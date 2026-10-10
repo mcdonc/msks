@@ -43,10 +43,6 @@ from ..conformance_args import (
 from . import egress as egress_mod
 from .config import ClientConfig, bootstrap
 from .console import run_workspace_shell
-
-# Re-exported for the tests (they drive cli.write_client_identity
-# directly); the create core's own callers live in the groups now.
-from .create import write_client_identity  # noqa: F401
 from .forward import run_workspace_forward
 from .images import (  # noqa: F401
     cmd_image_check,
@@ -92,10 +88,8 @@ from .volumes import (  # noqa: F401
     workspace_table,
 )
 from .workspaces import (  # noqa: F401
-    KEY_TYPE_HELP,
     CreateFlags,
     checked_key_flags,
-    checked_key_type,
     cmd_create,
     cmd_key,
     cmd_ls,
@@ -385,38 +379,24 @@ def create(
         "for msks ssh and rsync — the console session itself is the "
         "guest's root autologin getty (#481) (default: your username)",
     ),
-    daemon_mint: bool = typer.Option(
-        False,
-        "--daemon-mint",
-        help="let the daemon mint the workspace's ssh identity and "
-        "escrow both halves (#111) — an explicit opt-out; the create "
-        "default (#336) plants one operator key across workspaces "
-        "(identity_file, or the key msks mints under the client data "
-        "root — `~/.local/share/msks/identity`, or that root under "
-        "MSKSC_DATA_DIR) and the daemon holds public halves only",
-    ),
     pubkey: str | None = typer.Option(
         None,
         "--pubkey",
         metavar="FILE",
-        help="use a public key you already own as the workspace's ssh "
+        help="use a public key you already own as this workspace's ssh "
         "identity (#132), one workspace's worth: the file's one line "
         "travels to the daemon, any well-formed key type, and the "
         "private half stays wherever you keep it (nothing is written "
-        "client-side). - reads stdin",
-    ),
-    key_type: str | None = typer.Option(
-        None,
-        "--key-type",
-        metavar="TYPE",
-        help=KEY_TYPE_HELP,
+        "client-side). - reads stdin. Without this flag the create "
+        "plants the operator's configured key (identity_file / "
+        "MSKSC_IDENTITY_FILE, #336) — msks generates no key, and an "
+        "unconfigured client refuses the create (#486)",
     ),
     start: bool = typer.Option(
         False, "--start", help="boot the workspace immediately"
     ),
 ) -> int:
     """Create a workspace."""
-    checked_key_type(key_type)
     return run_create(
         CreateFlags(
             workspace_id=workspace_id,
@@ -437,9 +417,7 @@ def create(
             allow=allow,
             user_data=user_data,
             user=user,
-            daemon_mint=daemon_mint,
             pubkey=pubkey,
-            key_type=key_type,
             start=start,
         ),
         ctx.obj,
@@ -560,8 +538,9 @@ def key(
         help="write the private half to FILE (mode 0600) instead of printing",
     ),
 ) -> int:
-    """Fetch a workspace's ssh identity (#111; the public half alone
-    for a client-minted #121 workspace)."""
+    """Fetch a workspace's ssh identity (#111): the public half,
+    and the private half for a row minted before #486 still holds
+    one (the daemon holds none for a workspace created now)."""
     checked_key_flags(as_private, out)
     return cmd_key(workspace_id, as_private, out, transport=ctx.obj)
 

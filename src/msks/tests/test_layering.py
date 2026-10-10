@@ -143,8 +143,7 @@ ALLOWED_EDGES = {
     ("server", "settings"),
     ("server", "spec"),
     ("server", "storage"),
-    # settings parse against the vocabulary and key types
-    ("settings", "identity"),
+    # settings parse against the spec vocabulary
     ("settings", "spec"),
 }
 

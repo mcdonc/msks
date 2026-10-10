@@ -9,8 +9,6 @@ before the first screen draws), and the screens plug fakes here for
 the tests.
 """
 
-from pathlib import Path
-
 from ..create import create_workspace_core, invoking_user
 from ..env import env_token, env_url
 from ..rest import api_call
@@ -23,7 +21,6 @@ from .consent_ui import shared_ssl
 #: default (#336) plants the operator's own key instead; the TUI
 #: form keeps the per-workspace mint until it grows an operator-key
 #: surface of its own.
-TUI_KEY_TYPE = "ed25519"
 
 
 class TuiData:
@@ -68,9 +65,10 @@ class TuiData:
             ssl_ctx=shared_ssl(),
         )
 
-    async def create(self, body: dict) -> tuple[dict, Path | None]:
-        """POST one workspace (the create form's fields), the client
-        mint for its identity — ``(row, private-half path)``."""
+    async def create(self, body: dict) -> dict:
+        """POST one workspace (the create form's fields) with the
+        operator's configured key for its identity (#486) — the
+        row."""
         body.setdefault("user", invoking_user())
         return await create_workspace_core(
             env_url(),
@@ -78,7 +76,6 @@ class TuiData:
             body,
             self.transport,
             ssl_ctx=shared_ssl(),
-            key_type=TUI_KEY_TYPE,
         )
 
     async def resize(self, workspace_id: str, body: dict) -> dict:

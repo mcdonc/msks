@@ -96,7 +96,9 @@ configio = 3
 conformance_args = 8
 # #481: the console dropped its identity negotiation — the
 # challenge signer and the login-user resolver went with it.
-identity = 9
+# #486: the mint went from the client — three fewer identity
+# imports (the mint, the key-type set, the minted-key rung).
+identity = 6
 spec = 3
 
 [snapshot.config]
@@ -159,8 +161,9 @@ app = 2
 config = 4
 events = 4
 # #481: the console endpoint's identity-validation gate went with
-# the prelude.
-identity = 6
+# the prelude. #486: the create route's mint went with the daemon
+# mint — one fewer identity import.
+identity = 5
 # #470: the workspace listing joins the catalog — each row's image
 # reference resolves through the imagestore (resolve_hash beside
 # the listing's aliased list_images). #481: the console endpoint's
@@ -186,5 +189,4 @@ spec = 28
 storage = 13
 
 [snapshot.settings]
-identity = 2
 spec = 5

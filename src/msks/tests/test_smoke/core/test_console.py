@@ -6,12 +6,12 @@ import uuid
 from pathlib import Path
 
 from msks.app import build_app
-from msks.identity import mint
 from msks.microvm import VmSpec
 from msks.settings import (
     Settings,
     VmmSettings,
 )
+from testkeys import mint
 
 from test_smoke import (
     CMDLINE,
@@ -40,9 +40,9 @@ async def test_local_console_identity_drop() -> None:
     microvm = app.state.microvm
     wid = f"smoke-{uuid.uuid4().hex[:8]}"
     serial_log = state_dir / "vms" / wid / "serial.log"
-    # The mint a create performs (#111), replayed by hand so the
-    # launch stays direct: the public half rides the cidata seed and
-    # its script makes the home (#171).
+    # The public half a create sends (#486), supplied by hand so
+    # the launch stays direct: it rides the cidata seed and its
+    # script makes the home (#171).
     _private_pem, public = mint("ed25519")
     try:
         await microvm.launch(

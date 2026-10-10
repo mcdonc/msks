@@ -10,7 +10,6 @@ tests.
 import asyncio
 import json
 import os
-import stat
 import sys
 import time
 from datetime import UTC, datetime, timedelta, timezone
@@ -171,7 +170,7 @@ class FakeData:
             raise RuntimeError(self.refusal)
         fresh = dict(row(id="new1", name=body.get("name"), status="created"))
         self.rows.append(fresh)
-        return (dict(fresh), None)
+        return dict(fresh)
 
     async def resize(self, workspace_id: str, body: dict) -> dict:
         """The resize POST (#331) — recorded; the reply carries the
@@ -1971,6 +1970,12 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("MSKSC_URL", "https://api.test")
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    from testkeys import mint
+
+    pem, _public = mint("ed25519")
+    identity = tmp_path / "my-key"
+    identity.write_text(pem)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(identity))
     monkeypatch.setattr(data_mod, "invoking_user", lambda: "ops")
     seen: list[tuple] = []
     seen_pub: list[str] = []
@@ -2139,14 +2144,12 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
         "root_mib": 10240,
         "home_mib": 20480,
     }
-    created, path = await data.create({"name": "n"})
+    created = await data.create({"name": "n"})
     assert created["id"] == "ws1"
-    # The client mint's no-escrow exchange, in order after the
-    # listing.
-    post = seen.index(("POST", "/api/v1/workspaces"))
-    assert seen[post + 1] == ("GET", "/api/v1/workspaces/ws1/ssh-key")
-    assert path is not None and path.exists()
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    # The create sends the configured key's public half (#486): the
+    # POST carries it, nothing is fetched or written after.
+    assert seen_pub[0].startswith("ssh-ed25519 ")
+    assert ("GET", "/api/v1/workspaces/ws1/ssh-key") not in seen
     assert await data.start("ws1") == {"id": "ws1", "status": "running"}
     assert await data.stop("ws1") == {"id": "ws1", "status": "running"}
     assert await data.remove("ws1") == {"id": "ws1", "status": "running"}
@@ -2322,11 +2325,7 @@ def test_the_line_helpers() -> None:
             ]
         )
     ] == ["mid", "old", "broken"]
-    assert (
-        main_screen_mod.created_note(row(id="x"), None)
-        == "created alpha (id x)"
-    )
-    assert "identity" in main_screen_mod.created_note(row(id="x"), "/tmp/id")
+    assert main_screen_mod.created_note(row(id="x")) == "created alpha (id x)"
 
 
 def test_the_listing_columns_line_up(monkeypatch) -> None:

@@ -226,21 +226,6 @@ def configured_identity_file() -> Path | None:
     return path
 
 
-def load_identity_file(path: Path) -> str | None:
-    """One private key file's PEM, or None when the file is
-    missing, unreadable, or holds no key the session agent could
-    stage — the silent form for the data root's minted key. A key
-    that loads but cannot sign (a type or curve the agent has no
-    signer for) counts as unusable: staging it would create a
-    session `msks ssh` cannot complete."""
-    try:
-        pem = path.read_text(encoding="utf-8")
-        private = agent.load_private(pem)
-    except OSError, TypeError, ValueError:
-        return None
-    return pem if agent.signable(private) else None
-
-
 def named_identity_file(path: Path) -> str:
     """The strict form for the file the operator named: a missing,
     unreadable, encrypted, or unstagedable key is one line naming
@@ -281,26 +266,24 @@ def named_identity_file(path: Path) -> str:
 
 
 def operator_identity() -> tuple[str, Path] | None:
-    """The file-based operator identity: ``(pem, source path)`` or
-    None when no file resolves.
+    """The operator's identity: ``(pem, source path)`` or None
+    when no file is configured.
 
-    Two rungs, both deterministic and file-based (#336's non-goal:
-    no agent discovery, and no scanning of the operator's own
-    ``~/.ssh`` — which key of yours msks should use is a choice you
-    make, not a guess msks makes): ``identity_file`` /
-    ``MSKSC_IDENTITY_FILE`` when set (the operator's explicit
-    choice, checked strictly), else the key msks minted to the
-    data root (``<data_dir>/identity`` — a corrupt or missing file
-    simply does not resolve, and the create mints one there).
+    One rung, deterministic and file-based (#336, #486): the file
+    ``identity_file`` / ``MSKSC_IDENTITY_FILE`` names — the
+    operator's explicit choice, checked strictly. There is no
+    agent discovery and no scanning of the operator's own
+    ``~/.ssh`` (which key of yours msks should use is a choice you
+    make, not a guess msks makes), and msks never generates a key
+    (#486): the create refuses when nothing is configured. A key
+    an older msks wrote under the data root
+    (``<data_dir>/identity``) still works — point the setting at
+    that file.
     """
     configured = configured_identity_file()
-    if configured is not None:
-        return named_identity_file(configured), configured
-    minted = data_dir() / "identity"
-    pem = load_identity_file(minted)
-    if pem is not None:
-        return pem, minted
-    return None
+    if configured is None:
+        return None
+    return named_identity_file(configured), configured
 
 
 def operator_match(served: list[str]) -> str | None:
@@ -402,18 +385,14 @@ def missing_half_line(path: Path) -> str:
     return (
         f"msks: the workspace's private half is not on this "
         f"client — the daemon holds none, {path} is not "
-        "readable, and the operator identity matched nothing here "
-        "(identity_file / "
-        f"{IDENTITY_FILE_ENV}, or "
-        f"{data_dir() / 'identity'}).\n"
-        "The key was minted on another client (the file lives at "
-        "that path on that machine), on this client under a "
-        "different state root (MSKSC_DATA_DIR relocates it), or it "
-        "is a key you supplied at create — point identity_file (or "
-        f"{IDENTITY_FILE_ENV}) at that key's private file, log in "
-        "with it directly (ssh -i, or the Host msks-* alias), or "
-        "run the console from the client that holds the current "
-        "key: both console and ssh now need this half."
+        "readable, and no operator identity is configured here "
+        f"(identity_file / {IDENTITY_FILE_ENV}).\n"
+        "Point identity_file at this workspace's private key — a "
+        "key an older msks wrote may live under the client data "
+        f"root ({data_dir()}, MSKSC_DATA_DIR relocates it) — or "
+        "log in with it directly (ssh -i, or the Host msks-* "
+        "alias), or run the console from a client that holds the "
+        "current key: both console and ssh need this half."
     )
 
 

@@ -518,7 +518,6 @@ KEY_CASES = [
     ("conntrack_tool", "/ct", "net.conntrack_tool", "/ct"),
     ("interceptor_port", 9443, "net.interceptor_port", 9443),
     ("audit_hmac_key", "k1", "server.audit_hmac_key", "k1"),
-    ("ssh_key_type", "ed25519", "vmm.ssh_key_type", "ed25519"),
     ("image_import_max_mib", 4096, "vmm.image_import_max_mib", 4096),
     (
         "image_import_timeout_s",

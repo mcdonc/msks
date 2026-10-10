@@ -1,15 +1,14 @@
 """The workspace-lifecycle routes (#1, #111, #121, #246, #248):
-create, list, read, the identity and LLM credentials, and
+create, list, read, the ssh identity row, and
 start/stop/reset/delete."""
 
-import asyncio
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.exc import IntegrityError
 
-from ...identity import LEGACY_LOGIN_USER, mint, normalize_public_key
+from ...identity import LEGACY_LOGIN_USER, normalize_public_key
 from ...imagestore import list_images as list_catalog_images
 from ...imagestore import resolve_hash
 from ...microvm.errors import MicrovmError
@@ -121,21 +120,17 @@ def router(app) -> APIRouter:
                 ),
             )
         boot["secret_coverage"] = coverage
-        # The identity (#111) mints before the artifacts: its public
-        # half rides the seed (an artifact), its private half goes
-        # straight into the row. A bad key type on a
-        # directly-built Settings is a daemon fault, not a client
-        # error. Keygen is CPU-bound (RSA 3072 especially): off the
-        # loop, like every other tool call the routes make.
-        #
-        # The no-escrow mode (#121) replaces the mint: the client
-        # minted the keypair and sent the public line, or the
-        # operator supplied a key they already own (#132) — any
-        # well-formed type, sshd the authority; the daemon validates
-        # shape, re-annotates provenance, and stores the public half
-        # only — the row's private half stays NULL and the key
-        # endpoint answers private_key: null.
-        private_key = None
+        # The operator's key is the identity (#486): the client sends
+        # its public half with the create — from the operator's
+        # configured key file (identity_file / MSKSC_IDENTITY_FILE)
+        # or a one-off --pubkey — and the daemon validates shape,
+        # re-annotates provenance, and stores the public half only;
+        # the row's private half stays NULL and the key endpoint
+        # answers private_key: null. msks never mints. A create
+        # with no key at all (a deliberate API call, or a payload-
+        # only workspace) seeds no key: the guest answers the
+        # console alone (#481's root autologin), and rows minted
+        # before #486 keep serving the halves they already hold.
         if body.ssh_pubkey is not None:
             try:
                 algo, key_body = normalize_public_key(body.ssh_pubkey)
@@ -143,14 +138,6 @@ def router(app) -> APIRouter:
                 raise HTTPException(status_code=400, detail=str(exc)) from None
             comment = name or workspace_id
             boot["ssh_pubkey"] = f"{algo} {key_body} msks-client:{comment}"
-        else:
-            try:
-                private_key, public_key = await asyncio.to_thread(
-                    mint, app.state.settings.vmm.ssh_key_type
-                )
-            except ValueError as exc:
-                raise HTTPException(status_code=500, detail=str(exc)) from None
-            boot["ssh_pubkey"] = f"{public_key} msksd:{workspace_id}"
         # The creation name rides the seed's meta-data as the
         # guest's hostname (#370); a nameless workspace seeds the
         # minted id there instead (seed_metadata's fallback).
@@ -177,7 +164,6 @@ def router(app) -> APIRouter:
                 spec_for(boot),
                 image_hash=boot["image_hash"],
                 host=owner_host(app),
-                ssh_privkey=private_key,
                 name=name,
             )
         except IntegrityError:
@@ -229,23 +215,25 @@ def router(app) -> APIRouter:
         dependencies=[Depends(require_token)],
     )
     async def workspace_ssh_key(workspace_id: str) -> dict:
-        """The workspace identity (#111): both halves, token-gated.
+        """The workspace's ssh identity row, token-gated (#486).
 
-        A token holder already owns the workspace's root console, so
-        the private half grants nothing new; the response carries
-        the type name (parsed off the public line) so a client never
-        guesses the algorithm. A client-minted workspace (#121)
-        answers ``private_key: null`` — the daemon never held that
-        half; it lives on the client that created the workspace.
-        ``created_at`` (#245) stamps the workspace *instance*, and
-        ``id``/``name`` (#246) carry its immutable identity — the
-        client keys its caches on the id, so a workspace recreated
-        under the same name cannot collide with the first
-        instance's cached host keys. ``user`` (#248) is the
-        workspace's recorded login user — the default ``msks ssh``
-        and ``msks console`` log in as — answered as the image's own
-        account for a row created before per-workspace users, so
-        every workspace serves one.
+        A workspace created now answers the operator's public half
+        with ``private_key: null`` — msks never holds a private half
+        anymore. Rows minted before #486 keep serving the halves
+        they already hold (a daemon-side mint, or a client-side one
+        whose public half rode the same create): a token holder
+        already owns the workspace's root console, so the private
+        half grants nothing new. The response carries the type name
+        (parsed off the public line) so a client never guesses the
+        algorithm. ``created_at`` (#245) stamps the workspace
+        *instance*, and ``id``/``name`` (#246) carry its immutable
+        identity — the client keys its caches on the id, so a
+        workspace recreated under the same name cannot collide with
+        the first instance's cached host keys. ``user`` (#248) is
+        the workspace's recorded login user — the default
+        ``msks ssh`` and ``msks console`` log in as — answered as
+        the image's own account for a row created before
+        per-workspace users, so every workspace serves one.
         """
         key = await app.state.model.get_ssh_key(workspace_id)
         if key is None:
@@ -253,7 +241,7 @@ def router(app) -> APIRouter:
         if key["public_key"] is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"workspace {workspace_id} has no minted identity",
+                detail=f"workspace {workspace_id} has no ssh identity",
             )
         return {
             "workspace": key["id"],

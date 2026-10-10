@@ -649,6 +649,26 @@ in
     : "''${MSKSC_CACHE_DIR:=$DEVENV_ROOT/.devenv/state/msksc/cache}"
     : "''${MSKSC_DATA_DIR:=$DEVENV_ROOT/.devenv/state/msksc/data}"
     export MSKSC_CACHE_DIR MSKSC_DATA_DIR
+    # The dev shell's operator identity (#486): the client requires
+    # identity_file / MSKSC_IDENTITY_FILE and generates nothing, so
+    # a checkout that runs the client (the smokes, msks-dev) needs
+    # a key named once. The shell plays the operator the way a
+    # person would — one ssh-keygen run, kept in the worktree's
+    # state beside the cache and data roots — so every later shell
+    # reuses the same key and the workspaces it created stay
+    # reachable. A key an older checkout minted under the data root
+    # still works: point the variable at that file to adopt it.
+    # Like the state roots, a non-empty value exported before
+    # entering the shell survives.
+    dev_identity="$DEVENV_ROOT/.devenv/state/msksc/identity"
+    if [ ! -s "$dev_identity" ] && command -v ssh-keygen >/dev/null 2>&1; then
+      mkdir -p "$(dirname "$dev_identity")"
+      ssh-keygen -q -t ed25519 -N "" -f "$dev_identity" >/dev/null 2>&1 || true
+    fi
+    if [ -s "$dev_identity" ]; then
+      : "''${MSKSC_IDENTITY_FILE:=$dev_identity}"
+      export MSKSC_IDENTITY_FILE
+    fi
     # The daemon's config-tree root (#262): the dev daemon script
     # exports this itself, but a hand-run bare `msksd` from a
     # devenv shell resolves the same <repo>/msksd.yaml. A non-empty

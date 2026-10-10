@@ -8,16 +8,15 @@ import subprocess
 import pytest
 from cryptography.hazmat.primitives import serialization
 from msks.identity import (
-    KEY_TYPES,
     MIME_BOUNDARY,
     compose_user_data,
     keyless_seed_script,
-    mint,
     operator_content_type,
     seed_script,
     trailing_newline,
     unique_boundary,
 )
+from testkeys import KEY_TYPES, mint
 
 PUBLIC = "ecdsa-sha2-nistp256 AAAAE2VjZHNh user@host"
 

@@ -368,10 +368,18 @@ async def test_recreated_name_is_a_new_instance(client) -> None:
     reachable or collideable — a different id, different artifact
     paths, and a key endpoint that stamps the new instance."""
     http, app, _stub = client
+    from testkeys import mint
+
+    _pem, public = mint("ed25519")
     state_dir = app.state.settings.vmm.state_dir
     first = await http.post(
         "/api/v1/workspaces",
-        json={"id": "ws-again", "kernel": "/k", "rootfs": "/r"},
+        json={
+            "id": "ws-again",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "ssh_pubkey": public,
+        },
         headers=auth(),
     )
     assert first.status_code == 201
@@ -382,7 +390,12 @@ async def test_recreated_name_is_a_new_instance(client) -> None:
     await http.delete("/api/v1/workspaces/ws-again", headers=auth())
     second = await http.post(
         "/api/v1/workspaces",
-        json={"id": "ws-again", "kernel": "/k", "rootfs": "/r"},
+        json={
+            "id": "ws-again",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "ssh_pubkey": public,
+        },
         headers=auth(),
     )
     assert second.status_code == 201
@@ -398,16 +411,28 @@ async def test_recreated_name_is_a_new_instance(client) -> None:
     ).json()
     assert second_key["id"] == second_id
     assert second_key["created_at"] != first_key["created_at"]
-    assert second_key["public_key"] != first_key["public_key"]
+    # One operator key across workspaces (#486): both instances
+    # serve the same public half — the instance identity is the id
+    # and the stamp, not the key.
+    assert second_key["public_key"] == first_key["public_key"]
+    assert second_key["public_key"].startswith("ssh-ed25519 ")
 
 
 async def test_workspace_ref_resolution_prefers_the_id(client) -> None:
     """A workspace is addressable by id and by its unique name
     (#246); the id is the canonical answer in every response."""
     http, _app, _stub = client
+    from testkeys import mint
+
+    _pem, public = mint("ed25519")
     created = await http.post(
         "/api/v1/workspaces",
-        json={"id": "ws-ref", "kernel": "/k", "rootfs": "/r"},
+        json={
+            "id": "ws-ref",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "ssh_pubkey": public,
+        },
         headers=auth(),
     )
     wid = created.json()["id"]
@@ -420,13 +445,12 @@ async def test_workspace_ref_resolution_prefers_the_id(client) -> None:
     assert key.json()["name"] == "ws-ref"
 
 
-async def test_create_mints_identity(client) -> None:
-    """Create mints the identity (#111): the spec the seam saw
-    carries the public line (so the seed plants it), and the halves
-    the key endpoint serves re-derive each other — one keypair."""
-    from cryptography.hazmat.primitives import serialization
-    from msks.identity import KEY_TYPES
-
+async def test_a_keyless_create_seeds_no_key(client) -> None:
+    """A create with no ssh_pubkey (#486: the client always sends
+    one; a keyless create is a deliberate API call) stores no key
+    on the row, builds no key into the seed, and the key endpoint
+    answers the identity 404 — the workspace answers the console
+    alone."""
     http, _app, stub = client
     created = await http.post(
         "/api/v1/workspaces",
@@ -434,28 +458,12 @@ async def test_create_mints_identity(client) -> None:
         headers=auth(),
     )
     assert created.status_code == 201
-    assert created.json()["ssh_pubkey"].startswith(f"{KEY_TYPES['ed25519']} ")
+    assert created.json()["ssh_pubkey"] is None
     wid = created.json()["id"]
-    assert created.json()["ssh_pubkey"].endswith(f"msksd:{wid}")
-    spec_seen = stub.seen_specs[wid]
-    assert spec_seen.ssh_pubkey == created.json()["ssh_pubkey"]
+    assert stub.seen_specs[wid].ssh_pubkey is None
     key = await http.get("/api/v1/workspaces/ws-id/ssh-key", headers=auth())
-    assert key.status_code == 200
-    body = key.json()
-    assert body["type"] == KEY_TYPES["ed25519"]
-    assert body["public_key"] == created.json()["ssh_pubkey"]
-    loaded = serialization.load_ssh_private_key(
-        body["private_key"].encode(), password=b""
-    )
-    derived = (
-        loaded.public_key()
-        .public_bytes(
-            encoding=serialization.Encoding.OpenSSH,
-            format=serialization.PublicFormat.OpenSSH,
-        )
-        .decode()
-    )
-    assert derived in body["public_key"]
+    assert key.status_code == 404
+    assert "no ssh identity" in key.json()["detail"]
 
 
 async def test_ssh_key_endpoint_auth_and_missing(client) -> None:
@@ -467,7 +475,7 @@ async def test_ssh_key_endpoint_auth_and_missing(client) -> None:
     absent = await http.get("/api/v1/workspaces/ghost/ssh-key", headers=auth())
     assert absent.status_code == 404
     assert "no such workspace" in absent.json()["detail"]
-    # A row without an identity: minted-identity 404, distinct detail.
+    # A row without an identity: identity 404, distinct detail.
     await app.state.model.create_workspace(
         VmSpec(workspace_id="ws-old", kernel="/k", rootfs="/r")
     )
@@ -475,15 +483,15 @@ async def test_ssh_key_endpoint_auth_and_missing(client) -> None:
         "/api/v1/workspaces/ws-old/ssh-key", headers=auth()
     )
     assert legacy.status_code == 404
-    assert "no minted identity" in legacy.json()["detail"]
+    assert "no ssh identity" in legacy.json()["detail"]
 
 
 async def test_create_with_client_supplied_pubkey(client) -> None:
-    """The no-escrow create (#121): the daemon validates the supplied
+    """The create (#121, #486): the daemon validates the supplied
     public line, seeds and stores it annotated with its own provenance
     comment, and holds no private half — the key endpoint answers
-    private_key: null for the client that minted the pair."""
-    from msks.identity import mint
+    private_key: null."""
+    from testkeys import mint
 
     http, _app, stub = client
     _private, public = mint("ed25519")
@@ -627,27 +635,9 @@ async def test_concurrent_same_id_creates_serialize(
         ["enter", "exit"],  # loser saw the row first: no prepare
         ["enter", "exit", "enter", "exit"],  # loser entered after the winner
     )
-    # The winner's row carries exactly one identity, served whole.
-    key = await http.get("/api/v1/workspaces/ws-race/ssh-key", headers=auth())
-    assert key.status_code == 200
-    assert key.json()["public_key"].endswith(f"msksd:{key.json()['id']}")
-
-
-async def test_create_with_bad_key_type_setting_is_500(
-    client, monkeypatch
-) -> None:
-    """A directly-built Settings carrying an unknown key type (env
-    loading validates first) fails the create with the named error,
-    not a bare traceback."""
-    http, app, _stub = client
-    monkeypatch.setattr(app.state.settings.vmm, "ssh_key_type", "bogus")
-    created = await http.post(
-        "/api/v1/workspaces",
-        json={"id": "ws-bad", "kernel": "/k", "rootfs": "/r"},
-        headers=auth(),
-    )
-    assert created.status_code == 500
-    assert "unknown ssh key type" in created.json()["detail"]
+    # The winner's row exists and is addressable by the raced name.
+    row = await http.get("/api/v1/workspaces/ws-race", headers=auth())
+    assert row.status_code == 200
 
 
 async def test_workspace_validation(client) -> None:
@@ -1261,9 +1251,18 @@ async def test_create_with_user_reaches_the_row_and_spec(client) -> None:
     account reaches the guest's first boot — and the key endpoint
     serves it back as the client's default login."""
     http, _app, stub = client
+    from testkeys import mint
+
+    _pem, public = mint("ed25519")
     created = await http.post(
         "/api/v1/workspaces",
-        json={"id": "ws-u", "kernel": "/k", "rootfs": "/r", "user": "alice"},
+        json={
+            "id": "ws-u",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "user": "alice",
+            "ssh_pubkey": public,
+        },
         headers=auth(),
     )
     assert created.status_code == 201, created.text
@@ -1307,13 +1306,32 @@ async def test_ssh_key_serves_the_legacy_user_for_old_rows(client) -> None:
             rootfs="/r",
             ssh_pubkey="ssh-ed25519 AAAA msksd:ws-old",
         ),
-        ssh_privkey="-----BEGIN OPENSSH PRIVATE KEY-----\n...\n",
     )
+    # The row is a pre-#486 shape: a daemon-minted private half on
+    # the column. Nothing writes it anymore — seed it directly, the
+    # way a pre-#486 daemon would have.
+    from msks.model.db import sessionmaker_for
+    from msks.model.workspaces import Workspace
+    from sqlalchemy import update
+
+    maker = sessionmaker_for(app.state.model.engine())
+    async with maker() as session:
+        await session.execute(
+            update(Workspace)
+            .where(Workspace.id == "ws-old")
+            .values(ssh_privkey="-----BEGIN OPENSSH PRIVATE KEY-----\n...\n")
+        )
+        await session.commit()
     row = await app.state.model.get_workspace("ws-old")
     assert row["login_user"] is None
     key = await http.get("/api/v1/workspaces/ws-old/ssh-key", headers=auth())
     assert key.status_code == 200
     assert key.json()["user"] == "msks"
+    # The pre-#486 private half keeps serving (#486's no-forced-
+    # recreate): rows minted before the change stay reachable.
+    assert key.json()["private_key"] == (
+        "-----BEGIN OPENSSH PRIVATE KEY-----\n...\n"
+    )
 
 
 async def test_create_rejects_empty_user_data(client) -> None:

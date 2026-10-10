@@ -1,43 +1,26 @@
-"""The per-workspace ssh identity (#111): mint, seed, and shape.
+"""The workspace ssh identity (#111, #486): shape and seed.
 
-msksd mints an identity at create and stores both halves with the
-workspace's state; the public half reaches the guest through the
-#41 user_data channel — the cidata seed — so a fresh workspace
-accepts ssh with no manual key steps anywhere. The private half is
-served over the authenticated API to whoever holds a token (a token
-holder already owns the root console, so this grants nothing new —
-the console is a root autologin now, #481).
+The operator's own key is the identity (#486): the client sends
+its public half with the create, the daemon validates its shape,
+re-annotates it, and stores it — the public half alone — with the
+workspace's state; it reaches the guest through the #41 user_data
+channel, the cidata seed, so a fresh workspace accepts ssh with no
+manual key steps anywhere. msks never mints a key and never holds
+a private half; rows minted before #486 (a daemon-side mint, or a
+client-side one) keep their halves and keep serving them over the
+authenticated API to whoever holds a token (a token holder already
+owns the root console, so this grants nothing new — the console is
+a root autologin, #481).
 
-The key type is a setting (#115): the default is Ed25519 (#138 —
-FIPS 186-5 approves EdDSA), with ECDSA P-256 and RSA as choices,
-and nothing in the daemon, the client, or the image depends
-on which type a workspace carries — the algorithm name travels with
-the key material itself. The no-escrow mode (#121) moves the minting
-to the client: the daemon receives and stores the public half only,
-validated here.
+Any key type is accepted, at whatever type it carries: the guest's
+sshd, the platform's own (#115 posture), stays the authority on
+which keys it will authenticate.
 """
 
 import base64
 import binascii
 import re
 import secrets
-
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec, ed25519, rsa
-
-#: The identity key types a daemon may mint (#115): the setting names
-#: one of these, and the OpenSSH name each maps to is the wire format
-#: the public half carries.
-KEY_TYPES = {
-    "ecdsa": "ecdsa-sha2-nistp256",
-    "ed25519": "ssh-ed25519",
-    "rsa": "ssh-rsa",
-}
-
-#: The RSA bit size — 3072 stays inside every FIPS policy that admits
-#: RSA while remaining fast to mint at create.
-RSA_BITS = 3072
-
 
 #: The label charset of an algorithm name: OpenSSH's key types are
 #: lowercase token shapes (`ssh-rsa`, `ecdsa-sha2-nistp256`,
@@ -68,16 +51,14 @@ LEGACY_LOGIN_USER = "msks"
 def normalize_public_key(line: str) -> tuple[str, str]:
     """Validate one supplied public key line: ``(algo, body)``.
 
-    A supplied line may be a key the client minted (#121) or a key
-    the operator already owns (#132) — any key type is accepted, at
-    whatever type it carries: the guest's sshd, the platform's own
-    (#115 posture), stays the authority on which keys it will
-    authenticate. The daemon checks shape only — the label matches
-    the algorithm-name charset, the body is base64, and the blob's
-    embedded algorithm name agrees with its label. The mint paths
-    stay separate and stay limited to the FIPS-approvable type set.
-    The caller's comment is dropped: the daemon annotates provenance
-    its own way, like the minted mode.
+    A supplied line is a key the operator already owns (#132, #486)
+    — any key type is accepted, at whatever type it carries: the
+    guest's sshd, the platform's own (#115 posture), stays the
+    authority on which keys it will authenticate. The daemon checks
+    shape only — the label matches the algorithm-name charset, the
+    body is base64, and the blob's embedded algorithm name agrees
+    with its label. The caller's comment is dropped: the daemon
+    annotates provenance its own way.
     """
     fields = line.split()
     if len(fields) < 2:
@@ -106,41 +87,6 @@ def check_key_body(algo: str, encoded: str) -> None:
         raise ValueError("public key body is truncated")
     if blob[4 : 4 + length] != algo.encode():
         raise ValueError("public key algorithm does not match its key body")
-
-
-def mint(key_type: str) -> tuple[str, str]:
-    """A fresh keypair: ``(private_pem, public_openssh)``.
-
-    The private half is OpenSSH-format PEM ("OPENSSH PRIVATE KEY");
-    the public half is one authorized_keys line without a comment.
-    An unknown key type is a named error — the settings parser
-    validates against :data:`KEY_TYPES` at load, so this fires only
-    on a directly-constructed Settings carrying a bad value.
-    """
-    if key_type == "ecdsa":
-        private = ec.generate_private_key(ec.SECP256R1())
-    elif key_type == "ed25519":
-        private = ed25519.Ed25519PrivateKey.generate()
-    elif key_type == "rsa":
-        private = rsa.generate_private_key(
-            public_exponent=65537, key_size=RSA_BITS
-        )
-    else:
-        raise ValueError(f"unknown ssh key type {key_type!r}")
-    private_pem = private.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.OpenSSH,
-        encryption_algorithm=serialization.NoEncryption(),
-    ).decode()
-    public = (
-        private.public_key()
-        .public_bytes(
-            encoding=serialization.Encoding.OpenSSH,
-            format=serialization.PublicFormat.OpenSSH,
-        )
-        .decode()
-    )
-    return private_pem, public
 
 
 def seed_script(

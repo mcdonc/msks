@@ -88,7 +88,6 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_HOME_MIB",
     "MSKSD_STORAGE_WARN_PCT",
     "MSKSD_STORAGE_FLOOR_MIB",
-    "MSKSD_SSH_KEY_TYPE",
     "MSKSD_IMAGE_IMPORT_MAX_MIB",
     "MSKSD_IMAGE_IMPORT_TIMEOUT_S",
     # ServerSettings — the API listener.
@@ -517,12 +516,6 @@ def render_template() -> str:
 #                           # pressure to warn (#184)
 # storage_floor_mib: 512    # free state-disk MiB below which
 #                           # creates answer 507 (#184)
-# ssh_key_type: ed25519     # the identity type minted at create
-#                           # (#111): ed25519 (the FIPS-approvable
-#                           # default, #138; accepted by ssh clients
-#                           # restricted to the common
-#                           # ssh-ed25519,ssh-rsa set), ecdsa
-#                           # (P-256), or rsa
 #
 # --- Per-workspace egress networking ---
 # egress_enabled: false     # arm per-workspace NICs, DHCP, NAT, and

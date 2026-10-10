@@ -25,7 +25,6 @@ from dataclasses import dataclass, field
 from ipaddress import IPv4Network
 from pathlib import Path
 
-from .identity import KEY_TYPES
 from .spec.egress import EGRESS_MODES, MODE_ALLOW
 from .spec.tokens import validate_token_plaintext
 
@@ -152,13 +151,6 @@ class VmmSettings:
     # signal.
     storage_warn_pct: int = 90
     storage_floor_mib: int = 512
-    # The identity key type msksd mints at create (#111): Ed25519
-    # is FIPS-approvable (FIPS 186-5) and accepted by ssh clients
-    # restricted to the common ssh-ed25519,ssh-rsa set (#138);
-    # ECDSA P-256 and RSA remain choices for validated crypto
-    # modules that predate EdDSA. The type is a setting so the
-    # default can move without code surgery (#115).
-    ssh_key_type: str = "ed25519"
     # URL image imports (#258): the download's size ceiling (the
     # archive alone — the storage floor still counts its import
     # cost twice, like a path import) and its overall deadline.
@@ -437,9 +429,6 @@ def vmm_settings_from_env(
         storage_floor_mib=_parse_positive_int(
             env, "MSKSD_STORAGE_FLOOR_MIB", cls.storage_floor_mib
         ),
-        ssh_key_type=parse_key_type(
-            env, "MSKSD_SSH_KEY_TYPE", cls.ssh_key_type
-        ),
         image_import_max_mib=image_import_max_mib(env),
         image_import_timeout_s=image_import_timeout_s(env),
     )
@@ -475,17 +464,6 @@ def image_import_timeout_s(env: Mapping[str, str]) -> float:
     if value <= 0:
         raise ValueError(
             f"MSKSD_IMAGE_IMPORT_TIMEOUT_S must be positive, got {value}"
-        )
-    return value
-
-
-def parse_key_type(env: Mapping[str, str], name: str, default: str) -> str:
-    """One of the mintable identity types (#115): a named error
-    otherwise, so a typo fails at settings load, not at create."""
-    value = _env(env, name, default)
-    if value not in KEY_TYPES:
-        raise ValueError(
-            f"{name} must be one of {sorted(KEY_TYPES)}, got {value!r}"
         )
     return value
 
