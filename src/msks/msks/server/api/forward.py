@@ -11,6 +11,12 @@ from ...microvm.errors import MicrovmError
 from .deps import authed_accept
 from .streams import close_reason, pump_streams
 
+#: The forward.closed publishes detached by an endpoint the client
+#: cancelled away (#108 review): the documented shield reference
+#: pattern — the loop holds weak ones, so the event a cancelled
+#: caller abandoned keeps one of its own until it lands.
+DETACHED_PUBLISHES: set = set()
+
 
 def forward_port(raw: str) -> tuple[int, str | None]:
     """The forward's TCP port from the path, or the refusal reason."""
@@ -90,17 +96,23 @@ def router(app, hub) -> APIRouter:
             finally:
                 app.state.net.untrack_forward(workspace_id, writer)
         finally:
-            writer.close()
-            with contextlib.suppress(Exception):
-                await writer.wait_closed()
-            # A detached task, not an await: teardown can cancel this
-            # coroutine mid-finally (an await would raise CancelledError
-            # and skip the event), and publish never blocks — it fans
-            # out to subscriber queues synchronously.
-            asyncio.create_task(
+            # The closed event goes out BEFORE the teardown awaits: a
+            # cancellation delivered into ``wait_closed`` (CancelledError
+            # is a BaseException — the Exception suppress misses it)
+            # aborts the finally and skips whatever follows, and the
+            # event this block exists to publish is what followed. The
+            # publish itself stays a detached task (the await would
+            # raise the same way), held in a reference set until it
+            # lands — the loop keeps only weak ones.
+            closed = asyncio.create_task(
                 hub.publish(
                     "forward.closed", {"id": workspace_id, "port": target_port}
                 )
             )
+            DETACHED_PUBLISHES.add(closed)
+            closed.add_done_callback(DETACHED_PUBLISHES.discard)
+            writer.close()
+            with contextlib.suppress(Exception):
+                await writer.wait_closed()
 
     return api

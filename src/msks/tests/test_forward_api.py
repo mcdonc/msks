@@ -3,6 +3,7 @@ byte bridge, and the forward events — against a seam whose dialer
 serves a real listener."""
 
 import asyncio
+import contextlib
 import time
 
 import pytest
@@ -298,6 +299,69 @@ def test_forward_publishes_open_and_closed_events(
             socket.send_bytes(b"ping\n")
             assert socket.receive_bytes() == b"PING\n"
         assert ("forward.opened", {"id": wid, "port": 22}) in published
+        deadline = time.monotonic() + 5
+        while closed not in published and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert closed in published
+
+
+def test_forward_closed_publishes_before_a_cancelling_teardown(
+    forward_api, monkeypatch
+) -> None:
+    """#108 review's race pin: a cancellation delivered into the
+    route's ``wait_closed`` (CancelledError is a BaseException; the
+    finally's Exception suppress misses it) must not skip the
+    forward.closed event — the publish goes out before the teardown
+    awaits, so a client teardown that wins the race against the
+    guest-side EOF still lands the event. This is the CI-runner
+    shape the open/closed test flaked on: the slow runner's client
+    close reached the route first."""
+    api, app, net = forward_api
+    published: list[tuple[str, dict]] = []
+    original = EventHub.publish
+
+    async def spy(hub, event_type, data):
+        published.append((event_type, data))
+        await original(hub, event_type, data)
+
+    monkeypatch.setattr(EventHub, "publish", spy)
+
+    class CancelledWaitWriter:
+        """A writer whose wait_closed raises the teardown
+        cancellation the finally's suppress cannot swallow."""
+
+        def __init__(self, inner) -> None:
+            self._inner = inner
+
+        def write(self, data):
+            return self._inner.write(data)
+
+        async def drain(self):
+            return await self._inner.drain()
+
+        def close(self):
+            return self._inner.close()
+
+        async def wait_closed(self):
+            raise asyncio.CancelledError()
+
+    stream = net.forward_stream
+
+    async def wrapped(workspace_id, port):
+        reader, writer = await stream(workspace_id, port)
+        return reader, CancelledWaitWriter(writer)
+
+    monkeypatch.setattr(net, "forward_stream", wrapped)
+    net.close_after_echo = True
+    with TestClient(api) as client:
+        wid = _make_workspace(client)
+        with contextlib.suppress(Exception):
+            with client.websocket_connect(
+                "/api/v1/workspaces/ws-f/forward/22", headers=offer()
+            ) as socket:
+                socket.send_bytes(b"ping\n")
+                assert socket.receive_bytes() == b"PING\n"
+        closed = ("forward.closed", {"id": wid, "port": 22})
         deadline = time.monotonic() + 5
         while closed not in published and time.monotonic() < deadline:
             time.sleep(0.01)
