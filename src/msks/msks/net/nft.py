@@ -40,7 +40,6 @@ docs/networking.md.
 import asyncio
 import json
 import logging
-from ipaddress import IPv4Network
 
 from ..spec.egress import EgressPolicy, IpSpec
 from ..spec.failures import MicrovmError
@@ -64,9 +63,7 @@ DNS_PORTS = "{ 53, 853 }"
 QUEUE_MAX = 65535
 
 
-def base_ruleset(
-    uplink: str, llm: tuple[IPv4Network, int] | None = None
-) -> str:
+def base_ruleset(uplink: str, llm: tuple[str, int] | None = None) -> str:
     """The shared NAT table — masquerade out the host uplink — and,
     when the daemon serves an LLM model list, the proxy's
     loopback guard (#483).
@@ -552,9 +549,14 @@ def base_guard_shape(settings) -> tuple[str, int] | None:
 
 
 async def apply_base(settings) -> None:
-    """Install the shared NAT table (idempotent by daemon lifetime).
+    """Install the shared NAT table (idempotent by content).
 
-    The proxy's loopback guard rides with it when a model list is
+    Runs once at manager start and again from the manager's attach
+    path whenever the loopback guard's shape drifted from the live
+    settings (a SIGHUP that configured a model list — see the
+    manager's ensure_base_guard); a re-apply merges, so a retired
+    shape's guard lingers as a dead rule that binds nothing. The
+    proxy's loopback guard rides with it when a model list is
     configured (#483); an unconfigured daemon serves no proxy, so
     the guard names no port."""
     await nft_run(

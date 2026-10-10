@@ -59,13 +59,38 @@ async def pump_streams(
     return ended
 
 
+#: The detached drains (#482 review): a task whose caller was
+#: cancelled away keeps only the loop's weak reference — the
+#: documented shield pattern keeps one of its own until the drain
+#: lands, so a mid-cancellation child always finishes unwinding.
+DETACHED_DRAINS: set = set()
+
+
+def shielded_drain(tasks) -> asyncio.Future:
+    """The drain future, shielded from the caller's own
+    cancellation and referenced until it lands.
+
+    The shape the asyncio docs prescribe for shield (save a
+    reference; the loop holds weak ones): the caller cancelled away
+    mid-drain raises CancelledError out of the shield's await while
+    the children keep unwinding to completion — nothing is silently
+    swallowed and nothing is abandoned half-cancelled (the exact
+    ``await task`` under a CancelledError suppress bug the console
+    teardown's RuntimeError tolerance names: it returned with a
+    reader-owning child still mid-unwind)."""
+    drain = asyncio.gather(*tasks, return_exceptions=True)
+    DETACHED_DRAINS.add(drain)
+    drain.add_done_callback(DETACHED_DRAINS.discard)
+    return asyncio.shield(drain)
+
+
 async def cancel_tasks(tasks) -> None:
     """Cancel and drain the tasks, retrieving their outcomes — the
     outer-cancellation exit leaves no task and no unretrieved
     exception behind."""
     for task in tasks:
         task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
+    await shielded_drain(tasks)
 
 
 async def settle(done, pending) -> None:
@@ -73,9 +98,7 @@ async def settle(done, pending) -> None:
     outcomes quietly (the survivor's ending is the session's)."""
     for task in pending:
         task.cancel()
-    for task in pending:
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await task
+    await shielded_drain(pending)
     for task in done:
         with contextlib.suppress(Exception):
             task.result()

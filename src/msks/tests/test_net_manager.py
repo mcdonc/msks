@@ -1137,6 +1137,15 @@ async def test_a_reload_added_models_reapplies_the_base_guard(
     # second names the live port.
     loads = [line for line in log_lines(nft_log) if line == "-f -"]
     assert len(loads) >= 2
+    # The drift-healing apply carried the guard's text: the ruleset
+    # stdin the stub records beside the log names the live port in
+    # its second -f - block (start's apply, then the drift heal;
+    # the per-VM installs that follow are per-workspace tables).
+    stdin_blocks = (nft_log.parent / (nft_log.name + ".stdin")).read_text()
+    applies = stdin_blocks.split("--- -f -")[1:3]
+    assert len(applies) == 2
+    assert f"tcp dport {settings.llm.port} drop" in applies[1]
+    assert "llm_loopback_guard" in applies[1]
     # A second attach under the same shape adds no further base load.
     before = len(loads)
     await manager.attach("ws-b", want=True)

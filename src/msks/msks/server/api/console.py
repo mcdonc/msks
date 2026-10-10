@@ -9,7 +9,17 @@ from fastapi import APIRouter, WebSocket
 from ...microvm.errors import MicrovmError
 from ...microvm.local import close_console_stream
 from .deps import authed_accept
-from .streams import close_reason, pump_streams
+from .streams import (
+    DETACHED_DRAINS,  # noqa: F401 — re-exported for tests' discovery
+    close_reason,
+    pump_streams,
+)
+
+#: The console teardowns detached by a cancelling client abort
+#: (#482 review): the documented shield reference pattern — the
+#: loop holds weak ones, so the half-close a cancelled caller
+#: abandoned keeps one of its own until it lands.
+DETACHED_TEARDOWNS: set = set()
 
 
 async def bridge_console(
@@ -194,7 +204,21 @@ def router(app) -> APIRouter:
             # The half-close-and-drain teardown keeps the VMM's
             # serial-manager thread alive across client detaches
             # (close_console_stream's docstring names the upstream
-            # defect this avoids).
-            await close_console_stream(reader, writer)
+            # defect this avoids). Shielded: this finally runs on a
+            # cancelled task exactly when the client aborts — the
+            # moment the VMM most needs the clean EOF — and an
+            # unshielded await would abandon the half-close mid-way.
+            # A second cancellation raises out of the shield
+            # (suppressed); the teardown it cut loose from keeps a
+            # reference in DETACHED_TEARDOWNS and finishes unwound,
+            # and the stream-to_ws unwind race the drain can meet
+            # is tolerated inside the teardown itself.
+            teardown = asyncio.create_task(
+                close_console_stream(reader, writer)
+            )
+            DETACHED_TEARDOWNS.add(teardown)
+            teardown.add_done_callback(DETACHED_TEARDOWNS.discard)
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.shield(teardown)
 
     return api

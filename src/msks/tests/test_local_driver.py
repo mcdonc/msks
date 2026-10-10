@@ -882,6 +882,43 @@ async def test_close_console_stream_half_closes_and_drains(
         await server.wait_closed()
 
 
+async def test_close_console_stream_tolerates_a_held_reader() -> None:
+    """#482 review's race pin: an endpoint cancelled by a client
+    abort runs its teardown while the pump's reader coroutine is
+    still mid-cancellation and holds the reader's waiter — the
+    drain skips (RuntimeError), the half-close already landed, and
+    the writer still closes."""
+    import asyncio as aio
+
+    class HeldReader:
+        """A reader whose waiter another coroutine still owns."""
+
+        def __init__(self) -> None:
+            self._waiter = aio.get_running_loop().create_future()
+
+        async def read(self, n=-1):
+            # The RuntimeError path the drain tolerates: the waiter
+            # is pre-set, exactly as a mid-cancellation pump leaves
+            # it, so the read must refuse before any data flows.
+            raise RuntimeError(
+                "read() called while another coroutine "
+                "is already waiting for incoming data"
+            )
+
+    class Writer:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+        async def wait_closed(self) -> None:
+            return None
+
+    reader, writer = HeldReader(), Writer()
+    await close_console_stream(reader, writer)
+    assert writer.closed
+
+
 async def test_close_console_stream_tolerates_socketless_writers() -> None:
     """A writer that models no real socket (fakes, stub drivers)
     skips the half-close, idles out the drain, and still closes

@@ -274,7 +274,11 @@ reload naming a new one changes nothing:
   NAT masquerade's `egress_uplink` (per-workspace firewall rules
   read the live setting, but the base table that actually
   masquerades out the uplink keeps its startup value — change
-  `egress_uplink` only with a restart scheduled)
+  `egress_uplink` only with a restart scheduled. One reload does
+  re-stamp the base table: a change that alters the LLM proxy's
+  loopback guard shape (`llm_models` gaining or losing entries,
+  `llm_port`, `egress_subnet`) re-applies it at the next
+  workspace start, masquerade included, from the live `egress_uplink`)
 
 A config that fails to load or validate is refused: the daemon
 reports the error on stderr and keeps the previous settings. A
