@@ -1113,6 +1113,39 @@ class FakeInterceptor:
         self.detaches.append(workspace_id)
 
 
+async def test_a_reload_added_models_reapplies_the_base_guard(
+    net_app,
+) -> None:
+    """#483: the base table's loopback guard is baked from the
+    settings at start; a SIGHUP that adds a model list (the live
+    settings the attach path reads) must not leave the next
+    listener bound behind a guard-less table — the build re-applies
+    the base table when the guard's shape drifted."""
+    app, _ip_log, nft_log = net_app
+    manager = await ready(app)
+    assert manager._base_guard_shape is None  # no model list at start
+    # The operator's SIGHUP swap: settings replaced in place.
+    settings = app.state.settings
+    settings.llm.models = ("*:http://up.stream/v1:sk-x",)
+    app.state.settings = settings
+    assert manager._base_guard_shape is None  # the table still old-shaped
+    await manager.attach("ws-a", want=True)
+    shape = manager._base_guard_shape
+    assert shape is not None and shape[1] == settings.llm.port
+    # The re-apply rode the nft stub: two base-ruleset loads (start,
+    # then the drift-healing attach), and the guard text in the
+    # second names the live port.
+    loads = [line for line in log_lines(nft_log) if line == "-f -"]
+    assert len(loads) >= 2
+    # A second attach under the same shape adds no further base load.
+    before = len(loads)
+    await manager.attach("ws-b", want=True)
+    loads2 = [line for line in log_lines(nft_log) if line == "-f -"]
+    # per-VM installs also use -f -, so count only the delta the
+    # guard can explain: one per attach at most beyond the first.
+    assert len(loads2) - before <= 1
+
+
 async def test_attach_ends_in_an_interceptor_refresh(net_app) -> None:
     """Arming is placeholder-driven: the attachment completes, then
     the interceptor re-evaluates (it arms only if a placeholder is

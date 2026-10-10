@@ -224,6 +224,10 @@ class NetManager:
         self._guards: dict[str, WorkspaceGuard] = {}
         self._forwards: dict[str, list] = {}
         self._used_slices: set[int] = set()
+        # The base table's loopback-guard shape the running ruleset
+        # carries (#483) — the shape, not the settings, says whether
+        # a re-apply is due.
+        self._base_guard_shape: tuple[str, int] | None = None
         self._state = "init"  # init | disabled | ready | unavailable
 
     async def start(self) -> None:
@@ -235,6 +239,7 @@ class NetManager:
         try:
             verify_forwarding()
             await nft.apply_base(settings)
+            self._base_guard_shape = nft.base_guard_shape(settings)
         except (MicrovmError, OSError) as exc:
             # Loud, not fatal: workspaces without egress are unaffected;
             # every egress boot below refuses with this cause.
@@ -941,6 +946,7 @@ class NetManager:
         """Create tap + chain + services (+ consent queue) for one
         workspace."""
         settings = self.app.state.settings
+        await self.ensure_base_guard()
         slice_ = await self.claim_slice(workspace_id)
         consumer = None
         try:
@@ -996,6 +1002,23 @@ class NetManager:
             self._used_slices.discard(slice_)
             await self._unwind(workspace_id)
             raise
+
+    async def ensure_base_guard(self) -> None:
+        """Re-apply the base table when its loopback guard's shape
+        drifted from the live settings (#483).
+
+        The guard is baked from the settings at start; the listeners
+        bind from the LIVE settings at attach — a SIGHUP that added
+        a model list (or moved the port, or the pool) after startup
+        would otherwise leave the next listener bound behind a
+        guard-less table. Attach is the one path that binds from the
+        live shape, so the drift check lives here: the shape the
+        running ruleset carries, not the stamp-time settings, says
+        whether a re-apply is due."""
+        shape = nft.base_guard_shape(self.app.state.settings)
+        if shape != self._base_guard_shape:
+            await nft.apply_base(self.app.state.settings)
+            self._base_guard_shape = shape
 
     async def _start_services(
         self,

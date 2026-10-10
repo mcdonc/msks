@@ -264,8 +264,12 @@ class ProbeService:
         """The attachment's listener: its tap address on 443, the
         service leaf's TLS — one service shape on every tap, the
         device pin included (#483): the probe serves its own tap's
-        redirected traffic, and the pin holds the same degraded
-        paths it holds for the proxy."""
+        redirected traffic, and the pin holds the same cross-tap
+        degraded path it holds for the proxy. The loopback half is
+        the pin's and the proxy's story alone: the base table's
+        guard names the proxy port, so a host process reaching the
+        probe over lo still connects — the probe's own fixed public
+        credential is its designed gate, unchanged here."""
         return TapListener(
             self.probe_app,
             tap=attachment.tap,

@@ -59,7 +59,7 @@ class ServeApp:
 
 
 @needs_egress
-async def test_the_device_pin_holds_with_no_firewall_at_all() -> None:
+async def test_the_tap_gate_holds_without_per_vm_tables() -> None:
     cleanup()
     try:
         # Two taps, two guests — a fresh namespace each, the host

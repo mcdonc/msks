@@ -534,19 +534,35 @@ async def flush_set(settings, workspace_id: str, name: str) -> None:
     )
 
 
+def base_guard_shape(settings) -> tuple[str, int] | None:
+    """The loopback guard's shape in the live settings (#483): the
+    tap pool and proxy port when a model list is configured, None
+    when it is not. The manager compares this against the shape its
+    running ruleset carries — the shape, not the stamp-time
+    settings, says whether an attach re-applies the base table (a
+    SIGHUP that added ``llm_models`` must not leave a listener
+    bound behind a guard-less table).
+
+    A re-apply merges into the running table: a guard for a retired
+    shape lingers as a dead rule on a port no listener binds, and
+    cannot refuse anything the current shape serves."""
+    if not settings.llm.models:
+        return None
+    return (str(settings.net.pool), settings.llm.port)
+
+
 async def apply_base(settings) -> None:
     """Install the shared NAT table (idempotent by daemon lifetime).
 
     The proxy's loopback guard rides with it when a model list is
     configured (#483); an unconfigured daemon serves no proxy, so
     the guard names no port."""
-    llm = (
-        (settings.net.pool, settings.llm.port) if settings.llm.models else None
-    )
     await nft_run(
         settings,
         ["-f", "-"],
-        input_text=base_ruleset(settings.net.uplink, llm).encode(),
+        input_text=base_ruleset(
+            settings.net.uplink, base_guard_shape(settings)
+        ).encode(),
         what="nft base ruleset apply",
     )
 

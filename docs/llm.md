@@ -93,9 +93,13 @@ tap pool on the proxy port drops — the answer to a host process,
 which the kernel's weak-host delivery would otherwise hand to the
 listener through any device pin. The per-VM nftables input chain
 ahead of the socket admits exactly this port from exactly that
-tap, pinned to the guest's source address. And the tap addresses
-live in a private subnet with source-NAT out, so nothing outside
-the host routes to them at all.
+tap, pinned to the guest's source address. And a packet that reaches
+the host from outside — routed in over the uplink toward a tap
+address — dies at the pin too: it did not arrive on the tap, and
+the pin refuses off-tap arrivals whatever interface carried them
+(verified the same way, with no firewall tables loaded at all; the
+private, source-NAT'd pool means such a packet must be deliberately
+routed, and the pin still answers it).
 
 A daemon API bearer token presented at the proxy answers 401: the
 API surface's credential stays distinct from the proxy, which

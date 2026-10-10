@@ -595,7 +595,12 @@ def bind_to_device(sock: socket.socket, tap: str) -> None:
     """Pin a socket to one interface (#483): the kernel delivers
     packets to it only from that tap. Linux-only by shape — the
     option constant is absent elsewhere, and the daemon's taps are
-    Linux's."""
+    Linux's. No capability is required on kernel 5.7+ (the option's
+    CAP_NET_RAW check went away there); the pair the daemon's
+    privilege contract names (CAP_NET_ADMIN, CAP_NET_BIND_SERVICE)
+    stays exact. A tap name no interface carries answers ENODEV,
+    so a mis-built spec fails at the bind, not in the field."""
+
     sock.setsockopt(
         socket.SOL_SOCKET, socket.SO_BINDTODEVICE, tap.encode() + b"\0"
     )
@@ -645,10 +650,12 @@ class TapListener:
     def bind(self) -> None:
         """Bind the listening socket synchronously: a refused bind
         (another daemon on the port) raises here, in the caller's
-        exception frame. The device pin (#483) needs CAP_NET_RAW —
-        held by the same root the daemon needs for taps and
-        nftables, so an unprivileged daemon fails loudly here
-        rather than serving an unpinned listener."""
+        exception frame. The device pin (#483) needs no privilege
+        on kernel 5.7+ (SO_BINDTODEVICE shed its CAP_NET_RAW
+        requirement in v5.7); a pre-5.7 kernel answers EPERM and a
+        mistyped tap name ENODEV — both surface as this workspace's
+        LLM absence through the manager's best-effort catch, the
+        same posture a taken port carries."""
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((self.tap_ip, self.port))
@@ -830,7 +837,13 @@ class LlmProxy:
         stolen off a client config grants nothing on this port.
         Any other value (the placeholder the seed exports, a
         vendor-shaped key, garbage) passes: the tap already named
-        the workspace, and the header carries no authority here."""
+        the workspace, and the header carries no authority here.
+        The refusal is a liveness oracle — a workspace holding a
+        stolen API token can ask "is it still valid?" here without
+        touching the monitored API surface — accepted for the class
+        separation: a bearer the daemon accepts must never ride a
+        second surface, and the tokens are high-entropy enough that
+        the oracle only answers holders, not guessers."""
         workspace_id = self.workspace_for_request(request)
         if workspace_id is None:
             raise HTTPException(status_code=401, detail="no workspace")

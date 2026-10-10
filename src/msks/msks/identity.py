@@ -172,11 +172,12 @@ def seed_script(
     msks user holds (#169) — the operator's own account gets the
     workspace-user posture, not a second-class one.
 
-    A workspace's LLM proxy credential rides the same script
-    (#259): the token file under /etc/msks and the profile.d
-    exports that name the daemon's proxy for MSKSWS_*-aware
-    clients. A token with no identity (a pre-#111 row whose seed
-    is healing) seeds the token block alone.
+    The daemon's LLM proxy environment rides the same script
+    (#259, #483): the profile.d exports that name the proxy on this
+    workspace's tap for MSKSWS_*-aware clients — a placeholder key,
+    because the proxy authenticates by tap. A port with no
+    identity (a pre-#111 row whose seed is healing) seeds the
+    proxy block alone.
 
     The agent toolchain itself is the guest image's, not the
     seed's (#266): the image bakes pinned Node and pi under
@@ -337,7 +338,10 @@ def ca_seed_block(ca_pem: str) -> str:
 #: placeholder, not a credential — the proxy serves the workspace
 #: whose tap reached it and reads no credential. It exists for
 #: OpenAI-shaped clients that refuse to send requests with an
-#: empty key, and for the pi extension's presence check.
+#: empty key, and for the pi extension's presence check. The
+#: guest's pi extension registers the same literal
+#: (nix/guest-pi-extension.ts) — two sources by necessity (the
+#: seed is Python, the extension is baked TypeScript), one value.
 LLM_KEY_PLACEHOLDER = "msks-local-proxy"
 
 

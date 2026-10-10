@@ -126,6 +126,8 @@ export default async function (pi: ExtensionAPI) {
   pi.registerProvider("msks", {
     baseUrl,
     api: "openai-completions",
+    // The placeholder LLM_KEY_PLACEHOLDER exports (identity.py,
+    // Python's side of the tree); the proxy reads no credential.
     apiKey: "msks-local-proxy",
     models: chatModels.map((m) => ({
       id: m.id,
