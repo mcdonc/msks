@@ -433,12 +433,14 @@ async def poll(
     """Poll a condition until it lands a truthy value, and hand back that
     value. A read that raises is a read inside a rebuild's swap window,
     not a failure: it is retried until the deadline (#489). On timeout
-    the report follows the final read — a still-raising read re-raises
-    its error, an answering read that never landed fails as the content
-    mismatch it is, not as the window (the swap's error is cleared by
-    the first read that answers, so it cannot misdirect triage)."""
+    the report follows the reads — a poll that only ever raised
+    re-raises the final read's error; once any read has answered, the
+    failure is the content mismatch it is (a window opening at the
+    deadline does not outrank the answers before it), so triage is not
+    misdirected down the flake path this file retired."""
     deadline = time.monotonic() + timeout
     last_error = None
+    answered = False
     while True:
         try:
             value = condition()
@@ -446,6 +448,7 @@ async def poll(
             value, last_error = None, exc
         else:
             last_error = None
+            answered = True
         if value:
             return value
         parked = time.monotonic()
@@ -466,7 +469,7 @@ async def poll(
                 value, last_error = None, exc
             if value:
                 return value
-            if last_error is not None:
+            if last_error is not None and not answered:
                 raise last_error
             raise AssertionError("condition never landed")
 
@@ -486,9 +489,13 @@ async def press_until(pilot, key: str, landed, timeout: float = 10.0) -> None:
     The budget is time the app actually ran, for the same starved-
     runner reason as wait_for (#322, #468): a press cycle that ran
     past its requested sleep credits the overshoot back to the
-    deadline, so a descheduled worker cannot spend the budget."""
+    deadline, so a descheduled worker cannot spend the budget. On
+    timeout the report follows the reads, poll's rule: a check that
+    only ever raised re-raises its error; once a check has answered,
+    the failure is the key not taking effect."""
     deadline = time.monotonic() + timeout
     last_error = None
+    answered = False
     while True:
         started = time.monotonic()
         await pilot.press(key)
@@ -496,6 +503,7 @@ async def press_until(pilot, key: str, landed, timeout: float = 10.0) -> None:
             if landed():
                 return
             last_error = None
+            answered = True
         except Exception as exc:
             last_error = exc
         await asyncio.sleep(0.05)
@@ -503,7 +511,7 @@ async def press_until(pilot, key: str, landed, timeout: float = 10.0) -> None:
         if ran > 0.05:
             deadline += ran - 0.05
         if time.monotonic() >= deadline:
-            if last_error is not None:
+            if last_error is not None and not answered:
                 raise last_error
             raise AssertionError(f"{key!r} never took effect")
 
@@ -2101,6 +2109,27 @@ async def test_a_window_then_wrong_content_reports_the_content() -> None:
         await poll(
             lambda: "forever" in row_text(page, "hold-rows", 0), timeout=0.3
         )
+    except AssertionError as exc:
+        assert "never landed" in str(exc)
+    else:
+        raise AssertionError("the read should have given up")
+
+
+async def test_a_window_at_the_deadline_reports_the_content() -> None:
+    """A read that answers wrong through the whole budget and then hits
+    a window on the deadline read still fails as the content mismatch:
+    a window opening at the deadline does not outrank the answers
+    before it."""
+    calls = []
+
+    def answers_then_raises():
+        calls.append(1)
+        if len(calls) > 1:
+            raise NoMatches("window opened at the deadline")
+        return False
+
+    try:
+        await poll(answers_then_raises, timeout=0.05, delay=0.2)
     except AssertionError as exc:
         assert "never landed" in str(exc)
     else:
