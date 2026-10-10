@@ -12,7 +12,6 @@ from sqlalchemy.exc import IntegrityError
 from ...identity import LEGACY_LOGIN_USER, mint, normalize_public_key
 from ...imagestore import list_images as list_catalog_images
 from ...imagestore import resolve_hash
-from ...llm import mint_token
 from ...microvm.errors import MicrovmError
 from ...model.secrets import SECRET_COVERAGES
 from ...spec.egress import EGRESS_MODES, parse_allowlist
@@ -20,7 +19,6 @@ from ...storage import create_refusal
 from .boot import create_name, mint_workspace_id, resolve_boot
 from .deps import require_token
 from .rows import (
-    healed_spec,
     host_mismatch,
     owner_host,
     serialize_create,
@@ -153,11 +151,6 @@ def router(app) -> APIRouter:
             except ValueError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from None
             boot["ssh_pubkey"] = f"{public_key} msksd:{workspace_id}"
-        # The LLM proxy credential (#259): minted beside the identity,
-        # stored on the row, and seeded into the guest so the
-        # workspace's LLM clients point at the daemon's proxy with
-        # zero manual steps.
-        boot["llm_token"] = mint_token()
         # The creation name rides the seed's meta-data as the
         # guest's hostname (#370); a nameless workspace seeds the
         # minted id there instead (seed_metadata's fallback).
@@ -273,42 +266,6 @@ def router(app) -> APIRouter:
             "user": key["login_user"] or LEGACY_LOGIN_USER,
         }
 
-    @api.get(
-        "/api/v1/workspaces/{workspace_id}/llm-token",
-        dependencies=[Depends(require_token)],
-    )
-    async def workspace_llm_token(workspace_id: str) -> dict:
-        """The workspace's LLM proxy credential (#259), token-gated.
-
-        The same rationale the identity's private half carries: a
-        bearer-token holder already owns the workspace's root
-        console, and the credential is usable only from inside the
-        workspace's own tap. ``null`` answers for a workspace
-        created before the proxy existed — POST mints one."""
-        token = await app.state.model.get_llm_token(workspace_id)
-        if token is None:
-            raise HTTPException(status_code=404, detail="no such workspace")
-        return {
-            "workspace": token["id"],
-            "name": token["name"],
-            "token": token["llm_token"],
-        }
-
-    @api.post(
-        "/api/v1/workspaces/{workspace_id}/llm-token",
-        dependencies=[Depends(require_token)],
-    )
-    async def remint_workspace_llm_token(workspace_id: str) -> dict:
-        """Mint a fresh LLM proxy credential (#259), replacing the
-        row's. The seed is immutable create-time input — it still
-        carries the old token — so a reminted credential reaches a
-        running workspace by hand: export it as the client's API
-        key in place of what the seed planted."""
-        row = await workspace_or_404(app, workspace_id)
-        token = mint_token()
-        await app.state.model.set_llm_token(row["id"], token)
-        return {"workspace": row["id"], "token": token}
-
     # The #41 immutability contract, said out loud: the create-time
     # shape (user_data above all) never changes — a mutation attempt
     # gets a named error instead of a bare 405 from the router's
@@ -363,7 +320,7 @@ def router(app) -> APIRouter:
                 raise HTTPException(
                     status_code=404, detail="no such workspace"
                 )
-            await app.state.microvm.launch(await healed_spec(app, row))
+            await app.state.microvm.launch(spec_for(row))
             await app.state.model.set_status(workspace_id, "running")
         return {"id": workspace_id, "status": "running"}
 

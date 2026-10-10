@@ -256,11 +256,7 @@ def action_content(
 #: three groups — use, configure, power — each group's lead row
 #: (``lead`` True) carrying the top margin that separates the
 #: groups (#367); the use group's lead carries it too, the
-#: breathing room between the status lines and the actions. The
-#: LLM token's remint stays on the CLI (`msks llm-token
-#: --remint` prints the fresh token, the part the page cannot
-#: usefully show) — #343 took the action off the page: its flash
-#: painted the list's status line, which the pushed page hides.
+#: breathing room between the status lines and the actions.
 PAGE_ACTIONS = (
     PageAction(ACTION_SHELL_WINDOW, "Open a shell", "in a new terminal", True),
     PageAction(

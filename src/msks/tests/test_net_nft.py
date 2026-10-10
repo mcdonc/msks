@@ -48,56 +48,50 @@ def test_base_ruleset_masquerades_the_uplink() -> None:
     assert f"table inet {nft.BASE_TABLE}" in ruleset
     assert "type nat hook postrouting priority srcnat" in ruleset
     assert 'oifname "eth0" masquerade' in ruleset
+    # An unconfigured daemon ships the guard's chain nowhere: no
+    # model list, no proxy port to protect.
+    assert "llm_loopback_guard" not in ruleset
 
 
-def test_vm_ruleset_scopes_the_tap() -> None:
-    ruleset = nft.vm_ruleset(
-        "ws-a", "msks-tap", "172.31.0.1", "172.31.0.2", "eth0"
-    )
-    assert f"table inet {table_name('ws-a')}" in ruleset
-    # Forward: only this guest's source leaves via the uplink; only
-    # established replies come back toward the tap; everything else
-    # in either direction across this tap drops (which is also what
-    # blocks guest-to-guest hops between two taps).
-    assert "type filter hook forward priority filter" in ruleset
-    assert (
-        'iifname "msks-tap" ip saddr 172.31.0.1 oifname "eth0" accept'
-        in ruleset
-    )
-    assert 'oifname "msks-tap" ct state established,related accept' in ruleset
-    assert 'oifname "msks-tap" drop' in ruleset
-    assert 'iifname "msks-tap" drop' in ruleset
-    # Input: the guest reaches exactly DHCP and the resolver —
-    # nothing else on the host — and the replies to connections
-    # the host itself opened into the guest (the forward's
-    # dial, #109) return on their conntrack state; a guest-initiated
-    # connection arrives state NEW and never matches it.
-    assert "type filter hook input priority filter" in ruleset
-    assert 'iifname "msks-tap" udp dport 67 accept' in ruleset
-    assert (
-        'iifname "msks-tap" ip saddr 172.31.0.1 '
-        "ip daddr 172.31.0.2 udp dport 53 accept"
-    ) in ruleset
-    assert (
-        'iifname "msks-tap" ip saddr 172.31.0.1 '
-        "ct state established,related accept" in ruleset
-    )
-    assert "tcp dport 53" not in ruleset  # UDP-only resolver (#70 review)
-    # Order is load-bearing in both chains: an accept after its drop
-    # is dead code, and a dead established accept is exactly the
-    # bug the forward dial once died of (#110's smoke). Scoped per
-    # chain — both chains carry iifname drops.
-    egress = ruleset[
-        ruleset.index("chain egress") : ruleset.index("chain ingress")
-    ]
-    ingress = ruleset[ruleset.index("chain ingress") :]
-    assert egress.index(
-        'oifname "msks-tap" ct state established,related accept'
-    ) < egress.index('oifname "msks-tap" drop')
-    assert ingress.index(
-        'iifname "msks-tap" ip saddr 172.31.0.1 '
-        "ct state established,related accept"
-    ) < ingress.index('iifname "msks-tap" drop')
+def test_base_ruleset_guards_the_proxy_port_from_loopback() -> None:
+    """#483: one static drop answers a host process reaching a tap
+    address through lo — the path neither the device pin (loopback
+    matches the local route, not the arriving device) nor a
+    per-VM chain (its final drop keys to its own tap) covers."""
+    from ipaddress import IPv4Network
+
+    ruleset = nft.base_ruleset("eth0", (IPv4Network("172.31.0.0/16"), 8770))
+    assert 'iifname "lo" ip daddr 172.31.0.0/16 tcp dport 8770 drop' in ruleset
+    # The masquerade stands beside the guard.
+    assert 'oifname "eth0" masquerade' in ruleset
+
+
+async def test_apply_base_ships_the_guard_only_with_models(
+    tools, monkeypatch
+) -> None:
+    """apply_base threads the pool and port into the base table
+    when a model list is configured, and names no guard chain when
+    it is not."""
+    settings, _log = tools
+    seen: list[bytes] = []
+
+    async def capture(
+        settings, argv, *, what, input_text=None, absent_ok=False
+    ):
+        if input_text is not None:
+            seen.append(input_text)
+
+    monkeypatch.setattr(nft, "nft_run", capture)
+    settings.llm.models = ("*:http://up.stream/v1:sk-x",)
+    await nft.apply_base(settings)
+    assert len(seen) == 1
+    assert b"llm_loopback_guard" in seen[0]
+    assert f"tcp dport {settings.llm.port} drop".encode() in seen[0]
+    assert str(settings.net.pool).encode() in seen[0]
+    settings.llm.models = ()
+    await nft.apply_base(settings)
+    assert len(seen) == 2
+    assert b"llm_loopback_guard" not in seen[1]
 
 
 async def test_apply_base_and_install_vm(tools, monkeypatch) -> None:

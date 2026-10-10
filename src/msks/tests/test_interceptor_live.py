@@ -395,6 +395,7 @@ async def test_the_live_probe_chain(tmp_path, monkeypatch) -> None:
     certfile, keyfile = await service.material()
     listener = TapListener(
         service.probe_app,
+        tap="lo",
         tap_ip=TAP_IP,
         port=0,
         ssl_certfile=certfile,

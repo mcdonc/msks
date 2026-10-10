@@ -4,7 +4,10 @@
  * MSKSWS_API_KEY in every login shell (/etc/profile.d/msks-llm.sh,
  * from the seed script the daemon writes at first boot) — seeded
  * even when the daemon serves no LLM surface, so the environment
- * alone cannot tell whether a proxy listens. This extension makes
+ * alone cannot tell whether a proxy listens. The API key is a
+ * placeholder the proxy never reads (#483): the proxy serves the
+ * workspace whose tap reached it, so its presence is structural,
+ * not a credential. This extension makes
  * one fetch of the proxy's /models, aborted at 1500 ms, and
  * registers the catalog under the "msks" provider, so /model
  * always shows the daemon's live model list. No retry, no sleep:
@@ -29,11 +32,12 @@
  * A copy a user has edited is theirs; nothing re-overwrites it.
  *
  * A variant of klangk's llm-proxy-models.ts: the credential
- * sources differ (the environment pair above, and the apiKey
- * command below prints the token file the seed plants) — and so
- * does the retry posture, for the reasons above; the awaited
- * async factory, the quiet no-op, the embed/rerank filter, and
- * the placeholder metadata carry over verbatim.
+ * posture differs (this proxy holds no credential — #483 — and
+ * the placeholder key rides the headers for client-shape reasons
+ * alone) — and so does the retry posture, for the reasons
+ * above; the awaited async factory, the quiet no-op, the
+ * embed/rerank filter, and the placeholder metadata carry over
+ * verbatim.
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -122,7 +126,9 @@ export default async function (pi: ExtensionAPI) {
   pi.registerProvider("msks", {
     baseUrl,
     api: "openai-completions",
-    apiKey: "!cat /etc/msks/llm.token",
+    // The placeholder LLM_KEY_PLACEHOLDER exports (identity.py,
+    // Python's side of the tree); the proxy reads no credential.
+    apiKey: "msks-local-proxy",
     models: chatModels.map((m) => ({
       id: m.id,
       name: m.id,

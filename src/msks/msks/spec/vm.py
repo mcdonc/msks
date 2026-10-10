@@ -75,7 +75,6 @@ class VmSpec:
     # plus the profile.d exports that point OpenAI-shaped clients
     # at the daemon's proxy on this workspace's tap). None is a
     # workspace created before the proxy existed.
-    llm_token: str | None = None
     # The creation name (#246): the seed's ``local-hostname``
     # (#370) — the minted id stands in for a nameless workspace.
     # None is a spec built outside the row path (conformance

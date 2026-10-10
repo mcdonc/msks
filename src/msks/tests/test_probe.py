@@ -160,6 +160,7 @@ class Attachment:
 
     tap_ip: str
     workspace_id: str = "ws1"
+    tap: str = "msks-tap"
 
 
 def test_listener_for_binds_443_with_the_service_leaf(
@@ -171,6 +172,8 @@ def test_listener_for_binds_443_with_the_service_leaf(
         Attachment("10.0.0.1"), certfile, keyfile
     )
     assert listener.tap_ip == "10.0.0.1"
+    # The device pin rides every per-tap listener (#483).
+    assert listener.tap == "msks-tap"
     assert listener.port == PROBE_PORT == 443
     assert listener._ssl_certfile == certfile
     assert listener._ssl_keyfile == keyfile
@@ -264,6 +267,7 @@ async def test_listener_serves_real_https_and_stops(tmp_path: Path) -> None:
     ca_file = tmp_path / "state" / "probe" / ca.CA_CERT_FILE
     listener = TapListener(
         server.probe_app,
+        tap="lo",
         tap_ip="127.0.0.1",
         port=0,
         ssl_certfile=certfile,
@@ -293,7 +297,9 @@ async def test_listener_bind_failure_unregisters(tmp_path: Path) -> None:
     squatter.bind(("127.0.0.1", 0))
     squatter.listen(1)
     port = squatter.getsockname()[1]
-    listener = TapListener(server.probe_app, tap_ip="127.0.0.1", port=port)
+    listener = TapListener(
+        server.probe_app, tap="lo", tap_ip="127.0.0.1", port=port
+    )
     with pytest.raises(OSError):
         await server.start_listener("ws1", listener)
     assert server._listeners == {}
@@ -304,8 +310,8 @@ def test_stop_mapping_leaves_a_replaced_listener(tmp_path: Path) -> None:
     """The registry forgets an entry only when it still names the
     listener asked about."""
     server = build_app(probe_settings(tmp_path)).state.probe
-    first = TapListener(server.probe_app, tap_ip="10.0.0.1", port=1)
-    second = TapListener(server.probe_app, tap_ip="10.0.0.1", port=1)
+    first = TapListener(server.probe_app, tap="lo", tap_ip="10.0.0.1", port=1)
+    second = TapListener(server.probe_app, tap="lo", tap_ip="10.0.0.1", port=1)
     server._listeners["ws1"] = first
     server.stop_mapping("ws1", second)
     assert server._listeners == {"ws1": first}

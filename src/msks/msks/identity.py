@@ -146,7 +146,6 @@ def mint(key_type: str) -> tuple[str, str]:
 def seed_script(
     public_key: str | None,
     login_user: str | None = None,
-    llm_token: str | None = None,
     llm_port: int = 0,
     ca_pem: str | None = None,
 ) -> str:
@@ -173,11 +172,12 @@ def seed_script(
     msks user holds (#169) — the operator's own account gets the
     workspace-user posture, not a second-class one.
 
-    A workspace's LLM proxy credential rides the same script
-    (#259): the token file under /etc/msks and the profile.d
-    exports that name the daemon's proxy for MSKSWS_*-aware
-    clients. A token with no identity (a pre-#111 row whose seed
-    is healing) seeds the token block alone.
+    The daemon's LLM proxy environment rides the same script
+    (#259, #483): the profile.d exports that name the proxy on this
+    workspace's tap for MSKSWS_*-aware clients — a placeholder key,
+    because the proxy authenticates by tap. A port with no
+    identity (a pre-#111 row whose seed is healing) seeds the
+    proxy block alone.
 
     The agent toolchain itself is the guest image's, not the
     seed's (#266): the image bakes pinned Node and pi under
@@ -196,7 +196,7 @@ def seed_script(
     assignment is safe.
     """
     if public_key is None:
-        return keyless_seed_script(llm_token, llm_port, ca_pem)
+        return keyless_seed_script(llm_port, ca_pem)
     script = (
         "#!/bin/sh\n"
         "# msks (#111): the workspace identity — authorized_keys\n"
@@ -233,23 +233,21 @@ def seed_script(
     )
     if login_user not in (None, "root", "msks"):
         script += named_user_block(login_user)
-    if llm_token is not None:
-        script += llm_seed_block(llm_token, llm_port)
+    if llm_port:
+        script += llm_seed_block(llm_port)
     if ca_pem is not None:
         script += ca_seed_block(ca_pem)
     return script
 
 
-def keyless_seed_script(
-    llm_token: str | None, llm_port: int, ca_pem: str | None
-) -> str:
-    """The identity-less seed: the LLM credential block when a
-    token rides (a pre-#111 row whose seed is healing — a tokenless
-    spec names no proxy to configure), plus the interceptor CA
-    block when one rides (#424)."""
+def keyless_seed_script(llm_port: int, ca_pem: str | None) -> str:
+    """The identity-less seed: the proxy-environment block when a
+    listener will serve this workspace's tap (a port of zero names
+    a daemon with no model list), plus the interceptor CA block
+    when one rides (#424)."""
     script = "#!/bin/sh\n# msks (#424): the workspace's seed.\nset -eu\n"
-    if llm_token is not None:
-        script += llm_seed_block(llm_token, llm_port)
+    if llm_port:
+        script += llm_seed_block(llm_port)
     if ca_pem is not None:
         script += ca_seed_block(ca_pem)
     return script
@@ -336,35 +334,43 @@ def ca_seed_block(ca_pem: str) -> str:
     )
 
 
-def llm_seed_block(token: str, port: int) -> str:
-    """The #259 block: the workspace's proxy credential as
-    /etc/msks/llm.token, and the profile.d script that exports
+#: The value the seed exports as MSKSWS_API_KEY (#483): a
+#: placeholder, not a credential — the proxy serves the workspace
+#: whose tap reached it and reads no credential. It exists for
+#: OpenAI-shaped clients that refuse to send requests with an
+#: empty key, and for the pi extension's presence check. The
+#: guest's pi extension registers the same literal
+#: (nix/guest-pi-extension.ts) — two sources by necessity (the
+#: seed is Python, the extension is baked TypeScript), one value.
+LLM_KEY_PLACEHOLDER = "msks-local-proxy"
+
+
+def llm_seed_block(port: int) -> str:
+    """The #259 block, post-#483: the profile.d script that exports
     the MSKSWS_* client environment — the base URL names the DHCP
     lease's gateway (this workspace's tap address) and the port
     the daemon served at create, so login shells name the proxy
     with zero manual steps. The names carry the msks prefix, not
     the generic OpenAI pair: the proxy is this daemon's own
     service, and a vendor-shaped name would claim otherwise. The
-    token's charset (``msksllm1_`` plus URL-safe base64) carries
-    no quote or metacharacter, so the single-quoted assignment is
-    safe; the heredoc is quoted, so it plants unexpanded and
-    computes the gateway at login."""
+    API key is the module placeholder — the proxy authenticates
+    by tap (#483), so the value carries no authority; the heredoc
+    is quoted, so it plants unexpanded and computes the gateway
+    at login."""
     return (
-        f"llm_token='{token}'\n"
-        "install -d -m 0755 -o root -g root /etc/msks\n"
         # The block owns its profile.d target: the NixOS base ships
         # no /etc/profile.d, and the heredoc below aborts a set -eu
         # seed against a missing directory.
         "install -d -m 0755 /etc/profile.d\n"
-        "printf '%s\\n' \"$llm_token\" > /etc/msks/llm.token\n"
-        "chmod 0644 /etc/msks/llm.token\n"
         "cat > /etc/profile.d/msks-llm.sh <<'MSEOF'\n"
         "# msks (#259): name the daemon's LLM proxy on this\n"
-        "# workspace's tap for MSKSWS_*-aware clients.\n"
+        "# workspace's tap for MSKSWS_*-aware clients. The proxy\n"
+        "# serves the workspace whose tap reached it (#483); the\n"
+        "# API key is a placeholder the proxy never reads.\n"
         "gw=$(ip route show default 2>/dev/null | awk '{print $3; exit}')\n"
-        'if [ -n "$gw" ] && [ -r /etc/msks/llm.token ]; then\n'
+        'if [ -n "$gw" ]; then\n'
         f'  MSKSWS_BASE_URL="http://$gw:{port}/v1"\n'
-        '  MSKSWS_API_KEY="$(cat /etc/msks/llm.token)"\n'
+        f'  MSKSWS_API_KEY="{LLM_KEY_PLACEHOLDER}"\n'
         "  export MSKSWS_BASE_URL MSKSWS_API_KEY\n"
         "fi\n"
         "MSEOF\n"
@@ -479,26 +485,25 @@ def compose_user_data(
     operator_payload: str | None,
     public_key: str | None,
     login_user: str | None = None,
-    llm_token: str | None = None,
     llm_port: int = 0,
     ca_pem: str | None = None,
 ) -> str:
     """The seed's user-data document: what cidata actually carries.
 
-    With no minted key and no LLM token the operator's payload
-    travels verbatim (the #41 contract, unchanged); with a key or a
-    token and no payload the seed is the seeding script alone; with
-    a script and a payload, a MIME multipart carries the two as
-    sibling parts. The content type of the operator part is sniffed
-    from its first line — the two forms the #41 contract documents
-    are a ``#!`` script and a ``#cloud-config`` document.
+    With no minted key and no proxy environment the operator's
+    payload travels verbatim (the #41 contract, unchanged); with a
+    key, a proxy port, or a CA and no payload the seed is the
+    seeding script alone; with a script and a payload, a MIME
+    multipart carries the two as sibling parts. The content type
+    of the operator part is sniffed from its first line — the two
+    forms the #41 contract documents are a ``#!`` script and a
+    ``#cloud-config`` document.
     """
-    if public_key is None and llm_token is None and ca_pem is None:
+    if public_key is None and ca_pem is None and not llm_port:
         return operator_payload
     script = seed_script(
         public_key,
         login_user,
-        llm_token,
         llm_port,
         ca_pem,
     )

@@ -161,7 +161,12 @@ async def close_console_stream(reader, writer) -> None:
     half_close_raw_socket(writer)
     # Read the tail in flight (prompt redraws, escape sequences)
     # until the stream reaches EOF; each slice is capped so a
-    # chatty guest cannot hold the detach hostage.
+    # chatty guest cannot hold the detach hostage. RuntimeError is
+    # the detach racing the bridge's own unwind: an endpoint whose
+    # task was cancelled runs this teardown while the pump's reader
+    # coroutine is still mid-cancellation and holds the reader's
+    # waiter — the half-close above already landed (the part the
+    # VMM needs), so the tail read skips and the close proceeds.
     loop = asyncio.get_running_loop()
     deadline = loop.time() + 1.0
     while loop.time() < deadline:
@@ -169,6 +174,8 @@ async def close_console_stream(reader, writer) -> None:
             if not await asyncio.wait_for(reader.read(4096), 0.25):
                 break
         except TimeoutError, OSError:
+            break
+        except RuntimeError:
             break
     writer.close()
     with contextlib.suppress(Exception):

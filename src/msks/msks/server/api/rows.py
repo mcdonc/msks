@@ -5,27 +5,11 @@ create-serialization lock, and the 404 the ref-resolving routes
 answer."""
 
 import asyncio
-from dataclasses import replace
 from pathlib import Path
 
 from fastapi import HTTPException
 
 from ...spec.vm import VmSpec, VmStatus
-
-
-async def healed_spec(app, row: dict) -> VmSpec:
-    """The launch spec with the row's LLM credential restored (#259
-    review): ``workspace_dict`` omits it (operator views never show
-    it), so ``spec_for`` alone would rebuild a crash-healed seed
-    without the token the row still authenticates — the boot path
-    is the one consumer that needs the secret half."""
-    spec = spec_for(row)
-    if spec.llm_token is not None:
-        return spec
-    token = await app.state.model.get_llm_token(row["id"])
-    if token is None or token["llm_token"] is None:
-        return spec
-    return replace(spec, llm_token=token["llm_token"])
 
 
 def spec_for(row: dict) -> VmSpec:
@@ -52,7 +36,6 @@ def spec_for(row: dict) -> VmSpec:
         user_data=row.get("user_data"),
         ssh_pubkey=row.get("ssh_pubkey"),
         login_user=row.get("login_user"),
-        llm_token=row.get("llm_token"),
     )
 
 

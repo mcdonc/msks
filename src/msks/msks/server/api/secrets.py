@@ -416,10 +416,11 @@ def router(app, hub) -> APIRouter:
         The credential this placeholder swaps to is a fixed public
         probe value — the sentinel gates nothing an attacker wants —
         so serving it over the authenticated API costs nothing a
-        token holder does not already hold (the llm-token route's
-        rationale). A revoked or re-scoped row answers 404 with the
-        re-mint recipe in the detail: the credential is the fixed
-        blob the endpoint itself serves.
+        token holder does not already hold (the same rationale the
+        workspace identity's public half carries). A revoked or
+        re-scoped row answers 404 with the re-mint recipe in the
+        detail: the credential is the fixed blob the endpoint
+        itself serves.
         """
         row = await app.state.model.placeholder_for([], PROBE_NAME)
         if row is None:

@@ -1,4 +1,4 @@
-"""The workspace LLM proxy (#259): one router, one credential per tap.
+"""The workspace LLM proxy (#259): one router, one proxy per tap.
 
 msksd holds the provider credentials and the routing configuration;
 every workspace consumes LLMs through an OpenAI-shaped proxy served
@@ -32,10 +32,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import copy
-import hmac
 import json
 import logging
-import secrets
 import socket
 import subprocess
 from typing import TYPE_CHECKING, Any
@@ -54,12 +52,6 @@ logger = logging.getLogger(__name__)
 #: services are DHCP and DNS, and the proxy has no reason to join
 #: them.
 DEFAULT_PORT = 8770
-
-#: The prefix a minted workspace token carries (#259): the charset
-#: behind it is token_urlsafe's (URL-safe base64), safe inside the
-#: seed script's single-quoted assignments and the Authorization
-#: header.
-TOKEN_PREFIX = "msksllm1_"
 
 # Provider defaults: well-known providers whose api_base can be
 # omitted from an entry (ported from klangk).
@@ -557,12 +549,6 @@ class LlmRouter:
 # --- the per-tap proxy -----------------------------------------------------
 
 
-def mint_token() -> str:
-    """A fresh workspace credential (#259): the prefix plus one
-    URL-safe secret."""
-    return TOKEN_PREFIX + secrets.token_urlsafe(24)
-
-
 # The chat-completion request fields the proxy forwards (#259
 # review): litellm's Router treats call-site ``api_base``/``api_key``
 # as dynamic overrides of the deployment's credentials, so a guest
@@ -605,13 +591,18 @@ def chat_fields(body: dict) -> dict:
     return {k: v for k, v in body.items() if k in CHAT_FIELDS}
 
 
-def token_matches(presented: str, stored: str | None) -> bool:
-    """Constant-time equality on the encoded forms; no stored token
-    authenticates nothing. Bytes, because HTTP header bytes are
-    latin-1-decoded and the digest comparison refuses non-ASCII
-    strings — a crafted header must answer 401, never a 500."""
-    return stored is not None and hmac.compare_digest(
-        presented.encode("utf-8", "replace"), stored.encode("utf-8")
+def bind_to_device(sock: socket.socket, tap: str) -> None:
+    """Pin a socket to one interface (#483): the kernel delivers
+    packets to it only from that tap. Linux-only by shape — the
+    option constant is absent elsewhere, and the daemon's taps are
+    Linux's. No capability is required on kernel 5.7+ (the option's
+    CAP_NET_RAW check went away there); the pair the daemon's
+    privilege contract names (CAP_NET_ADMIN, CAP_NET_BIND_SERVICE)
+    stays exact. A tap name no interface carries answers ENODEV,
+    so a mis-built spec fails at the bind, not in the field."""
+
+    sock.setsockopt(
+        socket.SOL_SOCKET, socket.SO_BINDTODEVICE, tap.encode() + b"\0"
     )
 
 
@@ -619,23 +610,35 @@ class TapListener:
     """One tap's proxy listener: a uvicorn server bound to the tap's
     own address, serving the shared proxy app.
 
-    The bind IS the scoping: the address exists only on that tap's
-    /30, and the per-VM input chain admits exactly this port from
-    exactly that tap. The socket binds eagerly (a taken port raises
-    where the manager can tolerate it, not inside the serve task),
-    and signal handlers stay the process's own — an embedded
-    server has no business owning SIGTERM."""
+    The bind IS the scoping (#483), in two cooperating halves:
+    the address exists only on that tap's /30, and the socket is
+    bound to the tap device itself (``SO_BINDTODEVICE``) — the
+    kernel delivers a packet to it only when the packet arrived
+    on that tap. A host process connecting through ``lo``, and a
+    packet another guest sends over its own tap toward this
+    address, die at the socket even when every firewall table is
+    missing — the device pin survives nft failure modes
+    (`absent_ok` applies) that the per-VM input chain does not.
+    The per-VM chain still admits exactly this port from exactly
+    that tap ahead of the socket (defense in depth, and the
+    enforcement of every other tap service). The socket binds
+    eagerly (a taken port raises where the manager can tolerate
+    it, not inside the serve task), and signal handlers stay the
+    process's own — an embedded server has no business owning
+    SIGTERM."""
 
     def __init__(
         self,
         app,
         *,
+        tap: str,
         tap_ip: str,
         port: int,
         ssl_certfile: str | None = None,
         ssl_keyfile: str | None = None,
     ) -> None:
         self._app = app
+        self.tap = tap
         self.tap_ip = tap_ip
         self.port = port
         self._ssl_certfile = ssl_certfile
@@ -647,10 +650,16 @@ class TapListener:
     def bind(self) -> None:
         """Bind the listening socket synchronously: a refused bind
         (another daemon on the port) raises here, in the caller's
-        exception frame."""
+        exception frame. The device pin (#483) needs no privilege
+        on kernel 5.7+ (SO_BINDTODEVICE shed its CAP_NET_RAW
+        requirement in v5.7); a pre-5.7 kernel answers EPERM and a
+        mistyped tap name ENODEV — both surface as this workspace's
+        LLM absence through the manager's best-effort catch, the
+        same posture a taken port carries."""
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((self.tap_ip, self.port))
+        bind_to_device(sock, self.tap)
         sock.listen(128)
         sock.setblocking(False)
         self._sock = sock
@@ -760,6 +769,7 @@ class LlmProxy:
             return None
         listener = TapListener(
             self.proxy_app,
+            tap=attachment.tap,
             tap_ip=attachment.tap_ip,
             port=settings.llm.port,
         )
@@ -814,29 +824,39 @@ class LlmProxy:
         return presented
 
     async def authorize(self, request: Request) -> None:
-        """The proxy's one gate: the workspace's own token.
+        """The proxy's one gate (#483): the tap that served the
+        request. The workspace is the one whose listener answered,
+        and nothing else is consulted — the proxy holds no
+        credential to present, because every process inside the
+        workspace could read one anyway (the seed's own exports).
 
-        Rejects anonymous requests and every other credential alike
-        (a daemon API bearer token is not a workspace credential):
-        the proxy is usable only from inside a workspace, by the
-        workspace. The workspace is the one whose tap served the
-        request, and the token is its row's — the listener's bind
-        already scoped the connection to that tap."""
+        One credential class stays distinct: a presented bearer the
+        daemon's own token table accepts is a daemon API token,
+        and the proxy refuses it — the API surface's credential
+        must never double as a proxy credential, so an API token
+        stolen off a client config grants nothing on this port.
+        Any other value (the placeholder the seed exports, a
+        vendor-shaped key, garbage) passes: the tap already named
+        the workspace, and the header carries no authority here.
+        The refusal is a liveness oracle — a workspace holding a
+        stolen API token can ask "is it still valid?" here without
+        touching the monitored API surface — accepted for the class
+        separation: a bearer the daemon accepts must never ride a
+        second surface, and the tokens are high-entropy enough that
+        the oracle only answers holders, not guessers."""
         workspace_id = self.workspace_for_request(request)
-        presented = None if workspace_id is None else self.bearer_of(request)
-        if presented is None:
+        if workspace_id is None:
             raise HTTPException(status_code=401, detail="no workspace")
-        row = await self.app.state.model.get_llm_token(workspace_id)
-        if row is None or not token_matches(presented, row.get("llm_token")):
+        presented = self.bearer_of(request)
+        if presented is None:
+            return
+        if await self.app.state.model.token_valid(presented):
             raise HTTPException(
                 status_code=401,
                 detail=(
-                    "the LLM credential differs from its seeded copy "
-                    "(a remint, or a daemon newer than the guest); "
-                    "run `msks llm-token <workspace>` on the host, "
-                    "write its token to /etc/msks/llm.token in the "
-                    "guest as root; the next login shell exports it "
-                    "as MSKSWS_API_KEY"
+                    "a daemon API token is not a proxy credential; "
+                    "the proxy serves the workspace whose tap "
+                    "reached it, and needs no credential"
                 ),
             )
 

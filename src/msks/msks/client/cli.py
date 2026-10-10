@@ -98,7 +98,6 @@ from .workspaces import (  # noqa: F401
     checked_key_type,
     cmd_create,
     cmd_key,
-    cmd_llm_token,
     cmd_ls,
     cmd_resize,
     cmd_rm,
@@ -565,23 +564,6 @@ def key(
     for a client-minted #121 workspace)."""
     checked_key_flags(as_private, out)
     return cmd_key(workspace_id, as_private, out, transport=ctx.obj)
-
-
-@app.command("llm-token")
-@one_line_interrupts
-def llm_token(
-    ctx: typer.Context,
-    workspace_id: str = typer.Argument(
-        ..., help="the workspace whose credential to fetch (name or id)"
-    ),
-    remint: bool = typer.Option(
-        False,
-        "--remint",
-        help="mint a fresh credential, replacing the stored one",
-    ),
-) -> int:
-    """Fetch a workspace's LLM proxy credential (#259)."""
-    return cmd_llm_token(workspace_id, remint, transport=ctx.obj)
 
 
 @app.command(

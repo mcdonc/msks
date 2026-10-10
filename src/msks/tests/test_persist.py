@@ -120,7 +120,6 @@ def spec(
     home_mib: int = 2048,
     user_data=None,
     ssh_pubkey=None,
-    llm_token=None,
     name=None,
 ) -> VmSpec:
     return VmSpec(
@@ -132,7 +131,6 @@ def spec(
         home_mib=home_mib,
         user_data=user_data,
         ssh_pubkey=ssh_pubkey,
-        llm_token=llm_token,
     )
 
 
@@ -704,15 +702,14 @@ async def test_resize_names_an_uncorrectable_volume(tmp_path: Path) -> None:
         await persist.resize_home_volume(home, 128, settings)
 
 
-async def test_ensure_builds_seed_for_a_token_only_workspace(
+async def test_ensure_builds_seed_for_a_port_only_workspace(
     tools,
 ) -> None:
-    """The #259 credential alone builds a seed: no user_data and no
-    identity, but the token rides the same cidata channel."""
+    """A proxy port alone builds a seed (#483): no user_data and no
+    identity, but the MSKSWS_* exports ride the same cidata
+    channel."""
     settings, record, base = tools
-    await persist.ensure_artifacts(
-        spec(base, llm_token="msksllm1_only"), settings, 8770
-    )
+    await persist.ensure_artifacts(spec(base), settings, 8770)
     seed = persist.seed_path(settings.state_dir, WID)
     assert seed.is_file()
     assert "--- user-data ---\n#!/bin/sh" in record.read_text()

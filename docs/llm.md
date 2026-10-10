@@ -74,36 +74,52 @@ entry's own text, operator-visible), and requests answer a 503
 that names only the failure, never the entry — instead of sending
 an empty key upstream.
 
-## The listener, the firewall, and the credential
+## The listener, the firewall, and the tap
 
 Each egress workspace's tap carries its host-reachable services —
 DHCP (67), the resolver (53), the interceptor's listener while
 armed (#199), and — when a model list is configured — the proxy at
-`llm_port` (`MSKSD_LLM_PORT`, default `8770`). The listener binds the tap's own address, and that
-workspace's per-VM nftables input chain admits exactly this port
-from exactly that tap, pinned to the guest's source address. A
-workspace cannot reach another workspace's proxy, and nothing
-outside a tap can reach any of them.
+`llm_port` (`MSKSD_LLM_PORT`, default `8770`). The proxy holds no
+credential (#483): the tap that a request arrived on is the whole
+identity. Four layers pin it. The listener binds the tap's own
+address, and binds the tap device itself (`SO_BINDTODEVICE`), so
+the kernel delivers a packet to the socket only when it arrived on
+that tap — a packet another guest sends over its own tap dies at
+the socket even when firewall tables are missing (every per-VM
+apply is fail-tolerant, so a failed or flushed table is a state
+the daemon keeps serving through). The base firewall table carries
+one static guard beside the masquerade: loopback traffic to the
+tap pool on the proxy port drops — the answer to a host process,
+which the kernel's weak-host delivery would otherwise hand to the
+listener through any device pin. The per-VM nftables input chain
+ahead of the socket admits exactly this port from exactly that
+tap, pinned to the guest's source address. And a packet that reaches
+the host from outside — routed in over the uplink toward a tap
+address — dies at the pin too: it did not arrive on the tap, and
+the pin refuses off-tap arrivals whatever interface carried them
+(verified the same way, with no firewall tables loaded at all; the
+private, source-NAT'd pool means such a packet must be deliberately
+routed, and the pin still answers it).
 
-The credential is per workspace, minted at create and stored on
-the workspace's row. The proxy accepts one thing: that workspace's
-token in the `Authorization: Bearer` header. Daemon API tokens,
-anonymous requests, and any other credential answer 401 — the
-proxy is usable only from inside a workspace, by that workspace.
+A daemon API bearer token presented at the proxy answers 401: the
+API surface's credential stays distinct from the proxy, which
+reads no credential. Any other value in the header passes
+unexamined.
 
-The first-boot seed delivers it (`docs/networking.md` describes
-the tap; the identity seed is the vehicle): the token lands at
-`/etc/msks/llm.token` and `/etc/profile.d/msks-llm.sh` exports
-`MSKSWS_BASE_URL` — the DHCP lease's gateway and the daemon's port
-— and `MSKSWS_API_KEY`. The names carry the msks prefix because
-the proxy is this daemon's own service; a vendor-shaped name
-would claim otherwise. A login shell inside the workspace is
+The first-boot seed configures the clients (`docs/networking.md`
+describes the tap; the identity seed is the vehicle):
+`/etc/profile.d/msks-llm.sh` exports `MSKSWS_BASE_URL` — the DHCP
+lease's gateway and the daemon's port — and `MSKSWS_API_KEY`, a
+placeholder the proxy never reads (it exists for OpenAI-shaped
+clients that refuse an empty key). The names carry the msks prefix
+because the proxy is this daemon's own service; a vendor-shaped
+name would claim otherwise. A login shell inside the workspace is
 therefore already configured for every MSKSWS-aware client:
 
 ```console
 $ env | grep MSKSWS
 MSKSWS_BASE_URL=http://172.31.0.2:8770/v1
-MSKSWS_API_KEY=msksllm1_...
+MSKSWS_API_KEY=msks-local-proxy
 ```
 
 Both guest images ship the agent toolchain beside it
@@ -138,27 +154,6 @@ The toolchain pins move with an image rebuild (the shared pins in
 `nix/agent-toolchain.nix`; the Debian Node tarball pin in
 `nix/guest-debian.nix`); a workspace that already booted keeps
 what it booted with.
-
-Retrieve or rotate a credential with the CLI or API — a token
-holder already owns the workspace's root console, so the private
-half serving rule is the identity's:
-
-```console
-msks llm-token myws            # the stored credential
-msks llm-token myws --remint   # a fresh one, replacing the row's
-```
-
-A reminted credential does not re-run the seed — the seed is
-immutable create-time input — so export the new one inside the
-workspace by hand after rotating: `msks llm-token <ws> --remint`
-prints the fresh token on stdout with the update step on stderr
-(`/etc/msks/llm.token`, written as root, picked up by the next
-login shell). A workspace still holding the old credential gets a
-401 whose body names the cause and this recovery (#375) — the
-reason the seeded pi extension prints after the status line at
-startup (an image rebuilt after this change; an older home keeps
-its own copy), so `msks llm-models: fetch failed: 401 — …`
-carries the fix instead of a bare status.
 
 One more create-time fact rides the seed: the port. The planted
 `MSKSWS_BASE_URL` names the port the daemon served when the

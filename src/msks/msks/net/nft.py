@@ -63,14 +63,40 @@ DNS_PORTS = "{ 53, 853 }"
 QUEUE_MAX = 65535
 
 
-def base_ruleset(uplink: str) -> str:
-    """The shared NAT table: masquerade out the host uplink."""
+def base_ruleset(uplink: str, llm: tuple[str, int] | None = None) -> str:
+    """The shared NAT table — masquerade out the host uplink — and,
+    when the daemon serves an LLM model list, the proxy's
+    loopback guard (#483).
+
+    The guard answers the one path neither the device pin nor the
+    per-VM tables cover: a host process connecting to a tap
+    address travels the loopback route, and the kernel's weak-host
+    delivery hands it to the listener even through a socket pinned
+    to its tap (``SO_BINDTODEVICE`` filters ingress interfaces —
+    loopback matches the local route, not the arriving device the
+    pin names). One static rule closes it for every tap at once:
+    loopback traffic to the tap pool's proxy port drops. Guest
+    traffic arrives on its tap, so the rule never touches it, and
+    the per-VM input chain — whose final drop is keyed to its own
+    tap — was never in a position to drop ``lo`` traffic at all.
+    The guard rides the daemon-lifetime table the manager applies
+    once per run, beside the masquerade."""
+    guard = ""
+    if llm is not None:
+        pool, port = llm
+        guard = (
+            "  chain llm_loopback_guard {\n"
+            "    type filter hook input priority filter; policy accept;\n"
+            f'    iifname "lo" ip daddr {pool} tcp dport {port} drop\n'
+            "  }\n"
+        )
     return (
         f"table inet {BASE_TABLE} {{\n"
         "  chain nat_out {\n"
         "    type nat hook postrouting priority srcnat; policy accept;\n"
         f'    oifname "{uplink}" masquerade\n'
         "  }\n"
+        f"{guard}"
         "}\n"
     )
 
@@ -505,12 +531,40 @@ async def flush_set(settings, workspace_id: str, name: str) -> None:
     )
 
 
+def base_guard_shape(settings) -> tuple[str, int] | None:
+    """The loopback guard's shape in the live settings (#483): the
+    tap pool and proxy port when a model list is configured, None
+    when it is not. The manager compares this against the shape its
+    running ruleset carries — the shape, not the stamp-time
+    settings, says whether an attach re-applies the base table (a
+    SIGHUP that added ``llm_models`` must not leave a listener
+    bound behind a guard-less table).
+
+    A re-apply merges into the running table: a guard for a retired
+    shape lingers as a dead rule on a port no listener binds, and
+    cannot refuse anything the current shape serves."""
+    if not settings.llm.models:
+        return None
+    return (str(settings.net.pool), settings.llm.port)
+
+
 async def apply_base(settings) -> None:
-    """Install the shared NAT table (idempotent by daemon lifetime)."""
+    """Install the shared NAT table (idempotent by content).
+
+    Runs once at manager start and again from the manager's attach
+    path whenever the loopback guard's shape drifted from the live
+    settings (a SIGHUP that configured a model list — see the
+    manager's ensure_base_guard); a re-apply merges, so a retired
+    shape's guard lingers as a dead rule that binds nothing. The
+    proxy's loopback guard rides with it when a model list is
+    configured (#483); an unconfigured daemon serves no proxy, so
+    the guard names no port."""
     await nft_run(
         settings,
         ["-f", "-"],
-        input_text=base_ruleset(settings.net.uplink).encode(),
+        input_text=base_ruleset(
+            settings.net.uplink, base_guard_shape(settings)
+        ).encode(),
         what="nft base ruleset apply",
     )
 

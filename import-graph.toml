@@ -161,16 +161,12 @@ events = 4
 # #481: the console endpoint's identity-validation gate went with
 # the prelude.
 identity = 6
-# #448: the lifespan runs the catalog's startup sweep itself (the
-# seed bootstrap imports beside the default's, and debris from
-# either must clear whichever setting pointed it there). #470: the
-# workspace listing joins the catalog — each row's image
+# #470: the workspace listing joins the catalog — each row's image
 # reference resolves through the imagestore (resolve_hash beside
 # the listing's aliased list_images). #481: the console endpoint's
 # image-policy gate went with the prelude — the manifest's console
 # markers no longer cross this edge.
 imagestore = 26
-llm = 2
 # #481: the console endpoint's teardown uses the VMM-safe
 # half-close helper (upstream CH #8998), on the seam's module
 # beside its existing errors import.
