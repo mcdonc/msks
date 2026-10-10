@@ -47,6 +47,7 @@ the seed's staging directory.
 
 import asyncio
 import contextlib
+import hashlib
 import itertools
 import json
 import os
@@ -86,6 +87,26 @@ def overlay_path(state_dir: Path, workspace_id: str) -> Path:
 def home_volume_path(state_dir: Path, workspace_id: str) -> Path:
     """The /home volume: the ext4 file the guest mounts at /home."""
     return state_dir / "volumes" / f"{workspace_id}.ext4"
+
+
+#: The sidecar beside a seed recording which interceptor CA the
+#: seed's identity script carries (#485): the seed disk itself is
+#: an iso9660 image, unreadable without mounting, so the renewal
+#: check reads this instead. The value is the CA certificate's
+#: sha256 — stable per certificate, changing exactly when the
+#: staged cert must change.
+SEED_CA_MARK = "seed-ca.sha"
+
+
+def seed_ca_mark(vm_dir: Path) -> Path:
+    """The seed's CA marker's path, inside the workspace's state
+    directory."""
+    return vm_dir / SEED_CA_MARK
+
+
+def ca_fingerprint(ca_pem: str) -> str:
+    """The certificate's sha256 hex — the marker's value."""
+    return hashlib.sha256(ca_pem.encode()).hexdigest()
 
 
 def seed_path(state_dir: Path, workspace_id: str) -> Path:
@@ -157,13 +178,69 @@ async def ensure_seed(
     will serve an LLM listener gets its MSKSWS_* exports even with
     no key and no payload of its own.
     """
-    if spec.user_data is None and spec.ssh_pubkey is None and not llm_port:
+    if not seed_payload_present(spec, llm_port):
         return
     seed = seed_path(settings.state_dir, spec.workspace_id)
     if seed.is_file():
+        if seed_needs_renewal(seed.parent, ca_pem):
+            await renew_seed(spec, settings, llm_port, ca_pem, seed)
         return
     await create_seed(spec, settings, llm_port, ca_pem)
     installed.append(seed)
+
+
+def seed_payload_present(spec: VmSpec, llm_port: int) -> bool:
+    """Whether anything rides the seed for this spec: the
+    operator's own payload, the minted identity's key (#111), or
+    the proxy environment a tap will serve (#259, #483)."""
+    return (
+        spec.user_data is not None
+        or spec.ssh_pubkey is not None
+        or llm_port != 0
+    )
+
+
+def seed_needs_renewal(vm_dir: Path, ca_pem: str | None) -> bool:
+    """Whether an existing seed's staged CA drifted from *ca_pem*
+    (#485): a certificate rides the seed and the marker beside it
+    names another one (or none — the pre-#485 per-workspace
+    shape)."""
+    if ca_pem is None:
+        return False
+    return not seed_ca_is_current(vm_dir, ca_pem)
+
+
+def seed_ca_is_current(vm_dir: Path, ca_pem: str) -> bool:
+    """Whether the seed beside the marker carries *ca_pem* already.
+
+    The seed disk itself is an iso9660 image, unreadable without
+    mounting, so the marker beside it records the certificate its
+    identity script staged (#485). An absent marker is the
+    pre-#485 shape — a per-workspace CA the engine no longer signs
+    with, whose every interception handshake would fail guest-side
+    validation."""
+    marker = seed_ca_mark(vm_dir)
+    return marker.is_file() and marker.read_text() == ca_fingerprint(ca_pem)
+
+
+async def renew_seed(
+    spec: VmSpec, settings, llm_port: int, ca_pem: str, seed: Path
+) -> None:
+    """Rebuild a seed whose staged CA drifted, so the guest
+    re-provisions onto the daemon's certificate (#485).
+
+    The rebuilt seed carries the daemon's certificate and an
+    instance-id suffix keyed to it: cloud-init's run-once semantics
+    key off instance-id, so the suffix is what makes the
+    already-booted guest re-run the seed script (idempotent by
+    design — keys and accounts are left alone when present). The
+    operator's payload rides verbatim; it does re-execute with the
+    re-provision. The renewal also sweeps the pre-#485
+    per-workspace CA pair from the workspace's directory — its key
+    stays interception-capable against a guest that still trusts
+    its certificate."""
+    await create_seed(spec, settings, llm_port, ca_pem, renewing=True)
+    sweep_legacy_ca(seed.parent)
 
 
 async def create_home_volume(target: Path, spec: VmSpec, settings) -> None:
@@ -237,7 +314,9 @@ async def create_overlay(spec: VmSpec, settings, overlay: Path) -> None:
         scratch.unlink(missing_ok=True)
 
 
-def seed_metadata(workspace_id: str, name: str | None) -> str:
+def seed_metadata(
+    workspace_id: str, name: str | None, instance_suffix: str | None = None
+) -> str:
     """The seed's ``meta-data``: cloud-init NoCloud keys.
 
     ``instance-id`` is the workspace id, so cloud-init's run-once
@@ -259,11 +338,45 @@ def seed_metadata(workspace_id: str, name: str | None) -> str:
     only a factory reset moves an older workspace's.
     """
     hostname = name or workspace_id
-    return f"instance-id: {workspace_id}\nlocal-hostname: {hostname}\n"
+    instance = workspace_id + (
+        f"-{instance_suffix}" if instance_suffix else ""
+    )
+    return f"instance-id: {instance}\nlocal-hostname: {hostname}\n"
+
+
+#: The pre-#485 per-workspace CA pair's names — the literals the
+#: sweep needs; ``interceptor.ca`` owns the canonical constants, and
+#: the sweep's test pins the two in step (persist is a storage leaf
+#: and imports no interceptor).
+LEGACY_CA_KEY = "interceptor-ca.key"
+LEGACY_CA_CERT = "interceptor-ca.crt"
+
+
+def sweep_legacy_ca(vm_dir: Path) -> None:
+    """Remove a pre-#485 per-workspace interceptor CA pair from the
+    workspace's state directory (#485): nothing reads it, and the
+    key remains interception-capable against any guest whose trust
+    store still holds its certificate — swept the moment the
+    workspace's seed is renewed past it."""
+    (vm_dir / LEGACY_CA_KEY).unlink(missing_ok=True)
+    (vm_dir / LEGACY_CA_CERT).unlink(missing_ok=True)
+
+
+def install_marker(marker: Path, value: str) -> None:
+    """Write the CA marker atomically (the same house shape)."""
+    stage = tmp_sibling(marker)
+    stage.parent.mkdir(parents=True, exist_ok=True)
+    stage.write_text(value, encoding="utf-8")
+    install(stage, marker)
 
 
 async def create_seed(
-    spec: VmSpec, settings, llm_port: int = 0, ca_pem: str | None = None
+    spec: VmSpec,
+    settings,
+    llm_port: int = 0,
+    ca_pem: str | None = None,
+    *,
+    renewing: bool = False,
 ) -> None:
     """Build and install the workspace's #41 seed disk.
 
@@ -278,6 +391,10 @@ async def create_seed(
     """
     target = seed_path(settings.state_dir, spec.workspace_id)
     target.parent.mkdir(parents=True, exist_ok=True)
+    # The CA marker rides the same install as the seed (#485): the
+    # renewal check reads it instead of the iso.
+    marker = seed_ca_mark(target.parent)
+    marker_built = ca_pem is not None
     # The staging directory keeps the tmp_sibling shape, so a crash
     # mid-build leaves visibly-temporary debris inside the vm dir
     # (removed with the workspace by the vm-dir rmtree). 0700 beats
@@ -299,7 +416,20 @@ async def create_seed(
             encoding="utf-8",
         )
         (stage / "meta-data").write_text(
-            seed_metadata(spec.workspace_id, spec.name), encoding="utf-8"
+            seed_metadata(
+                spec.workspace_id,
+                spec.name,
+                # A renewal re-provisions the guest (cloud-init keys
+                # off instance-id), so the suffix rides ONLY the
+                # renewal path: a fresh seed keeps the plain id, a
+                # renewed one pins the certificate it carries.
+                instance_suffix=(
+                    ca_fingerprint(ca_pem)[:12]
+                    if renewing and ca_pem
+                    else None
+                ),
+            ),
+            encoding="utf-8",
         )
         image = stage / "seed.img"
         await run_tool(
@@ -320,6 +450,8 @@ async def create_seed(
         )
         image.chmod(0o600)
         install(image, target)
+        if marker_built:
+            install_marker(marker, ca_fingerprint(ca_pem) if ca_pem else "")
     finally:
         shutil.rmtree(stage, ignore_errors=True)
 

@@ -131,17 +131,18 @@ sentinel never leaves the host.
 
 The interceptor presents each connection a leaf certificate signed
 by the daemon's one interception CA (#485) — every workspace's
-guest trusts the same certificate its seed staged. A workspace
-whose guest already trusts that CA sees HTTPS toward allowlisted
-destinations validate normally from the first placeholder. That
-trust arrives with [#200]'s first-boot seeding; until it lands,
-nothing installs the CA into a guest — a workspace minted a
-placeholder against does not validate HTTPS toward allowlisted
-destinations at all, across reboots, until #200 ships and the
-workspace is recreated (or the operator installs the CA by hand —
-`.devenv/state/msksd/interceptor-ca.crt` into
-`/usr/local/share/ca-certificates/` + `update-ca-certificates`;
-the interactive recipe on the issue does exactly that). The splice
+guest trusts the same certificate its seed staged (#424: the
+identity seed writes `/etc/msks/interceptor-ca.crt` at first boot,
+and the trust-store exports and the NixOS fold register it). A
+workspace whose guest already trusts that CA sees HTTPS toward
+allowlisted destinations validate normally from the first
+placeholder. When the daemon's certificate changes under a
+workspace that already booted — the move from a pre-#485
+per-workspace CA, or a future CA rotation — the next boot renews
+the seed: it is rebuilt carrying the daemon's certificate with an
+instance-id suffix keyed to it, cloud-init re-provisions (the seed
+script is idempotent, and the operator's payload re-executes with
+it), and the fold re-registers the fresh certificate. The splice
 leg needs none of this: it presents the origin's own certificate. Arming and disarming swap the workspace's firewall
 table in one nft transaction — the redirect, the widened input
 rule for the listener, and the QUIC drop appear and disappear

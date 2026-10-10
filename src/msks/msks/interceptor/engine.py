@@ -34,7 +34,7 @@ gate (:mod:`msks.interceptor.egress`) before anything else moves:
   today's path (decrypt when a placeholder covers the SNI, relay
   undecrypted otherwise). A denied connection takes the decrypt
   path with a deny marker — the guest's client completes its
-  handshake against the workspace CA and the request hook answers
+  handshake against the daemon CA and the request hook answers
   locally, so no byte forwards. A pinned client fails the
   handshake instead; fail-closed either way.
 - ``request`` gates plain HTTP (no ClientHello ever gated it) on
@@ -344,7 +344,7 @@ class InterceptorAddon:
         workspace covers is relayed undecrypted,
         ``ignore_connection``; a covered one decrypts for the
         swap). A denied connection is marked and left on the
-        decrypt path: the handshake answers from the workspace CA
+        decrypt path: the handshake answers from the daemon CA
         and the request hook refuses locally."""
         workspace = self.workspace(data.context.client)
         if workspace is None:
@@ -369,7 +369,7 @@ class InterceptorAddon:
         return True
 
     def tls_start_client(self, data: tls.TlsData) -> None:
-        """Serve the client-facing TLS from this workspace's CA: a
+        """Serve the client-facing TLS from the daemon's CA: a
         leaf minted for the connection's SNI, on a context built
         here so the cipher list is mitmproxy's own default (never an
         empty tuple — a hard OpenSSL error). The proxy layer never

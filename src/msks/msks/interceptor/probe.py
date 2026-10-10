@@ -100,7 +100,7 @@ def service_material(settings) -> ca.Authority:
     real external deployment serves one name.
     """
     directory = probe_dir(settings)
-    authority = ca.load_or_mint(directory)
+    authority = ca.load_or_mint(directory, label="msks probe service CA")
     cert_path = directory / LEAF_CERT_FILE
     key_path = directory / LEAF_KEY_FILE
     if leaf_fresh(cert_path):

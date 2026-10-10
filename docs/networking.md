@@ -291,9 +291,9 @@ redirect, TLS splice, leaf mint, sentinel→secret swap — ran.
 
 The daemon seeds the machinery itself at first-time startup (the
 daemon-wide placeholder named `probe`, whose secret is the base64
-of the whole credential `bXNrczptc2tz`), and the guest's own
-interception CA is installed at first boot, so nothing is left to
-do by hand. The verification:
+of the whole credential `bXNrczptc2tz`), and the interception CA
+is installed at first boot, so nothing is left to do by hand. The
+verification:
 
 ```bash
 # on the host: read the seeded sentinel (token-gated API)

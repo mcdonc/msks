@@ -199,6 +199,31 @@ class Interceptor:
                 return entry
         return None
 
+    async def authority(self) -> ca.Authority:
+        """The daemon's interceptor CA, single-flighted (#485).
+
+        Two subsystems mint lazily against the same state-root pair
+        — arms (which run under this lock through refresh) and the
+        microvm seam's seed path, routed here for exactly that
+        reason: two unguarded mint sites racing the absent pair
+        interleave two authorities (the manager caching one, the
+        seed staging the other's certificate — a workspace whose
+        interception then never validates). One lock, one load, one
+        cached identity; every caller shares it.
+        """
+        async with self._lock:
+            return await self._authority_locked()
+
+    async def _authority_locked(self) -> ca.Authority:
+        """The load half, for callers already holding the lock
+        (arm, under refresh's) — the outer form would deadlock on
+        the non-reentrant lock."""
+        if self._authority is None:
+            self._authority = await asyncio.to_thread(
+                ca.load_or_mint, self.app.state.settings.vmm.state_dir
+            )
+        return self._authority
+
     def ca_for(self, workspace_id: str) -> ca.Authority | None:
         """The daemon's interceptor CA for an armed workspace, or
         None when this workspace is disarmed mid-handshake — the
@@ -355,11 +380,9 @@ class Interceptor:
         await self.ensure_master()
         # One CA for the daemon lifetime (#485): the first arm
         # mints it into the state root, every later arm reuses it —
-        # a second workspace must not mint a second identity.
-        if self._authority is None:
-            self._authority = await asyncio.to_thread(
-                ca.load_or_mint, self.app.state.settings.vmm.state_dir
-            )
+        # a second workspace must not mint a second identity. The
+        # locked form: arm runs under refresh's hold of the lock.
+        await self._authority_locked()
         # Register before the listener exists: a connection can
         # arrive the moment the port binds.
         self._armed[workspace_id] = armed

@@ -73,6 +73,21 @@ def test_one_ca_serves_every_directory_of_the_daemon(tmp_path) -> None:
     )
 
 
+def test_a_mismatched_ca_pair_mints_fresh(tmp_path) -> None:
+    """Two writers racing the mint interleave halves (key and cert
+    are two files): a loaded pair whose key did not sign the cert
+    serves nothing — the load mints both halves anew (#485
+    review's defense in depth)."""
+    first = ca.load_or_mint(tmp_path)
+    other = ca.load_or_mint(tmp_path / "elsewhere")
+    # Interleave: the first's key beside the other's cert.
+    (tmp_path / ca.CA_CERT_FILE).write_bytes(ca.cert_pem(other.cert))
+    healed = ca.load_or_mint(tmp_path)
+    assert healed.cert != first.cert
+    assert healed.cert != other.cert
+    assert healed.key.private_bytes_raw() != first.key.private_bytes_raw()
+
+
 def test_a_partial_ca_pair_mints_fresh(tmp_path) -> None:
     """A key without its cert — residue of an interrupted
     mint — cannot serve half a CA: the pair mints anew."""

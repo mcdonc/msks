@@ -562,7 +562,7 @@ async def test_the_live_consent_gate(tmp_path, monkeypatch) -> None:
 
         # 4. The deny: a second destination holds; the verdict
         # answers locally — the handshake completes against the
-        # workspace CA, the request refuses, nothing forwards.
+        # daemon CA, the request refuses, nothing forwards.
         holder["dst"] = ("127.0.0.12", origins["b"].port)
         task = asyncio.create_task(
             asyncio.to_thread(https_get, port, OTHER, "/echo", auth, ws_ca)

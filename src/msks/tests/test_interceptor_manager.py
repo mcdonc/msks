@@ -222,6 +222,22 @@ async def test_refresh_arms_a_running_workspace(app) -> None:
     ).read_bytes() == before
 
 
+async def test_authority_single_flights_one_identity(app) -> None:
+    """#485: the daemon CA loads once — the same object answers
+    every caller (the arm path and the microvm seam's seed path
+    share it), and a dead-master retirement that clears the handle
+    reloads the same identity from disk, never a second mint."""
+    first = await app.state.interceptor.authority()
+    again = await app.state.interceptor.authority()
+    assert again is first
+    # The retirement path clears the cached handle; the reload
+    # answers the same certificate.
+    app.state.interceptor._authority = None
+    reloaded = await app.state.interceptor.authority()
+    assert reloaded.cert == first.cert
+    assert reloaded.key.private_bytes_raw() == first.key.private_bytes_raw()
+
+
 async def test_ca_for_a_disarmed_workspace_is_none(app) -> None:
     """The engine's disarmed-mid-handshake fast path (#485): an
     unarmed workspace answers no CA, so its TLS hook fails visibly

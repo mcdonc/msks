@@ -376,10 +376,13 @@ class LocalCloudHypervisor(MicrovmDriver):
                     "remove it (or restore the workspace row) first"
                 )
         await ensure_artifacts(
-            spec, vmm, self._settings().llm.port, self.interceptor_ca_pem()
+            spec,
+            vmm,
+            self._settings().llm.port,
+            await self.interceptor_ca_pem(),
         )
 
-    def interceptor_ca_pem(self) -> str:
+    async def interceptor_ca_pem(self) -> str:
         """The daemon's interceptor CA certificate (#424, #485): one
         CA for every workspace, minted on first need into the
         daemon state root.
@@ -387,11 +390,13 @@ class LocalCloudHypervisor(MicrovmDriver):
         ``prepare`` lands here at create, so the seed disk carries
         the certificate and the guest trusts its interception path
         from first boot; ``_boot``'s artifact heal re-reads the
-        same CA (``load_or_mint`` is idempotent, and the
-        interceptor's arm path loads what this minted). The mint is
-        one Ed25519 keypair — milliseconds, once per daemon.
+        same CA. The load rides the interceptor manager's
+        single-flight ``authority()`` — the arm path and this seed
+        path mint against the same pair of files, and two unguarded
+        mints racing the absent pair would interleave two
+        identities.
         """
-        authority = ca.load_or_mint(self._settings().vmm.state_dir)
+        authority = await self.app.state.interceptor.authority()
         return ca.cert_pem(authority.cert).decode()
 
     async def launch(self, spec: VmSpec) -> None:
@@ -459,7 +464,10 @@ class LocalCloudHypervisor(MicrovmDriver):
         # overlay or volume is missing (a crash mid-create, or a row
         # that predates #14) gets them back before the VM starts.
         await ensure_artifacts(
-            spec, vmm, self._settings().llm.port, self.interceptor_ca_pem()
+            spec,
+            vmm,
+            self._settings().llm.port,
+            await self.interceptor_ca_pem(),
         )
         socket_path = vm_dir / "api.sock"
         proc = await self._spawn(

@@ -124,12 +124,15 @@ def cert_pem(cert: x509.Certificate) -> bytes:
     return cert.public_bytes(serialization.Encoding.PEM)
 
 
-def load_or_mint(directory: Path) -> Authority:
+def load_or_mint(
+    directory: Path, label: str = "msks interceptor CA"
+) -> Authority:
     """The CA of the directory the caller owns: loaded when both
     halves exist, minted and written (key 0600) when they do not.
     The interceptor's is the daemon state root — one CA for every
     workspace (#485); the probe service's is its own directory,
-    the same file shape for a different identity."""
+    the same file shape for a different identity, its *label*
+    distinguishing the two in diagnostics."""
     key_path = directory / CA_KEY_FILE
     cert_path = directory / CA_CERT_FILE
     if key_path.exists() and cert_path.exists():
@@ -137,8 +140,21 @@ def load_or_mint(directory: Path) -> Authority:
             key_path.read_bytes(), password=None
         )
         cert = x509.load_pem_x509_certificate(cert_path.read_bytes())
-        return Authority(key=key, cert=cert, chain_file=cert_path)
-    key, cert = mint_ca()
+        # A pair that does not match is the residue of two writers
+        # racing the mint (key and cert are two files, two writes) —
+        # half of an interleaving. Serve nothing from it: minting
+        # fresh replaces both halves atomically enough (the match
+        # check here is what catches the next load if it interleaves
+        # again).
+        if cert.public_key().public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        ) == key.public_key().public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw,
+        ):
+            return Authority(key=key, cert=cert, chain_file=cert_path)
+    key, cert = mint_ca(label)
     directory.mkdir(parents=True, exist_ok=True)
     fd = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as handle:
@@ -153,7 +169,7 @@ def mint_leaf(
     altnames: tuple[str, ...] | None = None,
     days: int = LEAF_DAYS,
 ) -> tuple[ed25519.Ed25519PrivateKey, x509.Certificate]:
-    """One connection's leaf, signed by the workspace CA and carrying
+    """One connection's leaf, signed by the CA and carrying
     the SNI as both subject and SAN (RFC 2818: the SAN is the
     identity a client checks). *altnames* widens the SAN set — the
     live test's origins serve several names from one leaf.
