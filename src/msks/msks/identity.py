@@ -149,27 +149,15 @@ def seed_script(
         "# for root and the msks user, planted first boot.\n"
         "set -eu\n"
         f"key='{public_key}'\n"
-        "install -d -m 0700 -o root -g root /root/.ssh\n"
+        + home_seed_block()
+        + "install -d -m 0700 -o root -g root /root/.ssh\n"
         "touch /root/.ssh/authorized_keys\n"
         'grep -qxF "$key" /root/.ssh/authorized_keys '
         "|| printf '%s\\n' \"$key\" >> /root/.ssh/authorized_keys\n"
         "chown root:root /root/.ssh/authorized_keys\n"
         "chmod 0600 /root/.ssh/authorized_keys\n"
-        # The workspace home (#171): install -d both creates the
-        # home and repairs one a pre-#171 seed left root-owned (it
-        # applies -o/-g to an existing directory too); the skel copy
-        # is skipped when the home already has dotfiles, and cp -a
-        # preserves the skel's root ownership, so the chown -R that
-        # follows is what hands the copy to the user — the same
-        # useradd -m shape. The copy is best-effort (set -eu would
-        # otherwise abort the whole seed on an image without a
-        # skeleton): a bare home still starts the shell, and the
-        # chown runs on whatever is there.
-        "install -d -m 0755 -o msks -g msks /home/msks\n"
-        "if [ ! -e /home/msks/.profile ]; then\n"
-        "cp -a /etc/skel/. /home/msks/ || true\n"
-        "chown -R msks:msks /home/msks\n"
-        "fi\n"
+        # The workspace home's authorized_keys: the home itself is
+        # made by the block every seed carries (below).
         "install -d -m 0700 -o msks -g msks /home/msks/.ssh\n"
         "touch /home/msks/.ssh/authorized_keys\n"
         'grep -qxF "$key" /home/msks/.ssh/authorized_keys '
@@ -186,12 +174,40 @@ def seed_script(
     return script
 
 
+def home_seed_block() -> str:
+    """The workspace home (#171): install -d both creates the home
+    and repairs one a pre-#171 seed left root-owned (it applies
+    -o/-g to an existing directory too); the skel copy is skipped
+    when the home already has dotfiles, and cp -a preserves the
+    skel's root ownership, so the chown -R that follows is what
+    hands the copy to the user — the same useradd -m shape. The
+    copy is best-effort (set -eu would otherwise abort the whole
+    seed on an image without a skeleton): a bare home still starts
+    the shell, and the chown runs on whatever is there.
+
+    Every seed carries the block, the keyless ones included: the
+    home rides a separate volume that mounts empty over whatever
+    the image baked, so a keyless guest needs it exactly as much
+    as a keyed one — the msks account's own scaffolding (the pi
+    extension, the nix channels on NixOS) arrives only through
+    the skeleton copy.
+    """
+    return (
+        "install -d -m 0755 -o msks -g msks /home/msks\n"
+        "if [ ! -e /home/msks/.profile ]; then\n"
+        "cp -a /etc/skel/. /home/msks/ || true\n"
+        "chown -R msks:msks /home/msks\n"
+        "fi\n"
+    )
+
+
 def keyless_seed_script(llm_port: int, ca_pem: str | None) -> str:
-    """The identity-less seed: the proxy-environment block when a
-    listener will serve this workspace's tap (a port of zero names
-    a daemon with no model list), plus the interceptor CA block
-    when one rides (#424)."""
+    """The identity-less seed: the workspace home (#171), the
+    proxy-environment block when a listener will serve this
+    workspace's tap (a port of zero names a daemon with no model
+    list), and the interceptor CA block when one rides (#424)."""
     script = "#!/bin/sh\n# msks (#424): the workspace's seed.\nset -eu\n"
+    script += home_seed_block()
     if llm_port:
         script += llm_seed_block(llm_port)
     if ca_pem is not None:
