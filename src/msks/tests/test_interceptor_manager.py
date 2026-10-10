@@ -194,13 +194,40 @@ async def test_refresh_arms_a_running_workspace(app) -> None:
     assert app.state.interceptor.workspace_for_tap(TAP_IP) == "ws-a"
     entries = app.state.interceptor.entries_for("ws-a")
     assert rows_entry(row).sentinel in entries
-    # The CA pair landed in the workspace's state directory.
+    # The CA pair landed in the daemon state root (#485): one CA
+    # for every workspace, nothing under the workspace's own
+    # directory.
+    assert (app.state.settings.vmm.state_dir / "interceptor-ca.crt").exists()
     assert (
-        app.state.settings.vmm.state_dir
-        / "vms"
-        / "ws-a"
-        / "interceptor-ca.crt"
-    ).exists()
+        not (app.state.settings.vmm.state_dir / "vms" / "ws-a").exists()
+        or not (
+            app.state.settings.vmm.state_dir
+            / "vms"
+            / "ws-a"
+            / "interceptor-ca.crt"
+        ).exists()
+    )
+    # A second workspace's arm reuses the same CA — one identity,
+    # one pair of files.
+    before = (
+        app.state.settings.vmm.state_dir / "interceptor-ca.key"
+    ).read_bytes()
+    await app.state.interceptor.arm(
+        "ws-b",
+        SimpleNamespace(tap_ip="10.0.0.2"),
+        {},
+    )
+    assert (
+        app.state.settings.vmm.state_dir / "interceptor-ca.key"
+    ).read_bytes() == before
+
+
+async def test_ca_for_a_disarmed_workspace_is_none(app) -> None:
+    """The engine's disarmed-mid-handshake fast path (#485): an
+    unarmed workspace answers no CA, so its TLS hook fails visibly
+    on the default context."""
+    assert await app.state.interceptor.refresh("ws-a") is None
+    assert app.state.interceptor.ca_for("ws-a") is None
 
 
 async def test_a_later_refresh_updates_entries_in_place(app) -> None:

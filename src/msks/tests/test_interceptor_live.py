@@ -89,7 +89,7 @@ class Origin:
         self.addr = addr
         self.dir = tmp / f"origin-{name}"
         self.dir.mkdir()
-        self.authority = ca.load_or_mint(self.dir, name)
+        self.authority = ca.load_or_mint(self.dir)
         self.leaf_key, self.leaf = ca.mint_leaf(
             self.authority, hosts[0], altnames=tuple(hosts)
         )
@@ -259,7 +259,9 @@ async def test_the_live_interceptor(tmp_path, monkeypatch) -> None:
     bundle.write_bytes(origins["a"].ca_pem + origins["b"].ca_pem)
     master.options.update(ssl_verify_upstream_trusted_ca=str(bundle))
 
-    ws_ca = str(tmp_path / "vms" / "ws-live" / ca.CA_CERT_FILE)
+    # #485: the interceptor CA is the daemon state root's, not
+    # the workspace directory's.
+    ws_ca = str(tmp_path / ca.CA_CERT_FILE)
     origin_b_ca = str(origins["b"].dir / ca.CA_CERT_FILE)
     auth = {"Authorization": f"Bearer {first['sentinel']}"}
 
@@ -422,7 +424,9 @@ async def test_the_live_probe_chain(tmp_path, monkeypatch) -> None:
         (tmp_path / "probe" / "interceptor-ca.crt").read_bytes()
     )
 
-    ws_ca = str(tmp_path / "vms" / "ws-live" / ca.CA_CERT_FILE)
+    # #485: the interceptor CA is the daemon state root's, not
+    # the workspace directory's.
+    ws_ca = str(tmp_path / ca.CA_CERT_FILE)
     auth = {"Authorization": f"Basic {row['sentinel']}"}
 
     try:
@@ -513,7 +517,9 @@ async def test_the_live_consent_gate(tmp_path, monkeypatch) -> None:
     bundle.write_bytes(origins["a"].ca_pem + origins["b"].ca_pem)
     master.options.update(ssl_verify_upstream_trusted_ca=str(bundle))
 
-    ws_ca = str(tmp_path / "vms" / "ws-live" / ca.CA_CERT_FILE)
+    # #485: the interceptor CA is the daemon state root's, not
+    # the workspace directory's.
+    ws_ca = str(tmp_path / ca.CA_CERT_FILE)
     auth = {"Authorization": f"Bearer {first['sentinel']}"}
 
     try:

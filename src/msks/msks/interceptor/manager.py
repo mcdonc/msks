@@ -150,7 +150,7 @@ class Interceptor:
         self._armed: dict[str, Armed] = {}
         self._by_tap: dict[str, str] = {}
         self._entries: dict[str, dict[str, PlaceholderEntry]] = {}
-        self._cas: dict[str, ca.WorkspaceCA] = {}
+        self._authority: ca.Authority | None = None
 
     # --- the addon's surface (sync: the hot path never awaits) ------
 
@@ -199,13 +199,20 @@ class Interceptor:
                 return entry
         return None
 
-    def ca_for(self, workspace_id: str) -> ca.WorkspaceCA | None:
-        """The workspace's CA, or None when disarmed mid-handshake."""
-        return self._cas.get(workspace_id)
+    def ca_for(self, workspace_id: str) -> ca.Authority | None:
+        """The daemon's interceptor CA for an armed workspace, or
+        None when this workspace is disarmed mid-handshake — the
+        handshake then fails visibly on the default context. One
+        CA serves every workspace (#485); the armed check keeps the
+        per-workspace disarmed-fast-path the engine's TLS hook
+        reads."""
+        if workspace_id not in self._armed:
+            return None
+        return self._authority
 
     def mint_leaf(self, workspace_id: str, sni: str):
-        """One connection's leaf from the workspace CA (SNI-keyed)."""
-        return ca.mint_leaf(self._cas[workspace_id], sni)
+        """One connection's leaf from the daemon CA (SNI-keyed)."""
+        return ca.mint_leaf(self.ca_for(workspace_id), sni)
 
     def confdir(self) -> Path:
         """mitmproxy's own scratch inside the daemon state."""
@@ -293,7 +300,7 @@ class Interceptor:
         self._armed.clear()
         self._by_tap.clear()
         self._entries.clear()
-        self._cas.clear()
+        self._authority = None
         self._master = None
         self._task = None
 
@@ -346,16 +353,18 @@ class Interceptor:
         port = self.app.state.settings.net.interceptor_port
         armed = Armed(workspace_id, attachment.tap_ip, port)
         await self.ensure_master()
-        vm_dir = self.app.state.settings.vmm.state_dir / "vms" / workspace_id
-        authority = await asyncio.to_thread(
-            ca.load_or_mint, vm_dir, workspace_id
-        )
+        # One CA for the daemon lifetime (#485): the first arm
+        # mints it into the state root, every later arm reuses it —
+        # a second workspace must not mint a second identity.
+        if self._authority is None:
+            self._authority = await asyncio.to_thread(
+                ca.load_or_mint, self.app.state.settings.vmm.state_dir
+            )
         # Register before the listener exists: a connection can
         # arrive the moment the port binds.
         self._armed[workspace_id] = armed
         self._by_tap[armed.tap_ip] = workspace_id
         self._entries[workspace_id] = entries
-        self._cas[workspace_id] = authority
         try:
             await self.apply_modes()
             await self.app.state.net.apply_interception(workspace_id, port)
@@ -410,7 +419,6 @@ class Interceptor:
         with the attachment anyway) swap its table back."""
         armed = self._armed.pop(workspace_id, None)
         self._entries.pop(workspace_id, None)
-        self._cas.pop(workspace_id, None)
         if armed is not None:
             self._by_tap.pop(armed.tap_ip, None)
         if self._master is not None:

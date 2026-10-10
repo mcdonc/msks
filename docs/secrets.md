@@ -87,7 +87,8 @@ endpoints, rows, durations, and session memory every other port
 uses — `msks egress watch` and the TUI answer them like any other
 hold. An allowed web connection takes the splice or swap path
 above; a denied one is answered locally with an HTTP 403 naming
-consent — the handshake completes against the workspace's CA, the
+consent — the handshake completes against the daemon's
+interception CA, the
 request refuses, and nothing forwards (a client that pins the
 origin's real certificate fails its handshake instead; refused
 closed either way). See
@@ -129,16 +130,16 @@ row the database cannot read, answers the request locally with a
 sentinel never leaves the host.
 
 The interceptor presents each connection a leaf certificate signed
-by the workspace's own CA, and each workspace's CA is its own: one
-workspace's leaves never validate under another's. A workspace
-whose guest already trusts its CA sees HTTPS toward allowlisted
+by the daemon's one interception CA (#485) — every workspace's
+guest trusts the same certificate its seed staged. A workspace
+whose guest already trusts that CA sees HTTPS toward allowlisted
 destinations validate normally from the first placeholder. That
 trust arrives with [#200]'s first-boot seeding; until it lands,
 nothing installs the CA into a guest — a workspace minted a
 placeholder against does not validate HTTPS toward allowlisted
 destinations at all, across reboots, until #200 ships and the
 workspace is recreated (or the operator installs the CA by hand —
-`.devenv/state/msksd/vms/<id>/interceptor-ca.crt` into
+`.devenv/state/msksd/interceptor-ca.crt` into
 `/usr/local/share/ca-certificates/` + `update-ca-certificates`;
 the interactive recipe on the issue does exactly that). The splice
 leg needs none of this: it presents the origin's own certificate. Arming and disarming swap the workspace's firewall

@@ -155,7 +155,7 @@ def entry(
 
 @pytest.fixture
 def authority(tmp_path):
-    return ca.load_or_mint(tmp_path, "ws-a")
+    return ca.load_or_mint(tmp_path)
 
 
 def hello_data(client, sni):

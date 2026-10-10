@@ -307,7 +307,7 @@ ok
 A request that reaches the service has already passed the nft
 redirect (guest TCP 80/443 to the per-tap interceptor listener),
 the splice tier (the SNI matched an allowlisted entry), and the
-per-workspace CA's leaf mint; the swap then rewrote the raw blob
+daemon CA's leaf mint; the swap then rewrote the raw blob
 into a well-formed credential, the interceptor's upstream dial
 landed on the service's own listener (port 443 on the tap
 address, verified against the service CA the daemon mints), and

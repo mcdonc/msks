@@ -335,8 +335,9 @@ enters an environment — fetching what the shipped store lacks
 from `cache.nixos.org` through the workspace's egress path. The
 image
 ships one background consumer of this readiness (#427): the
-`msks-interceptor-ca` oneshot folds the workspace's interception
-CA (staged by the identity seed under `/etc/msks`) into the
+`msks-interceptor-ca` oneshot folds the daemon's interception
+CA (staged by the identity seed under `/etc/msks` — one CA for
+every workspace, #485) into the
 system trust bundle — the module reads the staged certificate at
 evaluation time, the unit runs one `nixos-rebuild switch` per
 fresh certificate after `cloud-final`, and a hash marker keeps

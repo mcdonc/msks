@@ -88,17 +88,19 @@ def leaf_fresh(cert_path: Path) -> bool:
     )
 
 
-def service_material(settings) -> ca.WorkspaceCA:
+def service_material(settings) -> ca.Authority:
     """The probe CA and a fresh service leaf, as file paths.
 
-    Loads or mints the CA (the same ``load_or_mint`` the
-    per-workspace interceptor CAs use), then mints the service leaf
-    when it is missing or close to expiry. The leaf is shared by
+    Loads or mints the service's own CA (the same ``load_or_mint``
+    the daemon-wide interceptor CA uses, in this service's own
+    directory — a separate identity from the interception path's),
+    then mints the service leaf when it is missing or close to
+    expiry. The leaf is shared by
     every tap's listener: one service, one certificate, the way a
     real external deployment serves one name.
     """
     directory = probe_dir(settings)
-    authority = ca.load_or_mint(directory, "probe service")
+    authority = ca.load_or_mint(directory)
     cert_path = directory / LEAF_CERT_FILE
     key_path = directory / LEAF_KEY_FILE
     if leaf_fresh(cert_path):
