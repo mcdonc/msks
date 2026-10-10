@@ -451,7 +451,7 @@ async def create_seed(
         image.chmod(0o600)
         install(image, target)
         if marker_built:
-            install_marker(marker, ca_fingerprint(ca_pem) if ca_pem else "")
+            install_marker(marker, ca_fingerprint(ca_pem))
     finally:
         shutil.rmtree(stage, ignore_errors=True)
 
