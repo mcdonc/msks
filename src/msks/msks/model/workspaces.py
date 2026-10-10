@@ -112,7 +112,6 @@ class Workspace(Base):
     # proxy on the workspace's own tap. Stored like the ssh private
     # half — the database is the daemon-user's 0600 file — and
     # remintable over the API. NULL on a pre-#259 row.
-    llm_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The static allowlist as a JSON array of specs (#69):
     # ``host``/``host:port``/``.host``/``*.host`` names gate at the
     # daemon's resolver; CIDR and IP-literal specs accept in the

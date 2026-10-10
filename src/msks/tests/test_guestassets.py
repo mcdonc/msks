@@ -238,8 +238,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 def test_the_image_ships_the_pi_extension() -> None:
     """The model-discovery extension rides the guest image (#266):
     the file exists beside the image build, reads the MSKSWS_*
-    pair the seed exports (never a vendor-shaped name), resolves
-    its credential per request from the seeded token file, and
+    pair the seed exports (never a vendor-shaped name), and
     carries the klangk behavior — provider registration, the
     embed/rerank filter, the quiet no-op when the environment
     names no proxy."""
@@ -247,7 +246,7 @@ def test_the_image_ships_the_pi_extension() -> None:
     assert "process.env.MSKSWS_BASE_URL" in ext
     assert "process.env.MSKSWS_API_KEY" in ext
     assert "OPENAI_API_KEY" not in ext
-    assert 'apiKey: "!cat /etc/msks/llm.token"' in ext
+    assert 'apiKey: "msks-local-proxy"' in ext
     assert 'pi.registerProvider("msks"' in ext
     assert '"embed"' in ext and '"rerank"' in ext
 

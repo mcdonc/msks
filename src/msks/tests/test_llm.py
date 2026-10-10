@@ -15,25 +15,25 @@ from msks.llm import (
     LlmProxy,
     LlmRouter,
     TapListener,
+    bind_to_device,
     build_model_list,
     chat_fields,
     dispatch_completion,
     finish_aclose_task,
     is_passthrough,
-    mint_token,
     normalize_dict_entry,
     parse_model_entry,
     resolve_indirection,
     spawn_aclose,
     split_entry,
-    token_matches,
 )
 from msks.settings import LlmSettings, Settings
 
 from msks import llm as llm_mod
 
-TOKEN = "msksllm1_testtoken"
+TOKEN = "msksllm1_testtoken"  # a credential-shaped value the proxy ignores
 AUTH = {"authorization": f"Bearer {TOKEN}"}
+DAEMON = {"authorization": "Bearer a-daemon-api-token"}
 
 
 @pytest.fixture(scope="module")
@@ -363,32 +363,40 @@ async def test_spawn_aclose_and_its_done_callback() -> None:
     finish_aclose_task(cancelled)
 
 
-# --- tokens ----------------------------------------------------------------
+# --- the device pin (#483) -------------------------------------------------
 
 
-def test_minted_tokens_carry_the_prefix_and_are_unique() -> None:
-    one, two = mint_token(), mint_token()
-    assert one.startswith("msksllm1_")
-    assert one != two
+def test_bind_to_device_pins_the_named_tap() -> None:
+    """The pin is one setsockopt carrying the tap name as a NUL-
+    terminated bytes value — the shape SO_BINDTODEVICE reads."""
+    calls: list[tuple[int, int, bytes]] = []
+
+    class Sock:
+        def setsockopt(self, level, opt, value):
+            calls.append((level, opt, value))
+
+    bind_to_device(Sock(), "tap-msks-ws1")  # type: ignore[arg-type]
+    assert calls == [
+        (socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b"tap-msks-ws1\0")
+    ]
 
 
-def test_token_matches_is_constant_and_refuses_absent() -> None:
-    assert token_matches(TOKEN, TOKEN)
-    assert not token_matches(TOKEN, None)
-    assert not token_matches("other", TOKEN)
+# --- auth ------------------------------------------------------------------
 
 
 # --- the proxy app ---------------------------------------------------------
 
 
 class StubModel:
-    """The model surface the proxy reads: token rows by id."""
+    """The model surface the proxy reads: the daemon-token check.
+    A presented bearer the daemon accepts is refused at the proxy;
+    every other value passes."""
 
-    def __init__(self, rows: dict[str, dict]) -> None:
-        self.rows = rows
+    def __init__(self, daemon_tokens: set[str] | None = None) -> None:
+        self.daemon_tokens = daemon_tokens or set()
 
-    async def get_llm_token(self, ref: str) -> dict | None:
-        return self.rows.get(ref)
+    async def token_valid(self, plaintext: str) -> bool:
+        return plaintext in self.daemon_tokens
 
 
 @dataclass
@@ -412,10 +420,10 @@ class FakeListener:
 
 
 def proxy_under_test(
-    rows: dict[str, dict], settings: Settings | None = None
+    model: StubModel | None = None, settings: Settings | None = None
 ) -> LlmProxy:
     app = build_app(settings or llm_settings())
-    app.state.model = StubModel(rows)
+    app.state.model = model or StubModel()
     return app.state.llm
 
 
@@ -430,39 +438,41 @@ def async_client(
     )
 
 
-async def test_proxy_auth_rejects_everything_but_the_workspace_token() -> None:
-    proxy = proxy_under_test({"ws1": {"id": "ws1", "llm_token": TOKEN}})
-    # No token, a wrong token, a bare daemon token, an unknown tap:
-    # one answer.
+async def test_proxy_auth_is_the_tap_not_the_header() -> None:
+    """The tap serves; the header carries no authority (#483): a
+    credential-less request, the seeded placeholder, and garbage
+    all pass on a mapped tap."""
+    proxy = proxy_under_test()
     async with async_client(proxy, "10.0.0.1") as http:
-        assert (await http.get("/v1/models")).status_code == 401
-        wrong = await http.get(
-            "/v1/models", headers={"authorization": "Bearer nope"}
-        )
-        assert wrong.status_code == 401
-        # The mismatch 401 names the rotated credential and the
-        # recovery (#375): the file the guest re-reads at login and
-        # the host-side command that prints the current token.
-        detail = wrong.json()["detail"]
-        assert "msks llm-token" in detail
-        assert "/etc/msks/llm.token" in detail
-        assert "MSKSWS_API_KEY" in detail
-        bare = await http.get("/v1/models", headers={"authorization": TOKEN})
-        assert bare.status_code == 401
+        assert (await http.get("/v1/models")).status_code == 503
+        assert (await http.get("/v1/models", headers=AUTH)).status_code == 503
+        assert (
+            await http.get(
+                "/v1/models", headers={"authorization": "Bearer junk"}
+            )
+        ).status_code == 503
+
+
+async def test_proxy_auth_refuses_a_daemon_api_token() -> None:
+    """The one refused credential: a bearer the daemon's own token
+    table accepts — the API surface's credential stays a different
+    class than the proxy's no-credential surface."""
+    proxy = proxy_under_test(StubModel({"a-daemon-api-token"}))
+    async with async_client(proxy, "10.0.0.1") as http:
+        reply = await http.get("/v1/models", headers=DAEMON)
+    assert reply.status_code == 401
+    assert "not a proxy credential" in reply.json()["detail"]
+
+
+async def test_proxy_auth_rejects_an_unmapped_tap() -> None:
+    proxy = proxy_under_test()
     async with async_client(proxy, "10.9.9.9", mapped=False) as http:
-        assert (await http.get("/v1/models", headers=AUTH)).status_code == 401
-
-
-async def test_proxy_auth_rejects_a_row_without_a_token() -> None:
-    proxy = proxy_under_test({"ws1": {"id": "ws1", "llm_token": None}})
-    async with async_client(proxy, "10.0.0.1") as http:
         assert (await http.get("/v1/models", headers=AUTH)).status_code == 401
 
 
 async def test_models_endpoint_answers_the_openai_shape() -> None:
     proxy = proxy_under_test(
-        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
-        llm_settings(("*:http://up.stream/v1:sk-x",)),
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
     )
     proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
         transport=httpx.MockTransport(upstream_handler), timeout=timeout
@@ -478,8 +488,7 @@ async def test_completions_endpoint_serves_json() -> None:
     # Unconfigured: the ported klangk posture — the route exists,
     # 503 answers.
     proxy = proxy_under_test(
-        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
-        llm_settings(("*:http://up.stream/v1:sk-x",)),
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
     )
     proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
         transport=httpx.MockTransport(upstream_handler), timeout=timeout
@@ -497,7 +506,7 @@ async def test_completions_endpoint_serves_json() -> None:
 
 
 async def test_completions_endpoint_answers_503_unconfigured() -> None:
-    proxy = proxy_under_test({"ws1": {"id": "ws1", "llm_token": TOKEN}})
+    proxy = proxy_under_test()
     async with async_client(proxy, "10.0.0.1") as http:
         reply = await http.post(
             "/v1/chat/completions", headers=AUTH, json={"x": 1}
@@ -509,8 +518,7 @@ async def test_completions_endpoint_streams_and_maps_upstream_failure() -> (
     None
 ):
     proxy = proxy_under_test(
-        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
-        llm_settings(("*:http://up.stream/v1:sk-x",)),
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
     )
     proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
         transport=httpx.MockTransport(upstream_handler), timeout=timeout
@@ -547,13 +555,17 @@ async def test_completions_endpoint_streams_and_maps_upstream_failure() -> (
 
 async def test_tap_listener_serves_real_http_and_stops() -> None:
     proxy = proxy_under_test(
-        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
-        llm_settings(("*:http://up.stream/v1:sk-x",)),
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
     )
     proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
         transport=httpx.MockTransport(upstream_handler), timeout=timeout
     )
-    listener = TapListener(proxy.proxy_app, tap_ip="127.0.0.1", port=0)
+    # The pin uses "lo" here: the listener serves loopback in
+    # this test, and packets from 127.0.0.1 arrive on lo — the
+    # same device-match rule a tap listener applies to its tap.
+    listener = TapListener(
+        proxy.proxy_app, tap="lo", tap_ip="127.0.0.1", port=0
+    )
     await proxy.start_listener("ws1", listener)
     assert proxy._by_tap_ip["127.0.0.1"] == "ws1"
     port = listener._sock.getsockname()[1]
@@ -582,7 +594,12 @@ async def test_tap_listener_leaves_process_logging_and_signals_alone() -> None:
     import contextlib
 
     proxy = proxy_under_test({}, llm_settings(()))
-    listener = TapListener(proxy.proxy_app, tap_ip="127.0.0.1", port=0)
+    # The pin uses "lo" here: the listener serves loopback in
+    # this test, and packets from 127.0.0.1 arrive on lo — the
+    # same device-match rule a tap listener applies to its tap.
+    listener = TapListener(
+        proxy.proxy_app, tap="lo", tap_ip="127.0.0.1", port=0
+    )
     await proxy.start_listener("ws1", listener)
     try:
         config = listener._server.config
@@ -595,12 +612,14 @@ async def test_tap_listener_leaves_process_logging_and_signals_alone() -> None:
 
 
 async def test_listener_bind_failure_unregisters_the_mapping() -> None:
-    proxy = proxy_under_test({"ws1": {"id": "ws1", "llm_token": TOKEN}})
+    proxy = proxy_under_test()
     squatter = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     squatter.bind(("127.0.0.1", 0))
     squatter.listen(1)
     port = squatter.getsockname()[1]
-    listener = TapListener(proxy.proxy_app, tap_ip="127.0.0.1", port=port)
+    listener = TapListener(
+        proxy.proxy_app, tap="lo", tap_ip="127.0.0.1", port=port
+    )
     with pytest.raises(OSError):
         await proxy.start_listener("ws1", listener)
     assert "ws1" not in proxy._by_tap_ip
@@ -665,8 +684,7 @@ async def test_streaming_upstream_failure_maps_to_502() -> None:
         return httpx.Response(500)
 
     proxy = proxy_under_test(
-        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
-        llm_settings(("*:http://up.stream/v1:sk-x",)),
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
     )
     proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
         transport=httpx.MockTransport(down), timeout=timeout
@@ -684,12 +702,11 @@ async def test_streaming_upstream_failure_maps_to_502() -> None:
 def test_listener_for_follows_the_model_list() -> None:
     from types import SimpleNamespace
 
-    attachment = SimpleNamespace(tap_ip="172.31.0.2")
-    proxy = proxy_under_test({"ws1": {"id": "ws1", "llm_token": TOKEN}})
+    attachment = SimpleNamespace(tap="tap-x", tap_ip="172.31.0.2")
+    proxy = proxy_under_test()
     assert proxy.listener_for(attachment) is None
     configured = proxy_under_test(
-        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
-        llm_settings(("*:http://up.stream/v1:sk-x",)),
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
     )
     listener = configured.listener_for(attachment)
     assert isinstance(listener, TapListener)
@@ -699,13 +716,17 @@ def test_listener_for_follows_the_model_list() -> None:
 
 async def test_tap_listener_accepts_a_prebound_socket() -> None:
     proxy = proxy_under_test(
-        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
-        llm_settings(("*:http://up.stream/v1:sk-x",)),
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
     )
     proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
         transport=httpx.MockTransport(upstream_handler), timeout=timeout
     )
-    listener = TapListener(proxy.proxy_app, tap_ip="127.0.0.1", port=0)
+    # The pin uses "lo" here: the listener serves loopback in
+    # this test, and packets from 127.0.0.1 arrive on lo — the
+    # same device-match rule a tap listener applies to its tap.
+    listener = TapListener(
+        proxy.proxy_app, tap="lo", tap_ip="127.0.0.1", port=0
+    )
     listener.bind()  # the eager path start() would otherwise take
     await proxy.start_listener("ws1", listener)
     port = listener._sock.getsockname()[1]
@@ -775,8 +796,7 @@ async def test_injected_routing_fields_never_leave_passthrough() -> None:
         return httpx.Response(200, json={"ok": True})
 
     proxy = proxy_under_test(
-        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
-        llm_settings(("*:http://up.stream/v1:sk-x",)),
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
     )
     proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
         transport=httpx.MockTransport(handler), timeout=timeout
@@ -797,19 +817,57 @@ async def test_injected_routing_fields_never_leave_passthrough() -> None:
     assert seen == {"model": "m", "messages": []}
 
 
-def test_token_matches_survives_non_ascii_headers() -> None:
-    """HTTP header bytes are latin-1-decoded: a crafted bearer must
-    answer 401, never the digest comparison's TypeError."""
-    assert not token_matches("caf\xe9tok", "stored")
-    assert not token_matches("ok", "caf\xe9stored")
+async def test_non_ascii_bearers_still_pass_the_tap() -> None:
+    """HTTP header bytes are latin-1-decoded: a crafted bearer the
+    daemon check cannot accept still passes on a mapped tap (the
+    proxy reads no credential), never a decode error. httpx
+    refuses to build non-ascii headers, so the request rides the
+    ASGI scope directly — the same bytes a socket would carry."""
+    proxy = proxy_under_test(
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
+    )
+    proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
+        transport=httpx.MockTransport(upstream_handler), timeout=timeout
+    )
+    proxy.router.ensure(proxy.app.state.settings)
+    proxy._by_tap_ip["10.0.0.1"] = "ws1"
+
+    status: dict = {}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            status["code"] = message["status"]
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "path": "/v1/models",
+        "raw_path": b"/v1/models",
+        "query_string": b"",
+        "root_path": "",
+        "scheme": "http",
+        "client": ("10.0.0.1", 12345),
+        "server": ("10.0.0.1", 8770),
+        "headers": [
+            (b"host", b"10.0.0.1:8770"),
+            (b"authorization", "Bearer caf\xe9tok".encode("latin-1")),
+        ],
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    await proxy.proxy_app(scope, receive, send)
+    assert status["code"] == 200
 
 
 async def test_malformed_and_oversized_bodies_answer_named_codes(
     monkeypatch,
 ) -> None:
     proxy = proxy_under_test(
-        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
-        llm_settings(("*:http://up.stream/v1:sk-x",)),
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
     )
     proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
         transport=httpx.MockTransport(upstream_handler), timeout=timeout
@@ -843,8 +901,7 @@ async def test_models_endpoint_answers_503_once_unconfigured() -> None:
     """Models removed by a SIGHUP swap: the open port answers 503 —
     the closed-port posture arrives with the next stop/start."""
     proxy = proxy_under_test(
-        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
-        llm_settings(("*:http://up.stream/v1:sk-x",)),
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
     )
     proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
         transport=httpx.MockTransport(upstream_handler), timeout=timeout
@@ -927,8 +984,7 @@ async def test_a_failed_configure_answers_a_named_503(caplog) -> None:
     503 naming the configure failure — and the body never carries
     the entry's text (it may hold an inline key)."""
     proxy = proxy_under_test(
-        {"ws1": {"id": "ws1", "llm_token": TOKEN}},
-        llm_settings(("*:http://up.stream/v1:sk-live-key",)),
+        settings=llm_settings(("*:http://up.stream/v1:sk-live-key",)),
     )
     proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
         transport=httpx.MockTransport(upstream_handler), timeout=timeout

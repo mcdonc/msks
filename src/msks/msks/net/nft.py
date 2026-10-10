@@ -40,6 +40,7 @@ docs/networking.md.
 import asyncio
 import json
 import logging
+from ipaddress import IPv4Network
 
 from ..spec.egress import EgressPolicy, IpSpec
 from ..spec.failures import MicrovmError
@@ -63,14 +64,42 @@ DNS_PORTS = "{ 53, 853 }"
 QUEUE_MAX = 65535
 
 
-def base_ruleset(uplink: str) -> str:
-    """The shared NAT table: masquerade out the host uplink."""
+def base_ruleset(
+    uplink: str, llm: tuple[IPv4Network, int] | None = None
+) -> str:
+    """The shared NAT table — masquerade out the host uplink — and,
+    when the daemon serves an LLM model list, the proxy's
+    loopback guard (#483).
+
+    The guard answers the one path neither the device pin nor the
+    per-VM tables cover: a host process connecting to a tap
+    address travels the loopback route, and the kernel's weak-host
+    delivery hands it to the listener even through a socket pinned
+    to its tap (``SO_BINDTODEVICE`` filters ingress interfaces —
+    loopback matches the local route, not the arriving device the
+    pin names). One static rule closes it for every tap at once:
+    loopback traffic to the tap pool's proxy port drops. Guest
+    traffic arrives on its tap, so the rule never touches it, and
+    the per-VM input chain — whose final drop is keyed to its own
+    tap — was never in a position to drop ``lo`` traffic at all.
+    The guard rides the daemon-lifetime table the manager applies
+    once per run, beside the masquerade."""
+    guard = ""
+    if llm is not None:
+        pool, port = llm
+        guard = (
+            "  chain llm_loopback_guard {\n"
+            "    type filter hook input priority filter; policy accept;\n"
+            f'    iifname "lo" ip daddr {pool} tcp dport {port} drop\n'
+            "  }\n"
+        )
     return (
         f"table inet {BASE_TABLE} {{\n"
         "  chain nat_out {\n"
         "    type nat hook postrouting priority srcnat; policy accept;\n"
         f'    oifname "{uplink}" masquerade\n'
         "  }\n"
+        f"{guard}"
         "}\n"
     )
 
@@ -506,11 +535,18 @@ async def flush_set(settings, workspace_id: str, name: str) -> None:
 
 
 async def apply_base(settings) -> None:
-    """Install the shared NAT table (idempotent by daemon lifetime)."""
+    """Install the shared NAT table (idempotent by daemon lifetime).
+
+    The proxy's loopback guard rides with it when a model list is
+    configured (#483); an unconfigured daemon serves no proxy, so
+    the guard names no port."""
+    llm = (
+        (settings.net.pool, settings.llm.port) if settings.llm.models else None
+    )
     await nft_run(
         settings,
         ["-f", "-"],
-        input_text=base_ruleset(settings.net.uplink).encode(),
+        input_text=base_ruleset(settings.net.uplink, llm).encode(),
         what="nft base ruleset apply",
     )
 

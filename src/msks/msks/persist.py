@@ -152,18 +152,13 @@ async def ensure_seed(
 ) -> None:
     """Build the #41 seed when the workspace carries a payload — its
     own or the minted identity's (#111) — and the file is absent; a
-    fresh build joins the rollback list.
-
-    The token leg (#259) is wider than disk_entries' attach
-    condition (user_data or ssh_pubkey): an llm_token-only spec
-    builds a seed the VM never sees. No product row has that shape
-    — every create records a public key, minted or the client's
-    own — so the seed's local-hostname (#370) reaches every
-    attached disk either way.
+    fresh build joins the rollback list. The proxy-environment leg
+    (#259, #483) rides the same condition: a workspace whose tap
+    will serve an LLM listener gets its MSKSWS_* exports even with
+    no key and no payload of its own.
     """
-    if spec.user_data is None and spec.ssh_pubkey is None:
-        if spec.llm_token is None:
-            return
+    if spec.user_data is None and spec.ssh_pubkey is None and not llm_port:
+        return
     seed = seed_path(settings.state_dir, spec.workspace_id)
     if seed.is_file():
         return
@@ -298,7 +293,6 @@ async def create_seed(
                 spec.user_data,
                 spec.ssh_pubkey,
                 spec.login_user,
-                spec.llm_token,
                 llm_port,
                 ca_pem,
             ),

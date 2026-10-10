@@ -1,5 +1,5 @@
 """The workspace lifecycle commands (#21): ``msks ls``, ``create``,
-``start``, ``stop``, ``rm``, ``key``, ``llm-token``, and ``resize``
+``start``, ``stop``, ``rm``, ``key``, and ``resize``
 — the group the CLI's typer layer (:mod:`msks.client.cli`)
 dispatches into. The create core (the identity modes and the
 POST's shared plumbing) lives in :mod:`msks.client.create`;
@@ -24,7 +24,6 @@ from .create import (
     operator_pubkey,
 )
 from .resize import display_name, resize_message
-from .rest import fetch_llm_token as rest_fetch_llm_token
 from .rest import fetch_ssh_key as rest_fetch_ssh_key
 from .ssh import IDENTITY_FILE_ENV, data_dir
 from .tabular import listing_text
@@ -318,48 +317,6 @@ async def fetch_ssh_key(url, token, workspace_id, transport) -> dict:
     memory for the duration of a connection.
     """
     return await rest_fetch_ssh_key(url, token, workspace_id, transport)
-
-
-def cmd_llm_token(
-    workspace_id: str, remint: bool = False, transport=None
-) -> int:
-    """``msks llm-token``: the workspace's LLM proxy credential
-    (#259) — the token the workspace's own LLM clients present to
-    the daemon's proxy. A null token is a workspace created before
-    the proxy existed; ``--remint`` mints a fresh one (the seed's
-    planted copy keeps the old token — export the new one by
-    hand)."""
-    if remint:
-        reply = asyncio.run(
-            call(
-                "POST",
-                f"/api/v1/workspaces/{workspace_id}/llm-token",
-                transport=transport,
-            )
-        )
-        print(reply["token"])
-        # The update step rides stderr so stdout stays the bare
-        # token for scripts that pipe it (#375); the seed is
-        # immutable create-time input, so the guest's copy keeps
-        # serving the old credential until this lands.
-        print(
-            f"msks: the workspace keeps serving the old token until "
-            f"updated — write this one to /etc/msks/llm.token as "
-            f"root in {workspace_id} (msks console --user root, or "
-            f"msks ssh -l root), then open a new login shell",
-            file=sys.stderr,
-        )
-        return 0
-    reply = asyncio.run(
-        rest_fetch_llm_token(env_url(), env_token(), workspace_id, transport)
-    )
-    if reply["token"] is None:
-        raise SystemExit(
-            f"msks: workspace {workspace_id} has no LLM token (created "
-            "before the proxy); remint one with --remint"
-        )
-    print(reply["token"])
-    return 0
 
 
 def write_private_key(key: dict, out: str) -> None:

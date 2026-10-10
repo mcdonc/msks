@@ -11,6 +11,7 @@ from msks.identity import (
     KEY_TYPES,
     MIME_BOUNDARY,
     compose_user_data,
+    keyless_seed_script,
     mint,
     operator_content_type,
     seed_script,
@@ -535,17 +536,17 @@ def test_normalize_public_key_rejects_malformed_lines() -> None:
 
 
 def test_seed_script_appends_the_llm_block() -> None:
-    """A key-minted workspace with an LLM token seeds both: the
-    identity machinery and the token block after it. The exports
-    carry the msks-prefixed pair (#266): the proxy is this
-    daemon's own service, so the names say so, and no vendor-shaped
-    variable leaves the seed."""
-    script = seed_script(PUBLIC, llm_token="msksllm1_x", llm_port=8770)
-    assert "llm_token='msksllm1_x'" in script
-    assert "/etc/msks/llm.token" in script
+    """A key-minted workspace with a proxy port seeds both: the
+    identity machinery and the proxy-environment block after it
+    (#483: the exports name the proxy, the key is the placeholder).
+    The exports carry the msks-prefixed pair (#266): the proxy is
+    this daemon's own service, so the names say so, and no
+    vendor-shaped variable leaves the seed."""
+    script = seed_script(PUBLIC, llm_port=8770)
+    assert "/etc/msks/llm.token" not in script
     assert "/etc/profile.d/msks-llm.sh" in script
     assert 'MSKSWS_BASE_URL="http://$gw:8770/v1"' in script
-    assert 'MSKSWS_API_KEY="$(cat /etc/msks/llm.token)"' in script
+    assert 'MSKSWS_API_KEY="msks-local-proxy"' in script
     assert "export MSKSWS_BASE_URL MSKSWS_API_KEY" in script
     assert "OPENAI" not in script
     # The agent toolchain is the image's, not the seed's (#266):
@@ -558,23 +559,23 @@ def test_seed_script_appends_the_llm_block() -> None:
     assert "MSEOF" in script.split("<<'MSEOF'", 1)[1]
 
 
-def test_seed_script_carries_a_token_without_an_identity() -> None:
-    """A pre-#111 row healing its seed with a token plants the token
-    block alone — under a shebang, so cloud-init runs it."""
-    script = seed_script(None, llm_token="msksllm1_y", llm_port=99)
+def test_seed_script_carries_the_proxy_block_without_an_identity() -> None:
+    """A pre-#111 row healing its seed with a port plants the
+    proxy-environment block alone — under a shebang, so cloud-init
+    runs it."""
+    script = seed_script(None, llm_port=99)
     assert script.startswith("#!/bin/sh\n")
-    assert "llm_token='msksllm1_y'" in script
+    assert 'MSKSWS_API_KEY="msks-local-proxy"' in script
     assert "authorized_keys" not in script
     assert ':99/v1"' in script
 
 
-def test_compose_with_only_a_token_builds_a_seed() -> None:
-    """No key, no payload, a token: the seed is the token's script
-    alone (the seed's presence condition includes the token)."""
-    script = compose_user_data(
-        None, None, llm_token="msksllm1_z", llm_port=8770
-    )
-    assert "llm_token='msksllm1_z'" in script
+def test_compose_with_only_a_port_builds_a_seed() -> None:
+    """No key, no payload, a port: the seed is the proxy block's
+    script alone (the seed's presence condition includes the
+    port)."""
+    script = compose_user_data(None, None, llm_port=8770)
+    assert 'MSKSWS_API_KEY="msks-local-proxy"' in script
     assert script.startswith("#!/bin/sh\n")
     # Neither a key nor a token: the operator's payload verbatim (the
     # #41 contract).
@@ -606,11 +607,20 @@ def test_seed_script_installs_the_interceptor_ca() -> None:
     assert "update-ca-certificates" in script
 
 
+def test_keyless_seed_without_a_port_is_the_ca_block_alone() -> None:
+    """A daemon serving no model list plants no proxy environment
+    (#483): the port of zero names no listener, so the keyless
+    seed carries the CA block alone."""
+    script = keyless_seed_script(0, CA_PEM)
+    assert "MSKSWS_BASE_URL" not in script
+    assert "interceptor-ca.crt" in script
+
+
 def test_the_ca_block_tolerates_a_guest_without_the_tool() -> None:
     """A guest with no update-ca-certificates (NixOS manages its
     trust store) keeps booting: the CA is staged, the exports are
     written, and the miss lands on stderr (#424)."""
-    script = seed_script(None, llm_token="t", llm_port=1, ca_pem=CA_PEM)
+    script = seed_script(None, llm_port=1, ca_pem=CA_PEM)
     assert "command -v update-ca-certificates" in script
     assert "staged and exported" in script
 
@@ -727,7 +737,7 @@ def test_compose_user_data_carries_the_ca() -> None:
     exists — with a key, and keyless with a token alone."""
     with_key = compose_user_data(None, PUBLIC, ca_pem=CA_PEM)
     assert "ca_cert=" in with_key
-    keyless = compose_user_data(None, None, llm_token="t", ca_pem=CA_PEM)
+    keyless = compose_user_data(None, None, llm_port=8770, ca_pem=CA_PEM)
     assert "ca_cert=" in keyless
     # Without key, token, or CA the operator payload travels alone.
     assert compose_user_data("payload", None) == "payload"

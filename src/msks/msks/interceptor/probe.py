@@ -262,9 +262,13 @@ class ProbeService:
 
     def listener_for(self, attachment, certfile: str, keyfile: str):
         """The attachment's listener: its tap address on 443, the
-        service leaf's TLS — one service shape on every tap."""
+        service leaf's TLS — one service shape on every tap, the
+        device pin included (#483): the probe serves its own tap's
+        redirected traffic, and the pin holds the same degraded
+        paths it holds for the proxy."""
         return TapListener(
             self.probe_app,
+            tap=attachment.tap,
             tap_ip=attachment.tap_ip,
             port=PROBE_PORT,
             ssl_certfile=certfile,

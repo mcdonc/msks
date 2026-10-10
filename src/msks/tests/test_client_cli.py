@@ -4536,53 +4536,6 @@ def test_cmd_image_check_passes_the_full_surface(
     ]
 
 
-def test_cmd_llm_token_prints_and_remints(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """``msks llm-token`` prints the workspace credential; a null
-    token explains the remint path instead of printing None."""
-    client_env(monkeypatch)
-    seen: dict = {}
-
-    def handler(req: httpx.Request) -> httpx.Response:
-        seen["method"] = req.method
-        seen["path"] = req.url.path
-        if req.method == "POST":
-            return httpx.Response(
-                200, json={"workspace": "alpha", "token": "msksllm1_new"}
-            )
-        return httpx.Response(
-            200, json={"workspace": "alpha", "token": "msksllm1_old"}
-        )
-
-    rc = cli.cmd_llm_token("alpha", transport=mock(handler))
-    assert rc == 0
-    assert seen["path"] == "/api/v1/workspaces/alpha/llm-token"
-    assert capsys.readouterr().out.strip() == "msksllm1_old"
-    rc = cli.cmd_llm_token("alpha", remint=True, transport=mock(handler))
-    assert rc == 0
-    assert seen["method"] == "POST"
-    # stdout stays the bare token for scripts that pipe it; the
-    # update step rides stderr (#375) and names the guest file and
-    # the login shell that re-reads it.
-    outerr = capsys.readouterr()
-    assert outerr.out.strip() == "msksllm1_new"
-    assert "/etc/msks/llm.token" in outerr.err
-    assert "msks console" in outerr.err
-
-
-def test_cmd_llm_token_explains_a_missing_token(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    client_env(monkeypatch)
-
-    def handler(req: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"workspace": "alpha", "token": None})
-
-    with pytest.raises(SystemExit, match="--remint"):
-        cli.cmd_llm_token("alpha", transport=mock(handler))
-
-
 def test_egress_mode_sends_the_switch(monkeypatch, capsys) -> None:
     """`msks egress mode` (#280): the repeatable --allow entries
     ride as the replacement allowlist, the offline confirmation
@@ -4701,7 +4654,6 @@ def test_typer_commands_route_to_their_bodies(
     calls: list = []
     for name in (
         "cmd_storage",
-        "cmd_llm_token",
         "cmd_image_import",
         "cmd_image_rm",
         "cmd_image_info",
@@ -4723,7 +4675,6 @@ def test_typer_commands_route_to_their_bodies(
     monkeypatch.setattr(cli.egress_mod, "run_watch", fake_watch)
 
     assert cli.main(["storage", "ws1", "--json"]) == 7
-    assert cli.main(["llm-token", "ws1", "--remint"]) == 7
     assert cli.main(["image", "import", "/srv/i.tar"]) == 7
     assert cli.main(["image", "rm", "debian:13"]) == 7
     assert cli.main(["image", "info", "debian:13"]) == 7
@@ -4742,7 +4693,6 @@ def test_typer_commands_route_to_their_bodies(
     assert cli.main(["tui", "ws1"]) == 7
     by_name = {name: (args, kwargs) for name, args, kwargs in calls}
     assert by_name["cmd_storage"] == (("ws1", True), {"transport": None})
-    assert by_name["cmd_llm_token"] == (("ws1", True), {"transport": None})
     assert by_name["cmd_image_check"][0][0].keep is True
     assert by_name["cmd_image_check"][0][0].boot_timeout_s == 30.0
     assert by_name["forward"] == (("ws1", 22, 2200), {})

@@ -136,7 +136,6 @@ ALLOWED_EDGES = {
     ("server", "events"),
     ("server", "identity"),
     ("server", "imagestore"),
-    ("server", "llm"),
     ("server", "microvm"),
     ("server", "model"),
     ("server", "persist"),
