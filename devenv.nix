@@ -675,6 +675,10 @@ in
       dev_dir="$(dirname "$dev_identity")"
       mkdir -p "$dev_dir"
       dev_temp="$dev_dir/.identity.$$"
+      # A recycled PID would meet a crashed entry's debris here and
+      # keygen would prompt to overwrite it (invisible, tty-reading):
+      # clear the names first.
+      rm -f "$dev_temp" "$dev_temp.pub"
       if ssh-keygen -q -t ed25519 -N "" -f "$dev_temp" >/dev/null 2>&1; then
         mv -n "$dev_temp" "$dev_identity"
         rm -f "$dev_temp" "$dev_temp.pub"

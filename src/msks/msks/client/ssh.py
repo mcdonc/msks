@@ -374,7 +374,8 @@ def stale_half_line(path: Path, workspace_id: str) -> str:
         f"match {workspace_id} — the workspace was re-created since "
         "that key was stored. Delete that file and re-create the "
         "workspace (the client that holds the current identity "
-        "keeps working for both ssh and the console)"
+        "keeps ssh working; the console is the token-gated root "
+        "autologin either way, #481)"
     )
 
 

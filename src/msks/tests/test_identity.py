@@ -560,19 +560,24 @@ def test_seed_script_appends_the_llm_block() -> None:
 
 def test_seed_script_carries_the_proxy_block_without_an_identity() -> None:
     """A pre-#111 row healing its seed with a port plants the
-    proxy-environment block alone — under a shebang, so cloud-init
-    runs it."""
+    proxy-environment block beside the home block every seed
+    carries — under a shebang, so cloud-init runs it."""
     script = seed_script(None, llm_port=99)
     assert script.startswith("#!/bin/sh\n")
     assert 'MSKSWS_API_KEY="msks-local-proxy"' in script
     assert "authorized_keys" not in script
     assert ':99/v1"' in script
+    # The keyless seed still makes the workspace home (#171): the
+    # home volume mounts empty, so the skeleton copy is the msks
+    # account's only scaffolding (#486 — the identity half is gone
+    # but the home block stays).
+    assert "install -d -m 0755 -o msks -g msks /home/msks" in script
 
 
 def test_compose_with_only_a_port_builds_a_seed() -> None:
-    """No key, no payload, a port: the seed is the proxy block's
-    script alone (the seed's presence condition includes the
-    port)."""
+    """No key, no payload, a port: the seed is the script the home
+    and proxy blocks make (the seed's presence condition includes
+    the port)."""
     script = compose_user_data(None, None, llm_port=8770)
     assert 'MSKSWS_API_KEY="msks-local-proxy"' in script
     assert script.startswith("#!/bin/sh\n")
@@ -606,13 +611,14 @@ def test_seed_script_installs_the_interceptor_ca() -> None:
     assert "update-ca-certificates" in script
 
 
-def test_keyless_seed_without_a_port_is_the_ca_block_alone() -> None:
+def test_keyless_seed_without_a_port_is_home_and_ca() -> None:
     """A daemon serving no model list plants no proxy environment
     (#483): the port of zero names no listener, so the keyless
-    seed carries the CA block alone."""
+    seed carries the home block beside the CA block."""
     script = keyless_seed_script(0, CA_PEM)
     assert "MSKSWS_BASE_URL" not in script
     assert "interceptor-ca.crt" in script
+    assert "install -d -m 0755 -o msks -g msks /home/msks" in script
 
 
 def test_the_ca_block_tolerates_a_guest_without_the_tool() -> None:

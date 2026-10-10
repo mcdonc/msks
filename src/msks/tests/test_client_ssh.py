@@ -630,8 +630,12 @@ def test_resolve_private_names_a_missing_client_half(
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("MSKSC_IDENTITY_FILE", raising=False)
     monkeypatch.delenv("MSKSC_DATA_DIR", raising=False)
-    with pytest.raises(SystemExit, match="not on this client"):
+    with pytest.raises(SystemExit) as caught:
         ssh.resolve_private({"public_key": "x", "private_key": None}, "alpha")
+    assert "not on this client" in str(caught.value)
+    # The console keeps working either way (#481): the recovery
+    # says so instead of implying the console needs the key.
+    assert "token-gated root autologin" in str(caught.value)
 
 
 def identity_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

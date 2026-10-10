@@ -291,11 +291,6 @@ def root_prompt_needle(hostname: str | None = None) -> bytes:
     return f"root@{hostname or IMAGE_HOSTNAME}:~# ".encode()
 
 
-#: The default-hostname spelling, for probes on seed-less guests
-#: and the harness's own unit pins.
-CONSOLE_PROMPT_NEEDLE = root_prompt_needle()
-
-
 async def run_in_console(
     microvm,
     workspace_id: str,
