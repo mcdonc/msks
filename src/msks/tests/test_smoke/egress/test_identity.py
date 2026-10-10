@@ -958,7 +958,7 @@ async def test_local_operator_pubkey() -> None:
         sugar = await cli("ssh", wid, "--", "-F", os.devnull, "--", "true")
         assert sugar.returncode != 0
         assert "not on this client" in sugar.stderr
-        assert "supplied" in sugar.stderr
+        assert "Point identity_file" in sugar.stderr
 
         await microvm.shutdown(vm_id, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(vm_id)

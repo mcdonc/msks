@@ -1357,12 +1357,21 @@ async def test_launch_refuses_egress_without_the_plumbing(
         await app.state.microvm.launch(spec(tmp_path, egress=True))
 
 
+def plant_seed(state_dir: Path) -> Path:
+    """A built seed artifact at its path: the one fact the disk
+    attach follows."""
+    seed = persist.seed_path(state_dir, WID)
+    seed.parent.mkdir(parents=True, exist_ok=True)
+    seed.write_bytes(b"cidata")
+    return seed
+
+
 def test_disk_entries_attach_the_seed_read_only(tmp_path: Path) -> None:
-    """A user_data workspace (#41) attaches its cidata seed as a
-    third, read-only raw disk; a plain workspace keeps two disks."""
-    overlay, home, seed = disk_entries(
-        tmp_path, WID, user_data="#!/bin/sh\ntrue\n"
-    )
+    """A workspace whose artifacts include the seed attaches it as a
+    third, read-only raw disk; a workspace without one keeps two
+    disks (#41)."""
+    plant_seed(tmp_path)
+    overlay, home, seed = disk_entries(tmp_path, WID)
     assert overlay["path"] == str(tmp_path / "vms" / WID / "root.qcow2")
     assert home["path"] == str(tmp_path / "volumes" / f"{WID}.ext4")
     assert seed == {
@@ -1370,23 +1379,22 @@ def test_disk_entries_attach_the_seed_read_only(tmp_path: Path) -> None:
         "readonly": True,
         "image_type": "Raw",
     }
-    assert len(disk_entries(tmp_path, WID)) == 2
+    plain = Path(tmp_path.as_posix() + "-plain")
+    assert len(disk_entries(plain, WID)) == 2
 
 
-def test_disk_entries_attach_the_seed_for_identity(tmp_path: Path) -> None:
-    """A minted identity attaches the seed with no user_data at all
-    (#111) — the seeding script is the whole payload; both present
-    together still attach exactly one seed.
+def test_disk_entries_attach_a_keyless_seed(tmp_path: Path) -> None:
+    """A keyless create whose tap will serve an LLM listener or the
+    interception CA builds a seed with no key and no payload
+    (#259, #424, #486) — the attach follows the artifact, so the
+    guest still receives its cidata disk (#486's fix: the attach
+    once gated on user_data or ssh_pubkey, and a keyless create
+    booted without the seed its CA and proxy environment rode).
     """
-    seed_only = disk_entries(
-        tmp_path, WID, ssh_pubkey="ecdsa-sha2-nistp256 AAAA"
-    )
-    assert len(seed_only) == 3
-    assert seed_only[2]["readonly"] is True
-    both = disk_entries(
-        tmp_path, WID, user_data="#!/bin/sh\ntrue\n", ssh_pubkey="ecdsa AAAA"
-    )
-    assert len(both) == 3
+    plant_seed(tmp_path)
+    entries = disk_entries(tmp_path, WID)
+    assert len(entries) == 3
+    assert entries[2]["readonly"] is True
 
 
 async def test_launch_attaches_the_user_data_seed(
@@ -1402,7 +1410,7 @@ async def test_launch_attaches_the_user_data_seed(
     seed = persist.seed_path(state_dir, WID)
     assert seed.is_file()
     body = dict(fake.requests[0][2])
-    assert body["disks"] == disk_entries(state_dir, WID, user_data=payload)
+    assert body["disks"] == disk_entries(state_dir, WID)
     assert body["disks"][2]["readonly"] is True
     await app.state.microvm.kill(WID)
 
