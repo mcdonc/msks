@@ -325,8 +325,8 @@ async def fetch_ssh_key(
     ssl_ctx=None,
 ) -> dict:
     """GET the workspace's identity: type, public half, private half
-    (null for a client-minted workspace, #121 — the daemon never
-    held it).
+    (null for every workspace created now, #486 — the daemon never
+    held a half; a row minted before #486 keeps serving its own).
 
     ``msks key`` prints it; ``msks ssh`` (#112) serves the private
     half from a transient in-process agent through this same call.

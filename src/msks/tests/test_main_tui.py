@@ -851,6 +851,58 @@ async def test_the_create_form_refuses_local_junk() -> None:
         assert data.calls == []
 
 
+async def test_the_create_form_flashes_an_unconfigured_identity(
+    monkeypatch,
+) -> None:
+    """An unconfigured client refuses the create (#486): the form's
+    own identity resolution (the real core, a real TuiData) raises
+    before any exchange, and the failure panel carries the refusal
+    line — the TUI surface of the one-line error the CLI prints."""
+    import httpx
+    from msks.client.tui import data as data_mod
+
+    monkeypatch.setenv("MSKSC_URL", "https://api.test")
+    monkeypatch.setenv("MSKSC_TOKEN", "tok")
+    monkeypatch.delenv("MSKSC_IDENTITY_FILE", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", "/tmp/msks-tui-no-identity")
+    asked: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append((request.method, request.url.path))
+        if request.method == "GET" and request.url.path == (
+            "/api/v1/workspaces"
+        ):
+            return httpx.Response(200, json=[])
+        if request.method == "GET" and request.url.path == (
+            "/api/v1/create-defaults"
+        ):
+            return httpx.Response(
+                200, json={"root_mib": 10240, "home_mib": 20480}
+            )
+        if request.method == "GET":
+            return httpx.Response(200, json=[])
+        return httpx.Response(201, json={"id": "ws1"})
+
+    data = data_mod.TuiData(transport=httpx.MockTransport(handler))
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("c")
+        await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
+        screen = app.screen
+        screen.query_one("#field-name", Input).value = "brand-new"
+        screen.submit()
+        await pilot.pause()
+        await wait_for(lambda: type(app.screen).__name__ == "FailurePanel")
+        panel = str(app.screen.query_one("#failure-detail", Static).content)
+        assert "no identity configured" in panel
+        assert "MSKSC_IDENTITY_FILE" in panel
+        # The startup reads (the rows and form-default fetches) are
+        # the only traffic: the create itself never left the client.
+        assert all(method != "POST" for method, _path in asked)
+        await pilot.press("escape")
+        await wait_for(lambda: on_main(app))
+
+
 async def test_the_create_form_fits_the_small_terminal() -> None:
     # 80x24 is the smallest terminal the form must fit: the last
     # field and the buttons stay inside the screen, above the

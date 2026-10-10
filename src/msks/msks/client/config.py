@@ -889,7 +889,8 @@ def render_template() -> str:
 # expected_image: msks/debian13:1.0  # the image msks ls compares
 #                                # against the daemon's /health (#160)
 # cache_dir: ~/.cache/msks      # per-workspace host-key caches (#251)
-# data_dir: ~/.local/share/msks # client-minted identities (#251)
+# data_dir: ~/.local/share/msks # client state (#251; a pre-#486
+#                                # client wrote identity files here)
 # identity_file: ~/.ssh/id_ed25519  # your own private key — the ssh
 #                                # identity a bare msks create plants
 #                                # into every workspace (#336); msks

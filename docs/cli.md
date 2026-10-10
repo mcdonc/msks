@@ -1660,7 +1660,7 @@ configuration that hides all of this).
 
 ## `msks rsync`
 
-Stock rsync against a workspace over the forward, with the minted
+Stock rsync against a workspace over the forward, with the
 identity staged in memory (#190) — one command does the whole
 setup itself: the workspace boots when needed, the identity
 stages in memory, and the copy opens its own forward:
@@ -1702,13 +1702,13 @@ per-workspace `known_hosts` under `accept-new`, and the identity
 staged in a transient in-process ssh-agent — the private half
 exists only in memory, rsync's ssh children name it by its public
 half and sign through the agent socket, and the command writes no
-key file. Daemon-minted (#111), operator-key (#336, the create
-default), per-workspace client-minted (#121), and `--pubkey`
-(#132) identities all work: the private half resolves where it
-lives — over the API, from the operator identity (`identity_file`
-or the data root's minted key), or
-from the per-workspace file — and a key that resolves nowhere on
-this client exits with the line naming where it can be.
+key file. The operator identity (#486 — `identity_file`), a
+`--pubkey` workspace (#132), and the pre-#486 row shapes
+(daemon-minted #111, client-minted #121) all work: the private
+half resolves where it lives — from the operator's own file, over
+the API, or from the per-workspace file — and a key that resolves
+nowhere on this client exits with the line naming where it can
+be.
 A session that booted its workspace waits out the guest's first
 boot exactly as `msks ssh` does (#168): a probe login retries
 behind the identity seed (up to 30s, one line between attempts),

@@ -391,8 +391,8 @@ def missing_half_line(path: Path) -> str:
         "key an older msks wrote may live under the client data "
         f"root ({data_dir()}, MSKSC_DATA_DIR relocates it) — or "
         "log in with it directly (ssh -i, or the Host msks-* "
-        "alias), or run the console from a client that holds the "
-        "current key: both console and ssh need this half."
+        "alias). The console keeps working either way: it is the "
+        "token-gated root autologin (#481), not a key login."
     )
 
 

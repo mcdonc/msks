@@ -653,13 +653,18 @@ async def test_local_unconfigured_create_refuses() -> None:
                 raise AssertionError("the test API server never started (30s)")
             await asyncio.sleep(0.05)
 
+        # Hermetic: an empty config tree (not the operator's real
+        # ~/.config/msks, where an identity_file may live) and no
+        # identity in the environment — the create must refuse.
+        config_dir = state_dir / "client-config"
+        config_dir.mkdir(parents=True)
         cli_env = dict(
             os.environ,
             MSKSC_URL=f"http://127.0.0.1:{api_port}",
             MSKSC_TOKEN=token,
+            MSKSC_CONFIG_DIR=str(config_dir),
         )
-        for scrub in ("MSKSC_IDENTITY_FILE", "MSKSC_CONFIG_DIR"):
-            cli_env.pop(scrub, None)
+        cli_env.pop("MSKSC_IDENTITY_FILE", None)
         refused = await asyncio.to_thread(
             subprocess.run,
             [

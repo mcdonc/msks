@@ -67,16 +67,20 @@ class Workspace(Base):
     egress: Mapped[bool] = mapped_column(Boolean, default=True)
     # First-boot provisioning payload (#41): the operator's
     # user_data, delivered on the workspace's cidata seed disk
-    # beside the minted identity's seeding script (#111).
-    # Create-time and immutable — NULL boots with the identity
-    # script alone (or without a seed, pre-#111 rows).
+    # beside the identity's seeding script when a key was supplied
+    # (#111). Create-time and immutable — NULL boots with the
+    # identity script alone (or without a seed, a keyless create
+    # under #486).
     user_data: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # The minted identity (#111): the public half is one
-    # authorized_keys line (algorithm name, key, and an
-    # ``msksd:<workspace-id>`` comment); the private half is
-    # OpenSSH-format PEM. NULL on a pre-#111 row — no identity was
-    # minted, no key fetch serves it.
+    # The identity (#111, #486): the public half is one
+    # authorized_keys line (algorithm name, key, and a provenance
+    # comment). NULL on a keyless create or a pre-#111 row — no
+    # key was seeded, no key fetch serves it.
     ssh_pubkey: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The private half a pre-#486 daemon minted and escrowed
+    # (#111): NULL for every row created now (#486 — the daemon
+    # never holds a private half), kept readable for the rows that
+    # carry one so they stay reachable.
     ssh_privkey: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The workspace's login user (#248): create-time and immutable,
     # like the specs. The seed provisions the account at first boot

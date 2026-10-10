@@ -582,12 +582,11 @@ the stored half against the served public line, so a stale copy
 fails as one named line, not ssh's opaque `Permission denied`).
 A key an older msks minted to the data root itself
 (`~/.local/share/msks/identity`) resolves once `identity_file`
-points at it. Losing such a file loses ssh to that workspace and
-the console with it — unless the operator's ssh-agent holds the
-same key (`SSH_AUTH_SOCK`), which the console consults next.
-Deleting the workspace leaves the stored half behind, like its
-`known_hosts` — remove the per-workspace directory under the data
-root when you want the material gone.
+points at it. Losing such a file loses ssh to that workspace; the
+console keeps working — it is the token-gated root autologin
+(#481), not a key login. Deleting the workspace leaves the stored
+half behind, like its `known_hosts` — remove the per-workspace
+directory under the data root when you want the material gone.
 
 ### Pushing code out with your own credentials
 
@@ -661,13 +660,11 @@ configuration or the daemon's own settings, so an OpenSSH build whose
 crypto library enforces a FIPS module applies its restrictions by
 itself, without msks-side config surgery. The guest's libraries are
 Debian's own (OpenSSL 3), the line that carries a certified provider
-when one exists. The algorithm choices in play are FIPS-approvable
-from the start: identities default to Ed25519 (#138 — FIPS 186-5
-approves EdDSA, and ssh clients restricted to the common
-`ssh-ed25519,ssh-rsa` set accept it out of the box), with ECDSA
-P-256 and RSA as explicit `--key-type` / `MSKSD_SSH_KEY_TYPE`
-choices,
-and first boot generates the full `ssh-keygen -A` host-key set,
+when one exists. The algorithm choices in play are FIPS-approvable from the
+start: the operator's own key is the identity (#486), so the key
+type is the operator's choice — any type the guest's sshd
+authenticates, at whatever curve or size it carries — and first
+boot generates the full `ssh-keygen -A` host-key set,
 whose RSA and ECDSA members are the keys a FIPS-mode sshd serves —
 all persisting across stop/start on the overlay.
 Issue #115 records the constraint that keeps it that way: every
