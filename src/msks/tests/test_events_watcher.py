@@ -105,6 +105,9 @@ async def test_scan_once_publishes_transition(tmp_path: Path) -> None:
         await app.state.model.create_workspace(
             VmSpec(workspace_id="ws-t", kernel=Path("/k"), rootfs=Path("/r"))
         )
+        # ws-s started and then stopped: the row is at running, so the
+        # seam's stopped is a transition (#491).
+        await app.state.model.set_status("ws-s", "running")
         stub.statuses["ws-s"] = VmStatus.STOPPED
         stub.statuses["ws-t"] = VmStatus.RUNNING
         hub = api.state.hub
@@ -230,6 +233,22 @@ async def test_scan_skips_absent_over_created(tmp_path: Path) -> None:
         )
         assert await scan_workspace(app, api.state.hub, row) is False
         assert (await app.state.model.get_workspace("ws-c"))[
+            "status"
+        ] == "created"
+
+
+async def test_scan_keeps_created_over_stopped(tmp_path: Path) -> None:
+    """#491: the seam says stopped for a never-started workspace (the vm
+    directory exists from prepare, no socket), so the created row must
+    survive the tick."""
+    api, app, stub = api_with_stub(tmp_path)
+    async with api.router.lifespan_context(api):
+        row = await app.state.model.create_workspace(
+            VmSpec(workspace_id="ws-n", kernel=Path("/k"), rootfs=Path("/r"))
+        )
+        stub.statuses["ws-n"] = VmStatus.STOPPED
+        assert await scan_workspace(app, api.state.hub, row) is False
+        assert (await app.state.model.get_workspace("ws-n"))[
             "status"
         ] == "created"
 
