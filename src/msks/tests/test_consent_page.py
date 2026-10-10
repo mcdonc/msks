@@ -11,6 +11,7 @@ direct unit tests in test_consent_tui_helpers.py.
 import asyncio
 import json
 import time
+from types import SimpleNamespace
 
 import websockets
 from msks.client.tui import consent_ui
@@ -30,6 +31,7 @@ from test_consent_tui import (
 from test_consent_tui import (
     rules_frame as shared_rules_frame,
 )
+from textual.css.query import NoMatches
 from textual.widgets import Static
 
 WS = "ws-dev"
@@ -344,17 +346,28 @@ def page_settled(page) -> bool:
         return False
 
 
+def row_text(page, zone_id: str, index: int) -> str:
+    """One row's text. Inside a rebuild's swap window the query raises:
+    the zone's list is mounted, focused, and highlighted while its row's
+    ``Static`` is still mounting — the shape #489 names. The read is
+    polled, so that window is a retry, not a failure, and a row that
+    never answers still reports the query error."""
+    if page is None:
+        raise AssertionError("no consent page open")
+    row = page.query_one(f"#{zone_id}").children[index]
+    return str(row.query_one(Static).content)
+
+
 def held_row(app, index: int) -> str:
-    page = consent_in(app)
-    rows = page.query_one("#hold-rows")
-    return str(rows.children[index].query_one(Static).content)
+    """The held row's text — a single read that raises inside a rebuild's
+    swap window; the polls that read it retry there (#489)."""
+    return row_text(consent_in(app), "hold-rows", index)
 
 
 def rule_row_text(app, index: int) -> str:
-    page = consent_in(app)
-    return str(
-        page.query_one("#rule-rows").children[index].query_one(Static).content
-    )
+    """The verdict row's text — the same single read, verdicts zone
+    (#489)."""
+    return row_text(consent_in(app), "rule-rows", index)
 
 
 def status_line(app) -> str:
@@ -414,22 +427,21 @@ def focused_zone(app) -> str | None:
     return None
 
 
-async def wait_for(
-    condition, timeout: float = 10.0, delay: float = 0.02
-) -> None:
-    """Poll a render condition until a deadline (UI updates land
-    on the message pump, not synchronously with the worker's
-    frames). The budget is monotonic time, not a try count (#322),
-    and not raw wall clock (#468): the parallel suite can
-    deschedule this worker for whole seconds at a stretch, and a
-    parked poll would count that span as budget spent. Each
-    parked cycle credits its overshoot back to the deadline, so
-    the condition keeps its full window of pump progress however
-    starved the runner is."""
+async def poll(condition, timeout: float = 10.0, delay: float = 0.02):
+    """Poll a condition until it lands a truthy value, and hand back that
+    value. A read that raises is a read inside a rebuild's swap window,
+    not a failure: it is retried until the deadline (#489). A condition
+    that never lands and never answers is still reported as the failure
+    it is — the last query error is re-raised, not swallowed."""
     deadline = time.monotonic() + timeout
+    last_error = None
     while True:
-        if condition():
-            return
+        try:
+            value = condition()
+        except Exception as exc:
+            value, last_error = None, exc
+        if value:
+            return value
         parked = time.monotonic()
         await asyncio.sleep(delay)
         # The park ran past its requested span: the runner was
@@ -442,9 +454,24 @@ async def wait_for(
             # The cycle's pump work gets one read before the poll
             # gives up: the frames that landed during the park are
             # read here, not before it.
-            if condition():
-                return
+            try:
+                value = condition()
+            except Exception as exc:
+                value, last_error = None, exc
+            if value:
+                return value
+            if last_error is not None:
+                raise last_error
             raise AssertionError("condition never landed")
+
+
+async def wait_for(
+    condition, timeout: float = 10.0, delay: float = 0.02
+) -> None:
+    """Poll a render condition until it lands, on poll's budget. A
+    condition that raises is retried there, so a read inside a
+    rebuild's swap window no longer ends the poll (#489)."""
+    await poll(condition, timeout, delay)
 
 
 async def press_until(pilot, key: str, landed, timeout: float = 10.0) -> None:
@@ -558,8 +585,8 @@ async def test_the_page_shows_both_zones() -> None:
             )
         )
         assert "a allow" in str(cp.query_one("#holds-hint").content)
-        assert "api.example:443" in held_row(app, 0)
-        assert "allowed" in rule_row_text(app, 0)
+        await wait_for(lambda: "api.example:443" in held_row(app, 0))
+        await wait_for(lambda: "allowed" in rule_row_text(app, 0))
 
 
 async def test_the_page_opens_with_the_holds_zone_focused() -> None:
@@ -762,8 +789,8 @@ async def test_the_queue_lifecycle() -> None:
         cp = await open_consent(pilot, app, page)
         await wait_for(lambda: hold_children(app) == 2)
         await pilot.pause()
-        assert "api.example:443" in held_row(app, 0)
-        assert "raw.example (all ports)" in held_row(app, 1)
+        await wait_for(lambda: "api.example:443" in held_row(app, 0))
+        await wait_for(lambda: "raw.example (all ports)" in held_row(app, 1))
         assert "dev" in str(cp.query_one("#header").content)
         assert "connected" in status_line(app)
         # a allows the focused (first) hold with the default duration.
@@ -1179,7 +1206,7 @@ async def test_the_verdicts_zone_revokes() -> None:
         assert header.startswith("allowlist:")
         assert ".debian.org" in header
         await wait_for(lambda: "allowed" in rule_row_text(app, 0))
-        assert "forever" in rule_row_text(app, 1)
+        await wait_for(lambda: "forever" in rule_row_text(app, 1))
         # x revokes the focused rule (allowed, first).
         await pilot.press("x")
         await wait_for(lambda: len(data.revoked) == 1)
@@ -1976,6 +2003,54 @@ async def test_wait_for_still_gives_up_without_a_landing(monkeypatch) -> None:
         assert "never landed" in str(exc)
     else:
         raise AssertionError("the poll should have given up")
+
+
+class SwapWindowRow:
+    """A row caught in the rebuild's swap window: the row is mounted and
+    highlighted, its ``Static`` answers only after ``shots`` reads
+    (#489)."""
+
+    def __init__(self, text: str, shots: int) -> None:
+        self.text = text
+        self.shots = shots
+
+    def query_one(self, selector):
+        if self.shots > 0:
+            self.shots -= 1
+            raise NoMatches(f"No nodes match {selector!r} on SwapWindowRow")
+        return SimpleNamespace(content=self.text)
+
+
+class SwapWindowPage:
+    """The zone list as the row helpers see it during a rebuild."""
+
+    def __init__(self, rows) -> None:
+        self.rows = rows
+
+    def query_one(self, selector):
+        return SimpleNamespace(children=self.rows)
+
+
+async def test_the_row_read_retries_through_the_swap_window() -> None:
+    """#489: the row read was a single un-retried shot, so a read that
+    landed inside a rebuild's swap window raised while the count gates
+    had already passed. The read polls, so the window is a retry."""
+    page = SwapWindowPage([SwapWindowRow("api.example:443", shots=3)])
+    assert await poll(lambda: row_text(page, "hold-rows", 0)) == (
+        "api.example:443"
+    )
+
+
+async def test_a_row_read_that_never_lands_reports_the_query_error() -> None:
+    """The retry must not hide a genuine failure: a row that never
+    answers still fails, with the query error, not a bare timeout."""
+    page = SwapWindowPage([SwapWindowRow("api.example:443", shots=10_000)])
+    try:
+        await poll(lambda: row_text(page, "rule-rows", 0), timeout=0.3)
+    except NoMatches as exc:
+        assert "SwapWindowRow" in str(exc)
+    else:
+        raise AssertionError("the read should have given up")
 
 
 async def test_press_until_credits_a_descheduled_cycle(monkeypatch) -> None:
