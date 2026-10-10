@@ -323,8 +323,11 @@ async def test_local_operator_identity() -> None:
         served = await cli("key", wid)
         assert served.returncode == 0, served.stderr
         minted = served.stdout.strip()
+        # The daemon re-annotates the supplied line with the
+        # workspace's name as its provenance comment (the supplied
+        # path's rule since #121: name when one was given, else id).
         assert minted.startswith("ssh-ed25519 ") and minted.endswith(
-            f"msks-client:{vm_id}"
+            f"msks-client:{wid}"
         )
         refused = await cli("key", wid, "--private")
         assert refused.returncode != 0
@@ -859,7 +862,7 @@ async def test_local_operator_pubkey() -> None:
         refused = await cli("key", wid, "--private")
         assert refused.returncode != 0
         assert "holds no private half" in refused.stderr
-        assert "it is the operator's own key" in refused.stderr
+        assert "the operator's own key is the identity" in refused.stderr
 
         started = await cli("start", wid)
         assert started.returncode == 0, started.stderr
