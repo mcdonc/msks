@@ -427,12 +427,16 @@ def focused_zone(app) -> str | None:
     return None
 
 
-async def poll(condition, timeout: float = 10.0, delay: float = 0.02):
+async def poll(
+    condition, timeout: float = 10.0, delay: float = 0.02
+) -> object:
     """Poll a condition until it lands a truthy value, and hand back that
     value. A read that raises is a read inside a rebuild's swap window,
-    not a failure: it is retried until the deadline (#489). A condition
-    that never lands and never answers is still reported as the failure
-    it is — the last query error is re-raised, not swallowed."""
+    not a failure: it is retried until the deadline (#489). On timeout
+    the report follows the final read — a still-raising read re-raises
+    its error, an answering read that never landed fails as the content
+    mismatch it is, not as the window (the swap's error is cleared by
+    the first read that answers, so it cannot misdirect triage)."""
     deadline = time.monotonic() + timeout
     last_error = None
     while True:
@@ -440,6 +444,8 @@ async def poll(condition, timeout: float = 10.0, delay: float = 0.02):
             value = condition()
         except Exception as exc:
             value, last_error = None, exc
+        else:
+            last_error = None
         if value:
             return value
         parked = time.monotonic()
@@ -482,19 +488,23 @@ async def press_until(pilot, key: str, landed, timeout: float = 10.0) -> None:
     past its requested sleep credits the overshoot back to the
     deadline, so a descheduled worker cannot spend the budget."""
     deadline = time.monotonic() + timeout
+    last_error = None
     while True:
         started = time.monotonic()
         await pilot.press(key)
         try:
             if landed():
                 return
-        except Exception:
-            pass
+            last_error = None
+        except Exception as exc:
+            last_error = exc
         await asyncio.sleep(0.05)
         ran = time.monotonic() - started
         if ran > 0.05:
             deadline += ran - 0.05
         if time.monotonic() >= deadline:
+            if last_error is not None:
+                raise last_error
             raise AssertionError(f"{key!r} never took effect")
 
 
@@ -2022,13 +2032,33 @@ class SwapWindowRow:
 
 
 class SwapWindowPage:
-    """The zone list as the row helpers see it during a rebuild."""
+    """The zone list as the row helpers see it during a rebuild: the
+    container query answers only after its own ``shots`` reads — the
+    #492 CI shape, where ``No nodes match '#hold-rows'`` fired while
+    the count gates had already passed."""
+
+    def __init__(self, rows, shots: int = 0) -> None:
+        self.rows = rows
+        self.shots = shots
+
+    def query_one(self, selector):
+        if self.shots > 0:
+            self.shots -= 1
+            raise NoMatches(f"No nodes match {selector!r} on SwapWindowPage")
+        return SimpleNamespace(children=self.rows)
+
+
+class PopulatingPage:
+    """The zone list mid-populate: each read sees one more row mounted
+    than the last, so an early read's index is past the end."""
 
     def __init__(self, rows) -> None:
         self.rows = rows
+        self.reads = 0
 
     def query_one(self, selector):
-        return SimpleNamespace(children=self.rows)
+        self.reads += 1
+        return SimpleNamespace(children=self.rows[: self.reads - 1])
 
 
 async def test_the_row_read_retries_through_the_swap_window() -> None:
@@ -2039,6 +2069,53 @@ async def test_the_row_read_retries_through_the_swap_window() -> None:
     assert await poll(lambda: row_text(page, "hold-rows", 0)) == (
         "api.example:443"
     )
+
+
+async def test_the_container_read_retries_through_the_swap_window() -> None:
+    """The #492 CI shape: the zone's own id query raised inside the
+    window — the row behind it was fine. The poll retries the whole
+    read, container query first."""
+    page = SwapWindowPage([SwapWindowRow("api.example:443", shots=0)], shots=3)
+    assert await poll(lambda: row_text(page, "hold-rows", 0)) == (
+        "api.example:443"
+    )
+
+
+async def test_a_read_past_the_rows_mounted_so_far_retries() -> None:
+    """The list populates row by row: a read whose index is past the
+    rows mounted so far raises, and the poll reads again once the row
+    stands."""
+    page = PopulatingPage([SwapWindowRow("api.example:443", shots=0)])
+    assert await poll(lambda: row_text(page, "hold-rows", 0)) == (
+        "api.example:443"
+    )
+
+
+async def test_a_window_then_wrong_content_reports_the_content() -> None:
+    """A read that raises once and then answers with the wrong content
+    must fail as the content mismatch it is: the window's error is
+    cleared by the first answering read, so triage is not sent down
+    the flake path this file just retired."""
+    page = SwapWindowPage([SwapWindowRow("api.example:443", shots=1)])
+    try:
+        await poll(
+            lambda: "forever" in row_text(page, "hold-rows", 0), timeout=0.3
+        )
+    except AssertionError as exc:
+        assert "never landed" in str(exc)
+    else:
+        raise AssertionError("the read should have given up")
+
+
+async def test_a_read_with_no_page_open_names_the_page() -> None:
+    """A poll with no consent page on the stack still fails with the
+    guard's message, not a bare timeout."""
+    try:
+        await poll(lambda: row_text(None, "hold-rows", 0), timeout=0.3)
+    except AssertionError as exc:
+        assert "no consent page open" in str(exc)
+    else:
+        raise AssertionError("the read should have given up")
 
 
 async def test_a_row_read_that_never_lands_reports_the_query_error() -> None:
