@@ -1,4 +1,4 @@
-"""A transient ssh-agent serving one minted workspace identity.
+"""A transient ssh-agent serving one workspace identity.
 
 ``msks ssh`` stages the workspace's private key in memory and hands
 ssh an agent socket (``-o IdentityAgent=...``). The OpenSSH client
@@ -49,9 +49,9 @@ MAX_MESSAGE = 1 << 16
 
 #: The ECDSA curves the agent signs, by their wire names — the
 #: three NIST curves OpenSSH clients offer (P-256/384/521; the
-#: mint only ever produces P-256, but an operator's own key may
-#: carry the wider curves — the guest's sshd stays the authority,
-#: so the agent follows OpenSSH's existing set).
+#: operator's own key may carry any of them — the guest's sshd
+#: stays the authority, so the agent follows OpenSSH's existing
+#: set).
 CURVE_NAMES = {
     ec.SECP256R1: "ecdsa-sha2-nistp256",
     ec.SECP384R1: "ecdsa-sha2-nistp384",

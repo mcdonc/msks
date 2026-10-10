@@ -649,6 +649,45 @@ in
     : "''${MSKSC_CACHE_DIR:=$DEVENV_ROOT/.devenv/state/msksc/cache}"
     : "''${MSKSC_DATA_DIR:=$DEVENV_ROOT/.devenv/state/msksc/data}"
     export MSKSC_CACHE_DIR MSKSC_DATA_DIR
+    # The dev shell's operator identity (#486): the client requires
+    # identity_file / MSKSC_IDENTITY_FILE and generates nothing, so
+    # a checkout that runs the client (the smokes, msks-dev) needs
+    # a key named once. The shell plays the operator the way a
+    # person would — one ssh-keygen run, kept in the worktree's
+    # state beside the cache and data roots — so every later shell
+    # reuses the same key and the workspaces it created stay
+    # reachable. A checkout upgrading from the pre-#486 client
+    # adopts the key it minted under its data root instead of
+    # growing a second one. Like the state roots, a non-empty value
+    # exported before entering the shell survives.
+    dev_identity="$DEVENV_ROOT/.devenv/state/msksc/identity"
+    legacy_identity="$DEVENV_ROOT/.devenv/state/msksc/data/identity"
+    if [ ! -s "$dev_identity" ] && [ -s "$legacy_identity" ]; then
+      dev_identity="$legacy_identity"
+    fi
+    if [ ! -s "$dev_identity" ] && command -v ssh-keygen >/dev/null 2>&1; then
+      # Publish atomically: keygen writes to a private temp
+      # sibling, the rename lands whole — two shells racing the
+      # first entry both export a complete key (the loser's rename
+      # is a no-op over the winner's), and no half-written key ever
+      # passes the -s gate. The temp is per-process, so a crashed
+      # keygen's debris never blocks a later one.
+      dev_dir="$(dirname "$dev_identity")"
+      mkdir -p "$dev_dir"
+      dev_temp="$dev_dir/.identity.$$"
+      # A recycled PID would meet a crashed entry's debris here and
+      # keygen would prompt to overwrite it (invisible, tty-reading):
+      # clear the names first.
+      rm -f "$dev_temp" "$dev_temp.pub"
+      if ssh-keygen -q -t ed25519 -N "" -f "$dev_temp" >/dev/null 2>&1; then
+        mv -n "$dev_temp" "$dev_identity"
+        rm -f "$dev_temp" "$dev_temp.pub"
+      fi
+    fi
+    if [ -s "$dev_identity" ]; then
+      : "''${MSKSC_IDENTITY_FILE:=$dev_identity}"
+      export MSKSC_IDENTITY_FILE
+    fi
     # The daemon's config-tree root (#262): the dev daemon script
     # exports this itself, but a hand-run bare `msksd` from a
     # devenv shell resolves the same <repo>/msksd.yaml. A non-empty

@@ -27,7 +27,7 @@ from cryptography.hazmat.primitives.asymmetric.utils import (
     decode_dss_signature,
 )
 from msks.client import agent, cli, ssh
-from msks.identity import mint
+from testkeys import mint
 
 PEM = mint("ed25519")[0]
 ECDSA_PEM = mint("ecdsa")[0]
@@ -622,15 +622,20 @@ def test_resolve_private_names_a_missing_client_half(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """No daemon half and no local file: one SystemExit line naming
-    both recoveries — minted on another client, or the operator's
-    own key — with the path and the console fallback, not a
-    traceback (#121, #132)."""
+    the recovery — point identity_file at the workspace's private
+    key, a key an older msks wrote may live under the client data
+    root — with the path and the console fallback, not a traceback
+    (#121, #132, #486)."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("MSKSC_IDENTITY_FILE", raising=False)
     monkeypatch.delenv("MSKSC_DATA_DIR", raising=False)
-    with pytest.raises(SystemExit, match="another client"):
+    with pytest.raises(SystemExit) as caught:
         ssh.resolve_private({"public_key": "x", "private_key": None}, "alpha")
+    assert "not on this client" in str(caught.value)
+    # The console keeps working either way (#481): the recovery
+    # says so instead of implying the console needs the key.
+    assert "token-gated root autologin" in str(caught.value)
 
 
 def identity_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -651,36 +656,38 @@ def plant_operator_key(monkeypatch, tmp_path) -> tuple[str, str, Path]:
     return pem, public, mine
 
 
-def test_identity_file_outranks_the_minted_key(
+def test_identity_file_resolves_the_operator_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A workspace planted with the operator's key (#336, the
-    create default) has no per-workspace file: the private half
-    comes from identity_file, checked against the served public
-    line — and the data root's minted key loses to it when both
-    exist."""
+    create default, #486 the only mode) has no per-workspace file:
+    the private half comes from identity_file, checked against the
+    served public line."""
     identity_home(monkeypatch, tmp_path)
-    from msks.client.create import mint_operator_identity
-
-    mint_operator_identity()  # the losing rung
     pem, public, _mine = plant_operator_key(monkeypatch, tmp_path)
     key = {"public_key": f"{public} msks-client:ws", "private_key": None}
     assert ssh.resolve_private(key, "ws1") == pem
 
 
-def test_resolve_private_matches_the_minted_operator_identity(
+def test_a_data_root_key_resolves_only_when_configured(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The key msks minted to <data_dir>/identity at create is the
-    second rung: an operator-key workspace resolves through it with
-    identity_file unset (#336)."""
+    """A key an older msks wrote to <data_dir>/identity is not read
+    implicitly (#486 — the configured file is the only rung): the
+    workspace resolves when identity_file points at it, and the
+    refusal names it as the recovery when nothing is configured."""
     identity_home(monkeypatch, tmp_path)
-    from msks.client.create import mint_operator_identity, public_line
-
-    pem, path = mint_operator_identity()
-    public = public_line(pem)
-    assert path == tmp_path / "data" / "msks" / "identity"
+    pem, public = mint("ed25519")
+    legacy = tmp_path / "data" / "msks" / "identity"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(pem)
     key = {"public_key": f"{public} x", "private_key": None}
+    # Unconfigured: the legacy file does not resolve, and the
+    # refusal names the data root as the recovery.
+    with pytest.raises(SystemExit, match="older msks"):
+        ssh.resolve_private(key, "ws1")
+    # Configured: the same file answers.
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(legacy))
     assert ssh.resolve_private(key, "ws1") == pem
 
 
@@ -711,15 +718,13 @@ def test_resolve_private_falls_past_a_stale_half_to_the_operator(
     falls through to the operator identity before the refusal: the
     row was re-created as an operator-key workspace (#336)."""
     identity_home(monkeypatch, tmp_path)
-    from msks.client.create import mint_operator_identity, public_line
-
-    pem, _path = mint_operator_identity()
+    pem, public, _mine = plant_operator_key(monkeypatch, tmp_path)
     stale_pem, _stale_public = mint("ecdsa")
     path = tmp_path / "data" / "msks" / "ws1" / "identity"
     path.parent.mkdir(parents=True)
     path.write_text(stale_pem)
     key = {
-        "public_key": f"{public_line(pem)} msks-client:ws",
+        "public_key": f"{public} msks-client:ws",
         "private_key": None,
     }
     assert ssh.resolve_private(key, "ws1") == pem
@@ -741,11 +746,11 @@ def test_resolve_private_recovery_names_identity_file(
         ssh.resolve_private(key, "ws1")
     line = str(caught.value)
     assert "MSKSC_IDENTITY_FILE" in line
-    assert "another client" in line
+    assert "not on this client" in line
     # And with nothing set at all: no identity resolves, the same
     # refusal answers.
     monkeypatch.delenv("MSKSC_IDENTITY_FILE")
-    with pytest.raises(SystemExit, match="matched nothing"):
+    with pytest.raises(SystemExit, match="no operator identity is configured"):
         ssh.resolve_private(key, "ws1")
 
 

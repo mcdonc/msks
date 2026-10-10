@@ -131,11 +131,11 @@ boots. A guest image must:
   never writes sudo configuration, so a guest that is rebuilt
   keeps exactly the sudo policy its configuration declares.
 - **Run cloud-init against the cidata seed disk.** A workspace
-  created with `user_data` (#41) or a minted identity (#111) boots
+  created with `user_data` (#41) or a seeded ssh identity (#111) boots
   with a third, read-only virtio disk: a small iso9660 filesystem
   labeled `cidata` carrying `user-data` (the operator payload,
   composed beside the identity's seeding script when a key was
-  minted) and `meta-data`
+  supplied) and `meta-data`
   (`instance-id`, keyed off the workspace id, and
   `local-hostname`, the workspace's creation name (#370) — the
   minted id when the workspace was created without one) at its

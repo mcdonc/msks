@@ -325,17 +325,31 @@ def test_migration_is_one_atomic_statement() -> None:
     assert "UPDATE" not in source  # no backfill step to tear
 
 
-async def test_create_and_fetch_minted_identity(app_for) -> None:
-    """The #111 columns round-trip: the spec's public half plus the
-    mint-to-row private half, which never rides the API-facing
-    dict — and the login user (#248) with them."""
+async def test_create_and_fetch_a_legacy_minted_identity(app_for) -> None:
+    """The #111 columns round-trip: the spec's public half on the
+    row, and the private half a pre-#486 daemon would have written
+    (#486 — nothing writes it anymore; the column stays so those
+    rows keep serving) read back through the key fetch — with the
+    login user (#248) beside them."""
+    from msks.model.db import sessionmaker_for
+    from msks.model.workspaces import Workspace
+    from sqlalchemy import update
+
     app = app_for()
     await app.state.model.create_all()
     private_pem = "-----BEGIN OPENSSH PRIVATE KEY-----\n...\n"
     pub = "ecdsa-sha2-nistp256 AAAA msksd:ws1"
     row = await app.state.model.create_workspace(
-        spec(ssh_pubkey=pub, login_user="alice"), ssh_privkey=private_pem
+        spec(ssh_pubkey=pub, login_user="alice")
     )
+    maker = sessionmaker_for(app.state.model.engine())
+    async with maker() as session:
+        await session.execute(
+            update(Workspace)
+            .where(Workspace.id == "ws1")
+            .values(ssh_privkey=private_pem)
+        )
+        await session.commit()
     assert row["ssh_pubkey"] == pub
     assert row["login_user"] == "alice"
     assert "ssh_privkey" not in row

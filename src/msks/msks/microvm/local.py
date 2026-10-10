@@ -250,12 +250,7 @@ def vm_net(attachment) -> dict | None:
     return {"tap": attachment.tap, "mac": attachment.mac}
 
 
-def disk_entries(
-    state_dir: Path,
-    workspace_id: str,
-    user_data: str | None = None,
-    ssh_pubkey: str | None = None,
-) -> list[dict]:
+def disk_entries(state_dir: Path, workspace_id: str) -> list[dict]:
     """The VM's persistent disks (#14): root overlay, home volume.
 
     Both are writable — the overlay absorbs root writes over the
@@ -266,10 +261,15 @@ def disk_entries(
     ``backing_files``: v51 loads a qcow2 backing file only when the
     disk says so (landlock hardening, GHSA advisory follow-up).
 
-    A workspace created with ``user_data`` (#41) or a minted
-    identity (#111) adds a third disk: its ``cidata`` seed, read-only
-    raw. The caller has run ``ensure_artifacts`` first, so the file
-    exists by the time the VMM opens it.
+    A workspace whose artifacts include the ``cidata`` seed adds a
+    third disk: the seed, read-only raw. The seed is built for a
+    payload (#41), a supplied key (#111, #486), or a tap that will
+    serve an LLM listener or the interception CA (#259, #424) — a
+    keyless create seeds too, so the attach follows the artifact
+    itself: the caller has run ``ensure_artifacts`` first, and the
+    seed's presence at its path is the whole of the decision (the
+    boot-time heal rebuilds it the same way, so a healed boot
+    re-attaches it the same way).
     """
     disks = [
         {
@@ -284,7 +284,7 @@ def disk_entries(
             "image_type": "Raw",
         },
     ]
-    if user_data is not None or ssh_pubkey is not None:
+    if seed_path(state_dir, workspace_id).is_file():
         disks.append(
             {
                 "path": str(seed_path(state_dir, workspace_id)),
@@ -487,8 +487,6 @@ class LocalCloudHypervisor(MicrovmDriver):
                 disk_entries(
                     self._settings().vmm.state_dir,
                     spec.workspace_id,
-                    user_data=spec.user_data,
-                    ssh_pubkey=spec.ssh_pubkey,
                 ),
                 socket_path,
                 vmm.request_timeout_s,

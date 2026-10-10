@@ -37,13 +37,9 @@ from .secrets import SecretsScreen
 from .workspace import WorkspaceScreen, action_label, action_note
 
 
-def created_note(row: dict, path) -> str:
-    """The create's flash: the created line, plus the private
-    half's path when one was written."""
-    note = f"created {escape(workspace_label(row))} (id {row['id']})"
-    if path is not None:
-        note += f" · identity {path}"
-    return note
+def created_note(row: dict) -> str:
+    """The create's flash: the created line."""
+    return f"created {escape(workspace_label(row))} (id {row['id']})"
 
 
 async def guarded_flash(app, label: str, work):
@@ -417,8 +413,7 @@ class MainScreen(Screen):
                 FailurePanel("create", body.get("name"), str(exc))
             )
             return
-        row, path = result
-        self.app.flash(created_note(row, path))
+        self.app.flash(created_note(result))
         self.refresh_rows()
 
     def action_quit(self) -> None:

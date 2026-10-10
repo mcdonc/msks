@@ -291,11 +291,6 @@ def root_prompt_needle(hostname: str | None = None) -> bytes:
     return f"root@{hostname or IMAGE_HOSTNAME}:~# ".encode()
 
 
-#: The default-hostname spelling, for probes on seed-less guests
-#: and the harness's own unit pins.
-CONSOLE_PROMPT_NEEDLE = root_prompt_needle()
-
-
 async def run_in_console(
     microvm,
     workspace_id: str,
@@ -305,6 +300,14 @@ async def run_in_console(
 ) -> None:
     """Run one shell command over the console getty and wait for its
     marker, in a fresh guest shell session per attempt (#75).
+
+    The prompt needle defaults to the workspace's own name: every
+    guest carries its cidata seed (the daemon's interceptor CA rides
+    it from first boot, #424), and the seed's meta-data names the
+    guest for its creation name (#370) — the image's own hostname
+    survives only in a guest that booted without its seed. Callers
+    that address the workspace by a reference other than the name
+    (or pin the image default on purpose) pass ``hostname``.
 
     The prompt wait is where a slow boot bites: the console service
     accepts the connection and the pty echoes, but the shell behind
@@ -333,7 +336,9 @@ async def run_in_console(
                 # shell render a fresh prompt (#481).
                 writer.write(b"\n")
                 await writer.drain()
-                await read_until(reader, root_prompt_needle(hostname))
+                await read_until(
+                    reader, root_prompt_needle(hostname or workspace_id)
+                )
                 writer.write(command.encode() + b"\n")
                 await writer.drain()
                 await read_until(reader, marker.encode())
@@ -445,7 +450,9 @@ async def await_dev_state(
                 # was connected when it appeared).
                 writer.write(b"\n")
                 await writer.drain()
-                await read_until(reader, root_prompt_needle(hostname))
+                await read_until(
+                    reader, root_prompt_needle(hostname or workspace_id)
+                )
                 writer.write(
                     b"cat /root/.msks-bootstrap/state "
                     b"/root/.msks-bootstrap/unit-tests.rc 2>/dev/null; "
@@ -559,7 +566,9 @@ async def await_guest_trail(
                 # was connected when it appeared).
                 writer.write(b"\n")
                 await writer.drain()
-                await read_until(reader, root_prompt_needle(hostname))
+                await read_until(
+                    reader, root_prompt_needle(hostname or workspace_id)
+                )
                 writer.write(f"{probe}; echo E-$((21*2))\n".encode())
                 await writer.drain()
                 data = await read_until(

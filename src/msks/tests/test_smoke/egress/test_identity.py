@@ -1,4 +1,5 @@
-"""Identity smokes: minted, client-minted, and operator-supplied keys."""
+"""Identity smokes: the operator's configured key, the refusal an
+unconfigured client answers with, and operator-supplied keys."""
 
 import asyncio
 import contextlib
@@ -46,17 +47,18 @@ from test_smoke import (
 @needs_egress
 @needs_local
 @needs_ssh_tools
-async def test_local_minted_identity() -> None:
-    """The minted identity end to end (#111): create mints and seeds,
-    the key fetch serves the halves, and a fresh egress workspace
-    accepts ssh as root and as the msks workspace user with no manual
-    key steps anywhere.
+async def test_local_operator_identity() -> None:
+    """The operator's configured key end to end (#336, #486): create
+    plants the key identity_file names, the daemon holds the public
+    half alone, and a fresh egress workspace accepts ssh as root and
+    as the msks workspace user with no manual key steps anywhere.
 
-    The whole create path runs through the real API (POST /workspaces
-    → mint → seed build at prepare → row), the private half arrives
-    via ``msks key --out`` (the CLI over the same API the forward
-    uses), and a stop/start cycle serves the same identity again —
-    the halves live on the workspace's row, not in any process.
+    The whole create path runs through the real API (POST
+    /workspaces → validate → seed build at prepare → row), the
+    private half never leaves the operator's file (``msks key``
+    answers the public half; the private forms refuse), and a
+    stop/start cycle serves the same identity again — the public
+    half lives on the workspace's row, not in any process.
     """
     nft_tool = os.environ.get("TEST_NFT") or shutil.which("nft") or "nft"
     ip_tool = os.environ.get("TEST_IP") or shutil.which("ip") or "ip"
@@ -87,7 +89,18 @@ async def test_local_minted_identity() -> None:
     serial_log = state_dir / "vms" / wid / "serial.log"
     workdir = state_dir / "ident-work"
     workdir.mkdir(parents=True)
-    key = workdir / "id"
+    # The operator's own key, the way operators make them (#486:
+    # msks generates nothing — the test harness plays the operator
+    # and ssh-keygens one).
+    key = workdir / "operator-key"
+    keygen = await asyncio.to_thread(
+        subprocess.run,
+        [SSH_KEYGEN_BIN, "-q", "-t", "ed25519", "-N", "", "-f", str(key)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert keygen.returncode == 0, keygen.stderr
     known_hosts = workdir / "known_hosts"
     # The operator payload rides the same seed as the identity (the
     # MIME-composed default path every --user-data create now takes)
@@ -109,6 +122,7 @@ async def test_local_minted_identity() -> None:
         os.environ,
         MSKSC_URL=f"http://127.0.0.1:{api_port}",
         MSKSC_TOKEN=token,
+        MSKSC_IDENTITY_FILE=str(key),
     )
 
     def start_forward(port: int) -> None:
@@ -256,29 +270,6 @@ async def test_local_minted_identity() -> None:
             hostname=wid,
         )
 
-    async def fetch_key(out: Path) -> str:
-        # The CLI fetch (#111): same API, same token, mode 0600 —
-        # no manual key steps for the operator.
-        result = await asyncio.to_thread(
-            subprocess.run,
-            [
-                sys.executable,
-                "-m",
-                "msks.client.cli",
-                "key",
-                wid,
-                "--out",
-                str(out),
-            ],
-            env=cli_env,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        assert result.returncode == 0, result.stderr
-        assert out.stat().st_mode & 0o777 == 0o600
-        return out.read_text()
-
     try:
         api_server = uvicorn.Server(
             uvicorn.Config(
@@ -295,7 +286,8 @@ async def test_local_minted_identity() -> None:
                 raise AssertionError("the test API server never started (30s)")
             await asyncio.sleep(0.05)
 
-        # The real create path: mint at create, seed at prepare.
+        # The real create path: the configured key's public half
+        # rides the create, the seed plants it at prepare.
         payload_path = workdir / "payload.sh"
         payload_path.write_text(
             f"#!/bin/sh\nprintf '%s\\n' {payload_marker} > /root/payload\n",
@@ -316,7 +308,6 @@ async def test_local_minted_identity() -> None:
             "--egress",
             "--user-data",
             str(payload_path),
-            "--daemon-mint",
             "--user",
             "alice",
         )
@@ -327,25 +318,25 @@ async def test_local_minted_identity() -> None:
         vm_id = created_id(created)
         serial_log = state_dir / "vms" / vm_id / "serial.log"
 
-        private_pem = await fetch_key(key)
-        assert private_pem.startswith("-----BEGIN OPENSSH PRIVATE KEY-----")
+        # The daemon holds the public half alone (#486): the key
+        # command answers it, and the private form refuses.
+        served = await cli("key", wid)
+        assert served.returncode == 0, served.stderr
+        minted = served.stdout.strip()
+        # The daemon re-annotates the supplied line with the
+        # workspace's name as its provenance comment (the supplied
+        # path's rule since #121: name when one was given, else id).
+        assert minted.startswith("ssh-ed25519 ") and minted.endswith(
+            f"msks-client:{wid}"
+        )
+        refused = await cli("key", wid, "--private")
+        assert refused.returncode != 0
+        assert "holds no private half" in refused.stderr
 
         # Start via the API, boot, and let the guest say who its keys
-        # are for: both authorized_keys files carry the minted line.
+        # are for: both authorized_keys files carry the planted line.
         await start_via_api()
         await boot_and_wait(app=app)
-        pub = await asyncio.to_thread(
-            subprocess.run,
-            [sys.executable, "-m", "msks.client.cli", "key", wid],
-            env=cli_env,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        minted = pub.stdout.strip()
-        assert minted.startswith("ssh-ed25519 ") and minted.endswith(
-            f"msksd:{vm_id}"
-        )
         await run_in_console(
             microvm,
             vm_id,
@@ -580,9 +571,9 @@ async def test_local_minted_identity() -> None:
                 await asyncio.to_thread(proc.wait, 10)
         forwards.clear()
         await stop_via_api()
-        again_key = workdir / "id-again"
-        again_pem = await fetch_key(again_key)
-        assert again_pem == private_pem
+        again = await cli("key", wid)
+        assert again.returncode == 0, again.stderr
+        assert again.stdout.strip() == minted
         serial_log.unlink(missing_ok=True)
         await start_via_api()
         await boot_and_wait(app=app)
@@ -622,30 +613,19 @@ async def test_local_minted_identity() -> None:
         shutil.rmtree(state_dir, ignore_errors=True)
 
 
-@needs_egress
 @needs_local
-@needs_ssh_tools
-async def test_local_client_minted_identity() -> None:
-    """The client-minted identity end to end (#121): the client mints
-    the keypair and sends the public half only, the daemon's row holds
-    no private half (the no-escrow contract, checked in the database
-    itself), and ``msks ssh`` opens the fresh workspace from the local
-    cache alone — the identity the client kept is the identity the
-    guest planted.
+async def test_local_unconfigured_create_refuses() -> None:
+    """An unconfigured client refuses the create (#486): no key is
+    generated, the one-line error names the config key, the env var,
+    and the flag, and the daemon never hears the create — no row, no
+    artifacts. The real CLI against a real daemon, with the identity
+    settings scrubbed from its environment.
     """
-    nft_tool = os.environ.get("TEST_NFT") or shutil.which("nft") or "nft"
-    ip_tool = os.environ.get("TEST_IP") or shutil.which("ip") or "ip"
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
     token = f"smoke-token-{uuid.uuid4().hex}"
     api_port = free_port()
     settings = Settings(
         vmm=VmmSettings(state_dir=state_dir),
-        net=NetSettings(
-            enabled=True,
-            uplink=default_route_iface(),
-            ip_tool=ip_tool,
-            nft_tool=nft_tool,
-        ),
         server=ServerSettings(
             host="127.0.0.1",
             port=api_port,
@@ -654,58 +634,9 @@ async def test_local_client_minted_identity() -> None:
         ),
     )
     app = build_app(settings)
-    microvm = app.state.microvm
-    wid = f"cmint-{uuid.uuid4().hex[:8]}"
-    # The minted id lands here after the create (#246); the typed
-    # name is the pre-create fallback (nothing exists to clean).
-    vm_id = wid
-    serial_log = state_dir / "vms" / wid / "serial.log"
-    workdir = state_dir / "cmint-work"
-    workdir.mkdir(parents=True)
-    data = workdir / "data"
-
-    forwarding = Path("/proc/sys/net/ipv4/ip_forward")
-    forwarding_was = forwarding.read_text()
-    forwarding.write_text("1")
 
     api_server = None
     api_task = None
-
-    # XDG_DATA_HOME holds the client-minted identity (#121);
-    # XDG_CACHE_HOME keeps the msks ssh known_hosts inside the
-    # workdir (the #110 hermeticity lesson).
-    cli_env = dict(
-        os.environ,
-        MSKSC_URL=f"http://127.0.0.1:{api_port}",
-        MSKSC_TOKEN=token,
-        XDG_DATA_HOME=str(data),
-        XDG_CACHE_HOME=str(workdir / "cache"),
-    )
-    os.environ["XDG_DATA_HOME"] = str(data)
-
-    async def cli(
-        *args: str, timeout: float = 120.0
-    ) -> subprocess.CompletedProcess:
-        return await asyncio.to_thread(
-            subprocess.run,
-            [sys.executable, "-m", "msks.client.cli", *args],
-            env=cli_env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-
-    def row_halves() -> tuple[str | None, str | None]:
-        """(ssh_privkey, ssh_pubkey) straight from the daemon's own
-        database — the no-escrow contract, not the API's word for it.
-        The row is found by name (#246): the id is minted."""
-        with sqlite3.connect(settings.server.db_path) as conn:
-            return conn.execute(
-                "select ssh_privkey, ssh_pubkey from workspaces "
-                "where name = ?",
-                (wid,),
-            ).fetchone()
-
     try:
         api_server = uvicorn.Server(
             uvicorn.Config(
@@ -722,134 +653,54 @@ async def test_local_client_minted_identity() -> None:
                 raise AssertionError("the test API server never started (30s)")
             await asyncio.sleep(0.05)
 
-        # The client mint is explicit (#336 made the operator's
-        # own key the bare-create default, so #121's mint is
-        # opted into): the POST carries the public half only, and
-        # the private half lands mode 0600 under the client data
-        # root after the create.
-        created = await cli(
-            "create",
-            wid,
-            "--kernel",
-            VMLINUX,
-            *(["--initrd", INITRD] if INITRD else []),
-            "--rootfs",
-            ROOTFS,
-            *(["--cmdline", CMDLINE] if CMDLINE else []),
-            "--egress",
-            "--user",
-            "alice",
-            "--key-type",
-            "ed25519",
+        # Hermetic: an empty config tree (not the operator's real
+        # ~/.config/msks, where an identity_file may live) and no
+        # identity in the environment — the create must refuse.
+        config_dir = state_dir / "client-config"
+        config_dir.mkdir(parents=True)
+        cli_env = dict(
+            os.environ,
+            MSKSC_URL=f"http://127.0.0.1:{api_port}",
+            MSKSC_TOKEN=token,
+            MSKSC_CONFIG_DIR=str(config_dir),
         )
-        assert created.returncode == 0, created.stderr
-        # The client mint lands under the minted id (#246).
-        vm_id = created_id(created)
-        serial_log = state_dir / "vms" / vm_id / "serial.log"
-        identity = data / "msks" / vm_id / "identity"
-        assert identity.exists()
-        assert identity.stat().st_mode & 0o777 == 0o600
-        assert identity.read_text().startswith(
-            "-----BEGIN OPENSSH PRIVATE KEY-----"
-        )
-
-        # The daemon's row: public half annotated with its own
-        # provenance marker, private half NULL — no escrow.
-        priv, pub = row_halves()
-        assert priv is None
-        assert pub is not None and pub.endswith(f"msks-client:{wid}")
-
-        # The key endpoint serves the public half; the private forms
-        # name where that half lives instead.
-        served = await cli("key", wid)
-        assert served.returncode == 0, served.stderr
-        assert served.stdout.strip() == pub
-        refused = await cli("key", wid, "--private")
-        assert refused.returncode != 0
-        assert "holds no private half" in refused.stderr
-        assert "minted on a client" in refused.stderr
-
-        # Boot, let cloud-init plant the key, and confirm the guest's
-        # authorized_keys carry the client's line.
-        started = await cli("start", wid)
-        assert started.returncode == 0, started.stderr
-        await await_guest_up(microvm, vm_id, hostname=wid)
-        await run_in_console(
-            microvm,
-            vm_id,
-            "cloud-init status --wait",
-            "done",
-            hostname=wid,
-        )
-        await run_in_console(
-            microvm,
-            vm_id,
-            "i=0; while [ $i -lt 30 ] "
-            "&& ! { systemctl is-active msks-wait-address >/dev/null 2>&1 "
-            "&& systemctl is-active ssh >/dev/null 2>&1; }; "
-            "do sleep 1; i=$((i+1)); done; "
-            "systemctl is-active msks-wait-address >/dev/null 2>&1 "
-            "&& systemctl is-active ssh >/dev/null 2>&1 && echo U-$((6*7))",
-            "U-42",
-            hostname=wid,
-        )
-        await run_in_console(
-            microvm,
-            vm_id,
-            f"grep -qxF '{pub}' /root/.ssh/authorized_keys "
-            f"&& grep -qxF '{pub}' /home/msks/.ssh/authorized_keys "
-            f"&& echo AK-$((6*7))",
-            "AK-42",
-            hostname=wid,
-        )
-        # ``msks ssh`` from the local cache alone: the API serves the
-        # public half, the private half comes from the file the create
-        # wrote, and the login runs as the workspace's recorded login
-        # user (#248 — alice, the create's --user).
-        login = await asyncio.to_thread(
+        cli_env.pop("MSKSC_IDENTITY_FILE", None)
+        refused = await asyncio.to_thread(
             subprocess.run,
             [
                 sys.executable,
                 "-m",
                 "msks.client.cli",
-                "ssh",
-                wid,
-                "--",
-                "-F",
-                os.devnull,
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "ConnectTimeout=15",
-                "--",
-                "echo CMINT-$(whoami)-$((6*7))",
+                "create",
+                "unconfigured-ws",
+                "--kernel",
+                VMLINUX,
+                "--rootfs",
+                ROOTFS,
             ],
             env=cli_env,
             capture_output=True,
             text=True,
-            timeout=SSH_CMD_TIMEOUT_S,
+            timeout=60,
         )
-        assert login.returncode == 0, f"{login.stdout}\n{login.stderr}"
-        assert "CMINT-alice-42" in login.stdout, login.stdout
-
-        await microvm.shutdown(vm_id, timeout_s=SHUTDOWN_TIMEOUT_S)
-        final = await microvm.info(vm_id)
-        assert final.status.value in ("stopped", "absent")
-    except BaseException:
-        collect_failure_evidence(state_dir, vm_id, serial_log)
-        with contextlib.suppress(Exception):
-            await microvm.kill(vm_id)
-        raise
+        assert refused.returncode != 0
+        line = refused.stderr.strip()
+        assert "no identity configured" in line
+        assert "identity_file" in line
+        assert "MSKSC_IDENTITY_FILE" in line
+        assert "--pubkey" in line
+        # The daemon never heard it: no row, no artifacts.
+        with sqlite3.connect(settings.server.db_path) as conn:
+            assert (
+                conn.execute("select count(*) from workspaces").fetchone()[0]
+                == 0
+            )
+        assert not (state_dir / "vms").exists()
     finally:
         if api_task is not None:
             api_server.should_exit = True
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(asyncio.shield(api_task), timeout=10)
-        with contextlib.suppress(Exception):
-            await microvm.cleanup(vm_id)
-        with contextlib.suppress(OSError):
-            forwarding.write_text(forwarding_was)
-        os.environ.pop("XDG_DATA_HOME", None)
         shutil.rmtree(state_dir, ignore_errors=True)
 
 
@@ -1016,7 +867,7 @@ async def test_local_operator_pubkey() -> None:
         refused = await cli("key", wid, "--private")
         assert refused.returncode != 0
         assert "holds no private half" in refused.stderr
-        assert "it is the operator's own key" in refused.stderr
+        assert "the operator's own key is the identity" in refused.stderr
 
         started = await cli("start", wid)
         assert started.returncode == 0, started.stderr
@@ -1107,7 +958,7 @@ async def test_local_operator_pubkey() -> None:
         sugar = await cli("ssh", wid, "--", "-F", os.devnull, "--", "true")
         assert sugar.returncode != 0
         assert "not on this client" in sugar.stderr
-        assert "supplied" in sugar.stderr
+        assert "Point identity_file" in sugar.stderr
 
         await microvm.shutdown(vm_id, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(vm_id)

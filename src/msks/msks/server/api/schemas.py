@@ -213,15 +213,16 @@ class WorkspaceCreate(BaseModel):
     # First-boot provisioning (#41): a shell script (leading "#!") or
     # cloud-config YAML — cloud-init runs both — delivered on the
     # workspace's read-only cidata seed disk, composed beside the
-    # minted identity's seeding script when one was minted (#111).
+    # identity's seeding script when a key is supplied (#111).
     # Create-time and immutable: a workspace keeps its payload until
     # it is deleted and recreated.
     user_data: str | None = Field(default=None, max_length=USER_DATA_MAX)
-    # The no-escrow identity mode (#121): a public key line the
-    # client minted, or one the operator already owns (#132) — any
-    # well-formed key type. Present → the daemon stores and seeds the
-    # public half only — no private half ever reaches it. Absent →
-    # the daemon mints both halves itself (#111).
+    # The identity (#486): the operator's public key line, or a
+    # one-off supplied one (#132) — any well-formed key type.
+    # Present → the daemon stores and seeds the public half only; no
+    # private half ever reaches it. Absent → no key is seeded (a
+    # deliberate keyless create; the guest answers the console
+    # alone, #481).
     ssh_pubkey: str | None = Field(default=None, max_length=16384)
     # The workspace's login user (#248): recorded on the row, seeded
     # into the guest at first boot (the account and its authorized_keys

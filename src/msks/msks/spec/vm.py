@@ -53,15 +53,16 @@ class VmSpec:
     secret_coverage: str = "all"
     # First-boot provisioning payload (#41): a shell script (leading
     # ``#!``) or cloud-config YAML, delivered on a per-workspace seed
-    # disk labeled ``cidata`` — composed beside the minted identity's
-    # seeding script when one was minted (#111). Create-time only;
+    # disk labeled ``cidata`` — composed beside the identity's
+    # seeding script when one is staged (#111). Create-time only;
     # None boots the workspace without an operator payload (the
     # identity alone still builds a seed).
     user_data: str | None = None
-    # The minted identity's public half, one authorized_keys line
-    # (#111): composed into the seed's user-data beside any operator
-    # payload. None is a workspace without a minted identity (a
-    # pre-#111 row).
+    # The identity's public half, one authorized_keys line (#111,
+    # #486 — the operator's own key, supplied at create): composed
+    # into the seed's user-data beside any operator payload. None
+    # is a workspace without a seeded key (a deliberate keyless
+    # create, or a pre-#111 row).
     ssh_pubkey: str | None = None
     # The workspace's login user (#248): recorded at create and
     # seeded into the guest at first boot (the account, its home,

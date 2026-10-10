@@ -29,7 +29,13 @@ from pathlib import Path
 import httpx
 from msks.spec.probe import PROBE_HOST
 
-from test_smoke import GUEST_DIR, default_route_iface, free_port, needs_egress
+from test_smoke import (
+    GUEST_DIR,
+    collect_failure_evidence,
+    default_route_iface,
+    free_port,
+    needs_egress,
+)
 from test_smoke.egress.test_daemon_e2e import (
     DAEMON_EXIT_TIMEOUT_S,
     await_ca,
@@ -81,6 +87,7 @@ async def test_probe_e2e_curl_from_the_workspace() -> None:
 
     client = None
     wid = f"probe-e2e-{uuid.uuid4().hex[:8]}"
+    vm_id = wid  # the minted id lands here after the create (#246)
     try:
         await await_ca(proc, state_dir)
         client = httpx.AsyncClient(
@@ -100,6 +107,9 @@ async def test_probe_e2e_curl_from_the_workspace() -> None:
 
         response = await client.post("/api/v1/workspaces", json={"name": wid})
         assert response.status_code == 201, response.text
+        # The daemon minted the id (#246): the vm directory keys on
+        # it, the typed name addresses the API.
+        vm_id = response.json()["id"]
         response = await client.post(f"/api/v1/workspaces/{wid}/start")
         assert response.status_code == 200, response.text
 
@@ -176,6 +186,9 @@ async def test_probe_e2e_curl_from_the_workspace() -> None:
         assert response.status_code == 200, response.text
     except BaseException:
         print(daemon_log_tail(state_dir))
+        # The evidence collector resolves the vm directory by the
+        # id it is keyed on — the typed name would find nothing.
+        collect_failure_evidence(state_dir, vm_id)
         raise
     finally:
         if client is not None:

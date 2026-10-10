@@ -70,14 +70,13 @@ def host_mismatch(app, row: dict) -> str | None:
 async def serialize_create(app, key: str):
     """Serialize same-name creates end to end (#111, #246).
 
-    The minted identity makes every create racer-specific — two
-    concurrent creates of one name would each mint their own key,
-    and the artifact installs are last-rename-wins, so the loser's
-    seed could outlive its 409 under the winner's row: a workspace
-    whose key never logs in. One lock per workspace name, held
-    from the exists-check through the row insert, keeps the pair
-    (row, seed) from one mint; the loser sees the winner's row and
-    answers 409.
+    The artifact installs are last-rename-wins, so two concurrent
+    creates of one name would race their seeds against each other's
+    409s: the loser's seed could outlive its refusal under the
+    winner's row — a seed the row does not name. One lock per
+    workspace name, held from the exists-check through the row
+    insert, keeps the pair (row, seed) from one create; the loser
+    sees the winner's row and answers 409.
     """
     lock = app.state.create_locks.setdefault(key, asyncio.Lock())
     return lock

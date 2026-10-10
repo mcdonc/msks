@@ -10,7 +10,6 @@ tests.
 import asyncio
 import json
 import os
-import stat
 import sys
 import time
 from datetime import UTC, datetime, timedelta, timezone
@@ -171,7 +170,7 @@ class FakeData:
             raise RuntimeError(self.refusal)
         fresh = dict(row(id="new1", name=body.get("name"), status="created"))
         self.rows.append(fresh)
-        return (dict(fresh), None)
+        return dict(fresh)
 
     async def resize(self, workspace_id: str, body: dict) -> dict:
         """The resize POST (#331) — recorded; the reply carries the
@@ -850,6 +849,58 @@ async def test_the_create_form_refuses_local_junk() -> None:
         await pilot.press("escape")
         await wait_for(lambda: on_main(app))
         assert data.calls == []
+
+
+async def test_the_create_form_flashes_an_unconfigured_identity(
+    monkeypatch,
+) -> None:
+    """An unconfigured client refuses the create (#486): the form's
+    own identity resolution (the real core, a real TuiData) raises
+    before any exchange, and the failure panel carries the refusal
+    line — the TUI surface of the one-line error the CLI prints."""
+    import httpx
+    from msks.client.tui import data as data_mod
+
+    monkeypatch.setenv("MSKSC_URL", "https://api.test")
+    monkeypatch.setenv("MSKSC_TOKEN", "tok")
+    monkeypatch.delenv("MSKSC_IDENTITY_FILE", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", "/tmp/msks-tui-no-identity")
+    asked: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append((request.method, request.url.path))
+        if request.method == "GET" and request.url.path == (
+            "/api/v1/workspaces"
+        ):
+            return httpx.Response(200, json=[])
+        if request.method == "GET" and request.url.path == (
+            "/api/v1/create-defaults"
+        ):
+            return httpx.Response(
+                200, json={"root_mib": 10240, "home_mib": 20480}
+            )
+        if request.method == "GET":
+            return httpx.Response(200, json=[])
+        return httpx.Response(201, json={"id": "ws1"})
+
+    data = data_mod.TuiData(transport=httpx.MockTransport(handler))
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("c")
+        await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
+        screen = app.screen
+        screen.query_one("#field-name", Input).value = "brand-new"
+        screen.submit()
+        await pilot.pause()
+        await wait_for(lambda: type(app.screen).__name__ == "FailurePanel")
+        panel = str(app.screen.query_one("#failure-detail", Static).content)
+        assert "no identity configured" in panel
+        assert "MSKSC_IDENTITY_FILE" in panel
+        # The startup reads (the rows and form-default fetches) are
+        # the only traffic: the create itself never left the client.
+        assert all(method != "POST" for method, _path in asked)
+        await pilot.press("escape")
+        await wait_for(lambda: on_main(app))
 
 
 async def test_the_create_form_fits_the_small_terminal() -> None:
@@ -1971,6 +2022,12 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("MSKSC_URL", "https://api.test")
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    from testkeys import mint
+
+    pem, _public = mint("ed25519")
+    identity = tmp_path / "my-key"
+    identity.write_text(pem)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(identity))
     monkeypatch.setattr(data_mod, "invoking_user", lambda: "ops")
     seen: list[tuple] = []
     seen_pub: list[str] = []
@@ -2139,14 +2196,12 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
         "root_mib": 10240,
         "home_mib": 20480,
     }
-    created, path = await data.create({"name": "n"})
+    created = await data.create({"name": "n"})
     assert created["id"] == "ws1"
-    # The client mint's no-escrow exchange, in order after the
-    # listing.
-    post = seen.index(("POST", "/api/v1/workspaces"))
-    assert seen[post + 1] == ("GET", "/api/v1/workspaces/ws1/ssh-key")
-    assert path is not None and path.exists()
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    # The create sends the configured key's public half (#486): the
+    # POST carries it, nothing is fetched or written after.
+    assert seen_pub[0].startswith("ssh-ed25519 ")
+    assert ("GET", "/api/v1/workspaces/ws1/ssh-key") not in seen
     assert await data.start("ws1") == {"id": "ws1", "status": "running"}
     assert await data.stop("ws1") == {"id": "ws1", "status": "running"}
     assert await data.remove("ws1") == {"id": "ws1", "status": "running"}
@@ -2322,11 +2377,7 @@ def test_the_line_helpers() -> None:
             ]
         )
     ] == ["mid", "old", "broken"]
-    assert (
-        main_screen_mod.created_note(row(id="x"), None)
-        == "created alpha (id x)"
-    )
-    assert "identity" in main_screen_mod.created_note(row(id="x"), "/tmp/id")
+    assert main_screen_mod.created_note(row(id="x")) == "created alpha (id x)"
 
 
 def test_the_listing_columns_line_up(monkeypatch) -> None:

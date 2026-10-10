@@ -12,12 +12,13 @@ from the VM's:
   ``<state_dir>/volumes/<id>.ext4``, attached as a second virtio-blk
   disk the guest mounts at /home (labeled ``msks-home``).
 - the **seed disk** (#41) — present when the workspace carries a
-  ``user_data`` payload, a minted identity (#111), or an LLM proxy
-  credential (#259): a small iso9660
+  ``user_data`` payload, a supplied ssh key (#111, #486), or an
+  LLM proxy credential (#259): a small iso9660
   image under ``<state_dir>/vms/<id>/seed.img`` labeled ``cidata``,
   attached read-only as a third virtio-blk disk. Its ``user-data``
   document is the operator payload composed with the identity's
-  seeding script when a key was minted — verbatim alone otherwise —
+  seeding script when a key was supplied — verbatim alone
+  otherwise —
   plus a NoCloud ``meta-data`` (instance-id): exactly what
   cloud-init's datasource reads. It can embed tokens, so it is
   installed mode 0600 (the row that records the payload makes the
@@ -172,7 +173,8 @@ async def ensure_seed(
     ca_pem: str | None = None,
 ) -> None:
     """Build the #41 seed when the workspace carries a payload — its
-    own or the minted identity's (#111) — and the file is absent; a
+    own or the supplied ssh key's (#111, #486) — and the file is
+    absent; a
     fresh build joins the rollback list. The proxy-environment leg
     (#259, #483) rides the same condition: a workspace whose tap
     will serve an LLM listener gets its MSKSWS_* exports even with
@@ -191,7 +193,7 @@ async def ensure_seed(
 
 def seed_payload_present(spec: VmSpec, llm_port: int) -> bool:
     """Whether anything rides the seed for this spec: the
-    operator's own payload, the minted identity's key (#111), or
+    operator's own payload, the supplied ssh key (#111, #486), or
     the proxy environment a tap will serve (#259, #483)."""
     return (
         spec.user_data is not None
@@ -385,8 +387,9 @@ async def create_seed(
     cloud-init's NoCloud datasource expects — and the finished image
     is installed with the house atomic rename, mode 0600 (the payload
     can embed tokens). The staged user-data is the composed document:
-    the operator's payload beside the minted identity's seeding
-    script when a key was minted (#111), the operator's payload
+    the operator's payload beside the identity's seeding
+    script when a key was supplied (#111, #486), the operator's
+    payload
     verbatim otherwise.
     """
     target = seed_path(settings.state_dir, spec.workspace_id)

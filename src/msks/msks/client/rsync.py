@@ -5,17 +5,17 @@ The same composition ``msks ssh`` (#112) runs, answering the copy
 half of "git and rsync over the forward": the workspace is booted
 when the daemon reports it as not running (the same notices as
 ``msks console``), the workspace identity is fetched over the
-authenticated API — daemon-minted (#111) or client-minted (#121) —
-and the host ``rsync`` runs with the forward websocket (#109) as
-its ssh transport. The private half is staged in the transient
-in-process ssh-agent (:mod:`msks.client.agent`) and rsync's ssh
-children name the identity by its public half and sign through the
-agent socket (``IdentityAgent``), so the command writes no key
-file: a daemon-minted half arrives over the API and stays in
-memory for the session; a client-minted half is read from its one
-file and left exactly there. A session whose pre-flight booted the
-workspace waits out the first-boot identity seed (#168) with the
-same probe login ``msks ssh`` runs.
+authenticated API, and the host ``rsync`` runs with the forward
+websocket (#109) as its ssh transport. The private half is staged
+in the transient in-process ssh-agent
+(:mod:`msks.client.agent`) and rsync's ssh children name the
+identity by its public half and sign through the agent socket
+(``IdentityAgent``), so the command writes no key file: the
+operator identity (`identity_file`, #486) is read from its one
+file and left exactly there; a pre-#486 daemon-held half arrives
+over the API and stays in memory for the session. A session whose
+pre-flight booted the workspace waits out the first-boot identity
+seed (#168) with the same probe login ``msks ssh`` runs.
 
 Everything after the workspace id (or after ``--``) is passed to
 rsync verbatim; msks parses no rsync flags. The one shaping pass

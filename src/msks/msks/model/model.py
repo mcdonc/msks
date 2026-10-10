@@ -232,24 +232,20 @@ class Model:
         spec: VmSpec,
         image_hash: str | None = None,
         host: str | None = None,
-        ssh_privkey: str | None = None,
         name: str | None = None,
     ) -> dict:
         """Insert a workspace row from its VM spec and artifact facts.
 
-        ``ssh_privkey`` carries the minted identity's private half
-        (#111): the spec holds the public half (the seed needs it at
-        artifact-build time), the private half goes from mint to row
-        without ever riding a spec. ``name`` is the operator-chosen
-        label (#246) — the spec's ``workspace_id`` is the daemon-
-        minted immutable id, so the label rides beside it the same
-        way the private half does.
+        ``name`` is the operator-chosen label (#246) — the spec's
+        ``workspace_id`` is the daemon-minted immutable id, so the
+        label rides beside it. The row's private-half column stays
+        NULL (#486): msks never holds a private half; the column
+        survives for rows minted before #486, whose halves the key
+        endpoint keeps serving.
         """
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
-            row = Workspace(
-                **workspace_fields(spec, image_hash, host, ssh_privkey, name)
-            )
+            row = Workspace(**workspace_fields(spec, image_hash, host, name))
             session.add(row)
             await session.commit()
             return workspace_dict(row)
@@ -420,8 +416,9 @@ class Model:
             return result.rowcount > 0
 
     async def get_ssh_key(self, ref: str) -> dict | None:
-        """The workspace's minted identity halves (#111) and login
-        user (#248), or None when the workspace does not exist. The
+        """The workspace's ssh identity halves (#111, #486) and
+        login user (#248), or None when the workspace does not
+        exist. The
         workspace is resolved by id or name (#246) like every
         route-facing lookup, and the answer carries the row's
         immutable id and name so a client keys its caches on
@@ -708,7 +705,6 @@ def workspace_fields(
     spec: VmSpec,
     image_hash: str | None,
     host: str | None,
-    ssh_privkey: str | None,
     name: str | None = None,
 ) -> dict:
     """The ORM column values a VmSpec maps to."""
@@ -733,7 +729,6 @@ def workspace_fields(
         else None,
         "user_data": spec.user_data,
         "ssh_pubkey": spec.ssh_pubkey,
-        "ssh_privkey": ssh_privkey,
         "login_user": spec.login_user,
         "status": "created",
     }

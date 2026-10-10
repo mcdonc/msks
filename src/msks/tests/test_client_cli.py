@@ -23,11 +23,11 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from msks.app import build_app
-from msks.client import agent, cli, create, images, rest, workspaces
-from msks.identity import KEY_TYPES, mint
+from msks.client import cli, create, images, rest, workspaces
 from msks.server.api import build_api
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from test_api import TOKEN, StubMicrovm
+from testkeys import mint
 
 ROWS = [
     {
@@ -375,9 +375,13 @@ def test_cmd_ls_empty_prints_nothing(
 
 
 def test_cmd_create_posts_body_and_prints(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     client_env(monkeypatch)
+    identity_env(monkeypatch, tmp_path)
+    _pem, public, _mine = plant_identity(monkeypatch, tmp_path)
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -390,16 +394,20 @@ def test_cmd_create_posts_body_and_prints(
     assert rc == 0
     assert seen["path"] == "/api/v1/workspaces"
     assert seen["auth"] == "Bearer tok"
-    assert seen["body"] == {"id": "ws1", "cpus": 4}
+    assert seen["body"] == {"id": "ws1", "cpus": 4, "ssh_pubkey": public}
     out = capsys.readouterr().out
     assert "created ws1" in out
     assert "attach with" not in out  # no attach hint without --start
 
 
 def test_cmd_create_start_boots_and_hints(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     client_env(monkeypatch)
+    identity_env(monkeypatch, tmp_path)
+    plant_identity(monkeypatch, tmp_path)
     paths = []
     auths = []
 
@@ -420,64 +428,37 @@ def test_cmd_create_start_boots_and_hints(
     assert "msks console ws1" in out
 
 
-def test_cmd_create_client_mint_sends_public_only(
+def test_cmd_create_sends_the_configured_keys_public_half(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    """The create default (#121): the keypair is minted on this
-    client, the POST body carries the public half only, the daemon's
-    answer is checked against the no-escrow promise, and the private
-    half is persisted mode 0600 under the client data root after the
-    create."""
-    from cryptography.hazmat.primitives import serialization
-
+    """The create default (#486): the operator's configured key
+    supplies the identity — the POST body carries its derived
+    public half only, nothing is written client-side, and no
+    follow-up key fetch happens."""
     client_env(monkeypatch)
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    identity_env(monkeypatch, tmp_path)
+    pem, public, mine = plant_identity(monkeypatch, tmp_path)
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/ssh-key"):
-            return httpx.Response(
-                200,
-                json={
-                    "workspace": "ws1",
-                    "type": "ssh-ed25519",
-                    "public_key": f"{seen['supplied']} msks-client:ws1",
-                    "private_key": None,
-                },
-            )
+            raise AssertionError("the create fetches no key")
         seen["body"] = json.loads(request.content)
-        seen["supplied"] = seen["body"]["ssh_pubkey"]
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
-    rc = cli.cmd_create(
-        {"id": "ws1"}, transport=mock(handler), key_type="ed25519"
-    )
+    rc = cli.cmd_create({"id": "ws1"}, transport=mock(handler))
     assert rc == 0
-    supplied = seen["body"]["ssh_pubkey"]
-    assert supplied.startswith("ssh-ed25519 ")
+    assert seen["body"]["ssh_pubkey"] == public
     # No private material crosses the wire under any name.
     assert not any("priv" in name for name in seen["body"])
-    identity = tmp_path / "msks" / "ws1" / "identity"
-    pem = identity.read_text()
-    assert pem.startswith("-----BEGIN OPENSSH PRIVATE KEY-----")
-    assert identity.stat().st_mode & 0o777 == 0o600
-    # The stored half is the pair's other half: it derives the line
-    # that was sent.
-    loaded = serialization.load_ssh_private_key(pem.encode(), password=b"")
-    derived = (
-        loaded.public_key()
-        .public_bytes(
-            encoding=serialization.Encoding.OpenSSH,
-            format=serialization.PublicFormat.OpenSSH,
-        )
-        .decode()
-    )
-    assert derived == supplied
+    # Nothing per-workspace, and the operator's file is untouched.
+    assert not (tmp_path / "data" / "msks" / "ws1").exists()
+    assert mine.read_text() == pem
     out = capsys.readouterr().out
-    assert "client identity" in out
-    assert str(identity) in out
+    assert "created ws1" in out
+    assert "client identity" not in out
 
 
 def test_bare_create_plants_the_operator_key(
@@ -500,15 +481,7 @@ def test_bare_create_plants_the_operator_key(
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/ssh-key"):
-            return httpx.Response(
-                200,
-                json={
-                    "workspace": "ws1",
-                    "type": "ssh-ed25519",
-                    "public_key": f"{seen['supplied']} msks-client:ws1",
-                    "private_key": None,
-                },
-            )
+            raise AssertionError("the create fetches no key")
         seen["supplied"] = json.loads(request.content)["ssh_pubkey"]
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
@@ -525,172 +498,63 @@ def test_bare_create_plants_the_operator_key(
     assert f"identity: {mine}" in out
 
 
-def test_bare_create_mints_once_and_the_next_reuses(
+def test_an_unconfigured_create_refuses_before_any_traffic(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    """With identity_file unset, two bare creates mint one key and
-    reuse it: both bodies carry the same ssh_pubkey, one file lands
-    at <data_dir>/identity, no per-workspace file ever appears, and
-    the confirmations name the minted key then the reuse (#336)."""
+    """No identity configured and no --pubkey: the create refuses
+    locally (#486) — msks never generates a key — with the one-line
+    error naming the config key, the env var, and the flag, before
+    any network roundtrip and with nothing written anywhere."""
     identity_env(monkeypatch, tmp_path)
     client_env(monkeypatch)
-    supplied = []
+    asked = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/ssh-key"):
-            # The POST ran first: the last supplied line is this
-            # workspace's.
-            return httpx.Response(
-                200,
-                json={
-                    "workspace": "ws1",
-                    "type": "ssh-ed25519",
-                    "public_key": f"{supplied[-1]} msks-client:ws1",
-                    "private_key": None,
-                },
-            )
-        supplied.append(json.loads(request.content)["ssh_pubkey"])
+        asked.append(request.url.path)
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
-    rc = cli.run_create(cli.CreateFlags(workspace_id="ws1"), mock(handler))
-    assert rc == 0
-    rc = cli.run_create(cli.CreateFlags(workspace_id="ws2"), mock(handler))
-    assert rc == 0
-    assert len(supplied) == 2
-    assert supplied[0] == supplied[1]
-    minted = tmp_path / "data" / "msks" / "identity"
-    assert minted.exists()
-    assert minted.stat().st_mode & 0o777 == 0o600
-    assert not (tmp_path / "data" / "msks" / "ws1").exists()
-    assert not (tmp_path / "data" / "msks" / "ws2").exists()
-    out = capsys.readouterr().out
-    assert f"operator identity minted (mode 0600): {minted}" in out
-    assert f"identity: {minted}" in out
+    with pytest.raises(SystemExit) as caught:
+        cli.run_create(cli.CreateFlags(workspace_id="ws1"), mock(handler))
+    line = str(caught.value)
+    assert "no identity configured" in line
+    assert "identity_file" in line
+    assert "MSKSC_IDENTITY_FILE" in line
+    assert "--pubkey" in line
+    assert asked == []
+    assert not (tmp_path / "data").exists()
+    assert capsys.readouterr().out == ""
 
 
-def test_write_client_identity_names_an_unusable_cache(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A cache the client cannot write into is operator-shaped: one
-    SystemExit line naming the path and the recovery, after the
-    workspace itself was created."""
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    (tmp_path / "msks").write_text("a file where a directory belongs")
-    with pytest.raises(SystemExit, match="could not be written"):
-        cli.write_client_identity("ws1", "private material")
-
-
-def test_write_client_identity_forces_mode_on_a_preexisting_file(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The identity lands 0600 even when the path already holds a
-    world-readable file: the data root is the only home of this half."""
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    target = tmp_path / "msks" / "ws1" / "identity"
-    target.parent.mkdir(parents=True)
-    target.write_text("stale")
-    target.chmod(0o644)
-    path = cli.write_client_identity("ws1", "private material")
-    assert path == target
-    assert target.read_text() == "private material"
-    assert target.stat().st_mode & 0o777 == 0o600
-
-
-def test_create_client_mint_refuses_a_silent_escrow(
+def test_cmd_create_with_start_boots_after_the_create(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    """A daemon one version behind drops the unknown field and mints
-    its own pair: the create's follow-up check catches the swapped
-    identity and the escrowed half instead of caching a key that does
-    not open the workspace."""
-    from msks.identity import mint
-
+    """The configured key composes with --start in order: create,
+    then boot — nothing is fetched or written between them (#486)."""
     client_env(monkeypatch)
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    daemon_private, daemon_public = mint("ed25519")
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/ssh-key"):
-            return httpx.Response(
-                200,
-                json={
-                    "workspace": "ws1",
-                    "type": "ssh-ed25519",
-                    "public_key": f"{daemon_public} msksd:ws1",
-                    "private_key": daemon_private,
-                },
-            )
-        return httpx.Response(201, json={"id": "ws1", "status": "created"})
-
-    with pytest.raises(SystemExit, match="no-escrow promise"):
-        cli.cmd_create(
-            {"id": "ws1"}, transport=mock(handler), key_type="ed25519"
-        )
-    # Nothing was cached for the half the daemon swapped in.
-    assert not (tmp_path / "msks" / "ws1").exists()
-    assert "created ws1" in capsys.readouterr().out
-
-
-def test_write_client_identity_fails_as_one_line_when_unwritable(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Every phase of the write — open, chmod, the write itself —
-    exits as one named line: a directory squatting on the identity
-    path raises the same operator-shaped SystemExit as an unusable
-    cache root."""
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    blocker = tmp_path / "msks" / "ws1" / "identity"
-    blocker.parent.mkdir(parents=True)
-    blocker.mkdir()  # a directory where the key file belongs
-    with pytest.raises(SystemExit, match="could not be written"):
-        cli.write_client_identity("ws1", "private material")
-
-
-def test_cmd_create_client_mint_with_start_boots_after_verification(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    tmp_path: Path,
-) -> None:
-    """Client mint composes with --start in order: create, escrow
-    verification, identity write, then boot — a failure anywhere
-    earlier leaves the workspace created but unbooted, and the boot
-    rides the same client."""
-    client_env(monkeypatch)
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    identity_env(monkeypatch, tmp_path)
+    plant_identity(monkeypatch, tmp_path)
     paths = []
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         paths.append(request.url.path)
-        if request.url.path.endswith("/ssh-key"):
-            return httpx.Response(
-                200,
-                json={
-                    "workspace": "ws1",
-                    "type": "ssh-ed25519",
-                    "public_key": f"{seen['supplied']} msks-client:ws1",
-                    "private_key": None,
-                },
-            )
         if request.url.path.endswith("/start"):
             return httpx.Response(200, json={"id": "ws1", "status": "running"})
         seen["supplied"] = json.loads(request.content)["ssh_pubkey"]
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
-    rc = cli.cmd_create(
-        {"id": "ws1"}, start=True, transport=mock(handler), key_type="ed25519"
-    )
+    rc = cli.cmd_create({"id": "ws1"}, start=True, transport=mock(handler))
     assert rc == 0
     assert paths == [
         "/api/v1/workspaces",
-        "/api/v1/workspaces/ws1/ssh-key",
         "/api/v1/workspaces/ws1/start",
     ]
-    assert (tmp_path / "msks" / "ws1" / "identity").exists()
+    assert seen["supplied"].startswith("ssh-ed25519 ")
+    assert not (tmp_path / "data" / "msks" / "ws1").exists()
     out = capsys.readouterr().out
     assert "created ws1" in out
     assert "msks console ws1" in out
@@ -720,98 +584,51 @@ def identity_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("MSKSC_DATA_DIR", raising=False)
 
 
-def test_create_identity_modes(
+def plant_identity(monkeypatch, tmp_path) -> tuple[str, str, Path]:
+    """The configured identity (#486): one fixture key named by
+    MSKSC_IDENTITY_FILE — ``(pem, public, path)``."""
+    pem, public = mint("ed25519")
+    mine = tmp_path / "my-key"
+    mine.write_text(pem)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
+    return pem, public, mine
+
+
+def test_create_identity_sources(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The identity modes resolve to (key type, supplied line,
-    note): the operator key is the bare-create default (#336 —
-    here identity_file names it), --key-type opts into the
-    per-workspace client mint (#121), --daemon-mint hands the
-    identity to the daemon (#111), and the flag pairings that
-    would look meaningful but are not are rejected with the
-    conflict named."""
+    """The identity sources resolve to (supplied line, note)
+    (#486): the operator's configured key is the default — its
+    derived public half rides the body, and the confirmation names
+    the source — and --pubkey supplies a one-off line instead
+    (#132)."""
     identity_env(monkeypatch, tmp_path)
     pem, public = mint("ed25519")
     mine = tmp_path / "my-key"
     mine.write_text(pem)
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
-    key_type, supplied, note = cli.create_identity(
-        cli.CreateFlags(workspace_id="ws1")
-    )
-    # The bare create plants the operator key: its derived public
-    # half rides the body, no mint, and the confirmation names the
-    # source.
-    assert key_type is None
+    supplied, note = cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
     assert supplied == public
     assert note == f"identity: {mine}"
-    typed = cli.CreateFlags(workspace_id="ws1", key_type="rsa")
-    assert cli.create_identity(typed)[:2] == ("rsa", None)
-    daemon = cli.CreateFlags(workspace_id="ws1", daemon_mint=True)
-    assert cli.create_identity(daemon) == (None, None, None)
-    with pytest.raises(
-        SystemExit, match="--key-type conflicts with --daemon-mint"
-    ):
-        cli.create_identity(
-            cli.CreateFlags(
-                workspace_id="ws1", daemon_mint=True, key_type="rsa"
-            )
-        )
 
 
-def test_create_identity_mints_an_operator_key_once(
+def test_create_identity_reads_only_the_configured_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """With no operator key anywhere, the bare create mints one
-    key to <data_dir>/identity (mode 0600, the mint's type set)
-    and every later create reuses it — one key across workspaces,
-    and nothing written per-workspace (#336)."""
+    """The configured file is the only rung (#486): a key an older
+    msks wrote under the data root does not resolve implicitly, and
+    pointing identity_file at it makes it the identity."""
     identity_env(monkeypatch, tmp_path)
-    first_type, first_pub, first_note = cli.create_identity(
-        cli.CreateFlags(workspace_id="ws1")
-    )
-    minted = tmp_path / "data" / "msks" / "identity"
-    assert first_type is None
-    assert minted.exists()
-    assert minted.stat().st_mode & 0o777 == 0o600
-    assert first_note == f"operator identity minted (mode 0600): {minted}"
-    # The mint rung keeps the daemon's own default key type — the
-    # help, docs, and the mint's prose all say "the same
-    # FIPS-approvable default the daemon mints" (#138).
-    assert first_pub.startswith(f"{KEY_TYPES[create.OPERATOR_KEY_TYPE]} ")
-    assert create.OPERATOR_KEY_TYPE == VmmSettings().ssh_key_type
-    # The second create reuses the key: same public half, no new
-    # writes anywhere under the data root.
-    before = sorted(str(p) for p in (tmp_path / "data").rglob("*"))
-    _type, second_pub, second_note = cli.create_identity(
-        cli.CreateFlags(workspace_id="ws2")
-    )
-    assert second_pub == first_pub
-    assert second_note == f"identity: {minted}"
-    assert sorted(str(p) for p in (tmp_path / "data").rglob("*")) == before
-
-
-def test_create_identity_rung_precedence(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """identity_file outranks the minted <data_dir>/identity
-    (#336): the operator's explicit choice wins, the minted key
-    stays put for the creates that name nothing."""
-    identity_env(monkeypatch, tmp_path)
-    from msks.client.create import mint_operator_identity, public_line
-
-    mint_pem, minted = mint_operator_identity()
-    mint_public = public_line(mint_pem)
-    _type, pub, _note = cli.create_identity(cli.CreateFlags(workspace_id="ws"))
-    assert pub == mint_public
-    assert minted.read_text() == mint_pem
-    named_pem, named_public = mint("ecdsa")
-    named = tmp_path / "my-key"
-    named.write_text(named_pem)
-    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(named))
-    _type, pub, note = cli.create_identity(cli.CreateFlags(workspace_id="ws"))
-    assert pub == named_public
-    assert note == f"identity: {named}"
-    assert minted.read_text() == mint_pem
+    legacy_pem, legacy_public = mint("ed25519")
+    legacy = tmp_path / "data" / "msks" / "identity"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(legacy_pem)
+    with pytest.raises(SystemExit, match="no identity configured"):
+        cli.create_identity(cli.CreateFlags(workspace_id="ws"))
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(legacy))
+    supplied, note = cli.create_identity(cli.CreateFlags(workspace_id="ws"))
+    assert supplied == legacy_public
+    assert note == f"identity: {legacy}"
 
 
 def test_create_identity_refuses_a_broken_identity_file(
@@ -858,17 +675,17 @@ def test_create_identity_stages_a_wide_curve_operator_key(
     wide = tmp_path / "wide-key"
     wide.write_text(pem)
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(wide))
-    _type, pub, note = cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
+    pub, note = cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
     assert pub.startswith("ecdsa-sha2-nistp384 ")
     assert note == f"identity: {wide}"
 
 
-def test_a_local_refusal_mints_no_operator_key(
+def test_a_local_refusal_writes_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The body builds before the identity resolves: a create the
-    client refuses locally (a bad --user) mints and persists
-    nothing (#336)."""
+    client refuses locally (a bad --user) writes nothing anywhere
+    (#336, #486)."""
     identity_env(monkeypatch, tmp_path)
     with pytest.raises(SystemExit, match="not a valid login name"):
         cli.run_create(
@@ -877,102 +694,15 @@ def test_a_local_refusal_mints_no_operator_key(
     assert not (tmp_path / "data").exists()
 
 
-def test_the_mint_claim_reuses_a_concurrent_winner(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Two first-run creates racing the mint both work: the claim
-    is exclusive, and the loser reuses the winner's key — both
-    workspaces plant the same public half, and no private half is
-    overwritten out from under a created workspace (#336)."""
-    identity_env(monkeypatch, tmp_path)
-    winner_pem, _public = mint("ed25519")
-    minted = tmp_path / "data" / "msks" / "identity"
-    minted.parent.mkdir(parents=True)
-    minted.write_text(winner_pem)
-    pem, path = create.mint_operator_identity()
-    assert path == minted
-    assert pem == winner_pem
-    assert minted.read_text() == winner_pem
-    # A torn file (unusable content squatting on the path) is
-    # repaired in place: the next create gets a working key.
-    minted.write_text("torn")
-    pem, _path = create.mint_operator_identity()
-    assert pem != winner_pem
-    assert agent.load_private(minted.read_text()) is not None
-    assert minted.stat().st_mode & 0o777 == 0o600
-
-
-def test_the_mint_publishes_whole_and_leaves_no_temp(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The publish is atomic: the key is written whole to a temp
-    sibling and linked into place, so a racing create that sees
-    the path already there reads a complete key — and no temp
-    sibling outlives the mint (#336)."""
-    identity_env(monkeypatch, tmp_path)
-    pem, path = create.mint_operator_identity()
-    assert path.read_text() == pem
-    assert sorted(p.name for p in path.parent.iterdir()) == ["identity"]
-    # The lost-race signal carries a complete file: link-then-read
-    # is the publish's own order, pinned here by publishing over
-    # an empty path and reading back whole.
-    fresh = tmp_path / "data" / "msks" / "identity"
-    fresh.unlink()
-    other_pem, _public = mint("ed25519")
-    create.publish_exclusive(fresh, other_pem)
-    assert fresh.read_text() == other_pem
-    assert sorted(p.name for p in fresh.parent.iterdir()) == ["identity"]
-
-
-def test_the_mint_names_an_unwritable_data_root(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A data root the exclusive write cannot open into (here, a
-    read-only directory) is the operator's one-line refusal naming
-    identity_file as the way to bring your own key — before any
-    network activity (#336)."""
-    identity_env(monkeypatch, tmp_path)
-    root = tmp_path / "data" / "msks"
-    root.mkdir(parents=True)
-    root.chmod(0o500)
-    try:
-        with pytest.raises(SystemExit, match="could not be written"):
-            create.mint_operator_identity()
-    finally:
-        root.chmod(0o700)
-
-
 def test_create_identity_pubkey_mode(tmp_path: Path) -> None:
-    """--pubkey FILE resolves to (None, line) — no mint — and every
-    conflicting pairing is rejected before anything runs."""
+    """--pubkey FILE resolves to the file's one line, supplied
+    as-is — the configured key is not consulted (#132)."""
     source = tmp_path / "id.pub"
     source.write_text(f"{SUPPLIED_PUBKEY}\n")
     args = cli.CreateFlags(workspace_id="ws1", pubkey=str(source))
-    assert cli.create_identity(args)[:2] == (None, SUPPLIED_PUBKEY)
-    with pytest.raises(
-        SystemExit, match="--pubkey conflicts with --daemon-mint"
-    ):
-        cli.create_identity(
-            cli.CreateFlags(
-                workspace_id="ws1", pubkey=str(source), daemon_mint=True
-            )
-        )
-    with pytest.raises(SystemExit, match="--key-type needs the client mint"):
-        cli.create_identity(
-            cli.CreateFlags(
-                workspace_id="ws1",
-                pubkey=str(source),
-                key_type="rsa",
-            )
-        )
-    # An explicit empty value still counts as supplied: it conflicts
-    # with --daemon-mint instead of silently daemon-minting.
-    with pytest.raises(
-        SystemExit, match="--pubkey conflicts with --daemon-mint"
-    ):
-        cli.create_identity(
-            cli.CreateFlags(workspace_id="ws1", pubkey="", daemon_mint=True)
-        )
+    supplied, note = cli.create_identity(args)
+    assert supplied == SUPPLIED_PUBKEY
+    assert note is None
 
 
 def test_read_pubkey_file_stdin_and_rejections(
@@ -1052,34 +782,12 @@ def test_cmd_create_pubkey_sends_the_line_and_writes_nothing(
     assert "client identity" not in out
 
 
-def test_cmd_create_daemon_mint_sends_no_key(
+def test_cmd_key_private_refused_without_a_daemon_half(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """--daemon-mint hands the identity to the daemon (#111): the
-    body carries no key material and nothing is written
-    client-side."""
-    client_env(monkeypatch)
-    seen = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/ssh-key"):
-            raise AssertionError("the daemon-mint create fetches no key")
-        seen["body"] = json.loads(request.content)
-        return httpx.Response(201, json={"id": "ws1", "status": "created"})
-
-    rc = cli.cmd_create({"id": "ws1"}, transport=mock(handler), key_type=None)
-    assert rc == 0
-    assert "ssh_pubkey" not in seen["body"]
-    out = capsys.readouterr().out
-    assert "created ws1" in out
-    assert "client identity" not in out
-
-
-def test_cmd_key_private_refused_for_client_minted(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """A client-minted workspace serves its public half; the private
-    forms explain where that half lives instead of printing None."""
+    """A workspace created now serves its public half with a null
+    private half (#486); the private forms explain where that half
+    lives instead of printing None."""
     client_env(monkeypatch)
     body = dict(KEY_BODY, private_key=None)
     transport = mock(lambda req: httpx.Response(200, json=body))
@@ -1093,9 +801,13 @@ def test_cmd_key_private_refused_for_client_minted(
 
 
 def test_cmd_create_start_failure_keeps_the_workspace(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     client_env(monkeypatch)
+    identity_env(monkeypatch, tmp_path)
+    plant_identity(monkeypatch, tmp_path)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/start"):
@@ -1358,9 +1070,13 @@ def test_main_ls_dispatch(
 
 
 def test_main_create_dispatch(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
 ) -> None:
     client_env(monkeypatch)
+    identity_env(monkeypatch, tmp_path)
+    _pem, public, _mine = plant_identity(monkeypatch, tmp_path)
     # The create default fills the invoking user's name (#248) —
     # pinned here so the body assertion stays about the dispatch.
     monkeypatch.setattr(create.getpass, "getuser", lambda: "alice")
@@ -1370,8 +1086,6 @@ def test_main_create_dispatch(
         seen["body"] = json.loads(request.content)
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
-    # --daemon-mint keeps this dispatch test off the keygen path
-    # (the client mint's own suite covers it).
     rc = cli.main(
         [
             "create",
@@ -1380,7 +1094,6 @@ def test_main_create_dispatch(
             "debian:13",
             "--cpus",
             "4",
-            "--daemon-mint",
         ],
         transport=mock(handler),
     )
@@ -1390,6 +1103,7 @@ def test_main_create_dispatch(
         "image": "debian:13",
         "cpus": 4,
         "user": "alice",
+        "ssh_pubkey": public,
     }
     assert "created ws1" in capsys.readouterr().out
 
@@ -2030,7 +1744,7 @@ def test_help_folds_long_tokens_instead_of_cutting_them(
     # The long path reconstructs across the fold: strip the style
     # and border characters, keep every content character in order.
     flat = help_flat(text).replace(" ", "")
-    assert "`~/.local/share/msks/<id>/identity`,or" in flat
+    assert "MSKSC_DATA_DIR" in flat or "MSKSC_IDENTITY_FILE" in flat
 
 
 @pytest.mark.parametrize(
@@ -2458,6 +2172,8 @@ def test_create_user_data_reads_the_file(
     """--user-data FILE (#41) carries the file's bytes verbatim as the
     create body's user_data."""
     client_env(monkeypatch)
+    identity_env(monkeypatch, tmp_path)
+    plant_identity(monkeypatch, tmp_path)
     monkeypatch.setattr(create.getpass, "getuser", lambda: "alice")
     payload = "#!/bin/sh\necho seeded > /root/stamp\n"
     source = tmp_path / "seed.sh"
@@ -2469,23 +2185,24 @@ def test_create_user_data_reads_the_file(
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
     rc = cli.main(
-        ["create", "ws1", "--user-data", str(source), "--daemon-mint"],
+        ["create", "ws1", "--user-data", str(source)],
         transport=mock(handler),
     )
     assert rc == 0
-    assert seen["body"] == {
-        "name": "ws1",
-        "user_data": payload,
-        "user": "alice",
-    }
+    assert seen["body"]["user_data"] == payload
+    assert seen["body"]["ssh_pubkey"].startswith("ssh-ed25519 ")
     assert "created ws1" in capsys.readouterr().out
 
 
 def test_create_user_data_reads_stdin(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    tmp_path: Path,
 ) -> None:
     """--user-data - reads the payload from stdin, script-style."""
     client_env(monkeypatch)
+    identity_env(monkeypatch, tmp_path)
+    plant_identity(monkeypatch, tmp_path)
     payload = "#!/bin/sh\ntrue\n"
     monkeypatch.setattr("sys.stdin", io.StringIO(payload))
     seen = {}
@@ -2495,7 +2212,7 @@ def test_create_user_data_reads_stdin(
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
     rc = cli.main(
-        ["create", "ws1", "--user-data", "-", "--daemon-mint"],
+        ["create", "ws1", "--user-data", "-"],
         transport=mock(handler),
     )
     assert rc == 0
@@ -3257,8 +2974,10 @@ def test_egress_revoke(monkeypatch, capsys) -> None:
     assert "revoked" in capsys.readouterr().out
 
 
-def test_create_carries_the_consent_flags(monkeypatch) -> None:
+def test_create_carries_the_consent_flags(monkeypatch, tmp_path) -> None:
     client_env(monkeypatch)
+    identity_env(monkeypatch, tmp_path)
+    plant_identity(monkeypatch, tmp_path)
     seen = {}
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -3279,7 +2998,6 @@ def test_create_carries_the_consent_flags(monkeypatch) -> None:
             ".debian.org",
             "--allow",
             "10.0.0.0/8:443",
-            "--daemon-mint",
         ],
         transport=mock(handler),
     )
@@ -3291,10 +3009,14 @@ def test_create_carries_the_consent_flags(monkeypatch) -> None:
     ]
 
 
-def test_create_sends_the_secret_coverage_posture(monkeypatch, capsys) -> None:
+def test_create_sends_the_secret_coverage_posture(
+    monkeypatch, capsys, tmp_path
+) -> None:
     """#339: --secret-coverage rides the create body; omitted, the
     daemon takes its default."""
     client_env(monkeypatch)
+    identity_env(monkeypatch, tmp_path)
+    plant_identity(monkeypatch, tmp_path)
     seen = {}
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -3311,7 +3033,6 @@ def test_create_sends_the_secret_coverage_posture(monkeypatch, capsys) -> None:
             "/r",
             "--secret-coverage",
             "scoped",
-            "--daemon-mint",
         ],
         transport=mock(handler),
     )
@@ -4373,9 +4094,12 @@ def test_cmd_secret_revoke_names_a_missing_label(
 
 def test_create_user_flag_rides_the_body(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """An explicit --user is the create body's user, verbatim."""
     client_env(monkeypatch)
+    identity_env(monkeypatch, tmp_path)
+    plant_identity(monkeypatch, tmp_path)
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -4383,7 +4107,7 @@ def test_create_user_flag_rides_the_body(
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
     rc = cli.main(
-        ["create", "ws1", "--user", "alice", "--daemon-mint"],
+        ["create", "ws1", "--user", "alice"],
         transport=mock(handler),
     )
     assert rc == 0
@@ -4392,10 +4116,13 @@ def test_create_user_flag_rides_the_body(
 
 def test_create_defaults_the_user_to_the_invoking_name(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """No --user: the body carries the invoking user's name — the
     workspace seeds that account as its own."""
     client_env(monkeypatch)
+    identity_env(monkeypatch, tmp_path)
+    plant_identity(monkeypatch, tmp_path)
     monkeypatch.setattr(create.getpass, "getuser", lambda: "chrism")
     seen = {}
 
@@ -4403,7 +4130,7 @@ def test_create_defaults_the_user_to_the_invoking_name(
         seen["body"] = json.loads(request.content)
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
 
-    rc = cli.main(["create", "ws1", "--daemon-mint"], transport=mock(handler))
+    rc = cli.main(["create", "ws1"], transport=mock(handler))
     assert rc == 0
     assert seen["body"]["user"] == "chrism"
 
@@ -4420,7 +4147,7 @@ def test_create_refuses_an_unusable_invoking_name(
         raise AssertionError("the refusal must precede any request")
 
     with pytest.raises(SystemExit, match="pass --user"):
-        cli.main(["create", "ws1", "--daemon-mint"], transport=mock(no_calls))
+        cli.main(["create", "ws1"], transport=mock(no_calls))
 
 
 def test_create_refuses_an_off_charset_user_locally(
@@ -4436,7 +4163,6 @@ def test_create_refuses_an_off_charset_user_locally(
                 "ws1",
                 "--user",
                 "not a name",
-                "--daemon-mint",
             ],
             transport=mock(
                 lambda req: httpx.Response(201, json={"id": "ws1"})
@@ -4457,7 +4183,7 @@ def test_create_refuses_when_no_invoking_name(
     monkeypatch.setattr(create.getpass, "getuser", no_name)
     with pytest.raises(SystemExit, match="pass --user"):
         cli.main(
-            ["create", "ws1", "--daemon-mint"],
+            ["create", "ws1"],
             transport=mock(
                 lambda req: httpx.Response(201, json={"id": "ws1"})
             ),
@@ -4606,6 +4332,7 @@ def test_egress_mode_rejects_an_unknown_mode(monkeypatch) -> None:
 
 def test_create_with_start_builds_one_tls_context(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """The create and its boot share one TLS context: the
     unverified-mode warning prints once per invocation, not once
@@ -4613,6 +4340,8 @@ def test_create_with_start_builds_one_tls_context(
     import ssl as ssl_mod
 
     client_env(monkeypatch)
+    identity_env(monkeypatch, tmp_path)
+    plant_identity(monkeypatch, tmp_path)
     built: list[int] = []
 
     def counting_context() -> ssl_mod.SSLContext:
@@ -4622,8 +4351,6 @@ def test_create_with_start_builds_one_tls_context(
     async def fake_request(client, method: str, path: str, json_body=None):
         if path.endswith("/start"):
             return {"id": "ws1", "status": "running"}
-        if path.endswith("/ssh-key"):
-            return {"public_key": "k c", "private_key": None}
         return {"id": "ws1", "status": "created"}
 
     monkeypatch.setattr(workspaces, "ssl_context", counting_context)
@@ -4769,8 +4496,8 @@ def test_flag_validation_refusals_exit_two(
     """The checked flag pairings are usage refusals: one ``msks:``
     line on stderr and exit 2, the code the argparse-era
     mutually-exclusive and choice errors set."""
-    assert cli.main(["create", "ws1", "--key-type", "bogus"]) == 2
-    assert "must be one of" in capsys.readouterr().err
+    assert cli.main(["create", "ws1", "--egress-mode", "bogus"]) == 2
+    assert "Invalid value" in capsys.readouterr().err
     assert cli.main(["key", "ws1", "--private", "--out", "/tmp/k"]) == 2
     assert "exclusive" in capsys.readouterr().err
 
