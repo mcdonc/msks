@@ -6,7 +6,7 @@ working reference is the #194 spike
 """
 
 from . import egress
-from .ca import WorkspaceCA, load_or_mint, mint_ca, mint_leaf
+from .ca import Authority, load_or_mint, mint_ca, mint_leaf
 from .egress import WebVerdict
 from .engine import InterceptorAddon, LogBridge, host_matches
 from .manager import Armed, Interceptor, PlaceholderEntry
@@ -18,7 +18,7 @@ __all__ = [
     "LogBridge",
     "PlaceholderEntry",
     "WebVerdict",
-    "WorkspaceCA",
+    "Authority",
     "egress",
     "host_matches",
     "load_or_mint",

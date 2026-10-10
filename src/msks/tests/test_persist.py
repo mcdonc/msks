@@ -702,6 +702,69 @@ async def test_resize_names_an_uncorrectable_volume(tmp_path: Path) -> None:
         await persist.resize_home_volume(home, 128, settings)
 
 
+CA_A = "-----BEGIN CERTIFICATE-----\nca-a\n-----END CERTIFICATE-----\n"
+CA_B = "-----BEGIN CERTIFICATE-----\nca-b\n-----END CERTIFICATE-----\n"
+
+
+async def test_a_seed_is_renewed_when_its_ca_marker_drifts(tools) -> None:
+    """#485's migration: a seed built for another CA (a per-workspace
+    pre-#485 one, or the daemon's previous certificate) is rebuilt
+    carrying the daemon's, with an instance-id suffix keyed to it —
+    cloud-init re-provisions, the seed script (idempotent by
+    design) re-stages the certificate, and the fold re-registers.
+    The marker beside the seed says which certificate it carries
+    (the iso is unreadable without mounting); a match leaves the
+    seed alone."""
+    settings, record, base = tools
+    spec_a = spec(base, ssh_pubkey="key-one")
+    await persist.create_seed(spec_a, settings, 8770, CA_A)
+    seed = persist.seed_path(settings.state_dir, WID)
+    marker = persist.seed_ca_mark(seed.parent)
+    assert marker.read_text() == persist.ca_fingerprint(CA_A)
+    first = seed.stat().st_mtime_ns
+
+    # A match: no rebuild, no re-provision.
+    await persist.ensure_artifacts(spec_a, settings, 8770, CA_A)
+    assert seed.stat().st_mtime_ns == first
+
+    # A drift (the marker missing is the pre-#485 shape): renewed.
+    marker.unlink()
+    await persist.ensure_artifacts(spec_a, settings, 8770, CA_B)
+    assert marker.read_text() == persist.ca_fingerprint(CA_B)
+    log = record.read_text()
+    assert CA_B in log  # the new cert staged
+    # The renewal bumped instance-id: the recorded meta-data carries
+    # the fingerprint suffix, so cloud-init re-provisions the
+    # already-booted guest.
+    assert f"instance-id: {WID}-{persist.ca_fingerprint(CA_B)[:12]}" in log
+
+
+def test_the_legacy_ca_names_match_the_canonical_constants() -> None:
+    """The sweep's literals stay in step with interceptor.ca's
+    canonical file names (persist is a storage leaf — the tie is a
+    pinned literal, not an import)."""
+    from msks.interceptor import ca
+
+    assert persist.LEGACY_CA_KEY == ca.CA_KEY_FILE
+    assert persist.LEGACY_CA_CERT == ca.CA_CERT_FILE
+
+
+async def test_a_renewal_sweeps_the_legacy_per_workspace_ca(tools) -> None:
+    """The pre-#485 pair in the workspace's directory is
+    interception-capable against a guest that still trusts it;
+    the renewal that supersedes it sweeps it."""
+    settings, record, base = tools
+    spec_a = spec(base, ssh_pubkey="key-one")
+    await persist.create_seed(spec_a, settings, 8770, CA_A)
+    seed = persist.seed_path(settings.state_dir, WID)
+    seed.parent.mkdir(parents=True, exist_ok=True)
+    (seed.parent / "interceptor-ca.key").write_bytes(b"old-key")
+    (seed.parent / "interceptor-ca.crt").write_bytes(b"old-cert")
+    await persist.ensure_artifacts(spec_a, settings, 8770, CA_B)
+    assert not (seed.parent / "interceptor-ca.key").exists()
+    assert not (seed.parent / "interceptor-ca.crt").exists()
+
+
 async def test_ensure_builds_seed_for_a_port_only_workspace(
     tools,
 ) -> None:

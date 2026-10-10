@@ -291,9 +291,9 @@ redirect, TLS splice, leaf mint, sentinel→secret swap — ran.
 
 The daemon seeds the machinery itself at first-time startup (the
 daemon-wide placeholder named `probe`, whose secret is the base64
-of the whole credential `bXNrczptc2tz`), and the guest's own
-interception CA is installed at first boot, so nothing is left to
-do by hand. The verification:
+of the whole credential `bXNrczptc2tz`), and the interception CA
+is installed at first boot, so nothing is left to do by hand. The
+verification:
 
 ```bash
 # on the host: read the seeded sentinel (token-gated API)
@@ -307,7 +307,7 @@ ok
 A request that reaches the service has already passed the nft
 redirect (guest TCP 80/443 to the per-tap interceptor listener),
 the splice tier (the SNI matched an allowlisted entry), and the
-per-workspace CA's leaf mint; the swap then rewrote the raw blob
+daemon CA's leaf mint; the swap then rewrote the raw blob
 into a well-formed credential, the interceptor's upstream dial
 landed on the service's own listener (port 443 on the tap
 address, verified against the service CA the daemon mints), and
