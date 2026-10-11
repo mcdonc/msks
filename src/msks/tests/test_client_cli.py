@@ -27,7 +27,7 @@ from msks.client import cli, create, images, rest, workspaces
 from msks.server.api import build_api
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from test_api import TOKEN, StubMicrovm
-from testkeys import mint
+from testkeys import encrypted, mint
 
 ROWS = [
     {
@@ -577,10 +577,11 @@ SUPPLIED_PUBKEY = "ssh-ed25519 AAAAc3NzaC1lZDI1 operator@laptop"
 
 def identity_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A deterministic operator-identity environment (#336): a
-    fresh client data root — no ambient identity_file, no
-    leftovers from an earlier run."""
+    fresh client data root — no ambient identity_file or
+    pubkey_file, no leftovers from an earlier run."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     monkeypatch.delenv("MSKSC_IDENTITY_FILE", raising=False)
+    monkeypatch.delenv("MSKSC_PUBKEY_FILE", raising=False)
     monkeypatch.delenv("MSKSC_DATA_DIR", raising=False)
 
 
@@ -654,6 +655,119 @@ def test_create_identity_refuses_a_broken_identity_file(
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(classic))
     with pytest.raises(SystemExit, match="ssh-keygen -p"):
         cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
+
+
+def test_create_identity_reads_the_configured_pubkey_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """pubkey_file names the identity's public half directly
+    (#495): the create plants that one line without reading any
+    private material — no identity_file configured at all — and
+    the confirmation names the source as the public half."""
+    identity_env(monkeypatch, tmp_path)
+    _pem, public = mint("ed25519")
+    pub = tmp_path / "my-key.pub"
+    pub.write_text(f"{public} me@host\n")
+    monkeypatch.setenv("MSKSC_PUBKEY_FILE", str(pub))
+    supplied, note = cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
+    assert supplied == f"{public} me@host"
+    assert note == f"identity: {pub} (public half)"
+
+
+def test_the_configured_pubkey_file_wins_over_identity_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#495's precedence: pubkey_file is the configured identity,
+    so identity_file never gets its chance to refuse — a key that
+    sits encrypted at its private file (public half named, agent
+    holding it) creates workspaces."""
+    identity_env(monkeypatch, tmp_path)
+    pem, public = mint("ed25519")
+    locked = tmp_path / "locked"
+    locked.write_text(encrypted(pem))
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(locked))
+    pub = tmp_path / "my-key.pub"
+    pub.write_text(public + "\n")
+    monkeypatch.setenv("MSKSC_PUBKEY_FILE", str(pub))
+    supplied, note = cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
+    assert supplied == public
+    assert note == f"identity: {pub} (public half)"
+
+
+def test_the_pubkey_flag_overrides_the_configured_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """--pubkey stays the one-create override over every configured
+    source (#132 over #495)."""
+    identity_env(monkeypatch, tmp_path)
+    _pem, public = mint("ed25519")
+    pub = tmp_path / "configured.pub"
+    pub.write_text(public + "\n")
+    monkeypatch.setenv("MSKSC_PUBKEY_FILE", str(pub))
+    _other_pem, other_public = mint("ecdsa")
+    one_off = tmp_path / "one-off.pub"
+    one_off.write_text(other_public + "\n")
+    args = cli.CreateFlags(workspace_id="ws1", pubkey=str(one_off))
+    supplied, note = cli.create_identity(args)
+    assert supplied == other_public
+    assert note is None
+
+
+def test_a_broken_pubkey_file_is_a_named_refusal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The operator named the file, so a missing, multi-line, or
+    malformed one is one named line before any network roundtrip
+    (#495) — the strict form identity_file carries, for the same
+    reason: a silent skip would read as the key matching
+    nothing."""
+    identity_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("MSKSC_PUBKEY_FILE", str(tmp_path / "gone.pub"))
+    with pytest.raises(SystemExit, match="cannot read public key file"):
+        cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
+    two = tmp_path / "two.pub"
+    two.write_text("ssh-ed25519 AAAA one\nssh-ed25519 BBBB two\n")
+    monkeypatch.setenv("MSKSC_PUBKEY_FILE", str(two))
+    with pytest.raises(SystemExit, match="exactly one line"):
+        cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
+    bare = tmp_path / "bare.pub"
+    bare.write_text("not-a-key\n")
+    monkeypatch.setenv("MSKSC_PUBKEY_FILE", str(bare))
+    with pytest.raises(SystemExit, match="does not look like a public key"):
+        cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
+
+
+def test_the_unconfigured_refusal_names_pubkey_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The #486 refusal names every way to configure an identity —
+    pubkey_file is one of them now (#495)."""
+    identity_env(monkeypatch, tmp_path)
+    with pytest.raises(SystemExit) as caught:
+        cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
+    line = str(caught.value)
+    assert "no identity configured" in line
+    assert "pubkey_file" in line
+
+
+def test_an_encrypted_identity_file_refusal_names_pubkey_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An encrypted private file with no public half named: the
+    refusal's recoveries include pointing pubkey_file at the key's
+    public half (#495) — and still never the agent (the create
+    cannot use it)."""
+    identity_env(monkeypatch, tmp_path)
+    pem, _public = mint("ed25519")
+    locked = tmp_path / "locked"
+    locked.write_text(encrypted(pem))
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(locked))
+    with pytest.raises(SystemExit) as caught:
+        cli.create_identity(cli.CreateFlags(workspace_id="ws1"))
+    line = str(caught.value)
+    assert "encrypted" in line
+    assert "pubkey_file" in line
+    assert "ssh-add" not in line
 
 
 def test_create_identity_stages_a_wide_curve_operator_key(
@@ -1744,7 +1858,11 @@ def test_help_folds_long_tokens_instead_of_cutting_them(
     # The long path reconstructs across the fold: strip the style
     # and border characters, keep every content character in order.
     flat = help_flat(text).replace(" ", "")
-    assert "MSKSC_DATA_DIR" in flat or "MSKSC_IDENTITY_FILE" in flat
+    assert (
+        "MSKSC_DATA_DIR" in flat
+        or "MSKSC_IDENTITY_FILE" in flat
+        or "MSKSC_PUBKEY_FILE" in flat
+    )
 
 
 @pytest.mark.parametrize(

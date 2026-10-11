@@ -447,8 +447,12 @@ that line into `authorized_keys` for root and the workspace's
 login user — through the same cidata seed disk that carries
 `user_data`, so the guest needs no key steps of its own. msks
 generates no key: a client with no identity configured refuses
-the create with a one-line error naming the config key, the
-variable, and `--pubkey`. The daemon stores and seeds the public
+the create with a one-line error naming the config keys, the
+variables, and `--pubkey`. `pubkey_file` (or
+`MSKSC_PUBKEY_FILE`) names the public half directly instead
+(#495) — a `.pub` file, read in place of any private material,
+the create form for a key kept encrypted while the operator's
+agent holds it. The daemon stores and seeds the public
 line only; its database never holds a private half for a
 workspace created now (the API's key fetch answers
 `private_key: null`). The public half persists across daemon

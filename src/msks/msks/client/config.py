@@ -91,6 +91,8 @@ CONFIG_FILENAME = "msks.yaml"
 #: ``identity_file`` names the operator's own private key file
 #: (#336) and is global-only (no per-alias form): an identity
 #: belongs to the operator, not to a daemon connection.
+#: ``pubkey_file`` names the operator's key's public half (#495)
+#: and carries the same global-only rule for the same reason.
 #: ``terminal_title`` names the title of the workspace-shell
 #: windows the workspace page opens (#445) and is global-only:
 #: the windows belong to the operator's desktop, not to a daemon
@@ -103,6 +105,7 @@ GLOBAL_ENV_VARS: dict[str, str] = {
     "cache_dir": "MSKSC_CACHE_DIR",
     "data_dir": "MSKSC_DATA_DIR",
     "identity_file": "MSKSC_IDENTITY_FILE",
+    "pubkey_file": "MSKSC_PUBKEY_FILE",
     "terminal_title": "MSKSC_TERMINAL_TITLE",
 }
 
@@ -722,6 +725,7 @@ class ClientConfig:
     cache_dir: str | None
     data_dir: str | None
     identity_file: str | None
+    pubkey_file: str | None
     terminal_title: str | None
     terminal_open_cmd: list[str]
     ssh_options: list[str]
@@ -752,6 +756,7 @@ def resolve(
     cache = resolved_global("cache_dir", doc, layer)
     data = resolved_global("data_dir", doc, layer)
     identity = resolved_global("identity_file", doc, layer)
+    pubkey = resolved_global("pubkey_file", doc, layer)
     title = resolved_global("terminal_title", doc, layer)
     return ClientConfig(
         url=url,
@@ -761,6 +766,7 @@ def resolve(
         cache_dir=cache,
         data_dir=data,
         identity_file=identity,
+        pubkey_file=pubkey,
         terminal_title=title,
         terminal_open_cmd=terminal_command(doc),
         ssh_options=resolved_ssh_options(doc, layer),
@@ -897,6 +903,15 @@ def render_template() -> str:
 #                                # reads it in place and copies it
 #                                # nowhere. Global-only: a per-alias
 #                                # identity_file is refused
+# pubkey_file: ~/.ssh/id_ed25519.pub  # your key's public half —
+#                                # what a bare create plants instead
+#                                # of reading identity_file (#495):
+#                                # the form for a key you keep
+#                                # encrypted (your agent holds it;
+#                                # msks never reads the private half).
+#                                # --pubkey overrides it for one
+#                                # create. Global-only, like
+#                                # identity_file
 # terminal_open_cmd: konsole -e # the launcher the workspace page's
 #                                # new-terminal shell action opens
 #                                # workspace shells through (#314,

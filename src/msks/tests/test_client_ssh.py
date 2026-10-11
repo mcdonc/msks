@@ -810,6 +810,26 @@ def test_a_relative_identity_file_is_refused(
         ssh.operator_identity(ssh.ENCRYPTED_SESSION_RECOVERY)
 
 
+def test_pubkey_file_carries_the_identity_path_rules(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """pubkey_file carries identity_file's path rules (#495): a
+    relative value resolves per working directory — a different
+    identity from every directory — so it is refused with the fix
+    named; a leading ~ expands; empty and unset both mean no
+    public half configured."""
+    identity_home(monkeypatch, tmp_path)
+    monkeypatch.delenv("MSKSC_PUBKEY_FILE", raising=False)
+    assert ssh.configured_pubkey_file() is None
+    monkeypatch.setenv("MSKSC_PUBKEY_FILE", "")
+    assert ssh.configured_pubkey_file() is None
+    monkeypatch.setenv("MSKSC_PUBKEY_FILE", "~/keys/id.pub")
+    assert ssh.configured_pubkey_file() == Path.home() / "keys/id.pub"
+    monkeypatch.setenv("MSKSC_PUBKEY_FILE", "keys/id.pub")
+    with pytest.raises(SystemExit, match="MSKSC_PUBKEY_FILE"):
+        ssh.configured_pubkey_file()
+
+
 def test_the_agent_stages_the_wide_nist_curves() -> None:
     """The transient agent signs P-384 and P-521 keys (#336): an
     operator's own key at those curves must plant AND let msks ssh

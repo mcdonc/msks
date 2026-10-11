@@ -210,6 +210,15 @@ def client_identity_path(workspace_id: str, base: Path | None = None) -> Path:
 #: writes no copy anywhere.
 IDENTITY_FILE_ENV = "MSKSC_IDENTITY_FILE"
 
+#: The public-half setting (#495): the config key
+#: ``pubkey_file`` / the variable ``MSKSC_PUBKEY_FILE`` name a
+#: public key file — the one line a create plants as the identity
+#: when the private half is nowhere msks can read it (encrypted at
+#: its file, held by the operator's agent): the create reads no
+#: private material at all, and sessions resolve through the
+#: agent rung (#490). Global-only, like identity_file.
+PUBKEY_FILE_ENV = "MSKSC_PUBKEY_FILE"
+
 #: The encrypted-key refusal's recoveries (#490), by calling
 #: context: a session consults the operator's agent ahead of the
 #: file, so adding the key to the agent is the first recovery,
@@ -223,28 +232,43 @@ ENCRYPTED_SESSION_RECOVERY = (
 )
 ENCRYPTED_CREATE_RECOVERY = (
     "Decrypt a copy (ssh-keygen -p -f <copy> -P <passphrase> "
-    "-N '') or pass --pubkey at create"
+    "-N ''), point pubkey_file at the key's public half, or pass "
+    "--pubkey at create"
 )
 
 
-def configured_identity_file() -> Path | None:
-    """The operator-named identity file (``identity_file`` /
-    ``MSKSC_IDENTITY_FILE``), ``~`` expanded, or None when unset —
-    an empty value counts as unset, the same rule the shell
-    presets apply. A relative value is refused (the same rule the
-    state roots carry): a key that resolves per working directory
-    would plant a different identity from every directory."""
-    value = os.environ.get(IDENTITY_FILE_ENV, "")
+def configured_file(variable: str) -> Path | None:
+    """One configured key file's path (``identity_file``,
+    ``pubkey_file``), ``~`` expanded, or None when unset — an
+    empty value counts as unset, the same rule the shell presets
+    apply. A relative value is refused (the same rule the state
+    roots carry): a key that resolves per working directory would
+    plant a different identity from every directory."""
+    value = os.environ.get(variable, "")
     if not value:
         return None
     path = Path(value).expanduser()
     if not path.is_absolute():
         raise SystemExit(
-            f"msks: {IDENTITY_FILE_ENV} must name an absolute path "
-            f"(got '{value}'); unset it, pass an absolute path, or "
+            f"msks: {variable} must name an absolute path (got "
+            f"'{value}'); unset it, pass an absolute path, or "
             "lead with ~"
         )
     return path
+
+
+def configured_identity_file() -> Path | None:
+    """The operator-named identity file (``identity_file`` /
+    ``MSKSC_IDENTITY_FILE``) — the path rules live in
+    :func:`configured_file`."""
+    return configured_file(IDENTITY_FILE_ENV)
+
+
+def configured_pubkey_file() -> Path | None:
+    """The operator-named public key file (``pubkey_file`` /
+    ``MSKSC_PUBKEY_FILE``, #495) — the same path rules
+    :func:`configured_identity_file` applies."""
+    return configured_file(PUBKEY_FILE_ENV)
 
 
 def named_identity_file(path: Path, recovery: str) -> str:

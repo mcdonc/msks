@@ -903,6 +903,64 @@ async def test_the_create_form_flashes_an_unconfigured_identity(
         await wait_for(lambda: on_main(app))
 
 
+async def test_the_create_form_plants_the_configured_pubkey_file(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """A pubkey_file configured (#495): the form's create — the
+    real core, a real TuiData — posts the named public line as the
+    identity and reads no private material at all. The encrypted
+    private half sits configured beside it (identity_file set):
+    pubkey_file outranks it, so its refusal never fires and the
+    create lands."""
+    import httpx
+    from testkeys import encrypted, mint
+
+    pem, public = mint("ed25519")
+    pub = tmp_path / "id.pub"
+    pub.write_text(f"{public} me@host\n")
+    locked = tmp_path / "id"
+    locked.write_text(encrypted(pem))
+    monkeypatch.setenv("MSKSC_URL", "https://api.test")
+    monkeypatch.setenv("MSKSC_TOKEN", "tok")
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(locked))
+    monkeypatch.setenv("MSKSC_PUBKEY_FILE", str(pub))
+    posted: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == (
+            "/api/v1/workspaces"
+        ):
+            posted.append(json.loads(request.content))
+            return httpx.Response(
+                201, json={"id": "ws1", "name": "n", "status": "created"}
+            )
+        if request.method == "GET" and request.url.path == (
+            "/api/v1/create-defaults"
+        ):
+            return httpx.Response(
+                200, json={"root_mib": 10240, "home_mib": 20480}
+            )
+        return httpx.Response(200, json=[])
+
+    data = data_mod.TuiData(transport=httpx.MockTransport(handler))
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("c")
+        await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
+        screen = app.screen
+        screen.query_one("#field-name", Input).value = "brand-new"
+        screen.submit()
+        await pilot.pause()
+        await wait_for(lambda: posted)
+        # The flash is the created_note the CLI prints too: the
+        # daemon's row, its label and id.
+        await wait_for(
+            lambda: "created" in status_text(app) and "ws1" in status_text(app)
+        )
+    assert posted[0]["ssh_pubkey"] == f"{public} me@host"
+
+
 async def test_the_create_form_fits_the_small_terminal() -> None:
     # 80x24 is the smallest terminal the form must fit: the last
     # field and the buttons stay inside the screen, above the
