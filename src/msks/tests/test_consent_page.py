@@ -215,6 +215,14 @@ class PageData:
     """The page's daemon calls, scripted and recorded: the verdicts,
     the revokes, and the mode switches."""
 
+    def __repr__(self) -> str:
+        """The recorded calls, so a failing frame's locals name what
+        the seam actually saw (triage for the flake family #503)."""
+        return (
+            f"<PageData decided={self.decided} revoked={self.revoked}"
+            f" modes={self.modes}>"
+        )
+
     def __init__(self) -> None:
         self.decided: list[tuple] = []
         self.revoked: list[tuple] = []
@@ -315,6 +323,53 @@ def rules_children(app) -> int:
         return -1
 
 
+def zone_settled(page, zone_id: str, count: int) -> bool:
+    """Whether a zone's rows stand past the mount window #503
+    names: the zone carries ``count`` children and every child's
+    ``Static`` answers a query. A fresh ``ListItem`` is visible in
+    its zone's children the moment the zone's list mounts, but its
+    inner ``Static`` — a constructor child — registers on the
+    item's own Compose cycle, a pump round later; a read that
+    lands between the two raises where this check reports False."""
+    try:
+        rows = page.query_one(f"#{zone_id}")
+    except Exception:
+        return False
+    if len(rows.children) != count:
+        return False
+    try:
+        for row in rows.children:
+            row.query_one(Static)
+    except Exception:
+        return False
+    return True
+
+
+def rows_settled(app) -> bool:
+    """Whether the page's first rebuild has settled: no rebuild
+    flight is in the air (a parked swap's remove-window still
+    shows the dying list focused — ``has_focus`` lags the blur a
+    message round-trip, so a focus read alone can land inside the
+    window), both zones' rows stand queryable past the mount
+    window (``zone_settled`` over the controller's own counts),
+    and a zone owns the focus — the swap's handoff lands through
+    a message round-trip the same way a row's Static does, so a
+    single-shot key pressed before this reads as mis-zoned and
+    no-ops (#503)."""
+    page = consent_in(app)
+    if page is None:
+        return False
+    if page.hold_rebuilds.scheduled or page.rule_rebuilds.scheduled:
+        return False
+    if not zone_settled(page, "hold-rows", len(page.controller.ordered())):
+        return False
+    if not zone_settled(
+        page, "rule-rows", len(consent_ui.rule_rows(page.controller.rules))
+    ):
+        return False
+    return focused_zone(app) is not None
+
+
 async def open_page(pilot, app, page) -> WorkspaceScreen:
     """Push the page and let its rows and link settle."""
     app.push_screen(page)
@@ -326,10 +381,16 @@ async def open_page(pilot, app, page) -> WorkspaceScreen:
 async def open_consent(pilot, app, page) -> ConsentPage:
     """Push the page, then the egress consent page over it by hand.
     The page's widgets settle before the caller reads them (compose
-    streams asynchronously)."""
+    streams asynchronously), and the first rebuild's swap settles
+    with them: every row the controller implies stands queryable
+    past the mount window and a zone owns the focus (#503), so a
+    caller's single-shot read or press starts from a settled page
+    — the window a descheduled runner could otherwise hold open
+    across the whole opening sequence."""
     await open_page(pilot, app, page)
     page.open_consent_page()
     await wait_for(lambda: page_settled(consent_in(app)))
+    await wait_for(lambda: rows_settled(app))
     return consent_in(app)
 
 
@@ -356,6 +417,21 @@ def row_text(page, zone_id: str, index: int) -> str:
         raise AssertionError("no consent page open")
     row = page.query_one(f"#{zone_id}").children[index]
     return str(row.query_one(Static).content)
+
+
+def row_static(page, zone_id: str, index: int):
+    """One row's ``Static`` once its ``ListItem``'s compose has
+    settled — the mount-window read ``row_text`` raises through,
+    as a None the polls retry instead (#503: a fresh row is
+    visible in its zone's children before its inner Static
+    registers on the item's own Compose cycle)."""
+    if page is None:
+        return None
+    try:
+        row = page.query_one(f"#{zone_id}").children[index]
+        return row.query_one(Static)
+    except Exception:
+        return None
 
 
 def held_row(app, index: int) -> str:
@@ -736,17 +812,24 @@ async def test_focused_rule_or_none_in_a_swap_window() -> None:
     async with app.run_test() as pilot:
         cp = await open_consent(pilot, app, page)
         await wait_for(lambda: rules_children(app) == 2)
+        # The healer holds while the windows are read: a tick firing
+        # across either removal's park would remount its zone before
+        # the reads land — the windows these asserts mean to observe,
+        # closed by the self-heal the tail also means to prove
+        # (#468's class, #503's family).
+        real_rules = cp.rule_rebuilds.request
+        real_holds = cp.hold_rebuilds.request
+        cp.rule_rebuilds.request = lambda: None
+        cp.hold_rebuilds.request = lambda: None
         await cp.query_one("#rule-rows").remove()
         assert consent_ui.focused_rule_or_none(cp) is None
         cp.focus_rules()  # the verdicts mid-swap: the walk no-ops
         await cp.query_one("#hold-rows").remove()
         cp.focus_holds()  # the holds mid-swap
         cp.enter_holds()  # the up-edge handoff onto a missing list
-        # No pause before the read: the page's once-a-second tick
-        # timer can fire across any await, and its self-heal would
-        # remount the list this assert means to find missing
-        # (#468).
         assert cp.hold_rows() is None
+        cp.rule_rebuilds.request = real_rules
+        cp.hold_rebuilds.request = real_holds
         cp.tick()  # both zones self-heal
         await wait_for(lambda: rules_children(app) == 2)
         await wait_for(lambda: hold_children(app) == 0)
@@ -811,7 +894,11 @@ async def test_the_queue_lifecycle() -> None:
         await wait_for(lambda: "raw.example (all ports)" in held_row(app, 1))
         assert "dev" in str(cp.query_one("#header").content)
         assert "connected" in status_line(app)
-        # a allows the focused (first) hold with the default duration.
+        # a allows the focused (first) hold with the default duration
+        # — the zone's focus is waited first: the swap's handoff
+        # lands through a message round-trip, and a press ahead of
+        # it reads as mis-zoned and no-ops (#503).
+        await wait_for(lambda: focused_zone(app) == "holds")
         await pilot.press("a")
         await wait_for(lambda: len(data.decided) == 1)
         assert data.decided == [(WS, "r1", "allow", "tilrestart")]
@@ -1147,7 +1234,7 @@ async def test_decide_and_revoke_failures_flash() -> None:
     data.fail.add("decide")
     async with app.run_test() as pilot:
         cp = await open_consent(pilot, app, page)
-        await pilot.pause()
+        await wait_for(lambda: focused_zone(app) == "holds")
         await pilot.press("a")
         await wait_for(lambda: "decide failed" in status_line(app))
         # A failing revoke flashes the same way.
@@ -1168,7 +1255,7 @@ async def test_a_truncated_closing_tag_failure_flashes_literally() -> None:
     data.refusal = "unknown workspace [/dev"
     async with app.run_test() as pilot:
         cp = await open_consent(pilot, app, page)
-        await pilot.pause()
+        await wait_for(lambda: focused_zone(app) == "holds")
         await pilot.press("a")
         await wait_for(
             lambda: "decide failed: unknown workspace" in status_line(app)
@@ -1190,7 +1277,7 @@ async def test_a_bracketed_failure_message_flashes_literally() -> None:
     data.refusal = "[SSL: CERTIFICATE_VERIFY_FAILED] nope[/]"
     async with app.run_test() as pilot:
         cp = await open_consent(pilot, app, page)
-        await pilot.pause()
+        await wait_for(lambda: focused_zone(app) == "holds")
         await pilot.press("a")
         await wait_for(
             lambda: (
@@ -1225,7 +1312,11 @@ async def test_the_verdicts_zone_revokes() -> None:
         assert ".debian.org" in header
         await wait_for(lambda: "allowed" in rule_row_text(app, 0))
         await wait_for(lambda: "forever" in rule_row_text(app, 1))
-        # x revokes the focused rule (allowed, first).
+        # x revokes the focused rule (allowed, first) — the zone's
+        # focus is waited first: the swap's handoff lands through a
+        # message round-trip, and a press ahead of it reads as
+        # mis-zoned and no-ops (#503).
+        await wait_for(lambda: focused_zone(app) == "rules")
         await pilot.press("x")
         await wait_for(lambda: len(data.revoked) == 1)
         assert data.revoked == [(WS, "a1")]
@@ -1824,8 +1915,16 @@ async def test_hold_rows_returns_none_in_a_swap_window() -> None:
         cp = await open_consent(pilot, app, page)
         await wait_for(lambda: cp.hold_rows() is not None)
         rows = cp.hold_rows()
+        # The healer holds while the window is read: a tick firing
+        # across the removal's park would remount #hold-rows before
+        # the read lands — the window this assert means to observe,
+        # closed by the self-heal the tail also means to prove
+        # (#468's class, #503's family).
+        real_request = cp.hold_rebuilds.request
+        cp.hold_rebuilds.request = lambda: None
         await rows.remove()
         assert cp.hold_rows() is None
+        cp.hold_rebuilds.request = real_request
         cp.tick()  # the missing list self-heals
         await wait_for(lambda: cp.hold_rows() is not None)
 
@@ -2180,6 +2279,39 @@ async def test_a_row_read_that_never_lands_reports_the_query_error() -> None:
         raise AssertionError("the read should have given up")
 
 
+async def test_the_mount_window_read_retries_to_the_static() -> None:
+    """#503: a fresh row is visible in its zone's children the
+    moment the zone's list mounts, but its inner ``Static`` — a
+    constructor child — registers on the item's own Compose cycle,
+    a pump round later. The direct read returns None inside that
+    window, and the poll retries to the Static itself."""
+    page = SwapWindowPage([SwapWindowRow("api.example:443", shots=3)])
+    static = await poll(lambda: row_static(page, "hold-rows", 0))
+    assert str(static.content) == "api.example:443"
+
+
+async def test_the_mount_window_read_retries_past_a_populating_zone() -> None:
+    """The window's other edge (#503): a read whose row is past the
+    zone's end — the list populates row by row — reads as None and
+    the poll lands once the row stands."""
+    page = PopulatingPage([SwapWindowRow("api.example:443", shots=0)])
+    static = await poll(lambda: row_static(page, "hold-rows", 0))
+    assert str(static.content) == "api.example:443"
+
+
+def test_the_settle_check_reads_the_window_not_the_count() -> None:
+    """The ``zone_settled`` check is the mount-settled gate
+    ``open_consent`` waits on (#503): the count alone does not
+    settle it — every row's ``Static`` must answer too — and a
+    count mismatch (the swap window, the rows still streaming)
+    never does."""
+    mounting = SwapWindowPage([SwapWindowRow("api.example:443", shots=1)])
+    assert not zone_settled(mounting, "hold-rows", 1)  # Static still pending
+    settled = SwapWindowPage([SwapWindowRow("api.example:443", shots=0)])
+    assert zone_settled(settled, "hold-rows", 1)
+    assert not zone_settled(settled, "hold-rows", 2)  # the count is the gate
+
+
 async def test_press_until_credits_a_descheduled_cycle(monkeypatch) -> None:
     """A press cycle that runs past its requested sleep is not
     budget spent either (#468): the presses keep coming until the
@@ -2385,7 +2517,14 @@ async def test_a_teardown_prune_under_the_highlight_repaint_stops_quiet() -> (
         cp = await open_consent(pilot, app, page)
         await wait_for(lambda: hold_children(app) == 1)
         await wait_for(lambda: rules_children(app) == 2)
-        await cp.query_one("#rule-rows").children[0].query_one(Static).remove()
+        # The pruned row's Static is read through the mount window:
+        # the row is visible in the zone's children before its
+        # Static registers on the item's own Compose cycle, so a
+        # raw query raises there (#503) — the poll retries it.
+        pruned = await poll(
+            lambda: row_static(consent_in(app), "rule-rows", 0)
+        )
+        await pruned.remove()
         cp.on_list_view_highlighted(None)  # the pruned row skips, no raise
 
 
