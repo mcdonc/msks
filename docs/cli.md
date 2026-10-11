@@ -37,19 +37,14 @@ their file keys below.
 | `MSKSC_CAFILE`         | A PEM file to verify the daemon's TLS certificate                                                                                                                                                                           | unverified with warning                                   |
 | `MSKSC_EXPECTED_IMAGE` | An image reference the operator sets; `msks ls` compares it with the image the daemon reports in `/health` and names drift (#160)                                                                                           | unset (no check)                                          |
 | `MSKSC_CACHE_DIR`      | The directory per-workspace host-key caches live under (#251); the per-workspace directories are created below it                                                                                                           | `~/.cache/msks`                                           |
-| `MSKSC_DATA_DIR`       | The directory client state lives under (#251) — per-workspace identity files a pre-#486 client wrote live here; same naming rule                                                                                            | `~/.local/share/msks`                                     |
 | `MSKSC_IDENTITY_FILE`  | Your own private key file — the ssh identity `msks create` plants into every workspace (#336, #486; msks generates none); a leading `~` expands                                                                             | unset (`pubkey_file` answers, else `msks create` refuses) |
 | `MSKSC_PUBKEY_FILE`    | Your key's public half — what a bare `msks create` plants instead of reading `identity_file` (#495), the form for a key you keep encrypted (your agent holds it; msks reads no private half); same naming rule, global-only | unset (`identity_file` answers)                           |
 | `MSKSC_TERMINAL_TITLE` | The title template for the workspace-shell windows the workspace page opens (#445); `{workspace}` resolves to the workspace's id                                                                                            | unset (the terminal's own title)                          |
 
-The two directory variables are separate because their contents
-differ in durability: the host-key cache is disposable (a swept
-cache costs one trust-on-first-use re-pin), while the identity
-files a pre-#486 client wrote beside it have no other copy —
-losing one loses ssh to that workspace. Pointing the cache at a
-per-project, disposable location and the data at somewhere durable
-is the intended use; one variable for both would tie their
-lifetimes together.
+`MSKSC_CACHE_DIR` exists because the host-key cache is
+disposable: a swept cache costs one trust-on-first-use re-pin, so
+pointing it at a per-project, disposable location is the intended
+use (#251).
 
 Each names its directory directly — the per-workspace directories
 are created below it — and takes an absolute path (a relative
@@ -87,17 +82,11 @@ client names the variable and exits. Tokens come from the daemon:
 all three from the worktree's dev-daemon state dir,
 `.devenv/state/msksd/` (token + CA) — once the dev daemon has
 served once, a fresh devenv shell needs no exports. The same shell
-presets the two directory variables at the worktree's own
-`.devenv/state/msksc/` (cache under `cache/`, identities under
-`data/`), so each checkout's client state stays its own — one
-tree's cache entry is never read by another (#251); a non-empty
-value exported before entering the shell survives the preset, and
-an empty one counts as unset. Workspaces created before the preset
-keep their identity files under the previous root
-(`~/.local/share/msks/<id>/`): inside a devenv shell, either move
-that workspace's directory under the worktree's
-`.devenv/state/msksc/data/` or unset `MSKSC_DATA_DIR` — the ssh
-error names the path it looked in.
+presets `MSKSC_CACHE_DIR` at the worktree's own
+`.devenv/state/msksc/cache/`, so each checkout's client state
+stays its own — one tree's cache entry is never read by another
+(#251); a non-empty value exported before entering the shell
+survives the preset, and an empty one counts as unset.
 
 ```bash
 msks ls        # presets: https://127.0.0.1:8660, the worktree's
@@ -878,10 +867,7 @@ workspaces, the daemon holding the public half only. The key is
 yours and msks generates nothing: `identity_file` (or
 `MSKSC_IDENTITY_FILE`) names your private key file — the config
 file or the environment — and a create with neither that nor
-`--pubkey` refuses with a one-line error naming both. A key an
-older msks wrote under the client data root
-(`~/.local/share/msks/identity`, honoring `XDG_DATA_HOME` or
-`MSKSC_DATA_DIR`) keeps working: point the setting at that file.
+`--pubkey` refuses with a one-line error naming both.
 
 msks does not scan `~/.ssh` and never guesses which of your keys
 to take. The create sends the key's derived public half only and
@@ -1537,29 +1523,15 @@ command:
 
 ```bash
 msks key my-workspace                    # the public authorized_keys line
-msks key my-workspace --private          # the private half, on stdout
-msks key my-workspace --out ~/.cache/msks/my-workspace.key
 ```
 
-`--out FILE` writes the private half with mode 0600 and prints
-nothing but the path; the mode is forced on an existing file too.
-The path is always the operator's choice: the command writes the
-key to the file the operator named and to stdout, and nowhere else.
-A shell redirect (`msks key my-workspace --private > f`) keeps the
-shell's own umask — that is what `--out` is for. A workspace that
-predates #111 answers 404 with "no ssh identity"; a keyless create
-(a deliberate API call with no key) answers the same. The public
-half persists across daemon restarts and workspace stop/start.
-
-The daemon holds no private half for a workspace created now
-(#486): `--private` and `--out` exit with an error naming where
-that half lives — the private file `identity_file` (or
-`MSKSC_IDENTITY_FILE`) names. A workspace whose row predates #486
-keeps serving the half the daemon still holds: a daemon-minted
-row (#111) answers both private forms, and a client-minted one
-(#121) names the client data root of the client that minted it
-(`~/.local/share/msks/<id>/identity`, or that root under
-`MSKSC_DATA_DIR`).
+The command is public-only (#497): the private half is the
+operator's own key, and it never crossed the API to begin with —
+it lives wherever `identity_file` names it, or in the agent that
+holds it. A workspace that predates #111 answers 404 with "no ssh
+identity"; a keyless create (a deliberate API call with no key)
+answers the same. The public half persists across daemon restarts
+and workspace stop/start.
 
 ## `msks ssh`
 
@@ -1593,23 +1565,19 @@ carries only the session's login user and agent-forwarding setting —
 msks's own transport, its
 quiet flag, and a `true` command — so a session's tunnels and
 other ssh options cannot hold the wait open or alter it; the
-session itself keeps every option. For
-a workspace created now (#486) the API serves the public half and
-the private half resolves at session time: your own agent first
-(#490 — when `SSH_AUTH_SOCK` names a live agent holding the
+session itself keeps every option. The API serves the public half
+and the private half resolves at session time: your own agent
+first (#490 — when `SSH_AUTH_SOCK` names a live agent holding the
 workspace's key, matched on the key material so the file it came
 from and its name do not matter, the session signs through that
 agent and the private half never enters the msks process,
 encrypted or not), then the operator identity — `identity_file`
-(or `MSKSC_IDENTITY_FILE`), the same key the create planted. A workspace whose row predates #486 resolves
-through the legacy paths: a daemon-minted half arrives over the
-API; a client-minted one (#121) comes from the local data root
-(`~/.local/share/msks/<id>/identity` under the default root,
-`MSKSC_DATA_DIR` when it is set; written at create) — a missing,
-stale, or corrupt file exits with one line naming the path and the
-recovery, which for a key an older msks minted to the data root
-(`~/.local/share/msks/identity`) is pointing `identity_file` at
-it. Either way the session writes no new copy of the private half
+(or `MSKSC_IDENTITY_FILE`), the same key the create planted. When
+neither holds the workspace's key, the command exits with one line
+naming both rungs and the ways back in (ssh-add the key, point
+identity_file at it, ssh -i directly); the console keeps working
+either way — it is the token-gated root autologin, not a key
+login. The session writes no new copy of the private half
 anywhere: a transient in-process ssh-agent holds it in memory for
 the session, ssh names the identity by its public half (`-i`,
 public material only) and signs through the agent socket — a
@@ -1656,10 +1624,8 @@ agent, the same forwarding the paragraphs above describe —
 before #174 it forwarded the session agent, the workspace
 identity, which served nested logins to the same workspace (ssh
 from inside to `localhost`). That use now names the identity
-explicitly instead — `identity_file` names your own key, or a
-pre-#486 daemon-held half can be written with `msks key
-my-workspace --private` and added to your own agent once
-`ssh-add`ed.
+explicitly instead: `identity_file` names your own key, and your
+agent holds it for the nested login.
 The exit code is ssh's own (255 for ssh failures), not the msks
 command set. The session agent lives exactly as long as the
 `msks ssh` process — `ControlPersist`/mux sessions that outlive it

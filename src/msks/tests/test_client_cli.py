@@ -67,10 +67,6 @@ KEY_BODY = {
     "workspace": "alpha",
     "type": "ecdsa-sha2-nistp256",
     "public_key": "ecdsa-sha2-nistp256 AAAA msksd:alpha",
-    "private_key": (
-        "-----BEGIN OPENSSH PRIVATE KEY-----\nbytebyte\n"
-        "-----END OPENSSH PRIVATE KEY-----\n"
-    ),
 }
 
 
@@ -94,60 +90,6 @@ def test_cmd_key_prints_public(
     assert capsys.readouterr().out.strip() == KEY_BODY["public_key"]
 
 
-def test_cmd_key_private_and_out(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    tmp_path: Path,
-) -> None:
-    """--private prints the private half; --out materializes it 0600
-    at the operator-named path and prints only the path."""
-    client_env(monkeypatch)
-    transport = mock(lambda req: httpx.Response(200, json=KEY_BODY))
-    rc = cli.cmd_key("alpha", as_private=True, transport=transport)
-    assert rc == 0
-    assert capsys.readouterr().out == KEY_BODY["private_key"]
-    out = tmp_path / "id"
-    rc = cli.cmd_key("alpha", out=str(out), transport=transport)
-    assert rc == 0
-    assert capsys.readouterr().out.strip() == str(out)
-    assert out.read_text() == KEY_BODY["private_key"]
-    assert out.stat().st_mode & 0o777 == 0o600
-
-
-def test_cmd_key_out_forces_mode_on_existing_file(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """``--out`` forces 0600 even on a pre-existing world-readable
-    file: open()'s mode argument only applies at creation, the
-    write must not leave the old mode under new contents."""
-    client_env(monkeypatch)
-    out = tmp_path / "leaky"
-    out.write_text("stale\n")
-    out.chmod(0o644)
-    rc = cli.cmd_key(
-        "alpha",
-        out=str(out),
-        transport=mock(lambda req: httpx.Response(200, json=KEY_BODY)),
-    )
-    assert rc == 0
-    assert out.read_text() == KEY_BODY["private_key"]
-    assert out.stat().st_mode & 0o777 == 0o600
-
-
-def test_cmd_key_out_error_is_one_line(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """An unwritable --out path fails with one readable line (exit 1),
-    the CLI's error contract — not a raw traceback."""
-    client_env(monkeypatch)
-    with pytest.raises(SystemExit, match="msks: cannot write key file"):
-        cli.cmd_key(
-            "alpha",
-            out=str(tmp_path / "no-such-dir" / "k"),
-            transport=mock(lambda req: httpx.Response(200, json=KEY_BODY)),
-        )
-
-
 def test_cmd_key_dispatch(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -159,6 +101,24 @@ def test_cmd_key_dispatch(
     )
     assert rc == 0
     assert "ecdsa-sha2-nistp256" in capsys.readouterr().out
+
+
+def test_the_key_command_parses_no_private_forms(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`msks key` is public-only (#497): --private and --out are
+    gone flags — a usage error answers them, because the private
+    half is the operator's own key and never crossed the API to
+    begin with."""
+    client_env(monkeypatch)
+    transport = mock(lambda req: httpx.Response(200, json=KEY_BODY))
+    rc = cli.main(["key", "alpha", "--private"], transport=transport)
+    assert rc == 2
+    assert "No such option" in capsys.readouterr().err
+    rc = cli.main(["key", "alpha", "--out", "/tmp/k"], transport=transport)
+    assert rc == 2
+    assert "No such option" in capsys.readouterr().err
 
 
 def test_cmd_ls_aligns_columns(
@@ -577,12 +537,11 @@ SUPPLIED_PUBKEY = "ssh-ed25519 AAAAc3NzaC1lZDI1 operator@laptop"
 
 def identity_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A deterministic operator-identity environment (#336): a
-    fresh client data root — no ambient identity_file or
+    fresh home — no ambient identity_file or
     pubkey_file, no leftovers from an earlier run."""
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("MSKSC_IDENTITY_FILE", raising=False)
     monkeypatch.delenv("MSKSC_PUBKEY_FILE", raising=False)
-    monkeypatch.delenv("MSKSC_DATA_DIR", raising=False)
 
 
 def plant_identity(monkeypatch, tmp_path) -> tuple[str, str, Path]:
@@ -863,7 +822,7 @@ def test_cmd_create_pubkey_sends_the_line_and_writes_nothing(
     and nothing lands in the client data root — the private half
     stays wherever the operator keeps it."""
     client_env(monkeypatch)
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
     source = tmp_path / "id.pub"
     source.write_text(f"{SUPPLIED_PUBKEY}\n")
     seen = {}
@@ -878,7 +837,6 @@ def test_cmd_create_pubkey_sends_the_line_and_writes_nothing(
                     "workspace": "ws1",
                     "type": "ssh-ed25519",
                     "public_key": annotated,
-                    "private_key": None,
                 },
             )
         seen["body"] = json.loads(request.content)
@@ -890,25 +848,22 @@ def test_cmd_create_pubkey_sends_the_line_and_writes_nothing(
     )
     assert rc == 0
     assert seen["body"]["ssh_pubkey"] == SUPPLIED_PUBKEY
-    assert not (tmp_path / "msks" / "ws1").exists()
+    assert list(tmp_path.glob("msks*/**")) == []  # nothing per-workspace
     out = capsys.readouterr().out
     assert "created ws1" in out
     assert "client identity" not in out
 
 
-def test_cmd_key_private_refused_without_a_daemon_half(
+def test_cmd_key_serves_the_public_half_alone(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A workspace created now serves its public half with a null
-    private half (#486); the private forms explain where that half
-    lives instead of printing None."""
+    """The command prints the public line and reads nothing else
+    (#497): an older daemon may still answer a private_key field —
+    tolerated and ignored — while the current one carries none at
+    all; the private forms parse nowhere either way."""
     client_env(monkeypatch)
     body = dict(KEY_BODY, private_key=None)
     transport = mock(lambda req: httpx.Response(200, json=body))
-    with pytest.raises(SystemExit, match="holds no private half"):
-        cli.cmd_key("alpha", as_private=True, transport=transport)
-    with pytest.raises(SystemExit, match="holds no private half"):
-        cli.cmd_key("alpha", out="/tmp/never-written", transport=transport)
     rc = cli.cmd_key("alpha", transport=transport)
     assert rc == 0
     assert capsys.readouterr().out.strip() == body["public_key"]
@@ -1858,11 +1813,7 @@ def test_help_folds_long_tokens_instead_of_cutting_them(
     # The long path reconstructs across the fold: strip the style
     # and border characters, keep every content character in order.
     flat = help_flat(text).replace(" ", "")
-    assert (
-        "MSKSC_DATA_DIR" in flat
-        or "MSKSC_IDENTITY_FILE" in flat
-        or "MSKSC_PUBKEY_FILE" in flat
-    )
+    assert "MSKSC_IDENTITY_FILE" in flat or "MSKSC_PUBKEY_FILE" in flat
 
 
 @pytest.mark.parametrize(
@@ -4616,8 +4567,6 @@ def test_flag_validation_refusals_exit_two(
     mutually-exclusive and choice errors set."""
     assert cli.main(["create", "ws1", "--egress-mode", "bogus"]) == 2
     assert "Invalid value" in capsys.readouterr().err
-    assert cli.main(["key", "ws1", "--private", "--out", "/tmp/k"]) == 2
-    assert "exclusive" in capsys.readouterr().err
 
 
 def test_a_help_shaped_option_value_is_not_a_help_exit(

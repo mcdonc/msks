@@ -166,8 +166,8 @@ class WorkspaceCreate(BaseModel):
     # behind keeps creating (the daemon treats its ``id`` as the
     # name and mints the id either way). Note the same client's
     # ``msks ssh`` on such a workspace must address it by the minted
-    # id: its client-minted identity file lands under the id, and
-    # the old client looks it up under whatever reference it typed.
+    # id, and the old client looks it up under whatever reference it
+    # typed.
     id: str | None = Field(
         default=None, min_length=1, max_length=64, pattern=WORKSPACE_ID_PATTERN
     )

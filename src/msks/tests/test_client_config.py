@@ -22,7 +22,6 @@ CLIENT_VARS = (
     "MSKSC_CAFILE",
     "MSKSC_EXPECTED_IMAGE",
     "MSKSC_CACHE_DIR",
-    "MSKSC_DATA_DIR",
     "MSKSC_IDENTITY_FILE",
     "MSKSC_TERMINAL_OPEN_CMD",
     "MSKSC_TERMINAL_TITLE",
@@ -430,7 +429,6 @@ def layered_tree(root: Path) -> str:
         "cafile: /global-ca.pem\n"
         "expected_image: img:global\n"
         "cache_dir: /global-cache\n"
-        "data_dir: /global-data\n"
         "identity_file: /global-key\n"
         "daemons:\n"
         "  lab:\n"
@@ -464,7 +462,6 @@ def test_environment_beats_the_ambient_alias_and_globals(
     monkeypatch.setenv("MSKSC_URL", "https://env:8660")
     monkeypatch.setenv("MSKSC_TOKEN", "envtok")
     monkeypatch.setenv("MSKSC_CACHE_DIR", "/env-cache")
-    monkeypatch.setenv("MSKSC_DATA_DIR", "/env-data")
     path = layered_tree(tmp_path)
     path = write_config(
         tmp_path,
@@ -474,7 +471,6 @@ def test_environment_beats_the_ambient_alias_and_globals(
     assert conf.url == "https://env:8660"
     assert conf.token == "envtok"
     assert conf.cache_dir == "/env-cache"
-    assert conf.data_dir == "/env-data"
     # The environment won nothing from the file: no materialization.
     assert "MSKSC_URL" not in conf.env_layer
     assert "MSKSC_TOKEN" not in conf.env_layer
@@ -494,7 +490,6 @@ def test_ambient_alias_beats_the_global_keys(tmp_path, monkeypatch) -> None:
     assert conf.expected_image == "img:lab"
     # Globals still answer for the keys the entry leaves out.
     assert conf.cache_dir == "/global-cache"
-    assert conf.data_dir == "/global-data"
 
 
 def test_global_keys_answer_when_nothing_else_does(
@@ -511,7 +506,6 @@ def test_global_keys_answer_when_nothing_else_does(
         "MSKSC_CAFILE": "/global-ca.pem",
         "MSKSC_EXPECTED_IMAGE": "img:global",
         "MSKSC_CACHE_DIR": "/global-cache",
-        "MSKSC_DATA_DIR": "/global-data",
         "MSKSC_IDENTITY_FILE": "/global-key",
     }
 
@@ -771,7 +765,6 @@ def test_apply_writes_the_file_derived_winners(tmp_path, monkeypatch) -> None:
     assert os.environ["MSKSC_CAFILE"] == "/global-ca.pem"
     assert os.environ["MSKSC_EXPECTED_IMAGE"] == "img:global"
     assert os.environ["MSKSC_CACHE_DIR"] == "/global-cache"
-    assert os.environ["MSKSC_DATA_DIR"] == "/global-data"
     assert os.environ["MSKSC_IDENTITY_FILE"] == "/global-key"
 
 

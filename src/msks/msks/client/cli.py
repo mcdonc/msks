@@ -90,7 +90,6 @@ from .volumes import (  # noqa: F401
 )
 from .workspaces import (  # noqa: F401
     CreateFlags,
-    checked_key_flags,
     cmd_create,
     cmd_key,
     cmd_ls,
@@ -528,23 +527,11 @@ def key(
     workspace_id: str = typer.Argument(
         ..., help="the workspace whose identity to fetch (name or id)"
     ),
-    as_private: bool = typer.Option(
-        False,
-        "--private",
-        help="print the private half instead of the public line",
-    ),
-    out: str | None = typer.Option(
-        None,
-        "--out",
-        metavar="FILE",
-        help="write the private half to FILE (mode 0600) instead of printing",
-    ),
 ) -> int:
-    """Fetch a workspace's ssh identity (#111): the public half,
-    and the private half for a row minted before #486 still holds
-    one (the daemon holds none for a workspace created now)."""
-    checked_key_flags(as_private, out)
-    return cmd_key(workspace_id, as_private, out, transport=ctx.obj)
+    """Fetch a workspace's ssh identity (#111): the public half.
+    The private half is the operator's own key — it never crosses
+    the API (#486, #497)."""
+    return cmd_key(workspace_id, transport=ctx.obj)
 
 
 @app.command(

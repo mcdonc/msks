@@ -34,13 +34,17 @@ from testkeys import encrypted, mint
 
 
 @pytest.fixture
-def client_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The client environment the run loop reads — with no
-    ambient agent, so the staging path stays deterministic
-    (#490); tests that want an agent set SSH_AUTH_SOCK
-    themselves."""
+def client_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The client environment the run loop reads — the operator
+    identity KEY's public half pairs with (the session's file
+    rung, #497), and no ambient agent, so the staging path stays
+    deterministic (#490); tests that want an agent set
+    SSH_AUTH_SOCK themselves."""
     monkeypatch.setenv("MSKSC_URL", "https://daemon")
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
+    operator = tmp_path / "operator-key"
+    operator.write_text(PEM)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(operator))
     monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
 
 
@@ -286,7 +290,6 @@ def test_run_workspace_rsync_rides_the_operator_agent(
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(locked))
     row = {
         "public_key": f"{public} msksd:alpha",
-        "private_key": None,
         "user": "alice",
     }
 

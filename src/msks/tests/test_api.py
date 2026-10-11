@@ -489,8 +489,8 @@ async def test_ssh_key_endpoint_auth_and_missing(client) -> None:
 async def test_create_with_client_supplied_pubkey(client) -> None:
     """The create (#121, #486): the daemon validates the supplied
     public line, seeds and stores it annotated with its own provenance
-    comment, and holds no private half — the key endpoint answers
-    private_key: null."""
+    comment, and holds no private half — the key endpoint carries
+    no private field at all (#497)."""
     from testkeys import mint
 
     http, _app, stub = client
@@ -520,7 +520,6 @@ async def test_create_with_client_supplied_pubkey(client) -> None:
     body = key.json()
     assert body["type"] == "ssh-ed25519"
     assert body["public_key"] == row["ssh_pubkey"]
-    assert body["private_key"] is None
 
 
 async def test_create_accepts_any_supplied_pubkey_type(client) -> None:
@@ -572,7 +571,8 @@ async def test_create_accepts_any_supplied_pubkey_type(client) -> None:
         key = await http.get(
             f"/api/v1/workspaces/{wid}/ssh-key", headers=auth()
         )
-        assert key.json()["private_key"] is None
+        assert key.status_code == 200
+        assert "private_key" not in key.json()
 
 
 async def test_create_rejects_a_malformed_pubkey(client) -> None:
@@ -1295,9 +1295,9 @@ async def test_create_rejects_a_login_name_off_the_charset(client) -> None:
 
 
 async def test_ssh_key_serves_the_legacy_user_for_old_rows(client) -> None:
-    """A row created before per-workspace users (#248) answers the
-    image's own login user, so every workspace serves one name and
-    the client never falls back on its own."""
+    """A pre-#248 row serves the image's own account as its login
+    user, and the identity it carries stays the public half alone
+    (#497 — no private half is held for any row, old or new)."""
     http, app, _stub = client
     await app.state.model.create_workspace(
         VmSpec(
@@ -1307,31 +1307,11 @@ async def test_ssh_key_serves_the_legacy_user_for_old_rows(client) -> None:
             ssh_pubkey="ssh-ed25519 AAAA msksd:ws-old",
         ),
     )
-    # The row is a pre-#486 shape: a daemon-minted private half on
-    # the column. Nothing writes it anymore — seed it directly, the
-    # way a pre-#486 daemon would have.
-    from msks.model.db import sessionmaker_for
-    from msks.model.workspaces import Workspace
-    from sqlalchemy import update
-
-    maker = sessionmaker_for(app.state.model.engine())
-    async with maker() as session:
-        await session.execute(
-            update(Workspace)
-            .where(Workspace.id == "ws-old")
-            .values(ssh_privkey="-----BEGIN OPENSSH PRIVATE KEY-----\n...\n")
-        )
-        await session.commit()
     row = await app.state.model.get_workspace("ws-old")
     assert row["login_user"] is None
     key = await http.get("/api/v1/workspaces/ws-old/ssh-key", headers=auth())
     assert key.status_code == 200
     assert key.json()["user"] == "msks"
-    # The pre-#486 private half keeps serving (#486's no-forced-
-    # recreate): rows minted before the change stay reachable.
-    assert key.json()["private_key"] == (
-        "-----BEGIN OPENSSH PRIVATE KEY-----\n...\n"
-    )
 
 
 async def test_create_rejects_empty_user_data(client) -> None:

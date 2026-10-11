@@ -337,7 +337,7 @@ async def test_local_operator_identity() -> None:
         )
         refused = await cli("key", wid, "--private")
         assert refused.returncode != 0
-        assert "holds no private half" in refused.stderr
+        assert "No such option" in refused.stderr
 
         # Start via the API, boot, and let the guest say who its keys
         # are for: both authorized_keys files carry the planted line.
@@ -903,13 +903,12 @@ async def test_local_operator_pubkey() -> None:
             timeout=timeout,
         )
 
-    def row_halves() -> tuple[str | None, str | None]:
+    def row_pubkey() -> str | None:
         with sqlite3.connect(settings.server.db_path) as conn:
             return conn.execute(
-                "select ssh_privkey, ssh_pubkey from workspaces "
-                "where name = ?",
+                "select ssh_pubkey from workspaces where name = ?",
                 (wid,),
-            ).fetchone()
+            ).fetchone()[0]
 
     def forward_evidence() -> str:
         return "\n".join(
@@ -971,8 +970,7 @@ async def test_local_operator_pubkey() -> None:
         # wherever the operator keeps it (here, the workdir).
         assert not (data / "msks").exists()
 
-        priv, pub = row_halves()
-        assert priv is None
+        pub = row_pubkey()
         assert pub is not None and pub.endswith(f"msks-client:{wid}")
         assert pub.split()[:2] == supplied.split()[:2]
 
@@ -981,8 +979,7 @@ async def test_local_operator_pubkey() -> None:
         assert served.stdout.strip() == pub
         refused = await cli("key", wid, "--private")
         assert refused.returncode != 0
-        assert "holds no private half" in refused.stderr
-        assert "the operator's own key is the identity" in refused.stderr
+        assert "No such option" in refused.stderr
 
         started = await cli("start", wid)
         assert started.returncode == 0, started.stderr
@@ -1068,12 +1065,12 @@ async def test_local_operator_pubkey() -> None:
         )
         assert "OPKEY-msks-42" in login.stdout, login.stdout
 
-        # msks ssh has no half to serve for an operator key: the
-        # recovery names both places the half can be.
+        # msks ssh holds no private half for an operator key: the
+        # refusal names the rungs and the ways back in.
         sugar = await cli("ssh", wid, "--", "-F", os.devnull, "--", "true")
         assert sugar.returncode != 0
-        assert "not on this client" in sugar.stderr
-        assert "Point identity_file" in sugar.stderr
+        assert "no private half" in sugar.stderr
+        assert "ssh-add" in sugar.stderr
 
         await microvm.shutdown(vm_id, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(vm_id)

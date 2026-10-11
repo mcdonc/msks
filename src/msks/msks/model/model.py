@@ -238,10 +238,8 @@ class Model:
 
         ``name`` is the operator-chosen label (#246) — the spec's
         ``workspace_id`` is the daemon-minted immutable id, so the
-        label rides beside it. The row's private-half column stays
-        NULL (#486): msks never holds a private half; the column
-        survives for rows minted before #486, whose halves the key
-        endpoint keeps serving.
+        label rides beside it. The row carries the public half
+        alone (#486, #497): msks never holds a private half.
         """
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
@@ -436,7 +434,6 @@ class Model:
                 "id": row.id,
                 "name": row.name,
                 "public_key": row.ssh_pubkey,
-                "private_key": row.ssh_privkey,
                 # The workspace instance's stamp (#245): the client
                 # keys its host-key cache on it, so a recreated
                 # workspace (the same name, a new instance) starts

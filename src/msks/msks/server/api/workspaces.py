@@ -125,8 +125,8 @@ def router(app) -> APIRouter:
         # configured key file (identity_file / MSKSC_IDENTITY_FILE)
         # or a one-off --pubkey — and the daemon validates shape,
         # re-annotates provenance, and stores the public half only;
-        # the row's private half stays NULL and the key endpoint
-        # answers private_key: null. msks never mints. A create
+        # the key endpoint carries no private field at all (#497).
+        # msks never mints. A create
         # with no key at all (a deliberate API call, or a payload-
         # only workspace) seeds no key: the guest answers the
         # console alone (#481's root autologin), and rows minted
@@ -217,13 +217,10 @@ def router(app) -> APIRouter:
     async def workspace_ssh_key(workspace_id: str) -> dict:
         """The workspace's ssh identity row, token-gated (#486).
 
-        A workspace created now answers the operator's public half
-        with ``private_key: null`` — msks never holds a private half
-        anymore. Rows minted before #486 keep serving the halves
-        they already hold (a daemon-side mint, or a client-side one
-        whose public half rode the same create): a token holder
-        already owns the workspace's root console, so the private
-        half grants nothing new. The response carries the type name
+        The operator's public half alone (#497): the daemon stores
+        the public line only — the private half is the operator's
+        own key, and it never crosses the API. The response
+        carries the type name
         (parsed off the public line) so a client never guesses the
         algorithm. ``created_at`` (#245) stamps the workspace
         *instance*, and ``id``/``name`` (#246) carry its immutable
@@ -249,7 +246,6 @@ def router(app) -> APIRouter:
             "name": key["name"],
             "type": key["public_key"].split()[0],
             "public_key": key["public_key"],
-            "private_key": key["private_key"],
             "created_at": key["created_at"],
             "user": key["login_user"] or LEGACY_LOGIN_USER,
         }

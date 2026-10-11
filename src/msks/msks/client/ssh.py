@@ -2,12 +2,9 @@
 
 One-off sugar over the pieces that already exist: the workspace is
 booted when the daemon reports it as not running (the same pre-flight
-as ``msks console``), the workspace identity is fetched over the
-authenticated API — the daemon-minted half pair (#111), the public
-half of a client-minted one (#121, whose private half then comes
-from the client data root), or the public half of an operator-key
-one (#336, the create default, whose private half comes from the
-resolved operator identity: :func:`operator_identity`) — and
+as ``msks console``), the workspace identity — the public half
+alone (#486, #497: the daemon holds no private half) — is fetched
+over the authenticated API, and
 ``ssh`` runs with the forward
 websocket (#109) as its ProxyCommand. When the operator's own
 agent — the one ``SSH_AUTH_SOCK`` names — holds the workspace's
@@ -19,10 +16,9 @@ stages the private half in a transient in-process ssh-agent
 (:mod:`msks.client.agent`) and ssh authenticates through the agent
 socket (``-o IdentityAgent=...``) — ssh closes inherited descriptors
 at startup, so the socket is the one channel that survives to
-authentication — writing no new copy anywhere: a daemon-minted
-half arrives over the API and stays in memory for the session; a
-client-minted half is read from its one file and left exactly
-there.
+authentication — writing no new copy anywhere: the staged half
+stays in memory for the session and the file it came from is left
+exactly where it is.
 
 The session logs in as the workspace's recorded login user
 (#248 — the name ``msks create --user`` planted, the creating
@@ -133,13 +129,13 @@ async def prepare(
 def env_state_dir(variable: str) -> Path | None:
     """One state-root variable's value, normalized or refused.
 
-    `MSKSC_CACHE_DIR` and `MSKSC_DATA_DIR` name their root directly
-    (#251). A leading ``~`` expands (the XDG fallback branches do
-    the same); a relative value names a different directory from
-    every working directory, which is exactly what a state root
-    must not do, so it is refused with the one-line fix rather
-    than honored. An empty value counts as unset — the same rule
-    the shell preset applies.
+    `MSKSC_CACHE_DIR` names its root directly (#251). A leading
+    ``~`` expands (the XDG fallback branches do the same); a
+    relative value names a different directory from every working
+    directory, which is exactly what a state root must not do, so
+    it is refused with the one-line fix rather than honored. An
+    empty value counts as unset — the same rule the shell preset
+    applies.
     """
     value = os.environ.get(variable, "")
     if not value:
@@ -167,38 +163,6 @@ def cache_dir() -> Path:
         return override
     base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
     return Path(base) / "msks"
-
-
-def data_dir() -> Path:
-    """The client data root: `MSKSC_DATA_DIR` when set, else
-    XDG_DATA_HOME or ~/.local/share, under msks.
-
-    Distinct from :func:`cache_dir` on purpose: the cache is
-    disposable by convention (``~/.cache`` may be swept at any
-    time), while the client-minted private half (#121) is the
-    workspace's only copy — losing it loses ssh — so it lives with
-    data that survives cache cleanup. The two override variables
-    stay separate for the same reason (#251): the cache can point
-    at a per-checkout, disposable location while the identities
-    stay somewhere durable — one root for both would couple their
-    lifetimes.
-    """
-    override = env_state_dir("MSKSC_DATA_DIR")
-    if override is not None:
-        return override
-    base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser(
-        "~/.local/share"
-    )
-    return Path(base) / "msks"
-
-
-def client_identity_path(workspace_id: str, base: Path | None = None) -> Path:
-    """Where a client-minted private half lives (#121): the data
-    root's per-workspace directory, keyed on the workspace's
-    immutable id (#246) — a workspace recreated under the same
-    name is a different id and keeps a different file."""
-    root = (base if base is not None else data_dir()) / workspace_id
-    return root / "identity"
 
 
 #: The operator identity's setting (#336): the config key
@@ -322,10 +286,8 @@ def operator_identity(recovery: str) -> tuple[str, Path] | None:
     agent discovery and no scanning of the operator's own
     ``~/.ssh`` (which key of yours msks should use is a choice you
     make, not a guess msks makes), and msks never generates a key
-    (#486): the create refuses when nothing is configured. A key
-    an older msks wrote under the data root
-    (``<data_dir>/identity``) still works — point the setting at
-    that file. ``recovery`` is the encrypted-key refusal's
+    (#486): the create refuses when nothing is configured. ``recovery``
+    is the encrypted-key refusal's
     recoveries for the calling context
     (:data:`ENCRYPTED_SESSION_RECOVERY` or
     :data:`ENCRYPTED_CREATE_RECOVERY`).
@@ -374,97 +336,36 @@ def operator_match(served: list[str]) -> str | None:
     return None
 
 
-def identity_dir(key: dict, ref: str) -> str:
-    """The directory key for a workspace's client-side files: the
-    row's immutable id when the daemon serves it (#246), else the
-    typed reference (a daemon one version behind)."""
-    return key.get("id") or ref
-
-
 def resolve_private(key: dict, workspace_id: str) -> str:
-    """The private half to serve, by the identity's source.
-
-    A daemon-minted workspace (#111) hands its half over the API; a
-    client-minted one (#121) answers ``private_key: null`` — its
-    half lives in the client data root, written at create. The
-    stored half is checked against the served public line before
-    use: a stale cache (the id re-created from another client, a
-    backup restored over a re-created workspace) falls to the
-    operator identity before it fails — a workspace planted with
-    the operator's key (#336, the create default) has no
-    per-workspace file at all and resolves here, so a workspace
-    re-created under the same name keeps its access (a new id, the
-    same operator key). When nothing local matches, the failure is
-    one named line, not ssh's opaque ``Permission denied
-    (publickey)`` — losing the half loses ssh and the console
-    alike (a seeded guest challenges the console with the same
-    key), so the line names the paths and the recovery.
+    """The operator identity's PEM for the row's served line, or
+    the one-line refusal — the file rung under the agent (#490,
+    #497). The operator's agent answers first
+    (:func:`agent_held`); this rung stages the identity file
+    whose public half matches the row's line (the #336 operator
+    identity — a workspace re-created under the same name keeps
+    its access: a new id, the same key). A workspace planted with
+    a key this client holds nowhere fails as one named line, not
+    ssh's opaque ``Permission denied (publickey)`` — losing the
+    half loses ssh and the console alike (a seeded guest
+    challenges the console with the same key), so the line names
+    the ways back in.
     """
-    if key["private_key"] is not None:
-        return key["private_key"]
     served = key["public_key"].split()[:2]
-    path = client_identity_path(identity_dir(key, workspace_id))
-    try:
-        pem = path.read_text(encoding="utf-8")
-        private = agent.load_private(pem)
-    except OSError as exc:
-        return operator_or(missing_half_line(path), served, exc)
-    except ValueError as exc:
-        return operator_or(corrupt_half_line(path, exc), served, exc)
-    if derived_public(private) != served:
-        return operator_or(stale_half_line(path, workspace_id), served)
-    return pem
-
-
-def operator_or(
-    refusal: str, served: list[str], cause: BaseException | None = None
-) -> str:
-    """The matching operator identity's PEM, or the one-line
-    refusal — the rung every per-workspace failure falls to before
-    it exits (#336): a workspace planted with the operator's key
-    keeps working even when the per-workspace half is missing,
-    corrupt, or stale."""
     operator = operator_match(served)
     if operator is not None:
         return operator
-    raise SystemExit(refusal) from cause
+    raise SystemExit(unheld_identity_line(workspace_id))
 
 
-def corrupt_half_line(path: Path, exc: ValueError) -> str:
-    """The refusal for a per-workspace file that is not a private
-    key at all."""
+def unheld_identity_line(workspace_id: str) -> str:
+    """The recovery line for a session whose key this client holds
+    nowhere: the rungs it tried and the ways back in."""
     return (
-        f"msks ssh: the client-minted identity at {path} is not a "
-        f"usable private key: {exc}"
-    )
-
-
-def stale_half_line(path: Path, workspace_id: str) -> str:
-    """The refusal for a per-workspace file that loads but pairs
-    with a different public half — the id's earlier incarnation."""
-    return (
-        f"msks ssh: the client-minted identity at {path} does not "
-        f"match {workspace_id} — the workspace was re-created since "
-        "that key was stored. Delete that file and re-create the "
-        "workspace (the client that holds the current identity "
-        "keeps ssh working; the console is the token-gated root "
-        "autologin either way, #481)"
-    )
-
-
-def missing_half_line(path: Path) -> str:
-    """The recovery line for a row whose private half matched
-    nothing on this client: the per-workspace path it looked in,
-    the operator-identity rungs it tried, and the ways back in."""
-    return (
-        f"msks: the workspace's private half is not on this "
-        f"client — the daemon holds none, {path} is not "
-        "readable, and no operator identity is configured here "
-        f"(identity_file / {IDENTITY_FILE_ENV}).\n"
-        "Point identity_file at this workspace's private key — a "
-        "key an older msks wrote may live under the client data "
-        f"root ({data_dir()}, MSKSC_DATA_DIR relocates it) — or "
-        "log in with it directly (ssh -i, or the Host msks-* "
+        f"msks: this client holds no private half for {workspace_id} "
+        "— the agent lists none (ssh-add the key), and identity_file "
+        f"/ {IDENTITY_FILE_ENV} names none or a different key.\n"
+        "Add the key to your agent (ssh-add), point identity_file at "
+        "it, or log in with it directly (ssh -i, or the Host msks-* "
         "alias). The console keeps working either way: it is the "
         "token-gated root autologin (#481), not a key login."
     )
@@ -1330,13 +1231,15 @@ def probe_attempt(
 
 @contextmanager
 def session_identity(key: dict, workspace_id: str):
-    """The agent the session authenticates through (#490): the
-    operator's own when it holds the workspace's key
+    """The agent the session authenticates through (#490, #497):
+    the operator's own when it holds the workspace's key
     (:func:`agent_held` — adopted, not staged, so the private
     material never enters the msks process, and an encrypted
     identity_file stops mattering), else the transient in-process
-    agent (:func:`msks.client.agent.serve`) staging the private
-    half :func:`resolve_private` finds. The holder's two
+    agent (:func:`msks.client.agent.serve`) staging the operator
+    identity file whose public half matches the row's line
+    (:func:`resolve_private` — the daemon serves no private half
+    to stage). The holder's two
     attributes — the agent socket and the public half's path —
     are the same pair in both branches, so every session path
     (``msks ssh``'s argv, ``msks rsync``'s per-session config,
