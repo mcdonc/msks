@@ -821,9 +821,10 @@ system account the image already ships (Debian carries
 charset-valid names like `sync` and `man`) seeds nothing either —
 the first boot says so in its log, and the login stays with the
 accounts the guest already serves; pick a name the image uses
-for no one. Create-time and immutable,
-like `user_data`: a workspace created before #248 keeps the
-image's `msks` user as its login.
+for no one. Create-time and immutable, like `user_data`: a
+workspace created before #248 records no user of its own — `msks
+ssh` and `msks rsync` dial it as `root`, and the image's `msks`
+account stays reachable by naming it directly.
 
 `--start` boots the workspace right after creating it:
 
@@ -1635,9 +1636,9 @@ passthrough options override the injected defaults (your own
 stock ssh: ssh takes the first value a repeated option receives,
 and the passthrough comes first. The login user is the
 workspace's recorded login user (#248 — the create-time `--user`,
-defaulting to the creating operator's name; the image's `msks`
-account for a workspace created before #248); ssh arguments that
-name a user
+defaulting to the creating operator's name; a workspace created
+before #248 records none, and the dial is `root` — #500); ssh
+arguments that name a user
 (`-l root`, `-o User=root`) override it. The host argument ssh
 sees is the workspace id itself — the transport is the proxy, so
 the name never resolves. The ProxyCommand runs this very
@@ -1658,7 +1659,7 @@ stages in memory, and the copy opens its own forward:
 ```bash
 msks rsync my-workspace -- -av ./site/ root@:/root/site/    # push
 msks rsync my-workspace -- -av root@:/root/out.tar ./out.tar  # pull
-msks rsync my-workspace -- -aP ./src/ :src/                   # as msks
+msks rsync my-workspace -- -aP ./src/ :src/         # as the login user
 ```
 
 Everything after the workspace id (the `--` is optional) is given

@@ -226,7 +226,7 @@ def router(app) -> APIRouter:
         workspace recreated under the same name cannot collide with
         the first instance's cached host keys. ``user`` (#248) is
         the workspace's recorded login user — the default
-        ``msks ssh`` and ``msks console`` log in as. A row created
+        ``msks ssh`` and ``msks rsync`` dial as. A row created
         before per-workspace users answers ``null``; the guest
         carries the key for root and its own ``msks`` account
         either way, and the client dials root for it (#500).

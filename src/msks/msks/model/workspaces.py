@@ -82,8 +82,9 @@ class Workspace(Base):
     # The workspace's login user (#248): create-time and immutable,
     # like the specs. The seed provisions the account at first boot
     # when the image does not ship it; the key endpoint serves it as
-    # the client's default login. NULL on a pre-#248 row — the
-    # workspace's login user is the image's own msks account.
+    # the client's default login. NULL on a pre-#248 row (or an API
+    # create that names none) — the key endpoint answers null and
+    # the client dials root (#500).
     login_user: Mapped[str | None] = mapped_column(String, nullable=True)
     # The pool slice the workspace's /30 derives from (#70 review):
     # recorded at first attach so stop/start cycles and daemon

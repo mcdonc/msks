@@ -99,7 +99,7 @@ conformance_args = 8
 # #486: the mint went from the client — three fewer identity
 # imports (the mint, the key-type set, the minted-key rung).
 # #500: LEGACY_LOGIN_USER went — four fewer identity imports
-# (the constant left ssh, forms, and two test files behind).
+# (the constant left ssh and forms behind).
 identity = 2
 spec = 3
 

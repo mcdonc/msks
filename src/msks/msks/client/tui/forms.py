@@ -126,8 +126,9 @@ EDIT_ROW_KEYS = {
 #: The seeds' fallbacks for a row that predates the field (#331):
 #: a workspace without an image hash boots explicit kernel/rootfs
 #: paths (the listing's own absent mark), and a row without a
-#: login user predates per-workspace users — its account is the
-#: image's own, the same default the ssh-key endpoint serves.
+#: login user predates per-workspace users (#248) — its user reads
+#: as unset here; the ssh-key endpoint serves null and the client
+#: dials root (#500).
 EDIT_ROW_FALLBACKS = {"image": "-", "user": "-"}
 
 #: The statuses the resize route serves (#380) — the daemon's own
