@@ -1335,6 +1335,27 @@ async def test_a_swap_without_an_old_list_mounts_the_fresh_one() -> None:
         await wait_for(lambda: rules_children(app) == 2)
 
 
+async def test_a_highlight_inside_the_holds_swap_window_paints_rules() -> None:
+    """The highlight handler's holds-swap arc, driven directly: a
+    Highlighted event landing while the holds list is away — the
+    rebuild's swap window — skips the holds repaint and still
+    paints the verdicts (``hold_rows`` answers None, the guard's
+    own contract, #470 S3). Under CI load the arc stayed
+    uncovered and the gate red; the direct call pins it the way
+    its swap-sibling does (#468, #476)."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: rules_children(app) == 2)
+        # The swap-window shape: the holds list is away, the rules
+        # list stands with its membership intact.
+        await cp.query_one("#hold-rows").remove()
+        cp.on_list_view_highlighted(SimpleNamespace())
+        await pilot.pause()
+        assert rules_children(app) == 2
+
+
 async def test_the_verdicts_refresh_on_frames() -> None:
     """The verdicts repaint while a picker sits above the page: a
     frame landing repaints the rows without a visit, and `m`
