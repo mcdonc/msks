@@ -238,7 +238,7 @@ ENCRYPTED_CREATE_RECOVERY = (
 
 
 def configured_file(variable: str) -> Path | None:
-    """One configured key file's path (``identity_file``
+    """One configured key file's path (``identity_file``,
     ``pubkey_file``), ``~`` expanded, or None when unset — an
     empty value counts as unset, the same rule the shell presets
     apply. A relative value is refused (the same rule the state

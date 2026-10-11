@@ -500,7 +500,9 @@ def create_identity(args: CreateFlags) -> tuple[str | None, str | None]:
     """The create's identity source (#486): ``(supplied line,
     identity note)``.
 
-    One operator key becomes every workspace's key: the file
+    One operator key becomes every workspace's key: the public
+    half ``pubkey_file`` / ``MSKSC_PUBKEY_FILE`` names (#495, read
+    in place of any private material), else the file
     ``identity_file`` / ``MSKSC_IDENTITY_FILE`` names, its derived
     public half on the wire, the private file never copied
     anywhere — an unconfigured client refuses rather than

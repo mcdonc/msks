@@ -87,6 +87,7 @@ async def test_local_operator_identity() -> None:
     # The #495 phase's second workspace: created (never started)
     # with the operator's public half named in configuration.
     wid2 = f"ident2-{uuid.uuid4().hex[:8]}"
+    vm2_id = wid2
     # The minted id lands here after the create (#246); the typed
     # name is the pre-create fallback (nothing exists to clean).
     vm_id = wid
@@ -691,6 +692,9 @@ async def test_local_operator_identity() -> None:
             env=pub_env,
         )
         assert created2.returncode == 0, created2.stderr
+        # The minted id keys the artifacts (#246): the cleanup below
+        # removes the second row's state, not just its typed name.
+        vm2_id = created_id(created2)
         served2 = await cli("key", wid2, env=pub_env)
         assert served2.returncode == 0, served2.stderr
         assert served2.stdout.split()[:2] == minted.split()[:2], (
@@ -718,7 +722,7 @@ async def test_local_operator_identity() -> None:
         with contextlib.suppress(Exception):
             await microvm.cleanup(vm_id)
         with contextlib.suppress(Exception):
-            await microvm.cleanup(wid2)
+            await microvm.cleanup(vm2_id)
         with contextlib.suppress(OSError):
             forwarding.write_text(forwarding_was)
         shutil.rmtree(state_dir, ignore_errors=True)

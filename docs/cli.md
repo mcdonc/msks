@@ -30,17 +30,17 @@ The list-valued settings (`MSKSC_TERMINAL_OPEN_CMD`,
 `MSKSC_SSH_OPTIONS`) carry their string form and are documented with
 their file keys below.
 
-| Variable               | Meaning                                                                                                                                                                                                                     | Default                          |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| `MSKSC_URL`            | The daemon's base URL                                                                                                                                                                                                       | `https://127.0.0.1:8660`         |
-| `MSKSC_TOKEN`          | A daemon bearer token (see tokens below)                                                                                                                                                                                    | — (required)                     |
-| `MSKSC_CAFILE`         | A PEM file to verify the daemon's TLS certificate                                                                                                                                                                           | unverified with warning          |
-| `MSKSC_EXPECTED_IMAGE` | An image reference the operator sets; `msks ls` compares it with the image the daemon reports in `/health` and names drift (#160)                                                                                           | unset (no check)                 |
-| `MSKSC_CACHE_DIR`      | The directory per-workspace host-key caches live under (#251); the per-workspace directories are created below it                                                                                                           | `~/.cache/msks`                  |
-| `MSKSC_DATA_DIR`       | The directory client state lives under (#251) — per-workspace identity files a pre-#486 client wrote live here; same naming rule                                                                                            | `~/.local/share/msks`            |
-| `MSKSC_IDENTITY_FILE`  | Your own private key file — the ssh identity `msks create` plants into every workspace (#336, #486; required, msks generates none); a leading `~` expands                                                                   | unset (`msks create` refuses)    |
-| `MSKSC_PUBKEY_FILE`    | Your key's public half — what a bare `msks create` plants instead of reading `identity_file` (#495), the form for a key you keep encrypted (your agent holds it; msks reads no private half); same naming rule, global-only | unset (`identity_file` answers)  |
-| `MSKSC_TERMINAL_TITLE` | The title template for the workspace-shell windows the workspace page opens (#445); `{workspace}` resolves to the workspace's id                                                                                            | unset (the terminal's own title) |
+| Variable               | Meaning                                                                                                                                                                                                                     | Default                                                   |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `MSKSC_URL`            | The daemon's base URL                                                                                                                                                                                                       | `https://127.0.0.1:8660`                                  |
+| `MSKSC_TOKEN`          | A daemon bearer token (see tokens below)                                                                                                                                                                                    | — (required)                                              |
+| `MSKSC_CAFILE`         | A PEM file to verify the daemon's TLS certificate                                                                                                                                                                           | unverified with warning                                   |
+| `MSKSC_EXPECTED_IMAGE` | An image reference the operator sets; `msks ls` compares it with the image the daemon reports in `/health` and names drift (#160)                                                                                           | unset (no check)                                          |
+| `MSKSC_CACHE_DIR`      | The directory per-workspace host-key caches live under (#251); the per-workspace directories are created below it                                                                                                           | `~/.cache/msks`                                           |
+| `MSKSC_DATA_DIR`       | The directory client state lives under (#251) — per-workspace identity files a pre-#486 client wrote live here; same naming rule                                                                                            | `~/.local/share/msks`                                     |
+| `MSKSC_IDENTITY_FILE`  | Your own private key file — the ssh identity `msks create` plants into every workspace (#336, #486; msks generates none); a leading `~` expands                                                                             | unset (`pubkey_file` answers, else `msks create` refuses) |
+| `MSKSC_PUBKEY_FILE`    | Your key's public half — what a bare `msks create` plants instead of reading `identity_file` (#495), the form for a key you keep encrypted (your agent holds it; msks reads no private half); same naming rule, global-only | unset (`identity_file` answers)                           |
+| `MSKSC_TERMINAL_TITLE` | The title template for the workspace-shell windows the workspace page opens (#445); `{workspace}` resolves to the workspace's id                                                                                            | unset (the terminal's own title)                          |
 
 The two directory variables are separate because their contents
 differ in durability: the host-key cache is disposable (a swept
@@ -77,7 +77,7 @@ session each count as a signing request.
 identity and reads no private material at all: the form for a
 key you keep encrypted, whose public half sits in a `.pub` file
 while the private half answers from your agent. It wins over
-`identity_file` (which then needs no chance to refuse), carries
+`identity_file` (so `identity_file` is never consulted), carries
 the same path rules and global-only shape, and `--pubkey`
 still overrides it for one create.
 
