@@ -12,11 +12,20 @@ identity, and sign with it — and refuses everything else.
 The key material never becomes a file. The socket lives in a
 mode-0700 temporary directory and is removed with it; the private
 half stays a Python object in process memory.
+
+The module also speaks the protocol from the other side (#490):
+when the operator's own agent — the one ``SSH_AUTH_SOCK`` names —
+holds the workspace's key, the session adopts it
+(:func:`adopt`) instead of staging anything, and the identities
+it lists (:func:`listed_lines`, the question ``ssh-add -L`` asks)
+are how the match is decided — on key material, never on file
+paths.
 """
 
 import base64
 import os
 import shutil
+import socket
 import socketserver
 import struct
 import tempfile
@@ -323,12 +332,116 @@ def socket_mode(path: str) -> int:
     return os.stat(path).st_mode & 0o777
 
 
+#: How long the identity listing waits on the operator's agent
+#: (#490): a live agent answers in milliseconds, and a wedged one
+#: must decline the rung rather than hold the session's pre-flight
+#: open.
+LIST_TIMEOUT_S = 5.0
+
+
+def listed_lines(path: str) -> list[str] | None:
+    """The public lines of the identities the agent at ``path``
+    lists — the question ``ssh-add -L`` asks, asked over the wire
+    so no binary need be on PATH — or None when no live agent
+    answers there (nothing listening on the socket, a wedged one
+    past :data:`LIST_TIMEOUT_S`, an answer this parser refuses).
+
+    Each line carries the algorithm and the base64 key body, the
+    authorized_keys form, so callers compare on key material.
+    """
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(LIST_TIMEOUT_S)
+            sock.connect(path)
+            sock.sendall(frame(struct.pack("B", REQUEST_IDENTITIES)))
+            body = answer_payload(sock)
+        if body is None or not body or body[0] != IDENTITIES_ANSWER:
+            return None
+        return identity_lines(body)
+    except OSError, ValueError:
+        return None
+
+
+def answer_payload(sock) -> bytes | None:
+    """One answer payload from the agent, or None on a short read
+    or a length field past the message ceiling."""
+    header = read_exact(sock, 4)
+    if header is None:
+        return None
+    (length,) = struct.unpack(">I", header)
+    if not 1 <= length <= MAX_MESSAGE:
+        return None
+    return read_exact(sock, length)
+
+
+def read_exact(sock, count: int) -> bytes | None:
+    """Exactly ``count`` bytes from the socket, or None on EOF or
+    a short read — the client-side twin of the handler's own."""
+    data = b""
+    while len(data) < count:
+        chunk = sock.recv(count - len(data))
+        if not chunk:
+            return None
+        data += chunk
+    return data
+
+
+def identity_lines(body: bytes) -> list[str]:
+    """The public lines of an IDENTITIES_ANSWER payload: one per
+    listed identity, its embedded algorithm name and its blob as
+    base64 — the form ``ssh-add -L`` prints and authorized_keys
+    carries. The comment rides in the answer and stays out: it is
+    provenance, not identity, the same rule a served line's
+    comment follows."""
+    (count,) = struct.unpack_from(">I", body, 1)
+    reader = Reader(body)
+    reader.offset = 5
+    lines = []
+    for _ in range(count):
+        blob = reader.string()
+        reader.string()
+        algo = Reader(blob).string().decode()
+        lines.append(f"{algo} {base64.b64encode(blob).decode()}")
+    return lines
+
+
+class Adopted:
+    """An operator's agent adopted for one session (#490): the
+    socket ssh signs through (``server_address`` — the attribute
+    name the served transient agent carries, so the session paths
+    treat the two holders alike) and the public half written where
+    ssh names it (``identity_path``)."""
+
+    def __init__(self, socket_path: str, identity_path: str) -> None:
+        self.server_address = socket_path
+        self.identity_path = identity_path
+
+
+@contextmanager
+def adopt(socket_path: str, line: str):
+    """The adopted agent holder (#490): the operator's own agent,
+    with the session's public half as a file so ssh can name the
+    identity (``-i``, public material only) — the private half
+    stays with the agent, and the mode-0700 temporary directory
+    goes away with the session."""
+    directory = tempfile.mkdtemp(prefix="msks-agent-")
+    try:
+        identity_path = str(Path(directory) / "identity.pub")
+        Path(identity_path).write_text(
+            line.rstrip("\n") + "\n", encoding="utf-8"
+        )
+        yield Adopted(socket_path, identity_path)
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
 def environment_agent() -> str | None:
     """The agent socket the operator's environment names, when it
     names one and it exists.
 
     The one resolver for the operator's agent: ssh-session
-    agent forwarding (:mod:`msks.client.ssh`) consults it.
+    agent forwarding (:mod:`msks.client.ssh`) consults it, and the
+    identity rung (#490) dials it for the listing.
     """
     path = os.environ.get("SSH_AUTH_SOCK", "")
     if path and os.path.exists(path):

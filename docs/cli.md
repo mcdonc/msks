@@ -57,14 +57,16 @@ expands; an empty value counts as unset).
 
 `MSKSC_IDENTITY_FILE` names a file, not a directory: your own
 private key, read in place. msks derives the public half from it
-at create and stages the private half in memory for `msks ssh`
-and `msks rsync` — the key file
-itself is never copied into msks's state. The key must be an
-unencrypted OpenSSH-format key msks can stage (`ed25519`, `ecdsa`
-P-256/P-384/P-521, or `rsa`): msks never types a passphrase, and
-a key outside that set is refused with a line naming the fix
-(keep such keys with ssh-agent, or plant the public half with
-`--pubkey`).
+at create; `msks ssh` and `msks rsync` sign through your own
+ssh-agent when it holds that key (#490 — `ssh-add` it; the match
+is on the key material, so the file it came from and its name do
+not matter), and otherwise stage the private half in memory —
+the key file itself is never copied into msks's state. A key
+msks stages itself is an unencrypted OpenSSH-format key
+(`ed25519`, `ecdsa` P-256/P-384/P-521, or `rsa`): msks never
+types a passphrase, and an encrypted key no agent holds is
+refused with a line naming `ssh-add` as the first fix (then
+decrypting a copy, then `--pubkey` at create).
 
 A missing `MSKSC_TOKEN` is an error before any network activity: the
 client names the variable and exits. Tokens come from the daemon:
@@ -883,10 +885,13 @@ attach with: msks console my-workspace
 
 `msks ssh` and `msks rsync` resolve the same key at session time,
 so a workspace re-created under the same name keeps your access —
-a new id, the same key. A key msks stages for its own sessions
-must be an unencrypted OpenSSH-format key — `ed25519`, `ecdsa`
-(P-256/P-384/P-521), or `rsa`; an `identity_file` naming a key
-outside that set is refused with a line saying so. `--pubkey`
+a new id, the same key. Session resolution consults your own
+ssh-agent first (#490): when `SSH_AUTH_SOCK` names a live agent
+holding that key, the session signs through the agent and the
+key file's encryption stops mattering. A key msks stages for its
+own sessions is an unencrypted OpenSSH-format key — `ed25519`,
+`ecdsa` (P-256/P-384/P-521), or `rsa`; an `identity_file` naming
+a key outside that set is refused with a line saying so. `--pubkey`
 plants any well-formed public line at any type — the guest's sshd
 stays the authority on which key types it authenticates
 (#132, #115).
@@ -1575,9 +1580,13 @@ quiet flag, and a `true` command — so a session's tunnels and
 other ssh options cannot hold the wait open or alter it; the
 session itself keeps every option. For
 a workspace created now (#486) the API serves the public half and
-the private half comes from the operator identity —
-`identity_file` (or `MSKSC_IDENTITY_FILE`), the same key the
-create planted. A workspace whose row predates #486 resolves
+the private half resolves at session time: your own agent first
+(#490 — when `SSH_AUTH_SOCK` names a live agent holding the
+workspace's key, matched on the key material so the file it came
+from and its name do not matter, the session signs through that
+agent and the private half never enters the msks process,
+encrypted or not), then the operator identity — `identity_file`
+(or `MSKSC_IDENTITY_FILE`), the same key the create planted. A workspace whose row predates #486 resolves
 through the legacy paths: a daemon-minted half arrives over the
 API; a client-minted one (#121) comes from the local data root
 (`~/.local/share/msks/<id>/identity` under the default root,
@@ -1705,10 +1714,11 @@ half and sign through the agent socket, and the command writes no
 key file. The operator identity (#486 — `identity_file`), a
 `--pubkey` workspace (#132), and the pre-#486 row shapes
 (daemon-minted #111, client-minted #121) all work: the private
-half resolves where it lives — from the operator's own file, over
-the API, or from the per-workspace file — and a key that resolves
-nowhere on this client exits with the line naming where it can
-be.
+half resolves where it lives — through the operator's agent
+first (#490, the same key-material match `msks ssh` applies),
+from the operator's own file, over the API, or from the
+per-workspace file — and a key that resolves nowhere on this
+client exits with the line naming where it can be.
 A session that booted its workspace waits out the guest's first
 boot exactly as `msks ssh` does (#168): a probe login retries
 behind the identity seed (up to 30s, one line between attempts),
