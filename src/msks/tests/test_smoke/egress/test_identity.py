@@ -1,5 +1,6 @@
 """Identity smokes: the operator's configured key, the refusal an
-unconfigured client answers with, and operator-supplied keys."""
+unconfigured client answers with, operator-supplied keys, and the
+operator's agent as the session identity rung (#490)."""
 
 import asyncio
 import contextlib
@@ -587,6 +588,83 @@ async def test_local_operator_identity() -> None:
             f"forward logs:\n{forward_evidence()}"
         )
         assert "BACK-msks-42" in relogin.stdout, relogin.stdout
+
+        # #490: the operator's agent ahead of the identity file —
+        # the key encrypted in place (a file msks itself cannot
+        # read), the refusal naming ssh-add first when no agent is
+        # there, and a session that answers through the agent once
+        # one holds it: matched on key material, so the private
+        # half never enters the client, encrypted or not.
+        encrypt = await asyncio.to_thread(
+            subprocess.run,
+            [
+                SSH_KEYGEN_BIN,
+                "-p",
+                "-f",
+                str(key),
+                "-P",
+                "",
+                "-N",
+                "smoke-pass",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert encrypt.returncode == 0, encrypt.stderr
+        no_agent = {
+            name: value
+            for name, value in ssh_env.items()
+            if name != "SSH_AUTH_SOCK"
+        }
+        refused = await run_msks_ssh(command="true", env=no_agent)
+        assert refused.returncode != 0, refused.stdout
+        assert "ssh-add" in refused.stderr, (
+            f"{refused.stdout}\n{refused.stderr}"
+        )
+        holder_up = await asyncio.to_thread(
+            subprocess.run,
+            [SSH_AGENT_BIN, "-s"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert holder_up.returncode == 0, holder_up.stderr
+        holder_vars = {}
+        for line in holder_up.stdout.splitlines():
+            if line.startswith("SSH_") and "=" in line:
+                name, _, value = line.partition("=")
+                holder_vars[name] = value.split(";")[0].strip()
+        holder_env = dict(ssh_env, **holder_vars)
+        askpass = workdir / "askpass.sh"
+        askpass.write_text("#!/bin/sh\necho smoke-pass\n")
+        askpass.chmod(0o700)
+        try:
+            added = await asyncio.to_thread(
+                subprocess.run,
+                [SSH_ADD_BIN, str(key)],
+                env=dict(
+                    holder_env,
+                    SSH_ASKPASS=str(askpass),
+                    SSH_ASKPASS_REQUIRE="force",
+                ),
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert added.returncode == 0, added.stderr
+            agent_login = await run_msks_ssh(
+                command="echo AGENT-$(whoami)-$((6*7))", env=holder_env
+            )
+            assert agent_login.returncode == 0, (
+                f"{agent_login.stdout}\n{agent_login.stderr}"
+            )
+            assert "AGENT-alice-42" in agent_login.stdout, agent_login.stdout
+        finally:
+            if "SSH_AGENT_PID" in holder_vars:
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(int(holder_vars["SSH_AGENT_PID"]), 15)
 
         await microvm.shutdown(vm_id, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(vm_id)

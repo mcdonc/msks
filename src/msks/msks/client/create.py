@@ -18,7 +18,11 @@ import getpass
 from ..identity import LOGIN_NAME_RE
 from .agent import load_private
 from .rest import api_client, request
-from .ssh import derived_public, operator_identity
+from .ssh import (
+    ENCRYPTED_CREATE_RECOVERY,
+    derived_public,
+    operator_identity,
+)
 
 #: The refusal an unconfigured client raises at create (#486): the
 #: operator names a key the client never generates.
@@ -39,7 +43,7 @@ def operator_pubkey() -> tuple[str, str]:
     copied anywhere. An unconfigured client refuses rather than
     generating (:data:`IDENTITY_UNCONFIGURED`).
     """
-    resolved = operator_identity()
+    resolved = operator_identity(ENCRYPTED_CREATE_RECOVERY)
     if resolved is None:
         raise SystemExit(IDENTITY_UNCONFIGURED)
     pem, source = resolved

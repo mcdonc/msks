@@ -481,10 +481,14 @@ workspace created before #248) — whose home rides the persistent
 `/home` volume.
 
 `msks ssh` (#112) is the zero-step form of the same login: it
-boots the workspace if needed, stages the operator identity from
+boots the workspace if needed and runs ssh with the forward as
+its ProxyCommand — signing through the operator's own agent when
+it holds the workspace's key (#490, `ssh-add`; matched on the key
+material, so the file the key came from and its name do not
+matter), otherwise staging the operator identity from
 `identity_file` in a transient in-process ssh-agent (the private
-half never becomes a file), and runs ssh with the forward as its
-ProxyCommand — as the workspace's login user by default, with
+half never becomes a file) — as the workspace's login user by
+default, with
 `-l root` as the recovery login (see the CLI chapter's `msks ssh`
 section). When the command itself booted the workspace, it holds
 the connection back until the guest accepts the workspace key
@@ -556,9 +560,11 @@ written client-side, and login uses the operator's own key — `ssh
 -i` through a forward, or the `Host msks-*` alias with
 `IdentityFile` pointing at the operator's key file — the private
 half already exists wherever the operator keeps it, so the client
-fetches and stores nothing. `msks ssh` on such a workspace reads
-the key `identity_file` names when it pairs with the planted
-public half, and otherwise exits with a line naming that recovery.
+fetches and stores nothing. `msks ssh` on such a workspace signs
+through the operator's agent when it holds the planted key
+(#490), reads the key `identity_file` names when it pairs with
+the planted public half, and otherwise exits with a line naming
+those recoveries.
 
 ### Identities minted before #486
 

@@ -9,8 +9,13 @@ from the client data root), or the public half of an operator-key
 one (#336, the create default, whose private half comes from the
 resolved operator identity: :func:`operator_identity`) — and
 ``ssh`` runs with the forward
-websocket (#109) as its ProxyCommand. The session stages the
-private half in a transient in-process ssh-agent
+websocket (#109) as its ProxyCommand. When the operator's own
+agent — the one ``SSH_AUTH_SOCK`` names — holds the workspace's
+key (:func:`agent_held`, #490, matched on key material so the
+file the key came from and its name do not matter), the session
+authenticates through that agent and the private half never
+enters the msks process, encrypted or not. Otherwise the session
+stages the private half in a transient in-process ssh-agent
 (:mod:`msks.client.agent`) and ssh authenticates through the agent
 socket (``-o IdentityAgent=...``) — ssh closes inherited descriptors
 at startup, so the socket is the one channel that survives to
@@ -205,6 +210,22 @@ def client_identity_path(workspace_id: str, base: Path | None = None) -> Path:
 #: writes no copy anywhere.
 IDENTITY_FILE_ENV = "MSKSC_IDENTITY_FILE"
 
+#: The encrypted-key refusal's recoveries (#490), by calling
+#: context: a session consults the operator's agent ahead of the
+#: file, so adding the key to the agent is the first recovery,
+#: while the create reads the private half itself and offers the
+#: decrypt and ``--pubkey`` pair (the create can derive nothing
+#: from a file it cannot read — the agent holds no rung there).
+ENCRYPTED_SESSION_RECOVERY = (
+    "Add the key to your agent (ssh-add), decrypt a copy "
+    "(ssh-keygen -p -f <copy> -P <passphrase> -N ''), or pass "
+    "--pubkey at create"
+)
+ENCRYPTED_CREATE_RECOVERY = (
+    "Decrypt a copy (ssh-keygen -p -f <copy> -P <passphrase> "
+    "-N '') or pass --pubkey at create"
+)
+
 
 def configured_identity_file() -> Path | None:
     """The operator-named identity file (``identity_file`` /
@@ -226,11 +247,15 @@ def configured_identity_file() -> Path | None:
     return path
 
 
-def named_identity_file(path: Path) -> str:
+def named_identity_file(path: Path, recovery: str) -> str:
     """The strict form for the file the operator named: a missing,
     unreadable, encrypted, or unstagedable key is one line naming
     the setting and the fix — the operator pointed at it, so a
-    silent skip would read as the key matching nothing."""
+    silent skip would read as the key matching nothing.
+    ``recovery`` names the recoveries the calling context offers
+    for an encrypted key: the session resolves through the
+    operator's agent first (#490), the create reads the file
+    itself."""
     try:
         pem = path.read_text(encoding="utf-8")
         private = agent.load_private(pem)
@@ -243,9 +268,7 @@ def named_identity_file(path: Path) -> str:
     except TypeError as exc:
         raise SystemExit(
             f"msks: the operator identity file {path} is encrypted "
-            f"({exc}); msks never types a passphrase. Decrypt a copy "
-            f"(ssh-keygen -p -f <copy> -P <passphrase> -N ''), keep the "
-            "key with your agent, or pass --pubkey at create"
+            f"({exc}); msks never types a passphrase. {recovery}"
         ) from exc
     except ValueError as exc:
         raise SystemExit(
@@ -265,7 +288,7 @@ def named_identity_file(path: Path) -> str:
     return pem
 
 
-def operator_identity() -> tuple[str, Path] | None:
+def operator_identity(recovery: str) -> tuple[str, Path] | None:
     """The operator's identity: ``(pem, source path)`` or None
     when no file is configured.
 
@@ -278,12 +301,38 @@ def operator_identity() -> tuple[str, Path] | None:
     (#486): the create refuses when nothing is configured. A key
     an older msks wrote under the data root
     (``<data_dir>/identity``) still works — point the setting at
-    that file.
+    that file. ``recovery`` is the encrypted-key refusal's
+    recoveries for the calling context
+    (:data:`ENCRYPTED_SESSION_RECOVERY` or
+    :data:`ENCRYPTED_CREATE_RECOVERY`).
     """
     configured = configured_identity_file()
     if configured is None:
         return None
-    return named_identity_file(configured), configured
+    return named_identity_file(configured, recovery), configured
+
+
+def agent_held(served: list[str]) -> str | None:
+    """The operator's agent socket when the agent holds the
+    session's key (#490) — the rung ahead of every file: when
+    ``SSH_AUTH_SOCK`` names a live agent, the identities it lists
+    (:func:`msks.client.agent.listed_lines`) are compared against
+    the public half the session needs, on key material and never
+    on file paths (the agent may hold the same key under any
+    name). A match points the session at the operator's agent —
+    the private half, encrypted or not, never enters the msks
+    process. No agent, a dead socket, or no match declines to the
+    file rungs unchanged."""
+    socket_path = agent.environment_agent()
+    if socket_path is None:
+        return None
+    lines = agent.listed_lines(socket_path)
+    if lines is None:
+        return None
+    for line in lines:
+        if line.split()[:2] == served:
+            return socket_path
+    return None
 
 
 def operator_match(served: list[str]) -> str | None:
@@ -292,7 +341,7 @@ def operator_match(served: list[str]) -> str | None:
     rsync``, and the console's pubkey auth working on a workspace
     planted with the operator's key (#336), including one
     re-created under the same name (a new id, the same key)."""
-    resolved = operator_identity()
+    resolved = operator_identity(ENCRYPTED_SESSION_RECOVERY)
     if resolved is None:
         return None
     pem, _source = resolved
@@ -1256,14 +1305,40 @@ def probe_attempt(
 
 
 @contextmanager
+def session_identity(key: dict, workspace_id: str):
+    """The agent the session authenticates through (#490): the
+    operator's own when it holds the workspace's key
+    (:func:`agent_held` — adopted, not staged, so the private
+    material never enters the msks process, and an encrypted
+    identity_file stops mattering), else the transient in-process
+    agent (:func:`msks.client.agent.serve`) staging the private
+    half :func:`resolve_private` finds. The holder's two
+    attributes — the agent socket and the public half's path —
+    are the same pair in both branches, so every session path
+    (``msks ssh``'s argv, ``msks rsync``'s per-session config,
+    the first-boot probe) treats the two alike."""
+    served = key["public_key"].split()[:2]
+    held = agent_held(served)
+    if held is not None:
+        with agent.adopt(held, key["public_key"]) as adopted:
+            yield adopted
+        return
+    private = agent.load_private(resolve_private(key, workspace_id))
+    with agent.serve(private, identity_comment(key)) as staged:
+        yield staged
+
+
+@contextmanager
 def staged_session(workspace_id: str, transport=None):
     """The pre-flight every ssh-transport command runs: the client
     environment, the boot-if-needed probe wait's inputs, and the
-    workspace identity served from the transient agent
-    (:mod:`msks.client.agent). Yields ``(booted, served,
+    session's identity — served from the operator's own agent
+    when it holds the key (#490) or staged in the transient agent
+    (:mod:`msks.client.agent`). Yields ``(booted, served,
     known_hosts, user)`` — whether this session booted the workspace
-    (the #168 wait runs only then), the served agent holding the
-    private half in memory, the per-instance known_hosts path
+    (the #168 wait runs only then), the agent holder carrying the
+    identity (either branch of :func:`session_identity`), the
+    per-instance known_hosts path
     (#246), and the workspace's login user (#248).
     ``msks ssh`` (#112) and ``msks rsync`` (#190) share it."""
     token = env_token()
@@ -1272,8 +1347,7 @@ def staged_session(workspace_id: str, transport=None):
     key, booted = asyncio.run(
         prepare(workspace_id, url, token, ssl_ctx, transport)
     )
-    private = agent.load_private(resolve_private(key, workspace_id))
-    with agent.serve(private, identity_comment(key)) as served:
+    with session_identity(key, workspace_id) as served:
         cache_ref, instance = cache_key(key, workspace_id)
         yield (
             booted,

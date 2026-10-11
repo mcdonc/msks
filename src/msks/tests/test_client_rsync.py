@@ -10,6 +10,7 @@ exists — one integration test runs stock rsync against it through
 the agent, proving the transport path rsync's ssh children take.
 """
 
+import shlex
 import shutil
 import subprocess
 from contextlib import contextmanager
@@ -29,13 +30,18 @@ from test_client_ssh import (
     needs_sshd,
     wait_listening,
 )
+from testkeys import encrypted, mint
 
 
 @pytest.fixture
 def client_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The client environment the run loop reads."""
+    """The client environment the run loop reads — with no
+    ambient agent, so the staging path stays deterministic
+    (#490); tests that want an agent set SSH_AUTH_SOCK
+    themselves."""
     monkeypatch.setenv("MSKSC_URL", "https://daemon")
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
 
 
 RSYNC_BIN = shutil.which("rsync")
@@ -263,6 +269,73 @@ def test_run_workspace_rsync_runs_rsync_and_stops_the_agent(
     assert argv[1] == "-e"
     assert argv[-1] == "alpha:/d/"  # the empty host was filled
     assert stopped == ["stopped"]  # the agent tears down after rsync exits
+
+
+def test_run_workspace_rsync_rides_the_operator_agent(
+    monkeypatch: pytest.MonkeyPatch,
+    client_env: None,
+    tmp_path: Path,
+) -> None:
+    """#490 on the copy side: an encrypted identity_file and the
+    operator's agent holding the key — the per-session ssh config
+    carries the operator's socket as the identity agent and names
+    the identity by the served public half, and nothing stages."""
+    pem, public = mint("ed25519")
+    locked = tmp_path / "locked"
+    locked.write_text(encrypted(pem))
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(locked))
+    row = {
+        "public_key": f"{public} msksd:alpha",
+        "private_key": None,
+        "user": "alice",
+    }
+
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return row, False
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
+    )
+
+    def refuse_to_stage(private, comment):
+        raise AssertionError("the private half must not be staged")
+
+    with agent.serve(agent.load_private(pem), "yours") as held:
+        monkeypatch.setattr(ssh.agent, "serve", refuse_to_stage)
+        monkeypatch.setenv("SSH_AUTH_SOCK", held.server_address)
+        commands: list[list[str]] = []
+        configs: list[str] = []
+        named: list[str] = []
+
+        def fake_run(argv, **kwargs):
+            commands.append(list(argv))
+            words = shlex.split(argv[2])  # the -e value's ssh words
+            config = Path(words[words.index("-F") + 1]).read_text(
+                encoding="utf-8"
+            )
+            configs.append(config)
+            identity_file = next(
+                line[len("IdentityFile ") :].strip('"')
+                for line in config.splitlines()
+                if line.startswith("IdentityFile")
+            )
+            # Read while the session still holds the directory —
+            # the adopted directory goes away with the session.
+            named.append(Path(identity_file).read_text(encoding="utf-8"))
+            return SimpleNamespace(returncode=0, stderr="")
+
+        monkeypatch.setattr(ssh.subprocess, "run", fake_run)
+        rc = rsync.run_workspace_rsync("alpha", ["-av", "./s/", ":/d/"])
+    assert rc == 0
+    argv = commands[0]
+    assert argv[0] == "rsync"
+    assert argv[-1] == "alpha:/d/"
+    lines = configs[0].splitlines()
+    assert f"IdentityAgent {held.server_address}" in lines
+    assert named == [f"{public} msksd:alpha\n"]
 
 
 def test_run_workspace_rsync_skips_the_wait_when_not_booted(

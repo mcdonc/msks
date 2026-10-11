@@ -53,3 +53,15 @@ def mint(key_type: str) -> tuple[str, str]:
         .decode()
     )
     return private_pem, public
+
+
+def encrypted(pem: str, passphrase: bytes = b"pw") -> str:
+    """The same private half, passphrase-encrypted — the file msks
+    itself cannot read (#490's agent-rung fixtures: the refusal's
+    encrypted case, and the agent-held key that answers it)."""
+    private = serialization.load_ssh_private_key(pem.encode(), password=None)
+    return private.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.BestAvailableEncryption(passphrase),
+    ).decode()

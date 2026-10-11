@@ -15,6 +15,8 @@ import shutil
 import socket
 import struct
 import subprocess
+import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,8 +28,8 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding
 from cryptography.hazmat.primitives.asymmetric.utils import (
     decode_dss_signature,
 )
-from msks.client import agent, cli, ssh
-from testkeys import mint
+from msks.client import agent, cli, create, ssh
+from testkeys import encrypted, mint
 
 PEM = mint("ed25519")[0]
 ECDSA_PEM = mint("ecdsa")[0]
@@ -53,6 +55,11 @@ needs_sshd = pytest.mark.skipif(
 def client_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MSKSC_URL", "https://daemon")
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
+    # The session identity consults the operator's agent when one
+    # is named (#490) — the run loop stays hermetic (and its
+    # staging path deterministic) with no ambient agent; the
+    # tests that want one set it themselves.
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
 
 
 def mock(handler) -> httpx.MockTransport:
@@ -326,8 +333,6 @@ def test_agent_stays_quiet_when_the_peer_resets(
                 socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)
             )
             gone.close()
-        import time
-
         time.sleep(0.1)  # let the handler thread hit the reset
         # The agent still serves the next connection.
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as fresh:
@@ -473,8 +478,6 @@ def free_port() -> int:
 def wait_listening(
     port: int, timeout_s: float = 10.0, evidence: Path | None = None
 ) -> None:
-    import time
-
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         with socket.socket() as probe:
@@ -788,16 +791,7 @@ def test_resolve_private_names_a_broken_identity_file(
         ssh.resolve_private({"public_key": "x", "private_key": None}, "ws1")
     locked = tmp_path / "locked"
     unencrypted, _public = mint("ed25519")
-    key_obj = serialization.load_ssh_private_key(
-        unencrypted.encode(), password=b""
-    )
-    locked.write_text(
-        key_obj.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.OpenSSH,
-            encryption_algorithm=serialization.BestAvailableEncryption(b"pw"),
-        ).decode()
-    )
+    locked.write_text(encrypted(unencrypted))
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(locked))
     with pytest.raises(SystemExit, match="encrypted"):
         ssh.resolve_private({"public_key": "x", "private_key": None}, "ws1")
@@ -813,7 +807,7 @@ def test_a_relative_identity_file_is_refused(
     identity_home(monkeypatch, tmp_path)
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", "keys/id_ed25519")
     with pytest.raises(SystemExit, match="absolute path"):
-        ssh.operator_identity()
+        ssh.operator_identity(ssh.ENCRYPTED_SESSION_RECOVERY)
 
 
 def test_the_agent_stages_the_wide_nist_curves() -> None:
@@ -861,10 +855,283 @@ def test_the_staged_key_must_be_signable(
         return SimpleNamespace() if text == pem else real_load(text)
 
     monkeypatch.setattr(ssh.agent, "load_private", stub_loader)
-    assert ssh.operator_identity() is None
+    assert ssh.operator_identity(ssh.ENCRYPTED_SESSION_RECOVERY) is None
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(minted))
     with pytest.raises(SystemExit, match="cannot stage"):
-        ssh.operator_identity()
+        ssh.operator_identity(ssh.ENCRYPTED_SESSION_RECOVERY)
+
+
+# --- the operator's agent as the identity rung (#490) ---
+
+
+def test_listed_lines_answers_the_listing_question() -> None:
+    """listed_lines asks any agent the question ``ssh-add -L`` asks
+    and returns the authorized_keys lines — the comment stays out,
+    the same provenance-not-identity rule the served line
+    follows."""
+    with agent.serve(agent.load_private(PEM), "yours truly") as served:
+        assert agent.listed_lines(served.server_address) == [
+            agent_public_line(PEM)
+        ]
+
+
+def test_listed_lines_declines_when_no_agent_answers(
+    tmp_path: Path,
+) -> None:
+    """A socket path nothing listens on — or a path that is not a
+    socket at all — is no agent: the rung declines rather than
+    errors (#490's dead-socket rule: the behavior is exactly
+    today's)."""
+    assert agent.listed_lines(str(tmp_path / "gone.sock")) is None
+    plain = tmp_path / "agent.sock"
+    plain.touch()
+    assert agent.listed_lines(str(plain)) is None
+
+
+def run_scripted_peer(socket_path: str, behave) -> None:
+    """One unix-socket peer that accepts a single connection and
+    performs the scripted behavior — the broken-agent stand-in."""
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(socket_path)
+    server.listen(1)
+    try:
+        conn, _ = server.accept()
+        with conn:
+            behave(conn)
+    finally:
+        server.close()
+
+
+def scripted_reply(script: bytes):
+    """A peer behavior: read the listing ask, then send the script
+    (nothing, for the empty script) and hang up — the send order
+    keeps the client's own ask from racing into a closed socket."""
+
+    def behave(conn) -> None:
+        conn.recv(1024)
+        if script:
+            conn.sendall(script)
+
+    return behave
+
+
+def test_listed_lines_declines_a_broken_answer(tmp_path: Path) -> None:
+    """The listing declines whatever a broken peer does — hangs up
+    without answering, promises a length past the message ceiling,
+    truncates the body it promised, or answers a kind that is no
+    identity listing: no agent answers there, and the rung
+    declines rather than errors (#490)."""
+    cases = [
+        scripted_reply(b""),  # hangs up with no header
+        scripted_reply(b"\xff\xff\xff\xff"),  # a length past the ceiling
+        scripted_reply(b"\x00\x00\x00\x10\x0c\x00\x00\x00"),  # short body
+        scripted_reply(b"\x00\x00\x00\x01\x0c"),  # complete, but no count
+        scripted_reply(
+            b"\x00\x00\x00\x05\x0c\x00\x00\x00\x09"
+        ),  # count 9, no identities behind it
+        scripted_reply(b"\x00\x00\x00\x01\x05"),  # FAILURE, not a listing
+    ]
+    for index, behave in enumerate(cases):
+        path = str(tmp_path / f"broken-{index}.sock")
+        thread = threading.Thread(
+            target=run_scripted_peer, args=(path, behave), daemon=True
+        )
+        thread.start()
+        deadline = time.monotonic() + 5
+        while not os.path.exists(path):
+            assert time.monotonic() < deadline, "the peer never bound"
+            time.sleep(0.01)
+        assert agent.listed_lines(path) is None
+        thread.join(timeout=5)
+
+
+def test_agent_held_matches_on_key_material(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#490: the rung compares the agent's listed lines against the
+    served public half on key material — the file the key came
+    from, its path, and its comment do not matter, and no
+    identity_file needs to be configured at all."""
+    identity_home(monkeypatch, tmp_path)
+    pem, public = mint("ed25519")
+    with agent.serve(agent.load_private(pem), "re-pathed@anywhere") as held:
+        monkeypatch.setenv("SSH_AUTH_SOCK", held.server_address)
+        served = f"{public} whatever-comment".split()[:2]
+        assert ssh.agent_held(served) == held.server_address
+        _other_pem, other_public = mint("ecdsa")
+        assert ssh.agent_held(other_public.split()[:2]) is None
+
+
+def test_agent_held_declines_without_a_live_agent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An unset SSH_AUTH_SOCK or a dead socket declines the rung —
+    the file rungs answer, today's behavior exactly (#490)."""
+    served = "ssh-ed25519 AAAA x".split()[:2]
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+    assert ssh.agent_held(served) is None
+    dead = tmp_path / "agent.sock"
+    dead.touch()
+    monkeypatch.setenv("SSH_AUTH_SOCK", str(dead))
+    assert ssh.agent_held(served) is None
+
+
+def refuse_to_stage(private, comment):
+    """The staging stand-in that fails the test: the agent rung
+    answering means no private half is ever staged (#490)."""
+    raise AssertionError("the private half must not be staged")
+
+
+def test_session_identity_adopts_the_operator_agent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#490: an encrypted identity_file resolves when the
+    operator's agent holds the key — the session points at the
+    agent's socket, names the identity by the served public half,
+    and stages nothing (the encrypted file's refusal never
+    fires)."""
+    identity_home(monkeypatch, tmp_path)
+    pem, public = mint("ed25519")
+    locked = tmp_path / "locked"
+    locked.write_text(encrypted(pem))
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(locked))
+    key = {"public_key": f"{public} msks-client:ws", "private_key": None}
+    with agent.serve(agent.load_private(pem), "yours") as held:
+        monkeypatch.setattr(ssh.agent, "serve", refuse_to_stage)
+        monkeypatch.setenv("SSH_AUTH_SOCK", held.server_address)
+        with ssh.session_identity(key, "ws1") as served:
+            assert served.server_address == held.server_address
+            assert (
+                Path(served.identity_path).read_text(encoding="utf-8")
+                == f"{public} msks-client:ws\n"
+            )
+
+
+def test_the_agent_wins_even_for_an_unencrypted_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#490's consequence, pinned: staging a key the process could
+    read from disk buys nothing over the agent already holding
+    it — the agent rung answers first, and agent users need no
+    unencrypted file anywhere."""
+    identity_home(monkeypatch, tmp_path)
+    pem, public = mint("ed25519")
+    mine = tmp_path / "my-key"
+    mine.write_text(pem)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
+    key = {"public_key": f"{public} msks-client:ws", "private_key": None}
+    with agent.serve(agent.load_private(pem), "yours") as held:
+        monkeypatch.setattr(ssh.agent, "serve", refuse_to_stage)
+        monkeypatch.setenv("SSH_AUTH_SOCK", held.server_address)
+        with ssh.session_identity(key, "ws1") as served:
+            assert served.server_address == held.server_address
+
+
+def test_session_identity_stages_when_the_agent_holds_no_match(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A live agent holding a different key declines to the file
+    rung: today's staging answers, and the session's socket is the
+    transient agent's, not the operator's (#490's ordering)."""
+    identity_home(monkeypatch, tmp_path)
+    pem, public = mint("ed25519")
+    mine = tmp_path / "my-key"
+    mine.write_text(pem)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
+    key = {"public_key": f"{public} msks-client:ws", "private_key": None}
+    other_pem, _other_public = mint("ecdsa")
+    with agent.serve(agent.load_private(other_pem), "other") as held:
+        monkeypatch.setenv("SSH_AUTH_SOCK", held.server_address)
+        with ssh.session_identity(key, "ws1") as served:
+            assert served.server_address != held.server_address
+
+
+def test_an_encrypted_identity_file_refuses_naming_ssh_add_first(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#490: an encrypted key with no agent holding it stays the
+    one-line refusal — no prompt anywhere — and the agent is its
+    first recovery."""
+    identity_home(monkeypatch, tmp_path)
+    monkeypatch.delenv("SSH_AUTH_SOCK", raising=False)
+    pem, public = mint("ed25519")
+    locked = tmp_path / "locked"
+    locked.write_text(encrypted(pem))
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(locked))
+    key = {"public_key": f"{public} msks-client:ws", "private_key": None}
+    with pytest.raises(SystemExit) as caught:
+        ssh.resolve_private(key, "ws1")
+    line = str(caught.value)
+    assert "never types a passphrase" in line
+    assert "ssh-add" in line
+    assert line.index("ssh-add") < line.index("ssh-keygen")
+
+
+def test_the_create_refusal_names_no_agent_rung(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The create reads the private half itself, so its encrypted
+    refusal offers the decrypt and --pubkey pair alone — naming
+    the agent would point at a recovery the create cannot use
+    (#490)."""
+    identity_home(monkeypatch, tmp_path)
+    pem, _public = mint("ed25519")
+    locked = tmp_path / "locked"
+    locked.write_text(encrypted(pem))
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(locked))
+    with pytest.raises(SystemExit) as caught:
+        create.operator_pubkey()
+    line = str(caught.value)
+    assert "ssh-add" not in line
+    assert "ssh-keygen" in line
+
+
+def test_run_workspace_ssh_authenticates_through_the_operator_agent(
+    monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
+) -> None:
+    """#490 in the run loop: the identity file encrypted, the
+    operator's agent holding the key, and ssh pointed at the
+    operator's socket — the transient agent never starts."""
+    pem, public = mint("ed25519")
+    locked = tmp_path / "locked"
+    locked.write_text(encrypted(pem))
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(locked))
+    row = {
+        "public_key": f"{public} msksd:alpha",
+        "private_key": None,
+        "user": "alice",
+    }
+
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return row, False
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
+    )
+    with agent.serve(agent.load_private(pem), "yours") as held:
+        monkeypatch.setattr(ssh.agent, "serve", refuse_to_stage)
+        monkeypatch.setenv("SSH_AUTH_SOCK", held.server_address)
+        calls: list[list[str]] = []
+        named: list[str] = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(list(argv))
+            # The public half is read while the session still holds
+            # it — the adopted directory goes away with the session.
+            named.append(
+                Path(argv[argv.index("-i") + 1]).read_text(encoding="utf-8")
+            )
+            return SimpleNamespace(returncode=3, stderr="")
+
+        monkeypatch.setattr(ssh.subprocess, "run", fake_run)
+        rc = ssh.run_workspace_ssh("alpha", [])
+    assert rc == 3
+    argv = calls[0]
+    assert f"IdentityAgent={held.server_address}" in argv
+    assert named == [f"{public} msksd:alpha\n"]
 
 
 def test_cache_dir_honors_xdg(monkeypatch: pytest.MonkeyPatch) -> None:
