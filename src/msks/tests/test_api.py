@@ -443,8 +443,28 @@ async def test_workspace_ref_resolution_prefers_the_id(client) -> None:
     key = await http.get("/api/v1/workspaces/ws-ref/ssh-key", headers=auth())
     assert key.json()["id"] == wid
     assert key.json()["name"] == "ws-ref"
-    # The unread fields stay gone (#499): the answer is exactly
-    # the five the client reads.
+
+
+async def test_the_ssh_key_answer_is_exactly_the_five_fields(client) -> None:
+    """#499: the unread fields stay gone — the answer carries the
+    id, name, public half, instance stamp, and login user the
+    client reads, and nothing else."""
+    http, _app, _stub = client
+    from testkeys import mint
+
+    _private, public = mint("ed25519")
+    await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-five",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "ssh_pubkey": f"{public} operator@laptop",
+        },
+        headers=auth(),
+    )
+    key = await http.get("/api/v1/workspaces/ws-five/ssh-key", headers=auth())
+    assert key.status_code == 200
     assert set(key.json()) == {
         "id",
         "name",
