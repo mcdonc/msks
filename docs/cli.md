@@ -66,7 +66,10 @@ msks stages itself is an unencrypted OpenSSH-format key
 (`ed25519`, `ecdsa` P-256/P-384/P-521, or `rsa`): msks never
 types a passphrase, and an encrypted key no agent holds is
 refused with a line naming `ssh-add` as the first fix (then
-decrypting a copy, then `--pubkey` at create).
+decrypting a copy, then `--pubkey` at create). An agent that asks
+for confirmation per signature (a hardware token's touch) asks
+at its own cadence — the first-boot probe's retries and the
+session each count as a signing request.
 
 A missing `MSKSC_TOKEN` is an error before any network activity: the
 client names the variable and exits. Tokens come from the daemon:

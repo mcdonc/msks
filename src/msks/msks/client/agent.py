@@ -362,7 +362,7 @@ def listed_lines(path: str) -> list[str] | None:
         return None
 
 
-def answer_payload(sock) -> bytes | None:
+def answer_payload(sock: socket.socket) -> bytes | None:
     """One answer payload from the agent, or None on a short read
     or a length field past the message ceiling."""
     header = read_exact(sock, 4)
@@ -374,7 +374,7 @@ def answer_payload(sock) -> bytes | None:
     return read_exact(sock, length)
 
 
-def read_exact(sock, count: int) -> bytes | None:
+def read_exact(sock: socket.socket, count: int) -> bytes | None:
     """Exactly ``count`` bytes from the socket, or None on EOF or
     a short read — the client-side twin of the handler's own."""
     data = b""
@@ -392,10 +392,12 @@ def identity_lines(body: bytes) -> list[str]:
     base64 — the form ``ssh-add -L`` prints and authorized_keys
     carries. The comment rides in the answer and stays out: it is
     provenance, not identity, the same rule a served line's
-    comment follows."""
-    (count,) = struct.unpack_from(">I", body, 1)
+    comment follows. Every read goes through :class:`Reader`, so a
+    short or lying body is the module's own ValueError — an answer
+    this parser refuses, never a crash on untrusted input."""
     reader = Reader(body)
-    reader.offset = 5
+    reader.offset = 1
+    count = reader.uint32()
     lines = []
     for _ in range(count):
         blob = reader.string()

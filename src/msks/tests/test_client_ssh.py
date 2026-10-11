@@ -925,6 +925,10 @@ def test_listed_lines_declines_a_broken_answer(tmp_path: Path) -> None:
         scripted_reply(b""),  # hangs up with no header
         scripted_reply(b"\xff\xff\xff\xff"),  # a length past the ceiling
         scripted_reply(b"\x00\x00\x00\x10\x0c\x00\x00\x00"),  # short body
+        scripted_reply(b"\x00\x00\x00\x01\x0c"),  # complete, but no count
+        scripted_reply(
+            b"\x00\x00\x00\x05\x0c\x00\x00\x00\x09"
+        ),  # count 9, no identities behind it
         scripted_reply(b"\x00\x00\x00\x01\x05"),  # FAILURE, not a listing
     ]
     for index, behave in enumerate(cases):
