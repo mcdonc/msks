@@ -1065,12 +1065,12 @@ async def test_local_operator_pubkey() -> None:
         )
         assert "OPKEY-msks-42" in login.stdout, login.stdout
 
-        # msks ssh has no half to serve for an operator key: the
-        # recovery names both places the half can be.
+        # msks ssh holds no private half for an operator key: the
+        # refusal names the rungs and the ways back in.
         sugar = await cli("ssh", wid, "--", "-F", os.devnull, "--", "true")
         assert sugar.returncode != 0
-        assert "not on this client" in sugar.stderr
-        assert "Point identity_file" in sugar.stderr
+        assert "no private half" in sugar.stderr
+        assert "ssh-add" in sugar.stderr
 
         await microvm.shutdown(vm_id, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(vm_id)
