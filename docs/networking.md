@@ -513,7 +513,6 @@ invocations — one wildcard block serves every workspace:
 
 ```text
 Host msks-*
-    User msks
     ProxyCommand sh -c 'exec msks forward "${1#msks-}" 22' _ %h
     UserKnownHostsFile ~/.cache/msks/%h/known_hosts
     StrictHostKeyChecking accept-new
@@ -527,7 +526,13 @@ Host msks-*
 `ssh msks-devbox`, `rsync -aP src/ msks-devbox:/src/`, `git clone
 msks-devbox:srv/proj.git`, and VS Code Remote-SSH work against the
 alias; ControlMaster shares one forward connection across
-concurrent invocations. The alias block names the operator's own
+concurrent invocations. The block sets no `User`: plain `ssh`
+logs in as its own default — the local username, which is the
+workspace's recorded login user for the operator who created it
+(#248, the name `msks create --user` planted; `ssh -l alice`
+for a workspace another operator's name recorded); a workspace
+that records no user dials `root` (#500), the account every seed
+provisions a key for. The alias block names the operator's own
 key with `IdentityFile` — the same file `identity_file` names.
 Those paths are the client cache root's defaults and stay where
 the block writes them: OpenSSH reads its own config, so
