@@ -453,8 +453,8 @@ variables, and `--pubkey`. `pubkey_file` (or
 (#495) — a `.pub` file, read in place of any private material,
 the create form for a key kept encrypted while the operator's
 agent holds it. The daemon stores and seeds the public
-line only; its database never holds a private half (the API's
-key fetch answers `private_key: null` for every row, #497). The
+line only; its database never holds a private half and its key
+fetch carries no private field at all (#497). The
 public half persists across daemon
 restarts and workspace stop/start: it lives on the workspace's
 row, and a stop/start cycle serves the same line again. The seed

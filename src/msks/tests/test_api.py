@@ -489,8 +489,8 @@ async def test_ssh_key_endpoint_auth_and_missing(client) -> None:
 async def test_create_with_client_supplied_pubkey(client) -> None:
     """The create (#121, #486): the daemon validates the supplied
     public line, seeds and stores it annotated with its own provenance
-    comment, and holds no private half — the key endpoint answers
-    private_key: null."""
+    comment, and holds no private half — the key endpoint carries
+    no private field at all (#497)."""
     from testkeys import mint
 
     http, _app, stub = client
@@ -520,7 +520,6 @@ async def test_create_with_client_supplied_pubkey(client) -> None:
     body = key.json()
     assert body["type"] == "ssh-ed25519"
     assert body["public_key"] == row["ssh_pubkey"]
-    assert body["private_key"] is None
 
 
 async def test_create_accepts_any_supplied_pubkey_type(client) -> None:
@@ -572,7 +571,8 @@ async def test_create_accepts_any_supplied_pubkey_type(client) -> None:
         key = await http.get(
             f"/api/v1/workspaces/{wid}/ssh-key", headers=auth()
         )
-        assert key.json()["private_key"] is None
+        assert key.status_code == 200
+        assert "private_key" not in key.json()
 
 
 async def test_create_rejects_a_malformed_pubkey(client) -> None:
@@ -1312,7 +1312,6 @@ async def test_ssh_key_serves_the_legacy_user_for_old_rows(client) -> None:
     key = await http.get("/api/v1/workspaces/ws-old/ssh-key", headers=auth())
     assert key.status_code == 200
     assert key.json()["user"] == "msks"
-    assert key.json()["private_key"] is None
 
 
 async def test_create_rejects_empty_user_data(client) -> None:

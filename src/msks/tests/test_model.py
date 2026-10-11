@@ -244,6 +244,69 @@ async def test_migration_survives_a_torn_0013_and_downgrades(
     assert starred["backend_ref"] == "MSKSDAEMON_WIDE"
 
 
+async def test_migration_0015_drops_the_private_half_column(
+    tmp_path: Path, app_for
+) -> None:
+    """#497's deliverable, pinned on the schema itself: a database
+    stamped at 0014 upgrades to head with `workspaces.ssh_privkey`
+    gone — the stored halves drop as dead bytes, the rows survive —
+    and a torn 0015 (DDL committed, stamp rewound to 0014) re-runs
+    as a no-op and reaches head, the same live-columns guard
+    0013/0014 heal with."""
+    app = app_for()
+    db_path = tmp_path / "t.db"
+    config = alembic_config(db_path)
+    command.upgrade(config, "0014")
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            # A pre-#486 row carrying a planted half, the exact
+            # shape the upgrade drops.
+            conn.execute(
+                sa.text(
+                    "INSERT INTO workspaces (id, kernel, rootfs, "
+                    "cmdline, cpus, mem_mib, status, ssh_pubkey, "
+                    "ssh_privkey, created_at, updated_at) "
+                    "VALUES ('ws-old', '/k', '/r', 'console=hvc0', 1, "
+                    "128, 'stopped', 'ssh-ed25519 AAAA x', "
+                    "'-----BEGIN OPENSSH PRIVATE KEY-----', "
+                    "'2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                )
+            )
+    finally:
+        engine.dispose()
+    command.upgrade(config, "head")
+
+    def columns() -> set[str]:
+        engine = sa.create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as conn:
+                return {
+                    row[1]
+                    for row in conn.execute(
+                        sa.text("PRAGMA table_info(workspaces)")
+                    )
+                }
+        finally:
+            engine.dispose()
+
+    assert "ssh_privkey" not in columns()
+    assert "ssh_pubkey" in columns()  # the public half stays
+    row = await app.state.model.get_ssh_key("ws-old")
+    assert row == {
+        "id": "ws-old",
+        "name": None,
+        "public_key": "ssh-ed25519 AAAA x",
+        "created_at": row["created_at"],
+        "login_user": None,
+    }
+    # The torn shape: DDL committed, stamp rewound — the guard
+    # inspects the live columns and lands at head as a no-op.
+    command.stamp(config, "0014")
+    app.state.model.migrate()  # re-runs 0015 onto the finished shape
+    assert "ssh_privkey" not in columns()
+
+
 async def test_migration_gives_legacy_rows_a_null_name(
     tmp_path: Path, app_for
 ) -> None:
@@ -344,7 +407,6 @@ async def test_get_ssh_key_serves_the_public_half_alone(app_for) -> None:
         "id": "ws1",  # the immutable id, for client caches (#246)
         "name": None,
         "public_key": pub,
-        "private_key": None,
         "created_at": key["created_at"],  # the instance stamp (#245)
         "login_user": "alice",
     }
@@ -364,7 +426,6 @@ async def test_get_ssh_key_without_identity_and_absent(app_for) -> None:
         "id": "ws1",
         "name": None,
         "public_key": None,
-        "private_key": None,
         "created_at": key["created_at"],
         "login_user": None,
     }

@@ -879,7 +879,7 @@ def test_session_identity_adopts_the_operator_agent(
     locked = tmp_path / "locked"
     locked.write_text(encrypted(pem))
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(locked))
-    key = {"public_key": f"{public} msks-client:ws", "private_key": None}
+    key = {"public_key": f"{public} msks-client:ws"}
     with agent.serve(agent.load_private(pem), "yours") as held:
         monkeypatch.setattr(ssh.agent, "serve", refuse_to_stage)
         monkeypatch.setenv("SSH_AUTH_SOCK", held.server_address)
@@ -903,7 +903,7 @@ def test_the_agent_wins_even_for_an_unencrypted_file(
     mine = tmp_path / "my-key"
     mine.write_text(pem)
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
-    key = {"public_key": f"{public} msks-client:ws", "private_key": None}
+    key = {"public_key": f"{public} msks-client:ws"}
     with agent.serve(agent.load_private(pem), "yours") as held:
         monkeypatch.setattr(ssh.agent, "serve", refuse_to_stage)
         monkeypatch.setenv("SSH_AUTH_SOCK", held.server_address)
@@ -922,7 +922,7 @@ def test_session_identity_stages_when_the_agent_holds_no_match(
     mine = tmp_path / "my-key"
     mine.write_text(pem)
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
-    key = {"public_key": f"{public} msks-client:ws", "private_key": None}
+    key = {"public_key": f"{public} msks-client:ws"}
     other_pem, _other_public = mint("ecdsa")
     with agent.serve(agent.load_private(other_pem), "other") as held:
         monkeypatch.setenv("SSH_AUTH_SOCK", held.server_address)
@@ -942,7 +942,7 @@ def test_an_encrypted_identity_file_refuses_naming_ssh_add_first(
     locked = tmp_path / "locked"
     locked.write_text(encrypted(pem))
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(locked))
-    key = {"public_key": f"{public} msks-client:ws", "private_key": None}
+    key = {"public_key": f"{public} msks-client:ws"}
     with pytest.raises(SystemExit) as caught:
         ssh.resolve_private(key, "ws1")
     line = str(caught.value)
@@ -982,7 +982,6 @@ def test_run_workspace_ssh_authenticates_through_the_operator_agent(
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(locked))
     row = {
         "public_key": f"{public} msksd:alpha",
-        "private_key": None,
         "user": "alice",
     }
 
@@ -2196,9 +2195,7 @@ def test_workspace_user_falls_back_for_an_older_daemon() -> None:
     always-default."""
     from msks.identity import LEGACY_LOGIN_USER
 
-    assert ssh.workspace_user({"public_key": "k", "private_key": None}) == (
-        LEGACY_LOGIN_USER
-    )
+    assert ssh.workspace_user({"public_key": "k"}) == (LEGACY_LOGIN_USER)
     assert LEGACY_LOGIN_USER == "msks"
 
 

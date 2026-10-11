@@ -290,7 +290,6 @@ def test_run_workspace_rsync_rides_the_operator_agent(
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(locked))
     row = {
         "public_key": f"{public} msksd:alpha",
-        "private_key": None,
         "user": "alice",
     }
 

@@ -67,7 +67,6 @@ KEY_BODY = {
     "workspace": "alpha",
     "type": "ecdsa-sha2-nistp256",
     "public_key": "ecdsa-sha2-nistp256 AAAA msksd:alpha",
-    "private_key": None,
 }
 
 
@@ -113,10 +112,11 @@ def test_the_key_command_parses_no_private_forms(
     half is the operator's own key and never crossed the API to
     begin with."""
     client_env(monkeypatch)
-    rc = cli.main(
-        ["key", "alpha", "--private"],
-        transport=mock(lambda req: httpx.Response(200, json=KEY_BODY)),
-    )
+    transport = mock(lambda req: httpx.Response(200, json=KEY_BODY))
+    rc = cli.main(["key", "alpha", "--private"], transport=transport)
+    assert rc == 2
+    assert "No such option" in capsys.readouterr().err
+    rc = cli.main(["key", "alpha", "--out", "/tmp/k"], transport=transport)
     assert rc == 2
     assert "No such option" in capsys.readouterr().err
 
@@ -837,7 +837,6 @@ def test_cmd_create_pubkey_sends_the_line_and_writes_nothing(
                     "workspace": "ws1",
                     "type": "ssh-ed25519",
                     "public_key": annotated,
-                    "private_key": None,
                 },
             )
         seen["body"] = json.loads(request.content)

@@ -2201,7 +2201,6 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
                 200,
                 json={
                     "public_key": f"{seen_pub[0]} minted",
-                    "private_key": None,
                 },
             )
         if request.url.path == "/api/v1/workspaces":

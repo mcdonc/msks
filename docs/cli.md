@@ -41,14 +41,10 @@ their file keys below.
 | `MSKSC_PUBKEY_FILE`    | Your key's public half — what a bare `msks create` plants instead of reading `identity_file` (#495), the form for a key you keep encrypted (your agent holds it; msks reads no private half); same naming rule, global-only | unset (`identity_file` answers)                           |
 | `MSKSC_TERMINAL_TITLE` | The title template for the workspace-shell windows the workspace page opens (#445); `{workspace}` resolves to the workspace's id                                                                                            | unset (the terminal's own title)                          |
 
-The two directory variables are separate because their contents
-differ in durability: the host-key cache is disposable (a swept
-cache costs one trust-on-first-use re-pin), while the identity
-files a pre-#486 client wrote beside it have no other copy —
-losing one loses ssh to that workspace. Pointing the cache at a
-per-project, disposable location and the data at somewhere durable
-is the intended use; one variable for both would tie their
-lifetimes together.
+`MSKSC_CACHE_DIR` exists because the host-key cache is
+disposable: a swept cache costs one trust-on-first-use re-pin, so
+pointing it at a per-project, disposable location is the intended
+use (#251).
 
 Each names its directory directly — the per-workspace directories
 are created below it — and takes an absolute path (a relative
@@ -86,12 +82,11 @@ client names the variable and exits. Tokens come from the daemon:
 all three from the worktree's dev-daemon state dir,
 `.devenv/state/msksd/` (token + CA) — once the dev daemon has
 served once, a fresh devenv shell needs no exports. The same shell
-presets the two directory variables at the worktree's own
-`.devenv/state/msksc/` (cache under `cache/`, identities under
-`data/`), so each checkout's client state stays its own — one
-tree's cache entry is never read by another (#251); a non-empty
-value exported before entering the shell survives the preset, and
-an empty one counts as unset.
+presets `MSKSC_CACHE_DIR` at the worktree's own
+`.devenv/state/msksc/cache/`, so each checkout's client state
+stays its own — one tree's cache entry is never read by another
+(#251); a non-empty value exported before entering the shell
+survives the preset, and an empty one counts as unset.
 
 ```bash
 msks ls        # presets: https://127.0.0.1:8660, the worktree's

@@ -434,10 +434,6 @@ class Model:
                 "id": row.id,
                 "name": row.name,
                 "public_key": row.ssh_pubkey,
-                # Always None (#497): the daemon stores the public
-                # half alone — the field stays so one wire shape
-                # serves old and new clients alike.
-                "private_key": None,
                 # The workspace instance's stamp (#245): the client
                 # keys its host-key cache on it, so a recreated
                 # workspace (the same name, a new instance) starts
