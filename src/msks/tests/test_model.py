@@ -15,7 +15,7 @@ from msks.model import model as model_mod
 from msks.model.db import Base, engine_for
 from msks.model.model import alembic_config
 from msks.settings import ServerSettings, Settings
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 
 @pytest.fixture
@@ -908,3 +908,174 @@ async def test_rename_placeholder_ref(app_for) -> None:
         "MSKSWS_OTHER"
     )
     assert await model.rename_placeholder_ref(row["id"] + 1000, "X") is False
+
+
+# --- secret blobs (#513, #504) --------------------------------------
+
+
+def pubkey_fixture() -> str:
+    """One fresh ed25519 public line per call — fresh, so key
+    hashes never collide between the workspaces a staleness check
+    spans."""
+    from testkeys import mint
+
+    _pem, pub = mint("ed25519")
+    return pub
+
+
+async def test_secret_blob_write_read_drop_replace(app_for) -> None:
+    app = app_for()
+    await app.state.model.create_all()
+    model = app.state.model
+    row = await model.create_placeholder(
+        ["ws1"], "api", "mskssec1_x", ["api.example.com"], "MSKSWS_WS1_API"
+    )
+    await model.write_secret_blobs(row["id"], {"ws1": ("hash-a", b"cipher-a")})
+    seen = await model.secret_blobs(row["id"])
+    assert [
+        (b["recipient"], b["key_hash"], b["ciphertext"]) for b in seen
+    ] == [("ws1", "hash-a", b"cipher-a")]
+    assert seen[0]["created_at"]
+
+    # Replace-all: the second write lands whole, the first goes.
+    await model.write_secret_blobs(row["id"], {"ws2": ("hash-b", b"cipher-b")})
+    assert [b["recipient"] for b in await model.secret_blobs(row["id"])] == [
+        "ws2"
+    ]
+
+    assert await model.drop_secret_blob(row["id"], "ws2") is True
+    assert await model.drop_secret_blob(row["id"], "ws2") is False
+    assert await model.secret_blobs(row["id"]) == []
+    assert await model.secret_blobs(row["id"] + 1000) == []
+
+
+async def test_secret_blob_staleness_scoped(app_for) -> None:
+    """The rule from rows alone: a covered workspace without a
+    blob is missing; one whose blob names another key hash is
+    stale; a matching hash is fresh."""
+    app = app_for()
+    await app.state.model.create_all()
+    model = app.state.model
+    pub1, pub2 = pubkey_fixture(), pubkey_fixture()
+    await model.create_workspace(spec("ws1", ssh_pubkey=pub1))
+    await model.create_workspace(spec("ws2", ssh_pubkey=pub2))
+    row = await model.create_placeholder(
+        ["ws1", "ws2"], "api", "mskssec1_y", [], "MSKSWS_WS1_WS2_API"
+    )
+
+    # No blobs: every covered key-carrying workspace is missing.
+    assert await model.secret_blob_staleness(row["id"]) == {
+        "missing": ["ws1", "ws2"],
+        "stale": [],
+    }
+
+    fresh = model_mod.secret_key_hash(pub1)
+    stale = model_mod.secret_key_hash(pub2) + "rotated"
+    await model.write_secret_blobs(
+        row["id"],
+        {"ws1": (fresh, b"c1"), "ws2": (stale, b"c2")},
+    )
+    assert await model.secret_blob_staleness(row["id"]) == {
+        "missing": [],
+        "stale": ["ws2"],
+    }
+    assert await model.secret_blob_staleness(row["id"] + 1000) is None
+
+
+async def test_secret_blob_staleness_daemon_wide(app_for) -> None:
+    """A daemon-wide row's expected set is every key-carrying
+    workspace with ``all`` coverage — a scoped workspace and a
+    keyless one stay out of the rule entirely."""
+    app = app_for()
+    await app.state.model.create_all()
+    model = app.state.model
+    pub_all = pubkey_fixture()
+    pub_scoped = pubkey_fixture()
+    await model.create_workspace(spec("wsA", ssh_pubkey=pub_all))
+    await model.create_workspace(
+        spec("wsS", ssh_pubkey=pub_scoped, secret_coverage="scoped")
+    )
+    await model.create_workspace(spec("wsK"))  # keyless: never a recipient
+    row = await model.create_placeholder(
+        [], "api", "mskssec2_z", [], "MSKSDAEMON_API"
+    )
+    await model.write_secret_blobs(
+        row["id"], {"wsA": (model_mod.secret_key_hash(pub_all), b"c")}
+    )
+    assert await model.secret_blob_staleness(row["id"]) == {
+        "missing": [],
+        "stale": [],
+    }
+    # A workspace added later (daemon-wide coverage, a key) is
+    # missing until an unlock refreshes the row's blobs.
+    await model.create_workspace(spec("wsR", ssh_pubkey=pubkey_fixture()))
+    assert await model.secret_blob_staleness(row["id"]) == {
+        "missing": ["wsR"],
+        "stale": [],
+    }
+
+
+async def test_migration_0016_adds_secret_blobs(tmp_path: Path) -> None:
+    """#513's deliverable, pinned on the schema: a database
+    stamped at 0015 upgrades to head with the blob table, the
+    unique (placeholder, recipient) constraint holds, and the
+    downgrade drops it."""
+    db_path = tmp_path / "t.db"
+    config = alembic_config(db_path)
+    command.upgrade(config, "0015")
+
+    def tables() -> set[str]:
+        engine = sa.create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as conn:
+                return {
+                    row[0]
+                    for row in conn.execute(
+                        sa.text(
+                            "SELECT name FROM sqlite_master WHERE type='table'"
+                        )
+                    )
+                }
+        finally:
+            engine.dispose()
+
+    assert "secret_blobs" not in tables()
+    command.upgrade(config, "head")
+    assert "secret_blobs" in tables()
+    engine = sa.create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                sa.text(
+                    "INSERT INTO placeholders (workspaces, name,"
+                    " sentinel, dests, backend_ref, created_at)"
+                    " VALUES ('[]', 'api', 'mskssec1_m', '[]',"
+                    " 'MSKSDAEMON_API', '2026-01-01 00:00:00')"
+                )
+            )
+            conn.execute(
+                sa.text(
+                    "INSERT INTO secret_blobs (placeholder_id,"
+                    " recipient, key_hash, ciphertext, created_at)"
+                    " VALUES (1, 'ws1', 'h', X'00',"
+                    " '2026-01-01 00:00:00')"
+                )
+            )
+    finally:
+        engine.dispose()
+    with pytest.raises(IntegrityError):
+        engine = sa.create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    sa.text(
+                        "INSERT INTO secret_blobs (placeholder_id,"
+                        " recipient, key_hash, ciphertext, created_at)"
+                        " VALUES (1, 'ws1', 'h2', X'01',"
+                        " '2026-01-01 00:00:00')"
+                    )
+                )
+        finally:
+            engine.dispose()
+    command.downgrade(config, "0015")
+    assert "secret_blobs" not in tables()

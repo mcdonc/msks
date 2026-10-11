@@ -125,7 +125,9 @@ ALLOWED_EDGES = {
     # spec vocabulary since #401, imported from there since #407
     ("persist", "identity"),
     ("persist", "spec"),
-    # the secret store over the model
+    # the secret store over the model; the age identity mint
+    # comes from the crypto leaf (#513)
+    ("secretstore", "agecrypto"),
     ("secretstore", "model"),
     # the image catalog's ref grammar comes from the leaf vocabulary
     ("imagestore", "spec"),

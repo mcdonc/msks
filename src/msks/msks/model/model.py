@@ -10,7 +10,7 @@ from alembic import command
 from alembic.config import Config as AlembicConfig
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine, or_, select, update
+from sqlalchemy import create_engine, delete, or_, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -22,6 +22,7 @@ from .secrets import (
     AUDIT_KINDS,
     Placeholder,
     SecretAudit,
+    SecretBlob,
     coverage_label,
 )
 from .tokens import Token
@@ -36,6 +37,31 @@ def coverage_key(workspaces: list[str]) -> str:
 
 
 TOKEN_ENTROPY_BYTES = 32
+
+
+def classify_blobs(expected: dict[str, str], blobs: dict[str, str]) -> dict:
+    """The staleness rule over two maps (#513): a recipient whose
+    workspace has no blob row is missing, one whose blob names
+    another key hash is stale (the key rotated), and a matching
+    hash is fresh. Pure — the rows alone decide."""
+    missing = []
+    stale = []
+    for workspace_id, line in expected.items():
+        hash_seen = blobs.get(workspace_id)
+        if hash_seen is None:
+            missing.append(workspace_id)
+        elif hash_seen != secret_key_hash(line):
+            stale.append(workspace_id)
+    return {"missing": sorted(missing), "stale": sorted(stale)}
+
+
+def secret_key_hash(line: str) -> str:
+    """The staleness token a blob row records at mint (#513):
+    SHA-256 hex of the workspace's ssh public key line. A
+    workspace whose line changes mints a different hash, so the
+    blob written against the old line reads back stale."""
+    return hashlib.sha256(line.encode()).hexdigest()
+
 
 # Inside the package, so the wheel ships it: a pip-installed msksd
 # can run its migrations (the package build inherits this).
@@ -616,6 +642,117 @@ class Model:
             # strips tzinfo at bind); replace() unconditionally
             # normalizes without a branch.
             return row.expires_at.replace(tzinfo=UTC) > utcnow()
+
+    # --- secret blobs (#513) ----------------------------------------
+
+    async def write_secret_blobs(
+        self, placeholder_id: int, blobs: dict[str, tuple[str, bytes]]
+    ) -> None:
+        """Replace one placeholder's blob set atomically: every
+        recipient's ``(key_hash, ciphertext)`` pair lands in one
+        transaction, the previous set — if any — goes with it.
+        Replace-all is the lazy re-encryption rule's shape (#514:
+        an unlock refreshes the whole set to the current
+        recipients); a crash mid-write leaves either set whole."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            await session.execute(
+                delete(SecretBlob).where(
+                    SecretBlob.placeholder_id == placeholder_id
+                )
+            )
+            for recipient, (key_hash, ciphertext) in sorted(blobs.items()):
+                session.add(
+                    SecretBlob(
+                        placeholder_id=placeholder_id,
+                        recipient=recipient,
+                        key_hash=key_hash,
+                        ciphertext=ciphertext,
+                    )
+                )
+            await session.commit()
+
+    async def secret_blobs(self, placeholder_id: int) -> list[dict]:
+        """One placeholder's blob rows — recipient order — as
+        dicts: recipient, key_hash, ciphertext, created_at."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            rows = await session.scalars(
+                select(SecretBlob)
+                .where(SecretBlob.placeholder_id == placeholder_id)
+                .order_by(SecretBlob.recipient)
+            )
+            return [
+                {
+                    "recipient": row.recipient,
+                    "key_hash": row.key_hash,
+                    "ciphertext": row.ciphertext,
+                    "created_at": row.created_at.isoformat(),
+                }
+                for row in rows
+            ]
+
+    async def drop_secret_blob(
+        self, placeholder_id: int, recipient: str
+    ) -> bool:
+        """Remove one recipient's blob; False when absent."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            result = await session.execute(
+                delete(SecretBlob).where(
+                    SecretBlob.placeholder_id == placeholder_id,
+                    SecretBlob.recipient == recipient,
+                )
+            )
+            await session.commit()
+            return result.rowcount > 0
+
+    async def secret_blob_staleness(self, placeholder_id: int) -> dict | None:
+        """Which of a placeholder's recipients need a refresh
+        (#513's staleness rule): ``{"missing": ids, "stale": ids}``,
+        or None for an absent placeholder.
+
+        The expected set is the row's coverage — a scoped row's
+        workspaces, or every accepting workspace (``all``
+        coverage, #339) for a daemon-wide row — narrowed to the
+        workspaces that carry a public key: a keyless workspace
+        can hold no recipient, and #514's mint names that refusal
+        at write time. A covered workspace whose current key has
+        no blob is missing; one whose blob records a different
+        key hash is stale (the key rotated). Rows alone decide —
+        the rule survives a crash mid-write because each blob
+        carries the hash it was minted against."""
+        row = await self.get_placeholder(placeholder_id)
+        if row is None:
+            return None
+        expected = await self.secret_recipient_keys(row["workspaces"])
+        blobs = {
+            blob["recipient"]: blob["key_hash"]
+            for blob in await self.secret_blobs(placeholder_id)
+        }
+        return classify_blobs(expected, blobs)
+
+    async def secret_recipient_keys(
+        self, coverage: list[str]
+    ) -> dict[str, str]:
+        """The workspaces a placeholder's blobs belong to, as an
+        ``{id: ssh public key line}`` map: the explicit coverage
+        for a scoped row, every key-carrying workspace with ``all``
+        coverage for a daemon-wide one (#339). A covered workspace
+        without a key is absent from the map — the mint (#514)
+        refuses a keyless recipient by name, so the staleness rule
+        never meets one."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            if coverage:
+                rows = await session.scalars(
+                    select(Workspace).where(Workspace.id.in_(coverage))
+                )
+            else:
+                rows = await session.scalars(
+                    select(Workspace).where(Workspace.secret_coverage == "all")
+                )
+            return {row.id: row.ssh_pubkey for row in rows if row.ssh_pubkey}
 
     # --- secret audit (#198) -----------------------------------------
 

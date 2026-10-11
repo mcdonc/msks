@@ -20,7 +20,9 @@ decrypt unattended; the agefile itself stays ciphertext at
 rest. msksd never decrypts anything itself — every store
 operation spawns the SecretSpec CLI
 (``secretspec get/set/delete --provider "age://<root>/secrets.age?identity=<path>"``)
-and the agefile is decrypted inside that child process.
+and the agefile is decrypted inside that child process. The
+mint itself lives in the age crypto leaf (#513,
+:mod:`msks.agecrypto`), which owns the age primitives.
 
 The SecretSpec **CLI** is the integration surface, not the Python
 SDK: the SDK's native ABI exposes only the resolve path, while
@@ -52,9 +54,7 @@ import re
 import secrets as pysecrets
 from pathlib import Path
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import x25519
-
+from .agecrypto import mint_age_identity
 from .model.secrets import coverage_label
 
 LOG = logging.getLogger(__name__)
@@ -229,80 +229,10 @@ def cli_error(operation: str, err: bytes) -> SecretStoreError:
     )
 
 
-#: The bech32 character set (BIP-173): age identities and
-#: recipients encode with it.
-BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
-
-
-def bech32_polymod(values: list[int]) -> int:
-    """The bech32 checksum accumulator over *values* (5-bit)."""
-    gen = [0x3B6A57B2, 0x26508E6D, 0x1EA119FA, 0x3D4233DD, 0x2A1462B3]
-    chk = 1
-    for value in values:
-        top = chk >> 25
-        chk = (chk & 0x1FFFFFF) << 5 ^ value
-        for i in range(5):
-            chk ^= gen[i] if ((top >> i) & 1) else 0
-    return chk
-
-
-def bech32_checksum(hrp: str, data: list[int]) -> list[int]:
-    """The six 5-bit checksum words for *data* under *hrp* (the
-    bech32 const-1 variant age uses)."""
-    expanded = [ord(c) >> 5 for c in hrp] + [0]
-    expanded += [ord(c) & 31 for c in hrp]
-    polymod = bech32_polymod(expanded + data + [0] * 6) ^ 1
-    return [(polymod >> 5 * (5 - i)) & 31 for i in range(6)]
-
-
-def convertbits(data: bytes, frombits: int, tobits: int) -> list[int]:
-    """Re-group *data*'s bits: 8-bit bytes into 5-bit words
-    (zero-padded at the tail, as age's fixed-size keys need)."""
-    acc = 0
-    bits = 0
-    words = []
-    maxv = (1 << tobits) - 1
-    for value in data:
-        acc = (acc << frombits) | value
-        bits += frombits
-        while bits >= tobits:
-            bits -= tobits
-            words.append((acc >> bits) & maxv)
-    if bits:
-        words.append((acc << (tobits - bits)) & maxv)
-    return words
-
-
-def encode_bech32(hrp: str, data: bytes) -> str:
-    """*data* as a bech32 string under the lowercase *hrp*."""
-    words = convertbits(data, 8, 5)
-    payload = words + bech32_checksum(hrp, words)
-    return hrp + "1" + "".join(BECH32_CHARSET[w] for w in payload)
-
-
-def mint_age_identity() -> str:
-    """A fresh age-keygen-shaped identity file body: the X25519
-    private key bech32-encoded as ``AGE-SECRET-KEY-1…`` with its
-    recipient on a comment line (the shape ``age-keygen`` writes,
-    so the file reads as a native age identity everywhere — the
-    recipient line lets an operator re-key or back up without
-    decrypting anything).
-    """
-    private = x25519.X25519PrivateKey.generate()
-    scalar = private.private_bytes(
-        encoding=serialization.Encoding.Raw,
-        format=serialization.PrivateFormat.Raw,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
-    recipient = encode_bech32(
-        "age",
-        private.public_key().public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw,
-        ),
-    )
-    identity = encode_bech32("age-secret-key-", scalar).upper()
-    return f"# public key: {recipient}\n{identity}\n"
+#: The bech32 encoding and the age identity mint moved to the
+#: age crypto leaf (#513), which owns the age primitives for the
+#: store the daemon keeps and the per-recipient blobs that
+#: replace it.
 
 
 def ensure_age_identity(path: Path) -> None:
