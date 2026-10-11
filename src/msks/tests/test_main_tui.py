@@ -64,6 +64,7 @@ from test_consent_tui import (
     rules_frame as shared_rules_frame,
 )
 from textual.color import Color
+from textual.containers import Vertical
 from textual.content import Content, Span
 from textual.css.query import NoMatches
 from textual.widgets import Button, Input, OptionList, Select, Static
@@ -374,6 +375,18 @@ def list_children(app) -> int:
     return sum(
         1 for child in rows.children if getattr(child, "workspace_id", None)
     )
+
+
+def listing_settled(app) -> bool:
+    """Whether the listing stands past a rebuild's swap window
+    (#519): the list answers its query and the click's own read
+    — the focused row the screen's rows imply — is not None. The
+    status line alone cannot gate a single-shot read or press:
+    its 0.5s timer reads ``len(self.rows)``, which the rebuild
+    sets before it mounts the fresh list, so under a descheduled
+    runner the count stands on the line while no list does, and
+    a click fired there no-ops into the no-focus flash."""
+    return app.screen.focused_row() is not None
 
 
 def action_children(app) -> int:
@@ -3990,6 +4003,41 @@ async def test_a_row_selection_opens_the_page(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test():
         await wait_for(lambda: "1 workspace" in status_text(app))
+        # The settle gate, not the status line: the count can
+        # stand on the line while the first rebuild's swap window
+        # is still open (#519), and the click fired there no-ops.
+        await wait_for(lambda: listing_settled(app))
+        app.screen.on_list_view_selected(None)  # the click's message
+        await wait_for(lambda: on_page(app))
+
+
+async def test_a_row_selection_waits_out_the_listing_swap_window(
+    monkeypatch,
+) -> None:
+    """#519: the click's message must not fire inside the first
+    rebuild's swap window. The status line cannot gate it — the
+    0.5s status timer reads ``len(self.rows)``, which the rebuild
+    sets before it mounts the fresh list, so the count stands on
+    the line while no list does; a click fired in that window
+    no-ops (the no-focus flash) and the page never opens, the
+    exact CI lane shape (#518's run: "condition never landed"
+    while the code under test completed fine). The mount seam
+    here holds the window open the way a descheduled runner
+    does; the settle gate rides past it before the click fires."""
+    original = Vertical.mount
+
+    async def stalled_mount(self, *widgets, **kwargs):
+        if any(getattr(widget, "id", None) == "rows" for widget in widgets):
+            await asyncio.sleep(0.7)  # the deschedule the CI lane rides
+        return await original(self, *widgets, **kwargs)
+
+    monkeypatch.setattr(Vertical, "mount", stalled_mount)
+    scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        await wait_for(lambda: listing_settled(app))
         app.screen.on_list_view_selected(None)  # the click's message
         await wait_for(lambda: on_page(app))
 
