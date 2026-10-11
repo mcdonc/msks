@@ -53,6 +53,7 @@ facades = [
 # at its entry point, and conformance — the local checker —
 # composes the daemon, so it sits on top.
 [ranks]
+agecrypto = 0
 configio = 0
 conformance_args = 0
 events = 0
@@ -153,6 +154,9 @@ identity = 2
 spec = 4
 
 [snapshot.secretstore]
+# #513: the age identity mint moved to the crypto leaf (one
+# statement, module + name — the walker's pair of edges)
+agecrypto = 2
 model = 2
 
 [snapshot.server]
