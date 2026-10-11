@@ -228,20 +228,6 @@ class TuiData:
             json_body={"ttl_s": ttl_s},
         )
 
-    async def secret_check(self) -> dict:
-        """POST the secret store check (#393) — the mint form's
-        pre-flight, the same exchange ``msks secret check`` makes:
-        the configured store answers writes, or the refusal names
-        itself on the form."""
-        return await api_call(
-            "POST",
-            env_url(),
-            env_token(),
-            "/api/v1/secrets/check",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-        )
-
     async def mint_secret(self, body: dict) -> dict:
         """POST one placeholder mint (#393) — the secrets page's
         form, the same exchange ``msks secret mint`` makes: the

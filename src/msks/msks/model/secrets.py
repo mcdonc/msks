@@ -17,9 +17,10 @@ daemon that stores them holds no key that decrypts them, and the
 client (#515) does the unwrapping.
 
 Audit rows are the operator's record of placeholder lifecycle:
-mint, revoke, and expiry carry the placeholder's identity,
-coverage, destinations, and timestamp — everything except the
-secret and the sentinel, which have no business in an audit trail.
+mint, revoke, expiry, and unlock carry the placeholder's
+identity, coverage, destinations, and timestamp — everything
+except the secret and the sentinel, which have no business in an
+audit trail.
 """
 
 from datetime import datetime
@@ -36,8 +37,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base, utcnow
 
-#: The mint/revoke/expiry kinds an audit row can carry.
-AUDIT_KINDS = ("mint", "revoke", "expiry")
+#: The lifecycle kinds an audit row can carry — mint, revoke,
+#: expiry, and the unlock that re-encrypts a row's blobs (#514).
+AUDIT_KINDS = ("mint", "revoke", "expiry", "unlock")
 
 #: The workspace settings a coverage flip accepts (#339): ``all``
 #: takes daemon-wide placeholders, ``scoped`` exempts the workspace

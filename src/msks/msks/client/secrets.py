@@ -201,19 +201,14 @@ def cmd_secret_revoke(
     """``msks secret revoke`` (#339): effective on the next
     request; the targeting mirrors the mint's."""
     row = asyncio.run(find_placeholder(workspace_refs, name, transport))
-    result = asyncio.run(
+    asyncio.run(
         call(
             "DELETE",
             f"/api/v1/secrets/{row['id']}",
             transport=transport,
         )
     )
-    suffix = (
-        ""
-        if result.get("store_cleaned", True)
-        else (" (store value left behind; msks secret check reports it)")
-    )
-    print(f"revoked {coverage_label(row['workspaces'])}/{name}{suffix}")
+    print(f"revoked {coverage_label(row['workspaces'])}/{name}")
     return 0
 
 
@@ -259,13 +254,4 @@ def cmd_secret_coverage(
         f"workspace {workspace_id} secret coverage: "
         f"{result['secret_coverage']}"
     )
-    return 0
-
-
-def cmd_secret_check(transport=None) -> int:
-    """``msks secret check``: the configured store answers writes."""
-    result = asyncio.run(
-        call("POST", "/api/v1/secrets/check", transport=transport)
-    )
-    print(f"secret store ({result['provider']}): ok")
     return 0

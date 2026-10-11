@@ -262,6 +262,16 @@ def fingerprint(blob: bytes) -> str:
     return b64e(hashlib.sha256(blob).digest()[:4])
 
 
+def secret_key_hash(line: str) -> str:
+    """The staleness token a blob row records at mint (#513):
+    SHA-256 hex of the workspace's ssh public key line. A
+    workspace whose line changes mints a different hash, so the
+    blob written against the old line reads back stale. Defined
+    with the key vocabulary so the blob-writing leaf (#514) and
+    the staleness reader (the model) share one spelling."""
+    return hashlib.sha256(line.encode()).hexdigest()
+
+
 def age_capable(line: str) -> bool:
     """Whether *line* names a key type this module can encrypt to
     — the #514 mint's refusal predicate. Shape-invalid lines are

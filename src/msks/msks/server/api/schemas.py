@@ -50,6 +50,27 @@ class SecretCoverageSet(BaseModel):
     secret_coverage: str
 
 
+class SecretUnlockValue(BaseModel):
+    """One row's unlocked plaintext (#514): the value the client
+    decrypted from the row's ciphertext blob. Whitespace-stripped
+    at both ends, the same strip the mint applies; never echoed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    placeholder_id: int
+    value: str = Field(min_length=1, max_length=65536)
+
+
+class SecretUnlock(BaseModel):
+    """An unlock request (#514): one value per row, accepted only
+    for rows whose ciphertext the pending list served under the
+    live session window."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    values: list[SecretUnlockValue] = Field(min_length=1, max_length=64)
+
+
 class SecretRenew(BaseModel):
     """A renew request: the new lifetime in seconds from now."""
 

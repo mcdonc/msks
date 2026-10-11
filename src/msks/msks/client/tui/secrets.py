@@ -168,13 +168,10 @@ def ttl_default(row: dict) -> str:
 
 
 def revoke_note(row: dict, reply: dict) -> str:
-    """The revoke's outcome line (#390): the retired row's label,
-    plus the store's leftover note when the value stayed behind
-    (the CLI's own wording — ``msks secret check`` reports it)."""
-    note = f"revoked {escape(coverage_text(row))}/{escape(row['name'])}"
-    if not reply.get("store_cleaned", True):
-        note += " (store value left behind; msks secret check reports it)"
-    return note
+    """The revoke's outcome line (#390): the retired row's label
+    (the reply's shape keeps the daemon's id beside it)."""
+    del reply
+    return f"revoked {escape(coverage_text(row))}/{escape(row['name'])}"
 
 
 def renew_note(row: dict, reply: dict) -> str:
@@ -588,7 +585,7 @@ class SecretsScreen(Screen):
 
 #: The audit view's kind filter choices (#390): every kind a row
 #: can carry, in the issue's own order.
-AUDIT_KINDS = ("swap", "sighting", "mint", "revoke", "expiry")
+AUDIT_KINDS = ("swap", "sighting", "mint", "revoke", "expiry", "unlock")
 
 #: The pickers' no-filter label.
 FILTER_ALL = "all"
@@ -782,8 +779,8 @@ class SecretAuditScreen(Screen):
         if self.link_or_stub().controller.events:
             return "No events match the filters."
         return (
-            "No placeholder events yet — mints, revokes, and "
-            "expiries appear here."
+            "No placeholder events yet — mints, revokes, "
+            "expiries, and unlocks appear here."
         )
 
     def sync_status(self) -> None:
@@ -1165,19 +1162,12 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
             self.flighting = False
 
     async def mint_flight(self, body: dict) -> None:
-        """The exchange proper: the store check names a broken
-        store before a doomed mint runs; a refusal lands on the
-        failure panel (#426) — the daemon's detail at reading
-        width, dismissed by hand — with the fields kept for a
-        retry; a mint that lands dismisses with its reply (#393 —
-        the sentinel rides the reply; the value
-        rides no reply at all)."""
-        self.note("checking the secret store…")
-        try:
-            await self.app.data.secret_check()
-        except (Exception, SystemExit) as exc:
-            self.refused("secret store check", None, exc)
-            return
+        """The exchange proper: a refusal lands on the failure
+        panel (#426) — the daemon's detail at reading width,
+        dismissed by hand — with the fields kept for a retry; a
+        mint that lands dismisses with its reply (#393 — the
+        sentinel rides the reply; the value rides no reply at
+        all)."""
         self.note("minting…")
         try:
             row = await self.app.data.mint_secret(body)

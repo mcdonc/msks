@@ -114,7 +114,6 @@ def test_install_hint_fallbacks() -> None:
 
 
 def test_install_hint_pinned_binaries() -> None:
-    assert "secretspec/releases" in install_hint("secretspec", "apt")
     hint = install_hint("cloud-hypervisor", "apt")
     assert "cloud-hypervisor/releases" in hint
 
@@ -473,7 +472,6 @@ def test_run_doctor_grades_and_settings_names(
         "nft",
         "conntrack",
         "qemu-img",
-        "secretspec",
         "libnetfilter_queue",
         "libnfnetlink",
         "tmux",
@@ -568,7 +566,7 @@ def test_doctor_main_exit_codes_and_output(
     assert doctor_main(None) == 0
     out = capsys.readouterr().out
     assert "msksd doctor" in out
-    assert "All 15 checks passed." in out
+    assert "All 14 checks passed." in out
 
 
 def test_doctor_main_appends_config_notice(

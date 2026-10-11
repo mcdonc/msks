@@ -34,10 +34,12 @@ IGNORED = "ignore"  # malformed / unknown frame; state untouched
 
 #: The interceptor audit frames (#201) — event name to row kind. A
 #: swap or sighting names the wire destination; mint carries the
-#: allowlist; revoke and expiry are the placeholder's exit.
+#: allowlist; revoke and expiry are the placeholder's exit; unlock
+#: re-encrypted the row's blobs (#514).
 SECRET_KINDS = {
     "secret.mint": "mint",
     "secret.revoke": "revoke",
+    "secret.unlock": "unlock",
     "secret.expiry": "expiry",
     "secret.swap": "swap",
     "secret.sighting": "sighting",

@@ -249,8 +249,11 @@ class Interceptor:
         return await self.app.state.model.placeholder_valid(sentinel)
 
     async def secret_for(self, entry: PlaceholderEntry) -> str:
-        """The real secret behind the entry (cached after first use)."""
-        return await self.app.state.secrets.read(entry.backend_ref)
+        """The real secret behind the entry, from the unlock-time
+        plaintext cache (#514): cold raises the named locked error
+        the engine answers with a refusal — the daemon holds no
+        plaintext of its own anymore."""
+        return self.app.state.secrets.plain.read(entry.backend_ref)
 
     async def publish_swap(
         self, workspace_id: str, entry: PlaceholderEntry, host: str

@@ -313,13 +313,15 @@ async def test_revoke_confirms_then_retires_the_row() -> None:
         assert "revoked */github_api" in secrets_status(app)
 
 
-async def test_revoke_names_a_leftover_store_value() -> None:
+async def test_revoke_names_the_retired_row() -> None:
+    """The revoke's outcome line names the row (#390) — the reply
+    carries the daemon's id beside the label."""
     data = FakeData([])
     data.secret_rows = [secret_row(id=7)]
 
     async def revoke_secret(placeholder_id: int) -> dict:
         data.secret_calls.append(("revoke", placeholder_id))
-        return {"revoked": placeholder_id, "store_cleaned": False}
+        return {"revoked": placeholder_id}
 
     data.revoke_secret = revoke_secret
     app, _follow = make_app(data)
@@ -329,9 +331,7 @@ async def test_revoke_names_a_leftover_store_value() -> None:
         await pilot.press("x")
         await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
         await pilot.press("y")
-        await wait_for(
-            lambda: "store value left behind" in secrets_status(app)
-        )
+        await wait_for(lambda: "revoked" in secrets_status(app))
 
 
 async def test_a_renewal_failure_flashes_on_the_status_line() -> None:
@@ -565,9 +565,9 @@ def fill_mint(
 async def test_the_form_mints_and_the_panel_masks_until_revealed(
     tmp_path,
 ) -> None:
-    """The create action's whole path (#393): the store check
-    rides ahead of the mint, the daemon-wide body carries neither
-    a coverage list nor a ttl but does carry the operator's value,
+    """The create action's whole path (#393): the daemon-wide
+    body carries neither a coverage list nor a ttl but does carry
+    the operator's value,
     the panel opens with the sentinel masked (the reach decoded
     from the prefix), the reveal shows it and the hide masks it
     again, and closing clears the text and lands the row on the
@@ -581,8 +581,6 @@ async def test_the_form_mints_and_the_panel_masks_until_revealed(
         fill_mint(form)
         await pilot.click("#do-mint")
         await wait_for(lambda: on_panel(app))
-        # The store check rode ahead of the mint.
-        assert data.calls == [("secret-check",)]
         assert [call[0] for call in data.secret_calls] == ["mint"]
         body = data.secret_calls[0][1]
         assert body["name"] == "github_api"
@@ -720,32 +718,16 @@ async def test_the_failure_panel_holds_until_closed(tmp_path) -> None:
         await pilot.pause()
         assert on_failure(app)  # still standing
         assert data.secret_calls[exchanges:] == []  # no new exchange
-        await pilot.press("escape")
+        # The focused Close button dismisses through its press
+        # handler (the click's path), and a second refusal closes
+        # the same way.
+        await pilot.press("enter")
         await wait_for(lambda: on_mint(app))
-
-
-async def test_a_refused_store_check_opens_the_panel_and_no_mint_runs(
-    tmp_path,
-) -> None:
-    """The store pre-flight (#393, #426): a store that cannot
-    answer opens the failure panel — its refusal names no one
-    body, so the title carries the verb alone — and no mint
-    leaves."""
-    data = FakeData([])
-    data.fail.add("secret-check")
-    app, _follow = make_app(data)
-    async with app.run_test() as pilot:
-        await open_secrets(pilot, app)
-        form = await open_mint(pilot, app)
-        fill_mint(form)
         form.submit()
         await wait_for(lambda: on_failure(app))
-        await wait_for(lambda: failure_title(app))
-        assert failure_title(app) == "secret store check failed"
-        assert "daemon away" in failure_detail(app)
-        await pilot.press("enter")  # the focused Close button
+        await wait_for(lambda: close_focused(app))
+        await pilot.press("enter")
         await wait_for(lambda: on_mint(app))
-        assert data.secret_calls == []
 
 
 async def test_the_panel_copies_the_sentinel_over_osc52(

@@ -129,12 +129,6 @@ def keep_startup_bound(old: Settings, new: Settings) -> None:
         new.server.tls_key = old.server.tls_key
     new.vmm.state_dir = old.vmm.state_dir
     new.server.db_path = old.server.db_path
-    # The secret store's root is startup-bound the same way: a
-    # root swap would point reads at an agefile whose manifest and
-    # values were never migrated. The age identity path reloads
-    # live (the way dns_upstream does) — an operator moving the
-    # key file keeps the same vault.
-    new.secret_store.root = old.secret_store.root
 
 
 def install_sighup_reload(app, config: str | None) -> None:

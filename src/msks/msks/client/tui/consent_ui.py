@@ -488,7 +488,8 @@ def events_note() -> str:
     the marker means, and where detection stops (#201)."""
     return (
         "Placeholder-token audit — every workspace's recorded mints, "
-        "revokes, and expiries, then wire events as they happen. "
+        "revokes, expiries, and unlocks, then wire events as they "
+        "happen. "
         "! marks a sighting: a placeholder token reached a host its "
         "mint did not allow — the exfiltration signal. Wire events "
         "cover decrypted connections only; a connection the daemon "

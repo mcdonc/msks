@@ -104,8 +104,8 @@ async def replay_secret_audit(app, socket, workspace_id: str) -> None:
     """The workspace's recorded placeholder lifecycle (#305): the
     audit table's newest rows covering it, oldest first, as
     ``secret.*`` frames — the decider's connection opens on the
-    recorded mints, revokes, and expiries instead of an empty
-    live tail. Swaps and sightings stay live-only: they are
+    recorded mints, revokes, expiries, and unlocks instead of an
+    empty live tail. Swaps and sightings stay live-only: they are
     per-request wire events, and the audit table records
     lifecycle alone. A read failure skips the replay and logs —
     registration keeps the rules view and pending snapshot it
@@ -173,6 +173,10 @@ def router(app, hub) -> APIRouter:
         # code the clients' refused handling keys on.
         if not await authed_accept(app, socket):
             return
+        # The operator session stands from the accept (#514): a
+        # zero unlock window's plaintext lives exactly while at
+        # least one of these sockets remains open.
+        app.state.secrets.plain.operator_connected()
         queue = hub.subscribe()
         client_id = id(queue)
         try:
@@ -191,6 +195,10 @@ def router(app, hub) -> APIRouter:
             # The socket closing ends any decider authority this
             # client held (#69): interactivity follows the socket.
             app.state.deciders.deregister(client_id)
+            # And the operator session's half-life (#514): the
+            # session-held plaintext goes when the LAST operator
+            # socket closes.
+            app.state.secrets.plain.operator_disconnected()
             hub.unsubscribe(queue)
 
     return api

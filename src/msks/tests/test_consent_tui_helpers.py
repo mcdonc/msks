@@ -405,3 +405,14 @@ def test_verdict_row_paints_its_decision_and_clips_its_host() -> None:
     bold = next(s for s in focused.spans if s.style == "$text bold")
     assert focused.plain[bold.start : bold.end] == "api.example:443"
     assert len(long_host) > RULE_HOST_W  # the budget the clip serves
+
+
+def test_the_failure_panel_titles_a_nameless_refusal() -> None:
+    """A refusal that belongs to no one body (a create with no
+    name typed yet, #426): the title carries the verb alone."""
+    from msks.client.tui.consent_ui import FailurePanel
+
+    panel = FailurePanel("create", None, "daemon away")
+    assert panel.heading() == "create failed"
+    named = FailurePanel("mint", "github_api", "daemon away")
+    assert named.heading() == "mint failed: github_api"

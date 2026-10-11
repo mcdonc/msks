@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 from msks.app import build_app
 from msks.events import EventHub, close_all, relay
 from msks.microvm import MicrovmError, VmSpec
-from msks.secretstore import SecretStoreError
 from msks.server import watcher as watcher_mod
 from msks.server.api import build_api
 from msks.server.api.events import decider_loop
@@ -453,13 +452,13 @@ from datetime import UTC, datetime, timedelta  # noqa: E402
 
 from msks.secretstore import backend_ref, new_sentinel  # noqa: E402
 from msks.server.watcher import sweep_expired_placeholders  # noqa: E402
-from msks.settings import SecretStoreSettings  # noqa: E402
 
 
 async def seed_placeholder(
     app, workspace_id: str, name: str, expires_at=None
 ) -> dict:
-    """A placeholder row plus the manifest declaration beside it."""
+    """A placeholder row (the sweep's unit — blobs ride the row,
+    values nothing)."""
     await app.state.model.create_workspace(
         VmSpec(workspace_id=workspace_id, kernel=Path("/k"), rootfs=Path("/r"))
     )
@@ -475,7 +474,7 @@ async def seed_placeholder(
 
 
 def sweep_app(tmp_path: Path):
-    """An app whose secret store sits on the real file provider."""
+    """An app over a real database — the sweep's whole state."""
     settings = Settings(
         net=NetSettings(enabled=False),
         server=ServerSettings(
@@ -485,7 +484,6 @@ def sweep_app(tmp_path: Path):
             # manual sweep's way (the api fixture's 10.0, same reason).
             event_poll_s=10.0,
         ),
-        secret_store=SecretStoreSettings(root=tmp_path / "store"),
     )
     app = build_app(settings)
     # A stubbed seam lets the watch loop's first pass finish during
@@ -505,17 +503,13 @@ async def test_sweep_retires_expired_and_keeps_live_rows(tmp_path) -> None:
         # body at any await; these tests drive the sweep by hand, so
         # the background task is cancelled up front.
         api.state.watcher.cancel()
-        past = await seed_placeholder(
+        await seed_placeholder(
             app, "ws-a", "expired", datetime.now(UTC) - timedelta(seconds=1)
         )
-        live = await seed_placeholder(
+        await seed_placeholder(
             app, "ws-b", "live", datetime.now(UTC) + timedelta(hours=1)
         )
-        forever = await seed_placeholder(app, "ws-c", "forever")
-        refs = await app.state.model.placeholder_refs()
-        app.state.secrets.sync_manifest(refs)
-        for row in (past, live, forever):
-            await app.state.secrets.write(row["backend_ref"], "value")
+        await seed_placeholder(app, "ws-c", "forever")
         hub = api.state.hub
         queue = hub.subscribe()
         swept = await sweep_expired_placeholders(app, hub)
@@ -533,42 +527,50 @@ async def test_sweep_retires_expired_and_keeps_live_rows(tmp_path) -> None:
         assert [event["kind"] for event in audit] == ["expiry", "mint"]
         assert audit[0]["name"] == "expired"
         assert audit[0]["dests"] == ["api.example.com"]
-        manifest = (tmp_path / "store" / "secretspec.toml").read_text()
-        assert "MSKSWS_WS_A_EXPIRED" not in manifest
-        assert "MSKSWS_WS_B_LIVE" in manifest
-        with pytest.raises(SecretStoreError):
-            await app.state.secrets.read("MSKSWS_WS_A_EXPIRED")
-        assert await app.state.secrets.read("MSKSWS_WS_B_LIVE") == "value"
         event = json.loads(queue.get_nowait())
         assert event["event"] == "secret.expiry"
         assert event["data"]["workspace_id"] == "ws-a"
         assert event["data"]["name"] == "expired"
-        assert event["data"]["placeholder_id"] == past["id"]
-        assert event["data"]["ts"] > 0.0
 
 
-async def test_sweep_survives_a_failing_store_delete(tmp_path) -> None:
-    """The row still retires when the store cannot clean up: the
-    leftover value is inert, and the sweep still re-syncs the
-    manifest."""
+async def test_sweep_drops_blobs_alongside_the_row(tmp_path) -> None:
+    """#514: the expiry sweep keeps its row semantics and
+    additionally drops the row's ciphertext blobs — a retired
+    placeholder leaves no ciphertext behind in the database."""
     api, app = sweep_app(tmp_path)
     async with api.router.lifespan_context(api):
-        # The watch loop's first pass can interleave with the test
-        # body at any await; these tests drive the sweep by hand, so
-        # the background task is cancelled up front.
         api.state.watcher.cancel()
-        await seed_placeholder(
+        past = await seed_placeholder(
             app, "ws-a", "expired", datetime.now(UTC) - timedelta(seconds=1)
         )
-        refs = await app.state.model.placeholder_refs()
-        app.state.secrets.sync_manifest(refs)
-        app.state.settings.secret_store.cli = "/nonexistent/secretspec"
-        swept = await sweep_expired_placeholders(app, api.state.hub)
-        assert swept == 1
-        remaining = await app.state.model.list_placeholders()
-        assert [row["name"] for row in remaining] == ["probe"]
-        audit = await app.state.model.list_audit()
-        assert audit[0]["kind"] == "expiry"
+        live = await seed_placeholder(
+            app, "ws-b", "live", datetime.now(UTC) + timedelta(hours=1)
+        )
+        for row in (past, live):
+            await app.state.model.write_secret_blobs(
+                row["id"], {"ws-x": ("hash", b"cipher")}
+            )
+        hub = api.state.hub
+        await sweep_expired_placeholders(app, hub)
+        assert await app.state.model.secret_blobs(past["id"]) == []
+        assert len(await app.state.model.secret_blobs(live["id"])) == 1
+
+
+async def test_sweep_keeps_its_event_shape(tmp_path) -> None:
+    """The expiry event's shape survives the #514 blob drop: the
+    placeholder id and a wall-clock ts ride the frame."""
+    api, app = sweep_app(tmp_path)
+    async with api.router.lifespan_context(api):
+        api.state.watcher.cancel()
+        past = await seed_placeholder(
+            app, "ws-a", "expired", datetime.now(UTC) - timedelta(seconds=1)
+        )
+        queue = api.state.hub.subscribe()
+        await sweep_expired_placeholders(app, api.state.hub)
+        event = json.loads(queue.get_nowait())
+        assert event["event"] == "secret.expiry"
+        assert event["data"]["placeholder_id"] == past["id"]
+        assert event["data"]["ts"] > 0.0
 
 
 async def test_placeholder_predicate_honors_expiry(tmp_path) -> None:

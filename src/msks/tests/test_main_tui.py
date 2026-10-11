@@ -305,15 +305,6 @@ class FakeData:
             raise RuntimeError(self.refusal)
         return [dict(r) for r in self.audit_rows]
 
-    async def secret_check(self) -> dict:
-        """The mint form's store pre-flight (#393) — recorded; a
-        scripted failure names itself on the form and the mint
-        never runs."""
-        self.calls.append(("secret-check",))
-        if "secret-check" in self.fail:
-            raise RuntimeError(self.refusal)
-        return {"provider": "files", "ok": True}
-
     async def mint_secret(self, body: dict) -> dict:
         """The mint form's mint (#393) — recorded with its raw
         body (the value rides the record the way the wire does);
@@ -2136,11 +2127,6 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
                     }
                 ],
             )
-        if (
-            request.method == "POST"
-            and request.url.path == "/api/v1/secrets/check"
-        ):
-            return httpx.Response(200, json={"provider": "files", "ok": True})
         if request.method == "POST" and request.url.path == (
             "/api/v1/secrets"
         ):
@@ -2327,10 +2313,9 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     shown = await data.secret(7)
     assert shown["sentinel"] == "mskssec2_row"
     assert ("GET", "/api/v1/secrets/7") in seen
-    # The mint seams (#393): the store pre-flight and the mint
-    # itself — the same exchanges the secret subcommands make,
-    # the reply carrying the row and its sentinel, never the value.
-    assert await data.secret_check() == {"provider": "files", "ok": True}
+    # The mint seam (#393) — the same exchange the secret
+    # subcommand makes, the reply carrying the row and its
+    # sentinel, never the value.
     row = await data.mint_secret(
         {
             "name": "github_api",
@@ -2349,7 +2334,6 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
             "value": "hunter2",
         }
     ]
-    assert ("POST", "/api/v1/secrets/check") in seen
     assert ("POST", "/api/v1/secrets") in seen
 
 

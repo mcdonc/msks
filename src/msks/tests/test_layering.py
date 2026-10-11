@@ -109,6 +109,9 @@ ALLOWED_EDGES = {
     # edge); the probe service reuses the proxy's per-tap listener
     # wrapper and the resolver answers the probe name (#424)
     ("interceptor", "llm"),
+    # #514: the swap path's cold-cache refusal — the named
+    # locked error from the unlock-cache leaf.
+    ("interceptor", "secretcache"),
     ("interceptor", "spec"),
     # the local driver: vocabulary and storage read directly
     # (#407); it mints the workspace's interceptor CA at create so
@@ -116,7 +119,9 @@ ALLOWED_EDGES = {
     ("microvm", "interceptor"),
     ("microvm", "persist"),
     ("microvm", "spec"),
-    # the ORM's vocabulary
+    # the ORM's vocabulary; #514: the blob staleness hash lives
+    # with the key vocabulary in the crypto leaf.
+    ("model", "agecrypto"),
     ("model", "spec"),
     # the data plane: vocabulary and decided pins from spec alone
     # (#401 — the consent side decides, net applies)
@@ -125,10 +130,13 @@ ALLOWED_EDGES = {
     # spec vocabulary since #401, imported from there since #407
     ("persist", "identity"),
     ("persist", "spec"),
-    # the secret store over the model; the age identity mint
-    # comes from the crypto leaf (#513)
+    # the secret store's vocabulary over the crypto leaf (#513,
+    # #514 — the blob helpers); the agefile-era model edge went
+    # with the store's retirement.
     ("secretstore", "agecrypto"),
-    ("secretstore", "model"),
+    # #514: the store owns the unlock-time plaintext cache and
+    # raises the mint's named refusal from the same leaf.
+    ("secretstore", "secretcache"),
     # the image catalog's ref grammar comes from the leaf vocabulary
     ("imagestore", "spec"),
     # the HTTP surface orchestrates; main.py pulls the composer,
@@ -141,6 +149,9 @@ ALLOWED_EDGES = {
     ("server", "microvm"),
     ("server", "model"),
     ("server", "persist"),
+    # #514: the pending/unlock routes and the lock indicators
+    # read the unlock-cache leaf's error vocabulary.
+    ("server", "secretcache"),
     ("server", "secretstore"),
     ("server", "settings"),
     ("server", "spec"),
