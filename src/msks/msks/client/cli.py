@@ -43,6 +43,7 @@ from ..conformance_args import (
 from . import egress as egress_mod
 from .config import ClientConfig, bootstrap
 from .console import run_workspace_shell
+from .create import read_pubkey  # noqa: F401 — the tests' seam
 from .forward import run_workspace_forward
 from .images import (  # noqa: F401
     cmd_image_check,
@@ -101,7 +102,6 @@ from .workspaces import (  # noqa: F401
     create_identity,
     created_date,
     created_line,
-    read_pubkey,
     read_user_data,
     run_create,
     run_resize,
@@ -388,9 +388,11 @@ def create(
         "travels to the daemon, any well-formed key type, and the "
         "private half stays wherever you keep it (nothing is written "
         "client-side). - reads stdin. Without this flag the create "
-        "plants the operator's configured key (identity_file / "
-        "MSKSC_IDENTITY_FILE, #336) — msks generates no key, and an "
-        "unconfigured client refuses the create (#486)",
+        "plants the operator's configured key — the public half "
+        "pubkey_file / MSKSC_PUBKEY_FILE names (#495), or the "
+        "private key identity_file / MSKSC_IDENTITY_FILE names "
+        "(#336) — msks generates no key, and an unconfigured client "
+        "refuses the create (#486)",
     ),
     start: bool = typer.Option(
         False, "--start", help="boot the workspace immediately"

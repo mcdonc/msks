@@ -21,6 +21,7 @@ from .create import (
     create_workspace_core,
     invoking_user,
     operator_pubkey,
+    read_pubkey,
 )
 from .resize import display_name, resize_message
 from .rest import fetch_ssh_key as rest_fetch_ssh_key
@@ -509,39 +510,6 @@ def create_identity(args: CreateFlags) -> tuple[str | None, str | None]:
     if args.pubkey is not None:
         return read_pubkey(args.pubkey), None
     return operator_pubkey()
-
-
-def read_pubkey(path: str) -> str:
-    """One public key line from a file (or stdin with ``-``), checked
-    lightly here so a typo fails before any network roundtrip — the
-    daemon's shape validation is the authority."""
-    return checked_pubkey_line(pubkey_text(path))
-
-
-def pubkey_text(path: str) -> str:
-    """The file's (or stdin's) raw text, with a one-line read error."""
-    try:
-        if path == "-":
-            return sys.stdin.read()
-        return Path(path).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        raise SystemExit(
-            f"msks: cannot read public key file {path}: {exc}"
-        ) from exc
-
-
-def checked_pubkey_line(text: str) -> str:
-    """Exactly one public key line, stripped — a .pub file's shape."""
-    lines = [line for line in text.splitlines() if line.strip()]
-    if len(lines) != 1:
-        raise SystemExit(
-            f"msks: the public key file must carry exactly one line "
-            f"(found {len(lines)})"
-        )
-    line = lines[0].strip()
-    if len(line.split()) < 2:
-        raise SystemExit("msks: that line does not look like a public key")
-    return line
 
 
 def run_create(args: CreateFlags, transport) -> int:

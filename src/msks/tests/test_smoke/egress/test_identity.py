@@ -84,6 +84,9 @@ async def test_local_operator_identity() -> None:
     app = build_app(settings)
     microvm = app.state.microvm
     wid = f"ident-{uuid.uuid4().hex[:8]}"
+    # The #495 phase's second workspace: created (never started)
+    # with the operator's public half named in configuration.
+    wid2 = f"ident2-{uuid.uuid4().hex[:8]}"
     # The minted id lands here after the create (#246); the typed
     # name is the pre-create fallback (nothing exists to clean).
     vm_id = wid
@@ -224,14 +227,15 @@ async def test_local_operator_identity() -> None:
         return result
 
     async def cli(
-        *args: str, timeout: float = 120.0
+        *args: str, timeout: float = 120.0, env: dict | None = None
     ) -> subprocess.CompletedProcess:
         """One msks CLI call against the test daemon (to_thread: the
-        API server shares this loop)."""
+        API server shares this loop); ``env`` overrides the default
+        client environment."""
         return await asyncio.to_thread(
             subprocess.run,
             [sys.executable, "-m", "msks.client.cli", *args],
-            env=cli_env,
+            env=env or cli_env,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -666,6 +670,33 @@ async def test_local_operator_identity() -> None:
                 with contextlib.suppress(ProcessLookupError):
                     os.kill(int(holder_vars["SSH_AGENT_PID"]), 15)
 
+        # #495: the public half named in configuration — a second
+        # workspace created while the private half sits encrypted at
+        # its file (its agent was just killed above): the create
+        # reads no private material at all, and the row serves the
+        # named line's key material. The encrypted identity_file is
+        # still set in the environment — pubkey_file outranks it,
+        # so its refusal never fires.
+        pub_env = dict(cli_env, MSKSC_PUBKEY_FILE=f"{key}.pub")
+        created2 = await cli(
+            "create",
+            wid2,
+            "--kernel",
+            VMLINUX,
+            *(["--initrd", INITRD] if INITRD else []),
+            "--rootfs",
+            ROOTFS,
+            *(["--cmdline", CMDLINE] if CMDLINE else []),
+            "--egress",
+            env=pub_env,
+        )
+        assert created2.returncode == 0, created2.stderr
+        served2 = await cli("key", wid2, env=pub_env)
+        assert served2.returncode == 0, served2.stderr
+        assert served2.stdout.split()[:2] == minted.split()[:2], (
+            f"{served2.stdout}\nvs\n{minted}"
+        )
+
         await microvm.shutdown(vm_id, timeout_s=SHUTDOWN_TIMEOUT_S)
         final = await microvm.info(vm_id)
         assert final.status.value in ("stopped", "absent")
@@ -686,6 +717,8 @@ async def test_local_operator_identity() -> None:
                 await asyncio.wait_for(asyncio.shield(api_task), timeout=10)
         with contextlib.suppress(Exception):
             await microvm.cleanup(vm_id)
+        with contextlib.suppress(Exception):
+            await microvm.cleanup(wid2)
         with contextlib.suppress(OSError):
             forwarding.write_text(forwarding_was)
         shutil.rmtree(state_dir, ignore_errors=True)

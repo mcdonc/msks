@@ -809,6 +809,42 @@ def test_identity_file_is_global_only(tmp_path, monkeypatch) -> None:
         config.resolve(None, alias)
 
 
+def test_pubkey_file_is_global_only(tmp_path, monkeypatch) -> None:
+    """pubkey_file names the operator's key's public half (#495):
+    the same scalar-global shape identity_file carries — the file
+    value filed into the layer the bootstrap materializes, the
+    variable overriding the file, the empty forms unset, and a
+    per-alias pubkey_file refused: an identity belongs to the
+    operator, not to a daemon connection."""
+    clean_env(monkeypatch)
+    path = write_config(tmp_path, "pubkey_file: ~/.ssh/id_ed25519.pub\n")
+    conf = config.resolve(None, path)
+    assert conf.pubkey_file == "~/.ssh/id_ed25519.pub"
+    assert conf.env_layer["MSKSC_PUBKEY_FILE"] == "~/.ssh/id_ed25519.pub"
+    monkeypatch.setenv("MSKSC_PUBKEY_FILE", "/env.pub")
+    conf = config.resolve(None, path)
+    assert conf.pubkey_file == "/env.pub"
+    assert "MSKSC_PUBKEY_FILE" not in conf.env_layer
+    monkeypatch.setenv("MSKSC_PUBKEY_FILE", "")
+    unset = write_config(tmp_path, "pubkey-file:\n")
+    assert config.resolve(None, unset).pubkey_file is None
+    alias = write_config(
+        tmp_path,
+        "daemons:\n"
+        "  lab:\n"
+        "    url: https://lab:8660\n"
+        "    pubkey_file: /lab.pub\n",
+    )
+    with pytest.raises(ValueError, match="unknown key 'pubkey_file'"):
+        config.resolve(None, alias)
+
+
+def test_the_template_documents_pubkey_file() -> None:
+    """The first-run template shows the key (#495) beside
+    identity_file's example, commented like every other one."""
+    assert "# pubkey_file:" in config.render_template()
+
+
 def test_bootstrap_maps_config_errors_to_one_line(
     tmp_path, monkeypatch
 ) -> None:
