@@ -3850,9 +3850,7 @@ def test_cmd_secret_revoke_and_renew_resolve_the_label(
         if request.url.path == "/api/v1/workspaces":
             return httpx.Response(200, json=workspace_rows())
         if request.method == "DELETE":
-            return httpx.Response(
-                200, json={"revoked": 3, "store_cleaned": True}
-            )
+            return httpx.Response(200, json={"revoked": 3})
         if request.url.path.endswith("/renew"):
             return httpx.Response(
                 200,
@@ -3884,43 +3882,6 @@ def test_cmd_secret_revoke_and_renew_resolve_the_label(
     assert code == 0
     assert ("POST", "/api/v1/secrets/3/renew") in calls
     assert "2027-01-01" in capsys.readouterr().out
-
-
-def test_cmd_secret_revoke_reports_a_leftover_value(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    client_env(monkeypatch)
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/api/v1/workspaces":
-            return httpx.Response(200, json=workspace_rows())
-        if request.method == "DELETE":
-            return httpx.Response(
-                200, json={"revoked": 3, "store_cleaned": False}
-            )
-        return httpx.Response(200, json=secret_rows())
-
-    code = cli.main(
-        ["secret", "revoke", "--workspace", "ws-sec", "--name", "github_api"],
-        transport=mock(handler),
-    )
-    assert code == 0
-    assert "left behind" in capsys.readouterr().out
-
-
-def test_cmd_secret_check(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    client_env(monkeypatch)
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.method == "POST"
-        assert request.url.path == "/api/v1/secrets/check"
-        return httpx.Response(200, json={"provider": "file", "ok": True})
-
-    code = cli.main(["secret", "check"], transport=mock(handler))
-    assert code == 0
-    assert "secret store (file): ok" in capsys.readouterr().out
 
 
 def test_cmd_secret_ls_json(
@@ -4093,9 +4054,7 @@ def test_cmd_secret_revoke_and_renew_expand_the_same_targeting(
                 200, json=[*workspace_rows(), {"id": "ws-x", "name": None}]
             )
         if request.method == "DELETE":
-            return httpx.Response(
-                200, json={"revoked": 3, "store_cleaned": True}
-            )
+            return httpx.Response(200, json={"revoked": 3})
         return httpx.Response(
             200,
             json=[

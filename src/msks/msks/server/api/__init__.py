@@ -117,17 +117,6 @@ def build_api(app) -> FastAPI:
         try:
             app.state.model.migrate()
             await app.state.model.bootstrap_token()
-            # The #335 ref rename: rewrite legacy placeholder rows,
-            # their stored values, and the manifest before anything
-            # serves or mints — the store lock is unneeded while the
-            # watcher and API are not yet up.
-            moved = await app.state.secrets.migrate_legacy_refs()
-            if moved:
-                LOG.info(
-                    "secret store: migrated %d placeholder(s) onto "
-                    "MSKSWS_ backend refs",
-                    moved,
-                )
             # The catalog's startup sweep runs before either image
             # bootstrap: an interrupted import (a seed or default
             # that hit a full disk mid-unpack) leaves dot-prefixed

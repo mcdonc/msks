@@ -60,6 +60,9 @@ events = 0
 identity = 0
 llm = 0
 msks = 0
+# #514: the unlock-time plaintext cache + the named locked error
+# — a leaf the interceptor, the store, and the API all reach.
+secretcache = 0
 spec = 0
 storage = 0
 client = 1
@@ -128,6 +131,9 @@ spec = 3
 # llm: the probe service reuses the per-tap listener wrapper
 # (#424); spec grew by one for the probe name's vocabulary
 llm = 2
+# #514: the swap path's cold-cache refusal — the engine imports
+# the named locked error (module + name).
+secretcache = 2
 # spec grew: the probe service reads its whole vocabulary from the
 # leaf (#424); seven more names for the web-egress consent gate's
 # posture, coverage, and address grammar (#452)
@@ -141,6 +147,9 @@ persist = 7
 spec = 14
 
 [snapshot.model]
+# #514: the blob staleness hash moved to the crypto leaf with the
+# blob-writing path (model imports the one name).
+agecrypto = 2
 spec = 16
 
 [snapshot.net]
@@ -154,10 +163,13 @@ identity = 2
 spec = 4
 
 [snapshot.secretstore]
-# #513: the age identity mint moved to the crypto leaf (one
-# statement, module + name — the walker's pair of edges)
-agecrypto = 2
-model = 2
+# #513: the age identity mint moved to the crypto leaf; #514
+# added the blob-mint helpers (the encrypt/age_capable/hash
+# vocabulary) to the same edge.
+agecrypto = 4
+# #514: the store owns the unlock-time plaintext cache and
+# raises the mint's named refusal (module + two names).
+secretcache = 3
 
 [snapshot.server]
 app = 2
@@ -181,15 +193,22 @@ imagestore = 26
 # half-close helper (upstream CH #8998), on the seam's module
 # beside its existing errors import.
 microvm = 12
-model = 7
+# #514 retirement: the routes dropped the manifest's
+# placeholder_refs read and the seed's ref probe.
+model = 5
 persist = 12
 # #423 follow-up: the mint takes the operator's value again, so
 # the route dropped its new_secret_value import (the minter
-# itself is gone with it).
-secretstore = 5
+# itself is gone with it). #514: the mint's blob helpers joined
+# the statement (blob_recipients, eligible_recipients), and the
+# probe re-arm's skip-unchanged check added recipient_hashes.
+secretstore = 7
 # #464: doctor's Settings import (env-plus-defaults fallback when
 # a config will not load).
 settings = 4
+# #514: the mint's named refusal and the lock indicators read
+# the cache leaf's error vocabulary (module + name).
+secretcache = 2
 # spec grew by one statement: the secret routes seed and serve the
 # probe placeholder (#424)
 spec = 28

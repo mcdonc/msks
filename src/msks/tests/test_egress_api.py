@@ -259,16 +259,20 @@ def test_events_decider_registration_and_frames(tmp_path: Path) -> None:
             rules = json.loads(ws.receive_text())
             assert rules["event"] == "egress.rules"
             assert rules["data"]["mode"] == "interactive"
-            # An unknown workspace is rejected (not silently
-            # ignored): drain that frame here so the live-hold read
-            # below sees the request, not the rejection.
+            # The registration's replay (#305) lands recorded
+            # lifecycle frames after the rules view — the seeded
+            # probe row's mint (#424) replays on every
+            # registration. The ghost send below happens first so
+            # its rejection is already queued behind them, and the
+            # reads skip the replayed frames.
             ws.send_text(
                 json.dumps({"type": "egress.decider", "workspace": "ghost"})
             )
-            assert (
-                json.loads(ws.receive_text())["event"]
-                == "egress.decider_rejected"
-            )
+            while True:
+                frame = json.loads(ws.receive_text())
+                if frame["event"] == "egress.decider_rejected":
+                    break
+                assert frame["event"] == "secret.mint"
             ws.send_text("not json")
             ws.send_text(json.dumps({"type": "other"}))
             # A live hold fans out to every events socket.

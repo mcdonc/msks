@@ -487,7 +487,8 @@ picker over TTL-appropriate choices — an hour to thirty days,
 the choice nearest the row's remaining lifetime highlighted —
 and extends the row in place: the sentinel and the row's identity
 stay as they are. `e` opens the daemon-wide audit view: the
-newest hundred recorded mints, revokes, and expiries replayed
+newest hundred recorded mints, revokes, expiries, and unlocks
+replayed
 from the audit table at open, newest first, then the wire events
 streaming in live beside them, with the off-allowlist sighting
 highlighted as the exfil signal and `k`/`w` picking the kind and
@@ -1251,9 +1252,10 @@ code; the volume moves are for the whole `/home` at once.
 
 ## `msks secret`
 
-Placeholder secrets (#198, #339, #423): mint a sentinel — daemon-wide by
+Placeholder secrets (#198, #339, #514): mint a sentinel — daemon-wide by
 default, scoped with `--workspace` — and the daemon keeps your value
-in its agefile — the workspace never holds it (the full story is
+as per-recipient ciphertext blobs in its database — the workspace
+never holds it (the full story is
 [docs/secrets.md](secrets.md)):
 
 ```bash
@@ -1275,7 +1277,6 @@ msks secret renew --workspace myws --name pypi --ttl 86400
 msks secret revoke --name github_api     # the daemon-wide row of the label
 msks secret revoke --workspace ci,deploy --name pypi
 msks secret coverage myws scoped         # exempt myws from daemon-wide rows
-msks secret check                        # the store answers writes
 ```
 
 `--secret-file` takes a path or `-` for a pipe (the value is

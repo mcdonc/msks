@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, delete, or_, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from ..agecrypto import secret_key_hash
 from ..spec.tokens import validate_token_plaintext
 from ..spec.vm import VmSpec
 from .db import Base, engine_for, sessionmaker_for, tighten_db_mode, utcnow
@@ -23,7 +24,6 @@ from .secrets import (
     Placeholder,
     SecretAudit,
     SecretBlob,
-    coverage_label,
 )
 from .tokens import Token
 from .workspaces import WORKSPACE_STATUSES, Workspace
@@ -53,14 +53,6 @@ def classify_blobs(expected: dict[str, str], blobs: dict[str, str]) -> dict:
         elif hash_seen != secret_key_hash(line):
             stale.append(workspace_id)
     return {"missing": sorted(missing), "stale": sorted(stale)}
-
-
-def secret_key_hash(line: str) -> str:
-    """The staleness token a blob row records at mint (#513):
-    SHA-256 hex of the workspace's ssh public key line. A
-    workspace whose line changes mints a different hash, so the
-    blob written against the old line reads back stale."""
-    return hashlib.sha256(line.encode()).hexdigest()
 
 
 # Inside the package, so the wheel ships it: a pip-installed msksd
@@ -561,25 +553,6 @@ class Model:
             )
             return None if row is None else placeholder_dict(row)
 
-    async def placeholder_refs(self) -> list[tuple[str, str]]:
-        """Every (backend_ref, description) pair — the manifest body.
-        The description carries the row's coverage beside its label
-        (``*/name`` for the daemon-wide row, ``ws/name`` scoped), so
-        a human reading the store sees msks's naming, not just an
-        identifier."""
-        maker = sessionmaker_for(self.engine())
-        async with maker() as session:
-            rows = await session.scalars(
-                select(Placeholder).order_by(Placeholder.id)
-            )
-            return [
-                (
-                    row.backend_ref,
-                    f"{coverage_label(json.loads(row.workspaces))}/{row.name}",
-                )
-                for row in rows
-            ]
-
     async def rename_placeholder_ref(
         self, placeholder_id: int, new_ref: str
     ) -> bool:
@@ -613,12 +586,21 @@ class Model:
             return result.rowcount > 0
 
     async def delete_placeholder(self, placeholder_id: int) -> bool:
-        """Remove a placeholder row; False when absent."""
+        """Remove a placeholder row and its ciphertext blobs, in
+        one transaction; False when absent (#514: revoke and the
+        expiry sweep keep their row semantics and additionally
+        drop the row's blobs — a mint rolled back after arming
+        leaves no orphan ciphertext behind either)."""
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             row = await session.get(Placeholder, placeholder_id)
             if row is None:
                 return False
+            await session.execute(
+                delete(SecretBlob).where(
+                    SecretBlob.placeholder_id == placeholder_id
+                )
+            )
             await session.delete(row)
             await session.commit()
             return True

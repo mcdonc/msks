@@ -11,7 +11,6 @@ import httpx
 import pytest
 from msks.app import build_app
 from msks.microvm.errors import MicrovmError, MicrovmTimeoutError
-from msks.secretstore import SecretStoreError, new_sentinel
 from msks.server import api as api_mod
 from msks.server.api import build_api
 from msks.settings import (
@@ -92,7 +91,6 @@ async def client(tmp_path: Path):
             bootstrap_token=TOKEN,
             event_poll_s=10.0,
         ),
-        secret_store=SecretStoreSettings(root=tmp_path / "store"),
     )
     app = build_app(settings)
     stub = StubMicrovm()
@@ -2415,11 +2413,29 @@ async def test_resize_names_a_vanished_volume(client, monkeypatch) -> None:
 # --- secrets (#198) ------------------------------------------------------
 
 
-async def seed_workspace(app, workspace_id: str = "ws-sec") -> None:
-    """A workspace row for minting against."""
+async def seed_workspace(
+    app, workspace_id: str = "ws-sec", key_type: str | None = "ed25519"
+) -> tuple[str, str] | None:
+    """A workspace row for minting against (#514: the default row
+    carries an age-capable identity key, because a mint encrypts
+    one blob per covering workspace key — the returned pair is the
+    keypair, private half first, the tests' blob decrypts use).
+    ``key_type=None`` seeds the keyless row the mint's named
+    refusals test."""
+    pair = None
+    if key_type is not None:
+        from testkeys import mint as mint_key
+
+        pair = mint_key(key_type)
     await app.state.model.create_workspace(
-        VmSpec(workspace_id=workspace_id, kernel=Path("/k"), rootfs=Path("/r"))
+        VmSpec(
+            workspace_id=workspace_id,
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            ssh_pubkey=None if pair is None else pair[1],
+        )
     )
+    return pair
 
 
 def mint_body(**overrides) -> dict:
@@ -2437,7 +2453,7 @@ async def test_mint_stores_the_value_and_answers_the_sentinel_once(
     client,
 ) -> None:
     http, app, _stub = client
-    await seed_workspace(app)
+    private_pem, _public = await seed_workspace(app)
     response = await http.post(
         "/api/v1/secrets", json=mint_body(), headers=auth()
     )
@@ -2446,17 +2462,26 @@ async def test_mint_stores_the_value_and_answers_the_sentinel_once(
     assert row["sentinel"].startswith("mskssec1_")
     assert "value" not in row
     assert row["dests"] == ["api.github.com"]
-    # The operator's value landed in the store, under the derived
-    # ref — stored verbatim, never echoed.
+    # The operator's value landed as one ciphertext blob per
+    # covering workspace key, decryptable by the workspace
+    # identity's private half alone — the daemon holds no
+    # plaintext at rest (#514). The mint's own plaintext rides
+    # the unlock cache until its window ends.
+    blobs = await app.state.model.secret_blobs(row["id"])
+    assert [b["recipient"] for b in blobs] == ["ws-sec"]
+    from msks.agecrypto import decrypt
+
     assert (
-        await app.state.secrets.read("MSKSWS_WS_SEC_GITHUB_API")
-        == "ghp-real-token"
+        decrypt(
+            blobs[0]["ciphertext"],
+            private_pem.encode(),
+            lambda: b"",
+        )
+        == b"ghp-real-token"
     )
     assert (
-        "MSKSWS_WS_SEC_GITHUB_API"
-        in (
-            app.state.settings.secret_store.root / "secretspec.toml"
-        ).read_text()
+        app.state.secrets.plain.read("MSKSWS_WS_SEC_GITHUB_API")
+        == "ghp-real-token"
     )
     # Mint is the only view that ever carries the sentinel.
     listing = await http.get("/api/v1/secrets", headers=auth())
@@ -2524,7 +2549,7 @@ async def test_mint_strips_the_value_at_both_ends(client) -> None:
     )
     assert response.status_code == 201
     assert (
-        await app.state.secrets.read("MSKSWS_WS_SEC_GITHUB_API")
+        app.state.secrets.plain.read("MSKSWS_WS_SEC_GITHUB_API")
         == "ghp-padded"
     )
     # The BOM drops at the same door, whatever surface sent it —
@@ -2536,7 +2561,7 @@ async def test_mint_strips_the_value_at_both_ends(client) -> None:
         headers=auth(),
     )
     assert bom.status_code == 201
-    assert await app.state.secrets.read("MSKSWS_WS_SEC_BOMMED") == "bom-token"
+    assert app.state.secrets.plain.read("MSKSWS_WS_SEC_BOMMED") == "bom-token"
 
 
 async def test_validation_refusals_never_echo_the_input(client) -> None:
@@ -2602,65 +2627,33 @@ async def test_mint_rejects_a_duplicate_label(client) -> None:
     assert again.status_code == 409
 
 
-async def test_mint_reports_an_unreachable_store(client) -> None:
-    http, app, _stub = client
-    await seed_workspace(app)
-    app.state.settings.secret_store.cli = "/nonexistent/secretspec"
-    failed = await http.post(
-        "/api/v1/secrets", json=mint_body(), headers=auth()
-    )
-    assert failed.status_code == 503
-    assert "secret store" in failed.json()["detail"]
-
-
-async def test_mint_rolls_back_on_an_os_error_in_the_store_half(
+async def test_mint_rolls_back_when_the_blob_write_is_refused(
     client, monkeypatch
 ) -> None:
-    """The identity mint and the manifest write raise OSError
-    siblings of the store's own errors (an unwritable root, a full
-    disk); both roll the row back like a store failure — the
-    valueless live row would otherwise fail-close its
-    destinations on every swap (#423 review)."""
+    """The value leg's own failure: the blob write can raise
+    OSError siblings from the database half — the same rollback
+    answers it (the manifest sync stood, the value never landed,
+    and the rollback's own manifest re-sync is suppressed so the
+    ORIGINAL error is the one raised)."""
     http, app, _stub = client
     await seed_workspace(app)
 
-    def refuse_sync(refs):
-        raise OSError("disk full")
+    async def refuse_write(placeholder_id, blobs):
+        raise OSError("blob write refused")
 
-    monkeypatch.setattr(app.state.secrets, "sync_manifest", refuse_sync)
+    monkeypatch.setattr(app.state.model, "write_secret_blobs", refuse_write)
     failed = await http.post(
         "/api/v1/secrets", json=mint_body(), headers=auth()
     )
     assert failed.status_code == 503
-    assert "disk full" in failed.json()["detail"]
+    assert "blob write refused" in failed.json()["detail"]
     listing = await http.get("/api/v1/secrets", headers=auth())
     assert operator_rows(listing.json()) == []
+    # The rolled-back row's plaintext left the cache with it.
+    from msks.secretcache import SecretLockedError
 
-
-async def test_mint_rolls_back_when_the_identity_mint_is_refused(
-    client, monkeypatch
-) -> None:
-    """The write leg's own OSError: the identity mint can raise
-    PermissionError from an unwritable root mid-write — the same
-    rollback answers it (the store half's sync stood, the value
-    never landed)."""
-    http, app, _stub = client
-    await seed_workspace(app)
-    monkeypatch.setattr(app.state.secrets, "sync_manifest", lambda refs: None)
-
-    def refuse_identity(path):
-        raise PermissionError(13, "Permission denied", str(path))
-
-    monkeypatch.setattr(
-        "msks.secretstore.ensure_age_identity", refuse_identity
-    )
-    failed = await http.post(
-        "/api/v1/secrets", json=mint_body(), headers=auth()
-    )
-    assert failed.status_code == 503
-    assert "Permission denied" in failed.json()["detail"]
-    listing = await http.get("/api/v1/secrets", headers=auth())
-    assert operator_rows(listing.json()) == []
+    with pytest.raises(SecretLockedError):
+        app.state.secrets.plain.read("MSKSWS_WS_SEC_GITHUB_API")
 
 
 async def test_a_stale_client_sending_a_secret_is_refused_by_name(
@@ -2710,64 +2703,14 @@ async def test_revoke_cleans_row_store_and_manifest(client) -> None:
     ).json()
     revoked = await http.delete(f"/api/v1/secrets/{row['id']}", headers=auth())
     assert revoked.status_code == 200
-    assert revoked.json()["store_cleaned"] is True
+    assert revoked.json() == {"revoked": row["id"]}
     listing = await http.get("/api/v1/secrets", headers=auth())
     assert operator_rows(listing.json()) == []
-    root = app.state.settings.secret_store.root
-    manifest = (root / "secretspec.toml").read_text()
-    assert "MSKSWS_WS_SEC_GITHUB_API" not in manifest
-    with pytest.raises(SecretStoreError):
-        await app.state.secrets.read("MSKSWS_WS_SEC_GITHUB_API")
     audit = await http.get("/api/v1/secrets/audit", headers=auth())
     kinds = [event["kind"] for event in audit.json()]
     # The seeded probe row's startup mint rides the trail (#424).
     assert kinds[:2] == ["revoke", "mint"]
     assert kinds[2:] == ["mint"]
-
-
-async def test_revoke_survives_a_failing_store_cleanup(client) -> None:
-    """The row dies first: a leftover value is inert, and the
-    response says it was left behind."""
-    http, app, _stub = client
-    await seed_workspace(app)
-    row = (
-        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
-    ).json()
-    app.state.settings.secret_store.cli = "/nonexistent/secretspec"
-    revoked = await http.delete(f"/api/v1/secrets/{row['id']}", headers=auth())
-    assert revoked.status_code == 200
-    assert revoked.json()["store_cleaned"] is False
-    listing = await http.get("/api/v1/secrets", headers=auth())
-    assert operator_rows(listing.json()) == []
-
-
-async def test_store_check_endpoint(client) -> None:
-    http, _app, _stub = client
-    ok = await http.post("/api/v1/secrets/check", headers=auth())
-    assert ok.status_code == 200
-    assert ok.json() == {"provider": "age", "ok": True}
-
-
-async def test_store_check_names_a_broken_store(client) -> None:
-    http, app, _stub = client
-    app.state.settings.secret_store.cli = "/nonexistent/secretspec"
-    failed = await http.post("/api/v1/secrets/check", headers=auth())
-    assert failed.status_code == 503
-
-
-async def test_store_check_names_an_unwritable_root(client) -> None:
-    """The OSError sibling answers the check as a named 503 — the
-    unwritable root is the misconfig the endpoint exists to catch,
-    and it is not an Internal Server Error (#423 review, round 2)."""
-    http, app, _stub = client
-    root = app.state.settings.secret_store.root
-    root.chmod(0o555)
-    try:
-        failed = await http.post("/api/v1/secrets/check", headers=auth())
-    finally:
-        root.chmod(0o755)
-    assert failed.status_code == 503
-    assert "Permission denied" in failed.json()["detail"]
 
 
 async def test_secret_routes_require_a_token(client) -> None:
@@ -2820,7 +2763,7 @@ async def test_mint_survives_the_insert_race(client, monkeypatch) -> None:
     assert raced.status_code == 409
     assert "collision" in raced.json()["detail"]
     assert (
-        await app.state.secrets.read("MSKSWS_WS_SEC_GITHUB_API")
+        app.state.secrets.plain.read("MSKSWS_WS_SEC_GITHUB_API")
         == "ghp-real-token"
     )
     listing = await http.get("/api/v1/secrets", headers=auth())
@@ -2858,13 +2801,10 @@ async def test_mint_answers_409_on_a_ref_collision(client) -> None:
     )
     assert second.status_code == 409
     assert "collides" in second.json()["detail"]
-    # The winner's value and the manifest are intact.
-    root = app.state.settings.secret_store.root
+    # The winner's value is intact.
     assert (
-        await app.state.secrets.read("MSKSWS_WS_SEC_FOO") == "ghp-real-token"
+        app.state.secrets.plain.read("MSKSWS_WS_SEC_FOO") == "ghp-real-token"
     )
-    manifest = (root / "secretspec.toml").read_text()
-    assert manifest.count("MSKSWS_WS_SEC_FOO") == 1
 
 
 async def test_renew_loses_gracefully_to_the_expiry_sweep(
@@ -2938,11 +2878,10 @@ async def test_concurrent_mints_leave_one_intact_manifest(client) -> None:
     )
     done = await asyncio.gather(first, second)
     assert {response.status_code for response in done} == {201}
-    manifest = (
-        app.state.settings.secret_store.root / "secretspec.toml"
-    ).read_text()
-    assert "MSKSWS_WS_SEC_ALPHA" in manifest
-    assert "MSKSWS_WS_SEC_BETA" in manifest
+    for response in done:
+        assert (
+            len(await app.state.model.secret_blobs(response.json()["id"])) == 1
+        )
 
 
 class RefreshRecorder:
@@ -3018,8 +2957,12 @@ async def test_daemon_wide_mint_covers_every_workspace(client) -> None:
     assert row["workspaces"] == []
     assert row["sentinel"].startswith("mskssec2_")
     assert "value" not in row
+    # One blob per accepting workspace key (#514's daemon-wide
+    # rule), and the cache stands ready for swaps.
+    blobs = await app.state.model.secret_blobs(row["id"])
+    assert [b["recipient"] for b in blobs] == ["ws-sec"]
     assert (
-        await app.state.secrets.read("MSKSDAEMON_GITHUB_API") == "ghp-shared"
+        app.state.secrets.plain.read("MSKSDAEMON_GITHUB_API") == "ghp-shared"
     )
     # The audit row records the daemon-wide coverage.
     audit = await http.get("/api/v1/secrets/audit", headers=auth())
@@ -3067,8 +3010,12 @@ async def test_multi_workspace_mint_is_one_row(client) -> None:
     row = response.json()
     assert row["workspaces"] == ["ws-a", "ws-b"]  # sorted, deduped
     assert row["sentinel"].startswith("mskssec1_")
+    # One blob per covered workspace key — the row's whole
+    # recipient set, in recipient order (#514).
+    blobs = await app.state.model.secret_blobs(row["id"])
+    assert [b["recipient"] for b in blobs] == ["ws-a", "ws-b"]
     assert (
-        await app.state.secrets.read("MSKSWS_WS_A_WS_B_PAIR_API")
+        app.state.secrets.plain.read("MSKSWS_WS_A_WS_B_PAIR_API")
         == "pair-token"
     )
     # The legacy single-workspace spelling still mints, and the
@@ -3414,14 +3361,9 @@ async def test_a_mint_that_cannot_arm_rolls_back_whole(client) -> None:
     while not queue.empty():
         events.append(json.loads(await queue.get()))
     assert events == []
-    root = app.state.settings.secret_store.root
     assert (
-        "MSKSWS_WS_SEC_GITHUB_API"
-        not in (root / "secretspec.toml").read_text()
+        await app.state.model.placeholder_for(["ws-sec"], "github_api") is None
     )
-    assert not (
-        root / "msks" / "default" / "MSKSWS_WS_SEC_GITHUB_API"
-    ).exists()
 
 
 async def test_revoke_survives_a_failing_refresh(client) -> None:
@@ -3592,57 +3534,6 @@ async def test_launch_heals_a_lost_seed(client, tmp_path: Path) -> None:
     assert stub.seen_specs[wid].name == "ws-heal"
 
 
-async def test_lifespan_migrates_legacy_backend_refs(tmp_path: Path) -> None:
-    """#335's stored-format rename at the daemon's own layer: a
-    placeholder minted before the rename boots into a daemon that
-    moves its row, its stored value, and the manifest before the
-    first request is served."""
-    store_root = tmp_path / "store"
-    settings = Settings(
-        vmm=VmmSettings(state_dir=tmp_path / "vms"),
-        net=NetSettings(enabled=False),
-        server=ServerSettings(
-            db_path=tmp_path / "db",
-            bootstrap_token=TOKEN,
-            event_poll_s=10.0,
-        ),
-        secret_store=SecretStoreSettings(root=store_root),
-    )
-
-    seed = build_app(settings)
-    seed.state.model.migrate()
-    await seed.state.model.create_placeholder(
-        ["ws-a"],
-        "github_api",
-        new_sentinel(),
-        ["api.github.com"],
-        "MSKS_WS_A_GITHUB_API",
-        None,
-    )
-    seed.state.secrets.sync_manifest(
-        [("MSKS_WS_A_GITHUB_API", "ws-a/github_api")]
-    )
-    await seed.state.secrets.write("MSKS_WS_A_GITHUB_API", "ghp-old")
-    await seed.state.model.close()
-
-    app = build_app(settings)
-    app.state.microvm = StubMicrovm()
-    api = build_api(app)
-    async with api.router.lifespan_context(api):
-        (row,) = await app.state.model.list_placeholders()
-        assert row["backend_ref"] == "MSKSWS_WS_A_GITHUB_API"
-        # The moved value answers at the new ref; the legacy one is
-        # gone from the vault.
-        assert (
-            await app.state.secrets.read("MSKSWS_WS_A_GITHUB_API") == "ghp-old"
-        )
-        with pytest.raises(SecretStoreError):
-            await app.state.secrets.read("MSKS_WS_A_GITHUB_API")
-    manifest = (store_root / "secretspec.toml").read_text()
-    assert "MSKSWS_WS_A_GITHUB_API" in manifest
-    assert "MSKS_" not in manifest
-
-
 # --- the seeded probe placeholder (#424) -------------------------------------
 
 
@@ -3657,11 +3548,11 @@ async def test_first_startup_seeds_the_probe_placeholder(client) -> None:
     row = rows[0]
     assert row["workspaces"] == []
     assert row["dests"] == ["secretprobe.msks"]
-    root = app.state.settings.secret_store.root
     from msks.spec.probe import PROBE_SECRET_B64
 
-    assert await app.state.secrets.read("MSKSDAEMON_PROBE") == PROBE_SECRET_B64
-    assert "MSKSDAEMON_PROBE" in (root / "secretspec.toml").read_text()
+    # The boot-time arm cached the public credential (#514): the
+    # row swaps with zero operator minting, for the window.
+    assert app.state.secrets.plain.read("MSKSDAEMON_PROBE") == PROBE_SECRET_B64
     # The read-back surface: the sentinel and the recipe, gated the
     # same as every secret route.
     probe = await http.get("/api/v1/probe", headers=auth())
@@ -3687,7 +3578,6 @@ async def test_the_seed_leaves_an_occupied_table_alone(
         vmm=VmmSettings(state_dir=tmp_path / "vms"),
         net=NetSettings(enabled=False),
         server=ServerSettings(db_path=tmp_path / "api.db"),
-        secret_store=SecretStoreSettings(root=tmp_path / "store"),
     )
     app = build_app(settings)
     app.state.microvm = StubMicrovm()
@@ -3714,23 +3604,36 @@ async def test_the_seed_leaves_an_occupied_table_alone(
 async def test_a_store_that_cannot_serve_skips_the_seed(
     tmp_path: Path, monkeypatch, caplog
 ) -> None:
-    """A failing store write rolls the row back and the daemon
+    """A failing first-boot arm rolls the row back and the daemon
     stays up without the probe row (loud, non-fatal)."""
-    from msks.secretstore import SecretStoreError
 
-    async def broken_write(ref, value):
-        raise SecretStoreError("write", "store unavailable")
+    async def broken_arm(placeholder_id, blobs):
+        raise OSError("blob write refused at seed")
 
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path / "vms"),
         net=NetSettings(enabled=False),
         server=ServerSettings(db_path=tmp_path / "api.db"),
-        secret_store=SecretStoreSettings(root=tmp_path / "store"),
     )
     app = build_app(settings)
     app.state.microvm = StubMicrovm()
     api = build_api(app)
-    monkeypatch.setattr(app.state.secrets, "write", broken_write)
+    # A keyed workspace stands before the boot, so the seed's arm
+    # reaches the blob write it fails on (a keyless daemon's arm
+    # is cache-only and cannot fail this way).
+    from testkeys import mint as mint_key
+
+    _pem, public = mint_key("ed25519")
+    app.state.model.migrate()
+    await app.state.model.create_workspace(
+        VmSpec(
+            workspace_id="ws-seed",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            ssh_pubkey=public,
+        )
+    )
+    monkeypatch.setattr(app.state.model, "write_secret_blobs", broken_arm)
     import logging
 
     with caplog.at_level(logging.ERROR):
@@ -3771,7 +3674,6 @@ async def test_a_seed_race_lost_on_the_unique_index_stands_down(
         vmm=VmmSettings(state_dir=tmp_path / "vms"),
         net=NetSettings(enabled=False),
         server=ServerSettings(db_path=tmp_path / "api.db"),
-        secret_store=SecretStoreSettings(root=tmp_path / "store"),
     )
     app = build_app(settings)
     app.state.microvm = StubMicrovm()
@@ -3818,3 +3720,707 @@ async def test_the_listing_names_each_images_catalog_reference(client) -> None:
     catalog = list_images(state_dir)
     assert image_ref(catalog, None) is None
     assert image_ref(catalog, "0" * 64) is None
+
+
+# --- pending and unlock (#514) --------------------------------------------
+
+
+def unlock_body(placeholder_id: int, value: str) -> dict:
+    return {"values": [{"placeholder_id": placeholder_id, "value": value}]}
+
+
+async def test_pending_serves_blobs_and_opens_the_window(client) -> None:
+    """GET pending (#514): every row's ciphertext blobs — one per
+    recipient workspace, base64 on the wire, decryptable by the
+    workspace identity's private half — beside the staleness map
+    and the cache's lock state. The probe row rides along: its
+    credential is public and its boot-time seeding warmed it."""
+    http, app, _stub = client
+    private_pem, _public = await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    pending = await http.get("/api/v1/secrets/pending", headers=auth())
+    assert pending.status_code == 200
+    rows = {entry["name"]: entry for entry in pending.json()}
+    ours = rows["github_api"]
+    assert ours["id"] == row["id"]
+    assert [b["recipient"] for b in ours["blobs"]] == ["ws-sec"]
+    import base64
+
+    from msks.agecrypto import decrypt
+
+    ciphertext = base64.b64decode(ours["blobs"][0]["ciphertext"])
+    assert (
+        decrypt(ciphertext, private_pem.encode(), lambda: b"")
+        == b"ghp-real-token"
+    )
+    assert ours["staleness"] == {"missing": [], "stale": []}
+    assert ours["unlocked"] is True  # the mint warmed its own cache
+    # The probe row's plaintext stays warm from its boot-time seed.
+    assert rows["probe"]["unlocked"] is True
+
+
+async def test_unlock_accepts_reencrypts_and_rearms(client) -> None:
+    """POST unlock (#514): pending opens the window, the unlock's
+    values enter the cache (this POST is the session the timer
+    resets on), and the row's blobs re-encrypt to its CURRENT
+    recipient set — a workspace key rotated after the mint heals
+    here, the fresh blob decrypting under the new key alone."""
+    http, app, _stub = client
+    from sqlalchemy import update
+    from testkeys import mint as mint_key
+
+    _pem_a, public_a = mint_key("ed25519")
+    old_pem_b, old_public_b = mint_key("ed25519")
+    await app.state.model.create_workspace(
+        VmSpec(
+            workspace_id="ws-a",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            ssh_pubkey=public_a,
+        )
+    )
+    await app.state.model.create_workspace(
+        VmSpec(
+            workspace_id="ws-b",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            ssh_pubkey=old_public_b,
+        )
+    )
+    row = (
+        await http.post(
+            "/api/v1/secrets",
+            json={
+                "workspaces": ["ws-a", "ws-b"],
+                "name": "github_api",
+                "dests": ["api.github.com"],
+                "value": "ghp-real-token",
+            },
+            headers=auth(),
+        )
+    ).json()
+    # ws-b's key rotates after the mint: its blob reads stale.
+    new_pem_b, new_public_b = mint_key("ed25519")
+    engine = app.state.model.engine()
+    from msks.model.workspaces import Workspace
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            update(Workspace)
+            .where(Workspace.id == "ws-b")
+            .values(ssh_pubkey=new_public_b)
+        )
+    staleness = await app.state.model.secret_blob_staleness(row["id"])
+    assert staleness == {"missing": [], "stale": ["ws-b"]}
+    assert await http.get("/api/v1/secrets/pending", headers=auth())
+    reply = await http.post(
+        "/api/v1/secrets/unlock",
+        json=unlock_body(row["id"], "ghp-real-token"),
+        headers=auth(),
+    )
+    assert reply.status_code == 200
+    assert reply.json()["unlocked"] == [row["id"]]
+    assert reply.json()["rows"][0]["staleness"] == {
+        "missing": [],
+        "stale": [],
+    }
+    # The cache holds the plaintext: the row fetch reads unlocked.
+    fetched = await http.get(f"/api/v1/secrets/{row['id']}", headers=auth())
+    assert fetched.json()["locked"] is False
+    # The fresh ws-b blob decrypts under the NEW key — and the
+    # old key opens nothing anymore.
+    from msks.agecrypto import decrypt
+
+    blobs = {
+        b["recipient"]: b
+        for b in await app.state.model.secret_blobs(row["id"])
+    }
+    assert set(blobs) == {"ws-a", "ws-b"}
+    assert (
+        decrypt(blobs["ws-b"]["ciphertext"], new_pem_b.encode(), lambda: b"")
+        == b"ghp-real-token"
+    )
+
+
+async def test_unlock_refuses_a_row_never_served(client) -> None:
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    refused = await http.post(
+        "/api/v1/secrets/unlock",
+        json=unlock_body(row["id"], "ghp-real-token"),
+        headers=auth(),
+    )
+    assert refused.status_code == 422
+    assert (
+        "was not served in the live session window" in refused.json()["detail"]
+    )
+    assert "pending" in refused.json()["detail"]
+    missing = await http.post(
+        "/api/v1/secrets/unlock",
+        json=unlock_body(9999, "x"),
+        headers=auth(),
+    )
+    assert missing.status_code == 404
+
+
+async def test_unlock_refuses_after_the_window_expires(client) -> None:
+    """The served window is the clock's, not the socket's: once
+    the deadline passes, an unlock without a fresh pending read is
+    refused by name."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    # The window is pinned short BEFORE the mint: the deadline
+    # stamps at store time, whatever the later setting says.
+    app.state.settings.secret_store.unlock_timeout_s = 900.0
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    await http.get("/api/v1/secrets/pending", headers=auth())
+    from datetime import timedelta
+
+    real_clock = app.state.secrets.plain._clock
+    base = real_clock()
+
+    def later():
+        return base + timedelta(seconds=901)
+
+    app.state.secrets.plain._clock = later
+    refused = await http.post(
+        "/api/v1/secrets/unlock",
+        json=unlock_body(row["id"], "ghp-real-token"),
+        headers=auth(),
+    )
+    app.state.secrets.plain._clock = real_clock
+    assert refused.status_code == 422
+    assert "live session window" in refused.json()["detail"]
+
+
+async def test_the_row_fetch_and_pending_read_the_lock(client) -> None:
+    """Unlock warms, expiry cools — both observable through the
+    row fetch and the pending list (#508's acceptance), and a
+    pending read (any read) never resets the value's window: only
+    the unlock POST does."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    # The window is pinned short BEFORE the mint: the deadline
+    # stamps at store time, whatever the later setting says.
+    app.state.settings.secret_store.unlock_timeout_s = 900.0
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    fetched = await http.get(f"/api/v1/secrets/{row['id']}", headers=auth())
+    assert fetched.json()["locked"] is False
+    from datetime import timedelta
+
+    real_clock = app.state.secrets.plain._clock
+    base = real_clock()
+
+    def later():
+        return base + timedelta(seconds=901)
+
+    app.state.secrets.plain._clock = later
+    # A pending read does not extend the window.
+    await http.get("/api/v1/secrets/pending", headers=auth())
+    fetched = await http.get(f"/api/v1/secrets/{row['id']}", headers=auth())
+    assert fetched.json()["locked"] is True
+    pending = await http.get("/api/v1/secrets/pending", headers=auth())
+    entry = next(e for e in pending.json() if e["name"] == "github_api")
+    assert entry["unlocked"] is False
+    app.state.secrets.plain._clock = real_clock
+
+
+async def test_unlock_strips_and_refuses_empty_values(client) -> None:
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    await http.get("/api/v1/secrets/pending", headers=auth())
+    stripped = await http.post(
+        "/api/v1/secrets/unlock",
+        json=unlock_body(row["id"], "  ghp-fresh  \n"),
+        headers=auth(),
+    )
+    assert stripped.status_code == 200
+    assert (
+        app.state.secrets.plain.read("MSKSWS_WS_SEC_GITHUB_API") == "ghp-fresh"
+    )
+    await http.get("/api/v1/secrets/pending", headers=auth())
+    empty = await http.post(
+        "/api/v1/secrets/unlock",
+        json=unlock_body(row["id"], "  \n "),
+        headers=auth(),
+    )
+    assert empty.status_code == 422
+    assert "value is empty" in empty.json()["detail"]
+
+
+async def test_mint_refuses_a_keyless_workspace_by_name(client) -> None:
+    http, app, _stub = client
+    await seed_workspace(app, key_type=None)
+    refused = await http.post(
+        "/api/v1/secrets", json=mint_body(), headers=auth()
+    )
+    assert refused.status_code == 422
+    assert "ws-sec" in refused.json()["detail"]
+    assert "no ssh public key" in refused.json()["detail"]
+    listing = await http.get("/api/v1/secrets", headers=auth())
+    assert operator_rows(listing.json()) == []
+
+
+async def test_mint_refuses_an_incapable_key_type_by_name(client) -> None:
+    """A workspace keyed outside the crypto leaf's capable set
+    (ssh-ed25519, ssh-rsa) takes the named refusal naming the
+    workspace and the constraint."""
+    http, app, _stub = client
+    await seed_workspace(app, key_type="ecdsa")
+    refused = await http.post(
+        "/api/v1/secrets", json=mint_body(), headers=auth()
+    )
+    assert refused.status_code == 422
+    assert "ws-sec" in refused.json()["detail"]
+    assert "ecdsa-sha2-nistp256" in refused.json()["detail"]
+    assert "ssh-ed25519 or ssh-rsa" in refused.json()["detail"]
+
+
+async def test_a_daemon_wide_mint_skips_incapable_acceptors(client) -> None:
+    """A daemon-wide row mints one blob per accepting workspace
+    whose key can receive it (#514): an incapable acceptor is
+    skipped — it reads back from staleness — and a daemon with no
+    capable acceptor at all takes the named refusal."""
+    http, app, _stub = client
+    await seed_workspace(app, "ws-capable", key_type="ed25519")
+    await seed_workspace(app, "ws-ecdsa", key_type="ecdsa")
+    minted = await http.post(
+        "/api/v1/secrets",
+        json={"name": "shared", "dests": ["api.github.com"], "value": "v"},
+        headers=auth(),
+    )
+    assert minted.status_code == 201
+    blobs = await app.state.model.secret_blobs(minted.json()["id"])
+    assert [b["recipient"] for b in blobs] == ["ws-capable"]
+    staleness = await app.state.model.secret_blob_staleness(
+        minted.json()["id"]
+    )
+    assert staleness["missing"] == ["ws-ecdsa"]
+
+
+async def test_a_daemon_wide_mint_with_no_capable_acceptor_is_refused(
+    client,
+) -> None:
+    http, app, _stub = client
+    await seed_workspace(app, "ws-ecdsa", key_type="ecdsa")
+    refused = await http.post(
+        "/api/v1/secrets",
+        json={"name": "shared", "dests": ["api.github.com"], "value": "v"},
+        headers=auth(),
+    )
+    assert refused.status_code == 422
+    assert "no accepting workspace" in refused.json()["detail"]
+
+
+async def test_revoke_drops_the_rows_blobs(client) -> None:
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    assert await app.state.model.secret_blobs(row["id"])
+    revoked = await http.delete(f"/api/v1/secrets/{row['id']}", headers=auth())
+    assert revoked.status_code == 200
+    assert await app.state.model.secret_blobs(row["id"]) == []
+
+
+# --- the zero unlock window's session rule (#514) --------------------------
+
+
+def test_a_zero_window_drops_plaintext_on_operator_disconnect(
+    tmp_path: Path,
+) -> None:
+    """``MSKSD_SECRET_STORE_UNLOCK_TIMEOUT_S=0``: plaintext lives
+    only while an operator websocket stands — an HTTP-only unlock
+    holds nothing past its reply, the last socket's disconnect
+    drops the session, and the row fetch reads locked again
+    (#508's zero rule, #514 review's counter semantics)."""
+    from fastapi.testclient import TestClient
+    from msks.spec.probe import PROBE_SECRET_B64
+
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "api.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=10.0,
+        ),
+        secret_store=SecretStoreSettings(unlock_timeout_s=0.0),
+    )
+    app = build_app(settings)
+    app.state.microvm = StubMicrovm()
+    api = build_api(app)
+    with TestClient(api) as client:
+        probe_id = client.get("/api/v1/probe", headers=auth()).json()[
+            "placeholder_id"
+        ]
+        # An HTTP-only flow cannot even open the served window: no
+        # session stands, so the unlock is refused outright.
+        pending = client.get("/api/v1/secrets/pending", headers=auth())
+        probe = next(e for e in pending.json() if e["name"] == "probe")
+        assert probe["unlocked"] is False
+        refused = client.post(
+            "/api/v1/secrets/unlock",
+            json=unlock_body(probe_id, PROBE_SECRET_B64),
+            headers=auth(),
+        )
+        assert refused.status_code == 422
+        assert "live session window" in refused.json()["detail"]
+        # The same flow with a socket connected holds: served,
+        # unlocked, still unlocked while the socket stands, and
+        # dropped by the last disconnect.
+        with client.websocket_connect("/api/v1/events", headers=auth()):
+            client.get("/api/v1/secrets/pending", headers=auth())
+            unlocked = client.post(
+                "/api/v1/secrets/unlock",
+                json=unlock_body(probe_id, PROBE_SECRET_B64),
+                headers=auth(),
+            )
+            assert unlocked.status_code == 200
+            fetched = client.get(f"/api/v1/secrets/{probe_id}", headers=auth())
+            assert fetched.json()["locked"] is False  # session stands
+        fetched = client.get(f"/api/v1/secrets/{probe_id}", headers=auth())
+        assert fetched.json()["locked"] is True  # the last socket left
+
+
+# --- the #514 review's regression suite ------------------------------------
+
+
+async def test_an_empty_recipient_set_keeps_the_rows_blobs(client) -> None:
+    """The review's blocker: an unlock whose current recipient set
+    is empty (every accepting workspace flipped to scoped, say)
+    must KEEP the row's existing blobs — they are the only
+    ciphertext copies of the value, and a replace-all write with
+    no recipients would drop them for good. The unlock still
+    succeeds and the cache still warms."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    minted = await http.post(
+        "/api/v1/secrets",
+        json={"name": "shared", "dests": ["api.github.com"], "value": "v"},
+        headers=auth(),
+    )
+    assert minted.status_code == 201
+    row_id = minted.json()["id"]
+    blobs = await app.state.model.secret_blobs(row_id)
+    assert [b["recipient"] for b in blobs] == ["ws-sec"]
+    # The acceptor exempts itself: the daemon-wide row's eligible
+    # recipient set becomes empty.
+    await app.state.model.set_secret_coverage("ws-sec", "scoped")
+    await http.get("/api/v1/secrets/pending", headers=auth())
+    reply = await http.post(
+        "/api/v1/secrets/unlock",
+        json=unlock_body(row_id, "v"),
+        headers=auth(),
+    )
+    assert reply.status_code == 200
+    after = await app.state.model.secret_blobs(row_id)
+    assert [b["recipient"] for b in after] == ["ws-sec"]  # kept whole
+    assert app.state.secrets.plain.read("MSKSDAEMON_SHARED") == "v"
+
+
+async def test_a_reencryption_failure_answers_503_with_the_cache_warm(
+    client, monkeypatch
+) -> None:
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    await http.get("/api/v1/secrets/pending", headers=auth())
+
+    async def refuse_write(placeholder_id, blobs):
+        raise OSError("blob write refused")
+
+    monkeypatch.setattr(app.state.model, "write_secret_blobs", refuse_write)
+    failed = await http.post(
+        "/api/v1/secrets/unlock",
+        json=unlock_body(row["id"], "ghp-fresh"),
+        headers=auth(),
+    )
+    assert failed.status_code == 503
+    assert "re-encryption failed" in failed.json()["detail"]
+    # The operator's unlock stood: the cache is warm.
+    assert (
+        app.state.secrets.plain.read("MSKSWS_WS_SEC_GITHUB_API") == "ghp-fresh"
+    )
+
+
+async def test_an_unlock_leaves_the_audit_and_event_trail(client) -> None:
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    queue = app.state.hub.subscribe()
+    await http.get("/api/v1/secrets/pending", headers=auth())
+    reply = await http.post(
+        "/api/v1/secrets/unlock",
+        json=unlock_body(row["id"], "ghp-real-token"),
+        headers=auth(),
+    )
+    assert reply.status_code == 200
+    audit = await http.get("/api/v1/secrets/audit", headers=auth())
+    kinds = [event["kind"] for event in audit.json()]
+    assert kinds.count("unlock") == 1
+    import json as json_mod
+
+    frame = json_mod.loads(queue.get_nowait())
+    assert frame["event"] == "secret.unlock"
+    assert frame["data"]["name"] == "github_api"
+    assert frame["data"]["placeholder_id"] == row["id"]
+
+
+async def test_an_unlock_for_a_revoked_row_answers_404(client) -> None:
+    """The unlock's mutate half holds the store lock, so a revoke
+    that lands between pending and unlock removes the row before
+    any blob write — the unlock answers 404, never writing orphan
+    ciphertext behind a deleted row."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    await http.get("/api/v1/secrets/pending", headers=auth())
+    await http.delete(f"/api/v1/secrets/{row['id']}", headers=auth())
+    gone = await http.post(
+        "/api/v1/secrets/unlock",
+        json=unlock_body(row["id"], "ghp-real-token"),
+        headers=auth(),
+    )
+    assert gone.status_code == 404
+    assert await app.state.model.secret_blobs(row["id"]) == []
+
+
+async def test_the_probe_row_rearms_on_every_boot(client) -> None:
+    """The seeded probe row's public credential re-enters the
+    cache at every startup (the seed's re-arm half): a restart
+    leaves the probe swapping, not locked behind a window that
+    died with the previous process."""
+    http, app, _stub = client
+    db_path = app.state.settings.server.db_path
+    await seed_workspace(app)
+    await http.get("/api/v1/secrets/pending", headers=auth())
+    settings = Settings(
+        vmm=VmmSettings(state_dir=app.state.settings.vmm.state_dir),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=db_path,
+            bootstrap_token=TOKEN,
+            event_poll_s=10.0,
+        ),
+    )
+    second = build_app(settings)
+    second.state.microvm = StubMicrovm()
+    api2 = build_api(second)
+    async with api2.router.lifespan_context(api2):
+        # The second boot re-armed the probe row without an
+        # operator: the credential is public and the probe needs
+        # no session to keep working.
+        assert second.state.secrets.plain.knows("MSKSDAEMON_PROBE")
+        # And the re-arm re-encrypted the row's blobs to the
+        # workspace that exists by then.
+        probe_row = await second.state.model.placeholder_for([], "probe")
+        blobs = await second.state.model.secret_blobs(probe_row["id"])
+        assert [b["recipient"] for b in blobs] == ["ws-sec"]
+
+
+# --- the delta round's regression suite (#514 review) ----------------------
+
+
+async def test_a_failing_re_arm_never_kills_the_boot(
+    client, monkeypatch
+) -> None:
+    """The boot-time re-arm is best-effort: a blob write that
+    raises leaves the daemon up and the row exactly as it stood
+    (#514 review, delta — the first-boot seed's own posture)."""
+    http, app, _stub = client
+    db_path = app.state.settings.server.db_path
+    state_dir = app.state.settings.vmm.state_dir
+    await seed_workspace(app)
+
+    async def refuse_write(placeholder_id, blobs):
+        raise OSError("disk full at re-arm")
+
+    settings = Settings(
+        vmm=VmmSettings(state_dir=state_dir),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=db_path, bootstrap_token=TOKEN, event_poll_s=10.0
+        ),
+    )
+    monkeypatch.setattr("msks.server.api.secrets.arm_probe_row", refuse_write)
+    second = build_app(settings)
+    second.state.microvm = StubMicrovm()
+    api2 = build_api(second)
+    async with api2.router.lifespan_context(api2):
+        # The daemon stood the boot up: the row lives, simply not
+        # re-armed by this pass.
+        probe = await second.state.model.placeholder_for([], "probe")
+        assert probe is not None
+
+
+async def test_the_probe_read_rearms_the_row(client) -> None:
+    """GET /api/v1/probe re-arms the row (#514 review, delta): an
+    expired window heals on the read, without an operator."""
+    http, app, _stub = client
+    from datetime import timedelta
+
+    probe = await app.state.model.placeholder_for([], "probe")
+    # The window is pinned short and the row re-armed under it (the
+    # boot-time arm stamped the live default; a store's deadline
+    # stamps at store time).
+    app.state.settings.secret_store.unlock_timeout_s = 900.0
+    assert (await http.get("/api/v1/probe", headers=auth())).status_code == 200
+    real_clock = app.state.secrets.plain._clock
+    base = real_clock()
+
+    def later():
+        return base + timedelta(seconds=901)
+
+    app.state.secrets.plain._clock = later
+    fetched = await http.get(f"/api/v1/secrets/{probe['id']}", headers=auth())
+    assert fetched.json()["locked"] is True  # the window died
+    read = await http.get("/api/v1/probe", headers=auth())
+    app.state.secrets.plain._clock = real_clock
+    assert read.status_code == 200
+    fetched = await http.get(f"/api/v1/secrets/{probe['id']}", headers=auth())
+    assert fetched.json()["locked"] is False  # the read re-armed it
+
+
+async def test_the_unlock_reply_names_a_skipped_refresh(client) -> None:
+    """A row whose eligible set is empty keeps its blobs and the
+    reply says so (`refreshed: false`) — the operator can tell the
+    write was skipped (#514 review, delta nit)."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    minted = await http.post(
+        "/api/v1/secrets",
+        json={"name": "shared", "dests": ["api.github.com"], "value": "v"},
+        headers=auth(),
+    )
+    row_id = minted.json()["id"]
+    await app.state.model.set_secret_coverage("ws-sec", "scoped")
+    await http.get("/api/v1/secrets/pending", headers=auth())
+    reply = await http.post(
+        "/api/v1/secrets/unlock",
+        json=unlock_body(row_id, "v"),
+        headers=auth(),
+    )
+    assert reply.status_code == 200
+    assert reply.json()["rows"][0]["refreshed"] is False
+    # And a healing unlock names its write.
+    await app.state.model.set_secret_coverage("ws-sec", "all")
+    await http.get("/api/v1/secrets/pending", headers=auth())
+    healed = await http.post(
+        "/api/v1/secrets/unlock",
+        json=unlock_body(row_id, "v"),
+        headers=auth(),
+    )
+    assert healed.json()["rows"][0]["refreshed"] is True
+
+
+async def test_a_503_unlock_still_leaves_the_trail(
+    client, monkeypatch
+) -> None:
+    """The audit row and event precede the re-encryption: a write
+    failure 503s with the unlock's trail already recorded
+    (#514 review, delta nit)."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    row = (
+        await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
+    ).json()
+    await http.get("/api/v1/secrets/pending", headers=auth())
+
+    async def refuse_write(placeholder_id, blobs):
+        raise OSError("blob write refused")
+
+    monkeypatch.setattr(app.state.model, "write_secret_blobs", refuse_write)
+    failed = await http.post(
+        "/api/v1/secrets/unlock",
+        json=unlock_body(row["id"], "ghp-fresh"),
+        headers=auth(),
+    )
+    assert failed.status_code == 503
+    audit = await http.get("/api/v1/secrets/audit", headers=auth())
+    kinds = [event["kind"] for event in audit.json()]
+    assert kinds.count("unlock") == 1
+
+
+async def test_a_failing_re_arm_at_read_keeps_the_probe_answer(
+    client, monkeypatch
+) -> None:
+    """The read-time re-arm is best-effort too: a blob write that
+    raises logs and the endpoint still answers (#514 review,
+    delta) — a read endpoint never fails because the arm could
+    not."""
+    http, app, _stub = client
+    await seed_workspace(app)  # a keyed acceptor, so the arm writes
+
+    async def refuse_write(placeholder_id, blobs):
+        raise OSError("disk full at the read-time arm")
+
+    monkeypatch.setattr(app.state.model, "write_secret_blobs", refuse_write)
+    read = await http.get("/api/v1/probe", headers=auth())
+    assert read.status_code == 200
+    assert read.json()["sentinel"].startswith("mskssec2_")
+
+
+async def test_the_probe_read_skips_an_unchanged_blob_rewrite(
+    client, monkeypatch
+) -> None:
+    """The read-time arm rewrites the row's blobs only when the
+    recipient set or a key hash changed (#514 review, round 3): a
+    read endpoint does not rewrite the database per fetch when
+    nothing changed."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    first = await http.get("/api/v1/probe", headers=auth())
+    assert first.status_code == 200  # armed, blobs written
+
+    calls = []
+
+    async def spy_write(placeholder_id, blobs):
+        calls.append(placeholder_id)
+        raise AssertionError("an unchanged arm must not rewrite blobs")
+
+    monkeypatch.setattr(app.state.model, "write_secret_blobs", spy_write)
+    again = await http.get("/api/v1/probe", headers=auth())
+    assert again.status_code == 200
+    assert calls == []
+    # A key rotation makes the next read rewrite: the hash moved.
+    from sqlalchemy import update
+    from testkeys import mint as mint_key
+
+    _pem, new_public = mint_key("ed25519")
+    from msks.model.workspaces import Workspace
+
+    engine = app.state.model.engine()
+
+    async def rotated_write(placeholder_id, blobs):
+        calls.append(placeholder_id)
+
+    monkeypatch.setattr(app.state.model, "write_secret_blobs", rotated_write)
+    async with engine.begin() as conn:
+        await conn.execute(
+            update(Workspace)
+            .where(Workspace.id == "ws-sec")
+            .values(ssh_pubkey=new_public)
+        )
+    third = await http.get("/api/v1/probe", headers=auth())
+    assert third.status_code == 200
+    assert calls  # the rotation forced the rewrite

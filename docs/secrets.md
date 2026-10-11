@@ -6,9 +6,10 @@ workspace — and the daemon swaps the sentinel for the real secret
 on the wire, in flight, only toward the destinations the mint
 named. The real secret is the operator's own value, supplied at
 mint (a file or stdin on the CLI, a masked field on the TUI
-form); it lives in msksd's **secret store** — one age-encrypted
-agefile — and in the daemon's memory, and it is never echoed
-back: the mint reply carries the sentinel alone.
+form); it lives in msksd's **secret store** — the database's
+per-recipient age-encrypted blobs — and in the daemon's unlock
+cache for its window, and it is never echoed back: the mint reply
+carries the sentinel alone.
 
 A mint covers **workspaces** (#339). With no target it is the
 **daemon-wide placeholder**: one row, one sentinel, valid on
@@ -100,18 +101,19 @@ kernel carry across the
 interceptor's arm/disarm table swaps — re-pinned with their
 remaining lifetimes in the same transaction that swaps the table.
 
-Each swap publishes a `secret.swap` event; mint, revoke, and expiry
-publish their own (`secret.mint`, `secret.revoke`, `secret.expiry`).
-All five ride the events websocket beside the workspace lifecycle
-events, each naming the placeholder's row id, its workspace and
-name, and a timestamp — the row id is the durable handle, because
-the row itself retires on revoke and expiry. A swap or sighting
-also names the destination the wire saw; a mint names the
-allowlist it was minted with; revoke and expiry carry the
-identity alone. The `msks tui` secrets page's audit view (`e`
-from the page) shows every workspace's events newest first,
-daemon-wide: the newest hundred recorded mints, revokes, and
-expiries replay onto it when the view opens, and swaps and
+Each swap publishes a `secret.swap` event; mint, revoke, expiry,
+and unlock publish their own (`secret.mint`, `secret.revoke`,
+`secret.expiry`, `secret.unlock`). All six ride the events
+websocket beside the workspace lifecycle events, each naming the
+placeholder's row id, its workspace and name, and a timestamp —
+the row id is the durable handle, because the row itself retires
+on revoke and expiry. A swap or sighting also names the
+destination the wire saw; a mint names the allowlist it was
+minted with; revoke, expiry, and unlock carry the identity
+alone. The `msks tui` secrets page's audit view (`e` from the
+page) shows every workspace's events newest first, daemon-wide:
+the newest hundred recorded mints, revokes, expiries, and
+unlocks replay onto it when the view opens, and swaps and
 sightings stream in live, with the off-allowlist sighting
 highlighted as the exfil signal and a header line stating the
 detection boundary above.
@@ -201,6 +203,15 @@ credential blob `bXNrczptc2tz` (the value the probe endpoint
 itself serves). The seed's mint rides the audit trail like any
 other.
 
+Under the unlock window (#514) the probe row is armed for the
+window at every boot and again on every `GET /api/v1/probe` read:
+the credential is public, so the daemon re-arms its own row
+rather than leaving the probe locked after the window expires —
+the same rationale that lets the endpoint serve the credential
+at all. Between the window's expiry and the next read (or boot,
+or an operator's unlock with the public value) the probe's swap
+answers the locked refusal like any other row.
+
 ## The mint flow
 
 ```console
@@ -217,11 +228,16 @@ sentinel: mskssec2_9Jm3...kQ
   whitespace-stripped at both ends, never accepted as a
   command-line argument (argv lands in process lists and shell
   history), stripped at both ends (a UTF-8 BOM drops too) and
-  stored in the agefile, and never echoed —
+  stored as ciphertext blobs, and never echoed —
   the mint reply carries the sentinel, not the value. The client and the
   daemon may sit on different machines: the value rides the
-  token-authenticated TLS API, and the agefile and the age
-  identity stay on the daemon's host.
+  token-authenticated TLS API. The mint stores **ciphertext
+  only** (#514): one age-encrypted blob per covering workspace's
+  identity key, and the plaintext rides the daemon's unlock
+  cache until its window ends (below). A covering workspace
+  whose key is outside the store's capable set (`ssh-ed25519`,
+  `ssh-rsa`) — or that carries no identity key at all — refuses
+  the mint with the workspace named.
 - The mint above carries no workspace target: it is the
   **daemon-wide** mint — one row, one `mskssec2_` sentinel, valid
   on every workspace's tap toward the minted destinations. A
@@ -281,9 +297,7 @@ of that label everywhere at once; `msks secret revoke
 coverage is exactly that set — the targeting mirrors the mint's,
 and `msks secret renew` selects its row the same way. `msks
 secret ls` lists every row with its coverage (`*` for the
-daemon-wide row, the workspace list scoped). `msks secret check`
-verifies the configured store answers writes before the first
-mint — a typo'd setting fails there, loudly.
+daemon-wide row, the workspace list scoped).
 
 A workspace can exempt itself from daemon-wide placeholders
 (#339): `msks create --secret-coverage scoped` (or
@@ -294,71 +308,81 @@ and swaps nothing; every new workspace accepts daemon-wide
 coverage unless its own setting says scoped, and flipping the
 setting back to `all` arms it with any live daemon-wide row.
 
+## The unlock window (#514)
+
+The daemon holds no plaintext of its own: a mint leaves only the
+per-recipient ciphertext blobs, and the plaintext returns through
+an operator's unlock — the client (#515) decrypts the blobs with
+the workspace identity's private half and posts the values back
+over the token-authenticated API (`POST /api/v1/secrets/unlock`,
+after `GET /api/v1/secrets/pending` serves the ciphertext and
+opens the session window the unlock requires).
+
+The window is `MSKSD_SECRET_STORE_UNLOCK_TIMEOUT_S` (default
+86400 seconds — one day), the `ssh-add -t` pattern. The timer resets on an
+unlock POST itself — an operator action carrying plaintext — and
+on nothing else: websocket traffic, keepalives, and scheduled
+tasks never extend it. Zero holds plaintext only while at least
+one operator websocket stays connected — the last disconnect
+drops it, and an unlock over HTTP alone holds nothing past the
+reply. Expiry flushes the cache, observable through the row
+fetch and the pending list.
+
+Until an unlock stands, the interceptor's swap path refuses a
+carried sentinel with a named locked error — HTTP 423,
+`msks: locked: no operator session within the unlock window` —
+and the request never reaches the origin: the sentinel never
+passes through as a value. An unlock also re-encrypts the row's
+blobs to its current recipient set, so a coverage edit or a
+workspace key rotation heals at the next operator session.
+
 ## Where the real secret lives
 
-The store is [SecretSpec](https://secretspec.dev) driven through its
-CLI (`secretspec`, named by `secret_store_cli`): one
-age-encrypted **agefile** — `<store root>/secrets.age`, default
-`<state_dir>/secrets/secrets.age` — holding every value the
-operator supplied at mint. Values exist in plaintext only in the
-client's memory, the token-authenticated request, the daemon's
-memory, and the `secretspec` child's pipe; at rest they are
-ciphertext.
+A mint stores **ciphertext blobs in the daemon's database**
+(#514): one age file per covering workspace identity key, wrapped
+to that workspace's ssh public half — the same file format the
+reference `age` tool writes. The daemon holds no key that opens
+them: only the workspace identity's private half (kept on the
+operator's client machine, #486) unwraps a blob, which is the
+whole design — the client decrypts, the daemon swaps. Values
+exist in plaintext only in the operator's memory, the
+token-authenticated request, and the daemon's unlock cache for
+the window.
 
-The age identity is the daemon's own (#423): minted the first
-time a store operation needs it — a plaintext age-keygen X25519
-file, 0600, named by `secret_store_age_identity` (default
-`<store root>/age.key`) — the same self-minting pattern the
-per-workspace ssh identities use (#138). Plaintext, because the
-daemon must decrypt unattended. Under the default layout the
-identity sits inside the store root beside the agefile, so a
-copy of the whole root carries its own key; when the at-rest
-protection is meant to count for backups, name an identity path
-outside the store root (`secret_store_age_identity`) and back
-that path up separately (the file carries its recipient on a
-comment line, so a backup can be checked without decrypting
-anything). The identity's mint is named in the daemon's log — a
-second one means a repointed path or a moved vault, and a value
-encrypted under another identity never decrypts; a lost identity
-takes the values with it, so re-mint them.
-
-msksd never decrypts anything itself: every store operation
-spawns `secretspec get/set/delete --provider
-"age://<root>/secrets.age?identity=<path>"` and the agefile is
-decrypted inside that child process. Decryption runs once per ref
-per daemon lifetime — the first tap-time `get`, with the
-in-memory value cache serving every later rewrite — and the store
-root (`0700`) holds the agefile, the identity, and the generated
-manifest (`secretspec.toml`) beside them, readable only by the
-daemon's user.
+The per-recipient blobs are the store. The workspace identity
+keys decide who can read: back up the client machine's identity
+files alongside the daemon's database — a database copy alone
+carries ciphertext nobody can open, and a lost identity file
+means re-minting the values.
 
 ### Worked example
 
 ```yaml
-# the store's root: default <state_dir>/secrets
-secret_store_root: ""
-# the age identity: default <store root>/age.key, minted when
-# absent — name a path outside the root when backups of the root
-# must stay ciphertext
-secret_store_age_identity: ""
+# the unlock window: how long unlocked plaintext lives in the
+# daemon after the unlock POST that supplied it
+secret_store_unlock_timeout_s: 86400.0
 ```
+
+The store itself needs no configuration: the blobs live in the
+daemon's database beside the placeholder rows, and the only
+secret-bearing setting is the window above.
 
 ## At-rest encryption
 
-The agefile is the store: every minted value lands in it
-encrypted, and no configuration choice changes that posture — the
-`age` provider is the one store. The ssh identities, the
-database, and the token hashes keep their own house postures; the
-agefile names the secrets' one.
+Every minted value is ciphertext at rest — a per-recipient age
+blob in the database (#514) — and no configuration choice
+changes that posture. The ssh identities, the database, and the
+token hashes keep their own house postures; the blobs name the
+secrets' one, and the blob's recipient list is exactly the row's
+coverage.
 
-Moving a vault to another daemon host means moving the store root
-whole — agefile and identity together — while the daemon is
-stopped; the root's manifest regenerates from the database, and
-the values answer the moved identity.
+Moving a daemon to another host means moving its database (the
+blobs ride the placeholder rows) while the daemon is stopped.
 
 ## The audit trail
 
-Mint, revoke, and expiry append a row to the daemon database:
+Mint, revoke, expiry, and unlock append a row to the daemon
+database:
 the placeholder's coverage (the daemon-wide row, or the workspace
 list), name, destination allowlist, and a timestamp (`msks
 secret ls` lists placeholders; the audit view is

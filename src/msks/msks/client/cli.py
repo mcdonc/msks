@@ -64,7 +64,6 @@ from .images import (  # noqa: F401
 from .resize import display_name  # noqa: F401 — the tests' seam
 from .rsync import run_workspace_rsync
 from .secrets import (  # noqa: F401
-    cmd_secret_check,
     cmd_secret_coverage,
     cmd_secret_ls,
     cmd_secret_mint,
@@ -1017,13 +1016,6 @@ def secret_coverage(
 ) -> int:
     """Flip a workspace's daemon-wide placeholder posture (#339)."""
     return cmd_secret_coverage(workspace_id, coverage.value, transport=ctx.obj)
-
-
-@secret_app.command("check")
-@one_line_interrupts
-def secret_check(ctx: typer.Context) -> int:
-    """Verify the configured secret store answers writes."""
-    return cmd_secret_check(transport=ctx.obj)
 
 
 def help_requested(argv: list[str]) -> bool:

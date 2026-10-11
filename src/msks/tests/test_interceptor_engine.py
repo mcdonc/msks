@@ -600,6 +600,28 @@ async def test_request_passes_a_revoked_sentinel_through(authority) -> None:
     assert sentinel in flow.request.headers.get("authorization")
 
 
+async def test_request_answers_the_named_locked_refusal_when_cold(
+    authority,
+) -> None:
+    """#514: a cold plaintext cache refuses the connection outright
+    — 423, the named body, no swap, no hang, and the sentinel
+    never passes through as a value."""
+    from msks.secretcache import SecretLockedError
+
+    sentinel = entry().sentinel
+    owner = FakeOwner(
+        {sentinel: entry()}, authority, secret=SecretLockedError(sentinel)
+    )
+    flow = swap_flow(sentinel)
+    await engine.InterceptorAddon(owner).request(flow)
+    assert flow.response is not None
+    assert flow.response.status_code == 423
+    assert flow.response.get_text() == engine.BODY_LOCKED
+    assert "locked: no operator session" in flow.response.get_text()
+    assert owner.swaps == []
+    assert sentinel in flow.request.headers.get("authorization")
+
+
 async def test_request_fails_closed_when_the_store_cannot_serve(
     authority,
 ) -> None:

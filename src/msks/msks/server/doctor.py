@@ -5,8 +5,8 @@ environment: the cloud-hypervisor VMM (#1), the e2fsprogs pair
 that grows and checks workspace volumes (#184), the ``mkisofs``
 that packs the #41 cidata seed disks, the iproute2 / nftables /
 conntrack trio that wires and polices each workspace's tap (#52),
-``qemu-img`` for the root overlay, the secretspec CLI behind the
-#198 secret store, the two libraries the interceptor's NFQUEUE
+``qemu-img`` for the root overlay, the two libraries the
+interceptor's NFQUEUE
 path links against, and the client-side ssh/rsync pair and tmux
 the documented workflows run on. A missing tool surfaces today as
 a late runtime failure with an opaque error; doctor names each
@@ -117,10 +117,6 @@ UPSTREAM_HINTS = {
     "cloud-hypervisor": (
         "upstream static release — install from "
         "https://github.com/cloud-hypervisor/cloud-hypervisor/releases"
-    ),
-    "secretspec": (
-        "release binary — install from "
-        "https://github.com/cachix/secretspec/releases"
     ),
 }
 
@@ -617,14 +613,6 @@ def run_doctor(settings: Settings) -> DoctorReport:
             [vmm.qemu_img, "--version"],
             manager,
             use="builds the root overlay and probes volume formats",
-        )
-    )
-    report.add(
-        check_binary(
-            settings.secret_store.cli,
-            [settings.secret_store.cli, "--version"],
-            manager,
-            use="the secret store's CLI (#198)",
         )
     )
     report.add(check_library("libnetfilter_queue", manager))

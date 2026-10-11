@@ -50,14 +50,19 @@ class FakeNet:
         self.interceptions.append((workspace_id, port))
 
 
-class FakeSecrets:
-    """The store cache, pre-seeded with the real values."""
+class FakePlain:
+    """The unlock cache, pre-seeded with the real values (#514)."""
 
     def __init__(self) -> None:
         self.values: dict[str, str] = {}
 
-    async def read(self, ref: str) -> str:
+    def read(self, ref: str) -> str:
         return self.values[ref]
+
+
+class FakeSecrets:
+    def __init__(self) -> None:
+        self.plain = FakePlain()
 
 
 def free_port() -> int:
@@ -204,7 +209,7 @@ async def seed(app, name: str, dests: list[str], secret: str) -> dict:
     row = await app.state.model.create_placeholder(
         ["ws-live"], name, sentinel, dests, ref, None
     )
-    app.state.secrets.values[ref] = secret
+    app.state.secrets.plain.values[ref] = secret
     return row
 
 

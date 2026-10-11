@@ -12,7 +12,6 @@ import time
 from datetime import UTC, datetime
 
 from ..events import EventHub
-from ..model.secrets import coverage_label
 from ..spec.time import deadline_passed
 from ..spec.vm import VmStatus
 from ..storage import MIB, pressure_for, state_usage
@@ -154,6 +153,10 @@ async def watch_loop(app, hub: EventHub) -> None:
                 next_prune = time.monotonic() + PRUNE_INTERVAL_S
                 await sweep_consent(app)
             await sweep_expired_placeholders(app, hub)
+            # The unlock window's memory half (#514): swaps expire
+            # lazily on read; this flush retires the plaintext on
+            # time even when nothing swaps.
+            app.state.secrets.plain.flush_expired()
         except Exception:
             LOG.exception("watcher scan failed; retrying next interval")
         await asyncio.sleep(interval)
@@ -168,18 +171,15 @@ async def sweep_consent(app) -> None:
 
 
 async def sweep_expired_placeholders(app, hub: EventHub) -> int:
-    """Retire placeholders past their deadline (#198): audit, remove,
-    re-sync the store manifest, announce.
+    """Retire placeholders past their deadline (#198): audit, remove
+    with the row's blobs, announce.
 
     Expiry rides the same per-request predicate as revocation, so a
     row past its deadline stops swapping immediately — this sweep is
-    the cleanup half. Each retirement can cost a store call up to
-    ``secret_store_timeout_s``, so one pass retires at most
-    :data:`SWEEP_CAP` rows and leaves the rest to the next pass —
-    the watcher's other duties (status transitions, pressure, the
-    consent prune) stay responsive through a bulk expiry. A failing
-    store delete never keeps the row: the value left behind is
-    inert without it.
+    the cleanup half. One pass retires at most :data:`SWEEP_CAP`
+    rows and leaves the rest to the next pass — the watcher's
+    other duties (status transitions, pressure, the consent prune)
+    stay responsive through a bulk expiry.
     """
     model = app.state.model
     now = datetime.now(UTC)
@@ -193,8 +193,6 @@ async def sweep_expired_placeholders(app, hub: EventHub) -> int:
     async with app.state.store_lock:
         for row in expired:
             await retire_expired(app, hub, row)
-        refs = await model.placeholder_refs()
-        await asyncio.to_thread(app.state.secrets.sync_manifest, refs)
     await refresh_disarmed(app, expired)
     return len(expired)
 
@@ -225,27 +223,24 @@ SWEEP_CAP = 16
 
 
 async def retire_expired(app, hub: EventHub, row: dict) -> None:
-    """One expired placeholder: drop, audit, clean the store,
-    announce. The audit follows the drop (a persistently failing
-    delete cannot stack one audit row per watch interval) — the
-    accepted trade-off is that a raising audit loses the event with
-    the row already gone.
+    """One expired placeholder: drop the row with its blobs, the
+    cached plaintext, and the served marker; audit, announce. The
+    audit follows the drop (a persistently failing delete cannot
+    stack one audit row per watch interval) — the accepted
+    trade-off is that a raising audit loses the event with the row
+    already gone.
     """
     model = app.state.model
     await model.delete_placeholder(row["id"])
+    # The cached plaintext and the served marker go with the row
+    # (#514): a retired row's window is closed, and a marker left
+    # behind could admit an unlock for a rowid a later re-mint
+    # inherits.
+    app.state.secrets.plain.forget([row["backend_ref"]], [row["id"]])
     audit_id = await model.record_audit("expiry", row)
     # The audit row commits before this publish: a registration in
     # the gap replays the row, and the client's audit-id dedup
     # drops whichever delivery is second (#305).
-    try:
-        await app.state.secrets.delete(row["backend_ref"])
-    except Exception:  # noqa: BLE001 - inert leftover, logged below
-        LOG.warning(
-            "expired placeholder %s/%s: store value left behind at %s",
-            coverage_label(row["workspaces"]),
-            row["name"],
-            row["backend_ref"],
-        )
     await hub.publish(
         "secret.expiry",
         {

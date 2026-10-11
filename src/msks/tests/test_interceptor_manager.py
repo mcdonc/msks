@@ -92,12 +92,24 @@ class FakeNet:
         self.interceptions.append((workspace_id, port))
 
 
-class FakeSecrets:
+class FakePlain:
+    """The unlock cache's stand-in (#514): the same read contract
+    — a warm ref answers, a cold one raises the named error."""
+
     def __init__(self) -> None:
         self.values: dict[str, str] = {}
 
-    async def read(self, ref: str) -> str:
+    def read(self, ref: str) -> str:
+        from msks.secretcache import SecretLockedError
+
+        if ref not in self.values:
+            raise SecretLockedError(ref)
         return self.values[ref]
+
+
+class FakeSecrets:
+    def __init__(self) -> None:
+        self.plain = FakePlain()
 
 
 def fake_master_factory(cls=FakeMaster):
@@ -428,10 +440,17 @@ async def test_sentinel_live_reads_the_row(app) -> None:
     assert not await app.state.interceptor.sentinel_live(row["sentinel"])
 
 
-async def test_secret_for_reads_the_store_cache(app) -> None:
+async def test_secret_for_reads_the_unlock_cache(app) -> None:
+    """#514: the swap path reads the unlock-time plaintext cache.
+    Warm answers; cold raises the named locked error the engine
+    turns into the 423 refusal."""
+    from msks.secretcache import SecretLockedError
+
     row = await mint_placeholder(app)
-    app.state.secrets.values[row["backend_ref"]] = "the-real-one"
     entry = rows_entry(row)
+    with pytest.raises(SecretLockedError):
+        await app.state.interceptor.secret_for(entry)
+    app.state.secrets.plain.values[row["backend_ref"]] = "the-real-one"
     assert await app.state.interceptor.secret_for(entry) == "the-real-one"
 
 

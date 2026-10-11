@@ -526,28 +526,10 @@ KEY_CASES = [
         60.0,
     ),
     (
-        "secret_store_root",
-        "/srv/msks-secrets",
-        "secret_store.root",
-        Path("/srv/msks-secrets"),
-    ),
-    (
-        "secret_store_age_identity",
-        "/etc/msksd/age.key",
-        "secret_store.age_identity",
-        "/etc/msksd/age.key",
-    ),
-    (
-        "secret_store_cli",
-        "/usr/local/bin/secretspec",
-        "secret_store.cli",
-        "/usr/local/bin/secretspec",
-    ),
-    (
-        "secret_store_timeout_s",
-        45.0,
-        "secret_store.timeout_s",
-        45.0,
+        "secret_store_unlock_timeout_s",
+        60.0,
+        "secret_store.unlock_timeout_s",
+        60.0,
     ),
 ]
 
@@ -819,36 +801,23 @@ def test_settings_from_env_still_reads_plain_environment(
     assert Settings.from_env().server.port == 9006
 
 
-def test_reload_latches_the_secret_store_location(tmp_path) -> None:
-    """A SIGHUP naming a new secret-store root changes nothing:
-    the manifest and values were never migrated, so the store
-    keeps its startup location until a restart (the same reasoning
-    as vmm.state_dir). The age identity path reloads live — and
-    the value cache empties either way so the next read
-    re-fetches."""
-    app = app_with_file(
-        tmp_path,
-        {
-            "secret_store_age_identity": "/old/key",
-            "secret_store_root": str(tmp_path / "old-root"),
-        },
+def test_a_config_still_naming_the_agefile_store_is_refused(
+    tmp_path: Path,
+) -> None:
+    """The blob store retired the agefile family (#514): a config
+    that still names the root or the identity fails validation at
+    load — the file's unknown key names itself, and a reload
+    never swaps half of a vault that no longer exists."""
+    import pytest
+    from msks.config import key_layer
+
+    (tmp_path / "msksd.yaml").write_text(
+        f"secret_store_root: {tmp_path}/old-root\n",
     )
-    write_config(
-        tmp_path,
-        "\n".join(
-            [
-                f"secret_store_root: {tmp_path}/new-root",
-                "secret_store_age_identity: /new/key",
-            ]
-        )
-        + "\n",
-    )
-    app.state.secrets._cache["MSKSWS_X"] = "stale"
-    main_mod.reload_settings(app, str(tmp_path / "msksd.yaml"))
-    store = app.state.settings.secret_store
-    assert str(store.root) == str(tmp_path / "old-root")  # latched
-    assert str(store.age_identity) == "/new/key"  # connection detail: live
-    assert app.state.secrets._cache == {}  # the swap emptied the cache
+    doc = {"secret_store_root": str(tmp_path / "old-root")}
+    with pytest.raises(Exception) as raised:
+        key_layer(doc, str(tmp_path / "msksd.yaml"))
+    assert "secret_store_root" in str(raised.value)
 
 
 def test_llm_models_is_a_list_valued_key(tmp_path: Path) -> None:

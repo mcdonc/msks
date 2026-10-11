@@ -259,25 +259,22 @@ class NetSettings:
 
 @dataclass
 class SecretStoreSettings:
-    """The placeholder secret store (#198, #423): one
-    age-encrypted agefile under *root*, every value msks-minted.
+    """The placeholder secret store (#198, #514): per-recipient
+    ciphertext blobs in the daemon's database, plaintext only
+    through the operator's unlock.
 
-    The store is driven through the ``secretspec`` CLI (its
-    Python SDK exposes only the resolve path — every write lives
-    in the CLI), with a generated manifest under *root*; values
-    ride stdin, never argv. The age identity is minted by the
-    daemon itself the first time a store operation needs it (a
-    plaintext age-keygen X25519 file, 0600 — plaintext because
-    the daemon must decrypt unattended).
+    The unlock window is the one setting: accepted plaintext
+    lives in the daemon's cache for *unlock_timeout_s* past the
+    unlock POST that supplied it. The timer resets on an unlock
+    itself — an operator action carrying plaintext — and on
+    nothing else: websocket traffic, keepalives, and scheduled
+    tasks never extend it. Zero holds plaintext only while at
+    least one operator websocket stays connected — the last
+    disconnect drops it, and an unlock over HTTP alone holds
+    nothing past the reply.
     """
 
-    # None means <state_dir>/secrets (derived at parse time, like
-    # the server's db_path).
-    root: Path | None = None
-    # None means <root>/age.key (derived at use time).
-    age_identity: Path | None = None
-    cli: str = "secretspec"
-    timeout_s: float = 30.0
+    unlock_timeout_s: float = 86400.0
 
     @classmethod
     def from_env(
@@ -473,54 +470,47 @@ def secret_store_settings_from_env(
 ) -> SecretStoreSettings:
     """Build SecretStoreSettings from the environment (helper: keeps
     the class block itself at xenon rank A, like its siblings)."""
-    refuse_removed_provider_settings(env)
-    timeout = _env_float(env, "MSKSD_SECRET_STORE_TIMEOUT_S", cls.timeout_s)
-    if timeout <= 0:
-        raise ValueError(
-            f"MSKSD_SECRET_STORE_TIMEOUT_S must be positive, got {timeout}"
-        )
-    state = Path(
-        _env(env, "MSKSD_STATE_DIR", str(VmmSettings().state_dir))
-    ).expanduser()
-    root = _env(env, "MSKSD_SECRET_STORE_ROOT", "")
-    return cls(
-        root=Path(root).expanduser() if root else state / "secrets",
-        **secret_store_options(env),
-        timeout_s=timeout,
+    refuse_removed_store_settings(env)
+    unlock = _env_float(
+        env, "MSKSD_SECRET_STORE_UNLOCK_TIMEOUT_S", cls.unlock_timeout_s
     )
+    if unlock < 0:
+        raise ValueError(
+            "MSKSD_SECRET_STORE_UNLOCK_TIMEOUT_S must be zero or "
+            f"positive, got {unlock}"
+        )
+    return cls(unlock_timeout_s=unlock)
 
 
-def secret_store_options(env: Mapping[str, str]) -> dict:
-    """The optional fields, straight off the env."""
-    identity = _env(env, "MSKSD_SECRET_STORE_AGE_IDENTITY", "")
-    return {
-        "age_identity": Path(identity).expanduser() if identity else None,
-        "cli": _env(env, "MSKSD_SECRET_STORE_CLI", SecretStoreSettings.cli),
-    }
-
-
-#: Store settings #423 removed: the store is the agefile, so a
-#: config that still names a provider or its connection details
-#: names behavior msksd no longer has. Refused at load with the
-#: removal named — not silently ignored — so a stale half-written
-#: config fails before the first mint, not at it.
+#: Store settings the blob store removed: #423 retired the
+#: provider family (the store became the agefile), and #514
+#: retired the agefile family itself (the store became the
+#: database's per-recipient blobs — no vault file, no identity, no
+#: CLI child, no per-call timeout). A config that still names any
+#: of them names behavior msksd no longer has; refused at load
+#: with the removal named — not silently ignored — so a stale
+#: half-written config fails before the first mint, not at it.
 REMOVED_SECRET_STORE_KEYS = (
     "MSKSD_SECRET_STORE_PROVIDER",
     "MSKSD_SECRET_STORE_REGION",
     "MSKSD_SECRET_STORE_PROFILE",
     "MSKSD_SECRET_STORE_PREFIX",
     "MSKSD_SECRET_STORE_PROJECT",
+    "MSKSD_SECRET_STORE_ROOT",
+    "MSKSD_SECRET_STORE_AGE_IDENTITY",
+    "MSKSD_SECRET_STORE_CLI",
+    "MSKSD_SECRET_STORE_TIMEOUT_S",
 )
 
 
-def refuse_removed_provider_settings(env: Mapping[str, str]) -> None:
-    """Name every #423-removed store setting still set."""
+def refuse_removed_store_settings(env: Mapping[str, str]) -> None:
+    """Name every removed store setting still set."""
     stale = [name for name in REMOVED_SECRET_STORE_KEYS if env.get(name)]
     if stale:
         raise ValueError(
             f"{' and '.join(stale)} no longer exist: the secret store is "
-            "the agefile (docs/secrets.md) — remove the settings; the "
-            "identity is a setting, the vault needs none of these"
+            "the database's per-recipient blobs (docs/secrets.md) — "
+            "remove the settings; the store needs none of them"
         )
 
 

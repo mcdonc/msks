@@ -58,6 +58,8 @@ from mitmproxy.net import tls as net_tls
 from mitmproxy.net.http import url
 from OpenSSL import SSL
 
+from ..secretcache import SecretLockedError
+
 logger = logging.getLogger(__name__)
 
 
@@ -199,6 +201,11 @@ BODY_UNDECIDED = (
     "msks: the egress consent request ended without a decision; "
     "the request was not forwarded."
 )
+BODY_LOCKED = (
+    "msks: locked: no operator session within the unlock window; "
+    "unlock the secret store from a client; the request was not "
+    "forwarded."
+)
 
 
 def refusal_body(reason: str) -> str:
@@ -265,12 +272,28 @@ async def swap_or_announce(owner, workspace: str, flow) -> None:
     await swap_on_flow(owner, workspace, entry, host, flow)
 
 
+def locked_refusal(flow: http.HTTPFlow) -> None:
+    """Answer a swap whose plaintext cache is cold (#514): the
+    named locked error, refused outright — nothing forwards, the
+    request never hangs, and the sentinel never passes through as
+    a value."""
+    flow.response = http.Response.make(
+        423,
+        BODY_LOCKED,
+        {"content-type": "text/plain"},
+    )
+
+
 async def swap_on_flow(owner, workspace, entry, host, flow) -> None:
-    """The swap's tail: gate, fetch, rewrite, announce. A store or
-    row failure answers the guest locally (fail-closed); a dead
-    sentinel passes through decrypted and unrewritten."""
+    """The swap's tail: gate, fetch, rewrite, announce. A cold
+    plaintext cache answers the named locked refusal (#514); a
+    store or row failure answers the guest locally (fail-closed);
+    a dead sentinel passes through decrypted and unrewritten."""
     try:
         secret = await fetch_secret(owner, entry)
+    except SecretLockedError:
+        locked_refusal(flow)
+        return
     except Exception:  # noqa: BLE001 - named below, fail-closed
         logger.exception(
             "interceptor: swap for %s/%s failed; answered 502",

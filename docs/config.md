@@ -40,7 +40,7 @@ libraries msksd and the msks client exec at runtime (#464) — the
 cloud-hypervisor VMM, the e2fsprogs pair that grows and checks
 workspace volumes, the `mkisofs` that packs the cidata seed disks,
 the iproute2/nftables/conntrack trio behind each workspace's tap,
-`qemu-img` for the root overlay, the secretspec CLI behind the
+`qemu-img` for the root overlay,
 secret store, the two libraries the interceptor's NFQUEUE path
 links against, the host tmux at the 3.2 floor the consent
 terminal documents (#379), and the ssh/rsync pair the documented
@@ -74,7 +74,6 @@ packages carrying only the pkg-config files doctor falls back
 past). Where a fix is not a distro package, the hint names the
 real source: cloud-hypervisor installs from the upstream static
 release (Debian's archive carries it in none of its suites) and
-the secretspec CLI from its release binaries.
 
 The dev daemon runs bare: `scripts/dev-daemon.sh` sets
 `MSKSD_CONFIG_DIR` to the devenv root (and the devenv shell presets
@@ -229,18 +228,16 @@ the file itself carries them all at one level.
 
 Where the real secrets behind placeholder tokens live ([secrets
 chapter](secrets.md) for the flow). The store is one
-age-encrypted agefile; the identity is the daemon's own, minted
+per-recipient ciphertext blobs; plaintext returns only through an
+operator's unlock
 when the first store operation finds it absent.
 
-| Key                         | Environment variable              | Type        | Default                | What it does                                                                                                                                                           |
-| --------------------------- | --------------------------------- | ----------- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `secret_store_root`         | `MSKSD_SECRET_STORE_ROOT`         | string      | `<state_dir>/secrets`  | The store's root: the agefile, the age identity, and the generated manifest all live under it.                                                                         |
-| `secret_store_age_identity` | `MSKSD_SECRET_STORE_AGE_IDENTITY` | string      | `<store root>/age.key` | The age identity file; the daemon mints it (X25519, 0600) when the first store operation finds it absent (#423).                                                       |
-| `secret_store_cli`          | `MSKSD_SECRET_STORE_CLI`          | string      | `secretspec`           | Path to the SecretSpec CLI the store drives.                                                                                                                           |
-| `secret_store_timeout_s`    | `MSKSD_SECRET_STORE_TIMEOUT_S`    | float       | `30.0`                 | Seconds one store operation may run.                                                                                                                                   |
-| `llm_port`                  | `MSKSD_LLM_PORT`                  | int         | `8770`                 | The port each workspace's LLM proxy listener binds on its tap (#259).                                                                                                  |
-| `llm_models`                | `MSKSD_LLM_MODELS`                | string/list | `""`                   | The model list (#259): `provider/model:api_base:api_key` entries — comma-separated strings, or the file's list of strings and LiteLLM-native dicts; see `docs/llm.md`. |
-| `llm_api_key`               | `MSKSD_LLM_API_KEY`               | string      | `""`                   | A default key for entries that name none; `file:`/`cmd:` indirection works.                                                                                            |
+| Key                             | Environment variable                  | Type        | Default   | What it does                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------- | ------------------------------------- | ----------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `secret_store_unlock_timeout_s` | `MSKSD_SECRET_STORE_UNLOCK_TIMEOUT_S` | float       | `86400.0` | How long unlocked plaintext lives in the daemon's cache after the unlock POST that supplied it (#514); the timer resets on an unlock itself — websocket traffic and keepalives never extend it. Zero holds plaintext only while at least one operator websocket stays connected — the last disconnect drops it, and an unlock over HTTP alone holds nothing past the reply. |
+| `llm_port`                      | `MSKSD_LLM_PORT`                      | int         | `8770`    | The port each workspace's LLM proxy listener binds on its tap (#259).                                                                                                                                                                                                                                                                                                       |
+| `llm_models`                    | `MSKSD_LLM_MODELS`                    | string/list | `""`      | The model list (#259): `provider/model:api_base:api_key` entries — comma-separated strings, or the file's list of strings and LiteLLM-native dicts; see `docs/llm.md`.                                                                                                                                                                                                      |
+| `llm_api_key`                   | `MSKSD_LLM_API_KEY`                   | string      | `""`      | A default key for entries that name none; `file:`/`cmd:` indirection works.                                                                                                                                                                                                                                                                                                 |
 
 ## SIGHUP reload
 
@@ -260,10 +257,6 @@ reload naming a new one changes nothing:
   and the local driver resolves every workspace's artifacts from the
   state dir live — moving it mid-run would orphan running
   workspaces, so the daemon latches the startup value)
-- `secret_store_root` (the store's manifest and values were never
-  migrated, so a reload naming a new root changes nothing until a
-  restart; the age identity path reloads live, and its mint names
-  itself in the log)
 - `default_image` (imported into the catalog once, at first boot)
 - the watcher scan's `event_poll_s` (sampled at loop start): both the
   workspace status reconcile and the state-disk pressure probe
