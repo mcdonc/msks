@@ -269,14 +269,14 @@ def cmd_rm(workspace_ids: list[str], transport=None) -> int:
 
 
 async def fetch_ssh_key(url, token, workspace_id, transport) -> dict:
-    """GET the workspace's identity: type, public half, private half
-    (null for every workspace created now, #486; a row minted
-    before it keeps serving the half it holds).
+    """GET the workspace's identity: the public half alone (#497 —
+    the answer carries no private field), with the row's id, name,
+    instance stamp, and login user beside it.
 
     A re-export of :func:`msks.client.rest.fetch_ssh_key` (the call
     moved to rest.py when ``msks ssh`` (#112) began sharing it);
-    ``msks key`` prints it, ``msks ssh`` stages the private half in
-    memory for the duration of a connection.
+    ``msks key`` prints it, and ``msks ssh`` resolves the session's
+    signing key from it.
     """
     return await rest_fetch_ssh_key(url, token, workspace_id, transport)
 

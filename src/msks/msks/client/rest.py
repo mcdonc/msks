@@ -324,14 +324,14 @@ async def fetch_ssh_key(
     transport=None,
     ssl_ctx=None,
 ) -> dict:
-    """GET the workspace's identity: type, public half, private half
-    (null for every workspace created now, #486 — the daemon never
-    held a half; a row minted before #486 keeps serving its own).
+    """GET the workspace's identity: the public half alone (#486,
+    #497 — the answer carries no private field at all), with the
+    row's id, name, instance stamp, and login user beside it — the
+    five fields the client reads (#499).
 
-    ``msks key`` prints it; ``msks ssh`` (#112) serves the private
-    half from a transient in-process agent through this same call.
-    An already-built ``ssl_ctx`` avoids a second unverified-mode
-    warning in one command.
+    ``msks key`` prints it; ``msks ssh`` (#112) stages the session
+    identity through this same call. An already-built ``ssl_ctx``
+    avoids a second unverified-mode warning in one command.
     """
     return await api_call(
         "GET",

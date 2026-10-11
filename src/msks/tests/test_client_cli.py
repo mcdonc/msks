@@ -64,9 +64,11 @@ def client_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 KEY_BODY = {
-    "workspace": "alpha",
-    "type": "ecdsa-sha2-nistp256",
+    "id": "alpha",
+    "name": "alpha",
     "public_key": "ecdsa-sha2-nistp256 AAAA msksd:alpha",
+    "created_at": "2026-10-11T00:00:00",
+    "user": "alice",
 }
 
 
@@ -833,11 +835,12 @@ def test_cmd_create_pubkey_sends_the_line_and_writes_nothing(
         if request.url.path.endswith("/ssh-key"):
             return httpx.Response(
                 200,
-                json={
-                    "workspace": "ws1",
-                    "type": "ssh-ed25519",
-                    "public_key": annotated,
-                },
+                json=dict(
+                    KEY_BODY,
+                    id="ws1",
+                    name="ws1",
+                    public_key=annotated,
+                ),
             )
         seen["body"] = json.loads(request.content)
         return httpx.Response(201, json={"id": "ws1", "status": "created"})
