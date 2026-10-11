@@ -2188,15 +2188,12 @@ def test_workspace_user_reads_the_served_name() -> None:
     assert ssh.workspace_user(KEY) == "alice"
 
 
-def test_workspace_user_falls_back_for_an_older_daemon() -> None:
-    """A daemon predating the field serves no user: the image's own
-    login user is the only account those workspaces hold, so it is
-    the fallback — a constant named for its job, not the old
-    always-default."""
-    from msks.identity import LEGACY_LOGIN_USER
-
-    assert ssh.workspace_user({"public_key": "k"}) == (LEGACY_LOGIN_USER)
-    assert LEGACY_LOGIN_USER == "msks"
+def test_workspace_user_dials_root_when_the_row_names_none() -> None:
+    """A workspace with no recorded user (#500): the answer is
+    null, and root is the dial — the account every seed
+    provisions a key for, the console's own failsafe login."""
+    assert ssh.workspace_user({"public_key": "k"}) == "root"
+    assert ssh.workspace_user({"public_key": "k", "user": "alice"}) == "alice"
 
 
 def test_run_workspace_ssh_logs_in_as_the_workspace_user(

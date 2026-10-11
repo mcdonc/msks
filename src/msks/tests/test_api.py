@@ -1340,7 +1340,10 @@ async def test_ssh_key_serves_the_legacy_user_for_old_rows(client) -> None:
     assert row["login_user"] is None
     key = await http.get("/api/v1/workspaces/ws-old/ssh-key", headers=auth())
     assert key.status_code == 200
-    assert key.json()["user"] == "msks"
+    # No shim (#500): a pre-#248 row answers null; the client
+    # dials root for it, and the guest's msks account stays
+    # reachable by name.
+    assert key.json()["user"] is None
 
 
 async def test_create_rejects_empty_user_data(client) -> None:

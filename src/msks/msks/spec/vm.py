@@ -68,8 +68,9 @@ class VmSpec:
     # seeded into the guest at first boot (the account, its home,
     # authorized_keys, and the workspace-user sudo grant) when it
     # names an account the image does not ship. None is a workspace
-    # created before per-workspace users — its login user is the
-    # image's own (LEGACY_LOGIN_USER).
+    # created before per-workspace users (#248) or an API create
+    # that names none — the guest carries the key for root and its
+    # own msks account either way.
     login_user: str | None = None
     # The workspace's LLM proxy credential (#259): minted at create,
     # stored on the row, and seeded into the guest (the token file

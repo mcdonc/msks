@@ -38,13 +38,6 @@ LABEL_PATTERN = re.compile(r"[a-z0-9@.\-]+")
 #: assignments, the same job LABEL_PATTERN does for algorithms.
 LOGIN_NAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
 
-#: The login user the image ships beside root (#63): served as the
-#: workspace's login user for rows created before per-workspace
-#: users existed (#248) — those guests hold only root and this
-#: account — and the client's fallback against a daemon that
-#: predates the field.
-LEGACY_LOGIN_USER = "msks"
-
 
 def normalize_public_key(line: str) -> tuple[str, str]:
     """Validate one supplied public key line: ``(algo, body)``.
