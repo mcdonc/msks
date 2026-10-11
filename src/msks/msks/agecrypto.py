@@ -68,6 +68,14 @@ PAYLOAD_INFO = b"payload"
 FILE_KEY_BYTES = 16
 CHUNK_BYTES = 64 * 1024
 
+#: The reference parser's caps, adopted as-is: a header over
+#: 2 MiB, more than 1024 stanzas, or a stanza over 128 arguments
+#: is malformed — and unchecked, each is a memory lever a hostile
+#: blob could pull in the client (#515).
+MAX_HEADER_BYTES = 2 * 1024 * 1024
+MAX_STANZAS = 1024
+MAX_STANZA_ARGS = 128
+
 #: The ssh key types this module can encrypt to (#513's capability
 #: predicate): the two the reference tool defines. create accepts
 #: any shape-valid type (#132); a workspace keyed otherwise cannot
@@ -708,39 +716,56 @@ def header_step(
     if line.startswith(b"-> "):
         return first, open_stanza(line, stanzas)
     accept_body_line(line, current)
+    if len(line) < 64:
+        # The short final line closes the stanza.
+        return first, None
     return first, current
 
 
 def header_line(data: bytes, pos: int) -> tuple[bytes, int, int]:
     """One header line and where the next begins; a header with no
-    terminating newline ends nowhere the format accepts."""
+    terminating newline ends nowhere the format accepts, and a
+    header past the reference's size cap is malformed before any
+    more of it parses."""
     nl = data.find(b"\n", pos)
     if nl < 0:
         raise AgeCryptoError("the age header has no MAC line")
+    if nl + 1 > MAX_HEADER_BYTES:
+        raise AgeCryptoError("the header exceeds the format's limit")
     return data[pos:nl], pos, nl + 1
 
 
 def mac_line(line: bytes, data: bytes, line_start: int) -> tuple[bytes, bytes]:
     """The final line's claimed MAC and the bytes it must cover —
     everything through the ``---`` mark, the space after it
-    excluded."""
-    text = line[3:].lstrip()
-    try:
-        mac = b64d(text.decode("ascii"))
-    except AgeCryptoError:
-        raise AgeCryptoError("the MAC line is malformed") from None
-    if len(mac) != 32:
+    excluded. Exactly one space and exactly 43 base64 characters,
+    the shape 32 unpadded bytes take; anything else is malformed."""
+    if len(line) != 4 + 43 or line[3:4] != b" ":
         raise AgeCryptoError("the MAC line is malformed")
+    try:
+        mac = b64d(line[4:].decode("ascii"))
+    except AgeCryptoError, UnicodeDecodeError:
+        raise AgeCryptoError("the MAC line is malformed") from None
+    # 43 unpadded base64 characters decode to exactly 32 bytes, so
+    # the length check above is the whole shape story.
     return mac, data[: line_start + 3]
 
 
 def open_stanza(line: bytes, stanzas: list[Stanza]) -> Stanza:
     """The argument line's stanza, appended to the running set; an
     unknown type parses like any other (identities skip what they
-    do not open)."""
-    args = line[3:].decode("ascii", "replace").split()
+    do not open), under the reference's caps — stanza count and
+    argument count."""
+    if len(stanzas) >= MAX_STANZAS:
+        raise AgeCryptoError("the header carries too many stanzas")
+    try:
+        args = line[3:].decode("ascii").split()
+    except UnicodeDecodeError:
+        raise AgeCryptoError("a stanza line is not ASCII") from None
     if not args:
         raise AgeCryptoError("a stanza line with no type")
+    if len(args) - 1 > MAX_STANZA_ARGS:
+        raise AgeCryptoError("a stanza carries too many arguments")
     stanza = Stanza(kind=args[0], args=args[1:], body=b"")
     stanzas.append(stanza)
     return stanza
@@ -748,15 +773,16 @@ def open_stanza(line: bytes, stanzas: list[Stanza]) -> Stanza:
 
 def accept_body_line(line: bytes, current: Stanza | None) -> None:
     """One body line onto its stanza: unpadded base64, 64 columns
-    at most, and a short line closes the stanza — only another
-    stanza or the MAC may follow (the reference parser's rule)."""
+    at most. A short line closes the stanza — only another stanza
+    or the MAC may follow (the reference parser's rule; a body
+    line after the close is malformed, not continued)."""
     if current is None:
-        raise AgeCryptoError("a header line before any stanza")
+        raise AgeCryptoError("a body line outside any stanza")
     if len(line) > 64:
         raise AgeCryptoError("a stanza body line over 64 columns")
     try:
         piece = b64d(line.decode("ascii"))
-    except AgeCryptoError:
+    except AgeCryptoError, UnicodeDecodeError:
         raise AgeCryptoError("a stanza body line is not base64") from None
     current.body += piece
 
@@ -776,29 +802,35 @@ def verify_header(file_key: bytes, mac_input: bytes, mac: bytes) -> None:
 def stream_encrypt(payload_key: bytes, plaintext: bytes) -> bytes:
     """The payload's STREAM: 64 KiB chunks under ChaCha20-Poly1305
     with an 11-byte big-endian counter and a final-chunk flag in
-    the twelfth nonce byte. The final chunk carries the flag and
-    may be short; an empty plaintext produces no chunk at all —
-    the file is then the header and the 16-byte nonce alone."""
+    the twelfth nonce byte. The last chunk carries the flag and
+    may be short or full; an empty plaintext still produces its
+    one empty final chunk — the shape the reference writer emits
+    and its reader requires (a message always ends on a marked
+    chunk)."""
     aead = ChaCha20Poly1305(payload_key)
     out: list[bytes] = []
     pos = 0
     counter = 0
-    while pos < len(plaintext):
+    while True:
         block = plaintext[pos : pos + CHUNK_BYTES]
         pos += CHUNK_BYTES
-        nonce = counter.to_bytes(11, "big") + bytes(
-            [1 if pos >= len(plaintext) else 0]
-        )
+        final = 1 if pos >= len(plaintext) else 0
+        nonce = counter.to_bytes(11, "big") + bytes([final])
         out.append(aead.encrypt(nonce, block, b""))
+        if final:
+            return b"".join(out)
         counter += 1
-    return b"".join(out)
 
 
 def stream_decrypt(payload_key: bytes, payload: bytes) -> bytes:
-    """The STREAM mirror. A truncated or tampered payload fails
-    its tag under the chunk nonce it would have needed — including
-    a final chunk somebody cut off — so every mutilation surfaces
-    as the same named error."""
+    """The STREAM mirror: a payload always ends on a marked chunk,
+    so a payload of no chunk at all is refused (the reference's
+    rule). A truncated or tampered payload fails its tag under the
+    chunk nonce it would have needed — including a final chunk
+    somebody cut off — so every mutilation surfaces as the same
+    named error."""
+    if not payload:
+        raise AgeCryptoError("the payload ended without a final chunk")
     aead = ChaCha20Poly1305(payload_key)
     out: list[bytes] = []
     pos = 0

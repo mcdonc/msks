@@ -393,8 +393,9 @@ def test_header_mac_covers_the_stanza_arguments() -> None:
 
 def test_tampered_mac_line_is_refused() -> None:
     blob = bytearray(encrypt(b"the value", ED_PUB))
-    blob[-2] = 65 if blob[-2] != 65 else 66
-    with pytest.raises(AgeCryptoError):
+    start = blob.index(b"\n--- ") + 5
+    blob[start] = 65 if blob[start] != 65 else 66  # inside the MAC
+    with pytest.raises(AgeCryptoError, match="MAC"):
         decrypt(bytes(blob), ED_PEM, no_prompt)
 
 
@@ -424,9 +425,14 @@ def test_body_lines_are_validated() -> None:
 
 
 def test_body_after_short_line_is_refused() -> None:
-    with pytest.raises(AgeCryptoError):
+    """The short line closes the stanza; the MAC line's shape is
+    well-formed here, so the named property is what raises."""
+    with pytest.raises(AgeCryptoError, match="outside any stanza"):
         parse_header(
-            b"age-encryption.org/v1\n-> ssh-rsa abcd\nabc\nAAA\n--- aaaa\n"
+            b"age-encryption.org/v1\n-> ssh-rsa abcd\nabc\nAAA\n"
+            + b"--- "
+            + b"A" * 43
+            + b"\n"
         )
 
 
@@ -534,7 +540,7 @@ def test_stanza_line_without_a_type_is_refused() -> None:
 
 
 def test_body_line_before_any_stanza_is_refused() -> None:
-    with pytest.raises(AgeCryptoError, match="before any stanza"):
+    with pytest.raises(AgeCryptoError, match="outside any stanza"):
         parse_header(b"age-encryption.org/v1\nAAAA\n--- aaaa\n")
 
 
@@ -551,3 +557,117 @@ def test_classic_pem_rsa_key_loads() -> None:
     assert decrypt(encrypt(b"old school\n", line), pem, no_prompt) == (
         b"old school\n"
     )
+
+
+def test_reference_fixture_exact_chunk_boundary() -> None:
+    """A 64 KiB payload — one full chunk, the exact-multiple edge
+    the reference reader takes through its final-flag retry."""
+    blob = (FIXTURES / "exact64k.age").read_bytes()
+    plain = decrypt(blob, ED_PEM, no_prompt)
+    assert plain == b"x" * agecrypto.CHUNK_BYTES
+
+
+def test_reference_fixture_two_recipients() -> None:
+    """One reference file wrapped to two keys: either identity
+    unwraps it (the format's multi-recipient shape — msks writes
+    one stanza per file, but must read what the tool writes)."""
+    blob = (FIXTURES / "multi.age").read_bytes()
+    assert decrypt(blob, ED_PEM, no_prompt) == PLAIN
+    assert decrypt(blob, RSA_PEM, no_prompt) == PLAIN
+
+
+def test_reference_fixture_empty_payload() -> None:
+    """The reference writer's empty plaintext: one empty final
+    chunk — the shape our writer now mirrors (the review's
+    blocking find, pinned from the tool's side)."""
+    blob = (FIXTURES / "empty.age").read_bytes()
+    assert decrypt(blob, ED_PEM, no_prompt) == b""
+
+
+@pytest.mark.skipif(AGE is None, reason="the age binary is absent")
+def test_live_tool_decrypts_our_empty_file(tmp_path: Path) -> None:
+    out = tmp_path / "ours-empty.age"
+    out.write_bytes(encrypt(b"", ED_PUB))
+    seen = subprocess.run(
+        [AGE, "-d", "-i", str(FIXTURES / "ed25519"), str(out)],
+        capture_output=True,
+        check=True,
+    )
+    assert seen.stdout == b""
+
+
+def test_stream_without_any_chunk_is_refused() -> None:
+    key = hkdf_key(b"\x0b" * 16, b"\x0c" * 16, agecrypto.PAYLOAD_INFO)
+    with pytest.raises(AgeCryptoError, match="without a final chunk"):
+        stream_decrypt(key, b"")
+
+
+def test_parser_caps_match_the_reference() -> None:
+    too_many_args = (
+        b"age-encryption.org/v1\n-> t "
+        + b" ".join([b"a"] * 129)
+        + b"\nAAAA\n--- "
+        + b"A" * 43
+        + b"\n"
+    )
+    with pytest.raises(AgeCryptoError, match="too many arguments"):
+        parse_header(too_many_args)
+    too_many_stanzas = (
+        b"age-encryption.org/v1\n"
+        + b"-> t a\nAAAA\n" * 1025
+        + b"--- "
+        + b"A" * 43
+        + b"\n"
+    )
+    with pytest.raises(AgeCryptoError, match="too many stanzas"):
+        parse_header(too_many_stanzas)
+    oversized = (
+        b"age-encryption.org/v1\n-> t "
+        + b"a" * agecrypto.MAX_HEADER_BYTES
+        + b"\nAAAA\n--- "
+        + b"A" * 43
+        + b"\n"
+    )
+    with pytest.raises(AgeCryptoError, match="limit"):
+        parse_header(oversized)
+
+
+def test_non_ascii_lines_are_named_errors() -> None:
+    with pytest.raises(AgeCryptoError, match="not base64"):
+        parse_header(
+            b"age-encryption.org/v1\n-> ssh-rsa abcd\n"
+            + b"\xff\xfe\n"
+            + b"--- "
+            + b"A" * 43
+            + b"\n"
+        )
+    with pytest.raises(AgeCryptoError, match="MAC line is malformed"):
+        parse_header(
+            b"age-encryption.org/v1\n-> ssh-rsa abcd\nAAAA\n--- "
+            + b"\xff" * 43
+            + b"\n"
+        )
+
+
+def test_non_ascii_stanza_args_are_named() -> None:
+    with pytest.raises(AgeCryptoError, match="not ASCII"):
+        parse_header(
+            b"age-encryption.org/v1\n-> t \xff\xfe\nAAAA\n--- "
+            + b"A" * 43
+            + b"\n"
+        )
+
+
+def test_mac_line_shape_is_exact() -> None:
+    with pytest.raises(AgeCryptoError, match="MAC line is malformed"):
+        parse_header(
+            b"age-encryption.org/v1\n-> ssh-rsa abcd\nAAAA\n---"
+            + b"A" * 43
+            + b"\n"
+        )  # no space after the mark
+    with pytest.raises(AgeCryptoError, match="MAC line is malformed"):
+        parse_header(
+            b"age-encryption.org/v1\n-> ssh-rsa abcd\nAAAA\n--- "
+            + b"A" * 42
+            + b"\n"
+        )  # one short
