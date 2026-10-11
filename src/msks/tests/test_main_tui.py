@@ -1404,7 +1404,7 @@ def test_edit_seeds_read_every_field_off_the_row() -> None:
     }
     bare = edit_seeds({"id": WS})
     blank = {field: "" for field in seeded}
-    assert bare == {**blank, "image": "-", "user": "msks"}
+    assert bare == {**blank, "image": "-", "user": "-"}
 
 
 async def test_the_page_opens_the_prefilled_edit_dialog(

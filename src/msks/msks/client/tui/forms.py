@@ -20,7 +20,6 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Input, Select, Static
 
-from ...identity import LEGACY_LOGIN_USER
 from ..create import invoking_user
 from .rows import clip, workspace_label
 
@@ -127,9 +126,10 @@ EDIT_ROW_KEYS = {
 #: The seeds' fallbacks for a row that predates the field (#331):
 #: a workspace without an image hash boots explicit kernel/rootfs
 #: paths (the listing's own absent mark), and a row without a
-#: login user predates per-workspace users — its account is the
-#: image's own, the same default the ssh-key endpoint serves.
-EDIT_ROW_FALLBACKS = {"image": "-", "user": LEGACY_LOGIN_USER}
+#: login user predates per-workspace users (#248) — its user reads
+#: as unset here; the ssh-key endpoint serves null and the client
+#: dials root (#500).
+EDIT_ROW_FALLBACKS = {"image": "-", "user": "-"}
 
 #: The statuses the resize route serves (#380) — the daemon's own
 #: allow-list, mirrored here for the ask: a workspace in any other

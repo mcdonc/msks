@@ -228,7 +228,8 @@ class WorkspaceCreate(BaseModel):
     # into the guest at first boot (the account and its authorized_keys
     # when the image does not ship it), and served back as the
     # client's default login. Create-time and immutable, like the
-    # specs. Absent → the workspace keeps the image's own login user
-    # (the pre-#248 posture); the client fills its invoking user's
-    # name before the request ever leaves.
+    # specs. Absent → no user is recorded: the guest still ships
+    # root and its own msks account, and the client dials root
+    # (#500); the CLI fills its invoking user's name before the
+    # request ever leaves.
     user: str | None = Field(default=None, pattern=LOGIN_NAME_RE.pattern)

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from sqlalchemy.exc import IntegrityError
 
-from ...identity import LEGACY_LOGIN_USER, normalize_public_key
+from ...identity import normalize_public_key
 from ...imagestore import list_images as list_catalog_images
 from ...imagestore import resolve_hash
 from ...microvm.errors import MicrovmError
@@ -226,9 +226,10 @@ def router(app) -> APIRouter:
         workspace recreated under the same name cannot collide with
         the first instance's cached host keys. ``user`` (#248) is
         the workspace's recorded login user — the default
-        ``msks ssh`` and ``msks console`` log in as — answered as
-        the image's own account for a row created before
-        per-workspace users, so every workspace serves one.
+        ``msks ssh`` and ``msks rsync`` dial as. A row created
+        before per-workspace users answers ``null``; the guest
+        carries the key for root and its own ``msks`` account
+        either way, and the client dials root for it (#500).
         """
         key = await app.state.model.get_ssh_key(workspace_id)
         if key is None:
@@ -243,7 +244,7 @@ def router(app) -> APIRouter:
             "name": key["name"],
             "public_key": key["public_key"],
             "created_at": key["created_at"],
-            "user": key["login_user"] or LEGACY_LOGIN_USER,
+            "user": key["login_user"],
         }
 
     # The #41 immutability contract, said out loud: the create-time

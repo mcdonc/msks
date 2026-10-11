@@ -98,7 +98,9 @@ conformance_args = 8
 # challenge signer and the login-user resolver went with it.
 # #486: the mint went from the client — three fewer identity
 # imports (the mint, the key-type set, the minted-key rung).
-identity = 6
+# #500: LEGACY_LOGIN_USER went — four fewer identity imports
+# (the constant left ssh and forms behind).
+identity = 2
 spec = 3
 
 [snapshot.config]
@@ -162,8 +164,9 @@ config = 4
 events = 4
 # #481: the console endpoint's identity-validation gate went with
 # the prelude. #486: the create route's mint went with the daemon
-# mint — one fewer identity import.
-identity = 5
+# mint — one fewer identity import. #500: LEGACY_LOGIN_USER
+# left the route's user field.
+identity = 4
 # #470: the workspace listing joins the catalog — each row's image
 # reference resolves through the imagestore (resolve_hash beside
 # the listing's aliased list_images). #481: the console endpoint's

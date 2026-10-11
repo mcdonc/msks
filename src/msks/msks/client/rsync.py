@@ -26,7 +26,9 @@ filled in as the host, so the push and pull forms read
 ``msks rsync my-workspace -- -av ./site/ root@:/root/site/``
 (the ``root@`` spelling matters for root-owned paths: the guest's
 ``/root`` is root's alone, and the default login — the workspace's
-recorded user (#248), whose persistent ``/home`` it writes under). The
+recorded user (#248), whose persistent ``/home`` it writes under;
+a workspace recording none dials as root, whose paths live under
+``/root`` — #500). The
 direction comes entirely from the rsync
 arguments. A path that names a host keeps it (the transport is
 the proxy, so the name never resolves); ``::`` (rsync's daemon

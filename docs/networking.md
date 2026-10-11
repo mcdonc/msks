@@ -479,10 +479,11 @@ rsync -e 'ssh -i ~/.ssh/id_ed25519 -p 2201' \
 ```
 
 The same login works as the workspace's login user —
-`ssh -i ... -p 2201 alice@127.0.0.1` (the name `msks create
---user` recorded, #248; the image's `msks` account for a
-workspace created before #248) — whose home rides the persistent
-`/home` volume.
+`ssh -i ... -p 2201 alice@127.0.0.1`, the name `msks create
+--user` recorded (#248) — whose home rides the persistent
+`/home` volume. A workspace created before #248 records no user
+of its own; log in as `root`, or as `msks` — the account the
+image itself ships, named directly.
 
 `msks ssh` (#112) is the zero-step form of the same login: it
 boots the workspace if needed and runs ssh with the forward as
@@ -492,8 +493,8 @@ material, so the file the key came from and its name do not
 matter), otherwise staging the operator identity from
 `identity_file` in a transient in-process ssh-agent (the private
 half never becomes a file) — as the workspace's login user by
-default, with
-`-l root` as the recovery login (see the CLI chapter's `msks ssh`
+default, and as `root` for a workspace that records none (#500;
+`-l root` is also the recovery login — see the CLI chapter's `msks ssh`
 section). When the command itself booted the workspace, it holds
 the connection back until the guest accepts the workspace key
 (#168): a probe login retries behind the first boot's identity

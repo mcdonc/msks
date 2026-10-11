@@ -1323,10 +1323,11 @@ async def test_create_rejects_a_login_name_off_the_charset(client) -> None:
         assert created.status_code == 422, bad
 
 
-async def test_ssh_key_serves_the_legacy_user_for_old_rows(client) -> None:
-    """A pre-#248 row serves the image's own account as its login
-    user, and the identity it carries stays the public half alone
-    (#497 — no private half is held for any row, old or new)."""
+async def test_ssh_key_serves_null_user_for_old_rows(client) -> None:
+    """A pre-#248 row answers null for its login user — the client
+    dials root (#500) — and the identity it carries stays the
+    public half alone (#497 — no private half is held for any row,
+    old or new)."""
     http, app, _stub = client
     await app.state.model.create_workspace(
         VmSpec(
@@ -1340,7 +1341,10 @@ async def test_ssh_key_serves_the_legacy_user_for_old_rows(client) -> None:
     assert row["login_user"] is None
     key = await http.get("/api/v1/workspaces/ws-old/ssh-key", headers=auth())
     assert key.status_code == 200
-    assert key.json()["user"] == "msks"
+    # No shim (#500): a pre-#248 row answers null; the client
+    # dials root for it, and the guest's msks account stays
+    # reachable by name.
+    assert key.json()["user"] is None
 
 
 async def test_create_rejects_empty_user_data(client) -> None:

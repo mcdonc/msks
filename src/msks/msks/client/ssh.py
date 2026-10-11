@@ -69,7 +69,6 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
 
-from ..identity import LEGACY_LOGIN_USER
 from . import agent
 from .env import env_token, env_url, ssl_context
 from .rest import (
@@ -979,12 +978,13 @@ def workspace_user(key: dict) -> str:
 
     The daemon serves the recorded create-time user with the
     identity (a workspace created by one operator and ssh'd into by
-    another answers the same for both); the fallback covers a
-    daemon one version behind this client, whose workspaces hold
-    only the accounts the image ships — root and the legacy login
-    user — so logging in as anything else could only fail.
+    another answers the same for both). A workspace with no
+    recorded user — created before per-workspace users (#248), or
+    by an API create that names none — answers ``null``, and root
+    is the dial: the account every seed provisions a key for, the
+    same failsafe the console logs in as (#481, #500).
     """
-    return key.get("user") or LEGACY_LOGIN_USER
+    return key.get("user") or "root"
 
 
 def build_args(
