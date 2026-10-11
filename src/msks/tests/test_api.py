@@ -441,8 +441,17 @@ async def test_workspace_ref_resolution_prefers_the_id(client) -> None:
     assert by_name.json() == by_id.json()
     assert by_name.json()["id"] == wid
     key = await http.get("/api/v1/workspaces/ws-ref/ssh-key", headers=auth())
-    assert key.json()["workspace"] == wid
+    assert key.json()["id"] == wid
     assert key.json()["name"] == "ws-ref"
+    # The unread fields stay gone (#499): the answer is exactly
+    # the five the client reads.
+    assert set(key.json()) == {
+        "id",
+        "name",
+        "public_key",
+        "created_at",
+        "user",
+    }
 
 
 async def test_a_keyless_create_seeds_no_key(client) -> None:
@@ -518,7 +527,7 @@ async def test_create_with_client_supplied_pubkey(client) -> None:
     key = await http.get("/api/v1/workspaces/ws-cm/ssh-key", headers=auth())
     assert key.status_code == 200
     body = key.json()
-    assert body["type"] == "ssh-ed25519"
+    assert "type" not in body  # gone with #499
     assert body["public_key"] == row["ssh_pubkey"]
 
 

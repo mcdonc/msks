@@ -217,12 +217,10 @@ def router(app) -> APIRouter:
     async def workspace_ssh_key(workspace_id: str) -> dict:
         """The workspace's ssh identity row, token-gated (#486).
 
-        The operator's public half alone (#497): the daemon stores
-        the public line only — the private half is the operator's
-        own key, and it never crosses the API. The response
-        carries the type name
-        (parsed off the public line) so a client never guesses the
-        algorithm. ``created_at`` (#245) stamps the workspace
+        The operator's public half alone (#497, #499): the daemon
+        stores the public line only — the private half is the
+        operator's own key, and it never crosses the API.
+        ``created_at`` (#245) stamps the workspace
         *instance*, and ``id``/``name`` (#246) carry its immutable
         identity — the client keys its caches on the id, so a
         workspace recreated under the same name cannot collide with
@@ -241,10 +239,8 @@ def router(app) -> APIRouter:
                 detail=f"workspace {workspace_id} has no ssh identity",
             )
         return {
-            "workspace": key["id"],
             "id": key["id"],
             "name": key["name"],
-            "type": key["public_key"].split()[0],
             "public_key": key["public_key"],
             "created_at": key["created_at"],
             "user": key["login_user"] or LEGACY_LOGIN_USER,
