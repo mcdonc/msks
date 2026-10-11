@@ -101,6 +101,7 @@ from .workspaces import (  # noqa: F401
     create_identity,
     created_date,
     created_line,
+    image_column,
     read_user_data,
     run_create,
     run_resize,

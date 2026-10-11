@@ -549,6 +549,27 @@ async def open_quietly(pilot, app) -> None:
 # -- the workspaces list --------------------------------------------------
 
 
+def test_meta_fields_prefer_the_image_reference() -> None:
+    """#523: the image cell reads the catalog reference — the
+    ``name:version`` an operator can act on — and falls back to
+    the digest only when the catalog cannot resolve it; the
+    reference's version tail survives the clip."""
+    from msks.client.tui.rows import META_IMAGE_W, meta_fields
+
+    ref = meta_fields({"id": "ws1", "image_ref": "debian:13"})
+    assert ref[1] == "debian:13"
+    unresolvable = meta_fields({"id": "ws1", "image_hash": "a" * 64})
+    assert len(unresolvable[1]) == META_IMAGE_W  # the digest clip
+    assert "…" in unresolvable[1]
+    long_ref = meta_fields(
+        {"id": "ws1", "image_ref": "ghcr.internal.example/debian:13"}
+    )
+    assert long_ref[1].startswith("ghcr")
+    assert long_ref[1].endswith(":13")
+    bare = meta_fields({"id": "ws1"})
+    assert bare[1] == "-"
+
+
 async def test_the_list_rows_open_pages_and_return(monkeypatch) -> None:
     scripted_link(monkeypatch, [])
     data = FakeData([row(), row(id="ws-b", name="beta")])
@@ -1240,13 +1261,14 @@ async def test_the_header_splits_the_name_from_the_metadata(
     the id, image hash, host, and created date read muted on the
     second."""
     scripted_link(monkeypatch, [rules_frame()])
-    data = FakeData([row()])
+    data = FakeData([dict(row(), image_ref="debian:13")])
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
         await wait_for(lambda: "stopped" in header_text(app))
         assert "alpha" in header_text(app)
         assert WS in meta_text(app)
+        assert "image debian:13" in meta_text(app)  # #523: the name
         assert "host-1" in meta_text(app)
         assert "2026-01-02" in meta_text(app)
         header = app.screen.query_one("#header", Static)
@@ -1270,19 +1292,23 @@ async def test_the_header_splits_the_name_from_the_metadata(
 async def test_the_header_truncates_gracefully_at_eighty_columns(
     monkeypatch,
 ) -> None:
-    """#351, #470 S2: at 80 columns — a full id, a 12-character
-    image hash, a full host name — the meta line clips each field
-    to its own budget: the whole line fits the terminal with the
-    created date whole, the host clips at its middle (an ellipsis
-    keeps both its ends), and it never wraps. The name still
-    reads in full on its own line."""
+    """#351, #470 S2, #523: at 80 columns — a full id, a long
+    image reference, a full host name — the meta line clips each
+    field to its own budget: the whole line fits the terminal
+    with the created date whole, the reference and the host clip
+    at their middles (an ellipsis keeps both ends — the
+    reference's version tail included), and it never wraps. The
+    name still reads in full on its own line."""
     scripted_link(monkeypatch, [])
     data = FakeData(
         [
-            row(
-                id="a1b2c3d4e5",
-                name="a-very-long-workspace-name",
-                host="workstation-3.lab.example.internal.company.net",
+            dict(
+                row(
+                    id="a1b2c3d4e5",
+                    name="a-very-long-workspace-name",
+                    host="workstation-3.lab.example.internal.company.net",
+                ),
+                image_ref="ghcr.internal.example/debian:13",
             )
         ]
     )
@@ -1298,11 +1324,14 @@ async def test_the_header_truncates_gracefully_at_eighty_columns(
         assert "a-very-long-workspace-name" in name_line  # reads in full
         meta_line = "".join(s.text for s in meta.render_line(0))
         # Every field fits its budget: the date lands whole, the
-        # host clips at its middle — its head and tail both read —
-        # and nothing runs to the terminal's edge.
+        # image reference and the host clip at their middles —
+        # each keeps its head and tail (the reference's tail is
+        # its version, #523) — and nothing runs to the edge.
         assert "created 2026-01-02" in meta_line
         assert "…" in meta_line
-        assert "work…" in meta_line and "y.net" in meta_line
+        assert ":13" in meta_line
+        assert "ghcr" in meta_line
+        assert "wor….net" in meta_line
         assert (
             "workstation-3.lab.example.internal.company.net" not in meta_line
         )
@@ -2410,21 +2439,23 @@ def test_the_line_helpers() -> None:
     wide = rows_mod.header_name(row(name="北" * 16))
     (wide_span,) = wide.spans
     assert wide.plain[wide_span.start : wide_span.end] == "● stopped"
-    # The meta line: the id, the image hash, the host, the date —
-    # each clipped to its own budget (#470 S2) — with its
-    # separators carrying the muted span treatment (#366) — the
-    # same ride the name line gives the status.
+    # The meta line: the id, the image (the digest fallback here
+    # — the reference cell has its own test below, #523), the
+    # host, the date — each clipped to its own budget (#470 S2) —
+    # with its separators carrying the muted span treatment
+    # (#366) — the same ride the name line gives the status.
     meta = rows_mod.header_meta(row())
     plain = meta.plain
     assert WS in plain and "host-1" in plain and "2026-01-02" in plain
-    assert f"image {rows_mod.clip('a' * 64, 12)}" in plain
+    assert f"image {rows_mod.image_cell(row())}" in plain
+    assert "…" in rows_mod.image_cell(row())  # the digest clips
     assert [plain[s.start : s.end] for s in meta.spans] == ["·", "·", "·"]
     assert all(span.style == rows_mod.muted_style({}) for span in meta.spans)
     long_meta = rows_mod.header_meta(
         row(id="a1b2c3d4e5", host="workstation-3.lab.example.internal")
     ).plain
     assert "a1b…" in long_meta and "d4e5" in long_meta  # the id clips
-    assert "work…" in long_meta and "ernal" in long_meta  # the host clips
+    assert "wor…rnal" in long_meta  # the host clips (#523 budget)
     # The whole line fits an 80-column terminal's padding with
     # the date whole (#470 S2).
     assert cell_len(long_meta.rstrip()) <= 78

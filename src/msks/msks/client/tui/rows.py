@@ -310,34 +310,53 @@ def header_name(
     return Content(text, [span])
 
 
-#: Each meta field's cell budget (#470 S2): the line clips every
-#: field to its own width instead of running past the terminal's
-#: edge — at an 80-column terminal the whole line (its padding
-#: and separators included) fits with the created date whole
-#: ("id" stays on the CLI; eight cells identify a row as well as
-#: ten).
+#: Each meta field's cell budget (#470 S2, #523): the line clips
+#: every field to its own width instead of running past the
+#: terminal's edge — at an 80-column terminal the whole line (its
+#: padding and separators included) fits with the created date
+#: whole ("id" stays on the CLI; eight cells identify a row as
+#: well as ten). The image's budget widened to the reference's
+#: shape (#523): ``debian:13`` fits whole, longer references keep
+#: their tail around the middle ellipsis (the version half, the
+#: part a head-only clip eats) — the host narrowed to pay for it.
 META_ID_W = 8
-META_IMAGE_W = 12
-META_HOST_W = 10
+META_IMAGE_W = 14
+META_HOST_W = 8
+
+
+def image_cell(row: dict) -> str:
+    """The meta line's image cell (#523): the catalog's
+    ``name:version`` — the words the listing's IMAGE column reads
+    — with the row's digest as the fallback for a row the catalog
+    cannot resolve (a pruned image, a row older than the hash).
+    The digest prefix names nothing an operator can act on."""
+    return clip(
+        row.get("image_ref") or row.get("image_hash") or "-", META_IMAGE_W
+    )
 
 
 def meta_fields(row: dict) -> tuple[str, str, str, str]:
     """The meta line's fields, each clipped to its budget (#470
-    S2): the immutable id, the image hash, the host, and the
-    created date — each with its honest fallback for a row that
-    predates it."""
+    S2): the immutable id, the image, the host, and the created
+    date — each with its honest fallback for a row that predates
+    it. The image reads the catalog reference (#523): the
+    ``name:version`` the listing's IMAGE column shows, the row's
+    digest only when the catalog cannot resolve it (a pruned
+    image) — the digest prefix names nothing an operator can act
+    on."""
     created = (row.get("created_at") or "")[:10]
     return (
         clip(row["id"], META_ID_W),
-        clip(row.get("image_hash") or "-", META_IMAGE_W),
+        image_cell(row),
         clip(row.get("host") or "-", META_HOST_W),
         created or "-",
     )
 
 
 def header_meta(row: dict, theme_variables: dict | None = None) -> Content:
-    """The header's second line (#351, #470 S2): the immutable id,
-    the image hash, the host, and the created date — every field
+    """The header's second line (#351, #470 S2, #523): the
+    immutable id, the image (the catalog reference, the digest as
+    its fallback), the host, and the created date — every field
     clipped to its own budget so the line fits an 80-column
     terminal with the date whole. The page paints the line muted,
     and its ``·`` separators carry the same muted span style the
