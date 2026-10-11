@@ -2492,6 +2492,32 @@ async def test_mint_stores_the_value_and_answers_the_sentinel_once(
     assert "value" not in audit.json()[0]
 
 
+async def test_the_listing_carries_the_lock_state(client) -> None:
+    """The listing's ``locked`` flag (#515): a minted row answers
+    open while the cache holds its plaintext, and locked once the
+    cache forgets it — the state the client's listings surface so
+    a cold row is seen, not discovered at the swap's refusal."""
+    http, app, _stub = client
+    await seed_workspace(app)
+    minted = await http.post(
+        "/api/v1/secrets", json=mint_body(), headers=auth()
+    )
+    assert minted.status_code == 201
+    row = minted.json()
+    listing = await http.get("/api/v1/secrets", headers=auth())
+    fresh = next(r for r in listing.json() if r["id"] == row["id"])
+    assert fresh["locked"] is False
+    stored = await app.state.model.get_placeholder(row["id"])
+    app.state.secrets.plain.forget(
+        refs=[stored["backend_ref"]], placeholder_ids=[row["id"]]
+    )
+    cold = await http.get("/api/v1/secrets", headers=auth())
+    # The boot-armed probe row answers open beside it; the minted
+    # row is the one the forget chilled.
+    mine = next(r for r in cold.json() if r["id"] == row["id"])
+    assert mine["locked"] is True
+
+
 async def test_the_row_fetch_serves_the_sentinel_on_demand(
     client,
 ) -> None:

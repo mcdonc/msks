@@ -39,6 +39,7 @@ from .consent_ui import FlashLine, flash_safe, shared_ssl
 from .data import TuiData
 from .follow import TuiFollow, run_follow_up
 from .main_screen import MainScreen
+from .unlock import PassphraseScreen, unlock_flash, unlock_flow
 from .workspace import WorkspaceScreen
 
 
@@ -267,6 +268,12 @@ class MsksTuiApp(App):
 
     def on_mount(self) -> None:
         self.title = "msks"
+        # The session's unlock offer (#515): the store's values
+        # live only inside an unlock window, and a session that
+        # starts against a cold cache is the moment the operator
+        # can open it — the flow runs in the background and stays
+        # silent unless there is an outcome worth a status line.
+        self.run_worker(self.unlock_at_start, group="unlock")
         if self.follow.seed is not None:
             # A refused flow's one-line refusal, carried from the
             # plain terminal the flow owned (a SystemExit prints
@@ -277,6 +284,28 @@ class MsksTuiApp(App):
             self.follow.seed = None
         if self.follow.reopen is not None:
             self.run_worker(self.push_remembered, exclusive=True)
+
+    async def unlock_at_start(self) -> None:
+        """The session-start unlock (#515): the configured
+        identity file against the daemon's locked rows — the
+        passphrase prompt (when the file is encrypted) is the
+        session's one, and the outcome flashes on the list's
+        status line. A daemon that cannot be reached or refuses
+        is a named flash, not a retry and not a failed tree."""
+        try:
+            message = await unlock_flow(self.data, self.ask_passphrase)
+            if message is not None:
+                self.flash(unlock_flash(message))
+        except (Exception, SystemExit) as exc:
+            self.flash(unlock_flash(f"unlock failed: {exc}"))
+
+    async def ask_passphrase(self, path) -> str | None:
+        """The passphrase modal over whatever screen stands — the
+        one prompt the session asks (#515)."""
+        answer = await self.push_screen(
+            PassphraseScreen(path), wait_for_dismiss=True
+        )
+        return answer or None
 
     async def push_remembered(self) -> None:
         """Open the remembered workspace's page against a fresh

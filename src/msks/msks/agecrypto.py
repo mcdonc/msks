@@ -529,6 +529,21 @@ def load_any_key(key_pem: bytes, password: bytes | None):
         return serialization.load_pem_private_key(key_pem, password=password)
 
 
+def key_is_encrypted(key_pem: bytes) -> bool:
+    """Whether the private key file asks for a passphrase (#515):
+    the caller prompts before any unwrap runs, so an encrypted
+    key's prompt happens once, at the session's start — not once
+    per blob. A file that is no private key at all is the named
+    error, same as :func:`load_identity`."""
+    try:
+        load_any_key(key_pem, None)
+        return False
+    except TypeError:
+        return True
+    except ValueError:
+        raise AgeCryptoError("not a private key file") from None
+
+
 def load_identity(
     key_pem: bytes, prompt: Callable[[], str | bytes]
 ) -> SshIdentity:
@@ -872,16 +887,25 @@ def encrypt(value: bytes, public_line: str) -> bytes:
     return header + nonce + stream_encrypt(payload_key, value)
 
 
-def decrypt(
-    blob: bytes, key_pem: bytes, prompt: Callable[[], str | bytes]
-) -> bytes:
-    """The whole-file mirror: parse the header, unwrap the file
-    key with the loaded identity (a stanza this key does not open
-    is skipped — possession is proven by the unwrap, never
-    claimed), verify the header MAC, and STREAM-decrypt the
-    payload."""
+def addressed(blob: bytes, identity: SshIdentity) -> bool:
+    """Whether the file's header carries a stanza addressed to
+    this key's public half (#515): the client's corruption
+    diagnostic — a file addressed here whose open fails is a
+    re-mint, not another operator's row, and the two remedies
+    name differently."""
+    stanzas, _mac, _mac_input, _payload = parse_header(blob)
+    return any(
+        stanza.kind == identity.kind and stanza.args[:1] == [identity.fp]
+        for stanza in stanzas
+    )
+
+
+def decrypt_with_identity(blob: bytes, identity: SshIdentity) -> bytes:
+    """A whole age file opened by an identity the caller already
+    loaded (#515): the client loads its key once per session and
+    decrypts many rows' blobs through it. The whole-file
+    :func:`decrypt` below is this plus the load."""
     stanzas, mac, mac_input, payload = parse_header(blob)
-    identity = load_identity(key_pem, prompt)
     file_key: bytes | None = None
     for stanza in stanzas:
         try:
@@ -896,3 +920,12 @@ def decrypt(
         raise AgeCryptoError("the payload carries no nonce")
     payload_key = hkdf_key(file_key, payload[:16], PAYLOAD_INFO)
     return stream_decrypt(payload_key, payload[16:])
+
+
+def decrypt(
+    blob: bytes, key_pem: bytes, prompt: Callable[[], str | bytes]
+) -> bytes:
+    """A whole age file opened by a key file: the load (prompting
+    when the file is encrypted) then
+    :func:`decrypt_with_identity`."""
+    return decrypt_with_identity(blob, load_identity(key_pem, prompt))

@@ -46,6 +46,7 @@ from test_main_tui import (
     on_failure,
     row,
 )
+from testkeys import mint
 from textual.widgets import Button, Input, Select, Static
 
 
@@ -1303,9 +1304,10 @@ def test_secret_row_cells_clip_to_columns() -> None:
         dests=["x" * 30],
     )
     cells = secret_row_cells(row)
-    assert len(cells) == 5
+    assert len(cells) == 6
     assert "…" in cells[0]  # clipped coverage, both ends kept
     assert cells[1] == "github_api"
+    assert cells[5] == "open"  # the state cell (#515)
 
 
 def test_ttl_default_picks_the_nearest_choice() -> None:
@@ -1507,3 +1509,496 @@ async def test_the_panel_closes_on_its_button(tmp_path) -> None:
         await pilot.press("enter")
         await wait_for(lambda: on_secrets(app))
         assert str(sentinel_line.content) == ""
+
+
+# --- the unlock surface (#515) ---------------------------------------
+
+
+async def quiet_start() -> None:
+    """The mount-time unlock, quieted: a test that exercises the
+    page's own action answers it there, not twice (#515)."""
+    return None
+
+
+def plant_key(monkeypatch, tmp_path) -> tuple[str, str]:
+    """The configured identity (#515): one fresh key named by
+    MSKSC_IDENTITY_FILE — ``(pem, public line)``."""
+    pem, pub = mint("ed25519")
+    mine = tmp_path / "my-key"
+    mine.write_text(pem)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
+    monkeypatch.delenv("MSKSC_PUBKEY_FILE", raising=False)
+    return pem, pub
+
+
+def pending_blob_row(
+    row_id: int, name: str, pub: str, unlocked: bool = False
+) -> dict:
+    """One pending reply row (#514) carrying a blob wrapped to
+    *pub*, base64 as the wire serves it."""
+    import base64 as b64
+
+    from msks import agecrypto
+
+    return {
+        "id": row_id,
+        "workspaces": [],
+        "name": name,
+        "dests": ["api.github.com"],
+        "created_at": "2030-01-02T03:04:05",
+        "expires_at": None,
+        "blobs": [
+            {
+                "recipient": "h1",
+                "ciphertext": b64.b64encode(
+                    agecrypto.encrypt(b"tok", pub)
+                ).decode(),
+            }
+        ],
+        "staleness": {"missing": [], "stale": []},
+        "unlocked": unlocked,
+    }
+
+
+def pass_field_up(app) -> bool:
+    """The passphrase modal's masked field is on the screen."""
+    try:
+        app.screen.query_one("#pass-field", Input)
+        return True
+    except Exception:
+        return False
+
+
+def page_status(app) -> str:
+    """The secrets page's status line text."""
+    return str(app.screen.query_one("#status", Static).content)
+
+
+async def test_the_listing_shows_the_lock_state(tmp_path, monkeypatch) -> None:
+    """The STATE column (#515): a locked row reads locked, a warm
+    row open — the cold row is seen on the page, not discovered
+    at the swap's refusal."""
+    data = FakeData([])
+    data.secret_rows = [
+        secret_row(id=1, name="cold"),
+        dict(secret_row(id=2, name="warm"), locked=False),
+    ]
+    data.secret_rows[0]["locked"] = True
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        page = await open_secrets(pilot, app)
+        await wait_for(lambda: len(page.rows) == 2)
+        assert "locked" in secret_row_cells(page.rows[0])
+        assert "open" in secret_row_cells(page.rows[1])
+        assert "STATE" in str(
+            app.screen.query_one("#secret-columns", Static).content
+        )
+
+
+async def test_the_unlock_action_decrypts_and_uploads(
+    tmp_path, monkeypatch
+) -> None:
+    """The page's ``u`` (#515): the configured key decrypts the
+    pending blob, the upload carries the plaintext keyed by the
+    row id, and the outcome flashes on the page's status line."""
+    _pem, pub = plant_key(monkeypatch, tmp_path)
+    data = FakeData([row()])
+    data.pending_rows = [pending_blob_row(7, "github_api", pub)]
+    data.secret_rows = [secret_row(id=7)]
+    app, _follow = make_app(data)
+    app.unlock_at_start = quiet_start
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await pilot.press("u")
+        await wait_for(lambda: data.unlock_calls)
+        (values,) = data.unlock_calls
+        assert values == [{"placeholder_id": 7, "value": "tok"}]
+        await wait_for(
+            lambda: "unlocked 1 placeholder row" in page_status(app)
+        )
+
+
+async def test_the_unlock_action_answers_a_keyless_operator(
+    tmp_path, monkeypatch
+) -> None:
+    """No identity configured, asked by name (#515): the ``u``
+    action flashes the setting that points at the key — not a
+    retry, not a silent nothing."""
+    monkeypatch.delenv("MSKSC_IDENTITY_FILE", raising=False)
+    data = FakeData([row()])
+    data.secret_rows = [secret_row()]
+    app, _follow = make_app(data)
+    app.unlock_at_start = quiet_start
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await pilot.press("u")
+        await wait_for(lambda: "identity_file" in page_status(app))
+        assert data.unlock_calls == []
+
+
+async def test_the_unlock_action_prompts_once_for_an_encrypted_key(
+    tmp_path, monkeypatch
+) -> None:
+    """The acceptance bar (#510): a passphrase-encrypted identity
+    file prompts once through the masked modal, and the typed
+    passphrase unlocks the row."""
+    from cryptography.hazmat.primitives import serialization
+
+    pem, pub = mint("ed25519")
+    enc = serialization.load_ssh_private_key(
+        pem.encode(), password=None
+    ).private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.BestAvailableEncryption(b"pw"),
+    )
+    mine = tmp_path / "enc-key"
+    mine.write_bytes(enc)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
+    data = FakeData([row()])
+    data.pending_rows = [pending_blob_row(9, "github_api", pub)]
+    app, _follow = make_app(data)
+    app.unlock_at_start = quiet_start
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await pilot.press("u")
+        await wait_for(lambda: pass_field_up(app))
+        app.screen.query_one("#pass-field", Input).value = "pw"
+        await pilot.press("enter")
+        await wait_for(lambda: data.unlock_calls)
+        (values,) = data.unlock_calls
+        assert values == [{"placeholder_id": 9, "value": "tok"}]
+
+
+async def test_the_unlock_action_names_a_cold_refusal(
+    tmp_path, monkeypatch
+) -> None:
+    """A daemon that refuses the upload (#515): the exchange's
+    one-line refusal flashes — the tree's guarded shape, not a
+    retry loop."""
+    _pem, pub = plant_key(monkeypatch, tmp_path)
+    data = FakeData([row()])
+    data.pending_rows = [pending_blob_row(7, "github_api", pub)]
+    data.fail.add("unlock")
+    app, _follow = make_app(data)
+    app.unlock_at_start = quiet_start
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await pilot.press("u")
+        await wait_for(lambda: "unlock failed" in page_status(app))
+
+
+async def test_the_unlock_names_an_unreadable_key_file(
+    tmp_path, monkeypatch
+) -> None:
+    """A configured path that cannot be read (#515): the named
+    refusal flashes on the page — the mount flow's SystemExit
+    seam, caught and named, not a crash."""
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(tmp_path / "gone"))
+    data = FakeData([row()])
+    data.pending_rows = [
+        {
+            "unlocked": False,
+            "blobs": [{"recipient": "h", "ciphertext": "eA=="}],
+        }
+    ]
+    app, _follow = make_app(data)
+    app.unlock_at_start = quiet_start
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await pilot.press("u")
+        await wait_for(lambda: "cannot read" in page_status(app))
+
+
+async def test_the_unlock_names_a_file_that_is_no_key(
+    tmp_path, monkeypatch
+) -> None:
+    """A configured file that is not a private key (#515): the
+    crypto's named refusal flashes — the load, not the decrypt,
+    refuses."""
+    junk = tmp_path / "junk"
+    junk.write_text("not a key at all")
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(junk))
+    data = FakeData([row()])
+    data.pending_rows = [
+        {
+            "unlocked": False,
+            "blobs": [{"recipient": "h", "ciphertext": "eA=="}],
+        }
+    ]
+    app, _follow = make_app(data)
+    app.unlock_at_start = quiet_start
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await pilot.press("u")
+        await wait_for(lambda: "not a private key" in page_status(app))
+
+
+async def test_a_cancelled_passphrase_leaves_the_rows_named_locked(
+    tmp_path, monkeypatch
+) -> None:
+    """Escape at the modal (#515): the answer is None, the rows
+    stay locked, and the outcome names the cancel — never a
+    retry."""
+    from cryptography.hazmat.primitives import serialization
+
+    pem, pub = mint("ed25519")
+    enc = serialization.load_ssh_private_key(
+        pem.encode(), password=None
+    ).private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.BestAvailableEncryption(b"pw"),
+    )
+    mine = tmp_path / "enc-key"
+    mine.write_bytes(enc)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
+    data = FakeData([row()])
+    data.pending_rows = [pending_blob_row(9, "github_api", pub)]
+    app, _follow = make_app(data)
+    app.unlock_at_start = quiet_start
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await pilot.press("u")
+        await wait_for(lambda: pass_field_up(app))
+        await pilot.press("escape")
+        await wait_for(lambda: "stay locked" in page_status(app))
+        assert data.unlock_calls == []
+
+
+async def test_the_modal_answers_through_its_buttons(
+    tmp_path, monkeypatch
+) -> None:
+    """The modal's button paths (#515): the Cancel button answers
+    None, the Unlock button submits the typed passphrase — the
+    click surface beside Enter and Escape."""
+    from cryptography.hazmat.primitives import serialization
+
+    pem, pub = mint("ed25519")
+    enc = serialization.load_ssh_private_key(
+        pem.encode(), password=None
+    ).private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.BestAvailableEncryption(b"pw"),
+    )
+    mine = tmp_path / "enc-key"
+    mine.write_bytes(enc)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
+    data = FakeData([row()])
+    data.pending_rows = [pending_blob_row(9, "github_api", pub)]
+    app, _follow = make_app(data)
+    app.unlock_at_start = quiet_start
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await pilot.press("u")
+        await wait_for(lambda: pass_field_up(app))
+        app.screen.query_one("#pass-cancel", Button).focus()
+        await pilot.press("enter")
+        await wait_for(lambda: "stay locked" in page_status(app))
+        await pilot.press("u")
+        await wait_for(lambda: pass_field_up(app))
+        app.screen.query_one("#pass-field", Input).value = "pw"
+        app.screen.query_one("#pass-ok", Button).focus()
+        await pilot.press("enter")
+        await wait_for(lambda: data.unlock_calls)
+
+
+async def test_the_outline_names_a_mixed_session(
+    tmp_path, monkeypatch
+) -> None:
+    """The outcome line's plural and its left-behind half (#515):
+    two rows unlocked reads rows, and a row the key cannot open
+    rides the same line named."""
+    _pem, pub = plant_key(monkeypatch, tmp_path)
+    other, other_pub = mint("ed25519")
+    data = FakeData([row()])
+    data.pending_rows = [
+        pending_blob_row(1, "a", pub),
+        pending_blob_row(2, "b", pub),
+        pending_blob_row(3, "c", other_pub),
+    ]
+    app, _follow = make_app(data)
+    app.unlock_at_start = quiet_start
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await pilot.press("u")
+        await wait_for(
+            lambda: (
+                "unlocked 2 placeholder rows; 1 stay ciphertext"
+                in page_status(app)
+            )
+        )
+
+
+async def test_the_page_names_rows_the_key_opens_none_of(
+    tmp_path, monkeypatch
+) -> None:
+    """The page's outcome for another operator's rows (#515): the
+    flow's named line, the upload never sent."""
+    _pem, _pub = plant_key(monkeypatch, tmp_path)
+    other, other_pub = mint("ed25519")
+    data = FakeData([row()])
+    data.pending_rows = [pending_blob_row(3, "pypi", other_pub)]
+    app, _follow = make_app(data)
+    app.unlock_at_start = quiet_start
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await pilot.press("u")
+        await wait_for(
+            lambda: (
+                "stay locked" in page_status(app)
+                and "opens none" in page_status(app)
+            )
+        )
+        assert data.unlock_calls == []
+
+
+async def test_the_upload_survives_the_modal_pops_screen_resume(
+    tmp_path, monkeypatch
+) -> None:
+    """The blocking round's regression (#515 review): the unlock
+    runs in its own worker group, so the passphrase modal's pop —
+    which resumes the page and fires its exclusive refresh —
+    cannot cancel the upload mid-POST. The operator typed the
+    passphrase; the POST lands."""
+    import asyncio
+
+    from cryptography.hazmat.primitives import serialization
+
+    pem, pub = mint("ed25519")
+    enc = serialization.load_ssh_private_key(
+        pem.encode(), password=None
+    ).private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.BestAvailableEncryption(b"pw"),
+    )
+    mine = tmp_path / "enc-key"
+    mine.write_bytes(enc)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
+    data = FakeData([row()])
+    data.pending_rows = [pending_blob_row(9, "github_api", pub)]
+    gate = asyncio.Event()
+    data.unlock_gate = gate
+    app, _follow = make_app(data)
+    app.unlock_at_start = quiet_start
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await pilot.press("u")
+        await wait_for(lambda: pass_field_up(app))
+        app.screen.query_one("#pass-field", Input).value = "pw"
+        await pilot.press("enter")
+        # The modal popped and the page resumed behind it — the
+        # refresh fired while the upload stood gated.
+        await wait_for(lambda: on_secrets(app))
+        await pilot.pause()
+        assert data.unlock_calls == []  # still mid-POST
+        gate.set()
+        await wait_for(lambda: data.unlock_calls)
+        (values,) = data.unlock_calls
+        assert values == [{"placeholder_id": 9, "value": "tok"}]
+
+
+async def test_the_modal_clears_its_field_on_dismiss(
+    tmp_path, monkeypatch
+) -> None:
+    """The typed passphrase leaves with the screen (#515
+    review): a second prompt opens on an empty field — MintScreen's
+    discipline, nothing typed stays behind."""
+    from cryptography.hazmat.primitives import serialization
+
+    pem, pub = mint("ed25519")
+    enc = serialization.load_ssh_private_key(
+        pem.encode(), password=None
+    ).private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.BestAvailableEncryption(b"pw"),
+    )
+    mine = tmp_path / "enc-key"
+    mine.write_bytes(enc)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
+    data = FakeData([row()])
+    data.pending_rows = [pending_blob_row(9, "github_api", pub)]
+    app, _follow = make_app(data)
+    app.unlock_at_start = quiet_start
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await pilot.press("u")
+        await wait_for(lambda: pass_field_up(app))
+        app.screen.query_one("#pass-field", Input).value = "typed"
+        await pilot.press("escape")
+        await wait_for(lambda: "stay locked" in page_status(app))
+        await pilot.press("u")
+        await wait_for(lambda: pass_field_up(app))
+        assert app.screen.query_one("#pass-field", Input).value == ""
+        # A teardown race leaves the field already unmounted — the
+        # clear reads as noise and the dismiss still lands.
+        await app.screen.query_one("#pass-field", Input).remove()
+        await pilot.press("escape")
+        await wait_for(lambda: on_secrets(app))
+
+
+async def test_the_page_names_corruption_for_the_re_mint(
+    tmp_path, monkeypatch
+) -> None:
+    """The corruption remedy on the page (#515 review): a blob
+    addressed to the configured key that fails its authentication
+    names the re-mint, in the mixed outline and alone."""
+    from msks import agecrypto
+
+    _pem, pub = plant_key(monkeypatch, tmp_path)
+    blob = bytearray(agecrypto.encrypt(b"v", pub))
+    blob[-1] ^= 0xFF
+    import base64 as b64
+
+    broken = {
+        "id": 8,
+        "workspaces": [],
+        "name": "broken",
+        "dests": [],
+        "created_at": "2030-01-02T03:04:05",
+        "expires_at": None,
+        "blobs": [
+            {
+                "recipient": "h",
+                "ciphertext": b64.b64encode(bytes(blob)).decode(),
+            }
+        ],
+        "staleness": {"missing": [], "stale": []},
+        "unlocked": False,
+    }
+    data = FakeData([row()])
+    # One good row beside the broken one: the outline carries
+    # the unlock and the corruption together.
+    data.pending_rows = [
+        pending_blob_row(7, "fine", pub),
+        broken,
+    ]
+    app, _follow = make_app(data)
+    app.unlock_at_start = quiet_start
+    async with app.run_test() as pilot:
+        await open_secrets(pilot, app)
+        await pilot.press("u")
+        await wait_for(
+            lambda: (
+                "unlocked 1 placeholder row; "
+                "1 failed to open (re-mint)" in page_status(app)
+            )
+        )
+        assert data.unlock_calls
+        data2 = FakeData([row()])
+        data2.pending_rows = [dict(broken)]
+        app2, _f2 = make_app(data2)
+        app2.unlock_at_start = quiet_start
+    async with app2.run_test() as pilot2:
+        await open_secrets(pilot2, app2)
+        await pilot2.press("u")
+        await wait_for(
+            lambda: (
+                "stay locked" in page_status(app2)
+                and "re-mint them" in page_status(app2)
+            )
+        )
+        assert data2.unlock_calls == []

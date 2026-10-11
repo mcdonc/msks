@@ -318,6 +318,50 @@ over the token-authenticated API (`POST /api/v1/secrets/unlock`,
 after `GET /api/v1/secrets/pending` serves the ciphertext and
 opens the session window the unlock requires).
 
+### The client's half (#515)
+
+The unlock reads the identity key file the client already uses
+for ssh — `identity_file` (the client config,
+`~/.config/msks/msks.yaml`) or `MSKSC_IDENTITY_FILE` — and
+decrypts only the blobs that key opens: possession of the
+private key is the authority for a value, proven by the unwrap
+itself. An operator without the key receives ciphertext, uploads
+nothing, and the daemon stays cold for those rows; two operators
+keyed to different workspaces each unlock their own.
+
+An agent-held key cannot unlock: ssh-agent exposes signing, and
+the unwrap needs the private key material directly, so the
+unlock reads the file where it lives (ssh login still resolves
+through the agent, #490). A passphrase-encrypted key file
+prompts once per session — the passphrase loads the identity and
+every row then decrypts through it.
+
+Three surfaces run the flow:
+
+- **The TUI at start.** The tree's mount offers the unlock
+  against the daemon's locked rows: a warm cache stays silent, a
+  cold one with the key present unlocks itself, and the
+  passphrase prompt (when the file is encrypted) is the modal
+  the session opens with. The secrets page's `u` action runs
+  the same flow on demand — a window that lapsed mid-session
+  heals the moment it is seen — and the page's STATE column
+  (`locked` / `open`) and `msks secret ls`'s state column
+  carry the lock state row by row.
+- **`msks secret unlock`** — the scripting surface: fetch
+  pending, decrypt, upload, and print one line per unlocked row
+  plus the rows the key could not open — rows whose ciphertext
+  failed to open name the re-mint they need, rows with no stanza
+  for this key are another operator's and stay ciphertext. The
+  command without a configured identity names `identity_file`
+  and exits nonzero.
+- **A cold refusal is a named condition.** The daemon's
+  refusals surface verbatim — the locked swap error (423), and
+  on a zero-window daemon the `422` that answers an unlock while
+  no operator websocket stands. The websocket lives on a
+  workspace page or the secrets page's audit view: open either
+  (the TUI holds none at its root list) and the same flow
+  works — never a retry loop.
+
 The window is `MSKSD_SECRET_STORE_UNLOCK_TIMEOUT_S` (default
 86400 seconds — one day), the `ssh-add -t` pattern. The timer resets on an
 unlock POST itself — an operator action carrying plaintext — and

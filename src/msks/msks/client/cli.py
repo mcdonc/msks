@@ -69,6 +69,7 @@ from .secrets import (  # noqa: F401
     cmd_secret_mint,
     cmd_secret_renew,
     cmd_secret_revoke,
+    cmd_secret_unlock,
     resolved_workspace_id,
 )
 from .ssh import run_workspace_ssh
@@ -212,7 +213,7 @@ home_app = typer.Typer(
     help="move a workspace's /home volume through the daemon (#80)"
 )
 secret_app = typer.Typer(
-    help="placeholder secrets: mint, list, revoke, renew, check"
+    help="placeholder secrets: mint, list, revoke, renew, unlock"
 )
 app.add_typer(egress_app, name="egress")
 app.add_typer(image_app, name="image")
@@ -1016,6 +1017,17 @@ def secret_coverage(
 ) -> int:
     """Flip a workspace's daemon-wide placeholder posture (#339)."""
     return cmd_secret_coverage(workspace_id, coverage.value, transport=ctx.obj)
+
+
+@secret_app.command("unlock")
+@one_line_interrupts
+def secret_unlock(
+    ctx: typer.Context,
+) -> int:
+    """Unlock the store: decrypt the pending ciphertexts the
+    configured identity key opens and upload the plaintext
+    (rows the key cannot open stay ciphertext)."""
+    return cmd_secret_unlock(transport=ctx.obj)
 
 
 def help_requested(argv: list[str]) -> bool:

@@ -56,11 +56,14 @@ The whitelist reads bottom-up:
   #408 (the hub the composer builds is a root leaf)
 - ``client`` — the REST client (#397): it imports its own
   siblings, stdlib, third-party packages, and the allowlist
-  ``identity``, ``conformance_args``, ``spec``, ``configio`` — the
-  shared leaves. The local ``image check`` runs the standalone
-  conformance entry as a child process, so the daemon composition
-  stays out of the client process. ``test_client_imports_stay_within
-  _the_allowlist`` holds the rule; widening it is a deliberate edit
+  ``identity``, ``conformance_args``, ``spec``, ``configio``,
+  ``agecrypto`` — the shared leaves (the last is #515: the
+  client-side unlock unwraps the store's blobs). The local
+  ``image check`` runs the standalone conformance entry as a
+  child process, so the daemon composition stays out of the
+  client process. The allowlist test holds
+  the rule (``test_client_imports_stay_within_the_allowlist``);
+  widening it is a deliberate edit
   there and in ``ALLOWED_EDGES``.
 """
 
@@ -88,7 +91,9 @@ ALLOWED_EDGES = {
     ("app", "secretstore"),
     ("app", "settings"),
     # client: the REST consumer — only the shared-leaf allowlist
-    # (#397; enforced separately by the client test below)
+    # (#397; enforced separately by the client test below; the
+    # agecrypto edge is #515's client-side unlock unwrap)
+    ("client", "agecrypto"),
     ("client", "configio"),
     ("client", "conformance_args"),
     ("client", "identity"),
@@ -164,8 +169,17 @@ ALLOWED_EDGES = {
 # The client-isolation allowlist (#397): the packages outside
 # ``client`` its modules may import. Widening this is a deliberate
 # contract edit — a new entry needs a shared-leaf reason, not a
-# convenience import.
-CLIENT_ALLOWED = {"configio", "conformance_args", "identity", "spec"}
+# convenience import. ``agecrypto`` joined with #515: the unlock
+# decrypts the store's blobs client-side, and the leaf (stdlib
+# and ``cryptography`` alone) is the shared unwrap primitive the
+# daemon's encrypt path and the client's decrypt path both use.
+CLIENT_ALLOWED = {
+    "agecrypto",
+    "configio",
+    "conformance_args",
+    "identity",
+    "spec",
+}
 
 
 def test_client_imports_stay_within_the_allowlist():

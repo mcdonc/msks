@@ -1,18 +1,32 @@
 """The placeholder-secret commands (#339, #423): ``msks secret
 mint``, ``ls``, ``revoke``, ``renew``, ``coverage``, and
-``check`` — the group the CLI's typer layer
+``unlock`` (#515) — the group the CLI's typer layer
 (:mod:`msks.client.cli`) dispatches into. The client duplicates
 the coverage and identifier vocabulary per the CLI-isolation
 rule (the daemon's tables stay in its own process).
 """
 
 import asyncio
+import getpass
 import json
 import sys
 from pathlib import Path
 
+from msks.agecrypto import (
+    AgeCryptoError,
+    key_is_encrypted,
+    load_identity,
+)
+
 from .context import call
+from .ssh import configured_identity_file
 from .tabular import listing_text
+from .unlock import (
+    decrypt_rows,
+    locked_rows,
+    read_identity_pem,
+    unlock_body,
+)
 
 
 def read_secret(path: str) -> str:
@@ -170,12 +184,13 @@ def cmd_secret_mint(
 
 def secret_cells(row: dict) -> list[str]:
     """One placeholder row's cells: id, coverage/name,
-    destinations, expiry."""
+    destinations, expiry, lock state (#515)."""
     return [
         str(row["id"]),
         f"{coverage_label(row['workspaces'])}/{row['name']}",
         ", ".join(row["dests"]),
         row["expires_at"] or "never",
+        "locked" if row.get("locked") else "open",
     ]
 
 
@@ -187,11 +202,109 @@ def cmd_secret_ls(as_json: bool = False, transport=None) -> int:
         print(json.dumps(rows, indent=2))
         return 0
     text = listing_text(
-        ["id", "coverage", "destinations", "expires"],
+        ["id", "coverage", "destinations", "expires", "state"],
         [secret_cells(row) for row in rows],
     )
     if text:
         print(text)
+    return 0
+
+
+def unlock_identity(path):
+    """The named key file loaded for one command run (#515): a
+    passphrase-encrypted file prompts once — getpass on the tty —
+    and the loaded identity decrypts every row."""
+    key_pem = read_identity_pem(path)
+    if key_is_encrypted(key_pem):
+        answer = getpass.getpass(f"passphrase for {path}: ")
+        return load_identity(key_pem, lambda: answer)
+    return load_identity(key_pem, lambda: "")
+
+
+def row_names(rows: list) -> str:
+    """The report's name list: coverage/name per row, joined."""
+    return ", ".join(
+        f"{coverage_label(row['workspaces'])}/{row['name']}" for row in rows
+    )
+
+
+def report_unlock(unlocked: list, left: list, corrupt: list) -> None:
+    """The command's report (#515): one line per unlocked row,
+    then the rows that failed to open (a re-mint remedies them)
+    and the rows that stayed ciphertext — another operator's —
+    each named when any stand."""
+    for row, _value in unlocked:
+        print(f"unlocked {coverage_label(row['workspaces'])}/{row['name']}")
+    if corrupt:
+        print(f"ciphertext failed to open (re-mint): {row_names(corrupt)}")
+    if left:
+        print(
+            "stayed ciphertext (no stanza matches this key): "
+            f"{row_names(left)}"
+        )
+
+
+def missing_identity_line() -> str:
+    """The no-identity refusal's one line: the setting that
+    points at the key, and the variable that presets it."""
+    return (
+        "msks: the unlock needs the workspace identity's private "
+        "half — point identity_file (the client config) or "
+        "MSKSC_IDENTITY_FILE at your key file"
+    )
+
+
+def cmd_secret_unlock(transport=None) -> int:
+    """``msks secret unlock`` (#515): the client's half of the
+    store — fetch the pending ciphertexts, decrypt the blobs the
+    configured identity file opens, upload the plaintext. The
+    rows the key cannot open stay ciphertext on the daemon and
+    are named here, not retried: possession of the private key is
+    the authority for a value, and a client without it learns
+    nothing."""
+    path = configured_identity_file()
+    if path is None:
+        print(missing_identity_line(), file=sys.stderr)
+        return 1
+    rows = asyncio.run(
+        call("GET", "/api/v1/secrets/pending", transport=transport)
+    )
+    rows = locked_rows(rows)
+    if not rows:
+        print("every placeholder row is unlocked")
+        return 0
+    return upload_unlock(path, rows, transport)
+
+
+def upload_unlock(path, rows, transport) -> int:
+    """The load-decrypt-upload half (#515): the key loads only
+    now — a store with nothing locked never prompted for its
+    passphrase (#515 review). The report names every outcome,
+    and the exit code names completeness — a run whose rows
+    broke ends incomplete (the re-mint is the operator's next
+    act), while rows that are simply another operator's stayed
+    ciphertext by design and that run completes clean."""
+    try:
+        identity = unlock_identity(path)
+    except AgeCryptoError as exc:
+        print(
+            f"msks: the identity file {path} refused: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+    unlocked, left, corrupt = decrypt_rows(rows, identity)
+    if not unlocked:
+        report_unlock(unlocked, left, corrupt)
+        return 1 if corrupt else 0
+    asyncio.run(
+        call(
+            "POST",
+            "/api/v1/secrets/unlock",
+            json_body=unlock_body(unlocked),
+            transport=transport,
+        )
+    )
+    report_unlock(unlocked, left, corrupt)
     return 0
 
 
