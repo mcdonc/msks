@@ -15,7 +15,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .context import call, env_token, env_url, ssl_context
+from .context import call
 from .create import (
     checked_login_name,
     create_workspace_core,
@@ -23,9 +23,11 @@ from .create import (
     operator_pubkey,
     read_pubkey,
 )
+from .env import env_token, env_url, ssl_context
 from .resize import display_name, resize_message
 from .rest import fetch_ssh_key as rest_fetch_ssh_key
 from .tabular import listing_text
+from .tui.rows import clip
 
 
 def created_date(raw: str | None) -> str:
@@ -33,9 +35,26 @@ def created_date(raw: str | None) -> str:
     return raw[:10] if raw else "-"
 
 
+#: The CLI listing's image column width (#523): the table's own
+#: budget — wider than the page's meta cell, the table has room
+#: a header line does not.
+IMAGE_COLUMN_W = 16
+
+
+def image_column(row: dict) -> str:
+    """The listing's image column (#523): the catalog reference —
+    ``name:version``, the words an operator can act on — with the
+    digest prefix as the fallback for a row the catalog cannot
+    resolve. The clip is the page's own middle cut (the version
+    tail is the half a head-only clip eats; a registry-prefixed
+    reference would lose its name AND version to one)."""
+    ref = row.get("image_ref") or row.get("image_hash") or "-"
+    return clip(ref, IMAGE_COLUMN_W)
+
+
 def workspace_cells(row: dict) -> list[str]:
     """One listing row's cells."""
-    image = (row.get("image_hash") or "-")[:12]
+    image = image_column(row)
     host = row.get("host") or "-"
     name = row.get("name") or "-"
     egress_mode = row.get("egress_mode") or "-"

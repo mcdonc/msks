@@ -146,7 +146,9 @@ def test_cmd_ls_aligns_columns(
     # rows: the long name widened its column for the whole grid.
     assert lines[1].index(rows[0]["id"]) == lines[2].index(rows[1]["id"])
     assert lines[1].index("running") == lines[2].index("created")
-    assert "a" * 12 in lines[1]  # the image hash is shortened to 12 chars
+    # The image cell falls back to the digest, clipped at its
+    # middle (#523) — the version half of a reference survives.
+    assert "aaaaaaa…aaaaaaaa" in lines[1]
 
 
 def test_cmd_ls_rows_fit_the_values(
@@ -161,16 +163,39 @@ def test_cmd_ls_rows_fit_the_values(
     assert "interactive" in out and "allow" in out
     assert "2026-05-14" in out and "2026-06-01" in out
     # The #246 columns: the label beside the immutable id, which
-    # addresses the workspace as surely as the name does.
+    # addresses the workspace as surely as the name does; the
+    # image cell falls back to the digest (#523) — ROWS[0] carries
+    # no reference.
     assert cli.workspace_cells(ROWS[0]) == [
         "alpha",
         ROWS[0]["id"],
         "running",
         "interactive",
         "2026-05-14",
-        "a" * 12,
+        cli.image_column(ROWS[0]),
         "hv1",
     ]
+    assert cli.image_column(ROWS[0]).startswith("aaaaaaa")
+
+
+def test_cmd_ls_image_prefers_the_catalog_reference(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#523: the image column reads ``name:version`` when the
+    catalog resolves the row's digest, the digest stays the
+    fallback for a row it cannot, and the clip keeps the
+    reference's version tail (the half a head-only clip eats) —
+    a short reference prints whole."""
+    client_env(monkeypatch)
+    rows = [
+        {**ROWS[0], "image_ref": "ghcr.io/foo/bar:13"},
+        {**ROWS[1], "image_ref": "debian:13"},
+    ]
+    rc = cli.cmd_ls(transport=mock(lambda req: httpx.Response(200, json=rows)))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "ghcr.io…o/bar:13" in out  # the tail survives the clip
+    assert "debian:13" in out  # the short reference, whole
 
 
 def test_created_date_falls_back_to_dash() -> None:
