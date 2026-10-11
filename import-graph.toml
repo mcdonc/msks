@@ -96,6 +96,12 @@ secretstore = 2
 settings = 2
 
 [snapshot.client]
+# #515: the client-side unlock unwraps the store's blobs — the
+# CLI command, the unlock core, and the TUI's flow each load the
+# leaf's identity/decrypt names (a rank-1 to rank-0 edge). #515
+# review round: +2 — the corruption diagnostic (addressed) and
+# the CLI's named AgeCryptoError catch.
+agecrypto = 12
 configio = 3
 conformance_args = 8
 # #481: the console dropped its identity negotiation — the

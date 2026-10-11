@@ -242,6 +242,37 @@ class TuiData:
             json_body=body,
         )
 
+    async def pending_secrets(self) -> list[dict]:
+        """GET the pending ciphertext rows (#515) — the unlock
+        flow's fetch, the same exchange ``GET
+        /api/v1/secrets/pending`` serves: the rows' blobs and
+        lock state, with the session window the unlock POST
+        requires opened by the serve."""
+        return await api_call(
+            "GET",
+            env_url(),
+            env_token(),
+            "/api/v1/secrets/pending",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+        )
+
+    async def unlock_secrets(self, values: list[dict]) -> dict:
+        """POST the decrypted values back (#515) — the unlock
+        flow's upload, the same exchange ``POST
+        /api/v1/secrets/unlock`` takes: the values enter the
+        daemon's timeout-scoped cache and each row re-encrypts
+        fresh blobs to its current recipients."""
+        return await api_call(
+            "POST",
+            env_url(),
+            env_token(),
+            "/api/v1/secrets/unlock",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+            json_body={"values": values},
+        )
+
     async def secret_audit(self) -> list[dict]:
         """GET the recorded audit rows (#390) — the secrets page's
         audit view replays them newest first, the same listing

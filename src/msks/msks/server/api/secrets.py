@@ -652,8 +652,16 @@ def router(app, hub) -> APIRouter:
 
     @api.get("/api/v1/secrets", dependencies=[Depends(require_token)])
     async def list_secrets() -> list[dict]:
+        """Every live row (#390), each carrying the store's lock
+        state (#515): ``locked`` is True when the daemon's cache
+        holds no plaintext for the row — the flag the client's
+        listings surface so a cold row is seen, not discovered at
+        the swap's refusal."""
         return [
-            placeholder_view(row, sentinel=False)
+            dict(
+                placeholder_view(row, sentinel=False),
+                locked=not app.state.secrets.plain.knows(row["backend_ref"]),
+            )
             for row in await app.state.model.list_placeholders()
         ]
 

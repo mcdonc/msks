@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -63,6 +64,7 @@ from test_consent_tui import (
 from test_consent_tui import (
     rules_frame as shared_rules_frame,
 )
+from testkeys import mint as MINT
 from textual.color import Color
 from textual.containers import Vertical
 from textual.content import Content, Span
@@ -136,6 +138,14 @@ class FakeData:
         self.secret_rows: list[dict] = []
         self.audit_rows: list[dict] = []
         self.secret_calls: list[tuple] = []
+        # The unlock flow's surface (#515): the pending reply and
+        # the uploads the flow sends.
+        self.pending_rows: list[dict] = []
+        self.unlock_calls: list[list[dict]] = []
+        # The unlock upload's gate (#515 review): a test holding
+        # the upload mid-POST — the passphrase answer's screen
+        # resume must not cancel it.
+        self.unlock_gate: object | None = None
         # The mint form's surface (#393): the scripted refusal a
         # failed mint raises (the daemon's own one-line shape), and
         # the gate a test holds a mint mid-flight on (the flight
@@ -297,6 +307,23 @@ class FakeData:
             datetime.now(UTC) + timedelta(seconds=ttl_s)
         ).isoformat()
         return dict(fresh)
+
+    async def pending_secrets(self) -> list[dict]:
+        """The pending ciphertext rows (#515) — the unlock flow's
+        fetch, recorded like every exchange."""
+        if "pending" in self.fail:
+            raise RuntimeError(self.refusal)
+        return [dict(r) for r in self.pending_rows]
+
+    async def unlock_secrets(self, values: list[dict]) -> dict:
+        """The unlock upload (#515) — recorded with its raw body;
+        the reply names the rows the daemon accepted."""
+        if self.unlock_gate is not None:
+            await self.unlock_gate.wait()
+        self.unlock_calls.append([dict(v) for v in values])
+        if "unlock" in self.fail:
+            raise RuntimeError(self.refusal)
+        return {"unlocked": [v["placeholder_id"] for v in values]}
 
     async def secret_audit(self) -> list[dict]:
         """The recorded audit rows (#390), newest first — the
@@ -4114,3 +4141,188 @@ async def test_the_page_answers_the_lists_power_letters(monkeypatch) -> None:
         app.screen.on_list_view_selected(None)
         await wait_for(lambda: "opened a shell window" in consent_text(app))
         assert "Open a shell skipped" not in consent_text(app)
+
+
+# --- the session-start unlock (#515) ---------------------------------
+
+
+def plant_session_key(monkeypatch, tmp_path) -> str:
+    """The configured identity for the mount-time flow (#515):
+    one fresh key named by MSKSC_IDENTITY_FILE — the public
+    line."""
+    pem, pub = MINT("ed25519")
+    mine = tmp_path / "my-key"
+    mine.write_text(pem)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
+    monkeypatch.delenv("MSKSC_PUBKEY_FILE", raising=False)
+    return pub
+
+
+def cold_pending(pub: str) -> list[dict]:
+    """One locked pending row (#514): a blob wrapped to *pub*."""
+    import base64
+
+    from msks import agecrypto
+
+    return [
+        {
+            "id": 7,
+            "workspaces": [],
+            "name": "github_api",
+            "dests": [],
+            "created_at": "2030-01-02T03:04:05",
+            "expires_at": None,
+            "blobs": [
+                {
+                    "recipient": "h",
+                    "ciphertext": base64.b64encode(
+                        agecrypto.encrypt(b"tok", pub)
+                    ).decode(),
+                }
+            ],
+            "staleness": {"missing": [], "stale": []},
+            "unlocked": False,
+        }
+    ]
+
+
+async def test_the_session_unlock_runs_at_start(tmp_path, monkeypatch) -> None:
+    """The tree's mount offer (#515): a cold cache with the
+    configured key present unlocks itself — the upload carries
+    the decrypted value and the outcome flashes on the list's
+    status line."""
+    pub = plant_session_key(monkeypatch, tmp_path)
+    data = FakeData([row()])
+    data.pending_rows = cold_pending(pub)
+    app, _follow = make_app(data)
+    async with app.run_test() as _pilot:
+        await wait_for(lambda: data.unlock_calls)
+        (values,) = data.unlock_calls
+        assert values == [{"placeholder_id": 7, "value": "tok"}]
+        await wait_for(
+            lambda: "unlocked 1 placeholder row" in status_text(app)
+        )
+
+
+async def test_a_warm_store_stays_quiet_at_start(
+    tmp_path, monkeypatch
+) -> None:
+    """Nothing to say (#515): the daemon holds every row's
+    plaintext, and the mount flow sends nothing and flashes
+    nothing."""
+    pub = plant_session_key(monkeypatch, tmp_path)
+    data = FakeData([row()])
+    data.pending_rows = [dict(r, unlocked=True) for r in cold_pending(pub)]
+    app, _follow = make_app(data)
+    async with app.run_test() as _pilot:
+        await wait_for(lambda: "workspace" in status_text(app))
+        assert data.unlock_calls == []
+
+
+async def test_no_identity_configured_stays_quiet_at_start(
+    monkeypatch,
+) -> None:
+    """An operator without a configured key (#515): the mount
+    flow has nothing to offer and says nothing — the secrets
+    page's explicit action is where the named line lives."""
+    monkeypatch.delenv("MSKSC_IDENTITY_FILE", raising=False)
+    data = FakeData([row()])
+    data.pending_rows = [
+        {
+            "unlocked": False,
+            "blobs": [{"recipient": "h", "ciphertext": "eA=="}],
+        }
+    ]
+    app, _follow = make_app(data)
+    async with app.run_test() as _pilot:
+        await wait_for(lambda: "workspace" in status_text(app))
+        assert data.unlock_calls == []
+
+
+async def test_an_encrypted_key_prompts_once_at_start(
+    tmp_path, monkeypatch
+) -> None:
+    """The acceptance bar (#510): the session's one passphrase
+    prompt — the modal at start, answered once, the row unlocked
+    through it."""
+    from cryptography.hazmat.primitives import serialization
+    from textual.widgets import Input
+
+    pem, pub = MINT("ed25519")
+    enc = serialization.load_ssh_private_key(
+        pem.encode(), password=None
+    ).private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.BestAvailableEncryption(b"pw"),
+    )
+    mine = tmp_path / "enc-key"
+    mine.write_bytes(enc)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
+    monkeypatch.delenv("MSKSC_PUBKEY_FILE", raising=False)
+    data = FakeData([row()])
+    data.pending_rows = cold_pending(pub)
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(field_up(app))
+        app.screen.query_one("#pass-field", Input).value = "pw"
+        await pilot.press("enter")
+        await wait_for(lambda: data.unlock_calls)
+        (values,) = data.unlock_calls
+        assert values == [{"placeholder_id": 7, "value": "tok"}]
+
+
+async def test_a_refused_unlock_flashes_at_start(
+    tmp_path, monkeypatch
+) -> None:
+    """A daemon that refuses the upload (#515): the one-line
+    refusal flashes on the list's status line — the tree's
+    guarded shape, never a retry and never a failed tree."""
+    pub = plant_session_key(monkeypatch, tmp_path)
+    data = FakeData([row()])
+    data.pending_rows = cold_pending(pub)
+    data.fail.add("unlock")
+    app, _follow = make_app(data)
+    async with app.run_test() as _pilot:
+        await wait_for(lambda: "unlock failed" in status_text(app))
+
+
+def field_up(app) -> Callable[[], bool]:
+    """The passphrase modal's masked field is on the screen."""
+
+    def check() -> bool:
+        try:
+            app.screen.query_one("#pass-field")
+            return True
+        except Exception:
+            return False
+
+    return check
+
+
+async def test_the_data_seam_serves_the_unlock_pair(
+    monkeypatch,
+) -> None:
+    """TuiData's unlock exchanges (#515): the pending GET and the
+    unlock POST over the real seam — the same shapes the flow
+    and the CLI ride."""
+    monkeypatch.setenv("MSKSC_URL", "https://api.test")
+    monkeypatch.setenv("MSKSC_TOKEN", "tok")
+    asked = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        asked.append((request.method, request.url.path))
+        if (request.method, request.url.path) == (
+            "GET",
+            "/api/v1/secrets/pending",
+        ):
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json={"unlocked": [7]})
+
+    data = data_mod.TuiData(transport=httpx.MockTransport(handler))
+    assert await data.pending_secrets() == []
+    assert await data.unlock_secrets(
+        [{"placeholder_id": 7, "value": "tok"}]
+    ) == {"unlocked": [7]}
+    assert ("GET", "/api/v1/secrets/pending") in asked
+    assert ("POST", "/api/v1/secrets/unlock") in asked

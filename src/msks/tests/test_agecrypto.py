@@ -29,9 +29,11 @@ from msks.agecrypto import (
     b64d,
     build_header,
     decrypt,
+    decrypt_with_identity,
     encrypt,
     fingerprint,
     hkdf_key,
+    key_is_encrypted,
     load_identity,
     mint_age_identity,
     montgomery_u,
@@ -671,3 +673,37 @@ def test_mac_line_shape_is_exact() -> None:
             + b"A" * 42
             + b"\n"
         )  # one short
+
+
+# --- #515: one loaded identity over many blobs ---------------------
+
+
+def test_decrypt_with_identity_round_trips_both_types() -> None:
+    """The client's shape (#515): load the identity once, decrypt
+    many blobs through it — the whole-file decrypt is this plus
+    the load."""
+    ed = load_identity(ED_PEM, no_prompt)
+    rsa = load_identity(RSA_PEM, no_prompt)
+    for identity, line in ((ed, ED_PUB), (rsa, RSA_PUB)):
+        blob = encrypt(b"row value", line)
+        assert decrypt_with_identity(blob, identity) == b"row value"
+
+
+def test_decrypt_with_identity_names_a_key_that_opens_nothing() -> None:
+    """A blob wrapped to another key is a named miss, the flow's
+    quiet skip — possession is proven by the unwrap, never
+    claimed."""
+    blob = encrypt(b"row value", RSA_PUB)
+    identity = load_identity(ED_PEM, no_prompt)
+    with pytest.raises(AgeCryptoError, match="no stanza"):
+        decrypt_with_identity(blob, identity)
+
+
+def test_key_is_encrypted_sees_both_states() -> None:
+    """The pre-prompt probe (#515): the caller prompts once per
+    session only when the file asks, and a non-key file is the
+    named error the load would raise."""
+    assert not key_is_encrypted(ED_PEM)
+    assert key_is_encrypted(ED_ENC_PEM)
+    with pytest.raises(AgeCryptoError, match="not a private key"):
+        key_is_encrypted(b"not a key at all")

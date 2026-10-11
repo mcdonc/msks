@@ -1272,7 +1272,9 @@ msks secret mint --workspace myws --name pypi \
 msks secret mint --workspace ci,deploy --name pypi \
   --dest .pypi.org --secret-file ./token   # one row, two workspaces
 
-msks secret ls                           # placeholders + coverage, never sentinels
+msks secret ls                           # placeholders + coverage + lock state
+msks secret unlock                      # decrypt the pending blobs the
+                                         # configured identity key opens
 msks secret renew --workspace myws --name pypi --ttl 86400
 msks secret revoke --name github_api     # the daemon-wide row of the label
 msks secret revoke --workspace ci,deploy --name pypi

@@ -63,20 +63,24 @@ from .rows import (
     status_content,
     workspace_label,
 )
+from .unlock import PassphraseScreen, unlock_flash, unlock_flow
 
-#: The secrets page's columns (#390): the header's label and the
-#: column's width, in row order — the listing's own rule (#347)
-#: over the placeholder row: coverage (``*`` for the daemon-wide
-#: row, the scoped id list), name, destination allowlist, the
-#: remaining lifetime, the created date. At 80 columns the frame's
-#: edges and the scrollbar leave 74 cells; the columns and their
-#: gaps together are exactly that wide.
+#: The secrets page's columns (#390, #515): the header's label
+#: and the column's width, in row order — the listing's own rule
+#: (#347) over the placeholder row: coverage (``*`` for the
+#: daemon-wide row, the scoped id list), name, destination
+#: allowlist, the remaining lifetime, the created date, and the
+#: store's lock state (#515: ``locked`` when the daemon's cache
+#: holds no plaintext — the row an unlock is for). At 80 columns
+#: the frame's edges and the scrollbar leave 74 cells; the columns
+#: and their gaps together are exactly that wide.
 SECRET_COLUMNS = (
-    ("COVERAGE", 14),
-    ("NAME", 16),
-    ("DESTS", 20),
+    ("COVERAGE", 13),
+    ("NAME", 14),
+    ("DESTS", 15),
     ("EXPIRES", 8),
     ("CREATED", 8),
+    ("STATE", 6),
 )
 
 #: The secrets page's column widths, in row order.
@@ -86,6 +90,7 @@ SECRET_COLUMNS = (
     SECRET_DESTS_W,
     SECRET_EXPIRES_W,
     SECRET_CREATED_W,
+    SECRET_STATE_W,
 ) = (width for _label, width in SECRET_COLUMNS)
 
 #: The renew picker's TTL choices (#390): the duration picker over
@@ -140,6 +145,7 @@ def secret_row_cells(
         clip_cell(", ".join(row.get("dests") or []) or "-", SECRET_DESTS_W),
         clip_cell(ttl_text(row, now), SECRET_EXPIRES_W),
         clip_cell(created_label(row.get("created_at")), SECRET_CREATED_W),
+        clip_cell("locked" if row.get("locked") else "open", SECRET_STATE_W),
     )
 
 
@@ -316,6 +322,7 @@ class SecretsScreen(Screen):
         Binding("r", "renew", "Renew"),
         Binding("e", "audit", "Audit"),
         Binding("c", "create", "New"),
+        Binding("u", "unlock", "Unlock"),
         Binding("q", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
     ]
@@ -463,6 +470,39 @@ class SecretsScreen(Screen):
         if secret_id is None:
             return None
         return next((row for row in self.rows if row["id"] == secret_id), None)
+
+    def action_unlock(self) -> None:
+        """Run the session unlock now (#515): the configured
+        identity file's private half against the daemon's locked
+        rows — the same flow the tree ran at start, offered here
+        so a cold row heals the moment it is seen (an unlock
+        window can lapse mid-session). The run is a worker in
+        its own group — Textual's wait_for_dismiss (the
+        passphrase modal's answer) requires a worker, and the
+        page's own exclusive refreshes (the modal's pop resumes
+        the screen and fires one) must not cancel the upload
+        mid-POST."""
+        self.run_worker(self.run_unlock(), group="unlock", exclusive=True)
+
+    async def run_unlock(self) -> None:
+        """The action's awaited half: the outcome flashes on this
+        page's status line and the rows repaint their state."""
+        message = await self.guarded(
+            "unlock",
+            unlock_flow(self.app.data, self.ask_passphrase, explicit=True),
+        )
+        if message is not None:
+            self.flash(unlock_flash(message))
+            self.refresh_rows()
+
+    async def ask_passphrase(self, path) -> str | None:
+        """The one prompt per session (#515): the masked modal
+        over the page, answered by Enter with the typed
+        passphrase or cancelled with Escape."""
+        answer = await self.app.push_screen(
+            PassphraseScreen(path), wait_for_dismiss=True
+        )
+        return answer or None
 
     def action_revoke(self) -> None:
         """Ask first (#390: a revoke retires the row everywhere at
