@@ -1447,6 +1447,27 @@ async def test_a_highlight_inside_the_holds_swap_window_paints_rules() -> None:
         assert rules_children(app) == 2
 
 
+async def test_rules_swap_window_highlight_paints_nothing() -> None:
+    """The rules pass's own swap-window arc, driven directly: the
+    verdicts list away (a rebuild's swap window) means the
+    highlight's in-place pass must build nothing — the tick's
+    rebuild owns the swap (``paint_rules_in_place``'s guard, #470
+    S3). Under CI load the arc stayed uncovered and the coverage
+    gate red (#527); the direct call pins it the way its
+    swap-siblings do (#468, #476)."""
+    factory = FakeFactory([FakeWS([rules_frame()]), FakeWS([])])
+    app, page, _data = make_page(factory)
+    async with app.run_test() as pilot:
+        cp = await open_consent(pilot, app, page)
+        await wait_for(lambda: rules_children(app) == 2)
+        # The swap-window shape: the verdicts list is away, so the
+        # guard returns before any repaint — nothing builds.
+        await cp.query_one("#rule-rows").remove()
+        cp.paint_rules_in_place()
+        assert cp.rule_rows() is None
+        await wait_for(lambda: rules_children(app) == 2)
+
+
 async def test_the_verdicts_refresh_on_frames() -> None:
     """The verdicts repaint while a picker sits above the page: a
     frame landing repaints the rows without a visit, and `m`
