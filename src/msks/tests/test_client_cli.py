@@ -857,9 +857,10 @@ def test_cmd_create_pubkey_sends_the_line_and_writes_nothing(
 def test_cmd_key_serves_the_public_half_alone(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A workspace created now serves its public half with a null
-    private half (#486, #497): the command prints the public line
-    — the private forms parse nowhere."""
+    """The command prints the public line and reads nothing else
+    (#497): an older daemon may still answer a private_key field —
+    tolerated and ignored — while the current one carries none at
+    all; the private forms parse nowhere either way."""
     client_env(monkeypatch)
     body = dict(KEY_BODY, private_key=None)
     transport = mock(lambda req: httpx.Response(200, json=body))
