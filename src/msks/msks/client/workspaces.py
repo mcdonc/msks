@@ -25,16 +25,7 @@ from .create import (
 )
 from .resize import display_name, resize_message
 from .rest import fetch_ssh_key as rest_fetch_ssh_key
-from .ssh import IDENTITY_FILE_ENV, data_dir
 from .tabular import listing_text
-
-try:
-    # Typer vendors its own click (the 0.16+ line); its exceptions
-    # are the ones a parse of the app raises. Older typer rides
-    # the installed click instead — the pyproject floor spans both.
-    from typer._click.exceptions import UsageError
-except ImportError:  # pragma: no cover — the floor spans both eras
-    from click.exceptions import UsageError
 
 
 def created_date(raw: str | None) -> str:
@@ -290,79 +281,21 @@ async def fetch_ssh_key(url, token, workspace_id, transport) -> dict:
     return await rest_fetch_ssh_key(url, token, workspace_id, transport)
 
 
-def write_private_key(key: dict, out: str) -> None:
-    """Materialize the private half at ``out``, mode 0600 (#111).
-
-    The mode is forced on every write, an existing file included —
-    open()'s mode argument only applies at creation, and a
-    pre-existing group- or world-readable file must not stay that
-    way under new contents. The path is always the operator's own
-    choice: the command writes the key to the file the operator
-    named and to stdout, and nowhere else.
-    """
-    try:
-        fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    except OSError as exc:
-        raise SystemExit(f"msks: cannot write key file {out}: {exc}") from None
-    os.fchmod(fd, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(key["private_key"])
-
-
-def require_daemon_half(key: dict, workspace_id: str) -> None:
-    """Refuse the private forms for a workspace whose private half
-    the daemon never held (#486 — every workspace created now; the
-    client-minted mode #121 before it): the error names the places
-    that half can be instead of printing nothing."""
-    if key["private_key"] is None:
-        directory = key.get("id") or workspace_id
-        raise SystemExit(
-            f"msks key: the daemon holds no private half for {workspace_id}. "
-            "msks never holds a private half for a workspace created now — "
-            "the operator's own key is the identity: point identity_file "
-            f"(or {IDENTITY_FILE_ENV}) at its private file, or use that "
-            "key directly. A key an older msks minted on a client may live "
-            f"at {data_dir() / directory / 'identity'} on that machine"
-        )
-
-
 def cmd_key(
     workspace_id: str,
-    as_private: bool = False,
-    out: str | None = None,
     transport=None,
 ) -> int:
-    """``msks key``: the workspace's ssh identity.
-
-    Prints the public half (safe to display anywhere); ``--private``
-    prints the private half, ``--out`` writes the private half to a
-    file with mode 0600 and prints nothing but its path. The
-    private half is null for every workspace created now (#486 —
-    the operator's own key is the identity, and msks never holds
-    its private half); the private forms explain where that half
-    lives instead. A row minted before #486 keeps serving the half
-    the daemon still holds.
+    """``msks key``: the workspace's ssh identity — the public
+    half, safe to display anywhere. The private half is the
+    operator's own key and never crosses the API (#486, #497:
+    the daemon stores the public line alone), so the command
+    serves nothing else.
     """
     key = asyncio.run(
         fetch_ssh_key(env_url(), env_token(), workspace_id, transport)
     )
-    if as_private or out is not None:
-        require_daemon_half(key, workspace_id)
-    if out is not None:
-        write_private_key(key, out)
-        print(out)
-    elif as_private:
-        print(key["private_key"], end="")
-    else:
-        print(key["public_key"])
+    print(key["public_key"])
     return 0
-
-
-def checked_key_flags(as_private: bool, out: str | None) -> None:
-    """--private and --out are exclusive: one output shape — a
-    usage refusal (one line, exit 2, run_parsed's mapping)."""
-    if as_private and out is not None:
-        raise UsageError("--private and --out are exclusive")
 
 
 def cmd_resize(

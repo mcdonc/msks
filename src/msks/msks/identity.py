@@ -1,4 +1,4 @@
-"""The workspace ssh identity (#111, #486): shape and seed.
+"""The workspace ssh identity (#111, #486, #497): shape and seed.
 
 The operator's own key is the identity (#486): the client sends
 its public half with the create, the daemon validates its shape,
@@ -6,11 +6,9 @@ re-annotates it, and stores it — the public half alone — with the
 workspace's state; it reaches the guest through the #41 user_data
 channel, the cidata seed, so a fresh workspace accepts ssh with no
 manual key steps anywhere. msks never mints a key and never holds
-a private half; rows minted before #486 (a daemon-side mint, or a
-client-side one) keep their halves and keep serving them over the
-authenticated API to whoever holds a token (a token holder already
-owns the root console, so this grants nothing new — the console is
-a root autologin, #481).
+a private half anywhere (#497 dropped the pre-#486 escrow — rows a
+daemon- or client-side mint wrote against), so nothing crosses
+the API but the public line.
 
 Any key type is accepted, at whatever type it carries: the guest's
 sshd, the platform's own (#115 posture), stays the authority on

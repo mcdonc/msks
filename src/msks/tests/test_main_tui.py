@@ -864,7 +864,6 @@ async def test_the_create_form_flashes_an_unconfigured_identity(
     monkeypatch.setenv("MSKSC_URL", "https://api.test")
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
     monkeypatch.delenv("MSKSC_IDENTITY_FILE", raising=False)
-    monkeypatch.setenv("XDG_DATA_HOME", "/tmp/msks-tui-no-identity")
     asked: list[tuple[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -2079,7 +2078,6 @@ async def test_a_healthy_drop_restarts_the_ladder_at_its_first_rung(
 async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("MSKSC_URL", "https://api.test")
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     from testkeys import mint
 
     pem, _public = mint("ed25519")

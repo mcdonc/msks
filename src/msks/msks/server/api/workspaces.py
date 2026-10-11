@@ -217,13 +217,10 @@ def router(app) -> APIRouter:
     async def workspace_ssh_key(workspace_id: str) -> dict:
         """The workspace's ssh identity row, token-gated (#486).
 
-        A workspace created now answers the operator's public half
-        with ``private_key: null`` — msks never holds a private half
-        anymore. Rows minted before #486 keep serving the halves
-        they already hold (a daemon-side mint, or a client-side one
-        whose public half rode the same create): a token holder
-        already owns the workspace's root console, so the private
-        half grants nothing new. The response carries the type name
+        The operator's public half, and ``private_key: null`` for
+        every row (#497): the daemon stores the public line alone
+        — the private half is the operator's own key, and it never
+        crosses the API. The response carries the type name
         (parsed off the public line) so a client never guesses the
         algorithm. ``created_at`` (#245) stamps the workspace
         *instance*, and ``id``/``name`` (#246) carry its immutable

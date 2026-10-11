@@ -31,12 +31,14 @@ from cryptography.hazmat.primitives.asymmetric.utils import (
 from msks.client import agent, cli, create, ssh
 from testkeys import encrypted, mint
 
-PEM = mint("ed25519")[0]
+PEM, PUBLIC = mint("ed25519")
 ECDSA_PEM = mint("ecdsa")[0]
 RSA_PEM = mint("rsa")[0]
+#: The fetch answer every run-loop test stages against (#497): a
+#: real pair, so the operator-identity rung resolves it from
+#: identity_file — the daemon serves no private half to stage.
 KEY = {
-    "public_key": "ecdsa-sha2-nistp256 AAAA msksd:alpha",
-    "private_key": PEM,
+    "public_key": f"{PUBLIC} msksd:alpha",
     "user": "alice",
 }
 RUNNING_ROW = {"id": "alpha", "status": "running"}
@@ -52,9 +54,15 @@ needs_sshd = pytest.mark.skipif(
 
 
 @pytest.fixture
-def client_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def client_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("MSKSC_URL", "https://daemon")
     monkeypatch.setenv("MSKSC_TOKEN", "tok")
+    # The operator identity the run loop stages (#497): identity_file
+    # names the key whose public half KEY carries — the session's
+    # file rung, exercised through the real resolver.
+    operator = tmp_path / "operator-key"
+    operator.write_text(PEM)
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(operator))
     # The session identity consults the operator's agent when one
     # is named (#490) — the run loop stays hermetic (and its
     # staging path deterministic) with no ambient agent; the
@@ -543,110 +551,32 @@ def test_known_hosts_path_names_an_unusable_cache(tmp_path: Path) -> None:
         ssh.known_hosts_path("alpha", base=tmp_path)
 
 
-def test_client_identity_path_lives_under_the_data_root(
-    tmp_path: Path,
-) -> None:
-    assert ssh.client_identity_path("alpha", base=tmp_path) == (
-        tmp_path / "alpha" / "identity"
-    )
-
-
-def test_identity_dir_keys_on_the_served_id() -> None:
-    """#246: the identity directory keys on the row's immutable id
-    when the daemon serves it, else the typed reference."""
-    assert ssh.identity_dir({"id": "1a2b3c4d"}, "ws") == "1a2b3c4d"
-    assert ssh.identity_dir({}, "ws") == "ws"
-
-
-def test_resolve_private_prefers_the_daemon_half() -> None:
-    """A daemon-minted workspace (#111) hands its private half over
-    the API; that half wins when present."""
-    assert ssh.resolve_private(KEY, "alpha") == PEM
-
-
-def test_resolve_private_falls_back_to_the_client_cache(
+def test_resolve_private_names_an_unheld_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A client-minted workspace (#121) answers private_key: null;
-    the private half then comes from the local cache, written at
-    create — and it must be the pair's other half, checked against
-    the served public line."""
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    private_pem, public = mint("ecdsa")
-    path = tmp_path / "msks" / "alpha" / "identity"
-    path.parent.mkdir(parents=True)
-    path.write_text(private_pem)
-    key = {
-        "public_key": f"{public} msks-client:alpha",
-        "private_key": None,
-    }
-    assert ssh.resolve_private(key, "alpha") == private_pem
-
-
-def test_resolve_private_names_a_stale_cached_half(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A cache entry from a previous incarnation of the workspace id
-    fails as one named line — not as ssh's opaque publickey denial
-    deep inside a session."""
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    stale_pem, _stale_public = mint("ecdsa")
-    path = tmp_path / "msks" / "alpha" / "identity"
-    path.parent.mkdir(parents=True)
-    path.write_text(stale_pem)
-    _current_pem, current_public = mint("ecdsa")
-    key = {
-        "public_key": f"{current_public} msks-client:alpha",
-        "private_key": None,
-    }
-    with pytest.raises(SystemExit, match="does not match"):
-        ssh.resolve_private(key, "alpha")
-
-
-def test_resolve_private_names_a_corrupt_cached_half(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A file that is not a private key at all fails as one named
-    line too — the module's error contract holds for every way the
-    cache can be wrong."""
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    path = tmp_path / "msks" / "alpha" / "identity"
-    path.parent.mkdir(parents=True)
-    path.write_text("not a key")
-    key = {
-        "public_key": "ecdsa-sha2-nistp256 AAAA msks-client:alpha",
-        "private_key": None,
-    }
-    with pytest.raises(SystemExit, match="not a usable private key"):
-        ssh.resolve_private(key, "alpha")
-
-
-def test_resolve_private_names_a_missing_client_half(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """No daemon half and no local file: one SystemExit line naming
-    the recovery — point identity_file at the workspace's private
-    key, a key an older msks wrote may live under the client data
-    root — with the path and the console fallback, not a traceback
-    (#121, #132, #486)."""
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.delenv("MSKSC_IDENTITY_FILE", raising=False)
-    monkeypatch.delenv("MSKSC_DATA_DIR", raising=False)
+    """No agent holding the key and no matching identity file: one
+    SystemExit line naming the rungs it tried — ssh-add the key,
+    point identity_file at it, ssh -i directly — with the console
+    fallback, not a traceback (#497)."""
+    identity_home(monkeypatch, tmp_path)
     with pytest.raises(SystemExit) as caught:
-        ssh.resolve_private({"public_key": "x", "private_key": None}, "alpha")
-    assert "not on this client" in str(caught.value)
+        ssh.resolve_private(
+            {"public_key": "ssh-ed25519 AAAAnomatch x"}, "alpha"
+        )
+    line = str(caught.value)
+    assert "no private half" in line
+    assert "ssh-add" in line
+    assert "MSKSC_IDENTITY_FILE" in line
     # The console keeps working either way (#481): the recovery
     # says so instead of implying the console needs the key.
-    assert "token-gated root autologin" in str(caught.value)
+    assert "token-gated root autologin" in line
 
 
 def identity_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """A deterministic operator-identity environment (#336): a
-    fresh data root, no ambient identity_file."""
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    """A deterministic operator-identity environment (#336): no
+    ambient identity_file."""
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.delenv("MSKSC_IDENTITY_FILE", raising=False)
-    monkeypatch.delenv("MSKSC_DATA_DIR", raising=False)
 
 
 def plant_operator_key(monkeypatch, tmp_path) -> tuple[str, str, Path]:
@@ -668,29 +598,7 @@ def test_identity_file_resolves_the_operator_key(
     served public line."""
     identity_home(monkeypatch, tmp_path)
     pem, public, _mine = plant_operator_key(monkeypatch, tmp_path)
-    key = {"public_key": f"{public} msks-client:ws", "private_key": None}
-    assert ssh.resolve_private(key, "ws1") == pem
-
-
-def test_a_data_root_key_resolves_only_when_configured(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A key an older msks wrote to <data_dir>/identity is not read
-    implicitly (#486 — the configured file is the only rung): the
-    workspace resolves when identity_file points at it, and the
-    refusal names it as the recovery when nothing is configured."""
-    identity_home(monkeypatch, tmp_path)
-    pem, public = mint("ed25519")
-    legacy = tmp_path / "data" / "msks" / "identity"
-    legacy.parent.mkdir(parents=True)
-    legacy.write_text(pem)
-    key = {"public_key": f"{public} x", "private_key": None}
-    # Unconfigured: the legacy file does not resolve, and the
-    # refusal names the data root as the recovery.
-    with pytest.raises(SystemExit, match="older msks"):
-        ssh.resolve_private(key, "ws1")
-    # Configured: the same file answers.
-    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(legacy))
+    key = {"public_key": f"{public} msks-client:ws"}
     assert ssh.resolve_private(key, "ws1") == pem
 
 
@@ -698,80 +606,36 @@ def test_resolve_private_keeps_access_across_a_recreated_workspace(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A workspace re-created under the same name gets a new id but
-    the same operator key: the new row's per-workspace path is
-    empty and the operator rung answers, so the "re-created since
-    that key was stored" failure mode disappears for operator-key
-    workspaces (#336)."""
+    the same operator key: the operator rung answers, so the
+    workspace keeps its access (#336)."""
     identity_home(monkeypatch, tmp_path)
     pem, public, _mine = plant_operator_key(monkeypatch, tmp_path)
-    # The OLD incarnation's per-workspace half still sits under the
-    # old id — a stale half for a row that no longer exists.
-    old_pem, _old_public = mint("ecdsa")
-    old = tmp_path / "data" / "msks" / "old-id" / "identity"
-    old.parent.mkdir(parents=True)
-    old.write_text(old_pem)
-    new = {"public_key": f"{public} msks-client:ws", "private_key": None}
+    new = {"public_key": f"{public} msks-client:ws"}
     assert ssh.resolve_private(new, "new-id") == pem
-
-
-def test_resolve_private_falls_past_a_stale_half_to_the_operator(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A stale per-workspace half (the id's earlier incarnation)
-    falls through to the operator identity before the refusal: the
-    row was re-created as an operator-key workspace (#336)."""
-    identity_home(monkeypatch, tmp_path)
-    pem, public, _mine = plant_operator_key(monkeypatch, tmp_path)
-    stale_pem, _stale_public = mint("ecdsa")
-    path = tmp_path / "data" / "msks" / "ws1" / "identity"
-    path.parent.mkdir(parents=True)
-    path.write_text(stale_pem)
-    key = {
-        "public_key": f"{public} msks-client:ws",
-        "private_key": None,
-    }
-    assert ssh.resolve_private(key, "ws1") == pem
 
 
 def test_resolve_private_recovery_names_identity_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """When nothing local matches — no per-workspace half, and an
-    operator identity that either resolves to a different key or
-    does not resolve at all — the recovery line names the
-    identity_file setting among the rungs it tried (#336)."""
+    """When nothing holds the workspace's key — an operator
+    identity that either resolves to a different key or does not
+    resolve at all — the recovery line names the identity_file
+    setting among the rungs it tried (#336, #497)."""
     identity_home(monkeypatch, tmp_path)
     # A resolving operator key that pairs with a DIFFERENT public
     # half: the rung declines, not guesses.
     _pem, _public, _mine = plant_operator_key(monkeypatch, tmp_path)
-    key = {"public_key": "ssh-ed25519 AAAAnomatch x", "private_key": None}
+    key = {"public_key": "ssh-ed25519 AAAAnomatch x"}
     with pytest.raises(SystemExit) as caught:
         ssh.resolve_private(key, "ws1")
     line = str(caught.value)
     assert "MSKSC_IDENTITY_FILE" in line
-    assert "not on this client" in line
+    assert "no private half" in line
     # And with nothing set at all: no identity resolves, the same
     # refusal answers.
     monkeypatch.delenv("MSKSC_IDENTITY_FILE")
-    with pytest.raises(SystemExit, match="no operator identity is configured"):
+    with pytest.raises(SystemExit, match="no private half"):
         ssh.resolve_private(key, "ws1")
-
-
-def test_a_broken_identity_file_never_breaks_an_intact_workspace(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """The operator rung consults lazily, only after the
-    per-workspace half fails: a set-but-broken identity_file must
-    not lock an operator out of a workspace whose client-minted
-    half is intact (#121 mixed fleet beside #336)."""
-    identity_home(monkeypatch, tmp_path)
-    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(tmp_path / "gone"))
-    pem, public = mint("ecdsa")
-    path = tmp_path / "data" / "msks" / "ws1" / "identity"
-    path.parent.mkdir(parents=True)
-    path.write_text(pem)
-    key = {"public_key": f"{public} msks-client:ws1", "private_key": None}
-    assert ssh.resolve_private(key, "ws1") == pem
 
 
 def test_resolve_private_names_a_broken_identity_file(
@@ -783,18 +647,18 @@ def test_resolve_private_names_a_broken_identity_file(
     identity_home(monkeypatch, tmp_path)
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(tmp_path / "gone"))
     with pytest.raises(SystemExit, match="operator identity file"):
-        ssh.resolve_private({"public_key": "x", "private_key": None}, "ws1")
+        ssh.resolve_private({"public_key": "x"}, "ws1")
     junk = tmp_path / "junk"
     junk.write_text("not a key")
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(junk))
     with pytest.raises(SystemExit, match="OpenSSH format"):
-        ssh.resolve_private({"public_key": "x", "private_key": None}, "ws1")
+        ssh.resolve_private({"public_key": "x"}, "ws1")
     locked = tmp_path / "locked"
     unencrypted, _public = mint("ed25519")
     locked.write_text(encrypted(unencrypted))
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(locked))
     with pytest.raises(SystemExit, match="encrypted"):
-        ssh.resolve_private({"public_key": "x", "private_key": None}, "ws1")
+        ssh.resolve_private({"public_key": "x"}, "ws1")
 
 
 def test_a_relative_identity_file_is_refused(
@@ -1168,20 +1032,6 @@ def test_cache_dir_honors_msksc_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ssh.cache_dir() == Path("/tmp/per-checkout-cache")
 
 
-def test_data_dir_honors_xdg(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("XDG_DATA_HOME", "/tmp/xdg-data")
-    assert ssh.data_dir() == Path("/tmp/xdg-data/msks")
-
-
-def test_data_dir_honors_msksc_dir(monkeypatch: pytest.MonkeyPatch) -> None:
-    """`MSKSC_DATA_DIR` names the root itself and wins over the
-    XDG base (#251) — separately from the cache variable, since
-    the minted identities outlive a disposable cache."""
-    monkeypatch.setenv("XDG_DATA_HOME", "/tmp/xdg-data")
-    monkeypatch.setenv("MSKSC_DATA_DIR", "/tmp/durable-identities")
-    assert ssh.data_dir() == Path("/tmp/durable-identities")
-
-
 def test_cache_dir_expands_a_home_relative_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1192,29 +1042,26 @@ def test_cache_dir_expands_a_home_relative_override(
     assert ssh.cache_dir() == Path.home() / "state" / "cache"
 
 
-def test_data_dir_refuses_a_relative_override(
+def test_cache_dir_refuses_a_relative_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A relative root names a different directory from every
     working directory — the one thing a state root must not do —
     so it is one named line, not a silent CWD-dependent location
     (#251)."""
-    monkeypatch.setenv("MSKSC_DATA_DIR", "rel/identities")
-    with pytest.raises(SystemExit, match="MSKSC_DATA_DIR"):
-        ssh.data_dir()
+    monkeypatch.setenv("MSKSC_CACHE_DIR", "rel/host-keys")
+    with pytest.raises(SystemExit, match="MSKSC_CACHE_DIR"):
+        ssh.cache_dir()
 
 
-@pytest.mark.parametrize("variable", ["MSKSC_CACHE_DIR", "MSKSC_DATA_DIR"])
 def test_state_dir_empty_counts_as_unset(
-    monkeypatch: pytest.MonkeyPatch, variable: str
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An empty value is the unset state — the same rule the
     shell preset applies — so the XDG root answers (#251)."""
     monkeypatch.setenv("XDG_CACHE_HOME", "/tmp/xdg-cache")
-    monkeypatch.setenv("XDG_DATA_HOME", "/tmp/xdg-data")
-    monkeypatch.setenv(variable, "")
+    monkeypatch.setenv("MSKSC_CACHE_DIR", "")
     assert ssh.cache_dir() == Path("/tmp/xdg-cache/msks")
-    assert ssh.data_dir() == Path("/tmp/xdg-data/msks")
 
 
 # --- passthrough handling ---
@@ -1822,7 +1669,7 @@ def test_prepare_reports_the_boot_it_performed() -> None:
 
 def test_identity_comment_reads_the_public_line() -> None:
     assert ssh.identity_comment(KEY) == "msksd:alpha"
-    bare = {"public_key": "ssh-ed25519 AAAA", "private_key": PEM}
+    bare = {"public_key": "ssh-ed25519 AAAA"}
     assert ssh.identity_comment(bare) == ""
 
 

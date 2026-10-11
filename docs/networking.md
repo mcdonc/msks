@@ -453,9 +453,9 @@ variables, and `--pubkey`. `pubkey_file` (or
 (#495) — a `.pub` file, read in place of any private material,
 the create form for a key kept encrypted while the operator's
 agent holds it. The daemon stores and seeds the public
-line only; its database never holds a private half for a
-workspace created now (the API's key fetch answers
-`private_key: null`). The public half persists across daemon
+line only; its database never holds a private half (the API's
+key fetch answers `private_key: null` for every row, #497). The
+public half persists across daemon
 restarts and workspace stop/start: it lives on the workspace's
 row, and a stop/start cycle serves the same line again. The seed
 composes the identity's script with any `user_data` payload as
@@ -572,31 +572,16 @@ those recoveries.
 
 ### Identities minted before #486
 
-A workspace whose row predates #486 keeps the identity it was
-created with. A daemon-minted row (#111, `--daemon-mint`, or a
-bare create before #336) still serves both halves over the
-authenticated API — a token holder already owns the workspace's
-root console, so the private half grants nothing new:
-
-```bash
-msks key myws                    # the public authorized_keys line
-msks key myws --private          # the pre-#486 private half, on stdout
-msks key myws --out ./myws.key   # written mode 0600
-```
-
-A client-minted row (#121, `--key-type`) keeps its private half
-in the file the creating client wrote —
-`~/.local/share/msks/<id>/identity`, honoring `XDG_DATA_HOME` or
-`MSKSC_DATA_DIR` — and `msks ssh` reads it from there (checking
-the stored half against the served public line, so a stale copy
-fails as one named line, not ssh's opaque `Permission denied`).
-A key an older msks minted to the data root itself
-(`~/.local/share/msks/identity`) resolves once `identity_file`
-points at it. Losing such a file loses ssh to that workspace; the
-console keeps working — it is the token-gated root autologin
-(#481), not a key login. Deleting the workspace leaves the stored
-half behind, like its `known_hosts` — remove the per-workspace
-directory under the data root when you want the material gone.
+A workspace whose row predates #486 keeps the public half it was
+created with, and the private half stays wherever the mint left
+it — on the client that minted it, or in the operator's own
+files. The daemon holds none (#497 dropped the stored halves and
+the serving of them), so a pre-#486 workspace logs in the same
+way a current one does: the operator's agent when it holds the
+key, the file `identity_file` names when it pairs with the
+planted public half, `ssh -i` with the half directly — and the
+console keeps working either way, the token-gated root autologin
+(#481), not a key login.
 
 ### Pushing code out with your own credentials
 

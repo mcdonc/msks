@@ -75,13 +75,10 @@ class Workspace(Base):
     # The identity (#111, #486): the public half is one
     # authorized_keys line (algorithm name, key, and a provenance
     # comment). NULL on a keyless create or a pre-#111 row — no
-    # key was seeded, no key fetch serves it.
+    # key was seeded, no key fetch serves it. The private half
+    # lives nowhere on the daemon (#497): the operator's own key
+    # holds it.
     ssh_pubkey: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # The private half a pre-#486 daemon minted and escrowed
-    # (#111): NULL for every row created now (#486 — the daemon
-    # never holds a private half), kept readable for the rows that
-    # carry one so they stay reachable.
-    ssh_privkey: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The workspace's login user (#248): create-time and immutable,
     # like the specs. The seed provisions the account at first boot
     # when the image does not ship it; the key endpoint serves it as

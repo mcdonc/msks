@@ -103,7 +103,6 @@ GLOBAL_ENV_VARS: dict[str, str] = {
     "cafile": "MSKSC_CAFILE",
     "expected_image": "MSKSC_EXPECTED_IMAGE",
     "cache_dir": "MSKSC_CACHE_DIR",
-    "data_dir": "MSKSC_DATA_DIR",
     "identity_file": "MSKSC_IDENTITY_FILE",
     "pubkey_file": "MSKSC_PUBKEY_FILE",
     "terminal_title": "MSKSC_TERMINAL_TITLE",
@@ -666,7 +665,7 @@ def read_token_file(token_file: str, path: str) -> str:
 
 
 def global_or_env(key: str, doc: dict):
-    """A global-only key's winner (``cache_dir``, ``data_dir``,
+    """A global-only key's winner (``cache_dir``,
     ``identity_file``): the environment first, then the file's
     global value."""
     env = os.environ.get(GLOBAL_ENV_VARS[key], "")
@@ -723,7 +722,6 @@ class ClientConfig:
     cafile: str
     expected_image: str
     cache_dir: str | None
-    data_dir: str | None
     identity_file: str | None
     pubkey_file: str | None
     terminal_title: str | None
@@ -754,7 +752,6 @@ def resolve(
     cafile = resolved_scalar("cafile", entry, selection, doc, layer)
     image = resolved_scalar("expected_image", entry, selection, doc, layer)
     cache = resolved_global("cache_dir", doc, layer)
-    data = resolved_global("data_dir", doc, layer)
     identity = resolved_global("identity_file", doc, layer)
     pubkey = resolved_global("pubkey_file", doc, layer)
     title = resolved_global("terminal_title", doc, layer)
@@ -764,7 +761,6 @@ def resolve(
         cafile=cafile or "",
         expected_image=image or "",
         cache_dir=cache,
-        data_dir=data,
         identity_file=identity,
         pubkey_file=pubkey,
         terminal_title=title,
@@ -828,7 +824,7 @@ def resolved_scalar(
 
 
 def resolved_global(key: str, doc: dict, layer: dict):
-    """One global-only key's winner (``cache_dir``, ``data_dir``,
+    """One global-only key's winner (``cache_dir``,
     ``identity_file``), filed when the file provided it."""
     value, from_file = global_or_env(key, doc)
     if from_file and value is not None:
@@ -895,8 +891,6 @@ def render_template() -> str:
 # expected_image: msks/debian13:1.0  # the image msks ls compares
 #                                # against the daemon's /health (#160)
 # cache_dir: ~/.cache/msks      # per-workspace host-key caches (#251)
-# data_dir: ~/.local/share/msks # client state (#251; a pre-#486
-#                                # client wrote identity files here)
 # identity_file: ~/.ssh/id_ed25519  # your own private key — the ssh
 #                                # identity a bare msks create plants
 #                                # into every workspace (#336); msks
