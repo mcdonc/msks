@@ -107,17 +107,21 @@ class MainScreen(Screen):
     """The tree's root (#309): every workspace one row; create,
     start, stop, and remove happen here; Enter opens the
     workspace's page, ``e`` the secrets page (#431), ``/`` the
-    typeahead jump (#470 L4)."""
+    typeahead jump (#470 L4). The footer's descriptions stay
+    short (#524): every binding must fit the 80-column footer a
+    24-row terminal shows — the longer words (``Jump`` for the
+    typeahead, ``Del`` for remove, ``Reload`` for the standing
+    refresh) abbreviate their actions without hiding a binding."""
 
     BINDINGS = [
         Binding("enter", "open", "Open", priority=True),
-        Binding("/", "search", "Search"),
+        Binding("/", "search", "Jump"),
         Binding("c", "create", "New"),
         Binding("s", "start", "Start"),
         Binding("x", "stop", "Stop"),
-        Binding("D", "remove", "Remove"),
+        Binding("D", "remove", "Del"),
         Binding("e", "secrets", "Secrets"),
-        Binding("r", "refresh", "Refresh"),
+        Binding("r", "refresh", "Reload"),
         Binding("q", "quit", "Quit"),
         Binding("escape", "quit", show=False),
     ]

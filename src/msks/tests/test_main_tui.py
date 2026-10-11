@@ -4097,6 +4097,54 @@ async def test_every_footer_names_its_enter_binding(monkeypatch) -> None:
         await wait_for(enter_shown)  # the consent page: allow for…
 
 
+async def test_every_footer_fits_the_smallest_terminal(monkeypatch) -> None:
+    """#524: every footer the tree shows fits an 80-column
+    terminal. The widest shapes — the list's nine bindings and
+    the consent page's eight with a hold waiting — abbreviate or
+    drop what would not fit: the list's long words shorten
+    (``Jump`` for the typeahead, ``Del`` for remove, ``Reload``
+    for the standing refresh) and the command palette stays off
+    (the tree registers no commands, and its docked key is twelve
+    of the columns); nothing is clipped — a footer whose bindings
+    outgrew the line scrolled the last of them out of sight."""
+    scripted_link(monkeypatch, [rules_frame(), request_frame("r-1")])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+
+    def footer_settled(app) -> bool:
+        """The top screen's footer has composed its bindings —
+        the count the screen shows — and scrolled none of itself
+        away; False until the layout settles, so the wait covers a
+        screen the walk just pushed."""
+        try:
+            footer = app.screen.query_one("Footer")
+        except NoMatches:
+            return False
+        shown = sum(
+            1
+            for _, binding, _, _ in app.screen.active_bindings.values()
+            if binding.show
+        )
+        return len(footer.children) == shown and footer.max_scroll_x == 0
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await wait_for(lambda: footer_settled(app))  # the list's nine
+        assert len(app.screen.query_one("Footer").children) == 9
+        await open_page(pilot, app)
+        await wait_for(lambda: footer_settled(app))  # the page
+        await pilot.press("e")
+        await wait_for(lambda: on_consent(app))
+        # A hold waiting widens the consent footer to its full
+        # eight bindings — the shape tied with the list as the
+        # tree's widest, so the fit claim must cover it (#524
+        # review).
+        await wait_for(
+            lambda: len(app.screen.query_one("Footer").children) == 8
+        )
+        await wait_for(lambda: footer_settled(app))  # the consent page
+        assert "ctrl+p" not in app.screen.active_bindings  # palette off
+
+
 # -- the design pass (#470): the workspace page --------------------------
 
 

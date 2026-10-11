@@ -100,6 +100,13 @@ class MsksTuiApp(App):
     """The tree app: the workspaces list at the root, one page per
     workspace above it, the create form above that."""
 
+    # (#524) The command palette stays off: the tree registers no
+    # commands of its own, and the footer key it would dock —
+    # twelve columns — is the difference between every screen's
+    # bindings fitting an 80-column terminal and the last one
+    # being cut off (the consent decider app made the same call).
+    ENABLE_COMMAND_PALETTE = False
+
     CSS = """
     Screen { layout: vertical; }
     #status { height: 1; padding: 0 1; background: $panel;
