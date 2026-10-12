@@ -366,6 +366,21 @@ async def test_spawn_aclose_and_its_done_callback() -> None:
 # --- the device pin (#483) -------------------------------------------------
 
 
+def test_bind_records_an_ephemeral_asks_chosen_port() -> None:
+    """``port=0`` binds a kernel-chosen number and the listener
+    records it (#532): the probe dial repoint reads the served
+    port off the running listener's registry entry, so the
+    attribute must name the bound port, not the ask."""
+    listener = TapListener(StubModel(), tap="lo", tap_ip="127.0.0.1", port=0)
+    try:
+        listener.bind()
+        assert listener.port != 0
+        assert listener.port == listener._sock.getsockname()[1]
+    finally:
+        if listener._sock is not None:
+            listener._sock.close()
+
+
 def test_bind_to_device_pins_the_named_tap() -> None:
     """The pin is one setsockopt carrying the tap name as a NUL-
     terminated bytes value — the shape SO_BINDTODEVICE reads."""

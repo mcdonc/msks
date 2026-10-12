@@ -517,6 +517,7 @@ KEY_CASES = [
     ("egress_queue_base", 2048, "net.queue_base", 2048),
     ("conntrack_tool", "/ct", "net.conntrack_tool", "/ct"),
     ("interceptor_port", 9443, "net.interceptor_port", 9443),
+    ("probe_port", 9444, "net.probe_port", 9444),
     ("audit_hmac_key", "k1", "server.audit_hmac_key", "k1"),
     ("image_import_max_mib", 4096, "vmm.image_import_max_mib", 4096),
     (

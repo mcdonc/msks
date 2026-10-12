@@ -251,6 +251,13 @@ class NetSettings:
     # port, one address per workspace — the listeners differ by tap
     # address, so they share the number.
     interceptor_port: int = 8643
+    # The port every per-tap probe service listener binds (#532):
+    # the same one-port-many-addresses shape. The port is the
+    # service's own, not the guest's — the guest dials 443 (the
+    # redirect catches it, and the interceptor's dial is repointed
+    # here), so the number needs no privilege and no host's 443
+    # to be free.
+    probe_port: int = 8644
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> NetSettings:
@@ -338,17 +345,25 @@ class Settings:
 
 
 def check_tap_port_collision(settings: Settings) -> None:
-    """Refuse a daemon whose two per-tap services would bind the
-    same port (#259 review): the LLM proxy binds first at attach
-    and the interceptor's armed bind would then fail with an error
-    naming neither setting — one comparison at load names both."""
-    if (
-        settings.llm.models
-        and settings.llm.port == settings.net.interceptor_port
+    """Refuse a daemon whose per-tap services would bind the same
+    port (#259 review, #532): the LLM proxy binds first at attach,
+    the probe and the interceptor after it — a shared number would
+    fail one of the later binds with an error naming neither
+    setting, so the comparisons at load name them all."""
+    net = settings.net
+    if settings.llm.models and settings.llm.port in (
+        net.interceptor_port,
+        net.probe_port,
     ):
         raise ValueError(
-            "MSKSD_LLM_PORT and MSKSD_INTERCEPTOR_PORT name the same "
-            f"port ({settings.llm.port}); the proxy and the "
+            f"MSKSD_LLM_PORT names the same port as a per-tap "
+            f"listener ({settings.llm.port}); the proxy cannot "
+            "share it"
+        )
+    if net.probe_port == net.interceptor_port:
+        raise ValueError(
+            "MSKSD_PROBE_PORT and MSKSD_INTERCEPTOR_PORT name the "
+            f"same port ({net.probe_port}); the probe and the "
             "interceptor cannot share it"
         )
 
@@ -555,9 +570,10 @@ def _net_settings_from_env(
             "MSKSD_EGRESS_CONSENT_TIMEOUT_S must be positive, "
             f"got {consent_timeout}"
         )
-    interceptor_port = parse_interceptor_port(
+    interceptor_port = parse_tap_port(
         env, "MSKSD_INTERCEPTOR_PORT", default.interceptor_port
     )
+    probe_port = parse_tap_port(env, "MSKSD_PROBE_PORT", default.probe_port)
     return cls(
         enabled=_env(env, "MSKSD_EGRESS_ENABLED", str(default.enabled)).lower()
         == "true",
@@ -588,14 +604,13 @@ def _net_settings_from_env(
             env, "MSKSD_CONNTRACK_TOOL", default.conntrack_tool
         ),
         interceptor_port=interceptor_port,
+        probe_port=probe_port,
     )
 
 
-def parse_interceptor_port(
-    env: Mapping[str, str], name: str, default: int
-) -> int:
-    """The interceptor listeners' shared TCP port (#199): a named
-    error outside the port range."""
+def parse_tap_port(env: Mapping[str, str], name: str, default: int) -> int:
+    """A per-tap listener port (#199, #532): a named error outside
+    the port range."""
     value = _parse_int(env, name, default)
     if not 1 <= value <= 65535:
         raise ValueError(f"{name} must be a TCP port, got {value}")

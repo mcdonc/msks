@@ -118,6 +118,8 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_CONNTRACK_TOOL",
     # The egress interceptor's shared listener port (#199).
     "MSKSD_INTERCEPTOR_PORT",
+    # The probe service's own per-tap listener port (#532).
+    "MSKSD_PROBE_PORT",
     # SecretStoreSettings — the placeholder secret store (#198).
     "MSKSD_SECRET_STORE_UNLOCK_TIMEOUT_S",
     # LlmSettings — the workspace LLM proxy (#259).

@@ -309,10 +309,13 @@ redirect (guest TCP 80/443 to the per-tap interceptor listener),
 the splice tier (the SNI matched an allowlisted entry), and the
 daemon CA's leaf mint; the swap then rewrote the raw blob
 into a well-formed credential, the interceptor's upstream dial
-landed on the service's own listener (port 443 on the tap
-address, verified against the service CA the daemon mints), and
+was repointed to the service's own per-tap port
+(`probe_port`, default 8644 — the guest's 443 is the
+redirect's port, and the service listener binds the setting's
+unprivileged number a host wildcard cannot squat, #532) and
+verified against the service CA the daemon mints, and
 the service validated the fixed pair. A broken link answers
-distinctly: an TLS failure names the splice or the CA, a `401`
+distinctly: a TLS failure names the splice or the CA, a `401`
 names the swap (or a wrong credential), a timeout names the
 redirect.
 
@@ -359,8 +362,11 @@ dedicated service user holding exactly two ambient capabilities:
 `CAP_NET_ADMIN` (taps and their addresses, the nftables tables,
 and — because ambient capabilities survive `exec` — the workspace
 VMM opening its tap) and `CAP_NET_BIND_SERVICE` (the DHCP and DNS
-listeners, UDP 67 and 53, and the probe service's TCP 443). Nothing in the daemon's process tree
+listeners, UDP 67 and 53). Nothing in the daemon's process tree
 runs as uid 0; `/dev/kvm` reaches the VMM through the `kvm` group.
+The per-tap service listeners — the interceptor, the LLM proxy,
+and the probe service (#532) — bind ports above 1024 by default;
+a setting that names a privileged port needs the capability.
 The host's firewall is never touched; containment stays inside the
 host by design.
 

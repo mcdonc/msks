@@ -28,10 +28,12 @@ import base64
 #: requests aimed at it locally — no upstream exists.
 PROBE_HOST = "secretprobe.msks"
 
-#: The port the service answers on: the guest dials HTTPS (443),
-#: the nft redirect preserves the original destination's port, and
-#: the interceptor's upstream dial lands here — so 443 is the only
-#: port the service can serve.
+#: The guest-facing port the probe answers on (#532's two-port
+#: shape): the guest dials HTTPS (443) and the nft redirect
+#: catches it — the service's own listener binds the setting's
+#: unprivileged per-tap port instead, and the interceptor's dial
+#: is repointed there. The API's probe answer and every
+#: guest-facing fact name this 443.
 PROBE_PORT = 443
 
 #: The seeded probe placeholder's label (#424): the daemon-wide row

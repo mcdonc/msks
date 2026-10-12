@@ -659,6 +659,11 @@ class TapListener:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((self.tap_ip, self.port))
+        # An ephemeral ask (``port=0``) binds a kernel-chosen
+        # number — record it, so the served port is readable off
+        # the listener (the probe dial repoint reads it off the
+        # running listener's registry entry, #532).
+        self.port = sock.getsockname()[1]
         bind_to_device(sock, self.tap)
         sock.listen(128)
         sock.setblocking(False)

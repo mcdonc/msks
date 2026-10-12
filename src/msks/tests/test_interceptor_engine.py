@@ -715,3 +715,94 @@ async def test_matching_is_case_insensitive(authority) -> None:
     await engine.InterceptorAddon(owner).request(flow)
     assert owner.swaps == [("ws-a", "api", "API.Example.COM")]
     assert flow.request.host == "API.Example.COM"
+
+
+def connect_data(client, server):
+    """The server_connect hook's payload."""
+    return SimpleNamespace(client=client, server=server)
+
+
+class FakeServer:
+    """The upstream connection the dial repoint rewrites."""
+
+    def __init__(self, address) -> None:
+        self.address = address
+
+
+class PortOwner(FakeOwner):
+    """The manager surface plus the probe port (#532): the running
+    listener's when one serves (keyed by workspace), else the
+    setting's fallback."""
+
+    def __init__(self, authority, port, running=None) -> None:
+        super().__init__({}, authority)
+        self.probe_service_port = port
+        self.running = running or {}
+
+    def probe_listener_port(self, workspace_id):
+        return self.running.get(workspace_id, self.probe_service_port)
+
+
+def test_the_probes_dial_repoints_to_the_service_port(authority) -> None:
+    """The probe's upstream dial lands on the service's own port,
+    not the 443 the redirect preserved (#532): the address — the
+    tap itself, the resolver's own answer — is unchanged, and
+    only the port moves, so a host wildcard on 443 cannot divert
+    or squat the service."""
+    addon = engine.InterceptorAddon(PortOwner(authority, 8644))
+    server = FakeServer((TAP, 443))
+    addon.server_connect(
+        connect_data(FakeClient(sni="secretprobe.msks"), server)
+    )
+    assert server.address == (TAP, 8644)
+
+
+def test_every_other_destination_dials_what_the_guest_aimed_at(
+    authority,
+) -> None:
+    """The repoint is the probe's alone: any other SNI — and a
+    sentinelless plain-HTTP connection — keeps the original
+    destination's port exactly as transparent mode computed it."""
+    addon = engine.InterceptorAddon(PortOwner(authority, 8644))
+    other = FakeServer(("198.51.100.7", 443))
+    addon.server_connect(connect_data(FakeClient(), other))
+    assert other.address == ("198.51.100.7", 443)
+    plain = FakeServer((TAP, 80))
+    addon.server_connect(connect_data(FakeClient(sni=None, tls=False), plain))
+    assert plain.address == (TAP, 80)
+
+
+def test_the_probes_dial_case_matches_and_guards_a_blank_address(
+    authority,
+) -> None:
+    """The name compares case-insensitively (DNS semantics), and
+    a connection whose address is not yet known stays untouched
+    rather than rewritten to a half-formed pair."""
+    addon = engine.InterceptorAddon(PortOwner(authority, 8644))
+    mixed = FakeServer((TAP, 443))
+    addon.server_connect(
+        connect_data(FakeClient(sni="SecretProbe.MSKS"), mixed)
+    )
+    assert mixed.address == (TAP, 8644)
+    blank = FakeServer(None)
+    addon.server_connect(
+        connect_data(FakeClient(sni="secretprobe.msks"), blank)
+    )
+    assert blank.address is None
+
+
+def test_the_dial_follows_the_running_listener_not_the_setting(
+    authority,
+) -> None:
+    """A reload that changes the setting cannot tear a standing
+    chain (#532 review): the dial aims at the workspace's running
+    listener's port until its next start rebinds the new number,
+    whatever the setting says now."""
+    addon = engine.InterceptorAddon(
+        PortOwner(authority, 8644, running={"ws-a": 9000})
+    )
+    server = FakeServer((TAP, 443))
+    addon.server_connect(
+        connect_data(FakeClient(sni="secretprobe.msks"), server)
+    )
+    assert server.address == (TAP, 9000)
