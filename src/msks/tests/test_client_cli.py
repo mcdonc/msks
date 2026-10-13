@@ -300,6 +300,108 @@ def test_cmd_ls_stays_silent_when_images_match(
     assert capsys.readouterr().err == ""
 
 
+#: One refused probe bind as the daemon reports it (#533): the
+#: row's listener_faults entry verbatim.
+FAULTED_ROWS = [
+    {
+        "id": "1a2b3c4d",
+        "name": "alpha",
+        "status": "running",
+        "listener_faults": {
+            "probe": {
+                "port": 8644,
+                "error": "[Errno 98] Address already in use",
+            }
+        },
+    },
+    {
+        "id": "2b3c4d5e",
+        "name": "beta",
+        "status": "running",
+        "listener_faults": {},
+    },
+]
+
+
+def test_cmd_ls_names_a_refused_bind(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A refused tap-listener bind rides the listing as one
+    stderr line per fault (#533): the workspace, the port, the
+    bind error, and the remedy — and a healthy row stays
+    silent."""
+    client_env(monkeypatch)
+    rc = cli.cmd_ls(
+        transport=mock(lambda req: httpx.Response(200, json=FAULTED_ROWS))
+    )
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert err == (
+        "msks: alpha: the probe endpoint did not start on port 8644 "
+        "([Errno 98] Address already in use); another service holds "
+        "the port — free it or change it (MSKSD_PROBE_PORT)\n"
+    )
+
+
+def test_cmd_doctor_names_refused_binds(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`msks doctor` (#533): one ✗ line per refused bind — the
+    acceptance's one-liner — a ✓ line per healthy running
+    workspace, and exit 1 while any fault stands."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["path"] = req.url.path
+        seen["auth"] = req.headers.get("authorization")
+        return httpx.Response(200, json=FAULTED_ROWS)
+
+    rc = cli.cmd_doctor(transport=mock(handler))
+    assert rc == 1
+    assert seen["path"] == "/api/v1/workspaces"
+    assert seen["auth"] == "Bearer tok"
+    out = capsys.readouterr().out
+    assert (
+        "✗ alpha: the probe endpoint did not start on port 8644 "
+        "([Errno 98] Address already in use); another service holds "
+        "the port — free it or change it (MSKSD_PROBE_PORT)" in out
+    )
+    assert "✓ beta: every tap listener serves" in out
+
+
+def test_cmd_doctor_passes_when_every_listener_serves(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A clean daemon answers exit 0, and a daemon with no
+    running workspaces says so and passes too."""
+    client_env(monkeypatch)
+    rc = cli.cmd_doctor(
+        transport=mock(lambda req: httpx.Response(200, json=ROWS))
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "✓ alpha: every tap listener serves" in out
+    rc = cli.cmd_doctor(
+        transport=mock(lambda req: httpx.Response(200, json=[]))
+    )
+    assert rc == 0
+    assert "no running workspaces; nothing to check" in capsys.readouterr().out
+
+
+def test_the_doctor_command_parses(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The parser route: `msks doctor` through main()."""
+    client_env(monkeypatch)
+    rc = cli.main(
+        ["doctor"],
+        transport=mock(lambda req: httpx.Response(200, json=FAULTED_ROWS)),
+    )
+    assert rc == 1
+    assert "probe endpoint" in capsys.readouterr().out
+
+
 def test_cmd_ls_ignores_a_malformed_health_document(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

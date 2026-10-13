@@ -122,6 +122,8 @@ class MsksTuiApp(App):
     #header-meta { height: 1; padding: 0 1; background: $panel;
                    color: $text-muted; text-wrap: nowrap;
                    text-overflow: ellipsis; }
+    #header-faults { padding: 0 1; background: $panel; color: $warning;
+                     text-wrap: nowrap; text-overflow: ellipsis; }
     #consent { height: 1; padding: 0 1; color: $text-muted;
                text-wrap: nowrap; text-overflow: ellipsis; }
     #page { height: 1fr; align: center middle; }

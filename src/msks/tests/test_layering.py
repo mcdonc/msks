@@ -84,6 +84,9 @@ ALLOWED_EDGES = {
     ("app", "consent"),
     ("app", "events"),
     ("app", "interceptor"),
+    # the refused tap-listener record (#533): a root leaf the
+    # composer builds beside the subsystems that write it
+    ("app", "listenerfaults"),
     ("app", "llm"),
     ("app", "microvm"),
     ("app", "model"),

@@ -333,6 +333,27 @@ async def test_a_failed_listener_rolls_the_arm_back(app) -> None:
         await app.state.interceptor.refresh("ws-a")
     assert app.state.interceptor.workspace_for_tap(TAP_IP) is None
     assert FakeMaster.built[0].options.mode == []
+    # The refusal stands in the workspace's record (#533): the
+    # workspace keeps running without interception, and the
+    # record is what names it — the port from the settings, the
+    # error the arm raised.
+    assert app.state.listener_faults.payload("ws-a") == {
+        "interceptor": {
+            "port": 8643,
+            "error": "the interceptor's listener failed to start",
+        }
+    }
+    # A later arm that succeeds clears it.
+    FakeMaster.built[0].proxyserver.ok = True
+    await app.state.interceptor.refresh("ws-a")
+    assert app.state.listener_faults.payload("ws-a") == {}
+    # A disarm — the placeholders revoked — clears it too: the
+    # listener is down by intent, not by refusal.
+    await app.state.model.delete_placeholder(
+        (await app.state.model.list_placeholders())[0]["id"]
+    )
+    await app.state.interceptor.refresh("ws-a")
+    assert app.state.listener_faults.payload("ws-a") == {}
 
 
 async def test_matching_entry_answers_the_hello_question(app) -> None:

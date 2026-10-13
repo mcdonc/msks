@@ -166,6 +166,73 @@ def status_class(status: str) -> str:
     return status if status.isidentifier() and status.isascii() else "other"
 
 
+#: The words a refused bind's line names, per service, and the
+#: setting that moves the service's port (#533): the daemon
+#: records the service's name; every surface that names the
+#: refusal reads its noun and its setting from here. A service
+#: the table does not know still reads a line — its noun is its
+#: own name, and its remedy the generic one.
+FAULT_SERVICES = {
+    "probe": ("the probe endpoint", "MSKSD_PROBE_PORT"),
+    "llm": ("the LLM proxy", "MSKSD_LLM_PORT"),
+    "interceptor": ("the interceptor", "MSKSD_INTERCEPTOR_PORT"),
+}
+
+#: The error text a taken port answers with — matched case-blind
+#: so a locale's own spelling still reads (#533).
+PORT_HELD_MARK = "address already in use"
+
+
+#: The remedy for every other cause (an address the host cannot
+#: assign, a tap that is not there): the error names it, and the
+#: workspace's next start retries the bind (#533).
+RETRY_REMEDY = (
+    "the error names the cause; the workspace's next start retries the bind"
+)
+
+
+def fault_remedy(service: str, error: str) -> str:
+    """The remedy half of a refused-bind line (#533): a taken
+    port names the holder and the setting that moves the bind;
+    every other cause (an address the host cannot assign, a tap
+    that is not there) is its own remedy — the error names it,
+    and the workspace's next start retries the bind."""
+    setting = FAULT_SERVICES.get(service, (None, None))[1]
+    if setting and PORT_HELD_MARK in error.lower():
+        return (
+            "another service holds the port — free it or change "
+            f"it ({setting})"
+        )
+    return RETRY_REMEDY
+
+
+def fault_sentence(label: str, service: str, fault: dict) -> str:
+    """One refused bind's line (#533): the workspace, the surface,
+    the port, the bind error, and the remedy — the sentence
+    ``msks ls``'s notice, the TUI page's line, and ``msks
+    doctor``'s check all print."""
+    noun = FAULT_SERVICES.get(service, (f"the {service} listener",))[0]
+    error = str(fault.get("error") or "")
+    detail = f" ({error})" if error else ""
+    return (
+        f"{label}: {noun} did not start on port "
+        f"{fault.get('port')}{detail}; {fault_remedy(service, error)}"
+    )
+
+
+def fault_sentences(row: dict) -> list[str]:
+    """One line per refused tap-listener bind the row carries
+    (#533), the services ordered by name for a stable display;
+    a row without the field (an older daemon) or without faults
+    answers empty."""
+    label = workspace_label(row)
+    faults = row.get("listener_faults") or {}
+    return [
+        fault_sentence(label, service, fault)
+        for service, fault in sorted(faults.items())
+    ]
+
+
 def clock_now() -> datetime:
     """The wall clock the relative created labels read (#350) —
     the tests' seam for a pinned date."""
@@ -372,6 +439,24 @@ def header_meta(row: dict, theme_variables: dict | None = None) -> Content:
         for mark in re.finditer("·", text)
     ]
     return Content(text, spans)
+
+
+#: The fault block's line budget (#533): the frame's 80 columns
+#: minus its own padding — each refused bind's sentence keeps its
+#: head and tail around the middle cut (the tail carries the
+#: remedy's setting).
+FAULT_LINE_W = 78
+
+
+def faults_content(row: dict) -> Content | None:
+    """The page's refused-bind block (#533): one warning-colored
+    line per fault, clipped to the frame; None when the row
+    carries none (the page hides the line entirely)."""
+    sentences = fault_sentences(row)
+    if not sentences:
+        return None
+    text = "\n".join(clip(sentence, FAULT_LINE_W) for sentence in sentences)
+    return Content(text, [Span(0, len(text), "$warning")])
 
 
 #: The daemon URL's cell budget in the status line (#349): the

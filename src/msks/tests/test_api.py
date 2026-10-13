@@ -196,6 +196,37 @@ async def test_token_admin(client) -> None:
     assert response.status_code == 200
 
 
+async def test_workspace_rows_carry_the_listener_faults(client) -> None:
+    """The refused-bind record rides the row (#533): empty for a
+    workspace whose every attempted listener bound, the recorded
+    port and error for one that refused — on both the listing
+    and the single-workspace read."""
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-a", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    wid = created.json()["id"]
+    listed = await http.get("/api/v1/workspaces", headers=auth())
+    assert listed.json()[0]["listener_faults"] == {}
+    one = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
+    assert one.json()["listener_faults"] == {}
+    app.state.listener_faults.record(
+        wid, "probe", 8644, "[Errno 98] Address already in use"
+    )
+    listed = await http.get("/api/v1/workspaces", headers=auth())
+    assert listed.json()[0]["listener_faults"] == {
+        "probe": {
+            "port": 8644,
+            "error": "[Errno 98] Address already in use",
+        }
+    }
+    one = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
+    assert one.json()["listener_faults"] == listed.json()[0]["listener_faults"]
+
+
 async def test_workspace_lifecycle(client) -> None:
     http, _app, stub = client
     created = await http.post(
