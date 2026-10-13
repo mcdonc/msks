@@ -17,11 +17,11 @@ from .tui.rows import fault_sentences, workspace_label
 
 
 def workspace_doctor_lines(row: dict) -> list[str]:
-    """One workspace's lines: a ✓ when every bound listener
-    serves, one ✗ per refused bind."""
+    """One workspace's lines: a ✓ naming the clean record, one ✗
+    per refused bind."""
     sentences = fault_sentences(row)
     if not sentences:
-        return [f"✓ {workspace_label(row)}: every tap listener serves"]
+        return [f"✓ {workspace_label(row)}: no refused tap-listener binds"]
     return [f"✗ {sentence}" for sentence in sentences]
 
 

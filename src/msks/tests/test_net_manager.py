@@ -1987,6 +1987,32 @@ async def test_a_refused_llm_bind_stands_in_the_record(
     await manager.detach("ws-a")
 
 
+async def test_a_failed_interceptor_arm_at_attach_leaves_no_record(
+    net_app, monkeypatch
+) -> None:
+    """#533 review: the interceptor arms last in _build, and its
+    refusal fails the boot — the unwind forgets whatever the
+    attempt recorded, because the workspace never runs and the
+    boot's own error is the name. The record stays empty."""
+    app, _ip, _nft = net_app
+    monkeypatch.setattr(
+        manager_mod, "verify_forwarding", lambda path=None: None
+    )
+
+    async def refusing_refresh(workspace_id: str) -> None:
+        raise RuntimeError("the interceptor's listener failed to start")
+
+    monkeypatch.setattr(app.state.interceptor, "refresh", refusing_refresh)
+    manager = NetManager(
+        app, dhcp_factory=FakeService, dns_factory=FakeService
+    )
+    app.state.net = manager
+    await manager.start()
+    with pytest.raises(RuntimeError, match="listener failed"):
+        await manager.attach("ws-a", want=True)
+    assert app.state.listener_faults.payload("ws-a") == {}
+
+
 async def test_attach_works_without_a_probe_subsystem(net_app) -> None:
     """A stripped-down host with no probe service attaches and
     detaches untouched (#424)."""

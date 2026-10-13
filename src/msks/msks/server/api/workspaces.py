@@ -210,9 +210,9 @@ def router(app) -> APIRouter:
         dependencies=[Depends(require_token)],
     )
     async def get_workspace(workspace_id: str) -> dict:
-        return with_listener_faults(
-            app, await workspace_or_404(app, workspace_id)
-        )
+        row = await workspace_or_404(app, workspace_id)
+        with_listener_faults(app, row)
+        return row
 
     @api.get(
         "/api/v1/workspaces/{workspace_id}/ssh-key",

@@ -329,6 +329,14 @@ class Interceptor:
             if not covering:
                 if workspace_id in self._armed:
                     await self.disarm(workspace_id)
+                else:
+                    # Nothing wants the listener now: a fault from
+                    # an earlier failed arm no longer names a live
+                    # absence (#533) — the armed case's disarm
+                    # clear stands in for this branch.
+                    self.app.state.listener_faults.clear(
+                        workspace_id, "interceptor"
+                    )
                 return
             if workspace_id in self._armed:
                 self._entries[workspace_id] = table
@@ -419,12 +427,16 @@ class Interceptor:
             with contextlib.suppress(Exception):
                 await self.disarm(workspace_id)
             # The refusal stands in the fault registry (#533)
-            # until a later arm succeeds or the workspace detaches
-            # — the record runs after the unwind's disarm so the
-            # clear disarm carries cannot eat it.
-            self.app.state.listener_faults.record(
-                workspace_id, "interceptor", port, str(exc)
-            )
+            # until a later arm succeeds, the placeholders stop
+            # covering the workspace, or the workspace detaches —
+            # the record runs after the unwind's disarm so the
+            # clear disarm carries cannot eat it. A cancellation
+            # (daemon shutdown) records nothing: it names no bind
+            # refusal.
+            if not isinstance(exc, asyncio.CancelledError):
+                self.app.state.listener_faults.record(
+                    workspace_id, "interceptor", port, str(exc)
+                )
             raise
         self.app.state.listener_faults.clear(workspace_id, "interceptor")
 

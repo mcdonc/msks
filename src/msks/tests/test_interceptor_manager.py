@@ -356,6 +356,47 @@ async def test_a_failed_listener_rolls_the_arm_back(app) -> None:
     assert app.state.listener_faults.payload("ws-a") == {}
 
 
+async def test_a_cancellation_mid_arm_records_no_fault(
+    app, monkeypatch
+) -> None:
+    """#533: a cancellation mid-arm (daemon shutdown) unwinds the
+    registration like any failure but records no fault — the
+    cancellation names no bind refusal, and the detach that
+    follows forgets the workspace's record anyway."""
+    await mint_placeholder(app)
+    calls = {"n": 0}
+
+    async def cancelled_once() -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise asyncio.CancelledError()
+
+    monkeypatch.setattr(app.state.interceptor, "apply_modes", cancelled_once)
+    with pytest.raises(asyncio.CancelledError):
+        await app.state.interceptor.refresh("ws-a")
+    assert app.state.interceptor.workspace_for_tap(TAP_IP) is None
+    assert app.state.listener_faults.payload("ws-a") == {}
+
+
+async def test_a_revocation_clears_a_failed_arms_fault(app) -> None:
+    """#533 review: a fault from a failed arm outlives the
+    placeholder that wanted the listener — a revocation (or an
+    expiry — the watcher's sweep drives the same refresh) makes
+    the absence intentional, and the record must read clean even
+    though the workspace never armed."""
+    row = await mint_placeholder(app)
+    app.state.interceptor._master_factory = fake_master_factory()
+    await app.state.interceptor.ensure_master()
+    FakeMaster.built[0].proxyserver.ok = False
+    with pytest.raises(MicrovmError, match="listener failed"):
+        await app.state.interceptor.refresh("ws-a")
+    assert app.state.interceptor.workspace_for_tap(TAP_IP) is None
+    assert app.state.listener_faults.payload("ws-a")
+    await app.state.model.delete_placeholder(row["id"])
+    await app.state.interceptor.refresh("ws-a")
+    assert app.state.listener_faults.payload("ws-a") == {}
+
+
 async def test_matching_entry_answers_the_hello_question(app) -> None:
     await mint_placeholder(app, dests=[".example.com"])
     await app.state.interceptor.refresh("ws-a")

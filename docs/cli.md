@@ -716,8 +716,9 @@ A daemon with zero workspaces prints nothing (an empty table) and an
 empty JSON array under `--json`.
 
 A workspace the daemon booted without one of its tap listeners
-prints one notice line per refused bind below the table, on
-standard error — the data on standard output stays parseable:
+prints one notice line per refused bind beside the listing, on
+standard error — the data on standard output stays parseable,
+under both the table and `--json`:
 
 ```text
 msks: my-workspace: the probe endpoint did not start on port 8644 ([Errno 98] Address already in use); another service holds the port — free it or change it (MSKSD_PROBE_PORT)
@@ -740,7 +741,7 @@ binds the daemon recorded as refused. A healthy workspace prints
 one line:
 
 ```text
-✓ my-workspace: every tap listener serves
+✓ my-workspace: no refused tap-listener binds
 ```
 
 A workspace the daemon booted without a listener prints one line
@@ -1785,4 +1786,6 @@ scaffolding. A timeout says so explicitly, because the daemon may
 still complete a request the client stopped waiting for. Argument
 errors exit with code 2 — the convention the argparse-era CLI set
 and the typer-based one (#315) keeps; success is 0; a Ctrl-C during
-a long boot prints `msks: interrupted` and exits 130.
+a long boot prints `msks: interrupted` and exits 130. The one
+exception is `msks doctor`, which exits 1 while any refused
+tap-listener bind stands (see its own section above).

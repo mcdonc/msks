@@ -24,10 +24,10 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ListenerFault:
-    """One refused bind: the service, the port it meant to hold,
-    and the error the bind raised."""
+    """One refused bind: the port it meant to hold and the error
+    the bind raised — the service is the dict key the fault is
+    stored under."""
 
-    service: str
     port: int
     error: str
 
@@ -45,7 +45,7 @@ class ListenerFaults:
         workspace — the latest attempt's error is the one an
         operator reading the record can act on."""
         self._faults.setdefault(workspace_id, {})[service] = ListenerFault(
-            service, port, error
+            port, error
         )
 
     def clear(self, workspace_id: str, service: str) -> None:

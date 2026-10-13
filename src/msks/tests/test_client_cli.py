@@ -367,7 +367,7 @@ def test_cmd_doctor_names_refused_binds(
         "([Errno 98] Address already in use); another service holds "
         "the port — free it or change it (MSKSD_PROBE_PORT)" in out
     )
-    assert "✓ beta: every tap listener serves" in out
+    assert "✓ beta: no refused tap-listener binds" in out
 
 
 def test_cmd_doctor_passes_when_every_listener_serves(
@@ -381,7 +381,7 @@ def test_cmd_doctor_passes_when_every_listener_serves(
     )
     assert rc == 0
     out = capsys.readouterr().out
-    assert "✓ alpha: every tap listener serves" in out
+    assert "✓ alpha: no refused tap-listener binds" in out
     rc = cli.cmd_doctor(
         transport=mock(lambda req: httpx.Response(200, json=[]))
     )
