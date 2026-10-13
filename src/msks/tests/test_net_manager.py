@@ -1990,21 +1990,35 @@ async def test_a_refused_llm_bind_stands_in_the_record(
 async def test_a_failed_interceptor_arm_at_attach_leaves_no_record(
     net_app, monkeypatch
 ) -> None:
-    """#533 review: the interceptor arms last in _build, and its
-    refusal fails the boot — the unwind forgets whatever the
-    attempt recorded, because the workspace never runs and the
-    boot's own error is the name. The record stays empty."""
+    """#533 review: the interceptor arms last in _build, records
+    its refusal like the real arm does, and the refusal still
+    fails the boot — the unwind forgets the whole record
+    (the probe fault the same boot recorded included, which the
+    interceptor's own disarm-clear cannot reach), because the
+    workspace never runs and the boot's own error is the name."""
     app, _ip, _nft = net_app
-    monkeypatch.setattr(
-        manager_mod, "verify_forwarding", lambda path=None: None
-    )
+
+    async def refusing_probe(attachment):
+        raise OSError("[Errno 98] Address already in use")
 
     async def refusing_refresh(workspace_id: str) -> None:
+        # Mirror the real arm's record-before-raise (#533): the
+        # pin must see the interceptor's record land beside the
+        # probe's, and the unwind wipe both.
+        app.state.listener_faults.record(
+            workspace_id,
+            "interceptor",
+            app.state.settings.net.interceptor_port,
+            "the interceptor's listener failed to start",
+        )
         raise RuntimeError("the interceptor's listener failed to start")
 
     monkeypatch.setattr(app.state.interceptor, "refresh", refusing_refresh)
     manager = NetManager(
-        app, dhcp_factory=FakeService, dns_factory=FakeService
+        app,
+        dhcp_factory=FakeService,
+        dns_factory=FakeService,
+        probe_factory=refusing_probe,
     )
     app.state.net = manager
     await manager.start()
