@@ -365,7 +365,6 @@ async def test_the_live_probe_chain(tmp_path, monkeypatch) -> None:
     credential, the upstream dial verified against the probe CA —
     answers ``ok`` from the real probe service; a bogus blob answers
     401 with the challenge."""
-    from msks.interceptor.probe import PROBE_PORT
     from msks.llm import TapListener
     from msks.spec.probe import PROBE_HOST, PROBE_SECRET_B64
 
@@ -386,7 +385,10 @@ async def test_the_live_probe_chain(tmp_path, monkeypatch) -> None:
     app.state.interceptor = interceptor
 
     def fake_original_addr(sock) -> tuple[str, int]:
-        return TAP_IP, probe_port_holder["port"]
+        # Production shape (#532): the guest dialed 443, so the
+        # original destination carries 443 — the addon's dial
+        # repoint must move it to the service's own port below.
+        return TAP_IP, 443
 
     import mitmproxy.platform
 
@@ -394,10 +396,11 @@ async def test_the_live_probe_chain(tmp_path, monkeypatch) -> None:
         mitmproxy.platform, "original_addr", fake_original_addr
     )
 
-    # The probe service's listener on the tap address: the daemon
-    # side the interceptor's upstream dial lands on (production
-    # binds 443; the test's dial names this port).
-    probe_port_holder: dict = {}
+    # The probe service's listener on the tap address, asked for
+    # an ephemeral port: the repoint (443 -> the service's own
+    # port) must resolve the RUNNING listener's recorded port from
+    # the registry — the setting still names 8644, so only the
+    # registry path can pass this test.
     service = app.state.probe
     certfile, keyfile = await service.material()
     listener = TapListener(
@@ -409,7 +412,6 @@ async def test_the_live_probe_chain(tmp_path, monkeypatch) -> None:
         ssl_keyfile=keyfile,
     )
     await service.start_listener("ws-live", listener)
-    probe_port_holder["port"] = listener._sock.getsockname()[1]
 
     row = await seed(app, "probe", [PROBE_HOST], PROBE_SECRET_B64)
     await interceptor.refresh("ws-live")
@@ -446,7 +448,6 @@ async def test_the_live_probe_chain(tmp_path, monkeypatch) -> None:
         )
         assert status == 401
         assert body == "invalid credentials"
-        assert PROBE_PORT == 443
     finally:
         await interceptor.stop()
         await service.stop_listener("ws-live")

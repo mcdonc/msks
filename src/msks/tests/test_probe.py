@@ -16,7 +16,6 @@ from msks.interceptor import ca
 from msks.interceptor import probe as probe_mod
 from msks.interceptor.probe import (
     PROBE_PASSWORD,
-    PROBE_PORT,
     PROBE_USERNAME,
     build_probe_app,
     parse_basic_auth,
@@ -25,7 +24,7 @@ from msks.interceptor.probe import (
 )
 from msks.llm import TapListener
 from msks.settings import Settings, VmmSettings
-from msks.spec.probe import PROBE_SECRET_B64
+from msks.spec.probe import PROBE_PORT, PROBE_SECRET_B64
 
 
 def basic(username: str, password: str) -> str:
@@ -163,9 +162,13 @@ class Attachment:
     tap: str = "msks-tap"
 
 
-def test_listener_for_binds_443_with_the_service_leaf(
+def test_listener_for_binds_the_service_port_with_the_service_leaf(
     tmp_path: Path,
 ) -> None:
+    """The listener binds the setting's per-tap port, not the
+    guest's 443 (#532): the interceptor's dial is repointed to
+    the setting's port, so the number needs no privilege — and a
+    host wildcard on 443 cannot squat it."""
     app = build_app(probe_settings(tmp_path))
     certfile, keyfile = asyncio.run(app.state.probe.material())
     listener = app.state.probe.listener_for(
@@ -174,9 +177,23 @@ def test_listener_for_binds_443_with_the_service_leaf(
     assert listener.tap_ip == "10.0.0.1"
     # The device pin rides every per-tap listener (#483).
     assert listener.tap == "msks-tap"
-    assert listener.port == PROBE_PORT == 443
+    assert listener.port == app.state.settings.net.probe_port
+    assert app.state.settings.net.probe_port != PROBE_PORT
+    assert PROBE_PORT == 443  # the guest-facing fact stands
     assert listener._ssl_certfile == certfile
     assert listener._ssl_keyfile == keyfile
+
+
+def test_listener_for_follows_the_setting_live(tmp_path: Path) -> None:
+    """The port is read at bind time (#532): a changed setting
+    binds the changed port on the next listener."""
+    app = build_app(probe_settings(tmp_path))
+    certfile, keyfile = asyncio.run(app.state.probe.material())
+    app.state.settings.net.probe_port = 9443
+    listener = app.state.probe.listener_for(
+        Attachment("10.0.0.2"), certfile, keyfile
+    )
+    assert listener.port == 9443
 
 
 async def test_concurrent_material_calls_mint_once(
@@ -317,6 +334,21 @@ def test_stop_mapping_leaves_a_replaced_listener(tmp_path: Path) -> None:
     assert server._listeners == {"ws1": first}
     server.stop_mapping("ws1", first)
     assert server._listeners == {}
+
+
+def test_listener_port_reads_the_registry(tmp_path: Path) -> None:
+    """The dial repoint's live answer (#532): the running
+    listener's port while it serves, and None once the registry
+    forgets it — the manager's fallback chain then decides."""
+    server = build_app(probe_settings(tmp_path)).state.probe
+    assert server.listener_port("ws1") is None
+    listener = TapListener(
+        server.probe_app, tap="lo", tap_ip="10.0.0.1", port=8644
+    )
+    server._listeners["ws1"] = listener
+    assert server.listener_port("ws1") == 8644
+    server.stop_mapping("ws1", listener)
+    assert server.listener_port("ws1") is None
 
 
 def test_the_module_states_its_constants() -> None:

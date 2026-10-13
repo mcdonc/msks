@@ -612,3 +612,17 @@ async def test_host_for_without_a_net_seam_answers_none(app) -> None:
     assert app.state.interceptor.host_for("ws", "198.51.100.7") == (
         "api.example.com"
     )
+
+
+def test_probe_listener_port_prefers_the_running_listener(app) -> None:
+    """The dial repoint's answer (#532): the workspace's running
+    listener's port while one serves, the setting's when the
+    registry has none — a stripped host (no probe service) falls
+    all the way back to the setting without raising."""
+    interceptor = app.state.interceptor
+    app.state.probe._listeners["ws-a"] = SimpleNamespace(port=9000)
+    assert interceptor.probe_listener_port("ws-a") == 9000
+    assert interceptor.probe_listener_port("ws-b") == 8644  # the setting
+    app.state.probe = None
+    assert interceptor.probe_listener_port("ws-a") == 8644
+    assert interceptor.probe_listener_port(None) == 8644

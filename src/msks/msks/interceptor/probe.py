@@ -46,7 +46,6 @@ from ..llm import TapListener
 from ..spec.probe import (
     PROBE_HOST,
     PROBE_PASSWORD,
-    PROBE_PORT,
     PROBE_USERNAME,
 )
 from . import ca
@@ -216,7 +215,8 @@ class ProbeService:
     net manager asks for a listener at attach and stops it at
     detach; the listener is the same per-tap uvicorn wrapper the
     LLM proxy serves on (:class:`TapListener` in :mod:`msks.llm`),
-    here serving TLS on the port the redirect preserves.
+    here serving TLS on the setting's per-tap service port, the
+    number the interceptor's dial is repointed to (#532).
     """
 
     def __init__(self, app) -> None:
@@ -263,12 +263,16 @@ class ProbeService:
         return self._bundle
 
     def listener_for(self, attachment, certfile: str, keyfile: str):
-        """The attachment's listener: its tap address on 443, the
-        service leaf's TLS — one service shape on every tap, the
-        device pin included (#483): the probe serves its own tap's
-        redirected traffic, and the pin holds the same cross-tap
-        degraded path it holds for the proxy. The loopback half is
-        the pin's and the proxy's story alone: the base table's
+        """The attachment's listener: its tap address on the
+        service's own port (#532), the service leaf's TLS — one
+        service shape on every tap, the device pin included
+        (#483): the probe serves its own tap's redirected traffic,
+        and the pin holds the same cross-tap degraded path it
+        holds for the proxy. The port is the setting's, not the
+        guest's 443 — the interceptor's dial is repointed here
+        (``engine.server_connect``), so the number needs no
+        privilege and no host's 443 to be free. The loopback half
+        is the pin's and the proxy's story alone: the base table's
         guard names the proxy port, so a host process reaching the
         probe over lo still connects — the probe's own fixed public
         credential is its designed gate, unchanged here."""
@@ -276,7 +280,7 @@ class ProbeService:
             self.probe_app,
             tap=attachment.tap,
             tap_ip=attachment.tap_ip,
-            port=PROBE_PORT,
+            port=self.app.state.settings.net.probe_port,
             ssl_certfile=certfile,
             ssl_keyfile=keyfile,
         )
@@ -300,6 +304,16 @@ class ProbeService:
         entry)."""
         if self._listeners.get(workspace_id) is listener:
             del self._listeners[workspace_id]
+
+    def listener_port(self, workspace_id: str) -> int | None:
+        """The port this workspace's running listener actually
+        serves (#532) — the number the interceptor's dial repoint
+        aims at, read from the registry so a reload that changes
+        the setting cannot tear the chain: the dial follows the
+        bound listener until the workspace's next start rebinds
+        the new number."""
+        listener = self._listeners.get(workspace_id)
+        return None if listener is None else listener.port
 
     async def stop_listener(self, workspace_id: str) -> None:
         """Stop and forget one attachment's listener (idempotent)."""

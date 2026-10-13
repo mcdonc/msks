@@ -142,8 +142,9 @@ llm = 2
 secretcache = 2
 # spec grew: the probe service reads its whole vocabulary from the
 # leaf (#424); seven more names for the web-egress consent gate's
-# posture, coverage, and address grammar (#452)
-spec = 16
+# posture, coverage, and address grammar (#452); one more name
+# for the dial repoint's probe host (#532)
+spec = 17
 
 [snapshot.microvm]
 # interceptor: the local driver mints the workspace CA at create

@@ -1124,9 +1124,10 @@ class NetManager:
         refused bind (another daemon on the port, an address the
         host cannot bind) logs loudly and the boot proceeds,
         leaving that workspace without the probe endpoint until
-        its next start. The port is 443 on the tap's own address:
-        the nft redirect preserves the guest's destination port,
-        and the interceptor's upstream dial lands here."""
+        its next start. The port is the setting's own per-tap
+        number (#532), not the guest's 443: the interceptor's
+        dial is repointed to it, so a host wildcard listener on
+        443 cannot squat the bind."""
         probe = self.app.state.probe
         if probe is None:
             return

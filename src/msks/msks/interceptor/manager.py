@@ -183,6 +183,27 @@ class Interceptor:
         listener is not one of ours."""
         return self._by_tap.get(tap_ip)
 
+    @property
+    def probe_service_port(self) -> int:
+        """The setting's per-tap port (#532) — the fallback the
+        dial repoint aims at when no running listener names one
+        (a stripped-down host with no probe service; a workspace
+        whose listener is between bind and registry). The live
+        answer is the running listener's own port
+        (``probe_listener_port``), so a reload that changes the
+        setting cannot tear a standing chain."""
+        return self.app.state.settings.net.probe_port
+
+    def probe_listener_port(self, workspace_id: str | None) -> int:
+        """The port the workspace's probe dial aims at (#532): its
+        running listener's when one serves, else the setting's."""
+        service = getattr(self.app.state, "probe", None)
+        if service is not None and workspace_id is not None:
+            port = service.listener_port(workspace_id)
+            if port is not None:
+                return port
+        return self.probe_service_port
+
     def entries_for(self, workspace_id: str) -> dict[str, PlaceholderEntry]:
         """The workspace's live entries (sentinel-keyed): its
         covering rows first, then every other live row's sentinel

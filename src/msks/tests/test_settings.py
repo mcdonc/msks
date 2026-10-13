@@ -245,6 +245,7 @@ def test_consent_settings_defaults_and_env() -> None:
             "MSKSD_EGRESS_QUEUE_BASE": "2048",
             "MSKSD_CONNTRACK_TOOL": "/usr/sbin/conntrack",
             "MSKSD_INTERCEPTOR_PORT": "9443",
+            "MSKSD_PROBE_PORT": "9444",
             "MSKSD_AUDIT_HMAC_KEY": "k1",
         }
     )
@@ -256,7 +257,9 @@ def test_consent_settings_defaults_and_env() -> None:
     assert tuned.net.queue_base == 2048
     assert tuned.net.conntrack_tool == "/usr/sbin/conntrack"
     assert default.interceptor_port == 8643
+    assert default.probe_port == 8644
     assert tuned.net.interceptor_port == 9443
+    assert tuned.net.probe_port == 9444
     assert tuned.server.audit_hmac_key == "k1"
 
 
@@ -338,6 +341,46 @@ def test_llm_port_may_not_collide_with_the_interceptor_port(
     # ever binds it.
     monkeypatch.delenv("MSKSD_LLM_MODELS")
     assert Settings.from_env().llm.port == 8643
+
+
+def test_probe_port_is_a_setting_with_a_named_range(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The probe service's own per-tap port (#532): defaults land,
+    env overrides land, and a value outside the port range is a
+    named error."""
+    defaults = Settings.from_env()
+    assert defaults.net.probe_port == 8644
+    monkeypatch.setenv("MSKSD_PROBE_PORT", "9443")
+    assert Settings.from_env().net.probe_port == 9443
+    monkeypatch.setenv("MSKSD_PROBE_PORT", "0")
+    with pytest.raises(ValueError, match="MSKSD_PROBE_PORT"):
+        Settings.from_env()
+    monkeypatch.setenv("MSKSD_PROBE_PORT", "70000")
+    with pytest.raises(ValueError, match="MSKSD_PROBE_PORT"):
+        Settings.from_env()
+
+
+def test_probe_port_may_not_collide_with_a_per_tap_listener(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The probe's per-tap port names the interceptor's or the
+    configured LLM proxy's number: a named load-time refusal
+    (#532), not an attach-time bind failure naming neither
+    setting."""
+    monkeypatch.setenv("MSKSD_PROBE_PORT", "8643")
+    monkeypatch.setenv("MSKSD_INTERCEPTOR_PORT", "8643")
+    with pytest.raises(ValueError, match="MSKSD_PROBE_PORT"):
+        Settings.from_env()
+    monkeypatch.setenv("MSKSD_INTERCEPTOR_PORT", "8644")
+    monkeypatch.setenv("MSKSD_PROBE_PORT", "8644")
+    with pytest.raises(ValueError, match="MSKSD_PROBE_PORT"):
+        Settings.from_env()
+    monkeypatch.setenv("MSKSD_PROBE_PORT", "8643")
+    monkeypatch.setenv("MSKSD_LLM_MODELS", "*:http://up.stream/v1:k")
+    monkeypatch.setenv("MSKSD_LLM_PORT", "8643")
+    with pytest.raises(ValueError, match="MSKSD_LLM_PORT"):
+        Settings.from_env()
 
 
 def test_llm_models_accepts_the_file_list_form(

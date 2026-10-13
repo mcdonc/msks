@@ -56,9 +56,11 @@ from mitmproxy import http, tls
 from mitmproxy.addons.tlsconfig import _default_ciphers
 from mitmproxy.net import tls as net_tls
 from mitmproxy.net.http import url
+from mitmproxy.proxy import server_hooks
 from OpenSSL import SSL
 
 from ..secretcache import SecretLockedError
+from ..spec.probe import PROBE_HOST
 
 logger = logging.getLogger(__name__)
 
@@ -390,6 +392,31 @@ class InterceptorAddon:
             return False
         self._denied[client] = verdict.reason
         return True
+
+    def server_connect(
+        self, data: server_hooks.ServerConnectionHookData
+    ) -> None:
+        """Repoint the probe's upstream dial to the service's own
+        port (#532): the original destination carries the guest's
+        443 (the redirect preserves the port it caught), and the
+        probe listener binds the setting's unprivileged per-tap
+        port — a number a host wildcard listener cannot squat. The
+        address — the tap itself, the resolver's own answer — is
+        unchanged; only the port moves, and it is the workspace's
+        running listener's own port, so a reload that changes the
+        setting cannot tear a standing chain. Every other
+        destination dials exactly what the guest aimed at."""
+        client = data.client
+        if (client.sni or "").lower() != PROBE_HOST:
+            return
+        address = (data.server.address or ("", 0))[0]
+        if not address:
+            return
+        workspace = self.workspace(client)
+        data.server.address = (
+            address,
+            self.owner.probe_listener_port(workspace),
+        )
 
     def tls_start_client(self, data: tls.TlsData) -> None:
         """Serve the client-facing TLS from the daemon's CA: a
