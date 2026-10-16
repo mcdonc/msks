@@ -1,20 +1,37 @@
-"""Guards over the msksd package's nix mirror (#203).
+"""Guards over the msks wheel builds' nix mirrors (#203, #537).
 
 `nix/msks-pkg.nix` hand-mirrors `[project.dependencies]`; when #196
 added textual the mirror drifted and the failure surfaced only at
 package build time (the pythonRuntimeDepsCheckHook refuses the
 wheel). These checks compare the two lists by name so the next
 dependency addition fails a test instead of a build.
+
+`nix/msks-client-pkg.nix` mirrors the subset the client closure
+imports (#537): the same wheel, the client-only dependency list.
+Its guard walks the client tree and the CLIENT_ALLOWED shared
+leaves — the same contract test_layering holds — so a widening
+allowlist or a new client import fails a test when the nix list
+misses it.
 """
 
+import ast
 import re
+import sys
 import tomllib
 from pathlib import Path
+
+from test_layering import CLIENT_ALLOWED
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 PKG_NIX = REPO_ROOT / "nix" / "msks-pkg.nix"
+CLIENT_PKG_NIX = REPO_ROOT / "nix" / "msks-client-pkg.nix"
 TEXTUAL_PKG = REPO_ROOT / "nix" / "textual-pkg.nix"
+PKG_ROOT = REPO_ROOT / "src" / "msks" / "msks"
+
+# Import names whose distribution name differs: pyproject and the
+# nix dependency lists carry the distribution name.
+IMPORT_TO_DIST = {"yaml": "pyyaml"}
 
 
 def strip_comments(block: str) -> str:
@@ -34,22 +51,62 @@ def version_tuple(text: str) -> tuple[int, ...]:
     return tuple(int(part) for part in text.split("."))
 
 
-def nix_dependency_block() -> str:
-    """The lines of msks-pkg.nix's dependencies list, sans brackets."""
-    nix = strip_comments(PKG_NIX.read_text())
+def nix_dependency_block(nix_path: Path) -> str:
+    """The lines of a package file's dependencies list, sans brackets."""
+    nix = strip_comments(nix_path.read_text())
     start = nix.index("dependencies = [")
     body = nix[start + len("dependencies = [") : nix.index("]", start)]
     return body
 
 
+def nix_dependency_names(nix_path: Path) -> set[str]:
+    """The dependency names a package file's nix list carries."""
+    return {
+        line.strip()
+        for line in nix_dependency_block(nix_path).splitlines()
+        if line.strip()
+    }
+
+
+def client_subtree_imports() -> set[str]:
+    """Third-party distribution names the client closure imports.
+
+    Walks the client tree plus every CLIENT_ALLOWED shared leaf —
+    the same contract test_layering holds — so widening the
+    allowlist widens this walk with it. Stdlib names and the msks
+    package itself drop out; `yaml` maps to its distribution name.
+    """
+    files: list[Path] = sorted((PKG_ROOT / "client").rglob("*.py"))
+    for leaf in sorted(CLIENT_ALLOWED):
+        path = PKG_ROOT / leaf
+        if path.is_dir():
+            files.extend(sorted(path.rglob("*.py")))
+        else:
+            files.append(path.with_suffix(".py"))
+    names: set[str] = set()
+    for path in files:
+        for node in ast.walk(ast.parse(path.read_text())):
+            mods: list[str] = []
+            if isinstance(node, ast.Import):
+                mods = [alias.name for alias in node.names]
+            elif (
+                isinstance(node, ast.ImportFrom)
+                and node.module
+                and node.level == 0
+            ):
+                mods = [node.module]
+            names.update(mod.split(".")[0] for mod in mods)
+    return {
+        IMPORT_TO_DIST.get(name, name)
+        for name in names
+        if name != "msks" and name not in sys.stdlib_module_names
+    }
+
+
 def test_every_pyproject_dependency_is_in_the_nix_package() -> None:
     """Each [project.dependencies] name appears in msks-pkg.nix's
     dependencies list — the mirror the package closure builds from."""
-    have = {
-        line.strip()
-        for line in nix_dependency_block().splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    }
+    have = nix_dependency_names(PKG_NIX)
     missing = dependency_names() - have
     assert not missing, (
         f"pyproject dependencies missing from nix/msks-pkg.nix: "
@@ -61,14 +118,38 @@ def test_every_pyproject_dependency_is_in_the_nix_package() -> None:
 def test_no_extra_nix_dependencies_beyond_pyproject() -> None:
     """The nix list carries nothing pyproject does not name, so the
     mirror stays a mirror and the two cannot drift apart silently."""
-    have = {
-        line.strip()
-        for line in nix_dependency_block().splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    }
+    have = nix_dependency_names(PKG_NIX)
     extra = have - dependency_names()
     assert not extra, (
         f"nix/msks-pkg.nix dependencies pyproject does not declare: "
+        f"{sorted(extra)}"
+    )
+
+
+def test_client_nix_deps_cover_the_client_imports() -> None:
+    """Every pyproject-declared package the client closure imports
+    appears in msks-client-pkg.nix's dependencies — the wheel the
+    client output builds and runs; a missing name is an ImportError
+    at first use, not a build failure (#537). Names pyproject does
+    not declare (click, via typer's own dependency tree and a
+    fallback import for older typers) stay outside the mirror,
+    the same rule the daemon package's mirror follows."""
+    wanted = client_subtree_imports() & dependency_names()
+    missing = wanted - nix_dependency_names(CLIENT_PKG_NIX)
+    assert not missing, (
+        f"client-closure imports missing from nix/msks-client-pkg.nix: "
+        f"{sorted(missing)} — the client output's wheel cannot import "
+        f"them (#537)"
+    )
+
+
+def test_client_nix_deps_stay_within_pyproject() -> None:
+    """The client nix list carries nothing pyproject does not name:
+    the client closure is a subset of the one wheel's dependency
+    set, picked by name."""
+    extra = nix_dependency_names(CLIENT_PKG_NIX) - dependency_names()
+    assert not extra, (
+        f"nix/msks-client-pkg.nix dependencies pyproject does not declare: "
         f"{sorted(extra)}"
     )
 

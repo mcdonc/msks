@@ -53,6 +53,30 @@ let
       install -Dm555 -t $out/bin package/bin/jscpd
     '';
   };
+
+  # The three shippable artifacts (#537), each its own derivation
+  # so `devenv build outputs.<name>` builds one without evaluating
+  # or building the others. The daemon and the client are two wheel
+  # builds of the one source (nix/msks-pkg.nix, nix/msks-client-pkg.nix)
+  # — the split is the dependency closure, not the entry points: the
+  # server output runs msksd against the full daemon closure, the
+  # client output runs `msks` / `msks-term-popup` against the client
+  # closure alone. The guest image is the same image-archive
+  # derivation msks-build-guest-archive lands in the daemon state.
+  # flake.nix re-exposes the same three for `nix build` — the
+  # devenv-less release path this split is the first step of.
+  msksServer = pkgs.python314.withPackages (ps: [
+    (ps.callPackage ./nix/msks-pkg.nix {
+      textual = ps.callPackage ./nix/textual-pkg.nix { };
+      netfilterqueue = ps.callPackage ./nix/netfilterqueue-pkg.nix { };
+    })
+  ]);
+  msksClient = pkgs.python314.withPackages (ps: [
+    (ps.callPackage ./nix/msks-client-pkg.nix {
+      textual = ps.callPackage ./nix/textual-pkg.nix { };
+    })
+  ]);
+  guestImages = import ./nix/guest.nix { inherit pkgs; };
 in
 {
   # msks dev environment: Python 3.14 + cloud-hypervisor toolchain (#2).
@@ -140,6 +164,15 @@ in
   # not exist, so the presets stay unset (a value exported before
   # entering the shell survives) and the client warns it does not
   # verify on first connect.
+
+  # The shippable artifacts on their own store paths (#537): see
+  # the let block above. `devenv build` (no attributes) builds all
+  # three; `devenv build outputs.server` builds one.
+  outputs = {
+    server = msksServer;
+    client = msksClient;
+    guest-image = guestImages.image-archive;
+  };
 
   tasks = {
     # WORKAROUND (klangk pattern): devenv's uv sync gate only hashes the
@@ -294,9 +327,14 @@ in
       esac
       mkdir -p "$state"
       echo "msks: building the workspace image archive into $state (idempotent — unchanged inputs are a cached no-op)"
+      # outputs.guest-image is the definition (#537): the same
+      # derivation devenv.nix's outputs block builds, against the
+      # devenv.lock-pinned nixpkgs. devenv build prints the store
+      # paths as JSON on stdout (progress stays on stderr); the
+      # venv python picks the one path out.
       out=$(
-        nix-build --no-out-link -I nixpkgs=${pkgs.path} \
-          "$root/nix/guest.nix" -A image-archive
+        cd "$root" && devenv build outputs.guest-image \
+          | python -c 'import json,sys; print(json.load(sys.stdin)["outputs.guest-image"])'
       )
       ln -sfn "$out" "$state/default-image"
       echo "msks: image archive at $out (linked as $state/default-image)"

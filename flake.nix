@@ -22,6 +22,21 @@
             { };
       };
 
+      # The three release artifacts (#537), the flake half of the
+      # devenv outputs split: the same wheel builds, the same image
+      # archive — consumable with plain nix (`nix build .#server`,
+      # `.#client`, `.#guest-image`), no devenv in the environment.
+      # The flake and devenv.lock pin the same nixpkgs revision, so
+      # each attribute evaluates to the same derivation its
+      # `devenv build outputs.<name>` twin builds.
+      server = pkgs.python314.withPackages (_: [ msksd ]);
+      client = pkgs.python314.withPackages (_: [
+        (pkgs.python314.pkgs.callPackage ./nix/msks-client-pkg.nix {
+          textual = pkgs.python314.pkgs.callPackage ./nix/textual-pkg.nix { };
+        })
+      ]);
+      guest-image = (import ./nix/guest.nix { inherit pkgs; }).image-archive;
+
       # Eval-only guards (#231): both egress branches of the module
       # evaluate, the unit exists, and the capability grant follows
       # the branch. Evaluated at flake-eval time, asserted in the
@@ -56,6 +71,11 @@
     {
       packages.${system} = {
         msksd = msksd;
+        inherit
+          server
+          client
+          guest-image
+          ;
         default = msksd;
       };
 

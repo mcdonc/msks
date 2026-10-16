@@ -53,27 +53,7 @@
 }:
 
 let
-  # Only what hatchling reads: pyproject context at the root plus the
-  # package tree. Keeps .devenv/worktree noise out of the hash
-  # so unrelated edits cannot rebuild the package closure.
-  src = lib.cleanSourceWith {
-    src = ./..;
-    filter =
-      path: type:
-      let
-        rel = lib.removePrefix (toString ./.. + "/") (toString path);
-      in
-      # Directories prune their whole subtree when filtered out, so
-      # every ancestor of the package tree must pass too.
-      rel == "pyproject.toml"
-      || rel == "README.md"
-      || (type == "directory" && (rel == "src" || rel == "src/msks"))
-      || (
-        lib.hasPrefix "src/msks/msks" rel
-        && !lib.hasSuffix "__pycache__" rel
-        && !lib.hasSuffix ".pyc" rel
-      );
-  };
+  src = import ./source.nix { inherit lib; };
 in
 buildPythonPackage {
   pname = "msks";

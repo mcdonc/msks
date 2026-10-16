@@ -50,6 +50,30 @@ after one gated suite run:
 devenv --quiet -O dotenv.enable:bool false shell -- msks-preflight
 ```
 
+### Build outputs
+
+The three shippable artifacts each build on its own store path,
+without evaluating or building the others (#537):
+
+```bash
+devenv build outputs.server       # msksd with the full daemon closure
+devenv build outputs.client       # the msks CLI/TUI with the client closure alone
+devenv build outputs.guest-image  # the workspace image archive
+```
+
+The daemon and client outputs are two dependency closures over the
+one wheel (`nix/msks-pkg.nix`, `nix/msks-client-pkg.nix`): the
+server output runs `msksd`; the client output runs `msks` and
+`msks-term-popup`. The same three build from the flake with plain
+nix — no devenv in the environment — against the same pinned
+nixpkgs (flake.lock and devenv.lock pin the same revision, so each
+flake attribute is the same store path its `devenv build` twin
+builds):
+
+```bash
+nix build .#server .#client .#guest-image
+```
+
 ### VM guest assets
 
 The workspace guest is **Debian 13 (trixie)**, straight from Debian's
