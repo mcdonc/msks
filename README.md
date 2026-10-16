@@ -56,9 +56,10 @@ The three shippable artifacts each build on its own store path,
 without evaluating or building the others (#537):
 
 ```bash
-devenv build outputs.server       # msksd with the full daemon closure
-devenv build outputs.client       # the msks CLI/TUI with the client closure alone
-devenv build outputs.guest-image  # the workspace image archive
+devenv build outputs.server        # msksd with the full daemon closure
+devenv build outputs.client        # the msks CLI/TUI with the client closure alone
+devenv build outputs.guest-image   # the Debian workspace image archive
+devenv build outputs.guest-image-nixos  # the NixOS workspace image archive
 ```
 
 The daemon and client outputs are two dependency closures over the
@@ -71,7 +72,7 @@ flake attribute is the same store path its `devenv build` twin
 builds):
 
 ```bash
-nix build .#server .#client .#guest-image
+nix build .#server .#client .#guest-image .#guest-image-nixos
 ```
 
 ### VM guest assets

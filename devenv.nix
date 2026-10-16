@@ -61,9 +61,11 @@ let
   # — the split is the dependency closure, not the entry points: the
   # server output runs msksd against the full daemon closure, the
   # client output runs `msks` / `msks-term-popup` against the client
-  # closure alone. The guest image is the same image-archive
-  # derivation msks-build-guest-archive lands in the daemon state.
-  # flake.nix re-exposes the same three for `nix build` — the
+  # closure alone. The guest images cover both flavors the guests
+  # come in (#250): the Debian archive is the one
+  # msks-build-guest-archive lands in the daemon state as the
+  # default image; the NixOS archive builds standalone the same
+  # way. flake.nix re-exposes the same set for `nix build` — the
   # devenv-less release path this split is the first step of.
   msksServer = pkgs.python314.withPackages (ps: [
     (ps.callPackage ./nix/msks-pkg.nix {
@@ -166,12 +168,13 @@ in
   # verify on first connect.
 
   # The shippable artifacts on their own store paths (#537): see
-  # the let block above. `devenv build` (no attributes) builds all
-  # three; `devenv build outputs.server` builds one.
+  # the let block above. `devenv build` (no attributes) builds them
+  # all; `devenv build outputs.server` builds one.
   outputs = {
     server = msksServer;
     client = msksClient;
     guest-image = guestImages.image-archive;
+    guest-image-nixos = guestImages.image-archive-nixos;
   };
 
   tasks = {
