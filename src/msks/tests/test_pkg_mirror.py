@@ -8,13 +8,16 @@ dependency addition fails a test instead of a build.
 
 `nix/msks-client-pkg.nix` mirrors the subset the client closure
 imports (#537): the same wheel, the client-only dependency list.
-Its guard walks the client tree and the CLIENT_ALLOWED shared
+Its guards walk the client tree and the CLIENT_ALLOWED shared
 leaves — the same contract test_layering holds — so a widening
 allowlist or a new client import fails a test when the nix list
-misses it.
+misses it; the remove list is pinned against pyproject's
+full set, and the two locks are pinned to each other so the
+flake/devenv same-path claim cannot rot silently.
 """
 
 import ast
+import json
 import re
 import sys
 import tomllib
@@ -27,6 +30,8 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 PKG_NIX = REPO_ROOT / "nix" / "msks-pkg.nix"
 CLIENT_PKG_NIX = REPO_ROOT / "nix" / "msks-client-pkg.nix"
 TEXTUAL_PKG = REPO_ROOT / "nix" / "textual-pkg.nix"
+DEVENV_LOCK = REPO_ROOT / "devenv.lock"
+FLAKE_LOCK = REPO_ROOT / "flake.lock"
 PKG_ROOT = REPO_ROOT / "src" / "msks" / "msks"
 
 # Import names whose distribution name differs: pyproject and the
@@ -57,6 +62,17 @@ def nix_dependency_block(nix_path: Path) -> str:
     start = nix.index("dependencies = [")
     body = nix[start + len("dependencies = [") : nix.index("]", start)]
     return body
+
+
+def nix_list_names(nix_path: Path, attribute: str) -> set[str]:
+    """The names an attribute's bracketed list in a package file
+    carries (dependencies, pythonRemoveDeps, …)."""
+    nix = strip_comments(nix_path.read_text())
+    start = nix.index(f"{attribute} = [")
+    body = nix[start + len(f"{attribute} = [") : nix.index("]", start)]
+    return {
+        line.strip().strip('"') for line in body.splitlines() if line.strip()
+    }
 
 
 def nix_dependency_names(nix_path: Path) -> set[str]:
@@ -151,6 +167,50 @@ def test_client_nix_deps_stay_within_pyproject() -> None:
     assert not extra, (
         f"nix/msks-client-pkg.nix dependencies pyproject does not declare: "
         f"{sorted(extra)}"
+    )
+
+
+def test_client_remove_list_is_exactly_the_daemon_only_set() -> None:
+    """pythonRemoveDeps names every pyproject dependency the client
+    list does not carry — and nothing else. The remove list is what
+    keeps the trimmed wheel's recorded requirements from
+    re-expanding the closure at install time; a daemon-only
+    dependency added to pyproject lands in msks-pkg.nix via the
+    mirror tests above, and this holds the client half: miss the
+    remove list and the client build fails only at package build
+    time, the #203 failure shape, on a tree the suite never builds."""
+    wanted = dependency_names() - nix_dependency_names(CLIENT_PKG_NIX)
+    have = nix_list_names(CLIENT_PKG_NIX, "pythonRemoveDeps")
+    missing = wanted - have
+    stale = have - wanted
+    assert not missing and not stale, (
+        f"nix/msks-client-pkg.nix pythonRemoveDeps out of sync with "
+        f"pyproject minus the client dependency list — missing: "
+        f"{sorted(missing)} (the client build fails its runtime deps "
+        f"check without them), stale: {sorted(stale)}"
+    )
+
+
+def test_both_locks_pin_the_same_nixpkgs_revision() -> None:
+    """flake.nix's and README's claim that each flake attribute
+    builds the same store path as its `devenv build outputs.<name>`
+    twin holds while both locks pin the same nixpkgs revision
+    (#537). devenv.yaml tracks the moving nixos-26.05 branch and
+    the flake pins a rev, so a devenv bump that leaves flake.lock
+    behind fails here — re-pin the flake to match, or soften the
+    same-path claim where it is stated (README, flake.nix)."""
+
+    def locked_rev(path: Path) -> str:
+        nodes = json.loads(path.read_text())["nodes"]
+        return nodes["nixpkgs"]["locked"]["rev"]
+
+    devenv_rev = locked_rev(DEVENV_LOCK)
+    flake_rev = locked_rev(FLAKE_LOCK)
+    assert devenv_rev == flake_rev, (
+        f"devenv.lock pins nixpkgs {devenv_rev[:12]} but flake.lock "
+        f"pins {flake_rev[:12]} — the flake and devenv outputs no "
+        f"longer build the same store paths; re-pin one to match "
+        f"the other or update the same-path claim (#537)"
     )
 
 

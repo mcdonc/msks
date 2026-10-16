@@ -52,7 +52,7 @@ devenv --quiet -O dotenv.enable:bool false shell -- msks-preflight
 
 ### Build outputs
 
-The three shippable artifacts each build on its own store path,
+The release artifacts each build on their own store path,
 without evaluating or building the others (#537):
 
 ```bash

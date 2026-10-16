@@ -6,10 +6,11 @@
 # its own siblings, stdlib, third-party packages, and the shared
 # leaves (agecrypto, configio, conformance_args, identity, spec),
 # so the closure needs exactly those trees' third-party names:
-# cryptography (agecrypto, identity), httpx, pyyaml (configio),
-# rich, textual, typer, websockets. test_pkg_mirror.py pins this
-# list against the tree's imports — the same drift guard the daemon
-# package has (#203).
+# cryptography (agecrypto, and the client tree itself), httpx,
+# pyyaml (configio), rich, textual, typer, websockets.
+# test_pkg_mirror.py pins the dependency list against the tree's
+# imports and the remove list against pyproject — the same drift
+# guards the daemon package has (#203).
 #
 # The wheel installs every console script (msksd included): the
 # split is the closure, not the entry points. The client output
@@ -49,7 +50,12 @@ buildPythonPackage {
 
   # The wheel's recorded requirements name the full set
   # (pyproject.toml is the one source); pythonRemoveDeps drops the
-  # daemon-only names so the install keeps the client closure.
+  # daemon-only names so the install keeps the client closure. The
+  # hook matches by name prefix — the plain "uvicorn" entry drops
+  # the whole bracketed `uvicorn[standard]` requirement line (a
+  # bracketed entry would be a sed bracket expression and match
+  # nothing). test_pkg_mirror.py pins the list against pyproject's
+  # dependencies minus the client list.
   pythonRemoveDeps = [
     "aiosqlite"
     "alembic"
@@ -61,7 +67,6 @@ buildPythonPackage {
     "pydantic"
     "sqlalchemy"
     "uvicorn"
-    "uvicorn[standard]"
   ];
 
   # No nix-side test run: the unit suite runs in the devenv shell

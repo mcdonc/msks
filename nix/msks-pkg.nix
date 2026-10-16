@@ -87,11 +87,12 @@ buildPythonPackage {
   # and CI, not in this build.
   doCheck = false;
 
-  pythonRemoveDeps = [
-    # uvicorn[standard] extra: the speedups resolve via the plain
-    # nixpkgs uvicorn package here.
-    "uvicorn[standard]"
-  ];
+  # uvicorn[standard] extra: the plain nixpkgs uvicorn package
+  # serves the speedups here. The remove entry matches by name
+  # prefix — the plain "uvicorn" drops the whole bracketed
+  # requirement line (a bracketed entry would be a sed bracket
+  # expression and match nothing).
+  pythonRemoveDeps = [ "uvicorn" ];
 
   meta = {
     description = "Microvm workspace daemon (klangkd analogue on cloud-hypervisor)";

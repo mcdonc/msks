@@ -54,7 +54,7 @@ let
     '';
   };
 
-  # The three shippable artifacts (#537), each its own derivation
+  # The release artifacts (#537), each its own derivation
   # so `devenv build outputs.<name>` builds one without evaluating
   # or building the others. The daemon and the client are two wheel
   # builds of the one source (nix/msks-pkg.nix, nix/msks-client-pkg.nix)
