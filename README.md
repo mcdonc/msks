@@ -65,7 +65,7 @@ devenv build outputs.guest-image-nixos  # the NixOS workspace image archive
 The daemon and client outputs are two dependency closures over the
 one wheel (`nix/msks-pkg.nix`, `nix/msks-client-pkg.nix`): the
 server output runs `msksd`; the client output runs `msks` and
-`msks-term-popup`. The same three build from the flake with plain
+`msks-term-popup`. The same outputs build from the flake with plain
 nix — no devenv in the environment — against the same pinned
 nixpkgs (flake.lock and devenv.lock pin the same revision, so each
 flake attribute is the same store path its `devenv build` twin
