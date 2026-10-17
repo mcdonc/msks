@@ -15,8 +15,14 @@ package manager. The check set covers what msksd and the client
 exec at runtime — debugging and development tools stay out of it.
 
 Design (ported from klangkd doctor, klangk #1612): capabilities
-first, never platform predictions. Every check runs on every host;
-only the package-hint table varies by detected manager. Checks are
+first, never platform predictions. Every check runs on every
+host; only the package-hint table varies by detected manager. One
+deliberate exception (#540): the consent-stack rows — the two
+NFQUEUE libraries and the extension import — run on Linux hosts
+only, because off Linux the binding is absent by design (the
+platform marker) and every install candidate there is a
+Linux-only package; the extension row carries that contract.
+Checks are
 graded — an error keeps the daemon from its core paths, a warning
 names a client-side tool the daemon itself runs without. Exit
 code is 0 when every check passes or only warns, 1 when any check
@@ -603,7 +609,7 @@ def check_nfq_extension(manager: str | None) -> CheckResult:
         message=(
             "the netfilterqueue extension did not import — the "
             "runtime sonames are absent or the binding is missing "
-            "from this install"
+            "from this install (reinstall it with pip)"
         ),
         hint=hint,
     )
@@ -691,8 +697,14 @@ def run_doctor(settings: Settings) -> DoctorReport:
             use="builds the root overlay and probes volume formats",
         )
     )
-    report.add(check_library("libnetfilter_queue", manager))
-    report.add(check_library("libnfnetlink", manager))
+    if sys.platform == "linux":
+        report.add(check_library("libnetfilter_queue", manager))
+        report.add(check_library("libnfnetlink", manager))
+    # Off Linux the two library rows stay off the report: their
+    # install candidates there are Linux-only packages (Homebrew's
+    # formulae above all), so the rows would prescribe installs
+    # that cannot work. The extension row below carries the
+    # platform contract (#540).
     report.add(check_nfq_extension(manager))
     report.add(check_tmux(manager))
 

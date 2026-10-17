@@ -66,7 +66,10 @@ falls back silently. The two libraries are verified through
 `netfilterqueue` import itself — whichever answers first.
 
 The netfilterqueue import is its own check row beside the two
-library rows: one import loads the C extension and both sonames
+library rows, and all three run on Linux hosts only: off Linux
+the binding is absent by design (the platform marker), and the
+extension row names that contract instead of hinting packages.
+On Linux, one import loads the C extension and both sonames
 it links, so a host whose runtime sonames are absent fails it
 even when `pkg-config` still answers for the library. Its fix
 line names both the runtime package and the header package

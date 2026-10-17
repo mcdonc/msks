@@ -501,6 +501,21 @@ def test_nfq_extension_off_linux_names_the_platform_contract(
     assert result.hint == "run msksd on a Linux host"
 
 
+def test_run_doctor_off_linux_skips_the_library_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Off Linux the two library rows stay off the report — their
+    install candidates there are Linux-only packages — and the
+    extension row carries the contract (#540)."""
+    all_found(monkeypatch)
+    monkeypatch.setattr(doctor_mod.sys, "platform", "darwin")
+    report = run_doctor(Settings())
+    names = {r.name for r in report.results}
+    assert "libnetfilter_queue" not in names
+    assert "libnfnetlink" not in names
+    assert "netfilterqueue" in names
+
+
 def test_nfq_extension_miss_without_a_manager_names_the_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
