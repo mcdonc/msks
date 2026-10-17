@@ -189,6 +189,10 @@ def test_bind_drives_the_setup_sequence(fake_lib: FakeLib) -> None:
         "set_mode",
     ]
     assert fake_lib.copy_range == nfqbind.COPY_RANGE
+    # The derivation, not just the constant: a revert to the
+    # unclamped 0xFFFF passes the line above and hangs every
+    # packet the read cannot carry whole.
+    assert nfqbind.COPY_RANGE == nfqbind.READ_BUFFER - 80
     assert queue.get_fd() == fake_lib.fd
     queue.unbind()
     assert fake_lib.calls[-2:] == ["destroy", "close"]
@@ -397,9 +401,9 @@ def test_run_continues_past_a_buffer_overflow(
     fake_lib: FakeLib, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """ENOBUFS is the kernel dropping queue messages under a
-    burst: the missed packets stay queued and drop at the queue's
-    own overflow (fail-closed, upstream's posture), so the loop
-    reads on instead of surfacing a drain failure."""
+    burst: the kernel released the missed packets (fail-closed,
+    upstream's posture), so the loop reads on instead of surfacing
+    a drain failure."""
 
     def overflowing(fd, n):
         overflowing.calls += 1
