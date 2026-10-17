@@ -74,7 +74,7 @@ builds):
 ```bash
 nix build .#server .#client .#guest-image .#guest-image-nixos
 ```
-=======
+
 ### Wheel installs on Linux
 
 Installing the built wheel with pip compiles the netfilterqueue
