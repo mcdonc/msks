@@ -5,9 +5,9 @@ package had:
 
 - ``bind(queue_num, callback)`` attaches one queue; the callback
   receives a :class:`Packet` per queued message.
-- ``get_fd()`` is the queue's socket fd (drive it from an event
-  loop); ``run(block=False)`` processes pending messages and
-  returns when none remain.
+- ``get_fd()`` is the queue's fd (drive it from an event loop);
+  ``run()`` processes pending messages and returns when none
+  remain.
 - ``unbind()`` tears the queue down; queued packets the kernel
   still holds drop, as they do at the Cython binding's teardown.
 - A packet carries ``get_payload()``/``accept()``/``drop()``/
@@ -127,6 +127,9 @@ lib.nfq_get_msg_packet_hdr.argtypes = [c_void_p]
 lib.nfq_get_payload.restype = c_int
 lib.nfq_get_payload.argtypes = [c_void_p, POINTER(POINTER(c_ubyte))]
 
+lib.nfq_close.restype = c_int
+lib.nfq_close.argtypes = [c_void_p]
+
 
 class PacketHeader(ctypes.Structure):
     """The packet id's 4 bytes at offset 0 of the message header —
@@ -151,14 +154,14 @@ RAISE = "raise"
 def read_outcome(exc: OSError) -> str:
     """What a failed read means. EINTR retries; EAGAIN means the
     queue drained; ENOBUFS means the kernel dropped messages under
-    a burst — the missed packets stay queued and drop at the
-    queue's own overflow (fail-closed, upstream's posture), so the
-    read retries; every other error surfaces."""
+    a burst; every other error surfaces."""
     if isinstance(exc, InterruptedError):
         return RETRY
     if isinstance(exc, BlockingIOError):
         return DRAINED
     if exc.errno == errno.ENOBUFS:
+        # The kernel released the missed packets (fail-closed,
+        # upstream's posture), so the read retries.
         return RETRY
     return RAISE
 

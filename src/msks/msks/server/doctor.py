@@ -588,7 +588,8 @@ def check_nfq_load(manager: str | None) -> CheckResult:
         name="nfq-binding",
         ok=False,
         message=(
-            "libnetfilter_queue.so.1 did not load — the consent "
+            "libnetfilter_queue did not load (the probe tries the "
+            "versioned and unversioned sonames) — the consent "
             "stack's vendored binding needs it at runtime"
         ),
         hint=install_hint("libnetfilter_queue", manager),

@@ -11,7 +11,9 @@ bind/run/unbind sequence against a fake library and a pipe fd.
 import ctypes
 import errno
 import os
+import re
 from ctypes import c_void_p
+from pathlib import Path
 
 import pytest
 from msks.net import nfqbind
@@ -176,21 +178,20 @@ def bound_queue(fake_lib: FakeLib, callback) -> NetfilterQueue:
 
 def test_bind_drives_the_setup_sequence(fake_lib: FakeLib) -> None:
     """bind opens the library, clears and re-binds the family,
-    attaches the queue, asks for whole packets, and wraps the fd
-    the event loop will poll."""
+    attaches the queue, clamps the copy range to what one read
+    carries, and wraps the fd the event loop will poll."""
     queue = bound_queue(fake_lib, lambda pkt: None)
-    assert (
-        fake_lib.calls[:4]
-        == [
-            "open",
-            "create_queue:4",
-        ]
-        or fake_lib.calls[0] == "open"
-    )
-    assert "create_queue:4" in fake_lib.calls
+    assert fake_lib.calls == [
+        "open",
+        "unbind_pf",
+        "bind_pf",
+        "create_queue:4",
+        "set_mode",
+    ]
+    assert fake_lib.copy_range == nfqbind.COPY_RANGE
     assert queue.get_fd() == fake_lib.fd
     queue.unbind()
-    assert "destroy" in fake_lib.calls and "close" in fake_lib.calls
+    assert fake_lib.calls[-2:] == ["destroy", "close"]
 
 
 def test_run_processes_pending_messages_and_returns(fake_lib: FakeLib) -> None:
@@ -428,3 +429,27 @@ def test_run_surfaces_an_unrelated_read_error(
     with pytest.raises(OSError, match="input/output error"):
         queue.run()
     queue.unbind()
+
+
+def test_every_library_call_has_a_prototype() -> None:
+    """Every lib.nfq_* name the module calls carries argtypes (and
+    the pointer-returning trio carries a c_void_p restype): a call
+    without argtypes passes a Python int where the library takes a
+    pointer, and ctypes truncates it — the missing nfq_close
+    prototype segfaulted every unbind (#543's round-2 review). The
+    FakeLib-based tests cannot see this; this pin reads the
+    module's own source."""
+    source = nfqbind.__file__
+    called = set(re.findall(r"lib\.(nfq_\w+)\(", Path(source).read_text()))
+    assert called, "the source scan found no calls — the pin broke"
+    for name in sorted(called):
+        func = getattr(nfqbind.lib, name, None)
+        assert func is not None, f"lib.{name} is called but missing"
+        assert func.argtypes is not None, (
+            f"lib.{name} carries no argtypes — ctypes passes a "
+            "truncated pointer where the library takes a handle"
+        )
+    for name in ("nfq_open", "nfq_create_queue", "nfq_get_msg_packet_hdr"):
+        assert getattr(nfqbind.lib, name).restype == ctypes.c_void_p, (
+            f"lib.{name} must return c_void_p"
+        )
