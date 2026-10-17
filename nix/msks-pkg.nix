@@ -44,9 +44,6 @@
   # vendored-click import in cli falls back to the plain click
   # when a typer without one serves the closure).
   typer,
-  # The NFQUEUE binding (#69), built from the sdist against
-  # nixpkgs' libnetfilter_queue (nix/netfilterqueue-pkg.nix).
-  netfilterqueue,
   # The LLM router's multi-provider mode (#259), lazily imported
   # (the passthrough mode runs without it).
   litellm,
@@ -79,7 +76,6 @@ buildPythonPackage {
     textual
     rich
     typer
-    netfilterqueue
     litellm
   ];
 

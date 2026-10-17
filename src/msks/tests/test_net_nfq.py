@@ -137,13 +137,13 @@ async def test_unparseable_packet_drops(consumer_app) -> None:
 async def test_missing_binding_names_the_refusal(
     consumer_app, monkeypatch
 ) -> None:
-    """The binding ships with every install, but an exotic one
-    without the library must refuse the boot by name, not run an
-    unanswered queue."""
+    """The binding is vendored in the wheel, but a host without
+    libnetfilter_queue (every non-Linux one) must refuse the boot
+    by name, not run an unanswered queue."""
     app, _net = consumer_app
     flow = consumer(app, app.state.net)
     monkeypatch.setattr(nfq, "NetfilterQueue", None)
-    with pytest.raises(MicrovmError, match="netfilterqueue"):
+    with pytest.raises(MicrovmError, match="libnetfilter_queue"):
         flow.start()
 
 
