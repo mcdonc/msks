@@ -53,27 +53,7 @@
 }:
 
 let
-  # Only what hatchling reads: pyproject context at the root plus the
-  # package tree. Keeps .devenv/worktree noise out of the hash
-  # so unrelated edits cannot rebuild the package closure.
-  src = lib.cleanSourceWith {
-    src = ./..;
-    filter =
-      path: type:
-      let
-        rel = lib.removePrefix (toString ./.. + "/") (toString path);
-      in
-      # Directories prune their whole subtree when filtered out, so
-      # every ancestor of the package tree must pass too.
-      rel == "pyproject.toml"
-      || rel == "README.md"
-      || (type == "directory" && (rel == "src" || rel == "src/msks"))
-      || (
-        lib.hasPrefix "src/msks/msks" rel
-        && !lib.hasSuffix "__pycache__" rel
-        && !lib.hasSuffix ".pyc" rel
-      );
-  };
+  src = import ./source.nix { inherit lib; };
 in
 buildPythonPackage {
   pname = "msks";
@@ -107,11 +87,12 @@ buildPythonPackage {
   # and CI, not in this build.
   doCheck = false;
 
-  pythonRemoveDeps = [
-    # uvicorn[standard] extra: the speedups resolve via the plain
-    # nixpkgs uvicorn package here.
-    "uvicorn[standard]"
-  ];
+  # uvicorn[standard] extra: the plain nixpkgs uvicorn package
+  # serves the speedups here. The remove entry matches by name
+  # prefix — the plain "uvicorn" drops the whole bracketed
+  # requirement line (a bracketed entry would be a sed bracket
+  # expression and match nothing).
+  pythonRemoveDeps = [ "uvicorn" ];
 
   meta = {
     description = "Microvm workspace daemon (klangkd analogue on cloud-hypervisor)";
