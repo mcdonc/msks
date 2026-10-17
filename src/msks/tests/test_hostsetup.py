@@ -38,6 +38,7 @@ class Host:
             f"{WRAPPER} cap_net_bind_service,cap_net_admin=ep\n"
         )
         self.modprobe_fails: set[str] = set()
+        self.modprobe_absent: set[str] = set()
         self.ambient = "0000000000001400"
 
     def sh(self, cmd, timeout=10.0, env=None):
@@ -50,9 +51,12 @@ class Host:
         if head == "sysctl":
             return 0, "", ""
         if head == "modprobe":
-            return (
-                (1, "", "") if cmd[1] in self.modprobe_fails else (0, "", "")
+            fail_set = (
+                self.modprobe_absent
+                if "--dry-run" in cmd
+                else self.modprobe_fails
             )
+            return (1, "", "") if cmd[-1] in fail_set else (0, "", "")
         if head == "ip":
             return 0, "default via 192.0.2.1 dev eno4 proto dhcp\n", ""
         return 0, "", ""
@@ -140,7 +144,10 @@ def test_happy_path_lands_every_piece(
     assert debian_host.ran("sysctl") == [["sysctl", "--load", SYSCTL_FILE]]
     modules_file = debian_host.writes[hostsetup.MODULES_FILE]
     assert modules_file.endswith("\n".join(MODULES) + "\n")
-    assert len(debian_host.ran("modprobe")) == len(MODULES)
+    real_loads = [
+        c for c in debian_host.ran("modprobe") if "--dry-run" not in c
+    ]
+    assert len(real_loads) == len(MODULES)
     out = capsys.readouterr().out
     assert "wrapper:    /usr/local/bin/msks-caps" in out
     assert "dev-daemon use: DEV_CAPS=/usr/local/bin/msks-caps msks-dev" in out
@@ -195,10 +202,56 @@ def test_ip_forward_still_zero_refuses(
 def test_modprobe_failure_warns_without_refusing(
     debian_host: Host, capsys: pytest.CaptureFixture
 ) -> None:
+    """A module the tree carries whose load fails keeps the plain
+    warning; the consent summary marks it missing."""
     debian_host.modprobe_fails = {"nfnetlink_queue"}
     assert main() == 0
-    assert "WARNING modprobe nfnetlink_queue failed" in (
-        capsys.readouterr().err
+    out = capsys.readouterr()
+    assert "WARNING modprobe nfnetlink_queue failed" in out.err
+    assert "UNAVAILABLE on this kernel — missing: nfnetlink_queue" in (out.out)
+
+
+def test_absent_consent_modules_name_the_flavor_and_fix(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cloud-flavor gap (#550): a module absent from the tree
+    names the running release and the full-flavor fix, and the
+    summary marks interactive consent unavailable."""
+    debian_host.modprobe_absent = {
+        "nft_reject",
+        "nf_reject_ipv4",
+        "nfnetlink_queue",
+    }
+    monkeypatch.setattr(
+        hostsetup.os,
+        "uname",
+        lambda: type("U", (), {"release": "6.12.107+deb13-cloud-amd64"})(),
+    )
+    assert main() == 0
+
+
+def test_absent_module_warning_text(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    debian_host.modprobe_absent = {"nfnetlink_queue"}
+    monkeypatch.setattr(
+        hostsetup.os,
+        "uname",
+        lambda: type("U", (), {"release": "6.1.0-0.deb12u11-cloud-amd64"})(),
+    )
+    assert main() == 0
+    out = capsys.readouterr()
+    assert (
+        "WARNING nfnetlink_queue is absent from this kernel's module "
+        "tree — the running flavor (6.1.0-0.deb12u11-cloud-amd64) "
+        "ships without it" in out.err
+    )
+    assert "apt install linux-image-amd64, reboot, re-run" in out.err
+    assert (
+        "consent:    interactive egress consent UNAVAILABLE on this "
+        "kernel — missing: nfnetlink_queue" in out.out
     )
 
 

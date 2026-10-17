@@ -302,19 +302,83 @@ def land_sysctl() -> None:
         )
 
 
-def land_modules() -> None:
+# A module's state after land_modules: it loaded, the kernel's
+# module tree does not carry it, or the load itself failed.
+LOADED = "loaded"
+ABSENT = "absent"
+LOAD_FAILED = "load-failed"
+
+# The three the consent chain's rulesets reference (the deny RST's
+# `reject with tcp reset`, the interactive queue's `queue num`):
+# the cloud kernel flavors ship without them (#550), and the
+# daemon refuses consent-egress workspaces without them.
+CONSENT_MODULES = ("nft_reject", "nf_reject_ipv4", "nfnetlink_queue")
+
+
+def land_modules() -> dict[str, str]:
     """The modules file, boot-time (nix/module.nix's deterministic
-    posture) and modprobe'd now: modprobe accepts a built-in module
-    with status 0; a name the kernel tree lacks warns — the
-    daemon's ruleset load fails closed naming the cause."""
+    posture) and modprobe'd now. Returns each module's state for
+    the summary's consent line: a name the kernel tree lacks is a
+    flavor gap with a named fix (#550), not a load failure."""
     write_file(MODULES_FILE, MODULES_HEADER + "\n".join(MODULES) + "\n")
-    for module in MODULES:
-        rc, _out, _err = sh(["modprobe", module])
-        if rc != 0:
-            print(
-                f"{TOOL}: WARNING modprobe {module} failed — check the kernel",
-                file=sys.stderr,
-            )
+    return report_module_states(module_states())
+
+
+def module_states() -> dict[str, str]:
+    """Every module's state, probed in list order."""
+    return {module: load_module(module) for module in MODULES}
+
+
+def report_module_states(states: dict[str, str]) -> dict[str, str]:
+    """Warn per failure kind and hand the states to the summary."""
+    warn_load_failures(
+        [m for m, state in states.items() if state == LOAD_FAILED]
+    )
+    warn_flavor_gap([m for m, state in states.items() if state == ABSENT])
+    return states
+
+
+def load_module(module: str) -> str:
+    """One module's state: the dry-run resolves whether the kernel
+    tree carries it at all (a built-in answers yes), then the real
+    load runs — a failure there is a load failure, not an
+    absence."""
+    rc, _out, _err = sh(["modprobe", "--dry-run", module])
+    if rc != 0:
+        return ABSENT
+    rc, _out, _err = sh(["modprobe", module])
+    return LOADED if rc == 0 else LOAD_FAILED
+
+
+def warn_load_failures(failed: list[str]) -> None:
+    """A module the tree carries whose load failed: a genuine
+    kernel-level failure, the generic warning (the daemon's
+    ruleset load fails closed naming the cause)."""
+    for module in failed:
+        print(
+            f"{TOOL}: WARNING modprobe {module} failed — check the kernel",
+            file=sys.stderr,
+        )
+
+
+def warn_flavor_gap(absent: list[str]) -> None:
+    """Name the trimmed-flavor gap and its fix (#550): the cloud
+    kernel flavors (…-cloud-amd64) ship without the consent
+    modules, and interactive egress consent cannot work there
+    until the full flavor lands."""
+    for module in absent:
+        print(
+            f"{TOOL}: WARNING {module} is absent from this kernel's "
+            f"module tree — the running flavor "
+            f"({os.uname().release}) ships without it",
+            file=sys.stderr,
+        )
+    if absent:
+        print(
+            f"{TOOL}: the full flavor carries them: "
+            "apt install linux-image-amd64, reboot, re-run",
+            file=sys.stderr,
+        )
 
 
 def uplink() -> str:
@@ -342,7 +406,21 @@ def kvm_hint() -> str:
     return "adduser <daemon-user> kvm   (the kvm group gates the node)"
 
 
-def summary(ambient: str) -> None:
+def consent_line(states: dict[str, str]) -> str:
+    """The summary's consent verdict: interactive egress consent
+    needs every consent module loaded (#550)."""
+    missing = [
+        module for module in CONSENT_MODULES if states.get(module) != LOADED
+    ]
+    if not missing:
+        return "interactive egress consent available"
+    return (
+        "interactive egress consent UNAVAILABLE on this kernel — "
+        f"missing: {', '.join(missing)}"
+    )
+
+
+def summary(ambient: str, states: dict[str, str]) -> None:
     say("done —")
     print(f"  wrapper:    {WRAPPER} (setpriv, {CAPS}+ep)")
     print(f"               dev-daemon use: DEV_CAPS={WRAPPER} msks-dev")
@@ -353,6 +431,7 @@ def summary(ambient: str) -> None:
         f"conntrack={which('conntrack')}"
     )
     print(f"  /dev/kvm:   {kvm_hint()}")
+    print(f"  consent:    {consent_line(states)}")
     print(
         "  uplink:     point the daemon at this host's default-route "
         "interface (MSKSD_EGRESS_UPLINK, or DEV_UPLINK for "
@@ -375,8 +454,8 @@ def run_setup() -> None:
         ambient = wrapper_ambient_proof()
         say(f"wrapper {WRAPPER} carries {CAPS}+ep (CapAmb {ambient})")
         land_sysctl()
-        land_modules()
-        summary(ambient)
+        states = land_modules()
+        summary(ambient, states)
     finally:
         os.environ["PATH"] = saved
 
