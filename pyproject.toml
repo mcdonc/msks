@@ -73,6 +73,7 @@ build-backend = "hatchling.build"
 msks = "msks.client.cli:main"
 msksd = "msks.server.main:main"
 msks-term-popup = "msks.client.term_popup:main"
+msks-setup-debian-host = "msks.server.hostsetup:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/msks/msks"]

@@ -17,6 +17,7 @@ fan_in_ceiling = 12
 # module under src/msks/msks must be reachable from these.
 entry_points = [
   "msks.server.main",
+  "msks.server.hostsetup",
   "msks.client.cli",
   "msks.client.term_popup",
   "msks.client.tui.decide_app",
