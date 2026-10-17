@@ -8,6 +8,8 @@ The live root path runs on a dev host the way the nfqbind probe
 did; CI has no consumer of the retired script.
 """
 
+import os
+import subprocess
 from pathlib import Path
 
 import msks.server.hostsetup as hostsetup
@@ -38,7 +40,7 @@ class Host:
         self.modprobe_fails: set[str] = set()
         self.ambient = "0000000000001400"
 
-    def sh(self, cmd, timeout=10.0):
+    def sh(self, cmd, timeout=10.0, env=None):
         self.commands.append(cmd)
         head = cmd[0]
         if head == "getcap":
@@ -239,15 +241,19 @@ def test_apt_failure_refuses(
 
     monkeypatch.setattr(hostsetup, "which", lacking)
 
-    def failing(cmd, timeout=10.0):
+    def failing(cmd, timeout=10.0, env=None):
         debian_host.commands.append(cmd)
-        if cmd[0] == "apt-get":
-            return 100, "", "apt is broken"
+        if cmd[0] == "apt-get" and "update" in cmd:
+            return 100, "", "apt update is broken"
         return debian_host.sh(cmd, timeout)
 
     monkeypatch.setattr(hostsetup, "sh", failing)
     assert main() == 1
-    assert "apt install failed: apt is broken" in capsys.readouterr().err
+    assert "apt-get update failed: apt update is broken" in (
+        capsys.readouterr().err
+    )
+    # The script's set -e contract: no install after a failed update.
+    assert debian_host.ran("apt-get") == [["apt-get", "-qq", "update"]]
 
 
 def test_missing_setpriv_refuses(
@@ -373,3 +379,87 @@ def test_granted_caps_reads_the_set_before_ep() -> None:
     ) == {"cap_net_admin", "cap_net_bind_service"}
     assert hostsetup.granted_caps("") == set()
     assert hostsetup.granted_caps(f"{WRAPPER} nothing") == set()
+
+
+def test_sh_converts_exceptions_to_the_failure_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing binary and a timeout answer (-1, "", reason) —
+    doctor's one-shape-of-failure rule — so no traceback escapes
+    the entrypoint."""
+    rc, out, err = hostsetup.sh(["no-such-binary-anywhere"])
+    assert (rc, out) == (-1, "")
+    assert "no-such-binary-anywhere" in err
+
+    def expired(cmd, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, 1)
+
+    monkeypatch.setattr(hostsetup.subprocess, "run", expired)
+    rc, out, err = hostsetup.sh(["sleep", "100"], timeout=1)
+    assert (rc, out) == (-1, "")
+    assert "sleep" in err
+
+
+def test_apt_install_runs_noninteractive(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The script's guarantee, kept: the install env carries
+    DEBIAN_FRONTEND=noninteractive so debconf never reaches for
+    the terminal."""
+    seen: list[dict | None] = []
+    real_sh = debian_host.sh
+
+    def recording(cmd, timeout=10.0, env=None):
+        seen.append(env)
+        return real_sh(cmd, timeout)
+
+    monkeypatch.setattr(hostsetup, "sh", recording)
+    release = Path(hostsetup.OS_RELEASE)
+    release.write_text("ID=debian\n")
+    monkeypatch.setattr(hostsetup, "OS_RELEASE", str(release))
+    monkeypatch.setattr(
+        hostsetup,
+        "which",
+        lambda tool: None if tool == "nft" else "/usr/bin/x",
+    )
+    assert main() == 0
+    installs = [e for e in seen if e is not None]
+    assert installs and all(
+        e.get("DEBIAN_FRONTEND") == "noninteractive" for e in installs
+    )
+
+
+def test_path_restored_after_the_run(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Debian PATH prepend holds for the run and leaves."""
+    monkeypatch.setenv("PATH", "/original")
+    assert main() == 0
+    assert os.environ["PATH"] == "/original"
+
+
+def test_apt_install_failure_refuses(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """update succeeds, install fails: the refusal names install
+    (the split from update's refusal, above)."""
+    real_which = hostsetup.which
+
+    def lacking(tool):
+        return None if tool == "nft" else real_which(tool)
+
+    monkeypatch.setattr(hostsetup, "which", lacking)
+
+    def failing(cmd, timeout=10.0, env=None):
+        debian_host.commands.append(cmd)
+        if cmd[0] == "apt-get" and "install" in cmd:
+            return 100, "", "dpkg is locked"
+        return debian_host.sh(cmd, timeout, env)
+
+    monkeypatch.setattr(hostsetup, "sh", failing)
+    assert main() == 1
+    assert "apt install failed: dpkg is locked" in capsys.readouterr().err

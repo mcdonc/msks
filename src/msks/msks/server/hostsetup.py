@@ -106,9 +106,22 @@ class HostSetupError(Exception):
     step that cannot proceed."""
 
 
-def sh(cmd: list[str], timeout: float = 10.0) -> tuple[int, str, str]:
-    """Run one command, capturing its answer (doctor's run shape)."""
-    done = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+def sh(
+    cmd: list[str], timeout: float = 10.0, env: dict[str, str] | None = None
+) -> tuple[int, str, str]:
+    """Run one command, capturing its answer — doctor's run shape,
+    exceptions included: a timeout or a missing binary answers
+    (-1, "", reason) so every caller reports one shape of failure."""
+    try:
+        done = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return -1, "", f"{cmd[0]}: {exc}"
     return done.returncode, done.stdout, done.stderr
 
 
@@ -173,12 +186,23 @@ def missing_packages() -> list[str]:
     return missing
 
 
+def apt_env() -> dict[str, str]:
+    """The script's guarantee, kept: debconf never reaches for the
+    terminal (a postinst under an interactive frontend can block on
+    stdin, which sh does not redirect)."""
+    return {**os.environ, "DEBIAN_FRONTEND": "noninteractive"}
+
+
 def install_packages(packages: list[str]) -> None:
     say(f"installing {' '.join(packages)}")
     rc, _out, err = sh(["apt-get", "-qq", "update"], timeout=120)
-    rc2, _o, err2 = sh(["apt-get", "install", "-y", *packages], timeout=600)
-    if rc != 0 or rc2 != 0:
-        raise HostSetupError(f"apt install failed: {err or err2}")
+    if rc != 0:
+        raise HostSetupError(f"apt-get update failed: {err}")
+    rc, _out, err = sh(
+        ["apt-get", "install", "-y", *packages], timeout=600, env=apt_env()
+    )
+    if rc != 0:
+        raise HostSetupError(f"apt install failed: {err}")
 
 
 def install_wrapper() -> None:
@@ -241,7 +265,7 @@ def wrapper_ambient_proof() -> str:
     ambient set inspected in the exec'd process. CapAmb must read
     nonzero (net_bind_service | net_admin) — a wrapper whose capset
     fails closes with setpriv's own error before this check."""
-    rc, out, _err = sh(
+    rc, out, err = sh(
         [
             WRAPPER,
             "--inh-caps=+net_admin,+net_bind_service",
@@ -256,7 +280,7 @@ def wrapper_ambient_proof() -> str:
     if rc != 0 or ambient in ("", "0000000000000000"):
         raise HostSetupError(
             f"wrapper exec left no ambient capabilities "
-            f"(CapAmb reads '{ambient}')"
+            f"(CapAmb reads '{ambient}'; {err.strip()})"
         )
     return ambient
 
@@ -265,10 +289,11 @@ def land_sysctl() -> None:
     """The forwarding sysctl, boot-time and now; the daemon refuses
     egress workspaces naming this key while it reads 0."""
     write_file(SYSCTL_FILE, SYSCTL_TEXT)
-    sh(["sysctl", "--load", SYSCTL_FILE])
+    rc, _out, err = sh(["sysctl", "--load", SYSCTL_FILE])
     if read_file(IP_FORWARD_PROC).strip() != "1":
         raise HostSetupError(
-            f"{IP_FORWARD_PROC} still reads 0 after loading {SYSCTL_FILE}"
+            f"{IP_FORWARD_PROC} still reads 0 after loading "
+            f"{SYSCTL_FILE} (sysctl rc={rc}, {err.strip()})"
         )
 
 
@@ -303,7 +328,9 @@ def uplink() -> str:
 def kvm_hint() -> str:
     try:
         grp.getgrnam("kvm")
-    except KeyError:
+    except KeyError, OSError:
+        # KeyError: no such group; OSError: the NSS backend failed —
+        # the script's getent degraded the same way.
         return (
             "the kvm group is absent — install the KVM stack (qemu-kvm) first"
         )
@@ -323,23 +350,30 @@ def summary(ambient: str) -> None:
     print(f"  /dev/kvm:   {kvm_hint()}")
     print(
         "  uplink:     point the daemon at this host's default-route "
-        f"interface ({uplink() or 'none found'})"
+        "interface (MSKSD_EGRESS_UPLINK, or DEV_UPLINK for "
+        f"msks-dev): {uplink() or 'none found'}"
     )
 
 
 def run_setup() -> None:
-    """Every phase in order; the first refusal stops the run."""
-    os.environ["PATH"] = DEBIAN_PATH + ":" + os.environ.get("PATH", "")
-    check_root_and_platform()
-    missing = missing_packages()
-    if missing:
-        install_packages(missing)
-    install_wrapper()
-    ambient = wrapper_ambient_proof()
-    say(f"wrapper {WRAPPER} carries {CAPS}+ep (CapAmb {ambient})")
-    land_sysctl()
-    land_modules()
-    summary(ambient)
+    """Every phase in order; the first refusal stops the run. The
+    Debian PATH (sudo can strip /usr/sbin, where setcap and friends
+    live) holds for the run and is restored after it."""
+    saved = os.environ.get("PATH", "")
+    os.environ["PATH"] = DEBIAN_PATH + ":" + saved
+    try:
+        check_root_and_platform()
+        missing = missing_packages()
+        if missing:
+            install_packages(missing)
+        install_wrapper()
+        ambient = wrapper_ambient_proof()
+        say(f"wrapper {WRAPPER} carries {CAPS}+ep (CapAmb {ambient})")
+        land_sysctl()
+        land_modules()
+        summary(ambient)
+    finally:
+        os.environ["PATH"] = saved
 
 
 def main() -> int:
