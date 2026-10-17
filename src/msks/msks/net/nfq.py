@@ -32,12 +32,13 @@ skips it), and a deny on such a destination refuses only its own
 connection — the RST element is keyed by the connection's source
 port, so the co-resident's connections never see it.
 
-``netfilterqueue`` ships with every install (consent is the normal
-posture for workspaces): the devenv shells build it against
+``netfilterqueue`` ships with every Linux install (consent is the
+normal posture for workspaces): the devenv shells build it against
 nixpkgs' libnetfilter_queue/libnfnetlink, and the package closure
 builds it via ``nix/netfilterqueue-pkg.nix``. The import stays
-guarded — an exotic install without the library fails closed at
-bind time as a named refusal (the workspace boot refuses rather
+guarded — an install without the binding (every non-Linux one,
+via pyproject's platform marker) or without the library fails
+closed at bind time as a named refusal (the workspace boot refuses rather
 than running an unanswered queue), never silently.
 """
 
@@ -61,9 +62,10 @@ VERDICT_CACHE_TTL = 120.0
 try:
     from netfilterqueue import NetfilterQueue
 except ImportError:  # pragma: no cover — an install without the
-    # library (the binding ships with every install; dev/CI shells
-    # and the package closure build it); the guard keeps that
-    # install fail-closed at bind time instead of crashing import.
+    # binding (every non-Linux one, via the platform marker; on
+    # Linux the dev/CI shells and the package closure build it) or
+    # without the library; the guard keeps that install
+    # fail-closed at bind time instead of crashing import.
     NetfilterQueue = None
 
 

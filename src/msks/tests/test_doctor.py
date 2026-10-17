@@ -468,6 +468,39 @@ def test_nfq_extension_miss_dedupes_pacman_one_package(
     assert result.hint == "sudo pacman -S libnetfilter_queue"
 
 
+def test_nfq_fix_packages_pin_every_manager() -> None:
+    """The per-manager fix lines name real packages (#540): the
+    runtime soname plus the headers a pip build compiles against.
+    Alpine carries the underscored name; pacman and Homebrew ship
+    one package each, so the pair dedupes."""
+    expected = {
+        "apt": "libnetfilter-queue1 libnetfilter-queue-dev",
+        "dnf": "libnetfilter_queue libnetfilter_queue-devel",
+        "yum": "libnetfilter_queue libnetfilter_queue-devel",
+        "zypper": "libnetfilter_queue1 libnetfilter_queue-devel",
+        "apk": "libnetfilter_queue libnetfilter_queue-dev",
+        "pacman": "libnetfilter_queue",
+        "brew": "libnetfilter-queue",
+    }
+    for manager, packages in expected.items():
+        assert doctor_mod.nfq_fix_packages(manager) == packages.split(" "), (
+            manager
+        )
+
+
+def test_nfq_extension_off_linux_names_the_platform_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Off Linux the binding is absent by design (the platform
+    marker), so the miss names that contract — no package hint
+    can fix a Mac (#540)."""
+    monkeypatch.setattr(doctor_mod.sys, "platform", "darwin")
+    result = doctor_mod.check_nfq_extension("brew")
+    assert result.ok is False
+    assert "Linux installs only" in result.message
+    assert result.hint == "run msksd on a Linux host"
+
+
 def test_nfq_extension_miss_without_a_manager_names_the_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -234,22 +234,27 @@ PACKAGE_HINTS: dict[str, dict[str, str]] = {
         "yum": "libnetfilter_queue",
         "apt": "libnetfilter-queue1",
         "zypper": "libnetfilter_queue1",
-        "apk": "libnetfilter-queue",
+        # Alpine carries the underscored name (aports
+        # pkgname=libnetfilter_queue); Homebrew's formula is the
+        # hyphenated one, Linux-only.
+        "apk": "libnetfilter_queue",
         "pacman": "libnetfilter_queue",
+        "brew": "libnetfilter-queue",
     },
     # The header rows (#540): what a pip install of msks compiles
     # the netfilterqueue extension against — the binding ships as
     # an sdist, so the headers are an install-time requirement on
-    # every Linux host. pacman carries one package per library, so
-    # its header row repeats the runtime name and the fix line
-    # dedupes it.
+    # every Linux host. pacman carries one package per library, and
+    # Homebrew formulae bundle the headers, so those rows repeat
+    # the runtime name and the fix line dedupes it.
     "libnetfilter_queue-dev": {
         "dnf": "libnetfilter_queue-devel",
         "yum": "libnetfilter_queue-devel",
         "apt": "libnetfilter-queue-dev",
         "zypper": "libnetfilter_queue-devel",
-        "apk": "libnetfilter-queue-dev",
+        "apk": "libnetfilter_queue-dev",
         "pacman": "libnetfilter_queue",
+        "brew": "libnetfilter-queue",
     },
     "libnfnetlink": {
         "dnf": "libnfnetlink",
@@ -562,9 +567,22 @@ def nfq_fix_packages(manager: str) -> list[str]:
 def check_nfq_extension(manager: str | None) -> CheckResult:
     """Check the netfilterqueue extension loads — the definitive
     consent-stack capability test: one import loads the C extension
-    and both sonames it links. A miss is either the runtime sonames
-    absent or a pip build that compiled no extension (it needs the
-    header packages), so the fix names both rows (#540)."""
+    and both sonames it links. Off Linux the binding is absent by
+    design (pyproject's platform marker, #540), so the miss names
+    the platform contract; on Linux a miss means the runtime
+    sonames are absent or the binding is missing from the install,
+    and the fix names both the runtime and the header packages."""
+    if sys.platform != "linux":
+        return CheckResult(
+            name="netfilterqueue",
+            ok=False,
+            message=(
+                "the netfilterqueue binding ships on Linux installs "
+                "only — the consent stack does not run on this "
+                "platform (#540)"
+            ),
+            hint="run msksd on a Linux host",
+        )
     rc, _out, _err = run(NFQ_IMPORT_PROBE)
     if rc == 0:
         return CheckResult(
@@ -574,8 +592,8 @@ def check_nfq_extension(manager: str | None) -> CheckResult:
         )
     if manager is None:
         hint = (
-            "install libnetfilter_queue and libnfnetlink plus "
-            "their -dev/-devel header packages"
+            "install libnetfilter_queue plus its -dev/-devel header "
+            "packages (libnfnetlink rides their dependency chain)"
         )
     else:
         hint = manager_install(manager, " ".join(nfq_fix_packages(manager)))
@@ -584,8 +602,8 @@ def check_nfq_extension(manager: str | None) -> CheckResult:
         ok=False,
         message=(
             "the netfilterqueue extension did not import — the "
-            "runtime libraries are absent, or the pip build "
-            "compiled no extension (it needs the header packages)"
+            "runtime sonames are absent or the binding is missing "
+            "from this install"
         ),
         hint=hint,
     )
