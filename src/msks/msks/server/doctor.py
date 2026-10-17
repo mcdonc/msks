@@ -237,6 +237,20 @@ PACKAGE_HINTS: dict[str, dict[str, str]] = {
         "apk": "libnetfilter-queue",
         "pacman": "libnetfilter_queue",
     },
+    # The header rows (#540): what a pip install of msks compiles
+    # the netfilterqueue extension against — the binding ships as
+    # an sdist, so the headers are an install-time requirement on
+    # every Linux host. pacman carries one package per library, so
+    # its header row repeats the runtime name and the fix line
+    # dedupes it.
+    "libnetfilter_queue-dev": {
+        "dnf": "libnetfilter_queue-devel",
+        "yum": "libnetfilter_queue-devel",
+        "apt": "libnetfilter-queue-dev",
+        "zypper": "libnetfilter_queue-devel",
+        "apk": "libnetfilter-queue-dev",
+        "pacman": "libnetfilter_queue",
+    },
     "libnfnetlink": {
         "dnf": "libnfnetlink",
         "yum": "libnfnetlink",
@@ -533,6 +547,50 @@ def library_probe_result(name: str) -> str | None:
     )
 
 
+def nfq_fix_packages(manager: str) -> list[str]:
+    """The packages a netfilterqueue import miss needs, deduped in
+    row order: the runtime soname plus the headers a pip build of
+    the extension compiles against (#540)."""
+    packages: list[str] = []
+    for row in ("libnetfilter_queue", "libnetfilter_queue-dev"):
+        pkg = PACKAGE_HINTS.get(row, {}).get(manager, row)
+        if pkg not in packages:
+            packages.append(pkg)
+    return packages
+
+
+def check_nfq_extension(manager: str | None) -> CheckResult:
+    """Check the netfilterqueue extension loads — the definitive
+    consent-stack capability test: one import loads the C extension
+    and both sonames it links. A miss is either the runtime sonames
+    absent or a pip build that compiled no extension (it needs the
+    header packages), so the fix names both rows (#540)."""
+    rc, _out, _err = run(NFQ_IMPORT_PROBE)
+    if rc == 0:
+        return CheckResult(
+            name="netfilterqueue",
+            ok=True,
+            message="netfilterqueue ok (import)",
+        )
+    if manager is None:
+        hint = (
+            "install libnetfilter_queue and libnfnetlink plus "
+            "their -dev/-devel header packages"
+        )
+    else:
+        hint = manager_install(manager, " ".join(nfq_fix_packages(manager)))
+    return CheckResult(
+        name="netfilterqueue",
+        ok=False,
+        message=(
+            "the netfilterqueue extension did not import — the "
+            "runtime libraries are absent, or the pip build "
+            "compiled no extension (it needs the header packages)"
+        ),
+        hint=hint,
+    )
+
+
 # ---------------------------------------------------------------------------
 # The check set
 # ---------------------------------------------------------------------------
@@ -617,6 +675,7 @@ def run_doctor(settings: Settings) -> DoctorReport:
     )
     report.add(check_library("libnetfilter_queue", manager))
     report.add(check_library("libnfnetlink", manager))
+    report.add(check_nfq_extension(manager))
     report.add(check_tmux(manager))
 
     # Warning grade: the client-side tools the documented

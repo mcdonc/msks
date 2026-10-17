@@ -74,6 +74,19 @@ builds):
 ```bash
 nix build .#server .#client .#guest-image .#guest-image-nixos
 ```
+=======
+### Wheel installs on Linux
+
+Installing the built wheel with pip compiles the netfilterqueue
+binding from source on the host — the binding ships as an sdist,
+with no prebuilt wheels. The build needs each library's headers
+present: `libnetfilter-queue-dev` and `libnfnetlink-dev` on apt,
+`libnetfilter_queue-devel` and `libnfnetlink-devel` on dnf and
+zypper, `libnetfilter-queue-dev` and `libnfnetlink-dev` on apk,
+and `libnetfilter_queue` and `libnfnetlink` on pacman (one
+package per library carries both the library and the headers).
+`msksd doctor` names the same packages for the detected package
+manager when the extension fails to import.
 
 ### VM guest assets
 
