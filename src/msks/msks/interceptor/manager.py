@@ -329,6 +329,14 @@ class Interceptor:
             if not covering:
                 if workspace_id in self._armed:
                     await self.disarm(workspace_id)
+                else:
+                    # Nothing wants the listener now: a fault from
+                    # an earlier failed arm no longer names a live
+                    # absence (#533) — the armed case's disarm
+                    # clear stands in for this branch.
+                    self.app.state.listener_faults.clear(
+                        workspace_id, "interceptor"
+                    )
                 return
             if workspace_id in self._armed:
                 self._entries[workspace_id] = table
@@ -415,10 +423,22 @@ class Interceptor:
         try:
             await self.apply_modes()
             await self.app.state.net.apply_interception(workspace_id, port)
-        except BaseException:
+        except BaseException as exc:
             with contextlib.suppress(Exception):
                 await self.disarm(workspace_id)
+            # The refusal stands in the fault registry (#533)
+            # until a later arm succeeds, the placeholders stop
+            # covering the workspace, or the workspace detaches —
+            # the record runs after the unwind's disarm so the
+            # clear disarm carries cannot eat it. A cancellation
+            # (daemon shutdown) records nothing: it names no bind
+            # refusal.
+            if not isinstance(exc, asyncio.CancelledError):
+                self.app.state.listener_faults.record(
+                    workspace_id, "interceptor", port, str(exc)
+                )
             raise
+        self.app.state.listener_faults.clear(workspace_id, "interceptor")
 
     async def ensure_master(self) -> None:
         """Start the embedded master once, lazily.
@@ -468,6 +488,11 @@ class Interceptor:
         self._entries.pop(workspace_id, None)
         if armed is not None:
             self._by_tap.pop(armed.tap_ip, None)
+        # The listener is down by intent now — a fault recorded for
+        # an earlier failed arm no longer names a live absence
+        # (#533); arm's own unwind records after this clear, so a
+        # fresh refusal still stands.
+        self.app.state.listener_faults.clear(workspace_id, "interceptor")
         if self._master is not None:
             await self.apply_modes()
         if swap_table and armed is not None:

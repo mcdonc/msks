@@ -706,7 +706,7 @@ paths instead of a catalog image.
 `--json` replaces the table with one JSON document — the API's
 workspace rows verbatim (id, name, kernel, initrd, rootfs, cmdline,
 cpus, mem_mib, image_hash, image_ref, host, root_mib, home_mib,
-status, created_at):
+status, created_at, listener_faults):
 
 ```bash
 msks ls --json | jq -r '.[] | select(.status == "running") | .name'
@@ -714,6 +714,53 @@ msks ls --json | jq -r '.[] | select(.status == "running") | .name'
 
 A daemon with zero workspaces prints nothing (an empty table) and an
 empty JSON array under `--json`.
+
+A workspace the daemon booted without one of its tap listeners
+prints one notice line per refused bind beside the listing, on
+standard error — the data on standard output stays parseable,
+under both the table and `--json`:
+
+```text
+msks: my-workspace: the probe endpoint did not start on port 8644 ([Errno 98] Address already in use); another service holds the port — free it or change it (MSKSD_PROBE_PORT)
+```
+
+The `listener_faults` field the `--json` document carries is the
+same record: each service's intended port and the error its bind
+raised, empty once the listener binds again or the workspace
+stops. The field covers all three per-tap services — the
+interceptor (`MSKSD_INTERCEPTOR_PORT`, default 8643), the LLM
+proxy (`MSKSD_LLM_PORT`, default 8770), and the probe endpoint
+(`MSKSD_PROBE_PORT`, default 8644).
+
+## `msks doctor`
+
+Checks the running daemon's workspaces for refused tap-listener
+binds (#533): each running workspace's per-tap listeners — the
+interceptor, the LLM proxy, and the probe endpoint — and the
+binds the daemon recorded as refused. A healthy workspace prints
+one line:
+
+```text
+✓ my-workspace: no refused tap-listener binds
+```
+
+A workspace the daemon booted without a listener prints one line
+per refused bind naming the workspace, the port, the bind error,
+and the remedy:
+
+```text
+✗ my-workspace: the probe endpoint did not start on port 8644 ([Errno 98] Address already in use); another service holds the port — free it or change it (MSKSD_PROBE_PORT)
+```
+
+The exit code is 1 while any fault stands, 0 when every bound
+listener serves; a daemon with no running workspaces says so and
+passes. The record is boot-scoped: a listener that binds on the
+workspace's next start clears its own line, and a stopped
+workspace clears them all. This command reads the daemon over
+its API (`MSKSC_URL`, `MSKSC_TOKEN`, `MSKSC_CAFILE` — the same
+environment every client command reads); the host-side tool
+checks are `msksd doctor`'s own surface (see
+[config.md](config.md)).
 
 ## `msks storage`
 
@@ -1739,4 +1786,6 @@ scaffolding. A timeout says so explicitly, because the daemon may
 still complete a request the client stopped waiting for. Argument
 errors exit with code 2 — the convention the argparse-era CLI set
 and the typer-based one (#315) keeps; success is 0; a Ctrl-C during
-a long boot prints `msks: interrupted` and exits 130.
+a long boot prints `msks: interrupted` and exits 130. The one
+exception is `msks doctor`, which exits 1 while any refused
+tap-listener bind stands (see its own section above).

@@ -367,6 +367,12 @@ runs as uid 0; `/dev/kvm` reaches the VMM through the `kvm` group.
 The per-tap service listeners — the interceptor, the LLM proxy,
 and the probe service (#532) — bind ports above 1024 by default;
 a setting that names a privileged port needs the capability.
+A refused bind (another service holding the port, an address the
+host cannot assign) records itself on the workspace's row as the
+`listener_faults` field: `msks ls` prints a notice line per fault,
+the TUI's workspace page shows a warning line, and `msks doctor`
+checks every running workspace in one run (see
+[cli.md](cli.md)).
 The host's firewall is never touched; containment stays inside the
 host by design.
 

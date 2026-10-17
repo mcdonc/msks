@@ -371,6 +371,9 @@ class NetManager:
             attachment = self._attachments.pop(workspace_id, None)
             services = self._services.pop(workspace_id, None)
             self.close_forwards(workspace_id)
+            # The refused-bind record is boot-scoped (#533): the
+            # endpoints are down because the workspace is.
+            self.app.state.listener_faults.forget(workspace_id)
             with contextlib.suppress(Exception):
                 # Best-effort like the rest of the teardown: a listener
                 # whose serve task already died badly must not abort the
@@ -1085,6 +1088,27 @@ class NetManager:
         await self.start_llm(services, attachment)
         await self.start_probe(attachment)
 
+    def note_listener_fault(
+        self,
+        workspace_id: str,
+        service: str,
+        port: int,
+        exc: Exception,
+        label: str,
+    ) -> None:
+        """Record one refused tap-listener bind and say it once
+        (#533): the log line names the boot, the registry's field
+        keeps naming it until the listener's next bind — the
+        operator's surfaces read the record, not the log."""
+        self.app.state.listener_faults.record(
+            workspace_id, service, port, str(exc)
+        )
+        print(
+            f"msksd: {label} for {workspace_id} did not start "
+            f"({exc}); the workspace boots without it",
+            flush=True,
+        )
+
     async def start_llm(
         self, services: NetServices, attachment: NetAttachment
     ) -> None:
@@ -1104,6 +1128,7 @@ class NetManager:
         llm = self.app.state.llm
         if llm is None:
             return
+        port = self.app.state.settings.llm.port
         factory = self._llm_factory or (lambda att: llm.listener_for(att))
         try:
             listener = factory(attachment)
@@ -1111,12 +1136,11 @@ class NetManager:
                 return
             await llm.start_listener(attachment.workspace_id, listener)
         except Exception as exc:
-            print(
-                f"msksd: LLM proxy for {attachment.workspace_id} "
-                f"did not start ({exc}); the workspace boots "
-                "without it",
-                flush=True,
+            self.note_listener_fault(
+                attachment.workspace_id, "llm", port, exc, "LLM proxy"
             )
+            return
+        self.app.state.listener_faults.clear(attachment.workspace_id, "llm")
 
     async def start_probe(self, attachment: NetAttachment) -> None:
         """Bind this tap's probe listener (#424) — the same
@@ -1131,6 +1155,7 @@ class NetManager:
         probe = self.app.state.probe
         if probe is None:
             return
+        port = self.app.state.settings.net.probe_port
         factory = self._probe_factory or self.default_probe
         try:
             listener = await factory(attachment)
@@ -1138,12 +1163,11 @@ class NetManager:
                 return
             await probe.start_listener(attachment.workspace_id, listener)
         except Exception as exc:
-            print(
-                f"msksd: probe endpoint for {attachment.workspace_id} "
-                f"did not start ({exc}); the workspace boots "
-                "without it",
-                flush=True,
+            self.note_listener_fault(
+                attachment.workspace_id, "probe", port, exc, "probe endpoint"
             )
+            return
+        self.app.state.listener_faults.clear(attachment.workspace_id, "probe")
 
     async def default_probe(self, attachment):
         """The real listener path: the service's TLS material, then
@@ -1171,6 +1195,9 @@ class NetManager:
 
     async def _unwind(self, workspace_id: str) -> None:
         """Roll back a half-built attachment (best effort)."""
+        # The boot this attach attempted refused loudly to its
+        # caller; no per-listener fault outlives it (#533).
+        self.app.state.listener_faults.forget(workspace_id)
         with contextlib.suppress(Exception):
             await self.stop_llm(workspace_id)
         with contextlib.suppress(Exception):

@@ -91,6 +91,16 @@ async def workspace_or_404(app, workspace_id: str) -> dict:
     return row
 
 
+def with_listener_faults(app, row: dict) -> dict:
+    """The row with the daemon's live tap-listener faults (#533)
+    joined on: the field ``msks ls``'s notice, the TUI page's
+    line, and ``msks doctor``'s check read to name a refused
+    bind. Empty for a workspace whose every attempted listener
+    bound — or one that is not attached at all."""
+    row["listener_faults"] = app.state.listener_faults.payload(row["id"])
+    return row
+
+
 #: The lifecycle statuses a home-volume move serves (#80): an
 #: allow-list, so ``unknown`` — a possibly-live VM the watcher
 #: could not probe — and any future status refuse until named here.

@@ -51,7 +51,13 @@ from .consent_ui import (
 from .follow import FLOW_SHELL
 from .forms import EDIT_FREE_STATUSES, EditScreen, edit_stop_question
 from .link import CONNECTED, REJECTED, UNUSABLE_TOKEN, DeciderLink
-from .rows import header_meta, header_name, muted_style, workspace_label
+from .rows import (
+    faults_content,
+    header_meta,
+    header_name,
+    muted_style,
+    workspace_label,
+)
 
 #: The workspace page's shell action (#341) — a page action, not a
 #: flow: the tree keeps running while the window owns its own
@@ -338,6 +344,11 @@ class WorkspaceScreen(Screen):
             header_meta(self.row, self.app.theme_variables),
             id="header-meta",
         )
+        # The refused-bind block (#533): hidden until a row carries
+        # a fault, one warning line per refused tap listener.
+        faults = Static(id="header-faults")
+        faults.display = False
+        yield faults
         yield Static(consent_line(link, self.row), id="consent")
         # The action list mounts on the first rebuild (compose
         # yields the container alone).
@@ -503,6 +514,22 @@ class WorkspaceScreen(Screen):
             )
         except NoMatches:
             pass  # teardown unmounted a header line under the worker
+        self.paint_faults()
+
+    def paint_faults(self) -> None:
+        """The refused-bind block (#533): the row's live faults, or
+        the line gone when none stands — the page re-reads the
+        row every tick, so a rebind that lands clears it."""
+        try:
+            widget = self.query_one("#header-faults", Static)
+        except NoMatches:
+            return  # teardown unmounted the line under the timer
+        content = faults_content(self.row)
+        if content is None:
+            widget.display = False
+            return
+        widget.display = True
+        widget.update(content)
 
     def paint_consent(self) -> None:
         if self.link is not None:

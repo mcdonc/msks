@@ -58,6 +58,10 @@ configio = 0
 conformance_args = 0
 events = 0
 identity = 0
+# #533: the refused tap-listener record — a root leaf the
+# composer builds and the net/interceptor writers and the API
+# readers all reach off app.state.
+listenerfaults = 0
 llm = 0
 msks = 0
 # #514: the unlock-time plaintext cache + the named locked error
@@ -88,6 +92,9 @@ consent = 4
 events = 2
 # interceptor: the composer seam + the probe service (#424)
 interceptor = 4
+# #533: the composer builds the refused-bind record the
+# subsystems write (the class and its module).
+listenerfaults = 2
 llm = 2
 microvm = 2
 model = 2

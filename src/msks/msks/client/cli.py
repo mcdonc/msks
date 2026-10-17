@@ -44,6 +44,7 @@ from . import egress as egress_mod
 from .config import ClientConfig, bootstrap
 from .console import run_workspace_shell
 from .create import read_pubkey  # noqa: F401 — the tests' seam
+from .doctor import cmd_doctor
 from .forward import run_workspace_forward
 from .images import (  # noqa: F401
     cmd_image_check,
@@ -262,6 +263,15 @@ def ls(
 ) -> int:
     """List workspaces on the daemon."""
     return cmd_ls(as_json, transport=ctx.obj)
+
+
+@app.command("doctor")
+@one_line_interrupts
+def doctor(ctx: typer.Context) -> int:
+    """Check the daemon's workspaces for refused tap-listener
+    binds (#533): the interceptor, the LLM proxy, and the probe
+    endpoint each running workspace should serve."""
+    return cmd_doctor(transport=ctx.obj)
 
 
 @app.command("tui")

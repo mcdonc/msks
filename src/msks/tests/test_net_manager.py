@@ -1931,7 +1931,100 @@ async def test_a_refused_probe_bind_leaves_the_boot_alive(
     assert attachment is not None
     assert "probe endpoint" in capsys.readouterr().out
     assert app.state.probe._listeners == {}
+    # The refusal stands in the workspace's record (#533): the
+    # port it meant and the error the bind raised.
+    assert app.state.listener_faults.payload("ws-a") == {
+        "probe": {"port": 8644, "error": "address in use"}
+    }
     await manager.detach("ws-a")
+    # Detach ends the record: the endpoint is down because the
+    # workspace is (#533).
+    assert app.state.listener_faults.payload("ws-a") == {}
+
+
+async def test_a_refused_llm_bind_stands_in_the_record(
+    net_app, monkeypatch, capsys
+) -> None:
+    """The LLM proxy's refusal lands in the same record (#533) —
+    the port from the settings, the error from the bind — and a
+    later attach that binds clears it."""
+
+    fail = {"llm": True}
+
+    def factory(attachment):
+        return RecordingListener(attachment.tap_ip, fail=fail["llm"])
+
+    app, _ip, _nft = net_app
+    app.state.settings.llm.models = ("*:http://up.stream/v1:sk-x",)
+    monkeypatch.setattr(
+        manager_mod, "verify_forwarding", lambda path=None: None
+    )
+    manager = NetManager(
+        app,
+        dhcp_factory=FakeService,
+        dns_factory=FakeService,
+        llm_factory=factory,
+    )
+    app.state.net = manager
+    await manager.start()
+    attachment = await manager.attach("ws-a", want=True)
+    assert attachment is not None
+    assert app.state.llm._listeners == {}
+    assert app.state.listener_faults.payload("ws-a") == {
+        "llm": {
+            "port": app.state.settings.llm.port,
+            "error": "address in use",
+        }
+    }
+    await manager.detach("ws-a")
+    # The next boot binds: the record reads clean again.
+    fail["llm"] = False
+    attachment = await manager.attach("ws-a", want=True)
+    assert attachment is not None
+    assert app.state.llm._listeners
+    assert app.state.listener_faults.payload("ws-a") == {}
+    await manager.detach("ws-a")
+    await manager.detach("ws-a")
+
+
+async def test_a_failed_interceptor_arm_at_attach_leaves_no_record(
+    net_app, monkeypatch
+) -> None:
+    """#533 review: the interceptor arms last in _build, records
+    its refusal like the real arm does, and the refusal still
+    fails the boot — the unwind forgets the whole record
+    (the probe fault the same boot recorded included, which the
+    interceptor's own disarm-clear cannot reach), because the
+    workspace never runs and the boot's own error is the name."""
+    app, _ip, _nft = net_app
+
+    async def refusing_probe(attachment):
+        raise OSError("[Errno 98] Address already in use")
+
+    async def refusing_refresh(workspace_id: str) -> None:
+        # Mirror the real arm's record-before-raise (#533): the
+        # pin must see the interceptor's record land beside the
+        # probe's, and the unwind wipe both.
+        app.state.listener_faults.record(
+            workspace_id,
+            "interceptor",
+            app.state.settings.net.interceptor_port,
+            "the interceptor's listener failed to start",
+        )
+        raise RuntimeError("the interceptor's listener failed to start")
+
+    monkeypatch.setattr(app.state.interceptor, "refresh", refusing_refresh)
+    manager = NetManager(
+        app,
+        dhcp_factory=FakeService,
+        dns_factory=FakeService,
+        probe_factory=refusing_probe,
+    )
+    app.state.net = manager
+    await manager.start()
+    with pytest.raises(RuntimeError, match="listener failed"):
+        await manager.attach("ws-a", want=True)
+    assert app.state.listener_faults.payload("ws-a") == {}
 
 
 async def test_attach_works_without_a_probe_subsystem(net_app) -> None:

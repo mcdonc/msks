@@ -570,6 +570,123 @@ def test_meta_fields_prefer_the_image_reference() -> None:
     assert bare[1] == "-"
 
 
+def test_fault_sentences_name_the_remedy() -> None:
+    """#533: one refused bind's line carries the workspace, the
+    surface, the port, the bind error, and the remedy — the
+    port-held remedy names the setting that moves the bind, and
+    every other cause reads its own: the error names it and the
+    next start retries."""
+    from msks.client.tui.rows import fault_sentences
+
+    held = fault_sentences(
+        {
+            "id": "ws1",
+            "name": "alpha",
+            "listener_faults": {
+                "probe": {
+                    "port": 8644,
+                    "error": "[Errno 98] Address already in use",
+                }
+            },
+        }
+    )
+    assert held == [
+        "alpha: the probe endpoint did not start on port 8644 "
+        "([Errno 98] Address already in use); another service holds "
+        "the port — free it or change it (MSKSD_PROBE_PORT)"
+    ]
+    other = fault_sentences(
+        {
+            "id": "ws1",
+            "listener_faults": {
+                "interceptor": {
+                    "port": 8643,
+                    "error": "[Errno 19] No such device",
+                }
+            },
+        }
+    )
+    assert other == [
+        "ws1: the interceptor did not start on port 8643 "
+        "([Errno 19] No such device); the error names the cause; "
+        "the workspace's next start retries the bind"
+    ]
+    # A row without faults — or from a daemon without the field —
+    # answers empty, and the services order by name.
+    both = fault_sentences(
+        {
+            "id": "ws1",
+            "listener_faults": {
+                "probe": {"port": 1, "error": "x"},
+                "llm": {"port": 2, "error": "y"},
+            },
+        }
+    )
+    assert [line.split(":")[1].strip() for line in both] == [
+        "the LLM proxy did not start on port 2 (y); the error names "
+        "the cause; the workspace's next start retries the bind",
+        "the probe endpoint did not start on port 1 (x); the error "
+        "names the cause; the workspace's next start retries the bind",
+    ]
+    assert fault_sentences({"id": "ws1"}) == []
+    assert fault_sentences({"id": "ws1", "listener_faults": {}}) == []
+    # A service the table does not know still reads a line (#533):
+    # its own name for a noun, the generic remedy — the port-held
+    # remedy needs the setting it would name.
+    stranger = fault_sentences(
+        {
+            "id": "ws1",
+            "listener_faults": {
+                "vpn": {
+                    "port": 9999,
+                    "error": "[Errno 98] Address already in use",
+                }
+            },
+        }
+    )
+    assert stranger == [
+        "ws1: the vpn listener did not start on port 9999 "
+        "([Errno 98] Address already in use); the error names the cause; "
+        "the workspace's next start retries the bind"
+    ]
+
+
+def test_faults_content_warns_and_clips() -> None:
+    """The page's fault block (#533): one warning-styled line per
+    fault, each clipped to the frame's budget, and None for a row
+    without faults (the page hides the line)."""
+    from msks.client.tui.rows import FAULT_LINE_W, faults_content
+
+    assert faults_content({"id": "ws1"}) is None
+    content = faults_content(
+        {
+            "id": "ws1",
+            "listener_faults": {
+                "probe": {
+                    "port": 8644,
+                    "error": "[Errno 98] Address already in use",
+                }
+            },
+        }
+    )
+    assert content is not None
+    assert content.plain.startswith("ws1: the probe endpoint")
+    assert content.plain.endswith("(MSKSD_PROBE_PORT)")
+    assert content.spans and content.spans[0].style == "$warning"
+    long_error = "x" * 200
+    clipped = faults_content(
+        {
+            "id": "ws1",
+            "listener_faults": {"llm": {"port": 8770, "error": long_error}},
+        }
+    )
+    assert clipped is not None
+    assert all(
+        len(line) <= FAULT_LINE_W for line in clipped.plain.splitlines()
+    )
+    assert "…" in clipped.plain
+
+
 async def test_the_list_rows_open_pages_and_return(monkeypatch) -> None:
     scripted_link(monkeypatch, [])
     data = FakeData([row(), row(id="ws-b", name="beta")])
@@ -1287,6 +1404,42 @@ async def test_the_header_splits_the_name_from_the_metadata(
         assert len(marks) == 3
         for seg in segs:
             assert sum(seg.style.color.triplet) < sum(name.style.color.triplet)
+
+
+async def test_the_page_names_a_refused_bind(monkeypatch) -> None:
+    """#533: a row carrying a refused bind shows the warning line
+    under the meta line — the workspace, the port, the bind error,
+    and the remedy — and a clean row keeps the line hidden."""
+    scripted_link(monkeypatch, [rules_frame()])
+    clean = dict(
+        row(),
+        status="running",
+        listener_faults={
+            "probe": {
+                "port": 8644,
+                "error": "[Errno 98] Address already in use",
+            }
+        },
+    )
+    data = FakeData([clean])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        faults = app.screen.query_one("#header-faults", Static)
+        await wait_for(lambda: faults.display)
+        # The sentence is clipped to the frame's budget (#533): the
+        # head keeps the workspace and the surface, the tail keeps
+        # the remedy's setting — the middle cut eats the error's
+        # middle, which the full sentence on the ✓ surfaces carries.
+        plain = faults.content.plain
+        assert plain.startswith("alpha: the probe endpoint did not star")
+        assert plain.endswith("free it or change it (MSKSD_PROBE_PORT)")
+        assert "…" in plain
+        # A later read that carries no faults hides the line again
+        # — the rebind landed while the page stood.
+        data.rows[0] = dict(clean, listener_faults={})
+        await pilot.pause()
+        await wait_for(lambda: not faults.display)
 
 
 async def test_the_header_truncates_gracefully_at_eighty_columns(

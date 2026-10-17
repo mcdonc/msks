@@ -12,6 +12,7 @@ from .consent.deciders import DeciderRegistry
 from .events import EventHub
 from .interceptor import Interceptor
 from .interceptor.probe import ProbeService
+from .listenerfaults import ListenerFaults
 from .llm import LlmProxy
 from .microvm import Microvm
 from .model import Model
@@ -42,6 +43,10 @@ class AppState:
         # The probe service (#424): the emulated external HTTPS
         # endpoint each per-tap listener serves.
         self.probe: ProbeService | None = None
+        # The refused tap-listener binds (#533): the net manager
+        # and the interceptor record them; the API's workspace
+        # rows carry them to the client surfaces.
+        self.listener_faults = ListenerFaults()
 
 
 class App:

@@ -22,6 +22,7 @@ from .rows import (
     owner_host,
     serialize_create,
     spec_for,
+    with_listener_faults,
     workspace_or_404,
 )
 from .schemas import WorkspaceCreate
@@ -201,6 +202,7 @@ def router(app) -> APIRouter:
         images = list_catalog_images(app.state.settings.vmm.state_dir)
         for row in rows:
             row["image_ref"] = image_ref(images, row.get("image_hash"))
+            with_listener_faults(app, row)
         return rows
 
     @api.get(
@@ -208,7 +210,9 @@ def router(app) -> APIRouter:
         dependencies=[Depends(require_token)],
     )
     async def get_workspace(workspace_id: str) -> dict:
-        return await workspace_or_404(app, workspace_id)
+        row = await workspace_or_404(app, workspace_id)
+        with_listener_faults(app, row)
+        return row
 
     @api.get(
         "/api/v1/workspaces/{workspace_id}/ssh-key",

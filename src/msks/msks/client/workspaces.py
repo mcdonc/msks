@@ -27,7 +27,7 @@ from .env import env_token, env_url, ssl_context
 from .resize import display_name, resize_message
 from .rest import fetch_ssh_key as rest_fetch_ssh_key
 from .tabular import listing_text
-from .tui.rows import clip
+from .tui.rows import clip, fault_sentences
 
 
 def created_date(raw: str | None) -> str:
@@ -105,6 +105,18 @@ def stale_image_notice(expected: str, health: object) -> str | None:
     )
 
 
+def listener_fault_notices(rows: list[dict]) -> list[str]:
+    """The stderr notices for refused tap-listener binds (#533):
+    one line per fault below the table — the same sentence the
+    TUI page and ``msks doctor`` print, so every surface names a
+    refusal the same way."""
+    return [
+        f"msks: {sentence}"
+        for row in rows
+        for sentence in fault_sentences(row)
+    ]
+
+
 def cmd_ls(as_json: bool = False, transport=None) -> int:
     """``msks ls``: every workspace the daemon knows."""
 
@@ -127,6 +139,8 @@ def cmd_ls(as_json: bool = False, transport=None) -> int:
     if notice := stale_image_notice(
         os.environ.get("MSKSC_EXPECTED_IMAGE", ""), health
     ):
+        print(notice, file=sys.stderr)
+    for notice in listener_fault_notices(rows):
         print(notice, file=sys.stderr)
     return 0
 
