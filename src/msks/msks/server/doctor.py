@@ -17,11 +17,12 @@ exec at runtime — debugging and development tools stay out of it.
 Design (ported from klangkd doctor, klangk #1612): capabilities
 first, never platform predictions. Every check runs on every
 host; only the package-hint table varies by detected manager. One
-deliberate exception (#540): the consent-stack rows — the two
-NFQUEUE libraries and the extension import — run on Linux hosts
-only, because off Linux the binding is absent by design (the
-platform marker) and every install candidate there is a
-Linux-only package; the extension row carries that contract.
+deliberate exception (#542): the consent-stack rows — the two
+NFQUEUE libraries and the binding's soname load — run on Linux
+hosts only, because libnetfilter_queue is a Linux library (the
+binding itself is vendored in the wheel on every platform) and
+every install candidate for it is a Linux-only package; the
+binding row carries that contract.
 Checks are
 graded — an error keeps the daemon from its core paths, a warning
 names a client-side tool the daemon itself runs without. Exit
@@ -487,7 +488,15 @@ def check_tmux(manager: str | None) -> CheckResult:
 NFQ_LOAD_PROBE = [
     sys.executable,
     "-c",
-    "import ctypes; ctypes.CDLL('libnetfilter_queue.so.1')",
+    "import ctypes\n"
+    "for soname in ('libnetfilter_queue.so.1', "
+    "'libnetfilter_queue.so'):\n"
+    " try:\n"
+    "  ctypes.CDLL(soname); break\n"
+    " except OSError:\n"
+    "  pass\n"
+    "else:\n"
+    " raise SystemExit(1)",
 ]
 
 
@@ -537,7 +546,7 @@ def ldconfig_evidence(name: str) -> str | None:
 
 
 def import_evidence() -> str | None:
-    """ "ctypes load" when the soname loads."""
+    """ "ctypes load" when a soname loads."""
     rc, _out, _err = run(NFQ_LOAD_PROBE)
     return "ctypes load" if rc == 0 else None
 
@@ -674,8 +683,8 @@ def run_doctor(settings: Settings) -> DoctorReport:
     # Off Linux the two library rows stay off the report: their
     # install candidates there are Linux-only packages (Homebrew's
     # formulae above all), so the rows would prescribe installs
-    # that cannot work. The extension row below carries the
-    # platform contract (#540).
+    # that cannot work. The binding row below carries the
+    # platform contract (#542).
     report.add(check_nfq_load(manager))
     report.add(check_tmux(manager))
 

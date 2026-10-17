@@ -28,6 +28,7 @@ this binding adds no algorithm of its own).
 """
 
 import ctypes
+import errno
 import os
 import socket
 from ctypes import (
@@ -47,14 +48,13 @@ from ctypes import (
 DROP = 0
 ACCEPT = 1
 
-# Copy whole packets (the consent loop parses the L3 payload);
-# 0xFFFF is the "no snap length" range the library documents.
 COPY_PACKET = 2
-COPY_RANGE = 0xFFFF
-
-# One queued SYN fits many times over; a truncated read surfaces
-# as a handle_packet error in the drain guard, never a hang.
 READ_BUFFER = 16384
+# The copy range clamps to what one read can carry whole (the 80
+# bytes of netlink overhead is the same arithmetic upstream uses):
+# a message the kernel cannot fit is never read truncated, which
+# would parse as nothing — no callback, no verdict.
+COPY_RANGE = READ_BUFFER - 80
 
 _SONAMES = ("libnetfilter_queue.so.1", "libnetfilter_queue.so")
 
@@ -127,13 +127,12 @@ lib.nfq_get_msg_packet_hdr.argtypes = [c_void_p]
 lib.nfq_get_payload.restype = c_int
 lib.nfq_get_payload.argtypes = [c_void_p, POINTER(POINTER(c_ubyte))]
 
-lib.nfq_close.restype = c_int
-lib.nfq_close.argtypes = [c_void_p]
-
 
 class PacketHeader(ctypes.Structure):
-    """``struct nfq_msg_packet_hdr`` — the packet id alone is read
-    (the verdict key); hw_protocol and hook ride unread."""
+    """The packet id's 4 bytes at offset 0 of the message header —
+    a ``__be32`` on the wire, so the id reads big-endian below.
+    The trailing fields ride unread (and differ by width in the
+    real struct; nothing here touches them)."""
 
     _fields_ = [
         ("packet_id", c_uint32),
@@ -142,13 +141,37 @@ class PacketHeader(ctypes.Structure):
     ]
 
 
+# read_outcome's answers: RETRY reads on, DRAINED ends the loop,
+# RAISE surfaces the error.
+RETRY = "retry"
+DRAINED = "drained"
+RAISE = "raise"
+
+
+def read_outcome(exc: OSError) -> str:
+    """What a failed read means. EINTR retries; EAGAIN means the
+    queue drained; ENOBUFS means the kernel dropped messages under
+    a burst — the missed packets stay queued and drop at the
+    queue's own overflow (fail-closed, upstream's posture), so the
+    read retries; every other error surfaces."""
+    if isinstance(exc, InterruptedError):
+        return RETRY
+    if isinstance(exc, BlockingIOError):
+        return DRAINED
+    if exc.errno == errno.ENOBUFS:
+        return RETRY
+    return RAISE
+
+
 def packet_id_of(nfa):
-    """The nfq_data's packet id, or None when the header is absent
-    (a malformed message — the caller drops it)."""
+    """The nfq_data's packet id in host order — the verdict key
+    ``nfq_set_verdict`` takes — or None when the header is absent
+    (a malformed message; the caller drops it)."""
     header = lib.nfq_get_msg_packet_hdr(nfa)
     if not header:
         return None
-    return ctypes.cast(header, POINTER(PacketHeader)).contents.packet_id
+    raw = ctypes.cast(header, POINTER(PacketHeader)).contents.packet_id
+    return socket.ntohl(raw)
 
 
 def payload_of(nfa):  # pragma: no cover — needs a real nfq_data
@@ -232,8 +255,9 @@ class NetfilterQueue:
         self._handle = handle
         lib.nfq_unbind_pf(handle, socket.AF_INET)
         if lib.nfq_bind_pf(handle, socket.AF_INET) < 0:
+            captured = ctypes.get_errno()  # before close resets it
             self.close()
-            raise OSError(ctypes.get_errno(), "nfq_bind_pf(AF_INET) failed")
+            raise OSError(captured, "nfq_bind_pf(AF_INET) failed")
         self._callback = callback
         self._trampoline = QUEUE_CALLBACK(self.on_message)
         queue_handle = lib.nfq_create_queue(
@@ -262,21 +286,34 @@ class NetfilterQueue:
         """The queue's fd — readable when messages pend."""
         return self._fd
 
-    def run(self, block: bool = True) -> None:
-        """Read queue messages until none pend (``block=False``) or
-        forever (``block=True``). A callback exception raised inside
-        ``nfq_handle_packet`` propagates from here."""
+    def run(self) -> None:
+        """Read queue messages until none pend. A callback
+        exception raised inside ``nfq_handle_packet`` propagates
+        from here."""
+        while (buf := self.read_message()) is not None:
+            lib.nfq_handle_packet(self._handle, buf, len(buf))
+            self.raise_pending()
+
+    def read_message(self) -> bytes | None:
+        """One pending message, or None when the queue drained
+        (retries ride read_outcome's answers)."""
         while True:
             try:
-                buf = os.read(self._fd, READ_BUFFER)
-            except InterruptedError:
-                continue
-            except BlockingIOError:
-                return
-            lib.nfq_handle_packet(self._handle, buf, len(buf))
-            if self._pending_exc is not None:
-                exc, self._pending_exc = self._pending_exc, None
-                raise exc
+                return os.read(self._fd, READ_BUFFER)
+            except OSError as exc:
+                action = read_outcome(exc)
+                if action == DRAINED:
+                    return None
+                if action == RAISE:
+                    raise
+
+    def raise_pending(self) -> None:
+        """Re-raise the stored callback exception, if one is
+        pending (ctypes closures swallow them; run() is the way
+        out)."""
+        if self._pending_exc is not None:
+            exc, self._pending_exc = self._pending_exc, None
+            raise exc
 
     def unbind(self) -> None:
         """Tear the queue down. Queued packets the kernel still
@@ -312,7 +349,3 @@ class NetfilterQueue:
             if self._pending_exc is None:
                 self._pending_exc = exc
         return 0
-
-
-lib.nfq_close.restype = c_int
-lib.nfq_close.argtypes = [c_void_p]

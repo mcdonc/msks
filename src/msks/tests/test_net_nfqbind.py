@@ -9,6 +9,7 @@ bind/run/unbind sequence against a fake library and a pipe fd.
 """
 
 import ctypes
+import errno
 import os
 from ctypes import c_void_p
 
@@ -43,7 +44,7 @@ def test_open_library_loads_the_platform_library() -> None:
     assert isinstance(open_library(), ctypes.CDLL)
 
 
-def test_verdicts_are_one_shot(queue: RecordingQueue | None = None) -> None:
+def test_verdicts_are_one_shot() -> None:
     rec = RecordingQueue()
     packet = Packet(rec, 5, b"x")
     packet.accept()
@@ -111,13 +112,20 @@ class FakeLib:
         self.fd: int | None = None
         self.nfq_open = lambda: self._open()
         self.nfq_close = lambda h: self.calls.append("close")
-        self.nfq_unbind_pf = lambda h, pf: 0
+        self.nfq_unbind_pf = lambda h, pf: self.calls.append("unbind_pf")
         self.nfq_bind_pf = lambda h, pf: self._bind_pf()
+        self.copy_range: int | None = None
         self.nfq_create_queue = lambda h, num, cb, data: self._create_queue(
             num, cb
         )
         self.nfq_destroy_queue = lambda qh: self.calls.append("destroy")
-        self.nfq_set_mode = lambda qh, mode, rng: 0
+
+        def set_mode(qh, mode, rng):
+            self.copy_range = rng
+            self.calls.append("set_mode")
+            return 0
+
+        self.nfq_set_mode = set_mode
         self.nfq_set_verdict = lambda qh, pid, verdict, ln, buf: (
             self.calls.append(f"verdict:{pid}:{verdict}")
         )
@@ -131,6 +139,7 @@ class FakeLib:
         return self.handle
 
     def _bind_pf(self):
+        self.calls.append("bind_pf")
         return 0
 
     def _create_queue(self, num, cb):
@@ -190,9 +199,9 @@ def test_run_processes_pending_messages_and_returns(fake_lib: FakeLib) -> None:
     the next readability callback."""
     queue = bound_queue(fake_lib, lambda pkt: None)
     os.write(fake_lib.write_fd, b"message")
-    queue.run(block=False)
+    queue.run()
     assert "handle_packet" in fake_lib.calls
-    queue.run(block=False)  # drained: returns on BlockingIOError
+    queue.run()  # drained: returns on BlockingIOError
     queue.unbind()
 
 
@@ -203,7 +212,7 @@ def test_run_raises_the_stored_callback_exception(fake_lib: FakeLib) -> None:
     os.write(fake_lib.write_fd, b"message")
     queue._pending_exc = ValueError("boom")
     with pytest.raises(ValueError, match="boom"):
-        queue.run(block=False)
+        queue.run()
     queue.unbind()
 
 
@@ -327,7 +336,7 @@ def test_run_retries_an_interrupted_read(
     interrupted.calls = 0
     monkeypatch.setattr(nfqbind.os, "read", interrupted)
     queue = bound_queue(fake_lib, lambda pkt: None)
-    queue.run(block=False)
+    queue.run()
     assert interrupted.calls == 2
     queue.unbind()
 
@@ -359,3 +368,63 @@ def test_unbind_on_a_never_bound_queue_is_a_no_op(fake_lib: FakeLib) -> None:
     consumer guards its stop path the same way) closes cleanly."""
     NetfilterQueue().unbind()
     assert fake_lib.calls == []
+
+
+def test_packet_id_reads_big_endian(
+    fake_lib: FakeLib, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The id is a __be32 on the wire: the kernel's packet id 1
+    sits in memory as 0x01000000 on a little-endian host, and the
+    verdict must carry the host-order value (the swap discards
+    every verdict — found against a real kernel queue in #543's
+    review)."""
+    queue = bound_queue(fake_lib, lambda pkt: None)
+    header = nfqbind.PacketHeader(packet_id=0x01000000)
+    fake_lib.nfq_get_msg_packet_hdr = lambda nfa: ctypes.cast(
+        ctypes.pointer(header), c_void_p
+    )
+    monkeypatch.setattr(nfqbind, "payload_of", lambda nfa: b"")
+    queue.on_message(None, None, object(), None)
+    # deliver's default drop verdicted the swapped id's
+    # host-order twin: the recorded verdict names 1.
+    verdicts = [c for c in fake_lib.calls if c.startswith("verdict:")]
+    assert verdicts == ["verdict:1:0"]
+    queue.unbind()
+
+
+def test_run_continues_past_a_buffer_overflow(
+    fake_lib: FakeLib, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ENOBUFS is the kernel dropping queue messages under a
+    burst: the missed packets stay queued and drop at the queue's
+    own overflow (fail-closed, upstream's posture), so the loop
+    reads on instead of surfacing a drain failure."""
+
+    def overflowing(fd, n):
+        overflowing.calls += 1
+        if overflowing.calls == 1:
+            raise OSError(errno.ENOBUFS, "no buffer space")
+        raise BlockingIOError()
+
+    overflowing.calls = 0
+    monkeypatch.setattr(nfqbind.os, "read", overflowing)
+    queue = bound_queue(fake_lib, lambda pkt: None)
+    queue.run()
+    assert overflowing.calls == 2
+    queue.unbind()
+
+
+def test_run_surfaces_an_unrelated_read_error(
+    fake_lib: FakeLib, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EINTR, EAGAIN, and ENOBUFS have meanings; every other read
+    error surfaces out of run — the drain guard logs it."""
+
+    def failing(fd, n):
+        raise OSError(errno.EIO, "input/output error")
+
+    monkeypatch.setattr(nfqbind.os, "read", failing)
+    queue = bound_queue(fake_lib, lambda pkt: None)
+    with pytest.raises(OSError, match="input/output error"):
+        queue.run()
+    queue.unbind()

@@ -183,7 +183,7 @@ class FlowConsumer:
     def drain(self) -> None:
         """Process pending queue messages (readability callback)."""
         try:
-            self._nfq.run(block=False)
+            self._nfq.run()
         except Exception:
             logger.exception("nfq: drain failed for queue %s", self.queue_num)
 
