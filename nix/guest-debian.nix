@@ -483,6 +483,9 @@ let
         # the same kernel modules a deployment host loads — tun for the
         # per-inner-workspace taps, the nftables/NAT set the daemon's
         # rulesets name — so a workspace can host workspaces itself.
+        # The interactive-consent pieces (reject/NFQUEUE) stay out of
+        # this deterministic load set: the daemon's ruleset autoloads
+        # them from the shipped module tree when it installs (#552).
         # KVM does NOT ride this file: which flavor loads depends on the
         # host CPU, and a modules-load.d entry that fails leaves
         # systemd-modules-load.service failed (a degraded boot) — the
@@ -1007,10 +1010,20 @@ let
         # nested-KVM trio (kvm-intel/kvm-amd; a workspace running
         # msksd boots inner workspace VMs through /dev/kvm — kvm,
         # irqbypass, and ccp ride in as their dependencies) and the
-        # egress stack (tun for per-inner-workspace taps plus the
-        # nftables/NAT modules the daemon's rulesets need — the
-        # same list a deployment host loads, and what lets the
-        # image host workspaces itself). button,
+        # egress stack (tun for per-inner-workspace taps plus
+        # the nftables/NAT and consent modules the daemon's
+        # rulesets need, and what lets the image host workspaces
+        # itself): hostsetup's MODULES plus the expression modules
+        # the rulesets autoload — `reject with tcp reset` in a
+        # table inet requests nft-expr-1-reject (nft_reject_inet;
+        # nf_reject_ipv6 rides as its dep), `queue num` requests
+        # nft-expr-queue (nft_queue) and binding the queue
+        # requests nfnetlink-subsys-3 (nfnetlink_queue), and the
+        # armed interceptor's `redirect to` (#199) requests
+        # nft-expr-redir (nft_redir). A deployment host's full
+        # tree answers those autoloads itself; the pruned tree
+        # must ship them or the ruleset cannot install (#552).
+        # button,
         # evdev, and isofs are modules in BOTH Debian flavors — the
         # old cloud image found them only because it shipped
         # Debian's whole tree, and the smoke tests caught button and
@@ -1025,7 +1038,7 @@ let
         # assert below) — the set cannot drift from the kernel's
         # own dependency facts (the #36 bug class). A full install
         # ships the whole tree; the workspace's ~25MB of cloud
-        # modules becomes twenty-nine files (isofs's own cdrom
+        # modules becomes thirty-three files (isofs's own cdrom
         # dependency included).
         runtimeModules="
           virtio_net
@@ -1041,8 +1054,14 @@ let
           nft_chain_nat
           nft_masq
           nft_ct
+          nft_reject
+          nft_reject_inet
+          nf_reject_ipv4
           nf_nat
           nf_conntrack
+          nfnetlink_queue
+          nft_queue
+          nft_redir
         "
         rm -rf "$root"/lib/modules/*
         rm -rf "$root"/usr/lib/modules/* 2>/dev/null || true
@@ -1105,6 +1124,34 @@ let
           echo "shipped tree resolves: $tree_closure" >&2
           exit 1
         fi
+        # The closure guard cannot see autoload names: the rulesets
+        # ask for modules by nft expression/chain alias, and no
+        # runtimeModules root depends on the expression modules —
+        # the first cut of #552 shipped the backing libraries
+        # (nft_reject, nf_reject_ipv4, nfnetlink_queue) and still
+        # could not install its ruleset, and the second cut missed
+        # the interceptor's redirect (nft_redir). Every autoload
+        # name the daemon's rulesets carry (nft.py's queue_gate and
+        # armed_rules: the consent reject/queue pieces, the armed
+        # redirect, the NAT masquerade and ct matches, the nat
+        # chain type) must resolve against the SHIPPED tree's own
+        # depmod metadata or the build fails.
+        rulesetAliases="
+          nft-expr-1-reject
+          nft-expr-queue
+          nfnetlink-subsys-3
+          nft-expr-redir
+          nft-expr-masq
+          nft-expr-ct
+          nft-chain-1-nat
+        "
+        for alias in $rulesetAliases; do
+          if ! modprobe -d "$root" -S "$kver" --show-depends "$alias" \
+            | grep -q '^insmod '; then
+            echo "guest module tree lacks a module for autoload alias: $alias" >&2
+            exit 1
+          fi
+        done
 
         # Boot diet (#37): drop the wants symlinks of units a
         # workspace never uses. networkd and resolved stay (egress
