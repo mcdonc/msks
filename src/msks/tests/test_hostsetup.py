@@ -11,6 +11,7 @@ did; CI has no consumer of the retired script.
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import msks.server.hostsetup as hostsetup
 import pytest
@@ -38,6 +39,7 @@ class Host:
             f"{WRAPPER} cap_net_bind_service,cap_net_admin=ep\n"
         )
         self.modprobe_fails: set[str] = set()
+        self.modprobe_absent: set[str] = set()
         self.ambient = "0000000000001400"
 
     def sh(self, cmd, timeout=10.0, env=None):
@@ -50,9 +52,12 @@ class Host:
         if head == "sysctl":
             return 0, "", ""
         if head == "modprobe":
-            return (
-                (1, "", "") if cmd[1] in self.modprobe_fails else (0, "", "")
+            fail_set = (
+                self.modprobe_absent
+                if "--dry-run" in cmd
+                else self.modprobe_fails
             )
+            return (1, "", "") if cmd[-1] in fail_set else (0, "", "")
         if head == "ip":
             return 0, "default via 192.0.2.1 dev eno4 proto dhcp\n", ""
         return 0, "", ""
@@ -150,8 +155,12 @@ def test_happy_path_lands_every_piece(
     assert debian_host.ran("sysctl") == [["sysctl", "--load", SYSCTL_FILE]]
     modules_file = debian_host.writes[hostsetup.MODULES_FILE]
     assert modules_file.endswith("\n".join(MODULES) + "\n")
-    assert len(debian_host.ran("modprobe")) == len(MODULES)
+    real_loads = [
+        c for c in debian_host.ran("modprobe") if "--dry-run" not in c
+    ]
+    assert len(real_loads) == len(MODULES)
     out = capsys.readouterr().out
+    assert "consent:    interactive egress consent available" in out
     assert "wrapper:    /usr/local/bin/msks-caps" in out
     assert "dev-daemon use: DEV_CAPS=/usr/local/bin/msks-caps msks-dev" in out
     assert (
@@ -205,11 +214,112 @@ def test_ip_forward_still_zero_refuses(
 def test_modprobe_failure_warns_without_refusing(
     debian_host: Host, capsys: pytest.CaptureFixture
 ) -> None:
+    """A module the tree carries whose load fails keeps the plain
+    warning; the consent summary marks it missing."""
     debian_host.modprobe_fails = {"nfnetlink_queue"}
     assert main() == 0
-    assert "WARNING modprobe nfnetlink_queue failed" in (
+    out = capsys.readouterr()
+    assert "WARNING modprobe nfnetlink_queue failed" in out.err
+    assert "UNAVAILABLE on this kernel — missing: nfnetlink_queue" in (out.out)
+
+
+def fake_uname(monkeypatch: pytest.MonkeyPatch, release: str, machine: str):
+    """A fixed uname for the flavor-gap tests (release and machine
+    both read from it)."""
+    monkeypatch.setattr(
+        hostsetup.os,
+        "uname",
+        lambda: SimpleNamespace(release=release, machine=machine),
+    )
+
+
+def test_absent_consent_modules_name_the_cause_and_fix(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The trimmed-tree gap (#550): absent modules warn with the
+    observation, the cause shape, and the running release; the fix
+    names the machine's generic package; the summary marks
+    interactive consent unavailable naming every missing module."""
+    debian_host.modprobe_absent = {
+        "nft_reject",
+        "nf_reject_ipv4",
+        "nfnetlink_queue",
+    }
+    fake_uname(monkeypatch, "6.12.107+deb13-cloud-amd64", machine="amd64")
+    monkeypatch.setattr(hostsetup, "module_tree_present", lambda: True)
+    assert main() == 0
+    out = capsys.readouterr()
+    assert (
+        "WARNING nfnetlink_queue is absent from this kernel's module "
+        "tree — this kernel's build carries a trimmed module set "
+        "(running release 6.12.107+deb13-cloud-amd64)" in out.err
+    )
+    assert "apt install linux-image-amd64, reboot, re-run" in out.err
+    assert (
+        "consent:    interactive egress consent UNAVAILABLE on this "
+        "kernel — missing: nft_reject, nf_reject_ipv4, nfnetlink_queue"
+        in out.out
+    )
+
+
+def test_absent_modules_with_no_tree_name_the_missing_package(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A host with no module tree for its release (a container, a
+    pruned image): the cause says so — not a flavor claim the tool
+    cannot verify (#550's review)."""
+    debian_host.modprobe_absent = {"nfnetlink_queue"}
+    fake_uname(monkeypatch, "6.12.107+deb13-amd64", machine="x86_64")
+    monkeypatch.setattr(hostsetup, "module_tree_present", lambda: False)
+    assert main() == 0
+    out = capsys.readouterr()
+    assert (
+        "no module tree is installed on this host "
+        "(running release 6.12.107+deb13-amd64)" in out.err
+    )
+    assert "apt install linux-image-amd64, reboot, re-run" in out.err
+
+
+def test_the_fix_names_the_machines_own_package(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """An arm64 host gets the arm64 generic package, not amd64's
+    (#550's review)."""
+    debian_host.modprobe_absent = {"nfnetlink_queue"}
+    fake_uname(monkeypatch, "6.12.107+deb13-arm64", machine="aarch64")
+    monkeypatch.setattr(hostsetup, "module_tree_present", lambda: True)
+    assert main() == 0
+    assert "apt install linux-image-arm64, reboot, re-run" in (
         capsys.readouterr().err
     )
+
+
+def test_an_infra_failure_is_a_load_failure_not_an_absence(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """sh's -1 (a timeout, a missing binary) reads as a load
+    failure — the plain warning — never as the flavor-gap claim
+    (#550's review)."""
+
+    def flaky(cmd, timeout=10.0, env=None):
+        debian_host.commands.append(cmd)
+        if cmd[0] == "modprobe" and "--dry-run" in cmd:
+            return -1, "", "modprobe: timed out"
+        return debian_host.sh(cmd, timeout, env)
+
+    monkeypatch.setattr(hostsetup, "sh", flaky)
+    assert main() == 0
+    out = capsys.readouterr()
+    assert "WARNING modprobe tun failed — check the kernel" in out.err
+    assert "absent from this kernel's module tree" not in out.err
 
 
 def test_sh_runs_a_real_command() -> None:
@@ -485,3 +595,16 @@ def test_apt_install_failure_refuses(
     monkeypatch.setattr(hostsetup, "sh", failing)
     assert main() == 1
     assert "apt install failed: dpkg is locked" in capsys.readouterr().err
+
+
+def test_module_tree_present_reads_the_filesystem(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The real seam behind the fake: a tree directory for the
+    running release answers True, a missing one False."""
+    release = "6.12.107-test-amd64"
+    fake_uname(monkeypatch, release, machine="amd64")
+    monkeypatch.setattr(hostsetup, "MODULES_ROOT", str(tmp_path))
+    assert hostsetup.module_tree_present() is False
+    (tmp_path / release).mkdir()
+    assert hostsetup.module_tree_present() is True
