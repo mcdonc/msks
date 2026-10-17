@@ -32,14 +32,13 @@ skips it), and a deny on such a destination refuses only its own
 connection — the RST element is keyed by the connection's source
 port, so the co-resident's connections never see it.
 
-``netfilterqueue`` ships with every Linux install (consent is the
-normal posture for workspaces): the devenv shells build it against
-nixpkgs' libnetfilter_queue/libnfnetlink, and the package closure
-builds it via ``nix/netfilterqueue-pkg.nix``. The import stays
-guarded — an install without the binding (every non-Linux one,
-via pyproject's platform marker) or without the library fails
-closed at bind time as a named refusal (the workspace boot refuses rather
-than running an unanswered queue), never silently.
+The vendored ctypes binding (#542) loads the platform's
+``libnetfilter_queue`` at import — the binding ships inside the
+wheel, so nothing compiles at install time; a host without the
+library (every non-Linux one) fails that load, and the guard
+keeps such an install fail-closed at bind time as a named refusal
+(the workspace boot refuses rather than running an unanswered
+queue), never silently.
 """
 
 import asyncio
@@ -60,12 +59,14 @@ VERDICT_CACHE_MAX = 4096
 VERDICT_CACHE_TTL = 120.0
 
 try:
-    from netfilterqueue import NetfilterQueue
-except ImportError:  # pragma: no cover — an install without the
-    # binding (every non-Linux one, via the platform marker; on
-    # Linux the dev/CI shells and the package closure build it) or
-    # without the library; the guard keeps that install
-    # fail-closed at bind time instead of crashing import.
+    # allow-deferred-import — the guard is OSError, not
+    # ImportError: nfqbind's loader raises it, and the checker's
+    # exemption list names only the import errors.
+    from .nfqbind import NetfilterQueue
+except OSError:  # pragma: no cover — a host without
+    # libnetfilter_queue (every non-Linux one); the guard keeps
+    # that install fail-closed at bind time instead of crashing
+    # import.
     NetfilterQueue = None
 
 
@@ -155,9 +156,10 @@ class FlowConsumer:
         unbound queue — the fail-closed gap stays closed."""
         if NetfilterQueue is None:
             raise MicrovmError(
-                f"consent for {self.workspace_id}: netfilterqueue is "
-                "not installed (the msksd nix package ships it); "
-                "refusing to run an unanswered queue"
+                f"consent for {self.workspace_id}: the NFQUEUE "
+                "binding's libnetfilter_queue did not load on this "
+                "host (msksd doctor names the package); refusing to "
+                "run an unanswered queue"
             )
         self._nfq = NetfilterQueue()
         self._nfq.bind(self.queue_num, self.on_packet)
@@ -181,7 +183,7 @@ class FlowConsumer:
     def drain(self) -> None:
         """Process pending queue messages (readability callback)."""
         try:
-            self._nfq.run(block=False)
+            self._nfq.run()
         except Exception:
             logger.exception("nfq: drain failed for queue %s", self.queue_num)
 

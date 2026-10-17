@@ -70,7 +70,6 @@ let
   msksServer = pkgs.python314.withPackages (ps: [
     (ps.callPackage ./nix/msks-pkg.nix {
       textual = ps.callPackage ./nix/textual-pkg.nix { };
-      netfilterqueue = ps.callPackage ./nix/netfilterqueue-pkg.nix { };
     })
   ]);
   msksClient = pkgs.python314.withPackages (ps: [
@@ -133,21 +132,20 @@ in
       python3 = pkgs.python314;
     })
     (python314Packages.radon) # complexity introspection (radon cc)
-    # egress consent's NFQUEUE binding (#69): the C libraries the
-    # netfilterqueue wheel links (the queue library and its
-    # nfnetlink substrate), present so `uv sync` builds it in every
-    # dev/CI shell — the binding is a base dependency and the flags
-    # below point its build and import at these store paths.
+    # Egress consent's NFQUEUE binding (#69): the C libraries the
+    # vendored ctypes binding (msks/net/nfqbind.py, #542) loads by
+    # soname at runtime — present in every dev/CI shell so the
+    # consent path runs, with LD_LIBRARY_PATH below pointing the
+    # load at these store paths.
     libnetfilter_queue
     libnfnetlink
   ];
 
   env.UV_PYTHON = config.languages.python.package;
-  # The wheel build (CFLAGS/LDFLAGS) and the runtime import
-  # (LD_LIBRARY_PATH) both resolve against the nix store — each
-  # library carries its .so and headers in one output.
-  env.CFLAGS = "-I${pkgs.libnetfilter_queue}/include -I${pkgs.libnfnetlink}/include";
-  env.LDFLAGS = "-L${pkgs.libnetfilter_queue}/lib -L${pkgs.libnfnetlink}/lib";
+  # The binding's runtime load (LD_LIBRARY_PATH) resolves against
+  # the nix store — each library carries its .so in one output.
+  # Nothing compiles against them anymore (#542), so no
+  # CFLAGS/LDFLAGS.
   env.LD_LIBRARY_PATH = "${pkgs.libnetfilter_queue}/lib:${pkgs.libnfnetlink}/lib";
 
   # The nixpkgs source the devenv lock pins — the revision every

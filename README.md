@@ -75,19 +75,18 @@ builds):
 nix build .#server .#client .#guest-image .#guest-image-nixos
 ```
 
-### Wheel installs on Linux
+### Wheel installs
 
-Installing the built wheel with pip compiles the netfilterqueue
-binding from source on the host — the binding ships as an sdist,
-with no prebuilt wheels. The build needs each library's headers
-present: `libnetfilter-queue-dev` and `libnfnetlink-dev` on apt,
-`libnetfilter_queue-devel` and `libnfnetlink-devel` on dnf and
-zypper, `libnetfilter_queue-dev` and `libnfnetlink-dev` on apk
-(Alpine carries the underscored name), and
-`libnetfilter_queue` and `libnfnetlink` on pacman (one package
-per library carries both the library and the headers).
-`msksd doctor` names the netfilterqueue package pair for the
-detected package manager when the extension fails to import.
+The msks wheel is pure Python on every platform — nothing
+compiles at install time. Egress consent is the one runtime
+library need: the daemon's vendored NFQUEUE binding (#542) loads
+`libnetfilter_queue.so.1` by soname, so a daemon host with
+interactive egress carries the runtime package —
+`libnetfilter-queue1` on apt, `libnetfilter_queue` on dnf and
+pacman, `libnetfilter_queue1` on zypper, `libnetfilter_queue` on
+apk. A host without it boots workspaces without egress and
+refuses an egress boot by name. `msksd doctor` names the package
+for the detected package manager when the load fails.
 
 ### VM guest assets
 

@@ -400,7 +400,7 @@ def test_library_probers_miss_falls_to_import(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fake_run(cmd, timeout=10.0):
-        if len(cmd) == 3 and cmd[2] == "import netfilterqueue":
+        if len(cmd) == 3 and "CDLL" in cmd[2]:
             return (0, "", "")
         return (1, "", "nope")
 
@@ -408,7 +408,7 @@ def test_library_probers_miss_falls_to_import(
         doctor_mod.shutil, "which", which_map({"pkg-config", "ldconfig"})
     )
     monkeypatch.setattr(doctor_mod, "run", fake_run)
-    assert library_probe_result("libnfnetlink") == "netfilterqueue import"
+    assert library_probe_result("libnfnetlink") == "ctypes load"
 
 
 def test_library_absent_probers_falls_to_import(
@@ -418,7 +418,7 @@ def test_library_absent_probers_falls_to_import(
     monkeypatch.setattr(
         doctor_mod, "run", lambda cmd, timeout=10.0: (0, "", "")
     )
-    assert library_probe_result("libnfnetlink") == "netfilterqueue import"
+    assert library_probe_result("libnfnetlink") == "ctypes load"
 
 
 def test_library_missing_everywhere(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -433,71 +433,54 @@ def test_library_missing_everywhere(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.hint == "sudo apt install libnetfilter-queue1"
 
 
-def test_nfq_extension_imports(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_nfq_load_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         doctor_mod, "run", lambda cmd, timeout=10.0: (0, "", "")
     )
-    result = doctor_mod.check_nfq_extension(None)
+    result = doctor_mod.check_nfq_load(None)
     assert result.ok is True
-    assert "import" in result.message
+    assert "ctypes load" in result.message
 
 
-def test_nfq_extension_miss_names_runtime_and_header_packages(
+def test_nfq_load_miss_names_the_runtime_package(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A load miss names the runtime soname package for the
+    detected manager — nothing compiles anymore, so no header
+    package rides the fix (#542)."""
+
     def refuse(cmd, timeout=10.0):
-        if cmd[2] == "import netfilterqueue":
-            return (1, "", "ModuleNotFoundError")
+        if "CDLL" in cmd[2]:
+            return (1, "", "OSError")
         return (0, "", "")
 
     monkeypatch.setattr(doctor_mod, "run", refuse)
-    result = doctor_mod.check_nfq_extension("apt")
+    result = doctor_mod.check_nfq_load("apt")
     assert result.ok is False
-    assert result.hint == (
-        "sudo apt install libnetfilter-queue1 libnetfilter-queue-dev"
-    )
+    assert result.hint == "sudo apt install libnetfilter-queue1"
 
 
-def test_nfq_extension_miss_dedupes_pacman_one_package(
+def test_nfq_load_miss_without_a_manager_names_the_library(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         doctor_mod, "run", lambda cmd, timeout=10.0: (1, "", "")
     )
-    result = doctor_mod.check_nfq_extension("pacman")
-    assert result.hint == "sudo pacman -S libnetfilter_queue"
+    result = doctor_mod.check_nfq_load(None)
+    assert result.ok is False
+    assert "libnetfilter_queue" in result.message
 
 
-def test_nfq_fix_packages_pin_every_manager() -> None:
-    """The per-manager fix lines name real packages (#540): the
-    runtime soname plus the headers a pip build compiles against.
-    Alpine carries the underscored name; pacman and Homebrew ship
-    one package each, so the pair dedupes."""
-    expected = {
-        "apt": "libnetfilter-queue1 libnetfilter-queue-dev",
-        "dnf": "libnetfilter_queue libnetfilter_queue-devel",
-        "yum": "libnetfilter_queue libnetfilter_queue-devel",
-        "zypper": "libnetfilter_queue1 libnetfilter_queue-devel",
-        "apk": "libnetfilter_queue libnetfilter_queue-dev",
-        "pacman": "libnetfilter_queue",
-        "brew": "libnetfilter-queue",
-    }
-    for manager, packages in expected.items():
-        assert doctor_mod.nfq_fix_packages(manager) == packages.split(" "), (
-            manager
-        )
-
-
-def test_nfq_extension_off_linux_names_the_platform_contract(
+def test_nfq_load_off_linux_names_the_platform_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Off Linux the binding is absent by design (the platform
-    marker), so the miss names that contract — no package hint
-    can fix a Mac (#540)."""
+    """Off Linux the library is a Linux package, so the miss names
+    the platform contract — no package hint can fix a Mac
+    (#542)."""
     monkeypatch.setattr(doctor_mod.sys, "platform", "darwin")
-    result = doctor_mod.check_nfq_extension("brew")
+    result = doctor_mod.check_nfq_load("brew")
     assert result.ok is False
-    assert "Linux installs only" in result.message
+    assert "Linux library" in result.message
     assert result.hint == "run msksd on a Linux host"
 
 
@@ -506,24 +489,14 @@ def test_run_doctor_off_linux_skips_the_library_rows(
 ) -> None:
     """Off Linux the two library rows stay off the report — their
     install candidates there are Linux-only packages — and the
-    extension row carries the contract (#540)."""
+    binding row carries the contract (#542)."""
     all_found(monkeypatch)
     monkeypatch.setattr(doctor_mod.sys, "platform", "darwin")
     report = run_doctor(Settings())
     names = {r.name for r in report.results}
     assert "libnetfilter_queue" not in names
     assert "libnfnetlink" not in names
-    assert "netfilterqueue" in names
-
-
-def test_nfq_extension_miss_without_a_manager_names_the_rows(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (1, "", "")
-    )
-    result = doctor_mod.check_nfq_extension(None)
-    assert "-dev/-devel" in result.hint
+    assert "nfq-binding" in names
 
 
 # ---------------------------------------------------------------------------
@@ -567,7 +540,7 @@ def test_run_doctor_grades_and_settings_names(
         "qemu-img",
         "libnetfilter_queue",
         "libnfnetlink",
-        "netfilterqueue",
+        "nfq-binding",
         "tmux",
     } <= names
 

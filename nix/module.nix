@@ -63,12 +63,13 @@ let
   ];
 
   # The daemon closure, built against the consuming host's nixpkgs
-  # (the same wiring the appliance used): python 3.14, the pinned
-  # textual, and the NFQUEUE binding against nixpkgs'
-  # libnetfilter_queue.
+  # (the same wiring the appliance used): python 3.14 and the
+  # pinned textual. The NFQUEUE binding is vendored ctypes
+  # (#542): the wheel needs no compiled dependency, and the
+  # module loads the platform's libnetfilter_queue at runtime
+  # (the service's environment carries it).
   msksd = pkgs.python314.pkgs.callPackage ./msks-pkg.nix {
     textual = pkgs.python314.pkgs.callPackage ./textual-pkg.nix { };
-    netfilterqueue = pkgs.python314.pkgs.callPackage ./netfilterqueue-pkg.nix { };
   };
 
   # The generated msksd.yaml (docs/config.md is the key reference):
@@ -286,6 +287,10 @@ in
       after = [ "network-online.target" ];
       wants = [ "network-online.target" ];
       wantedBy = [ "multi-user.target" ];
+      # The vendored NFQUEUE binding (#542) dlopens the platform's
+      # queue library by soname; the store paths carry it into the
+      # service (isolated store dirs, nothing shadowed).
+      environment.LD_LIBRARY_PATH = lib.mkDefault "${pkgs.libnetfilter_queue}/lib:${pkgs.libnfnetlink}/lib";
       unitConfig.StartLimitIntervalSec = 0;
       serviceConfig = {
         ExecStart = "${cfg.package}/bin/msksd --config ${settingsFile}";

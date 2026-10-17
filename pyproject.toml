@@ -37,17 +37,11 @@ dependencies = [
   # reviewed against (call-site api_base/api_key overrides) — lift
   # it only alongside a re-review of CHAT_FIELDS.
   "litellm>=1.86,<2",
-  # Egress consent's NFQUEUE binding (#69): consent is the normal
-  # posture for workspaces, so the binding ships with every Linux
-  # install. It links libnetfilter_queue — devenv carries the
-  # library for dev/CI shells, and nix/msks-pkg.nix ships the
-  # binding in the msksd package. The import stays guarded so an
-  # install without the library — every non-Linux one — fails
-  # closed at attach with a named refusal, never silently. The
-  # marker (#540) keeps the one wheel installable on macOS, where
-  # the client runs and the daemon does not; the sdist compiles
-  # against the header packages, which the install docs name.
-  "netfilterqueue>=0.9; platform_system == 'Linux'",
+  # Egress consent's NFQUEUE consumer (#69) uses the vendored
+  # ctypes binding (msks/net/nfqbind.py, #542): no compiled
+  # dependency ships with the wheel, and the platform's
+  # libnetfilter_queue loads at runtime — present or the attach
+  # fails closed with a named refusal, never silently.
   "textual>=8.2.8",
   # The listings' and help's measured columns (#271): textual
   # already ships it, but the CLI imports it directly on every

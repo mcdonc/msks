@@ -17,11 +17,12 @@ exec at runtime — debugging and development tools stay out of it.
 Design (ported from klangkd doctor, klangk #1612): capabilities
 first, never platform predictions. Every check runs on every
 host; only the package-hint table varies by detected manager. One
-deliberate exception (#540): the consent-stack rows — the two
-NFQUEUE libraries and the extension import — run on Linux hosts
-only, because off Linux the binding is absent by design (the
-platform marker) and every install candidate there is a
-Linux-only package; the extension row carries that contract.
+deliberate exception (#542): the consent-stack rows — the two
+NFQUEUE libraries and the binding's soname load — run on Linux
+hosts only, because libnetfilter_queue is a Linux library (the
+binding itself is vendored in the wheel on every platform) and
+every install candidate for it is a Linux-only package; the
+binding row carries that contract.
 Checks are
 graded — an error keeps the daemon from its core paths, a warning
 names a client-side tool the daemon itself runs without. Exit
@@ -247,21 +248,9 @@ PACKAGE_HINTS: dict[str, dict[str, str]] = {
         "pacman": "libnetfilter_queue",
         "brew": "libnetfilter-queue",
     },
-    # The header rows (#540): what a pip install of msks compiles
-    # the netfilterqueue extension against — the binding ships as
-    # an sdist, so the headers are an install-time requirement on
-    # every Linux host. pacman carries one package per library, and
-    # Homebrew formulae bundle the headers, so those rows repeat
-    # the runtime name and the fix line dedupes it.
-    "libnetfilter_queue-dev": {
-        "dnf": "libnetfilter_queue-devel",
-        "yum": "libnetfilter_queue-devel",
-        "apt": "libnetfilter-queue-dev",
-        "zypper": "libnetfilter_queue-devel",
-        "apk": "libnetfilter_queue-dev",
-        "pacman": "libnetfilter_queue",
-        "brew": "libnetfilter-queue",
-    },
+    # The header rows retired with #542 (the vendored ctypes
+    # binding compiles nothing): a load miss names the runtime
+    # soname package alone.
     "libnfnetlink": {
         "dnf": "libnfnetlink",
         "yum": "libnfnetlink",
@@ -493,21 +482,34 @@ def check_tmux(manager: str | None) -> CheckResult:
 
 
 # The definitive capability test for the two libraries: the
-# netfilterqueue extension links them, so importing it exercises
-# exactly what the interceptor's NFQUEUE path loads at runtime.
-NFQ_IMPORT_PROBE = [sys.executable, "-c", "import netfilterqueue"]
+# vendored ctypes binding (#542) dlopens libnetfilter_queue by
+# soname — the same load msks.net.nfqbind performs at import — so
+# it exercises exactly what the consent path loads at runtime.
+NFQ_LOAD_PROBE = [
+    sys.executable,
+    "-c",
+    "import ctypes\n"
+    "for soname in ('libnetfilter_queue.so.1', "
+    "'libnetfilter_queue.so'):\n"
+    " try:\n"
+    "  ctypes.CDLL(soname); break\n"
+    " except OSError:\n"
+    "  pass\n"
+    "else:\n"
+    " raise SystemExit(1)",
+]
 
 
 def check_library(name: str, manager: str | None) -> CheckResult:
     """Check a shared library is loadable, through layered probers.
 
-    ``pkg-config --exists`` first (it answers when the -dev package
+    pkg-config first (it answers when the -dev package
     ships the .pc file), then ``ldconfig -p`` (the runtime soname
-    cache, present without any -dev package), then the
-    netfilterqueue import itself — which also covers hosts whose
-    linker database lists nothing (the extension binds its own
-    paths, as on NixOS). Each layer that answers "present" passes;
-    all three failing is the error.
+    cache, present without any -dev package), then the ctypes
+    soname load itself — which also covers hosts whose linker
+    database lists nothing (the daemon's environment carries the
+    store paths). Each layer that answers "present" passes; all
+    three failing is the error.
     """
     via = library_probe_result(name)
     if via is not None:
@@ -517,7 +519,7 @@ def check_library(name: str, manager: str | None) -> CheckResult:
         ok=False,
         message=(
             f"{name} not found via pkg-config, ldconfig, or "
-            "the netfilterqueue import"
+            "the ctypes soname load"
         ),
         hint=install_hint(name, manager),
     )
@@ -544,9 +546,9 @@ def ldconfig_evidence(name: str) -> str | None:
 
 
 def import_evidence() -> str | None:
-    """ "netfilterqueue import" when the linked extension loads."""
-    rc, _out, _err = run(NFQ_IMPORT_PROBE)
-    return "netfilterqueue import" if rc == 0 else None
+    """ "ctypes load" when a soname loads."""
+    rc, _out, _err = run(NFQ_LOAD_PROBE)
+    return "ctypes load" if rc == 0 else None
 
 
 def library_probe_result(name: str) -> str | None:
@@ -558,60 +560,39 @@ def library_probe_result(name: str) -> str | None:
     )
 
 
-def nfq_fix_packages(manager: str) -> list[str]:
-    """The packages a netfilterqueue import miss needs, deduped in
-    row order: the runtime soname plus the headers a pip build of
-    the extension compiles against (#540)."""
-    packages: list[str] = []
-    for row in ("libnetfilter_queue", "libnetfilter_queue-dev"):
-        pkg = PACKAGE_HINTS.get(row, {}).get(manager, row)
-        if pkg not in packages:
-            packages.append(pkg)
-    return packages
-
-
-def check_nfq_extension(manager: str | None) -> CheckResult:
-    """Check the netfilterqueue extension loads — the definitive
-    consent-stack capability test: one import loads the C extension
-    and both sonames it links. Off Linux the binding is absent by
-    design (pyproject's platform marker, #540), so the miss names
-    the platform contract; on Linux a miss means the runtime
-    sonames are absent or the binding is missing from the install,
-    and the fix names both the runtime and the header packages."""
+def check_nfq_load(manager: str | None) -> CheckResult:
+    """Check the consent binding's library loads — the definitive
+    capability test: the vendored ctypes binding (#542) dlopens
+    the soname the consent path dlopens. Off Linux the library is
+    a Linux package, so the miss names the platform contract; on
+    Linux a miss means the runtime soname is absent, and the fix
+    names the package that carries it."""
     if sys.platform != "linux":
         return CheckResult(
-            name="netfilterqueue",
+            name="nfq-binding",
             ok=False,
             message=(
-                "the netfilterqueue binding ships on Linux installs "
-                "only — the consent stack does not run on this "
-                "platform (#540)"
+                "libnetfilter_queue is a Linux library — the consent "
+                "stack does not run on this platform (#542)"
             ),
             hint="run msksd on a Linux host",
         )
-    rc, _out, _err = run(NFQ_IMPORT_PROBE)
+    rc, _out, _err = run(NFQ_LOAD_PROBE)
     if rc == 0:
         return CheckResult(
-            name="netfilterqueue",
+            name="nfq-binding",
             ok=True,
-            message="netfilterqueue ok (import)",
+            message="nfq-binding ok (ctypes load)",
         )
-    if manager is None:
-        hint = (
-            "install libnetfilter_queue plus its -dev/-devel header "
-            "packages (libnfnetlink rides their dependency chain)"
-        )
-    else:
-        hint = manager_install(manager, " ".join(nfq_fix_packages(manager)))
     return CheckResult(
-        name="netfilterqueue",
+        name="nfq-binding",
         ok=False,
         message=(
-            "the netfilterqueue extension did not import — the "
-            "runtime sonames are absent or the binding is missing "
-            "from this install (reinstall it with pip)"
+            "libnetfilter_queue did not load (the probe tries the "
+            "versioned and unversioned sonames) — the consent "
+            "stack's vendored binding needs it at runtime"
         ),
-        hint=hint,
+        hint=install_hint("libnetfilter_queue", manager),
     )
 
 
@@ -703,9 +684,9 @@ def run_doctor(settings: Settings) -> DoctorReport:
     # Off Linux the two library rows stay off the report: their
     # install candidates there are Linux-only packages (Homebrew's
     # formulae above all), so the rows would prescribe installs
-    # that cannot work. The extension row below carries the
-    # platform contract (#540).
-    report.add(check_nfq_extension(manager))
+    # that cannot work. The binding row below carries the
+    # platform contract (#542).
+    report.add(check_nfq_load(manager))
     report.add(check_tmux(manager))
 
     # Warning grade: the client-side tools the documented

@@ -63,7 +63,6 @@ buildPythonPackage {
     "fastapi"
     "litellm"
     "mitmproxy"
-    "netfilterqueue"
     "pydantic"
     "sqlalchemy"
     "uvicorn"

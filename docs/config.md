@@ -62,20 +62,18 @@ the first-run template; a config that exists but fails to load
 falls back to environment variables and defaults with a warning
 naming the error, and a fresh host with no default config yet
 falls back silently. The two libraries are verified through
-`pkg-config`, the linker cache (`ldconfig -p`), or the
-`netfilterqueue` import itself — whichever answers first.
+`pkg-config`, the linker cache (`ldconfig -p`), or the binding's
+ctypes soname load — whichever answers first.
 
-The netfilterqueue import is its own check row beside the two
+The binding's soname load is its own check row beside the two
 library rows, and all three run on Linux hosts only: off Linux
-the binding is absent by design (the platform marker), and the
-extension row names that contract instead of hinting packages.
-On Linux, one import loads the C extension and both sonames
-it links, so a host whose runtime sonames are absent fails it
-even when `pkg-config` still answers for the library. Its fix
-line names both the runtime package and the header package
-(`libnetfilter-queue1` and `libnetfilter-queue-dev` on apt) —
-the headers because a pip install of msks builds the binding
-from source on the host, which needs them (#540).
+the library is a Linux package, and the binding row names that
+contract instead of hinting packages. On Linux, the vendored
+ctypes binding (#542) dlopens `libnetfilter_queue.so.1` — the
+same load the consent path performs — so a host whose runtime
+soname is absent fails it even when `pkg-config` still answers
+for the library. Its fix line names the package that carries the
+runtime soname (`libnetfilter-queue1` on apt).
 
 The install hints match each manager's real package names
 (verified against a Debian trixie container: `genisoimage` serves

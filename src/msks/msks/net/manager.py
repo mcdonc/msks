@@ -964,7 +964,7 @@ class NetManager:
                 queue_num = self.queue_for(slice_)
                 # Bind the queue BEFORE the chain references it: an
                 # unbound queue drops, and a boot that cannot bind
-                # (no netfilterqueue binding) refuses outright with
+                # (the library did not load) refuses outright with
                 # a named error rather than running a queue nothing
                 # answers.
                 consumer = self._consumer_factory(
