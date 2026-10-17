@@ -278,9 +278,11 @@ def wrapper_ambient_proof() -> str:
     )
     ambient = out.strip()
     if rc != 0 or ambient in ("", "0000000000000000"):
+        detail = f"CapAmb reads '{ambient}'" + (
+            f"; {err.strip()}" if err.strip() else ""
+        )
         raise HostSetupError(
-            f"wrapper exec left no ambient capabilities "
-            f"(CapAmb reads '{ambient}'; {err.strip()})"
+            f"wrapper exec left no ambient capabilities ({detail})"
         )
     return ambient
 
@@ -291,9 +293,12 @@ def land_sysctl() -> None:
     write_file(SYSCTL_FILE, SYSCTL_TEXT)
     rc, _out, err = sh(["sysctl", "--load", SYSCTL_FILE])
     if read_file(IP_FORWARD_PROC).strip() != "1":
+        detail = f"sysctl rc={rc}" + (
+            f", {err.strip()}" if err.strip() else ""
+        )
         raise HostSetupError(
             f"{IP_FORWARD_PROC} still reads 0 after loading "
-            f"{SYSCTL_FILE} (sysctl rc={rc}, {err.strip()})"
+            f"{SYSCTL_FILE} ({detail})"
         )
 
 

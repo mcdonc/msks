@@ -144,7 +144,11 @@ def test_happy_path_lands_every_piece(
     out = capsys.readouterr().out
     assert "wrapper:    /usr/local/bin/msks-caps" in out
     assert "dev-daemon use: DEV_CAPS=/usr/local/bin/msks-caps msks-dev" in out
-    assert "uplink:" in out and "eno4" in out
+    assert (
+        "uplink:" in out
+        and "MSKSD_EGRESS_UPLINK, or DEV_UPLINK for msks-dev" in out
+        and "eno4" in out
+    )
 
 
 def test_missing_tools_install_via_apt(
@@ -335,12 +339,20 @@ def test_kvm_absent_hint(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture,
 ) -> None:
+    """Both absence shapes read the same: no such group (KeyError)
+    and a failing NSS backend (OSError) — the script's getent
+    degraded the same way."""
+
     def no_group(name):
         raise KeyError(name)
 
-    monkeypatch.setattr(hostsetup.grp, "getgrnam", no_group)
-    assert main() == 0
-    assert "kvm group is absent" in capsys.readouterr().out
+    def broken_backend(name):
+        raise OSError("nss is down")
+
+    for failure in (no_group, broken_backend):
+        monkeypatch.setattr(hostsetup.grp, "getgrnam", failure)
+        assert main() == 0
+        assert "kvm group is absent" in capsys.readouterr().out
 
 
 def test_uplink_without_a_default_route(
