@@ -171,7 +171,7 @@ in
   outputs = {
     server = msksServer;
     client = msksClient;
-    guest-image = guestImages.image-archive;
+    guest-image-debian = guestImages.image-archive-debian;
     guest-image-nixos = guestImages.image-archive-nixos;
   };
 
@@ -328,14 +328,14 @@ in
       esac
       mkdir -p "$state"
       echo "msks: building the workspace image archive into $state (idempotent — unchanged inputs are a cached no-op)"
-      # outputs.guest-image is the definition (#537): the same
-      # derivation devenv.nix's outputs block builds, against the
-      # devenv.lock-pinned nixpkgs. devenv build prints the store
-      # paths as JSON on stdout (progress stays on stderr); the
-      # venv python picks the one path out.
+      # outputs.guest-image-debian is the definition (#537): the
+      # same derivation devenv.nix's outputs block builds, against
+      # the devenv.lock-pinned nixpkgs. devenv build prints the
+      # store paths as JSON on stdout (progress stays on stderr);
+      # the venv python picks the one path out.
       out=$(
-        cd "$root" && devenv build outputs.guest-image \
-          | python -c 'import json,sys; print(json.load(sys.stdin)["outputs.guest-image"])'
+        cd "$root" && devenv build outputs.guest-image-debian \
+          | python -c 'import json,sys; print(json.load(sys.stdin)["outputs.guest-image-debian"])'
       )
       ln -sfn "$out" "$state/default-image"
       echo "msks: image archive at $out (linked as $state/default-image)"
