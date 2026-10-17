@@ -310,8 +310,8 @@ LOAD_FAILED = "load-failed"
 
 # The three the consent chain's rulesets reference (the deny RST's
 # `reject with tcp reset`, the interactive queue's `queue num`):
-# the cloud kernel flavors ship without them (#550), and the
-# daemon refuses consent-egress workspaces without them.
+# interactive egress consent cannot work without them, and the
+# daemon refuses consent-egress workspaces (#550).
 CONSENT_MODULES = ("nft_reject", "nf_reject_ipv4", "nfnetlink_queue")
 
 
@@ -340,12 +340,15 @@ def report_module_states(states: dict[str, str]) -> dict[str, str]:
 
 def load_module(module: str) -> str:
     """One module's state: the dry-run resolves whether the kernel
-    tree carries it at all (a built-in answers yes), then the real
-    load runs — a failure there is a load failure, not an
-    absence."""
+    tree carries it at all (a built-in answers yes; kmod answers 1
+    for a name the tree lacks — every other answer, including sh's
+    -1 infra failure, is a load failure, not an absence), then the
+    real load runs."""
     rc, _out, _err = sh(["modprobe", "--dry-run", module])
-    if rc != 0:
+    if rc == 1:
         return ABSENT
+    if rc != 0:
+        return LOAD_FAILED
     rc, _out, _err = sh(["modprobe", module])
     return LOADED if rc == 0 else LOAD_FAILED
 
@@ -361,22 +364,52 @@ def warn_load_failures(failed: list[str]) -> None:
         )
 
 
+MODULES_ROOT = "/lib/modules"
+
+
+def module_tree_present() -> bool:
+    """Whether /lib/modules carries a tree for the running release
+    at all — a container or a pruned host can hold none."""
+    return Path(MODULES_ROOT, os.uname().release).is_dir()
+
+
+def tree_cause() -> str:
+    """Why the tree lacks a module, as the warning states it: no
+    tree for this release (the kernel package is not installed —
+    a container, a trimmed image) or a tree without the module (a
+    trimmed kernel build; stock Debian flavors, cloud included,
+    carry the consent modules — #550's evidence host ran a pruned
+    tree, not a stock flavor)."""
+    if not module_tree_present():
+        return "no module tree is installed for this release"
+    return "this kernel's build carries a trimmed module set"
+
+
+def kernel_package() -> str:
+    """The generic flavor's package for this machine — Debian's
+    arch names, not uname's machine names (x86_64 installs
+    linux-image-amd64, aarch64 linux-image-arm64)."""
+    machine = os.uname().machine
+    arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(machine, machine)
+    return f"linux-image-{arch}"
+
+
 def warn_flavor_gap(absent: list[str]) -> None:
-    """Name the trimmed-flavor gap and its fix (#550): the cloud
-    kernel flavors (…-cloud-amd64) ship without the consent
-    modules, and interactive egress consent cannot work there
-    until the full flavor lands."""
+    """Name the absence and its remediation (#550): the observation
+    (the module is not in this kernel's tree) plus the cause shape
+    and the generic-flavor fix — a causal claim beyond that is one
+    the tool cannot verify."""
     for module in absent:
         print(
             f"{TOOL}: WARNING {module} is absent from this kernel's "
-            f"module tree — the running flavor "
-            f"({os.uname().release}) ships without it",
+            f"module tree — {tree_cause()} "
+            f"(running release {os.uname().release})",
             file=sys.stderr,
         )
     if absent:
         print(
-            f"{TOOL}: the full flavor carries them: "
-            "apt install linux-image-amd64, reboot, re-run",
+            f"{TOOL}: the generic flavor carries them: apt install "
+            f"{kernel_package()}, reboot, re-run",
             file=sys.stderr,
         )
 
