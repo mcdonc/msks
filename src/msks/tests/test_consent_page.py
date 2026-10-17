@@ -564,13 +564,14 @@ async def call_until(
 ) -> None:
     """Run an action until its effect lands — an action issued
     inside a rebuild's swap window can no-op or miss its paint
-    (by design), so the tests retry. press_until's budget rule:
-    the budget is time the app actually ran (#322, #468) — a cycle
-    that ran past its requested sleep credits the overshoot back
-    to the deadline, so a descheduled runner cannot spend it. On
-    timeout the report follows the reads, poll's rule: a check
-    that only ever raised re-raises its error; once a check has
-    answered, the failure is the effect not landing."""
+    (by design), so the tests retry. The budget is time the app
+    actually ran, for the same starved-runner reason as wait_for
+    (#322, #468): a cycle that ran past its requested sleep
+    credits the overshoot back to the deadline, so a descheduled
+    runner cannot spend it. On timeout the report follows the
+    reads, poll's rule: a check that only ever raised re-raises
+    its error; once a check has answered, the failure is the
+    effect not landing — `what` names it for triage."""
     deadline = time.monotonic() + timeout
     last_error = None
     answered = False
@@ -596,14 +597,9 @@ async def call_until(
 
 async def press_until(pilot, key: str, landed, timeout: float = 10.0) -> None:
     """Press a key until its effect lands — an action pressed inside
-    a rebuild's swap window no-ops (by design), so the tests retry.
-    The budget is time the app actually ran, for the same starved-
-    runner reason as wait_for (#322, #468): a press cycle that ran
-    past its requested sleep credits the overshoot back to the
-    deadline, so a descheduled worker cannot spend the budget. On
-    timeout the report follows the reads, poll's rule: a check that
-    only ever raised re-raises its error; once a check has answered,
-    the failure is the key not taking effect."""
+    a rebuild's swap window no-ops (by design), so the tests retry:
+    call_until's loop and budget (#322, #468), the key as the
+    action and the key's name in the timeout."""
     await call_until(lambda: pilot.press(key), landed, timeout, what=repr(key))
 
 
@@ -909,13 +905,12 @@ async def test_the_queue_lifecycle() -> None:
         await wait_for(lambda: "raw.example (all ports)" in held_row(app, 1))
         assert "dev" in str(cp.query_one("#header").content)
         assert "connected" in status_line(app)
-        # a allows the focused (first) hold with the default duration
-        # — the zone's focus is waited first: the swap's handoff
-        # lands through a message round-trip, and a press ahead of
-        # it reads as mis-zoned and no-ops (#503).
+        # a allows the focused (first) hold with the default
+        # duration — the zone's focus is waited first (#503) and
+        # the press itself retries: one landing in a swap window
+        # no-ops and the decide never comes (#539, #548).
         await wait_for(lambda: focused_zone(app) == "holds")
-        await pilot.press("a")
-        await wait_for(lambda: len(data.decided) == 1)
+        await press_until(pilot, "a", lambda: len(data.decided) == 1)
         assert data.decided == [(WS, "r1", "allow", "tilrestart")]
         # A resolved frame drops its row.
         await decide_the(page.link.controller, "r1")
@@ -1263,6 +1258,7 @@ async def test_decide_and_revoke_failures_flash() -> None:
         await call_until(
             lambda: cp.revoke_rule("r1"),
             lambda: "revoke failed" in status_line(app),
+            what="revoke r1",
         )
 
 
@@ -1319,6 +1315,7 @@ async def test_a_bracketed_failure_message_flashes_literally() -> None:
         await call_until(
             lambda: cp.revoke_rule("r1"),
             lambda: "revoke failed: [SSL" in status_line(app),
+            what="revoke r1",
         )
         assert "nope\\[/]" in status_line(app)
         cp.update_status()
