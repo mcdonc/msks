@@ -165,10 +165,18 @@ def which(tool: str) -> str | None:
     return shutil.which(tool)
 
 
+def invoked_as() -> str:
+    """The entrypoint's own absolute path, for the sudo hint: an
+    install root's PATH does not carry (a venv's bin, above all),
+    so the bare name cannot work there — the hint names the path
+    that does."""
+    return str(Path(sys.argv[0]).resolve())
+
+
 def check_root_and_platform() -> None:
     """The two refusals that precede every side effect."""
     if not am_root():
-        raise HostSetupError(f"run me as root (sudo {TOOL})")
+        raise HostSetupError(f"run me as root (sudo {invoked_as()})")
     release = os_release_id()
     if release != "debian":
         raise HostSetupError(
