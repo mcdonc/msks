@@ -559,22 +559,24 @@ async def wait_for(
     await poll(condition, timeout, delay)
 
 
-async def press_until(pilot, key: str, landed, timeout: float = 10.0) -> None:
-    """Press a key until its effect lands — an action pressed inside
-    a rebuild's swap window no-ops (by design), so the tests retry.
-    The budget is time the app actually ran, for the same starved-
-    runner reason as wait_for (#322, #468): a press cycle that ran
-    past its requested sleep credits the overshoot back to the
-    deadline, so a descheduled worker cannot spend the budget. On
-    timeout the report follows the reads, poll's rule: a check that
-    only ever raised re-raises its error; once a check has answered,
-    the failure is the key not taking effect."""
+async def call_until(
+    action, landed, timeout: float = 10.0, what: str = "the action"
+) -> None:
+    """Run an action until its effect lands — an action issued
+    inside a rebuild's swap window can no-op or miss its paint
+    (by design), so the tests retry. press_until's budget rule:
+    the budget is time the app actually ran (#322, #468) — a cycle
+    that ran past its requested sleep credits the overshoot back
+    to the deadline, so a descheduled runner cannot spend it. On
+    timeout the report follows the reads, poll's rule: a check
+    that only ever raised re-raises its error; once a check has
+    answered, the failure is the effect not landing."""
     deadline = time.monotonic() + timeout
     last_error = None
     answered = False
     while True:
         started = time.monotonic()
-        await pilot.press(key)
+        await action()
         try:
             if landed():
                 return
@@ -589,7 +591,20 @@ async def press_until(pilot, key: str, landed, timeout: float = 10.0) -> None:
         if time.monotonic() >= deadline:
             if last_error is not None and not answered:
                 raise last_error
-            raise AssertionError(f"{key!r} never took effect")
+            raise AssertionError(f"{what} never took effect")
+
+
+async def press_until(pilot, key: str, landed, timeout: float = 10.0) -> None:
+    """Press a key until its effect lands — an action pressed inside
+    a rebuild's swap window no-ops (by design), so the tests retry.
+    The budget is time the app actually ran, for the same starved-
+    runner reason as wait_for (#322, #468): a press cycle that ran
+    past its requested sleep credits the overshoot back to the
+    deadline, so a descheduled worker cannot spend the budget. On
+    timeout the report follows the reads, poll's rule: a check that
+    only ever raised re-raises its error; once a check has answered,
+    the failure is the key not taking effect."""
+    await call_until(lambda: pilot.press(key), landed, timeout, what=repr(key))
 
 
 async def open_screen(pilot, app, key: str, name: str) -> None:
@@ -1235,13 +1250,20 @@ async def test_decide_and_revoke_failures_flash() -> None:
     async with app.run_test() as pilot:
         cp = await open_consent(pilot, app, page)
         await wait_for(lambda: focused_zone(app) == "holds")
-        await pilot.press("a")
-        await wait_for(lambda: "decide failed" in status_line(app))
-        # A failing revoke flashes the same way.
+        # The press retries: one landing inside a rebuild's swap
+        # window no-ops and the flash never comes (#539, #548).
+        await press_until(
+            pilot, "a", lambda: "decide failed" in status_line(app)
+        )
+        # A failing revoke flashes the same way — the call takes
+        # the same retry posture: a flash set inside a window
+        # paints on a tick, and the tests do not wait on luck.
         data.fail.discard("decide")
         data.fail.add("revoke")
-        await cp.revoke_rule("r1")
-        await wait_for(lambda: "revoke failed" in status_line(app))
+        await call_until(
+            lambda: cp.revoke_rule("r1"),
+            lambda: "revoke failed" in status_line(app),
+        )
 
 
 async def test_a_truncated_closing_tag_failure_flashes_literally() -> None:
@@ -1256,9 +1278,10 @@ async def test_a_truncated_closing_tag_failure_flashes_literally() -> None:
     async with app.run_test() as pilot:
         cp = await open_consent(pilot, app, page)
         await wait_for(lambda: focused_zone(app) == "holds")
-        await pilot.press("a")
-        await wait_for(
-            lambda: "decide failed: unknown workspace" in status_line(app)
+        await press_until(
+            pilot,
+            "a",
+            lambda: "decide failed: unknown workspace" in status_line(app),
         )
         assert "\\[/dev" in status_line(app)
         cp.update_status()  # renders, no MarkupError
@@ -1278,21 +1301,25 @@ async def test_a_bracketed_failure_message_flashes_literally() -> None:
     async with app.run_test() as pilot:
         cp = await open_consent(pilot, app, page)
         await wait_for(lambda: focused_zone(app) == "holds")
-        await pilot.press("a")
-        await wait_for(
+        await press_until(
+            pilot,
+            "a",
             lambda: (
                 "decide failed: [SSL: CERTIFICATE_VERIFY_FAILED]"
                 in status_line(app)
-            )
+            ),
         )
         assert "nope\\[/]" in status_line(app)
         cp.update_status()
         await pilot.pause()
-        # A failing revoke with bracketed text flashes the same way.
+        # A failing revoke with bracketed text flashes the same
+        # way — the same retry posture as the decide leg above.
         data.fail.discard("decide")
         data.fail.add("revoke")
-        await cp.revoke_rule("r1")
-        await wait_for(lambda: "revoke failed: [SSL" in status_line(app))
+        await call_until(
+            lambda: cp.revoke_rule("r1"),
+            lambda: "revoke failed: [SSL" in status_line(app),
+        )
         assert "nope\\[/]" in status_line(app)
         cp.update_status()
         await pilot.pause()
