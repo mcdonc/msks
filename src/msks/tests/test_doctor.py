@@ -433,6 +433,99 @@ def test_library_missing_everywhere(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.hint == "sudo apt install libnetfilter-queue1"
 
 
+def test_nfq_extension_imports(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        doctor_mod, "run", lambda cmd, timeout=10.0: (0, "", "")
+    )
+    result = doctor_mod.check_nfq_extension(None)
+    assert result.ok is True
+    assert "import" in result.message
+
+
+def test_nfq_extension_miss_names_runtime_and_header_packages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse(cmd, timeout=10.0):
+        if cmd[2] == "import netfilterqueue":
+            return (1, "", "ModuleNotFoundError")
+        return (0, "", "")
+
+    monkeypatch.setattr(doctor_mod, "run", refuse)
+    result = doctor_mod.check_nfq_extension("apt")
+    assert result.ok is False
+    assert result.hint == (
+        "sudo apt install libnetfilter-queue1 libnetfilter-queue-dev"
+    )
+
+
+def test_nfq_extension_miss_dedupes_pacman_one_package(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        doctor_mod, "run", lambda cmd, timeout=10.0: (1, "", "")
+    )
+    result = doctor_mod.check_nfq_extension("pacman")
+    assert result.hint == "sudo pacman -S libnetfilter_queue"
+
+
+def test_nfq_fix_packages_pin_every_manager() -> None:
+    """The per-manager fix lines name real packages (#540): the
+    runtime soname plus the headers a pip build compiles against.
+    Alpine carries the underscored name; pacman and Homebrew ship
+    one package each, so the pair dedupes."""
+    expected = {
+        "apt": "libnetfilter-queue1 libnetfilter-queue-dev",
+        "dnf": "libnetfilter_queue libnetfilter_queue-devel",
+        "yum": "libnetfilter_queue libnetfilter_queue-devel",
+        "zypper": "libnetfilter_queue1 libnetfilter_queue-devel",
+        "apk": "libnetfilter_queue libnetfilter_queue-dev",
+        "pacman": "libnetfilter_queue",
+        "brew": "libnetfilter-queue",
+    }
+    for manager, packages in expected.items():
+        assert doctor_mod.nfq_fix_packages(manager) == packages.split(" "), (
+            manager
+        )
+
+
+def test_nfq_extension_off_linux_names_the_platform_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Off Linux the binding is absent by design (the platform
+    marker), so the miss names that contract — no package hint
+    can fix a Mac (#540)."""
+    monkeypatch.setattr(doctor_mod.sys, "platform", "darwin")
+    result = doctor_mod.check_nfq_extension("brew")
+    assert result.ok is False
+    assert "Linux installs only" in result.message
+    assert result.hint == "run msksd on a Linux host"
+
+
+def test_run_doctor_off_linux_skips_the_library_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Off Linux the two library rows stay off the report — their
+    install candidates there are Linux-only packages — and the
+    extension row carries the contract (#540)."""
+    all_found(monkeypatch)
+    monkeypatch.setattr(doctor_mod.sys, "platform", "darwin")
+    report = run_doctor(Settings())
+    names = {r.name for r in report.results}
+    assert "libnetfilter_queue" not in names
+    assert "libnfnetlink" not in names
+    assert "netfilterqueue" in names
+
+
+def test_nfq_extension_miss_without_a_manager_names_the_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        doctor_mod, "run", lambda cmd, timeout=10.0: (1, "", "")
+    )
+    result = doctor_mod.check_nfq_extension(None)
+    assert "-dev/-devel" in result.hint
+
+
 # ---------------------------------------------------------------------------
 # The check set
 # ---------------------------------------------------------------------------
@@ -474,6 +567,7 @@ def test_run_doctor_grades_and_settings_names(
         "qemu-img",
         "libnetfilter_queue",
         "libnfnetlink",
+        "netfilterqueue",
         "tmux",
     } <= names
 
@@ -566,7 +660,7 @@ def test_doctor_main_exit_codes_and_output(
     assert doctor_main(None) == 0
     out = capsys.readouterr().out
     assert "msksd doctor" in out
-    assert "All 14 checks passed." in out
+    assert "All 15 checks passed." in out
 
 
 def test_doctor_main_appends_config_notice(

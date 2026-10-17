@@ -65,13 +65,24 @@ falls back silently. The two libraries are verified through
 `pkg-config`, the linker cache (`ldconfig -p`), or the
 `netfilterqueue` import itself — whichever answers first.
 
+The netfilterqueue import is its own check row beside the two
+library rows, and all three run on Linux hosts only: off Linux
+the binding is absent by design (the platform marker), and the
+extension row names that contract instead of hinting packages.
+On Linux, one import loads the C extension and both sonames
+it links, so a host whose runtime sonames are absent fails it
+even when `pkg-config` still answers for the library. Its fix
+line names both the runtime package and the header package
+(`libnetfilter-queue1` and `libnetfilter-queue-dev` on apt) —
+the headers because a pip install of msks builds the binding
+from source on the host, which needs them (#540).
+
 The install hints match each manager's real package names
 (verified against a Debian trixie container: `genisoimage` serves
 `mkisofs`, `qemu-utils` ships `qemu-img`, `conntrack` is apt's
 name, and the library rows name the runtime soname packages —
-`libnetfilter-queue1` and `libnfnetlink0` — with the `-dev`
-packages carrying only the pkg-config files doctor falls back
-past). Where a fix is not a distro package, the hint names the
+`libnetfilter-queue1` and `libnfnetlink0`). Where a fix is not a
+distro package, the hint names the
 real source: cloud-hypervisor installs from the upstream static
 release (Debian's archive carries it in none of its suites) and
 
