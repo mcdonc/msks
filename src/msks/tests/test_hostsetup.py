@@ -263,12 +263,12 @@ def test_absent_modules_with_no_tree_name_the_missing_package(
     pruned image): the cause says so — not a flavor claim the tool
     cannot verify (#550's review)."""
     debian_host.modprobe_absent = {"nfnetlink_queue"}
-    fake_uname(monkeypatch, "6.12.107+deb13-amd64", machine="amd64")
+    fake_uname(monkeypatch, "6.12.107+deb13-amd64", machine="x86_64")
     monkeypatch.setattr(hostsetup, "module_tree_present", lambda: False)
     assert main() == 0
     out = capsys.readouterr()
     assert (
-        "no module tree is installed for this release "
+        "no module tree is installed on this host "
         "(running release 6.12.107+deb13-amd64)" in out.err
     )
     assert "apt install linux-image-amd64, reboot, re-run" in out.err

@@ -318,8 +318,9 @@ CONSENT_MODULES = ("nft_reject", "nf_reject_ipv4", "nfnetlink_queue")
 def land_modules() -> dict[str, str]:
     """The modules file, boot-time (nix/module.nix's deterministic
     posture) and modprobe'd now. Returns each module's state for
-    the summary's consent line: a name the kernel tree lacks is a
-    flavor gap with a named fix (#550), not a load failure."""
+    the summary's consent line: a name the kernel tree lacks gets
+    the named observation and remediation (#550), not the plain
+    load-failure warning."""
     write_file(MODULES_FILE, MODULES_HEADER + "\n".join(MODULES) + "\n")
     return report_module_states(module_states())
 
@@ -334,7 +335,7 @@ def report_module_states(states: dict[str, str]) -> dict[str, str]:
     warn_load_failures(
         [m for m, state in states.items() if state == LOAD_FAILED]
     )
-    warn_flavor_gap([m for m, state in states.items() if state == ABSENT])
+    warn_absent_modules([m for m, state in states.items() if state == ABSENT])
     return states
 
 
@@ -381,7 +382,7 @@ def tree_cause() -> str:
     carry the consent modules — #550's evidence host ran a pruned
     tree, not a stock flavor)."""
     if not module_tree_present():
-        return "no module tree is installed for this release"
+        return "no module tree is installed on this host"
     return "this kernel's build carries a trimmed module set"
 
 
@@ -394,7 +395,7 @@ def kernel_package() -> str:
     return f"linux-image-{arch}"
 
 
-def warn_flavor_gap(absent: list[str]) -> None:
+def warn_absent_modules(absent: list[str]) -> None:
     """Name the absence and its remediation (#550): the observation
     (the module is not in this kernel's tree) plus the cause shape
     and the generic-flavor fix — a causal claim beyond that is one
