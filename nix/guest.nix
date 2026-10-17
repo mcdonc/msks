@@ -27,10 +27,11 @@ in
   # system evaluated against the same pinned nixpkgs.
   inherit guest-nixos;
 
-  # The workspace image archive on its own (#141): the bare-host dev
-  # daemon's default image — same derivation the `guest` build embeds,
-  # buildable without the kernel/rootfs copies that shape serves.
-  image-archive = guest.imageArchive;
+  # The Debian workspace image archive on its own (#141): the
+  # bare-host dev daemon's default image — same derivation the
+  # `guest` build embeds, buildable without the kernel/rootfs
+  # copies that shape serves.
+  image-archive-debian = guest.imageArchive;
 
   # The NixOS image archive on its own (#250).
   image-archive-nixos = guest-nixos.imageArchive;
