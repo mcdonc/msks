@@ -1009,8 +1009,11 @@ let
         # irqbypass, and ccp ride in as their dependencies) and the
         # egress stack (tun for per-inner-workspace taps plus the
         # nftables/NAT modules the daemon's rulesets need — the
-        # same list a deployment host loads, and what lets the
-        # image host workspaces itself). button,
+        # same list a deployment host loads (hostsetup's MODULES),
+        # reject and NFQUEUE pieces included (the deny RST's
+        # `reject with tcp reset` and the interactive consent
+        # queue's `queue num` autoload them from this tree), and
+        # what lets the image host workspaces itself). button,
         # evdev, and isofs are modules in BOTH Debian flavors — the
         # old cloud image found them only because it shipped
         # Debian's whole tree, and the smoke tests caught button and
@@ -1041,8 +1044,11 @@ let
           nft_chain_nat
           nft_masq
           nft_ct
+          nft_reject
+          nf_reject_ipv4
           nf_nat
           nf_conntrack
+          nfnetlink_queue
         "
         rm -rf "$root"/lib/modules/*
         rm -rf "$root"/usr/lib/modules/* 2>/dev/null || true
