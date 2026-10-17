@@ -86,10 +86,20 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 def test_non_root_refuses_before_anything(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
+    """The hint names the invoked path: an install root's PATH
+    does not carry a venv's bin, so the bare name cannot work
+    under sudo."""
     monkeypatch.setattr(hostsetup.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(
+        hostsetup.sys,
+        "argv",
+        ["/home/chrism/msks/.venv/bin/msks-setup-debian-host"],
+    )
     assert main() == 1
-    assert "run me as root (sudo msks-setup-debian-host)" in (
-        capsys.readouterr().err
+    assert (
+        "run me as root (sudo "
+        "/home/chrism/msks/.venv/bin/msks-setup-debian-host)"
+        in (capsys.readouterr().err)
     )
 
 
