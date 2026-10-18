@@ -16,6 +16,8 @@ import subprocess
 import sys
 from datetime import datetime
 
+import httpx
+
 from ..spec.images import is_hash_shape, newest_rank
 from .context import env_token, env_url
 from .rest import api_call, api_client, request
@@ -547,3 +549,25 @@ def cmd_image_default(
     else:
         asyncio.run(designate_image(env_url(), env_token(), ref, transport))
     return 0
+
+
+async def fetch_manifest(url: str, transport=None) -> list[dict]:
+    """The published channel's manifest (#565): a plain public
+    GET, client-side — the daemon is not involved until a pick
+    POSTs one row's URL to its import endpoint. The manifest's
+    rows are validated by the caller (:func:`manifest_row`);
+    this names every fetch shape's failure in one line."""
+    try:
+        async with httpx.AsyncClient(
+            transport=transport, follow_redirects=True, timeout=30.0
+        ) as client:
+            answer = await client.get(url)
+        answer.raise_for_status()
+        document = answer.json()
+    except httpx.HTTPError as exc:
+        raise SystemExit(f"cannot fetch the image manifest: {exc}") from exc
+    except ValueError as exc:
+        raise SystemExit(f"the image manifest is not JSON: {exc}") from exc
+    if not isinstance(document, list):
+        raise SystemExit("the image manifest is not a list of images")
+    return document

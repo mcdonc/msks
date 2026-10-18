@@ -133,6 +133,10 @@ class FakeData:
         self.refusal = "daemon away"
         self.images_rows: list[dict] = []
         self.defaults: dict = {"root_mib": 10240, "home_mib": 20480}
+        # The import picker's surface (#565): the recorded channel
+        # imports and the refusal a test arms.
+        self.import_calls: list[str] = []
+        self.import_refusal: str | None = None
         # The secrets page's surface (#390): the placeholder rows,
         # the recorded audit rows, and the calls the page makes.
         self.secret_rows: list[dict] = []
@@ -169,6 +173,19 @@ class FakeData:
         if "images" in self.fail:
             raise RuntimeError(self.refusal)
         return [dict(r) for r in self.images_rows]
+
+    async def import_image(self, source: str) -> dict:
+        """The channel import (#565): recorded; a refusal a test
+        armed raises the way the daemon's would."""
+        self.import_calls.append(source)
+        if self.import_refusal is not None:
+            raise SystemExit(self.import_refusal)
+        return {
+            "ref": "debian:13.6",
+            "hash": "a" * 64,
+            "name": "debian",
+            "version": "13.6",
+        }
 
     async def create_defaults(self) -> dict:
         if "defaults" in self.fail:
@@ -4167,7 +4184,7 @@ async def test_every_footer_names_its_enter_binding(monkeypatch) -> None:
 
 async def test_every_footer_fits_the_smallest_terminal(monkeypatch) -> None:
     """#524: every footer the tree shows fits an 80-column
-    terminal. The widest shapes — the list's nine bindings and
+    terminal. The widest shapes — the list's ten bindings and
     the consent page's eight with a hold waiting — abbreviate or
     drop what would not fit: the list's long words shorten
     (``Jump`` for the typeahead, ``Del`` for remove, ``Reload``
@@ -4196,8 +4213,10 @@ async def test_every_footer_fits_the_smallest_terminal(monkeypatch) -> None:
         return len(footer.children) == shown and footer.max_scroll_x == 0
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await wait_for(lambda: footer_settled(app))  # the list's nine
-        assert len(app.screen.query_one("Footer").children) == 9
+        # ten keys now (#565's Img); the settled footer still
+        # scrolls nowhere at 80 columns
+        await wait_for(lambda: footer_settled(app))
+        assert len(app.screen.query_one("Footer").children) == 10
         await open_page(pilot, app)
         await wait_for(lambda: footer_settled(app))  # the page
         await pilot.press("e")
@@ -4661,3 +4680,400 @@ def test_ensure_forward_dials_a_unix_daemon_without_tls(monkeypatch) -> None:
     )
     follow_mod.ensure_forward("w1")
     assert seen["ssl"] is None
+
+
+CHANNEL = [
+    {
+        "ref": "debian:13.6",
+        "description": "Debian 13.6 cloud image, kernel 6.12, "
+        "cloud-init, the egress module set and consent stack",
+        "kernel": "6.12.107+deb13",
+        "size": 279_000_000,
+        "url": "https://example.com/debian.tar.zst",
+        "hash": "a" * 64,
+    },
+    {
+        "ref": "nixos:26.05",
+        "description": "NixOS 26.05, kernel 6.18",
+        "size": 651_000_000,
+        "url": "https://example.com/nixos.tar.zst",
+        "hash": "b" * 64,
+    },
+]
+
+
+def scripted_manifest(monkeypatch, rows=None, refusal=None):
+    """Patch the picker's manifest fetch (#565) with rows or a
+    one-line refusal, the way the channel answers."""
+    from msks.client.tui import importer as importer_mod
+
+    async def fetch(url, transport=None):
+        if refusal is not None:
+            raise SystemExit(refusal)
+        return rows if rows is not None else CHANNEL
+
+    monkeypatch.setattr(importer_mod, "fetch_manifest", fetch)
+    return importer_mod
+
+
+async def test_the_import_key_opens_the_channel_picker(monkeypatch) -> None:
+    """#565: ``i`` on the list fetches the manifest and offers the
+    published images — ref, the baked description (capped), and
+    the download size — with no daemon call made yet."""
+    scripted_manifest(monkeypatch)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(
+            lambda: type(app.screen).__name__ == "ImageImportScreen"
+        )
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        options = app.screen.query_one(OptionList)
+        labels = [str(o.prompt) for o in options.options]
+        assert any("debian:13.6" in label for label in labels)
+        assert any("(266 MiB)" in label for label in labels)
+        assert data.import_calls == []
+
+
+async def test_picking_a_row_imports_through_the_daemon(monkeypatch) -> None:
+    """Enter on a row dismisses into the importing modal, the
+    daemon import runs with the row's URL, and the success flash
+    names the ref and hash; the create form's catalog carries the
+    image from there."""
+    scripted_manifest(monkeypatch)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        await pilot.press("enter")
+        # The importing modal is transient against an instant fake
+        # import — the observable contract is the call and the
+        # flash, not the modal's lifetime.
+        await wait_for(lambda: data.import_calls == [CHANNEL[0]["url"]])
+        await wait_for(
+            lambda: "imported debian:13.6 (aaaaaaaaaaaa)" in status_text(app)
+        )
+
+
+async def test_cancelling_the_picker_imports_nothing(monkeypatch) -> None:
+    scripted_manifest(monkeypatch)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.query(OptionList) != [])
+        await pilot.press("q")
+        await wait_for(
+            lambda: type(app.screen).__name__ != "ImageImportScreen"
+        )
+        assert data.import_calls == []
+
+
+async def test_a_refused_import_lands_on_the_failure_panel(
+    monkeypatch,
+) -> None:
+    """A daemon the ceiling or floor refuses (or a fetch that
+    fails mid-download) surfaces its reason on the panel — a
+    five-second flash would drop the detail."""
+    scripted_manifest(monkeypatch)
+    data = FakeData([row()])
+    data.import_refusal = "download exceeds the import ceiling"
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        await pilot.press("enter")
+        await wait_for(lambda: on_failure(app))
+        detail = str(app.screen.query_one("#failure-detail").render())
+        assert "download exceeds the import ceiling" in detail
+
+
+async def test_a_failed_manifest_fetch_names_the_cause(monkeypatch) -> None:
+    scripted_manifest(
+        monkeypatch, refusal="cannot fetch the image manifest: offline"
+    )
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: on_failure(app))
+        detail = str(app.screen.query_one("#failure-detail").render())
+        assert "cannot fetch the image manifest: offline" in detail
+        assert data.import_calls == []
+
+
+async def test_an_empty_manifest_names_itself(monkeypatch) -> None:
+    scripted_manifest(monkeypatch, rows=[])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: on_failure(app))
+        detail = str(app.screen.query_one("#failure-detail").render())
+        assert "carries no images" in detail
+
+
+async def test_q_on_the_importing_modal_closes_it(monkeypatch) -> None:
+    """q while the daemon still downloads: the modal closes (the
+    import itself cannot be cancelled — the POST runs to
+    completion) and the flash still lands when it finishes."""
+    import asyncio
+
+    scripted_manifest(monkeypatch)
+    release = asyncio.Event()
+
+    class Held(FakeData):
+        async def import_image(self, source: str) -> dict:
+            self.import_calls.append(source)
+            await release.wait()
+            return {
+                "ref": "debian:13.6",
+                "hash": "a" * 64,
+                "name": "debian",
+                "version": "13.6",
+            }
+
+    data = Held([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        await pilot.press("enter")
+        await wait_for(lambda: data.import_calls == [CHANNEL[0]["url"]])
+        # One elapsed tick paints first (the label carries the
+        # ref and the running seconds); then the cancel — the
+        # modal's repeating timer holds pilot.press's idle wait,
+        # so it drives the action directly, the same one the q
+        # binding routes through.
+        app.screen.tick()
+        assert "importing debian:13.6" in str(
+            app.screen.query_one("#importing-status").content
+        )
+        app.screen.action_cancel()
+        await wait_for(lambda: type(app.screen).__name__ != "ImportingScreen")
+        release.set()
+        await wait_for(
+            lambda: "imported debian:13.6 (aaaaaaaaaaaa)" in status_text(app)
+        )
+
+
+def test_a_foreign_option_prompt_is_ignored() -> None:
+    """A selection whose prompt names no manifest row (a widget
+    rebuilt under the picker) decides nothing — no dismiss, no
+    import."""
+    from types import SimpleNamespace
+
+    from msks.client.tui.importer import ImageImportScreen
+
+    picked: list = []
+    screen = ImageImportScreen(lambda row: picked.append(row))
+    screen.rows = [{"ref": "x:1", "url": "u"}]
+    event = SimpleNamespace(option=SimpleNamespace(prompt="not a row"))
+    screen.on_option_list_option_selected(event)
+    assert picked == []
+
+
+async def test_the_data_seam_posts_the_import(monkeypatch) -> None:
+    """The TUI's import exchange (#565): the pick's URL POSTs to
+    the daemon's import endpoint over the shared TLS context."""
+    from msks.client.tui.data import TuiData
+
+    posted: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append(request)
+        return httpx.Response(
+            200, json={"ref": "debian:13.6", "hash": "a" * 64}
+        )
+
+    monkeypatch.setenv("MSKSC_URL", "https://daemon")
+    monkeypatch.setenv("MSKSC_TOKEN", "tok")
+    data = TuiData(transport=httpx.MockTransport(handler))
+    record = await data.import_image("https://example.com/x.tar.zst")
+    assert record["ref"] == "debian:13.6"
+    assert posted[0].url.path == "/api/v1/images"
+    assert json.loads(posted[0].content) == {
+        "source": "https://example.com/x.tar.zst"
+    }
+
+
+async def test_a_cancelled_fetch_pops_nothing_later(monkeypatch) -> None:
+    """Round-1 review's live repro, pinned: q while the fetch
+    hangs cancels it — the later failure (or success) of that
+    fetch touches no screen that stood on top in the meantime;
+    a create form opened right after survives."""
+    import asyncio
+
+    release = asyncio.Event()
+
+    async def hanging(url, transport=None):
+        await release.wait()
+        raise SystemExit("cannot fetch the image manifest: offline")
+
+    from msks.client.tui import importer as importer_mod
+
+    monkeypatch.setattr(importer_mod, "fetch_manifest", hanging)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(
+            lambda: type(app.screen).__name__ == "ImageImportScreen"
+        )
+        await pilot.press("q")
+        await pilot.press("c")  # an innocent screen takes the top
+        await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
+        release.set()  # the cancelled fetch's failure lands now
+        await asyncio.sleep(0.3)
+        assert type(app.screen).__name__ == "CreateScreen"
+        assert data.import_calls == []
+
+
+async def test_a_mistyped_manifest_field_refuses_by_name() -> None:
+    """A hand-written channel row with a string size (the
+    fork/self-hosted case the setting exists for) names the row
+    on the failure panel — the picker never strands on its
+    fetching line."""
+    from msks.client.tui import importer as importer_mod
+
+    with pytest.raises(ValueError, match="size must be a number"):
+        importer_mod.manifest_row(
+            {"ref": "x:1", "url": "u", "size": "279000000"}
+        )
+    with pytest.raises(ValueError, match="description must be a string"):
+        importer_mod.manifest_row({"ref": "x:1", "url": "u", "description": 7})
+    with pytest.raises(ValueError, match="url must be a string"):
+        importer_mod.manifest_row({"ref": "x:1", "url": 5})
+    # The hash the deduped label slices validates like its
+    # siblings — the round-2 Enter crash: an int hash on one row
+    # detonated the pick of the NEXT row.
+    with pytest.raises(ValueError, match="hash must be a string"):
+        importer_mod.manifest_row({"ref": "x:1", "url": "u", "hash": 123})
+    # An explicit null reads as absent (a generator's idiom), and
+    # a negative size is no size.
+    assert importer_mod.manifest_row(
+        {"ref": "x:1", "url": "u", "description": None, "size": None}
+    ) == {"ref": "x:1", "url": "u", "description": None, "size": None}
+    assert importer_mod.size_label(-5) == "-"
+
+
+def test_a_duplicated_ref_keeps_both_rows_selectable() -> None:
+    """Two rows sharing a ref (a rebuilt archive) carry the hash
+    tail, and each label finds its own row."""
+    from msks.client.tui.importer import picker_label
+
+    rows = [
+        {"ref": "x:1", "url": "a", "hash": "a" * 64},
+        {"ref": "x:1", "url": "b", "hash": "b" * 64},
+    ]
+    labels = [
+        picker_label(rows[0], dedupe=True),
+        picker_label(rows[1], dedupe=True),
+    ]
+    assert labels[0] != labels[1]
+    assert "aaaaaaaaaaaa" in labels[0]
+
+
+def test_the_importing_modal_binds_q() -> None:
+    """The modal's q binding is registered to its cancel action —
+    a typo'd binding string would otherwise never be caught (the
+    suite drives the action directly; the timer holds
+    pilot.press)."""
+    from msks.client.tui.importer import ImportingScreen
+
+    keys = {
+        (b.key, getattr(b, "action", None)) for b in ImportingScreen.BINDINGS
+    }
+    assert ("q", "cancel") in keys
+
+
+def test_the_picker_binds_its_cancel_keys() -> None:
+    """The picker's escape binding too — the same typo class."""
+    from msks.client.tui.importer import ImageImportScreen
+
+    keys = {
+        (b.key, getattr(b, "action", None)) for b in ImageImportScreen.BINDINGS
+    }
+    assert ("escape", "cancel") in keys
+    assert ("q", "cancel") in keys
+
+
+def test_a_bool_size_refuses(monkeypatch) -> None:
+    """A hand-written manifest's ``size: true`` (bools are ints
+    in Python) is not a size — the row refuses by name."""
+    from msks.client.tui.importer import manifest_row
+
+    with pytest.raises(ValueError, match="size must be a number"):
+        manifest_row({"ref": "x:1", "url": "u", "size": True})
+
+
+def test_a_row_missing_its_pair_and_the_left_paths() -> None:
+    """The validation's floor (a row without its ref/url pair)
+    and the left-guarded exits: a screen already dismissed takes
+    no second dismissal and fires no callback."""
+    from msks.client.tui.importer import ImageImportScreen, manifest_row
+
+    with pytest.raises(ValueError, match="lacks ref/url"):
+        manifest_row({"ref": "x:1"})
+    with pytest.raises(ValueError, match="lacks ref/url"):
+        manifest_row("not even a dict")
+
+    picked: list = []
+    screen = ImageImportScreen(lambda row: picked.append(row))
+    screen._left = True
+    screen.dismiss_with(None)
+    assert picked == []
+    screen.land(SystemExit("late failure"))  # no pop, no panel
+
+
+def test_read_rows_on_a_left_screen_mounts_nothing() -> None:
+    """The left-guarded mount: a read that finishes after the
+    screen went (the cancel's narrow loss window) validates its
+    rows but mounts nothing — the comprehension's whole walk and
+    both guard arms in one drive."""
+    from msks.client.tui.importer import ImageImportScreen
+
+    screen = ImageImportScreen(lambda row: None)
+    screen._left = True
+    screen.read_rows([{"ref": "x:1", "url": "u"}])
+    assert screen.rows == [{"ref": "x:1", "url": "u"}]
+    with pytest.raises(SystemExit, match="carries no images"):
+        screen.read_rows([])
+
+
+async def test_a_queued_q_cannot_eat_the_failure_panel(monkeypatch) -> None:
+    """Round-2's live repro, pinned: a q pressed while the hung
+    fetch's failure is landing finds the screen already left —
+    the panel survives on top."""
+    import asyncio
+
+    release = asyncio.Event()
+
+    async def hanging(url, transport=None):
+        await release.wait()
+        raise SystemExit("cannot fetch the image manifest: offline")
+
+    from msks.client.tui import importer as importer_mod
+
+    monkeypatch.setattr(importer_mod, "fetch_manifest", hanging)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(
+            lambda: type(app.screen).__name__ == "ImageImportScreen"
+        )
+        picker = app.screen
+        release.set()  # the failure lands; its pop is queued
+        await wait_for(lambda: on_failure(app))
+        # The landed failure marked its screen left, so the q the
+        # operator had in flight when it landed is a no-op (its
+        # pop would otherwise eat the panel that just landed) —
+        # the panel stands, the queue stays empty.
+        assert picker._left is True
+        picker.dismiss_with(None)
+        await asyncio.sleep(0.2)
+        assert on_failure(app)
+        assert data.import_calls == []

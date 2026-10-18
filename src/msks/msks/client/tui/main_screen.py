@@ -25,6 +25,7 @@ from .consent_ui import (
     focused_attr,
 )
 from .forms import CreateScreen
+from .importer import ImageImportScreen, ImportingScreen
 from .rows import (
     list_header,
     newest_first,
@@ -117,6 +118,7 @@ class MainScreen(Screen):
         Binding("enter", "open", "Open", priority=True),
         Binding("/", "search", "Jump"),
         Binding("c", "create", "New"),
+        Binding("i", "image", "Img"),
         Binding("s", "start", "Start"),
         Binding("x", "stop", "Stop"),
         Binding("D", "remove", "Del"),
@@ -401,6 +403,20 @@ class MainScreen(Screen):
 
     def action_create(self) -> None:
         self.app.push_screen(CreateScreen(self.created))
+
+    def action_image(self) -> None:
+        """``i``: the published-channel picker (#565) — the
+        manifest's rows with their descriptions, the pick POSTed
+        to the daemon's import endpoint, the modal holding the
+        terminal through the download."""
+        self.app.push_screen(ImageImportScreen(self.imported_image))
+
+    async def imported_image(self, pick: dict | None) -> None:
+        """The picker's callback: a row imports through the
+        importing modal; a cancel decides nothing."""
+        if pick is None:
+            return
+        self.app.push_screen(ImportingScreen(pick, self.refresh_rows))
 
     async def created(self, body: dict | None) -> None:
         """The create form's callback: a body creates, a cancel

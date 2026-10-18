@@ -4898,3 +4898,44 @@ def test_cmd_image_check_spawns_the_real_child(capfd) -> None:
 
     assert cli.cmd_image_check(CheckOptions(archive="/nonexistent/x.tar")) == 2
     assert "no such archive" in capfd.readouterr().err
+
+
+async def test_fetch_manifest_reads_the_channel() -> None:
+    """The channel fetch (#565): a public GET, redirects followed,
+    rows handed through; every failure shape names itself in one
+    line."""
+    from msks.client import images as images_mod
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"ref": "debian:13.6", "url": "u"}])
+
+    rows = await images_mod.fetch_manifest(
+        "https://example.com/images.json", transport=httpx.MockTransport(reply)
+    )
+    assert rows == [{"ref": "debian:13.6", "url": "u"}]
+
+    def denied(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404)
+
+    with pytest.raises(SystemExit, match="cannot fetch the image manifest"):
+        await images_mod.fetch_manifest(
+            "https://example.com/gone",
+            transport=httpx.MockTransport(denied),
+        )
+
+    def not_json(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="nope")
+
+    def not_a_list(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ref": "x"})
+
+    with pytest.raises(SystemExit, match="is not JSON"):
+        await images_mod.fetch_manifest(
+            "https://example.com/bad",
+            transport=httpx.MockTransport(not_json),
+        )
+    with pytest.raises(SystemExit, match="not a list"):
+        await images_mod.fetch_manifest(
+            "https://example.com/object",
+            transport=httpx.MockTransport(not_a_list),
+        )

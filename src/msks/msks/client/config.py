@@ -106,6 +106,7 @@ GLOBAL_ENV_VARS: dict[str, str] = {
     "identity_file": "MSKSC_IDENTITY_FILE",
     "pubkey_file": "MSKSC_PUBKEY_FILE",
     "terminal_title": "MSKSC_TERMINAL_TITLE",
+    "image_manifest_url": "MSKSC_IMAGE_MANIFEST_URL",
 }
 
 #: The keys one ``daemons:`` entry may carry. Exactly one of
@@ -132,6 +133,14 @@ TITLE_ENV_VAR = "MSKSC_TERMINAL_TITLE"
 #: form of the file value (shell-split), overriding it for one
 #: shell — the same shape :data:`TERMINAL_ENV_VAR` carries.
 SSH_OPTIONS_ENV = "MSKSC_SSH_OPTIONS"
+
+#: Where the TUI's image import reads the published channel's
+#: manifest (#565): the latest release's images.json, fetched
+#: client-side with no daemon involvement. The setting names a
+#: fork's or a self-hoster's channel instead.
+DEFAULT_IMAGE_MANIFEST_URL = (
+    "https://github.com/mcdonc/msks/releases/latest/download/images.json"
+)
 
 
 def config_dir() -> str:
@@ -739,6 +748,7 @@ class ClientConfig:
     pubkey_file: str | None
     terminal_title: str | None
     terminal_open_cmd: list[str] | None
+    image_manifest_url: str
     ssh_options: list[str]
     daemon: str | None
     env_layer: dict[str, str] = field(default_factory=dict)
@@ -779,6 +789,10 @@ def resolve(
         pubkey_file=pubkey,
         terminal_title=title,
         terminal_open_cmd=terminal_command(doc),
+        image_manifest_url=(
+            resolved_global("image_manifest_url", doc, layer)
+            or DEFAULT_IMAGE_MANIFEST_URL
+        ),
         ssh_options=resolved_ssh_options(doc, layer),
         daemon=selection.alias,
         env_layer=layer,
@@ -1014,6 +1028,11 @@ def render_template() -> str:
 #                                # form carries its words as written;
 #                                # unset (the default) -> the shell
 #                                # runs in the TUI's own terminal
+# image_manifest_url: https://example.com/images.json
+#                                # where the TUI's Import image action
+#                                # reads the published channel's manifest
+#                                # (#565); the default is this
+#                                # repository's latest release
 # terminal_title: msks — {workspace} # the title of the workspace-shell
 #                                # windows the workspace page opens
 #                                # (#445); {workspace} resolves to the

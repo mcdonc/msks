@@ -1079,3 +1079,26 @@ def test_the_unconfigured_refusal_names_the_absent_runtime_dir(
         "no $XDG_RUNTIME_DIR to look in — a socket outside it is a "
         "path MSKSC_SOCKET names"
     )
+
+
+def test_the_image_manifest_url_resolves_in_tier_order(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#565: the channel's manifest address — the file's value,
+    the environment's, then the default (this repository's latest
+    release)."""
+    path = write_config(
+        tmp_path, "image_manifest_url: https://fork.example/images.json\n"
+    )
+    conf = config.resolve(None, path)
+    assert conf.image_manifest_url == "https://fork.example/images.json"
+    monkeypatch.setenv(
+        "MSKSC_IMAGE_MANIFEST_URL", "https://env.example/images.json"
+    )
+    conf = config.resolve(None, path)
+    assert conf.image_manifest_url == "https://env.example/images.json"
+    monkeypatch.delenv("MSKSC_IMAGE_MANIFEST_URL")
+    bare = write_config(tmp_path, "url: https://d:8660\n")
+    assert config.resolve(None, bare).image_manifest_url == (
+        "https://github.com/mcdonc/msks/releases/latest/download/images.json"
+    )
