@@ -321,9 +321,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         serve(app, args.no_tls)
     except OSError as exc:
-        # A listener bind the kernel refused (a socket path without
-        # permissions, a TCP port taken): one operator-shaped line,
-        # the same shape config and TLS failures take above.
+        # The unix listener's bind the kernel refused (a socket
+        # path without permissions, a name too long) — uvicorn
+        # handles its own TCP bind failure inside serve. One
+        # operator-shaped line, the same shape config and TLS
+        # failures take above.
         print(f"msksd: {exc}", file=sys.stderr)
         return 2
     return 0

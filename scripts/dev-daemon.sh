@@ -137,8 +137,9 @@ export MSKSD_PORT="$p"
 # sockets, the same per-instance allocation the port gives TCP —
 # the default path would have the second daemon's bind refuse the
 # first's live listener. The shell presets point MSKSC at this
-# daemon's TCP surface; the socket serves bare clients (a nested
-# workspace's msks, an unconfigured shell) on the same host.
+# daemon's TCP surface; a client reaches this socket by naming its
+# path (MSKSC_SOCKET, a config alias, --daemon <path>) — an
+# unconfigured client looks only at the default candidates.
 export MSKSD_SOCKET="${DEV_SOCKET:-$state/msksd.sock}"
 export MSKSD_EGRESS_ENABLED="$egress"
 export MSKSD_EGRESS_UPLINK="${DEV_UPLINK:-eno4}"

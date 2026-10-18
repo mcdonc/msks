@@ -942,9 +942,12 @@ def apply(conf: ClientConfig) -> None:
 
     The readers (:func:`msks.client.env.env_url` and its kin) stay
     environment-driven — one materialization point instead of a
-    config object threaded through every call, and a value the
+    config object threaded through every call. A value the
     environment already provided is never rewritten (it won its
-    layer; writing it back would only blur provenance).
+    layer; writing it back would only blur provenance) — with one
+    exception: the address pick (#555) writes the loser's variable
+    empty, deliberately, so an ambient export cannot take the dial
+    back from a flag or file choice.
     """
     for name, value in conf.env_layer.items():
         os.environ[name] = value

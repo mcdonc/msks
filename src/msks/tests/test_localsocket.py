@@ -668,3 +668,45 @@ def test_a_socket_setting_survives_the_env_reader() -> None:
     settings = ServerSettings.from_env({"MSKSD_SOCKET": ""})
     assert settings.socket == ""
     assert localsocket.enabled(settings.socket) is None
+
+
+async def test_a_forged_forwarded_header_cannot_mark_a_tcp_peer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The proxy-header forgery, pinned as behavior (#555 review
+    round 2): a TCP request carrying X-Forwarded-For: unix must
+    leave scope["client"] the kernel's address pair, not the
+    local-listener marker — whatever a future uvicorn grows, this
+    is the regression that must not return."""
+    from fastapi import Request as FastApiRequest
+
+    api = FastAPI()
+
+    @api.get("/who")
+    async def who(request: FastApiRequest):
+        client = request.scope.get("client")
+        return {"client": list(client) if client else None}
+
+    app = fake_listener_app(monkeypatch, 0, "")
+    monkeypatch.setattr(main, "build_api", lambda app: api)
+    config = main.server_config(app, api=api)
+    localsocket.wrap_protocols(
+        config
+    )  # the socket-side wrap must not leak here
+    server = localsocket.QuietServer(config)
+    task = asyncio.create_task(server.serve())
+    deadline = asyncio.get_event_loop().time() + 10
+    while not server.started and asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(0.05)
+    assert server.started
+    try:
+        port = server.servers[0].sockets[0].getsockname()[1]
+        async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as c:
+            row = (
+                await c.get("/who", headers={"X-Forwarded-For": "unix"})
+            ).json()
+        assert row["client"][0] != localsocket.SCOPE_KIND
+    finally:
+        server.should_exit = True
+        with contextlib.suppress(BaseException):
+            await asyncio.wait_for(task, timeout=10)

@@ -912,3 +912,16 @@ def raises_bind_refused():
         raise OSError(13, "permission denied binding /run/msks/msksd.sock")
 
     return run_forever
+
+
+def test_an_empty_socket_export_disables_through_a_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """MSKSD_SOCKET="" keeps its meaning through the file layer
+    (#555 review): the layered env treats empty as the unset form
+    everywhere else, and the disable spelling must survive a
+    config file that carries other keys."""
+    monkeypatch.setenv("MSKSD_SOCKET", "")
+    path = dump_config(tmp_path, {"port": 9015})
+    settings = load_settings(path)
+    assert settings.server.socket == ""
