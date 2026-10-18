@@ -119,11 +119,23 @@ def detect_package_manager() -> str | None:
 # Checks whose fix is not a distro package, so every manager
 # gets the same hint: the upstream source itself. Doctor runs on
 # deployment hosts (Debian and the like) where the repo's own dev
-# tooling is absent, so the hints stay host-usable.
+# tooling is absent, so the hints stay host-usable — a command
+# sequence the operator can paste, one command a line.
 UPSTREAM_HINTS = {
-    "cloud-hypervisor": (
-        "upstream static release — install from "
-        "https://github.com/cloud-hypervisor/cloud-hypervisor/releases"
+    # The static release carries both binaries the daemon execs:
+    # cloud-hypervisor (the VMM) and ch-remote (the control-socket
+    # client). The sequence puts both on PATH at /usr/local/bin
+    # with curl, tar, and install(1) — tools every deployment
+    # host already has.
+    "cloud-hypervisor": "\n".join(
+        [
+            "curl -LO "
+            "https://github.com/cloud-hypervisor/cloud-hypervisor"
+            "/releases/latest/download/"
+            "cloud-hypervisor-static.tar.xz",
+            "tar -xf cloud-hypervisor-static.tar.xz",
+            "sudo install -m755 cloud-hypervisor ch-remote /usr/local/bin/",
+        ]
     ),
 }
 
@@ -776,12 +788,23 @@ def result_marker(result: CheckResult) -> str:
     return "✗"
 
 
+def hint_lines(hint: str) -> list[str]:
+    """A hint as printed lines: the first carries the Run: label,
+    the rest align beneath it — an upstream hint is a command
+    sequence, one command a line, and the sequence reads as the
+    operator pastes it."""
+    parts = hint.split("\n")
+    return [f"    Run:  {parts[0]}"] + [
+        f"          {part}" for part in parts[1:]
+    ]
+
+
 def append_result(lines: list[str], result: CheckResult) -> None:
     """One result line with its marker; the hint follows on its own."""
     marker = result_marker(result)
     lines.append(f"  {marker} {result.name}: {result.message}")
     if result.hint:
-        lines.append(f"    Run:  {result.hint}")
+        lines.extend(hint_lines(result.hint))
 
 
 def append_failure_block(
@@ -795,7 +818,7 @@ def append_failure_block(
     for result in results:
         lines.append(f"  {marker} {result.name}: {result.message}")
         if result.hint:
-            lines.append(f"    Run:  {result.hint}")
+            lines.extend(hint_lines(result.hint))
         lines.append("")
 
 
