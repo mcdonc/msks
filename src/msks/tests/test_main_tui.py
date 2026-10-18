@@ -4931,7 +4931,7 @@ async def test_a_cancelled_fetch_pops_nothing_later(monkeypatch) -> None:
         assert data.import_calls == []
 
 
-async def test_a_mistyped_manifest_field_refuses_by_name(monkeypatch) -> None:
+async def test_a_mistyped_manifest_field_refuses_by_name() -> None:
     """A hand-written channel row with a string size (the
     fork/self-hosted case the setting exists for) names the row
     on the failure panel — the picker never strands on its
@@ -4946,9 +4946,20 @@ async def test_a_mistyped_manifest_field_refuses_by_name(monkeypatch) -> None:
         importer_mod.manifest_row({"ref": "x:1", "url": "u", "description": 7})
     with pytest.raises(ValueError, match="url must be a string"):
         importer_mod.manifest_row({"ref": "x:1", "url": 5})
+    # The hash the deduped label slices validates like its
+    # siblings — the round-2 Enter crash: an int hash on one row
+    # detonated the pick of the NEXT row.
+    with pytest.raises(ValueError, match="hash must be a string"):
+        importer_mod.manifest_row({"ref": "x:1", "url": "u", "hash": 123})
+    # An explicit null reads as absent (a generator's idiom), and
+    # a negative size is no size.
+    assert importer_mod.manifest_row(
+        {"ref": "x:1", "url": "u", "description": None, "size": None}
+    ) == {"ref": "x:1", "url": "u", "description": None, "size": None}
+    assert importer_mod.size_label(-5) == "-"
 
 
-def test_a_duplicated_ref_keeps_both_rows_selectable(monkeypatch) -> None:
+def test_a_duplicated_ref_keeps_both_rows_selectable() -> None:
     """Two rows sharing a ref (a rebuilt archive) carry the hash
     tail, and each label finds its own row."""
     from msks.client.tui.importer import picker_label
@@ -4965,7 +4976,7 @@ def test_a_duplicated_ref_keeps_both_rows_selectable(monkeypatch) -> None:
     assert "aaaaaaaaaaaa" in labels[0]
 
 
-def test_the_importing_modal_binds_q(monkeypatch) -> None:
+def test_the_importing_modal_binds_q() -> None:
     """The modal's q binding is registered to its cancel action —
     a typo'd binding string would otherwise never be caught (the
     suite drives the action directly; the timer holds
@@ -4975,6 +4986,17 @@ def test_the_importing_modal_binds_q(monkeypatch) -> None:
     keys = {
         (b.key, getattr(b, "action", None)) for b in ImportingScreen.BINDINGS
     }
+    assert ("q", "cancel") in keys
+
+
+def test_the_picker_binds_its_cancel_keys() -> None:
+    """The picker's escape binding too — the same typo class."""
+    from msks.client.tui.importer import ImageImportScreen
+
+    keys = {
+        (b.key, getattr(b, "action", None)) for b in ImageImportScreen.BINDINGS
+    }
+    assert ("escape", "cancel") in keys
     assert ("q", "cancel") in keys
 
 
@@ -5019,3 +5041,39 @@ def test_read_rows_on_a_left_screen_mounts_nothing() -> None:
     assert screen.rows == [{"ref": "x:1", "url": "u"}]
     with pytest.raises(SystemExit, match="carries no images"):
         screen.read_rows([])
+
+
+async def test_a_queued_q_cannot_eat_the_failure_panel(monkeypatch) -> None:
+    """Round-2's live repro, pinned: a q pressed while the hung
+    fetch's failure is landing finds the screen already left —
+    the panel survives on top."""
+    import asyncio
+
+    release = asyncio.Event()
+
+    async def hanging(url, transport=None):
+        await release.wait()
+        raise SystemExit("cannot fetch the image manifest: offline")
+
+    from msks.client.tui import importer as importer_mod
+
+    monkeypatch.setattr(importer_mod, "fetch_manifest", hanging)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(
+            lambda: type(app.screen).__name__ == "ImageImportScreen"
+        )
+        picker = app.screen
+        release.set()  # the failure lands; its pop is queued
+        await wait_for(lambda: on_failure(app))
+        # The landed failure marked its screen left, so the q the
+        # operator had in flight when it landed is a no-op (its
+        # pop would otherwise eat the panel that just landed) —
+        # the panel stands, the queue stays empty.
+        assert picker._left is True
+        picker.dismiss_with(None)
+        await asyncio.sleep(0.2)
+        assert on_failure(app)
+        assert data.import_calls == []

@@ -71,8 +71,9 @@ def manifest_row(row: object) -> dict:
     exists for)."""
     check_present(row)
     check_str_fields(row, ("ref", "url"))
-    check_optional(row, "description", check_str)
-    check_optional(row, "size", check_size_field)
+    for field in ("description", "hash"):
+        check_optional(row, field, check_str)
+    check_optional(row, "size", check_number)
     return row
 
 
@@ -89,15 +90,11 @@ def check_present(row: object) -> None:
 
 
 def check_optional(row: dict, field: str, check) -> None:
-    """An absent field renders as its dash; a present one takes
-    its check."""
-    if field in row:
+    """An absent field renders as its dash — an explicit null too
+    (a generator's idiom for absent, common in hand-written
+    channels) — and a present one takes its check."""
+    if row.get(field) is not None:
         check(row, field)
-
-
-def check_size_field(row: dict, field: str) -> None:
-    """The size check in the optional-field shape."""
-    check_size(row)
 
 
 def check_str_fields(row: dict, fields: tuple[str, ...]) -> None:
@@ -111,14 +108,14 @@ def check_str_fields(row: dict, fields: tuple[str, ...]) -> None:
             )
 
 
-def check_size(row: dict) -> None:
-    """The size field is a whole number (bools are ints in
+def check_number(row: dict, field: str) -> None:
+    """The named field is a whole number (bools are ints in
     Python — a manifest written by hand with ``true`` is not a
     size), or the row refuses by name."""
-    size = row["size"]
+    size = row[field]
     if not isinstance(size, int) or isinstance(size, bool):
         raise ValueError(
-            f"manifest row {row['ref']!r}: size must be a number, "
+            f"manifest row {row['ref']!r}: {field} must be a number, "
             f"got {type(size).__name__}"
         )
 
@@ -191,6 +188,10 @@ class ImageImportScreen(ModalScreen[dict | None]):
         failure belongs to no one)."""
         if self._left:
             return
+        # The flag first: a q queued as the failure lands must
+        # find the screen already left, or its pop eats the panel
+        # this just pushed.
+        self._left = True
         self.dismiss()
         self.app.push_screen(FailurePanel("manifest fetch", None, str(exc)))
 
