@@ -484,9 +484,12 @@ def render_template() -> str:
 #                           # (#555): same-host clients connect
 #                           # through it with peer-credential
 #                           # auth and no token. Unset binds the
-#                           # default ($XDG_RUNTIME_DIR or /run,
-#                           # under msks/); the empty string
-#                           # serves TCP alone
+#                           # default ($XDG_RUNTIME_DIR/msks/
+#                           # msksd.sock); without a runtime dir
+#                           # (a container) name a path here —
+#                           # TCP serves alone otherwise; the
+#                           # empty string always serves TCP
+#                           # alone
 # tls_cert: /etc/msksd/tls.crt  # operator-provided TLS material;
 # tls_key: /etc/msksd/tls.key   # both unset -> a self-signed CA is
 #                           # generated on first run and its

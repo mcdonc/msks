@@ -25,24 +25,57 @@ whatever deployment brought it; this tool owns the host only:
    reads 0 — and the netfilter/tun modules at boot, mirroring
    nix/module.nix's boot.kernelModules plus the REJECT and NFQUEUE
    pieces the consent chain's rulesets reference.
+3. The systemd user service (#560), on a host systemd manages:
+   the tool writes ``~/.config/systemd/user/msksd.service`` for
+   the executing user — the operator who invoked the tool
+   (``SUDO_USER`` under sudo), whose own state dir, image
+   catalog, and #555 socket identity the service inherits —
+   execs the daemon through the wrapper (the wrapper's file
+   capabilities grant any executor the two caps, so a user unit
+   holds the same posture a root unit would), creates the #555
+   socket's runtime directory under the user's own
+   ``$XDG_RUNTIME_DIR``, and ``loginctl enable-linger`` keeps
+   the user manager — and the daemon — running across logouts
+   and boots. A host without systemd (a container, a non-systemd
+   init), a deployment whose msksd lives elsewhere, or
+   ``--no-service`` keeps today's behavior: every host piece
+   above, no unit.
 
 The plumbing tools the daemon execs (ip, nft, conntrack) install
 through apt when missing. /dev/kvm access arrives through the kvm
 group on the daemon's user, the same supplementary-group grant the
-NixOS unit makes — the summary prints the command when the group
-is present. Idempotent: re-run any time. Re-run after a util-linux
+NixOS unit makes — the tool adds the executing user to the group
+when missing (#560; bare runs and new logins need it on the
+account). A user manager that was already running forked before
+the group write reaches it — the daemon holds the old groups
+until that manager restarts, and the service line says so.
+Idempotent: re-run any time. Re-run after a util-linux
 upgrade — the setpriv copy under /usr/local keeps running the old
 binary until refreshed.
 """
 
+import argparse
 import grp
 import os
+import pwd
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 TOOL = "msks-setup-debian-host"
+
+# The service phase's names (#560): the user unit's location
+# under the executing user's home, and the directory whose
+# presence says systemd is the manager (the same probe systemctl
+# itself gates on; a container or another init leaves it absent).
+# The service is a user service of the executing user — their
+# state dir, image catalog, and #555 socket identity carry over —
+# so no system unit, no User=/Group= lines, and no state
+# relocation are involved.
+USER_UNIT_RELATIVE = ".config/systemd/user/msksd.service"
+SYSTEMD_MANAGER = "/run/systemd/system"
 
 # Root's login PATH carries /usr/sbin on Debian; a sudo invocation
 # can arrive with a stripped PATH, and setcap/nft/conntrack/modprobe
@@ -436,16 +469,368 @@ def uplink() -> str:
     return ""
 
 
-def kvm_hint() -> str:
+def in_group(user: str, name: str) -> bool:
+    """Whether *user* holds group *name* — by membership or as its
+    primary group (the same two gates #555's peer policy reads).
+    A database that answers nothing says no, and the caller's
+    adduser is idempotent either way."""
     try:
-        grp.getgrnam("kvm")
+        entry = grp.getgrnam(name)
+        account = pwd_getpwnam(user)
     except KeyError, OSError:
-        # KeyError: no such group; OSError: the NSS backend failed —
-        # the script's getent degraded the same way.
+        return False
+    return user in entry.gr_mem or account.pw_gid == entry.gr_gid
+
+
+def ensure_kvm_membership(user: str) -> tuple[str, bool]:
+    """Make sure the executing user reaches /dev/kvm (#560): bare
+    runs (msks-dev, a hand-started msksd) need the kvm group on
+    the account — the tool adds the user when missing. Returns
+    the summary's /dev/kvm line and whether the membership was
+    added this run (a user manager already running forked before
+    the group existed — its services, this daemon included, hold
+    the group only after that manager restarts)."""
+    if not group_present("kvm"):
         return (
-            "the kvm group is absent — install the KVM stack (qemu-kvm) first"
+            "the kvm group is absent — install the KVM stack (qemu-kvm) first",
+            False,
         )
-    return "adduser <daemon-user> kvm   (the kvm group gates the node)"
+    if in_group(user, "kvm"):
+        return (
+            f"{user} is a member of kvm (the kvm group gates the node)",
+            False,
+        )
+    rc, _out, err = sh(["adduser", user, "kvm"])
+    if rc != 0:
+        raise HostSetupError(f"adduser {user} kvm failed: {err}")
+    return (
+        f"added {user} to kvm — a fresh login picks the group up",
+        True,
+    )
+
+
+def group_present(name: str) -> bool:
+    """Whether the group database carries *name* (an NSS failure
+    answers no — the same degrade kvm_hint's probe took)."""
+    try:
+        grp.getgrnam(name)
+    except KeyError, OSError:
+        return False
+    return True
+
+
+def executing_user() -> tuple[str, int, int, str]:
+    """The operator the user service belongs to: name, uid, gid,
+    home — SUDO_USER when sudo lifted the tool to root (the
+    account that typed the command), the effective account
+    otherwise (a root shell's own choice). The #555 posture: the
+    daemon and its clients share one user, whose state dir, image
+    catalog, and token-free socket identity the service keeps;
+    the gid chowns the unit's parent chain into that user's
+    hands."""
+    name = os.environ.get("SUDO_USER")
+    entry = None
+    if name:
+        try:
+            entry = pwd_getpwnam(name)
+        except KeyError, OSError:
+            entry = None
+    if entry is None:
+        entry = pwd_getpwuid(os.geteuid())
+    return entry.pw_name, entry.pw_uid, entry.pw_gid, entry.pw_dir
+
+
+def pwd_getpwnam(name: str):
+    """pwd.getpwnam, as a seam the suite can pin (the same shape
+    sh and write_file take)."""
+    return pwd.getpwnam(name)
+
+
+def pwd_getpwuid(uid: int):
+    """pwd.getpwuid, as a seam the suite can pin."""
+    return pwd.getpwuid(uid)
+
+
+def msksd_sibling() -> str | None:
+    """The msksd the deployment brought, as this tool's own bin
+    sibling (the venv that shipped the tool ships the daemon), or
+    None when no sibling exists — the deployment runs its daemon
+    from elsewhere and the service phase names that and stands
+    down (invoked_as()'s reasoning: an install root's bin dir is
+    the one path that locates the deployment)."""
+    sibling = Path(sys.argv[0]).resolve().parent / "msksd"
+    return str(sibling) if sibling.exists() else None
+
+
+def systemd_manages() -> bool:
+    """Whether a systemd manager owns this host and systemctl is
+    there to reach it — the unit is dead text without both."""
+    return Path(SYSTEMD_MANAGER).is_dir() and which("systemctl") is not None
+
+
+def unit_path(home: str) -> str:
+    """Where the user unit lands: under the executing user's own
+    config, the location the user manager loads. The file itself
+    is root-owned mode 0644 (write_file's shape); the directory
+    chain below the home belongs to the user, so an operator can
+    replace the file — the same grant the world-executable
+    wrapper already makes."""
+    return str(Path(home) / USER_UNIT_RELATIVE)
+
+
+def user_systemctl(user: str, uid: int, args: list[str]) -> list[str]:
+    """One systemctl --user call made as the executing user: the
+    tool runs as root, so runuser (util-linux, a package the tool
+    already installs) drops to the account and names its runtime
+    dir — the one the user manager's socket lives under."""
+    return [
+        "runuser",
+        "-u",
+        user,
+        "--",
+        "env",
+        f"XDG_RUNTIME_DIR=/run/user/{uid}",
+        "systemctl",
+        "--user",
+        *args,
+    ]
+
+
+def unit_text(msksd: str, uplink_name: str) -> str:
+    """The msksd.service user unit: the wrapper raises the two
+    caps ambient (dev-daemon.sh's exec line verbatim — the file
+    capabilities grant any executor the same posture a root unit
+    would), the #555 local socket's runtime directory lands under
+    the user's own $XDG_RUNTIME_DIR (the client's default
+    candidate path), and egress runs enabled against the uplink
+    the tool detected. A user unit carries no User=/Group=/HOME —
+    the user manager is the account."""
+    lines = [
+        "# Generated by msks-setup-debian-host (#560): re-run the "
+        "tool to refresh this file.",
+        "[Unit]",
+        "Description=msks daemon (workspaces as cloud-hypervisor microvms)",
+        "Documentation=https://github.com/mcdonc/msks",
+        "StartLimitIntervalSec=0",
+        "",
+        "[Service]",
+        "ExecStart="
+        + WRAPPER
+        + " --inh-caps=+net_admin,+net_bind_service"
+        + " --ambient-caps=+net_admin,+net_bind_service"
+        + f' -- "{msksd}"',
+        "Environment=MSKSD_EGRESS_ENABLED=true",
+    ]
+    if uplink_name:
+        lines.append(f"Environment=MSKSD_EGRESS_UPLINK={uplink_name}")
+    lines += [
+        "RuntimeDirectory=msks",
+        "Restart=always",
+        "RestartSec=1",
+        "TimeoutStopSec=180s",
+        "StandardInput=null",
+        "StandardOutput=journal",
+        "StandardError=journal",
+        "",
+        "[Install]",
+        "WantedBy=default.target",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+RUNTIME_DIR_FMT = "/run/user/{}"
+RETRY_DELAY = 1.0
+
+
+def manager_running(uid: int) -> bool:
+    """Whether the user manager for *uid* is up (its runtime dir
+    exists). Read before linger is armed: a manager that was
+    already running forked before any group this run adds, so its
+    services hold the old supplementary groups."""
+    return Path(RUNTIME_DIR_FMT.format(uid)).is_dir()
+
+
+def chown_path(path: Path, uid: int, gid: int) -> None:
+    """os.chown, as a seam the suite can pin."""
+    os.chown(path, uid, gid)
+
+
+def ensure_unit_parents(home: str, uid: int, gid: int) -> None:
+    """Create the unit's parent chain user-owned. A fresh Debian
+    account ships no ~/.config, and write_file's mkdir would land
+    root-owned parents there — the user manager's enable step
+    writes its symlink as the user and a root-owned parent
+    refuses it, on this run and every re-run. Each level the
+    chain is missing is created and handed to the executing user;
+    levels that exist keep their owner."""
+    current = Path(home)
+    for part in Path(USER_UNIT_RELATIVE).parts[:-1]:
+        current = current / part
+        if not current.exists():
+            current.mkdir()
+            chown_path(current, uid, gid)
+            current.chmod(0o755)
+
+
+def user_manager_call(
+    user: str, uid: int, args: list[str], timeout: float = 10.0
+) -> tuple[int, str]:
+    """One systemctl --user call, with the linger-startup retry:
+    enable-linger returns after logind enqueues the user manager,
+    so the first call can beat the manager's bus into existence —
+    a "Failed to connect to bus" answer retries briefly before it
+    is treated as a failure."""
+    cmd = user_systemctl(user, uid, args)
+    rc, _out, err = sh(cmd, timeout=timeout)
+    tries = 0
+    while rc != 0 and "Failed to connect to bus" in err and tries < 4:
+        time.sleep(RETRY_DELAY)
+        rc, _out, err = sh(cmd, timeout=timeout)
+        tries += 1
+    return rc, err
+
+
+def write_unit(home: str, msksd: str, uplink_name: str) -> bool:
+    """Build the user unit and land it at its path. True when a
+    different unit was replaced — a re-run that changes the
+    daemon's line or its uplink — so the caller can restart a
+    running daemon onto the new unit. A missing unit file is a
+    first landing; any other read failure is the caller's named
+    refusal, not a silent rebuild."""
+    path = unit_path(home)
+    try:
+        existing = read_file(path)
+    except FileNotFoundError:
+        existing = ""
+    text = unit_text(msksd, uplink_name)
+    write_file(path, text)
+    return existing not in ("", text)
+
+
+def linger(user: str) -> None:
+    """Keep the user manager — and the daemon with it — running
+    across logouts and boots. Idempotent; enabling it also starts
+    the manager now when no session had."""
+    rc, _out, err = sh(["loginctl", "enable-linger", user])
+    if rc != 0:
+        raise HostSetupError(
+            f"loginctl enable-linger {user} failed: {err} "
+            "(the daemon would stop at the operator's logout)"
+        )
+
+
+def load_unit(user: str, uid: int) -> None:
+    """daemon-reload through the bus-race retry; a manager that
+    never answers is a named refusal."""
+    rc, err = user_manager_call(user, uid, ["daemon-reload"])
+    if rc != 0:
+        raise HostSetupError(f"systemctl --user daemon-reload failed: {err}")
+
+
+def start_unit(user: str, uid: int) -> None:
+    """Enable and start the service — a first landing's only
+    start; the failure names the journal that holds the cause."""
+    rc, err = user_manager_call(
+        user, uid, ["enable", "--now", "msksd.service"]
+    )
+    if rc != 0:
+        raise HostSetupError(
+            f"systemctl --user enable --now msksd.service failed: {err} "
+            f"(as {user}: journalctl --user -u msksd names the cause)"
+        )
+
+
+def restart_running_unit(user: str, uid: int) -> None:
+    """Restart the daemon, waited out: a stop stops workspaces
+    first (the unit allows 180s), so this call carries a matching
+    timeout, and the restart command's own failure is named."""
+    rc, err = user_manager_call(
+        user, uid, ["restart", "msksd.service"], timeout=240.0
+    )
+    if rc != 0:
+        raise HostSetupError(
+            f"systemctl --user restart msksd.service failed: {err} "
+            f"(as {user}: journalctl --user -u msksd names the cause)"
+        )
+
+
+def activate_unit(user: str, uid: int, changed: bool) -> None:
+    """Linger on, load the unit, enable and start it, and restart
+    a running daemon when the unit changed under it — a fresh
+    landing starts through enable alone."""
+    linger(user)
+    load_unit(user, uid)
+    start_unit(user, uid)
+    if not changed:
+        return
+    rc, _err = user_manager_call(
+        user, uid, ["is-active", "--quiet", "msksd.service"]
+    )
+    if rc == 0:
+        restart_running_unit(user, uid)
+
+
+def service_skip_cause(msksd: str | None) -> str | None:
+    """Why the service phase stands down, as the summary's line
+    states it: no msksd beside the tool, or no systemd manager.
+    None means the phase proceeds."""
+    if msksd is None:
+        return (
+            "skipped (no msksd beside this tool; the deployment's "
+            "daemon is elsewhere — bare msksd unchanged)"
+        )
+    if not systemd_manages():
+        return (
+            "skipped (no systemd manager on this host — bare msksd unchanged)"
+        )
+    return None
+
+
+def service_note(user: str, uid: int, manager_up_first: bool) -> str:
+    """The summary's service line. A user manager that was already
+    running forked before any kvm membership this run adds — and a
+    re-run cannot prove the manager postdates an older membership
+    either — so whenever the manager predates the proof, the line
+    names the symptom (workspaces failing on /dev/kvm) and the
+    manager restart that hands the daemon the group, with what
+    that restart really stops (the user's units; login sessions
+    survive it)."""
+    note = f"user service msksd.service ({user}, enabled, started, lingering)"
+    if manager_up_first:
+        note += (
+            f" — the manager may predate the kvm membership; if "
+            f"workspaces fail on /dev/kvm, restart it: "
+            f"sudo systemctl restart user@{uid}.service "
+            f"(it stops that user's units — the daemon and its "
+            f"workspaces; login sessions survive)"
+        )
+    return note
+
+
+def install_service(
+    user: str, uid: int, gid: int, home: str, uplink_name: str
+) -> str:
+    """Land the daemon's systemd user service (#560): the unit in
+    the executing user's own config, enable-and-start with linger
+    — and a restart when a re-run rewrote a unit that was already
+    running, so a refreshed ExecStart or uplink takes effect.
+    Returns the summary's service line; every stand-down names
+    its cause instead of refusing (the host pieces above landed,
+    and a container or an elsewhere daemon keeps a working
+    host)."""
+    msksd = msksd_sibling()
+    cause = service_skip_cause(msksd)
+    if cause is not None:
+        return cause
+    manager_up_first = manager_running(uid) and group_present("kvm")
+    try:
+        ensure_unit_parents(home, uid, gid)
+        changed = write_unit(home, msksd, uplink_name)
+        activate_unit(user, uid, changed)
+    except OSError as exc:
+        raise HostSetupError(f"landing the user unit failed: {exc}") from exc
+    return service_note(user, uid, manager_up_first)
 
 
 def consent_line(states: dict[str, str]) -> str:
@@ -462,7 +847,13 @@ def consent_line(states: dict[str, str]) -> str:
     )
 
 
-def summary(ambient: str, states: dict[str, str]) -> None:
+def summary(
+    ambient: str,
+    states: dict[str, str],
+    kvm: str,
+    service: str,
+    uplink_name: str,
+) -> None:
     say("done —")
     print(f"  wrapper:    {WRAPPER} (setpriv, {CAPS}+ep)")
     print(f"               dev-daemon use: DEV_CAPS={WRAPPER} msks-dev")
@@ -472,16 +863,22 @@ def summary(ambient: str, states: dict[str, str]) -> None:
         f"  tools:      ip={which('ip')} nft={which('nft')} "
         f"conntrack={which('conntrack')}"
     )
-    print(f"  /dev/kvm:   {kvm_hint()}")
+    print(f"  /dev/kvm:   {kvm}")
     print(f"  consent:    {consent_line(states)}")
     print(
         "  uplink:     point the daemon at this host's default-route "
         "interface (MSKSD_EGRESS_UPLINK, or DEV_UPLINK for "
-        f"msks-dev): {uplink() or 'none found'}"
+        f"msks-dev): {uplink_name or 'none found'}"
     )
+    print(f"  service:    {service}")
+    if "started" in service:
+        print(
+            "               same-user clients connect token-free "
+            "(#555): $XDG_RUNTIME_DIR/msks/msksd.sock"
+        )
 
 
-def run_setup() -> None:
+def run_setup(service: bool = True) -> None:
     """Every phase in order; the first refusal stops the run. The
     Debian PATH (sudo can strip /usr/sbin, where setcap and friends
     live) holds for the run and is restored after it."""
@@ -497,15 +894,41 @@ def run_setup() -> None:
         say(f"wrapper {WRAPPER} carries {CAPS}+ep (CapAmb {ambient})")
         land_sysctl()
         states = land_modules()
-        summary(ambient, states)
+        user, uid, gid, home = executing_user()
+        the_uplink = uplink()
+        kvm_note, _kvm_added = ensure_kvm_membership(user)
+        service_note = (
+            install_service(user, uid, gid, home, the_uplink)
+            if service
+            else "skipped (--no-service)"
+        )
+        summary(ambient, states, kvm_note, service_note, the_uplink)
     finally:
         os.environ["PATH"] = saved
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog=TOOL,
+        description="Prepare a Debian deployment host for msksd "
+        "(#546): the capability wrapper, the routing kernel "
+        "settings, and a systemd service for the daemon (#560).",
+    )
+    parser.add_argument(
+        "--no-service",
+        action="store_true",
+        help="land every host piece but the systemd unit (a "
+        "container, a non-systemd init, a deployment that runs "
+        "msksd its own way)",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
     """The console entry: 0 on success, 1 on a named refusal."""
+    args = parse_args(argv)
     try:
-        run_setup()
+        run_setup(service=not args.no_service)
     except HostSetupError as exc:
         print(f"{TOOL}: {exc}", file=sys.stderr)
         return 1

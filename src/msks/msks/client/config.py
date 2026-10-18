@@ -1048,7 +1048,7 @@ def render_template() -> str:
 # no cafile). The rest override their global keys for that alias.
 # daemons:
 #   dev:
-#     socket: /run/msks/msksd.sock   # the local listener this
+#     socket: /run/user/1000/msks/msksd.sock   # the local listener this
 #                                    # host's daemon serves
 #   lab:
 #     url: https://hv-1.lab.example.com:8660
