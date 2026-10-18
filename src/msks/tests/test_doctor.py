@@ -115,17 +115,24 @@ def test_install_hint_fallbacks() -> None:
 
 def test_install_hint_pinned_binaries() -> None:
     hint = install_hint("cloud-hypervisor", "apt")
-    # The upstream hint is the paste-able sequence (#557): the
-    # static tarball, its extraction, and both binaries onto
-    # PATH — every line a host command, nothing to look up.
-    assert hint.startswith("curl -LO ")
+    # The upstream hint is the paste-able sequence (#557): fetch
+    # the release's static binaries and install each under its
+    # unsuffixed name — every line a host command, nothing to
+    # look up, no tarball that upstream does not ship.
     assert (
-        "cloud-hypervisor/releases/latest/download/"
-        "cloud-hypervisor-static.tar.xz" in hint
+        "curl -LO https://github.com/cloud-hypervisor/cloud-hypervisor"
+        "/releases/latest/download/cloud-hypervisor-static" in hint
     )
-    assert "tar -xf cloud-hypervisor-static.tar.xz" in hint
     assert (
-        "sudo install -m755 cloud-hypervisor ch-remote /usr/local/bin/" in hint
+        "curl -LO https://github.com/cloud-hypervisor/cloud-hypervisor"
+        "/releases/latest/download/ch-remote-static" in hint
+    )
+    assert (
+        "sudo install -m755 cloud-hypervisor-static"
+        " /usr/local/bin/cloud-hypervisor" in hint
+    )
+    assert (
+        "sudo install -m755 ch-remote-static /usr/local/bin/ch-remote" in hint
     )
     assert install_hint("cloud-hypervisor", None) == hint
 
@@ -576,13 +583,15 @@ def test_a_missing_vmm_report_prints_the_install_sequence(
     )  # the miss is error-grade: the daemon execs the VMM
     text = format_report(report)
     assert "    Run:  curl -LO " in text
-    assert "cloud-hypervisor-static.tar.xz" in text
-    assert "          tar -xf cloud-hypervisor-static.tar.xz" in text
     assert (
-        "          sudo install -m755 cloud-hypervisor ch-remote"
-        " /usr/local/bin/" in text
+        "          sudo install -m755 cloud-hypervisor-static"
+        " /usr/local/bin/cloud-hypervisor" in text
     )
-    assert text.count("curl -LO ") == 2  # the row and the block
+    assert (
+        "          sudo install -m755 ch-remote-static"
+        " /usr/local/bin/ch-remote" in text
+    )
+    assert text.count("curl -LO ") == 4  # two assets, row and block
 
 
 def test_run_doctor_warning_rows(monkeypatch: pytest.MonkeyPatch) -> None:

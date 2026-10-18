@@ -122,19 +122,24 @@ def detect_package_manager() -> str | None:
 # tooling is absent, so the hints stay host-usable — a command
 # sequence the operator can paste, one command a line.
 UPSTREAM_HINTS = {
-    # The static release carries both binaries the daemon execs:
-    # cloud-hypervisor (the VMM) and ch-remote (the control-socket
-    # client). The sequence puts both on PATH at /usr/local/bin
-    # with curl, tar, and install(1) — tools every deployment
-    # host already has.
+    # The release ships pre-built static binaries — cloud-hypervisor
+    # itself and ch-remote — as x86-64 assets with -aarch64
+    # siblings; the daemon drives the VMM over its --api-socket
+    # HTTP API, while ch-remote serves the operator's hands-on
+    # control (the demo and dev tooling). The sequence installs
+    # both under their unsuffixed names with curl and install(1) —
+    # tools every deployment host already has.
     "cloud-hypervisor": "\n".join(
         [
             "curl -LO "
             "https://github.com/cloud-hypervisor/cloud-hypervisor"
-            "/releases/latest/download/"
-            "cloud-hypervisor-static.tar.xz",
-            "tar -xf cloud-hypervisor-static.tar.xz",
-            "sudo install -m755 cloud-hypervisor ch-remote /usr/local/bin/",
+            "/releases/latest/download/cloud-hypervisor-static",
+            "curl -LO "
+            "https://github.com/cloud-hypervisor/cloud-hypervisor"
+            "/releases/latest/download/ch-remote-static",
+            "sudo install -m755 cloud-hypervisor-static"
+            " /usr/local/bin/cloud-hypervisor",
+            "sudo install -m755 ch-remote-static /usr/local/bin/ch-remote",
         ]
     ),
 }
@@ -146,8 +151,8 @@ UPSTREAM_HINTS = {
 # (Debian family) and cdrtools (pacman, brew) both serve mkisofs,
 # qemu-utils/qemu-img is Debian's name for the conversion tool,
 # and conntrack comes from conntrack-tools everywhere except apt.
-# cloud-hypervisor and ch-remote carry no rows: Debian's archive
-# has neither, so their hint is the upstream release (UPSTREAM_HINTS).
+# cloud-hypervisor carries no row: Debian's archive has it not,
+# so its hint is the upstream release (UPSTREAM_HINTS).
 PACKAGE_HINTS: dict[str, dict[str, str]] = {
     "mkfs.ext4": {
         "dnf": "e2fsprogs",
