@@ -6,6 +6,7 @@ exists yet)."""
 import asyncio
 import io
 import sys
+from types import SimpleNamespace
 
 import pytest
 import websockets
@@ -678,3 +679,84 @@ async def test_drain_close_reports_and_passes(monkeypatch) -> None:
             await asyncio.sleep(3600)
 
     assert await asyncio.wait_for(fwd.drain_close(QuietWs(), 0.05), 5) is None
+
+
+async def test_the_probe_names_the_daemons_refusal(monkeypatch) -> None:
+    """The TUI shell flow's pre-flight (#562): a refusal close
+    (4501, the no-NIC shape) becomes the one-line SystemExit in
+    the probing process — where the console fallback lives — and
+    a healthy forward's first frame closes the probe clean."""
+    import websockets
+    from msks.client import forward as forward_mod
+
+    class Refused:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def recv(self):
+            raise websockets.ConnectionClosed(
+                SimpleNamespace(code=4501, reason="no NIC"), None
+            )
+
+    async def refused(address, token, ssl_ctx):
+        return Refused()
+
+    monkeypatch.setattr(forward_mod, "dial", refused)
+    with pytest.raises(SystemExit, match="forward unavailable.*no NIC"):
+        await forward_mod.probe("wss://x", "tok", None)
+
+
+class Banner:
+    """A healthy forward: the guest sshd's banner arrives."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        self.closed = True
+        return False
+
+    async def recv(self):
+        return b"SSH-2.0-OpenSSH_9"
+
+
+async def test_the_probe_passes_a_healthy_forward(monkeypatch) -> None:
+    from msks.client import forward as forward_mod
+
+    banner = Banner()
+
+    async def healthy(address, token, ssl_ctx):
+        return banner
+
+    monkeypatch.setattr(forward_mod, "dial", healthy)
+    await forward_mod.probe("wss://x", "tok", None)
+    assert banner.closed
+
+
+async def test_the_probe_times_out_silent_but_open(monkeypatch) -> None:
+    """A forward that opens but stays silent is reachable — the
+    ceiling only bounds the wait, and ssh names anything further
+    from here."""
+    import asyncio as aio
+
+    from msks.client import forward as forward_mod
+
+    class Silent(Banner):
+        async def recv(self):
+            await aio.sleep(30)
+
+    silent = Silent()
+
+    async def quiet(address, token, ssl_ctx):
+        return silent
+
+    monkeypatch.setattr(forward_mod, "dial", quiet)
+    monkeypatch.setattr(forward_mod, "PROBE_TIMEOUT_S", 0.05)
+    await forward_mod.probe("wss://x", "tok", None)
+    assert silent.closed

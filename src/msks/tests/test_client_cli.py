@@ -4542,7 +4542,7 @@ def test_the_tree_carries_the_invocations_resolution(
     )
     assert cli.main(["--config", str(path)]) == 0
     flagged, ambient = seen
-    assert flagged.terminal_open_cmd == ["xterm", "-e"]
+    assert flagged.terminal_open_cmd is None
     assert flagged.url == "https://lab:8660"
     assert ambient.url == "https://lab:8660"
 

@@ -167,6 +167,38 @@ async def dial(address: str, token: str, ssl_ctx):
         raise SystemExit(f"msks: cannot reach {address}: {exc}") from exc
 
 
+#: How long the probe waits for the guest's first frame — a
+#: listening sshd banners at once. The ceiling sits above the
+#: daemon's own forward dial deadline (settings'
+#: forward_wait_timeout_s, 15s): a running workspace whose service
+#: is down has the daemon retrying the guest dial that long before
+#: its named refusal closes, and the probe must still be reading
+#: when it lands.
+PROBE_TIMEOUT_S = 20.0
+
+
+async def probe(address: str, token: str, ssl_ctx) -> None:
+    """Dial the forward and read its verdict (#562): the daemon
+    dials the guest at the upgrade and closes with its named
+    refusal — no NIC, not running, service not listening — while
+    a healthy guest's sshd banners at once and the probe closes
+    clean. The TUI's shell flow runs this before ssh, so a
+    workspace ssh cannot reach lands in the tree's own process
+    (where its console fallback and flash live), not in the
+    ProxyCommand child ssh would spawn, whose exit code carries
+    no reason."""
+    ws = await dial(address, token, ssl_ctx)
+    async with ws:
+        try:
+            await asyncio.wait_for(ws.recv(), timeout=PROBE_TIMEOUT_S)
+        except websockets.ConnectionClosed as closed:
+            report_close(closed)
+        except TimeoutError:
+            # An open-but-silent forward is reachable; ssh
+            # itself names whatever ails it from here.
+            pass
+
+
 async def stdio_session(address: str, token: str, ssl_ctx) -> int:
     """One forward bridged to this process's stdio (the ProxyCommand
     shape); returns on either end's EOF, and exits nonzero on the

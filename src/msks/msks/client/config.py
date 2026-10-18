@@ -133,14 +133,6 @@ TITLE_ENV_VAR = "MSKSC_TERMINAL_TITLE"
 #: shell — the same shape :data:`TERMINAL_ENV_VAR` carries.
 SSH_OPTIONS_ENV = "MSKSC_SSH_OPTIONS"
 
-#: The built-in launcher (#314): ``xterm -e``, the one terminal
-#: most Linux distributions carry, with the msks invocation
-#: appended after ``-e``. A box without it hits the launch
-#: action's unexecutable-launcher rule — an inline error, then the
-#: same-terminal path — so the default is safe where xterm is
-#: absent.
-DEFAULT_TERMINAL_CMD = ("xterm", "-e")
-
 
 def config_dir() -> str:
     """The config-tree root: ``$MSKSC_CONFIG_DIR``, else
@@ -694,17 +686,18 @@ def global_or_env(key: str, doc: dict):
     return value, value is not None
 
 
-def terminal_command(doc: dict) -> list[str]:
-    """The terminal launcher (#314): the variable's string form,
-    else the file's value, else the built-in ``xterm -e`` — so the
-    new-window path works without configuration, and a box
-    without xterm falls back to the same-terminal path at launch.
-    The workspace TUI's new-terminal shell action (#341) consumes
-    the value from the resolved :class:`ClientConfig`."""
+def terminal_command(doc: dict) -> list[str] | None:
+    """The terminal launcher for shells that open in a new window
+    (#314): the variable's string form, else the file's value —
+    or None, the unconfigured form, and the workspace TUI's shell
+    action (#341, #562) then runs ``msks ssh`` in the TUI's own
+    terminal instead. A configured launcher is the desktop
+    opt-in: windows beside a running tree, on hosts that carry a
+    terminal to open."""
     env = os.environ.get(TERMINAL_ENV_VAR, "")
     if env.strip():
         return split_words(env, TERMINAL_ENV_VAR, "environment")
-    return doc.get("terminal_open_cmd") or list(DEFAULT_TERMINAL_CMD)
+    return doc.get("terminal_open_cmd") or None
 
 
 def resolved_ssh_options(doc: dict, layer: dict) -> list[str]:
@@ -745,7 +738,7 @@ class ClientConfig:
     identity_file: str | None
     pubkey_file: str | None
     terminal_title: str | None
-    terminal_open_cmd: list[str]
+    terminal_open_cmd: list[str] | None
     ssh_options: list[str]
     daemon: str | None
     env_layer: dict[str, str] = field(default_factory=dict)
@@ -1015,12 +1008,12 @@ def render_template() -> str:
 #                                # create. Global-only, like
 #                                # identity_file
 # terminal_open_cmd: konsole -e # the launcher the workspace page's
-#                                # new-terminal shell action opens
-#                                # workspace shells through (#314,
-#                                # #341); string form is shell-split,
-#                                # a list form carries its words as
-#                                # written; unset -> xterm -e, the
-#                                # terminal most Linuxes carry
+#                                # shell action opens shells through
+#                                # in new windows (#314, #341, #562);
+#                                # string form is shell-split, a list
+#                                # form carries its words as written;
+#                                # unset (the default) -> the shell
+#                                # runs in the TUI's own terminal
 # terminal_title: msks — {workspace} # the title of the workspace-shell
 #                                # windows the workspace page opens
 #                                # (#445); {workspace} resolves to the

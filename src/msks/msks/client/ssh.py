@@ -86,6 +86,7 @@ SSH_OPTIONS_ENV = "MSKSC_SSH_OPTIONS"
 #: The guest port sshd listens on (#110).
 SSH_PORT = 22
 
+
 #: How long a just-booted workspace's first ssh attempt keeps
 #: retrying (#168): the daemon reports ``running`` when the VM
 #: process is up, but the guest's sshd answers before cloud-init's
