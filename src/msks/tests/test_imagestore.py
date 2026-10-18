@@ -2,6 +2,7 @@
 
 import asyncio
 import gzip
+import hashlib
 import json
 import os
 import shutil
@@ -13,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
+import certifi
 import guestassets
 import pytest
 from fastapi.testclient import TestClient
@@ -2337,45 +2339,55 @@ def test_the_download_trusts_the_system_store_beside_certifi(
     through its host's egress interceptor, whose CA the guest seed
     stages into the SYSTEM store — ``verify=True`` reads only
     certifi and refuses the re-signed chain. The download's trust
-    is the system store with certifi's bundle behind it: a staged
-    CA lands on top, and the bundle's roots are present whatever
-    the system store holds."""
-    import hashlib
+    is the system's default context (the store the seed, and a
+    corporate proxy's operator, stage into) with certifi's bundle
+    loaded on top; the pin observes both halves without depending
+    on any one host's OpenSSL env semantics."""
+    import ssl
 
-    import certifi
-    from cryptography import x509 as x509_mod
-    from msks.server.tls import generate_ca
+    real_context = ssl.create_default_context
+    built: list = []
+    loaded: list = []
+    bundle = tmp_path / "bundle.pem"
+    bundle.write_bytes(Path(certifi.where()).read_bytes())
 
-    ca_pem, _key = generate_ca()
-    staged = tmp_path / "staged-ca.pem"
-    staged.write_bytes(ca_pem)
-    staged_der = x509_mod.load_pem_x509_certificate(ca_pem).public_bytes(
-        __import__(
-            "cryptography.hazmat.primitives.serialization", fromlist=["x"]
-        ).Encoding.DER
+    def recording_context(*args, **kwargs):
+        context = real_context(*args, **kwargs)
+        built.append(context)
+        original = context.load_verify_locations
+
+        def recording_load(*args, **kwargs):
+            loaded.append((args, kwargs))
+            return original(*args, **kwargs)
+
+        context.load_verify_locations = recording_load
+        return context
+
+    monkeypatch.setattr(
+        imagestore.ssl, "create_default_context", recording_context
     )
-    staged_fp = hashlib.sha256(staged_der).hexdigest()
+    monkeypatch.setattr(
+        imagestore.certifi, "where", lambda where=None: str(bundle)
+    )
+    context = imagestore.fetch_verify_context()
+    assert built == [context]  # the system's default context, not a bare one
+    assert loaded == [((), {"cafile": str(bundle)})]
+    # certifi's own first root rides in it (the fallback an empty
+    # system store needs).
+    raw = bundle.read_bytes()
+    first = hashlib.sha256(cert_der_of(raw)).hexdigest()
+    assert first in {
+        hashlib.sha256(der).hexdigest()
+        for der in context.get_ca_certs(binary_form=True)
+    }
 
-    def fingerprints():
-        return {
-            hashlib.sha256(der).hexdigest()
-            for der in imagestore.fetch_verify_context().get_ca_certs(
-                binary_form=True
-            )
-        }
 
-    monkeypatch.setenv("SSL_CERT_FILE", str(staged))
-    assert staged_fp in fingerprints()  # the staged CA contributes
+def cert_der_of(pem_bundle: bytes) -> bytes:
+    """The first certificate in a PEM bundle, as DER."""
+    import base64
+    import re as re_mod
 
-    monkeypatch.setenv("SSL_CERT_FILE", "/no/such/bundle.pem")
-    # certifi's roots survive an unreadable system store: the
-    # bundle's first certificate is present.
-    raw = Path(certifi.where()).read_bytes()
-    first_b64 = raw.split(b"-----BEGIN CERTIFICATE-----")[1].split(
+    body = pem_bundle.split(b"-----BEGIN CERTIFICATE-----")[1].split(
         b"-----END CERTIFICATE-----"
     )[0]
-    first_der = __import__("base64").b64decode(
-        __import__("re").sub(rb"\s+", b"", first_b64)
-    )
-    first_bundle_fp = hashlib.sha256(first_der).hexdigest()
-    assert first_bundle_fp in fingerprints()
+    return base64.b64decode(re_mod.sub(rb"\s+", b"", body))
