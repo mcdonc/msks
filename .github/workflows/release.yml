@@ -218,7 +218,12 @@ jobs:
             else
               prev_from=$(jq -r --arg f "$flavor" \
                 '.[$f].built_from // empty' prev.json)
+              # Prerelease: GitHub's releases/latest skips
+              # prereleases, so the hash-keyed channel slots can
+              # never displace the version release the default
+              # manifest URL (releases/latest/download) points at.
               gh release create "$tag" \
+                --prerelease \
                 --target "$SHA" \
                 --title "$flavor image ($short)" \
                 --notes "Built from $SHA. What changed: https://github.com/$REPO/compare/${prev_from:-$SHA}...$SHA" \
