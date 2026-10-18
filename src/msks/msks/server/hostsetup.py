@@ -60,6 +60,7 @@ import pwd
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 TOOL = "msks-setup-debian-host"
@@ -480,22 +481,31 @@ def in_group(user: str, name: str) -> bool:
     return user in entry.gr_mem or account.pw_gid == entry.gr_gid
 
 
-def ensure_kvm_membership(user: str) -> str:
+def ensure_kvm_membership(user: str) -> tuple[str, bool]:
     """Make sure the executing user reaches /dev/kvm (#560): bare
     runs (msks-dev, a hand-started msksd) need the kvm group on
-    the account, not just on the service — the tool adds the user
-    when missing, and the summary names what happened. Returns
-    the summary's /dev/kvm line."""
+    the account — the tool adds the user when missing. Returns
+    the summary's /dev/kvm line and whether the membership was
+    added this run (a user manager already running forked before
+    the group existed — its services, this daemon included, hold
+    the group only after that manager restarts)."""
     if not group_present("kvm"):
         return (
-            "the kvm group is absent — install the KVM stack (qemu-kvm) first"
+            "the kvm group is absent — install the KVM stack (qemu-kvm) first",
+            False,
         )
     if in_group(user, "kvm"):
-        return f"{user} is a member of kvm (the kvm group gates the node)"
+        return (
+            f"{user} is a member of kvm (the kvm group gates the node)",
+            False,
+        )
     rc, _out, err = sh(["adduser", user, "kvm"])
     if rc != 0:
         raise HostSetupError(f"adduser {user} kvm failed: {err}")
-    return f"added {user} to kvm — a fresh login picks the group up"
+    return (
+        f"added {user} to kvm — a fresh login picks the group up",
+        True,
+    )
 
 
 def group_present(name: str) -> bool:
@@ -508,13 +518,15 @@ def group_present(name: str) -> bool:
     return True
 
 
-def executing_user() -> tuple[str, int, str]:
-    """The operator the user service belongs to: name, uid, home —
-    SUDO_USER when sudo lifted the tool to root (the account that
-    typed the command), the effective account otherwise (a root
-    shell's own choice). The #555 posture: the daemon and its
-    clients share one user, whose state dir, image catalog, and
-    token-free socket identity the service keeps."""
+def executing_user() -> tuple[str, int, int, str]:
+    """The operator the user service belongs to: name, uid, gid,
+    home — SUDO_USER when sudo lifted the tool to root (the
+    account that typed the command), the effective account
+    otherwise (a root shell's own choice). The #555 posture: the
+    daemon and its clients share one user, whose state dir, image
+    catalog, and token-free socket identity the service keeps;
+    the gid chowns the unit's parent chain into that user's
+    hands."""
     name = os.environ.get("SUDO_USER")
     entry = None
     if name:
@@ -524,7 +536,7 @@ def executing_user() -> tuple[str, int, str]:
             entry = None
     if entry is None:
         entry = pwd_getpwuid(os.geteuid())
-    return entry.pw_name, entry.pw_uid, entry.pw_dir
+    return entry.pw_name, entry.pw_uid, entry.pw_gid, entry.pw_dir
 
 
 def pwd_getpwnam(name: str):
@@ -557,9 +569,11 @@ def systemd_manages() -> bool:
 
 def unit_path(home: str) -> str:
     """Where the user unit lands: under the executing user's own
-    config, the location the user manager loads — root-owned and
-    mode 0644 (write_file's shape), so the manager reads it and
-    the unit stays re-run-refreshable."""
+    config, the location the user manager loads. The file itself
+    is root-owned mode 0644 (write_file's shape); the directory
+    chain below the home belongs to the user, so an operator can
+    replace the file — the same grant the world-executable
+    wrapper already makes."""
     return str(Path(home) / USER_UNIT_RELATIVE)
 
 
@@ -603,7 +617,7 @@ def unit_text(msksd: str, uplink_name: str) -> str:
         + WRAPPER
         + " --inh-caps=+net_admin,+net_bind_service"
         + " --ambient-caps=+net_admin,+net_bind_service"
-        + f" -- {msksd}",
+        + f' -- "{msksd}"',
         "Environment=MSKSD_EGRESS_ENABLED=true",
     ]
     if uplink_name:
@@ -624,17 +638,71 @@ def unit_text(msksd: str, uplink_name: str) -> str:
     return "\n".join(lines)
 
 
-def write_unit(home: str, msksd: str) -> bool:
+RUNTIME_DIR_FMT = "/run/user/{}"
+RETRY_DELAY = 1.0
+
+
+def manager_running(uid: int) -> bool:
+    """Whether the user manager for *uid* is up (its runtime dir
+    exists). Read before linger is armed: a manager that was
+    already running forked before any group this run adds, so its
+    services hold the old supplementary groups."""
+    return Path(RUNTIME_DIR_FMT.format(uid)).is_dir()
+
+
+def chown_path(path: Path, uid: int, gid: int) -> None:
+    """os.chown, as a seam the suite can pin."""
+    os.chown(path, uid, gid)
+
+
+def ensure_unit_parents(home: str, uid: int, gid: int) -> None:
+    """Create the unit's parent chain user-owned. A fresh Debian
+    account ships no ~/.config, and write_file's mkdir would land
+    root-owned parents there — the user manager's enable step
+    writes its symlink as the user and a root-owned parent
+    refuses it, on this run and every re-run. Each level the
+    chain is missing is created and handed to the executing user;
+    levels that exist keep their owner."""
+    current = Path(home)
+    for part in Path(USER_UNIT_RELATIVE).parts[:-1]:
+        current = current / part
+        if not current.exists():
+            current.mkdir()
+            chown_path(current, uid, gid)
+            current.chmod(0o755)
+
+
+def user_manager_call(
+    user: str, uid: int, args: list[str], timeout: float = 10.0
+) -> tuple[int, str]:
+    """One systemctl --user call, with the linger-startup retry:
+    enable-linger returns after logind enqueues the user manager,
+    so the first call can beat the manager's bus into existence —
+    a "Failed to connect to bus" answer retries briefly before it
+    is treated as a failure."""
+    cmd = user_systemctl(user, uid, args)
+    rc, _out, err = sh(cmd, timeout=timeout)
+    tries = 0
+    while rc != 0 and "Failed to connect to bus" in err and tries < 4:
+        time.sleep(RETRY_DELAY)
+        rc, _out, err = sh(cmd, timeout=timeout)
+        tries += 1
+    return rc, err
+
+
+def write_unit(home: str, msksd: str, uplink_name: str) -> bool:
     """Build the user unit and land it at its path. True when a
     different unit was replaced — a re-run that changes the
     daemon's line or its uplink — so the caller can restart a
-    running daemon onto the new unit."""
+    running daemon onto the new unit. A missing unit file is a
+    first landing; any other read failure is the caller's named
+    refusal, not a silent rebuild."""
     path = unit_path(home)
     try:
         existing = read_file(path)
-    except OSError:
+    except FileNotFoundError:
         existing = ""
-    text = unit_text(msksd, uplink())
+    text = unit_text(msksd, uplink_name)
     write_file(path, text)
     return existing not in ("", text)
 
@@ -651,42 +719,63 @@ def linger(user: str) -> None:
         )
 
 
-def activate_unit(user: str, uid: int, changed: bool) -> None:
-    """Linger on, load the unit, enable and start it, and restart
-    a running daemon when the unit changed under it — a fresh
-    landing starts through enable alone."""
-    linger(user)
-    rc, _out, err = sh(user_systemctl(user, uid, ["daemon-reload"]))
+def load_unit(user: str, uid: int) -> None:
+    """daemon-reload through the bus-race retry; a manager that
+    never answers is a named refusal."""
+    rc, err = user_manager_call(user, uid, ["daemon-reload"])
     if rc != 0:
         raise HostSetupError(f"systemctl --user daemon-reload failed: {err}")
-    rc, _out, err = sh(
-        user_systemctl(user, uid, ["enable", "--now", "msksd.service"])
+
+
+def start_unit(user: str, uid: int) -> None:
+    """Enable and start the service — a first landing's only
+    start; the failure names the journal that holds the cause."""
+    rc, err = user_manager_call(
+        user, uid, ["enable", "--now", "msksd.service"]
     )
     if rc != 0:
         raise HostSetupError(
             f"systemctl --user enable --now msksd.service failed: {err} "
             f"(as {user}: journalctl --user -u msksd names the cause)"
         )
+
+
+def restart_running_unit(user: str, uid: int) -> None:
+    """Restart the daemon, waited out: a stop stops workspaces
+    first (the unit allows 180s), so this call carries a matching
+    timeout, and its failure is named — a crash-looping unit must
+    not print as started."""
+    rc, err = user_manager_call(
+        user, uid, ["restart", "msksd.service"], timeout=240.0
+    )
+    if rc != 0:
+        raise HostSetupError(
+            f"systemctl --user restart msksd.service failed: {err} "
+            f"(as {user}: journalctl --user -u msksd names the cause)"
+        )
+
+
+def activate_unit(user: str, uid: int, changed: bool) -> None:
+    """Linger on, load the unit, enable and start it, and restart
+    a running daemon when the unit changed under it — a fresh
+    landing starts through enable alone."""
+    linger(user)
+    load_unit(user, uid)
+    start_unit(user, uid)
     if not changed:
         return
-    rc, _out, _err = sh(
-        user_systemctl(user, uid, ["is-active", "--quiet", "msksd.service"])
+    rc, _err = user_manager_call(
+        user, uid, ["is-active", "--quiet", "msksd.service"]
     )
     if rc == 0:
-        sh(user_systemctl(user, uid, ["restart", "msksd.service"]))
+        restart_running_unit(user, uid)
 
 
-def install_service(user: str, uid: int, home: str) -> str:
-    """Land the daemon's systemd user service (#560): the unit in
-    the executing user's own config, enable-and-start with linger
-    — and a restart when a re-run rewrote a unit that was already
-    running, so a refreshed ExecStart or uplink takes effect.
-    Returns the summary's service line; every stand-down names
-    its cause instead of refusing (the host pieces above landed,
-    and a container or an elsewhere daemon keeps a working
-    host)."""
-    msksd = msksd_sibling()
-    if msksd is None:
+def service_skip_cause() -> str | None:
+    """Why the service phase stands down, as the summary's line
+    states it: no msksd beside the tool, or no systemd manager.
+    None means the phase proceeds."""
+    if msksd_sibling() is None:
         return (
             "skipped (no msksd beside this tool; the deployment's "
             "daemon is elsewhere — bare msksd unchanged)"
@@ -695,8 +784,47 @@ def install_service(user: str, uid: int, home: str) -> str:
         return (
             "skipped (no systemd manager on this host — bare msksd unchanged)"
         )
-    activate_unit(user, uid, write_unit(home, msksd))
-    return f"user service msksd.service ({user}, enabled, started, lingering)"
+    return None
+
+
+def service_note(user: str, uid: int, stale_manager: bool) -> str:
+    """The summary's service line. A kvm membership added this run
+    under a manager that was already running never reached the
+    daemon (its supplementary groups forked with the manager), and
+    the line names the manager restart that hands it over."""
+    note = f"user service msksd.service ({user}, enabled, started, lingering)"
+    if stale_manager:
+        note += (
+            f" — kvm joined this run under a manager already running; "
+            f"restart it to hand the daemon the group: "
+            f"sudo systemctl restart user@{uid}.service "
+            f"(it ends that user's sessions)"
+        )
+    return note
+
+
+def install_service(
+    user: str, uid: int, gid: int, home: str, uplink_name: str, kvm_added: bool
+) -> str:
+    """Land the daemon's systemd user service (#560): the unit in
+    the executing user's own config, enable-and-start with linger
+    — and a restart when a re-run rewrote a unit that was already
+    running, so a refreshed ExecStart or uplink takes effect.
+    Returns the summary's service line; every stand-down names
+    its cause instead of refusing (the host pieces above landed,
+    and a container or an elsewhere daemon keeps a working
+    host)."""
+    cause = service_skip_cause()
+    if cause is not None:
+        return cause
+    stale_manager = kvm_added and manager_running(uid)
+    ensure_unit_parents(home, uid, gid)
+    try:
+        changed = write_unit(home, msksd_sibling(), uplink_name)
+        activate_unit(user, uid, changed)
+    except OSError as exc:
+        raise HostSetupError(f"landing the user unit failed: {exc}") from exc
+    return service_note(user, uid, stale_manager)
 
 
 def consent_line(states: dict[str, str]) -> str:
@@ -714,7 +842,11 @@ def consent_line(states: dict[str, str]) -> str:
 
 
 def summary(
-    ambient: str, states: dict[str, str], kvm: str, service: str
+    ambient: str,
+    states: dict[str, str],
+    kvm: str,
+    service: str,
+    uplink_name: str,
 ) -> None:
     say("done —")
     print(f"  wrapper:    {WRAPPER} (setpriv, {CAPS}+ep)")
@@ -730,7 +862,7 @@ def summary(
     print(
         "  uplink:     point the daemon at this host's default-route "
         "interface (MSKSD_EGRESS_UPLINK, or DEV_UPLINK for "
-        f"msks-dev): {uplink() or 'none found'}"
+        f"msks-dev): {uplink_name or 'none found'}"
     )
     print(f"  service:    {service}")
     if "started" in service:
@@ -756,14 +888,15 @@ def run_setup(service: bool = True) -> None:
         say(f"wrapper {WRAPPER} carries {CAPS}+ep (CapAmb {ambient})")
         land_sysctl()
         states = land_modules()
-        user, uid, home = executing_user()
-        kvm_note = ensure_kvm_membership(user)
+        user, uid, gid, home = executing_user()
+        the_uplink = uplink()
+        kvm_note, kvm_added = ensure_kvm_membership(user)
         service_note = (
-            install_service(user, uid, home)
+            install_service(user, uid, gid, home, the_uplink, kvm_added)
             if service
             else "skipped (--no-service)"
         )
-        summary(ambient, states, kvm_note, service_note)
+        summary(ambient, states, kvm_note, service_note, the_uplink)
     finally:
         os.environ["PATH"] = saved
 
