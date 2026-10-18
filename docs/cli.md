@@ -213,9 +213,10 @@ names another).
 ### `terminal_open_cmd`
 
 `terminal_open_cmd` names the launcher the workspace page's
-**Open a shell (new terminal)** action uses to open a workspace
-shell in a new terminal window (#314, #341); the msks invocation
-is appended after it, the way most terminals take a command after
+**Open a shell** action uses to open workspace shells in new
+terminal windows (#314, #341, #562) — the opt-in for hosts that
+want windows beside the running tree; the msks invocation is
+appended after it, the way most terminals take a command after
 `-e` / `--`:
 
 ```yaml
@@ -228,12 +229,12 @@ terminal_open_cmd:                     # list form (no shell quoting)
 ```
 
 `MSKSC_TERMINAL_OPEN_CMD` overrides the file value with the string
-form. The built-in default is `xterm -e` — the terminal most
-Linux distributions carry — so the new-terminal path needs no
-configuration; a launcher that fails to execute (a binary that is
-missing or not executable) names its reason on the tree's first
-flash after the same-terminal shell ends, and the shell runs in
-the same terminal. A holding variant
+form. Unset — the default — the shell action runs `msks ssh` in
+the TUI's own terminal (#562), on every host, with no terminal to
+launch; a configured launcher that fails to execute (a binary
+that is missing or not executable) names its reason on the tree's
+first flash after the same-terminal shell ends, and the shell
+runs in the same terminal. A holding variant
 (`konsole --hold -e`, xterm's `-hold`) keeps the window open after
 the session ends, for reading final output; without one the window
 closes itself when the session disconnects.
@@ -553,9 +554,8 @@ grants · next expires 4h` — so the line stays readable at 80
 columns, every grant listed on the workspace's egress consent
 screen), and the page's actions centered in the space the header
 lines and the footer leave — the block capped at 64 columns — in
-three groups: a shell in a new terminal
-window, then egress consent and an edit dialog for the sizes and
-topology (#331), then start and stop. Each action paints its
+three groups: a shell, then egress consent and an edit dialog
+for the sizes and topology (#331), then start and stop. Each action paints its
 name with its description muted behind it, and the row Enter
 acts on carries a marker beside the list's own highlight and the
 name in bold. The start and stop rows dim behind their reason
@@ -651,22 +651,26 @@ value with a note naming the field instead of accepting it
 silently. A size left blank keeps its current value. Escape
 closes the dialog and decides nothing.
 
-The page's **Open a shell (new terminal)** action spawns the
-configured terminal launcher with a `msks ssh` invocation
-appended (see `terminal_open_cmd` below), and the tree keeps
-running beside the window — the spawned shell inherits the tree's
-resolved connection, so it reaches the same daemon, and it rides
-ssh rather than the console because a fresh window gets resized:
-the console keeps the getty's geometry, while ssh carries every
-resize to the guest. The action runs on a stopped
-workspace too: the spawned `msks ssh` boots the workspace itself
-(it carries the workspace's id, and the window reads the pre-flight's
-`msks: <id> is stopped; starting it`) and the same-terminal fallback
-below boots the same way. A launcher that cannot start — a missing
-binary, one without the execute bit — names its
-reason on the tree's first flash after the shell hands the
-terminal back, and the shell runs in this terminal instead: a
-chained `msks console` session.
+The page's **Open a shell** action runs `msks ssh` in the
+TUI's own terminal (#562): the tree exits, the ssh session runs
+where it stood, and the tree restarts when the session hands the
+terminal back — it rides ssh rather than the console because the
+console keeps the getty's geometry while ssh carries every resize
+to the guest. A workspace ssh cannot reach — no NIC, no identity
+configured — falls back to a `msks console` session one step
+later, and the tree's first flash names why ssh stood down. The
+action runs on a stopped workspace too: the ssh session boots the
+workspace itself (it carries the workspace's id, and reads the
+pre-flight's `msks: <id> is stopped; starting it`).
+
+A host that wants shells in windows beside the running tree
+configures a terminal launcher (`terminal_open_cmd` below): the
+action then spawns the launcher with a `msks ssh` invocation
+appended, and the spawned shell inherits the tree's resolved
+connection, so it reaches the same daemon. A launcher that cannot
+start — a missing binary, one without the execute bit — names its
+reason on the tree's first flash and the shell runs in this
+terminal instead: a chained `msks console` session.
 
 Every screen walks with the arrow keys alone: lists move with
 up/down, the create form's fields move with up/down between them,

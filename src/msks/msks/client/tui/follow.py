@@ -11,12 +11,15 @@ import os
 import sys
 
 from ..console import run_workspace_shell
+from ..ssh import run_workspace_ssh
 from ..wintitle import TITLE_MARKER
 
-#: The full-terminal flows a page can record (#309): the console
-#: shell as the new-terminal action's dead-launcher fallback. The
-#: consent decider stopped chaining when it moved into the tree
-#: (#358).
+#: The full-terminal flows a page can record (#309): the
+#: same-terminal ssh session the shell action takes by default
+#: (#562), and the console shell — the ssh refusal's fallback and
+#: the dead-launcher fallback before it. The consent decider
+#: stopped chaining when it moved into the tree (#358).
+FLOW_SSH = "ssh"
 FLOW_SHELL = "shell"
 
 
@@ -42,10 +45,29 @@ class TuiFollow:
         return action
 
 
-def run_shell_flow(workspace_id: str) -> None:
+def run_shell_flow(workspace_id: str) -> str | None:
     """A console shell in the workspace — the dead-launcher
     fallback's flow (the console boots a stopped workspace first)."""
     run_workspace_shell(workspace_id)
+    return None
+
+
+def run_ssh_flow(workspace_id: str) -> str | None:
+    """An ssh session in the TUI's own terminal (#562): the tree
+    exited for this flow, ssh runs where it stood, and the tree
+    restarts when the session hands the terminal back. An ssh
+    that refuses — no NIC, no identity — takes the console one
+    step later and returns the note the restarted tree flashes
+    (the console is the failsafe; ssh is the interactive path, and
+    a refusal the operator can read rides along). A console that
+    refuses too raises on: the outer loop flashes that reason."""
+    try:
+        run_workspace_ssh(workspace_id, [])
+        return None
+    except SystemExit as exc:
+        reason = str(exc)
+        run_shell_flow(workspace_id)
+        return f"ssh refused ({reason}) — the console session ran instead"
 
 
 def ssh_child_argv(workspace_id: str) -> list[str]:
@@ -87,12 +109,14 @@ async def spawn_window(argv: list[str]):
 
 #: The full-terminal flows, keyed by the kind a page records.
 FLOWS = {
+    FLOW_SSH: run_ssh_flow,
     FLOW_SHELL: run_shell_flow,
 }
 
 
-def run_follow_up(action: tuple[str, str]) -> None:
-    """Run one recorded flow; the kinds a page can record are
-    exactly the FLOWS keys."""
+def run_follow_up(action: tuple[str, str]) -> str | None:
+    """Run one recorded flow, answering the flash the restarted
+    tree should carry (None for none); the kinds a page can record
+    are exactly the FLOWS keys."""
     kind, workspace_id = action
-    FLOWS[kind](workspace_id)
+    return FLOWS[kind](workspace_id)

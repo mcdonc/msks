@@ -33,7 +33,7 @@ import sys
 from textual.app import App
 from textual.screen import Screen
 
-from ..config import DEFAULT_TERMINAL_CMD, ClientConfig
+from ..config import ClientConfig
 from ..env import env_token, env_url
 from .consent_ui import FlashLine, flash_safe, shared_ssl
 from .data import TuiData
@@ -53,6 +53,21 @@ def require_terminal() -> None:
         )
 
 
+def land_flow(follow: TuiFollow, action: tuple[str, str]) -> None:
+    """Run one recorded flow and land its answer on the follow
+    queue: a note the flow answers becomes the restarted tree's
+    first flash (the ssh flow's fallback names why ssh stood
+    down), and a refusal's SystemExit reason lands the same way
+    (it prints nowhere until the interpreter's top level, which
+    the restart would eat). Real exceptions (bugs) still surface."""
+    try:
+        seed = run_follow_up(action)
+        if seed:
+            follow.seed = seed
+    except SystemExit as exc:
+        follow.seed = str(exc)
+
+
 def run_main_tui(
     open_ref: str | None = None, data=None, conf: ClientConfig | None = None
 ) -> int:
@@ -69,9 +84,10 @@ def run_main_tui(
     page it was on, and an exit with no recorded flow is the
     operator's quit.
 
-    ``conf`` is the invocation's resolved client config (#341):
-    the page's new-terminal shell action reads the terminal
-    launcher from it.
+    ``conf`` is the invocation's resolved client config (#341,
+    #562): the page's shell action reads the terminal launcher
+    from it — None, the default, runs the shell in the TUI's own
+    terminal.
     """
     if data is None:
         require_terminal()
@@ -85,15 +101,7 @@ def run_main_tui(
         action = follow.take()
         if action is None:
             return 0
-        try:
-            run_follow_up(action)
-        except SystemExit as exc:
-            # The flow refused: its one-line reason rides the
-            # follow queue as the restarted tree's first flash (a
-            # SystemExit prints nowhere until the interpreter's
-            # top level, which the restart would eat). Real
-            # exceptions (bugs) still surface.
-            follow.seed = str(exc)
+        land_flow(follow, action)
 
 
 class MsksTuiApp(App):
@@ -238,14 +246,15 @@ class MsksTuiApp(App):
         # status lines read it off the app instead of each holding
         # its own env edge.
         self.url = env_url()
-        # The operator's terminal launcher (#341), read by the
-        # page's new-terminal shell action. A tree without a
-        # resolution (a test's injected data seam) launches with
-        # the built-in.
+        # The operator's terminal launcher (#341, #562): configured
+        # means the page's shell action opens windows through it;
+        # None — the default, and a tree without a resolution
+        # (a test's injected data seam) — means the shell runs in
+        # the TUI's own terminal.
         self.terminal_cmd = (
             list(conf.terminal_open_cmd)
-            if conf is not None
-            else list(DEFAULT_TERMINAL_CMD)
+            if conf is not None and conf.terminal_open_cmd
+            else None
         )
         # The launchers the page has spawned (#341): held until
         # they exit, so a running window's Process never collects

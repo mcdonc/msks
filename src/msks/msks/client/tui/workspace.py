@@ -258,7 +258,9 @@ def action_content(
 #: groups (#367); the use group's lead carries it too, the
 #: breathing room between the status lines and the actions.
 PAGE_ACTIONS = (
-    PageAction(ACTION_SHELL_WINDOW, "Open a shell", "in a new terminal", True),
+    PageAction(
+        ACTION_SHELL_WINDOW, "Open a shell", "ssh — console as fallback", True
+    ),
     PageAction(
         ACTION_CONSENT,
         "Egress consent",
@@ -701,20 +703,28 @@ class WorkspaceScreen(Screen):
         await handler()
 
     async def open_shell_window(self) -> None:
-        """Open a workspace shell in a new terminal window (#341):
-        the launcher runs an ssh invocation as its child — ssh, not
-        the console, because the console sizes its guest pty once
-        at connect while ssh carries a live window's resizes — the
-        child inherits the tree's materialized connection, so it
-        reaches the same daemon — and the tree keeps running. A
-        launcher that cannot start — a missing binary, one without
-        the execute bit, a word the exec itself refuses — seeds the
-        restart's flash with its reason and takes the
-        same-terminal shell flow instead (the setting's documented
-        fallback). The action runs on a stopped workspace too
-        (#479): the ssh child boots the workspace itself, and the
-        window carries the boot notice; the same-terminal fallback
-        boots the same way."""
+        """Open a workspace shell (#341, #562). The default runs
+        ``msks ssh`` in the TUI's own terminal: the tree exits,
+        the ssh session runs where it stood — ssh, not the
+        console, because the console sizes its guest pty once at
+        connect while ssh carries the terminal's resizes — and the
+        tree restarts when the session hands the terminal back; a
+        workspace ssh cannot reach falls back to the console one
+        step later (the flow's own rule). A configured terminal
+        launcher (``terminal_open_cmd``) opens windows beside the
+        running tree instead: the launcher runs the ssh invocation
+        as its child, which inherits the tree's materialized
+        connection, so it reaches the same daemon. A launcher that
+        cannot start — a missing binary, one without the execute
+        bit, a word the exec itself refuses — seeds the restart's
+        flash with its reason and takes the same-terminal shell
+        flow instead (the setting's documented fallback). The
+        action runs on a stopped workspace too (#479): the ssh
+        session — window or same-terminal — boots the workspace
+        itself."""
+        if self.app.terminal_cmd is None:
+            self.app.quit_after(follow.FLOW_SSH, self.row["id"])
+            return
         child = follow.ssh_child_argv(self.row["id"])
         try:
             proc = await follow.spawn_window([*self.app.terminal_cmd, *child])
