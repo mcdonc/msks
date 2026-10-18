@@ -41,6 +41,12 @@ class Host:
         self.modprobe_fails: set[str] = set()
         self.modprobe_absent: set[str] = set()
         self.ambient = "0000000000001400"
+        # The service phase's dials (#560): is-active's answer, the
+        # systemctl subcommands a run must fail on, and adduser's.
+        self.is_active = 0
+        self.fail_systemctl: set[str] = set()
+        self.loginctl_rc = 0
+        self.adduser_rc = 0
 
     def sh(self, cmd, timeout=10.0, env=None):
         self.commands.append(cmd)
@@ -60,6 +66,18 @@ class Host:
             return (1, "", "") if cmd[-1] in fail_set else (0, "", "")
         if head == "ip":
             return 0, "default via 192.0.2.1 dev eno4 proto dhcp\n", ""
+        if head == "adduser":
+            if self.adduser_rc != 0:
+                return self.adduser_rc, "", "adduser: refused\n"
+        if head == "loginctl":
+            if self.loginctl_rc != 0:
+                return self.loginctl_rc, "", "loginctl: refused\n"
+        if head == "runuser":
+            sub = cmd[cmd.index("systemctl") + 2]
+            if sub in self.fail_systemctl:
+                return 1, "", f"systemctl --user {sub}: refused\n"
+            if sub == "is-active":
+                return self.is_active, "", ""
         return 0, "", ""
 
     def write(self, path: str, text: str) -> None:
@@ -79,6 +97,25 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     host = Host()
     release = tmp_path / "os-release"
     release.write_text('ID="debian"\n')
+    # The deployment's venv: the tool and its msksd sibling share
+    # a bin dir, the systemd manager probe finds a live manager,
+    # and the service runs as a fixed executing user (#560).
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "msksd").write_text("#!/bin/sh\n")
+    monkeypatch.setattr(
+        hostsetup.sys, "argv", [str(bin_dir / "msks-setup-debian-host")]
+    )
+    manager = tmp_path / "systemd"
+    manager.mkdir()
+    monkeypatch.setattr(hostsetup, "SYSTEMD_MANAGER", str(manager))
+    monkeypatch.setattr(hostsetup, "group_present", lambda name: name == "kvm")
+    monkeypatch.setattr(hostsetup, "in_group", lambda user, name: False)
+    home = tmp_path / "home" / "chrism"
+    home.mkdir(parents=True)
+    monkeypatch.setattr(
+        hostsetup, "executing_user", lambda: ("chrism", 1000, str(home))
+    )
     monkeypatch.setattr(hostsetup, "sh", host.sh)
     monkeypatch.setattr(hostsetup, "write_file", host.write)
     monkeypatch.setattr(hostsetup, "read_file", host.read)
@@ -470,7 +507,7 @@ def test_kvm_absent_hint(
         raise OSError("nss is down")
 
     for failure in (no_group, broken_backend):
-        monkeypatch.setattr(hostsetup.grp, "getgrnam", failure)
+        monkeypatch.setattr(hostsetup, "group_present", lambda name: False)
         assert main() == 0
         assert "kvm group is absent" in capsys.readouterr().out
 
@@ -608,3 +645,398 @@ def test_module_tree_present_reads_the_filesystem(
     assert hostsetup.module_tree_present() is False
     (tmp_path / release).mkdir()
     assert hostsetup.module_tree_present() is True
+
+
+def test_a_fresh_landing_adds_the_executing_user_to_kvm(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """Bare runs and new logins need the kvm group on the account
+    itself (#560): the tool adds the executing user when the
+    group is missing from their membership, and the summary names
+    the fresh-login fact."""
+    assert main() == 0
+    assert debian_host.ran("adduser") == [["adduser", "chrism", "kvm"]]
+    out = capsys.readouterr().out
+    assert (
+        "/dev/kvm:   added chrism to kvm — a fresh login picks the group up"
+        in (out)
+    )
+
+
+def test_an_existing_kvm_membership_is_left_alone(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(hostsetup, "in_group", lambda user, name: True)
+    assert main() == 0
+    assert debian_host.ran("adduser") == []
+
+
+def test_adduser_kvm_failure_refuses(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    debian_host.adduser_rc = 1
+    assert main() == 1
+    assert "adduser chrism kvm failed" in capsys.readouterr().err
+
+
+def test_in_group_reads_membership_and_primary_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The two gates: named membership in the group's member list,
+    and the account's primary group — the same pair #555's peer
+    policy reads. A database that answers nothing says no."""
+
+    class MemberGrp:
+        class entry:
+            gr_mem = ["chrism"]
+            gr_gid = 104
+
+        def getgrnam(self, name):
+            return self.entry
+
+    monkeypatch.setattr(hostsetup, "grp", MemberGrp())
+    monkeypatch.setattr(
+        hostsetup,
+        "pwd_getpwnam",
+        lambda name: FakeEntry("chrism", 1000, "/home/chrism"),
+    )
+    assert hostsetup.in_group("chrism", "kvm") is True
+
+    class PrimaryGrp:
+        class entry:
+            gr_mem = []
+            gr_gid = 104
+
+        def getgrnam(self, name):
+            return self.entry
+
+    monkeypatch.setattr(hostsetup, "grp", PrimaryGrp())
+    monkeypatch.setattr(
+        hostsetup,
+        "pwd_getpwnam",
+        lambda name: FakeEntry("chrism", 1000, "/home/chrism", gid=104),
+    )
+    assert hostsetup.in_group("chrism", "kvm") is True
+
+    class MissingGrp:
+        def getgrnam(self, name):
+            raise KeyError(name)
+
+    monkeypatch.setattr(hostsetup, "grp", MissingGrp())
+    assert hostsetup.in_group("chrism", "kvm") is False
+
+
+def fixture_unit_path(host: Host) -> str:
+    """The unit path the fixture's executing user lands."""
+    return hostsetup.unit_path(hostsetup.executing_user()[2])
+
+
+def unit_writes(host: Host) -> dict[str, str]:
+    """The unit file(s) a run wrote (any path under .config)."""
+    return {
+        path: text
+        for path, text in host.writes.items()
+        if path.endswith(hostsetup.USER_UNIT_RELATIVE)
+    }
+
+
+def systemctl_ran(host: Host, sub: str) -> list[list[str]]:
+    """The systemctl --user calls a run issued for one subcommand,
+    as the runuser command lines carry them."""
+    out = []
+    for cmd in host.ran("runuser"):
+        args = cmd[cmd.index("systemctl") + 2 :]
+        if args[0] == sub:
+            out.append(cmd)
+    return out
+
+
+def user_unit_path() -> str:
+    """The unit path the fixture's executing user carries."""
+    return hostsetup.unit_path("/tmp/fake-home/chrism")
+
+
+def test_service_lands_the_unit_as_the_executing_user(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The service phase (#560): a user unit under the executing
+    operator's own config — no User=/Group= lines (the user manager
+    is the account), the wrapper raising the caps ambient (file
+    capabilities grant any executor), the #555 socket's runtime
+    directory under the user's $XDG_RUNTIME_DIR, egress pointed at
+    the detected uplink — plus linger, so the daemon survives
+    logout. First landing starts the service and does not restart
+    it."""
+
+    def strict_unit_read(path):
+        # The real read_file raises on a missing file; the fake
+        # answers "" — drive the real shape for the unit path.
+        if path.endswith(hostsetup.USER_UNIT_RELATIVE):
+            raise FileNotFoundError(path)
+        return debian_host.read(path)
+
+    monkeypatch.setattr(hostsetup, "read_file", strict_unit_read)
+    assert main() == 0
+    home = Path(hostsetup.executing_user()[2])
+    path = hostsetup.unit_path(str(home))
+    text = debian_host.writes[path]
+    msksd = str(Path(hostsetup.sys.argv[0]).resolve().parent / "msksd")
+    assert path.startswith(str(home))
+    assert "User=" not in text
+    assert "Group=" not in text
+    assert "Environment=HOME=" not in text
+    assert (
+        "ExecStart=/usr/local/bin/msks-caps "
+        "--inh-caps=+net_admin,+net_bind_service "
+        "--ambient-caps=+net_admin,+net_bind_service "
+        f"-- {msksd}" in text
+    )
+    assert "WantedBy=default.target" in text
+    assert "RuntimeDirectory=msks" in text
+    assert "Environment=MSKSD_EGRESS_ENABLED=true" in text
+    assert "Environment=MSKSD_EGRESS_UPLINK=eno4" in text
+    assert debian_host.ran("loginctl") == [
+        ["loginctl", "enable-linger", "chrism"]
+    ]
+
+    def run(args):
+        return hostsetup.user_systemctl("chrism", 1000, args)
+
+    assert systemctl_ran(debian_host, "daemon-reload") == [
+        run(["daemon-reload"])
+    ]
+    assert systemctl_ran(debian_host, "enable") == [
+        run(["enable", "--now", "msksd.service"])
+    ]
+    assert systemctl_ran(debian_host, "is-active") == []
+    assert systemctl_ran(debian_host, "restart") == []
+    out = capsys.readouterr().out
+    assert (
+        "service:    user service msksd.service "
+        "(chrism, enabled, started, lingering)" in out
+    )
+    assert "token-free (#555): $XDG_RUNTIME_DIR/msks/msksd.sock" in out
+
+
+def test_unit_text_omits_the_uplink_when_none_was_found(
+    debian_host: Host,
+) -> None:
+    """An uplink the tool could not detect writes no env line —
+    the piece lands only when the host carries it."""
+    text = hostsetup.unit_text("/bin/msksd", uplink_name="")
+    assert "MSKSD_EGRESS_UPLINK" not in text
+    assert "RuntimeDirectory=msks" in text
+
+
+def test_service_skips_when_no_msksd_beside_the_tool(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A deployment whose msksd lives elsewhere (no bin sibling)
+    keeps a working host: the skip names the cause, no unit is
+    written, systemctl never runs."""
+    Path(hostsetup.sys.argv[0]).parent.joinpath("msksd").unlink()
+    assert main() == 0
+    assert unit_writes(debian_host) == {}
+    assert debian_host.ran("runuser") == []
+
+
+def test_service_skips_without_a_systemd_manager(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A container or another init: the manager probe answers no
+    and the phase stands down, naming it."""
+    monkeypatch.setattr(hostsetup, "SYSTEMD_MANAGER", "/no/such/manager-dir")
+    assert main() == 0
+    assert unit_writes(debian_host) == {}
+    assert debian_host.ran("runuser") == []
+    assert debian_host.ran("loginctl") == []
+
+
+def test_no_service_flag_keeps_today_s_behavior(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """--no-service lands every host piece but the unit (a
+    deployment that runs msksd its own way)."""
+    assert main(["--no-service"]) == 0
+    assert unit_writes(debian_host) == {}
+    assert debian_host.ran("runuser") == []
+    assert "service:    skipped (--no-service)" in capsys.readouterr().out
+
+
+def test_a_rerun_with_an_unchanged_unit_does_not_restart(
+    debian_host: Host,
+) -> None:
+    """Idempotent re-run: the unit on disk equals the one the tool
+    writes, so the service stays as enable --now left it."""
+    assert main() == 0
+    debian_host.commands.clear()
+    assert main() == 0
+    assert systemctl_ran(debian_host, "is-active") == []
+    assert systemctl_ran(debian_host, "restart") == []
+
+
+def test_a_changed_unit_restarts_a_running_daemon(
+    debian_host: Host,
+) -> None:
+    """A re-run that rewrites the unit (a refreshed ExecStart, a
+    new uplink) restarts the daemon when it is running, so the
+    change takes effect."""
+    debian_host.writes[fixture_unit_path(debian_host)] = (
+        "ExecStart=/old/msksd\n"
+    )
+    assert main() == 0
+
+    def run(args):
+        return hostsetup.user_systemctl("chrism", 1000, args)
+
+    assert systemctl_ran(debian_host, "is-active") == [
+        run(["is-active", "--quiet", "msksd.service"])
+    ]
+    assert systemctl_ran(debian_host, "restart") == [
+        run(["restart", "msksd.service"])
+    ]
+
+
+def test_a_changed_unit_leaves_a_stopped_daemon_alone(
+    debian_host: Host,
+) -> None:
+    """A stopped service (the daemon crashed out, the host just
+    booted) needs no restart — enable --now starts it."""
+    debian_host.writes[fixture_unit_path(debian_host)] = (
+        "ExecStart=/old/msksd\n"
+    )
+    debian_host.is_active = 1
+    assert main() == 0
+    assert systemctl_ran(debian_host, "restart") == []
+
+
+def test_daemon_reload_failure_refuses(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    debian_host.fail_systemctl = {"daemon-reload"}
+    assert main() == 1
+    assert "systemctl --user daemon-reload failed" in capsys.readouterr().err
+
+
+def test_enable_failure_refuses_and_points_at_the_journal(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    debian_host.fail_systemctl = {"enable"}
+    assert main() == 1
+    err = capsys.readouterr().err
+    assert "systemctl --user enable --now msksd.service failed" in err
+    assert "journalctl --user -u msksd names the cause" in err
+
+
+def test_linger_failure_refuses(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """Without linger the daemon dies at the operator's logout —
+    a failure to arm it is a named refusal, not a warning."""
+    debian_host.loginctl_rc = 1
+    assert main() == 1
+    err = capsys.readouterr().err
+    assert "loginctl enable-linger chrism failed" in err
+    assert "stop at the operator's logout" in err
+
+
+class FakeEntry:
+    """A pwd database row with the fields executing_user and
+    in_group read."""
+
+    def __init__(
+        self, name: str, uid: int, pw_dir: str, gid: int = 1000
+    ) -> None:
+        self.pw_name = name
+        self.pw_uid = uid
+        self.pw_gid = gid
+        self.pw_dir = pw_dir
+
+
+class FakeGroup:
+    def __init__(self, name: str) -> None:
+        self.gr_name = name
+
+
+def test_executing_user_prefers_sudo_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sudo lifted the tool to root; the account that typed the
+    command is the one the service runs as. This one drives the
+    real getpwnam seam."""
+    monkeypatch.setenv("SUDO_USER", "alice")
+
+    class AlicePwd:
+        def getpwnam(self, name):
+            return FakeEntry(name, 1001, "/home/alice")
+
+        def getpwuid(self, uid):
+            return FakeEntry("root", 0, "/root")
+
+    monkeypatch.setattr(hostsetup, "pwd", AlicePwd())
+    monkeypatch.setattr(
+        hostsetup, "pwd_getpwuid", lambda uid: FakeEntry("root", 0, "/root")
+    )
+    assert hostsetup.executing_user() == ("alice", 1001, "/home/alice")
+
+
+def test_executing_user_falls_back_when_sudo_user_left_no_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale SUDO_USER (the account was removed after the sudo
+    started) degrades to the effective account, which adduser-era
+    refusals never see: the lookup failure is a fallback, not a
+    stop."""
+    monkeypatch.setenv("SUDO_USER", "ghost")
+
+    def missing(name):
+        raise KeyError(name)
+
+    monkeypatch.setattr(hostsetup, "pwd_getpwnam", missing)
+    monkeypatch.setattr(
+        hostsetup, "pwd_getpwuid", lambda uid: FakeEntry("root", 0, "/root")
+    )
+    assert hostsetup.executing_user() == ("root", 0, "/root")
+
+
+def test_executing_user_reads_the_effective_account_without_sudo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A root shell that ran the tool directly (no sudo): root is
+    the executing user, its own choice. This one drives the real
+    pwd/grp seams (the lookup helpers are the suite's pin on
+    them)."""
+    monkeypatch.delenv("SUDO_USER", raising=False)
+
+    class RootPwd:
+        def getpwuid(self, uid):
+            return FakeEntry("root", 0, "/root")
+
+        def getpwnam(self, name):
+            raise KeyError(name)
+
+    monkeypatch.setattr(hostsetup, "pwd", RootPwd())
+    assert hostsetup.executing_user() == ("root", 0, "/root")
+
+
+def test_group_present_degrades_to_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An NSS failure answers no — the same degrade kvm_hint's
+    probe took — and a carried group answers yes."""
+
+    class FlakyGrp:
+        def getgrnam(self, name):
+            raise OSError("nss unavailable")
+
+    monkeypatch.setattr(hostsetup, "grp", FlakyGrp())
+    assert hostsetup.group_present("kvm") is False
+
+    class CarryingGrp:
+        def getgrnam(self, name):
+            return FakeGroup(name)
+
+    monkeypatch.setattr(hostsetup, "grp", CarryingGrp())
+    assert hostsetup.group_present("kvm") is True

@@ -404,7 +404,20 @@ verifies: the NixOS module in `nix/module.nix` sets
 grants the daemon the two capabilities — a `nixos-rebuild switch`
 is the whole host setup. The dev host's wrapper carries the same
 grant for `msks-dev` (its uplink default names this dev host's
-interface). An
+interface). A Debian deployment host runs
+`msks-setup-debian-host` (#546): it installs the same capability
+wrapper, lands the sysctl and the module set, adds the executing
+user to the `kvm` group when missing, and registers the
+`msksd` systemd **user** service of the user who ran the setup
+(#560) — the unit execs the daemon through the wrapper (the
+wrapper's file capabilities grant any executor), carries
+`MSKSD_EGRESS_ENABLED=true` and the uplink it detected, and
+`loginctl enable-linger` keeps it running across logouts and
+boots; a re-run refreshes the unit and restarts the daemon when
+the unit changed. Hosts the tool
+does not cover (a container, a non-systemd init, an msksd it
+cannot find beside its own install) keep the host pieces without
+the unit. An
 operator who sets `MSKSD_EGRESS_ENABLED=false` arms nothing, and
 every egress workspace then refuses to boot with the cause named.
 The dev-host egress smoke (`TEST_EGRESS=1`) runs as root:
