@@ -119,11 +119,28 @@ def detect_package_manager() -> str | None:
 # Checks whose fix is not a distro package, so every manager
 # gets the same hint: the upstream source itself. Doctor runs on
 # deployment hosts (Debian and the like) where the repo's own dev
-# tooling is absent, so the hints stay host-usable.
+# tooling is absent, so the hints stay host-usable — a command
+# sequence the operator can paste, one command a line.
 UPSTREAM_HINTS = {
-    "cloud-hypervisor": (
-        "upstream static release — install from "
-        "https://github.com/cloud-hypervisor/cloud-hypervisor/releases"
+    # The release ships pre-built static binaries — cloud-hypervisor
+    # itself and ch-remote — as x86-64 assets with -aarch64
+    # siblings; the daemon drives the VMM over its --api-socket
+    # HTTP API, while ch-remote serves the operator's hands-on
+    # control (the demo and dev tooling). The sequence installs
+    # both under their unsuffixed names with curl and install(1) —
+    # tools every deployment host already has.
+    "cloud-hypervisor": "\n".join(
+        [
+            "curl -LO "
+            "https://github.com/cloud-hypervisor/cloud-hypervisor"
+            "/releases/latest/download/cloud-hypervisor-static",
+            "curl -LO "
+            "https://github.com/cloud-hypervisor/cloud-hypervisor"
+            "/releases/latest/download/ch-remote-static",
+            "sudo install -m755 cloud-hypervisor-static"
+            " /usr/local/bin/cloud-hypervisor",
+            "sudo install -m755 ch-remote-static /usr/local/bin/ch-remote",
+        ]
     ),
 }
 
@@ -134,8 +151,8 @@ UPSTREAM_HINTS = {
 # (Debian family) and cdrtools (pacman, brew) both serve mkisofs,
 # qemu-utils/qemu-img is Debian's name for the conversion tool,
 # and conntrack comes from conntrack-tools everywhere except apt.
-# cloud-hypervisor and ch-remote carry no rows: Debian's archive
-# has neither, so their hint is the upstream release (UPSTREAM_HINTS).
+# cloud-hypervisor carries no row: Debian's archive has it not,
+# so its hint is the upstream release (UPSTREAM_HINTS).
 PACKAGE_HINTS: dict[str, dict[str, str]] = {
     "mkfs.ext4": {
         "dnf": "e2fsprogs",
@@ -776,12 +793,23 @@ def result_marker(result: CheckResult) -> str:
     return "✗"
 
 
+def hint_lines(hint: str) -> list[str]:
+    """A hint as printed lines: the first carries the Run: label,
+    the rest align beneath it — an upstream hint is a command
+    sequence, one command a line, and the sequence reads as the
+    operator pastes it."""
+    parts = hint.split("\n")
+    return [f"    Run:  {parts[0]}"] + [
+        f"          {part}" for part in parts[1:]
+    ]
+
+
 def append_result(lines: list[str], result: CheckResult) -> None:
     """One result line with its marker; the hint follows on its own."""
     marker = result_marker(result)
     lines.append(f"  {marker} {result.name}: {result.message}")
     if result.hint:
-        lines.append(f"    Run:  {result.hint}")
+        lines.extend(hint_lines(result.hint))
 
 
 def append_failure_block(
@@ -795,7 +823,7 @@ def append_failure_block(
     for result in results:
         lines.append(f"  {marker} {result.name}: {result.message}")
         if result.hint:
-            lines.append(f"    Run:  {result.hint}")
+            lines.extend(hint_lines(result.hint))
         lines.append("")
 
 

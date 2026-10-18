@@ -115,7 +115,26 @@ def test_install_hint_fallbacks() -> None:
 
 def test_install_hint_pinned_binaries() -> None:
     hint = install_hint("cloud-hypervisor", "apt")
-    assert "cloud-hypervisor/releases" in hint
+    # The upstream hint is the paste-able sequence (#557): fetch
+    # the release's static binaries and install each under its
+    # unsuffixed name — every line a host command, nothing to
+    # look up, no tarball that upstream does not ship.
+    assert (
+        "curl -LO https://github.com/cloud-hypervisor/cloud-hypervisor"
+        "/releases/latest/download/cloud-hypervisor-static" in hint
+    )
+    assert (
+        "curl -LO https://github.com/cloud-hypervisor/cloud-hypervisor"
+        "/releases/latest/download/ch-remote-static" in hint
+    )
+    assert (
+        "sudo install -m755 cloud-hypervisor-static"
+        " /usr/local/bin/cloud-hypervisor" in hint
+    )
+    assert (
+        "sudo install -m755 ch-remote-static /usr/local/bin/ch-remote" in hint
+    )
+    assert install_hint("cloud-hypervisor", None) == hint
 
 
 # ---------------------------------------------------------------------------
@@ -545,6 +564,36 @@ def test_run_doctor_grades_and_settings_names(
     } <= names
 
 
+def test_a_missing_vmm_report_prints_the_install_sequence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cloud-hypervisor miss names the fix the operator can
+    paste: the three commands the static release needs, in the
+    result list and in the closing error block (#557)."""
+
+    def without_vmm(name):
+        return None if name == "cloud-hypervisor" else f"/usr/bin/{name}"
+
+    monkeypatch.setattr(doctor_mod.shutil, "which", without_vmm)
+    monkeypatch.setattr(doctor_mod, "run", probes_ok)
+    monkeypatch.setattr(doctor_mod, "detect_package_manager", lambda: "apt")
+    report = run_doctor(Settings())
+    assert any(
+        r.name == "cloud-hypervisor" for r in report.errors
+    )  # the miss is error-grade: the daemon execs the VMM
+    text = format_report(report)
+    assert "    Run:  curl -LO " in text
+    assert (
+        "          sudo install -m755 cloud-hypervisor-static"
+        " /usr/local/bin/cloud-hypervisor" in text
+    )
+    assert (
+        "          sudo install -m755 ch-remote-static"
+        " /usr/local/bin/ch-remote" in text
+    )
+    assert text.count("curl -LO ") == 4  # two assets, row and block
+
+
 def test_run_doctor_warning_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         doctor_mod.shutil,
@@ -682,6 +731,43 @@ def test_append_failure_block_skips_empty() -> None:
     lines: list[str] = []
     append_failure_block(lines, [], "✗", "Errors:")
     assert lines == []
+
+
+def test_a_multiline_hint_aligns_its_commands() -> None:
+    """An upstream hint is a command sequence — the first line
+    carries the Run: label, the rest align beneath it so the
+    block pastes as written (#557), in the result list and in the
+    closing failure block alike."""
+    result = CheckResult(
+        name="cloud-hypervisor",
+        ok=False,
+        message="missing",
+        hint="curl -LO url\ntar -xf t\nsudo install -m755 x y /usr/local/bin/",
+    )
+    lines: list[str] = []
+    append_result(lines, result)
+    assert lines == [
+        "  ✗ cloud-hypervisor: missing",
+        "    Run:  curl -LO url",
+        "          tar -xf t",
+        "          sudo install -m755 x y /usr/local/bin/",
+    ]
+    block: list[str] = []
+    append_failure_block(
+        block,
+        [
+            CheckResult(
+                name="cloud-hypervisor",
+                ok=False,
+                message="missing",
+                hint="curl -LO url\ntar -xf t",
+            )
+        ],
+        "✗",
+        "Errors:",
+    )
+    assert "    Run:  curl -LO url" in block
+    assert "          tar -xf t" in block
 
 
 def test_format_report_all_passed(
