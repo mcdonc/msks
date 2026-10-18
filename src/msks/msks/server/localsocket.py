@@ -229,10 +229,11 @@ def is_unix_scope(scope: dict) -> int | None:
 def enabled(path_setting: str | None) -> Path | None:
     """Resolve the ``socket`` setting into the path to bind.
 
-    ``None`` (the setting absent) binds the default path; an
-    empty string disables the listener (an operator who wants
-    the TCP surface alone names that); any other value is the
-    path itself.
+    ``None`` (the setting absent) binds the default path — the
+    daemon user's own runtime dir — or serves TCP alone when no
+    runtime root exists; an empty string disables the listener
+    (an operator who wants the TCP surface alone names that); any
+    other value is the path itself.
     """
     if path_setting is None:
         return default_socket_path()

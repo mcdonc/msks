@@ -34,20 +34,27 @@ def test_default_path_prefers_the_user_runtime_dir(monkeypatch) -> None:
     assert default_socket_path() == Path("/run/user/1234/msks/msksd.sock")
 
 
-def test_default_path_falls_to_run_without_xdg(monkeypatch) -> None:
+def test_default_path_without_xdg_is_no_socket(monkeypatch) -> None:
+    """A process with no runtime root (a container, a system
+    unit) binds no default socket — the TCP surface serves alone
+    until MSKSD_SOCKET names a path."""
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-    assert default_socket_path() == Path("/run/msks/msksd.sock")
+    assert default_socket_path() is None
 
 
-def test_candidates_cover_user_and_system_runs(monkeypatch) -> None:
+def test_candidates_are_the_own_runtime_dir_alone(monkeypatch) -> None:
+    """The client looks where the same-user daemon bound: its own
+    runtime root. A socket anywhere else is a deployment choice
+    the client names explicitly, never guesses at."""
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1234")
-    assert socket_candidates() == [
-        Path("/run/user/1234/msks/msksd.sock"),
-        Path("/run/msks/msksd.sock"),
-    ]
+    assert socket_candidates() == [Path("/run/user/1234/msks/msksd.sock")]
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    assert socket_candidates() == []
 
 
-def test_candidates_dedupe_a_host_pointing_xdg_at_run(monkeypatch) -> None:
+def test_candidates_follow_xdg_pointed_at_run(monkeypatch) -> None:
+    """A host whose XDG_RUNTIME_DIR is /run itself still resolves
+    one candidate, /run/msks/msksd.sock."""
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run")
     assert socket_candidates() == [Path("/run/msks/msksd.sock")]
 
@@ -61,6 +68,9 @@ def test_find_default_socket_skips_non_sockets(
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(user_run))
     assert find_default_socket() is None
     assert is_socket_file(user_run / "msks" / "msksd.sock") is False
+    # A path that does not stat (absent, unreadable parent) takes
+    # the OSError arm, not the mode test.
+    assert is_socket_file(user_run / "msks" / "absent.sock") is False
 
 
 def test_find_default_socket_answers_a_real_socket(
@@ -266,9 +276,11 @@ async def test_require_token_refuses_a_denied_peer_without_a_token() -> None:
 
 def test_enabled_maps_the_setting(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-    assert localsocket.enabled(None) == Path("/run/msks/msksd.sock")
+    assert localsocket.enabled(None) is None
     assert localsocket.enabled("") is None
     assert localsocket.enabled("/custom/sock") == Path("/custom/sock")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1234")
+    assert localsocket.enabled(None) == Path("/run/user/1234/msks/msksd.sock")
 
 
 def test_socket_config_serves_plain_with_no_lifespan() -> None:

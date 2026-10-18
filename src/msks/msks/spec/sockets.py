@@ -18,54 +18,42 @@ SOCKET_NAME = "msksd.sock"
 SOCKET_DIR = "msks"
 
 
-def runtime_root() -> Path:
-    """The runtime root a same-user deployment uses.
-
+def runtime_root() -> Path | None:
+    """The runtime root a same-user deployment uses:
     ``$XDG_RUNTIME_DIR`` (a systemd user session's per-user
-    runtime dir, ``/run/user/<uid>``) when set — a per-user path
-    the daemon user owns without root help. System deployments
-    (a daemon running as a service user, root included) run with
-    the variable unset and land on ``/run``.
+    runtime dir, ``/run/user/<uid>``) — a path the daemon user
+    owns without root help. A process without one (a container, a
+    system unit) has no default socket: the daemon serves TCP
+    alone until ``MSKSD_SOCKET`` names a path, the same spelling
+    an operator uses to relocate it.
     """
     xdg = os.environ.get("XDG_RUNTIME_DIR", "")
-    if xdg:
-        return Path(xdg)
-    return Path("/run")
+    return Path(xdg) if xdg else None
 
 
-def default_socket_path() -> Path:
+def default_socket_path() -> Path | None:
     """Where the daemon binds its local listener by default.
 
     ``MSKSD_SOCKET`` overrides this on the daemon side; the
     client's config file and ``MSKSC_SOCKET`` name it on the
     client side. The default pairs with
     :func:`socket_candidates`: the daemon binds exactly one of
-    the candidates.
+    the candidates — or none, when no runtime root exists and
+    the TCP surface serves alone.
     """
-    return runtime_root() / SOCKET_DIR / SOCKET_NAME
+    root = runtime_root()
+    return root / SOCKET_DIR / SOCKET_NAME if root else None
 
 
 def socket_candidates() -> list[Path]:
-    """The paths an unconfigured client checks, in order.
-
-    The client's own runtime root first (the same-user case: the
-    daemon bound there), then ``/run`` (a system daemon bound
-    there; an operator's session reaches it through the socket
-    file's group bits). The first candidate that names a socket
-    wins; the list is deduplicated for hosts whose
-    ``XDG_RUNTIME_DIR`` points at ``/run`` itself.
+    """The paths an unconfigured client checks: its own runtime
+    root's socket, the same path the daemon bound. A client that
+    finds nothing there names the path explicitly (``socket:``,
+    ``MSKSC_SOCKET``, ``--daemon``) — a socket somewhere else is
+    a deployment choice the client does not guess at.
     """
-    candidates = [
-        default_socket_path(),
-        Path("/run") / SOCKET_DIR / SOCKET_NAME,
-    ]
-    seen: set[str] = set()
-    unique: list[Path] = []
-    for candidate in candidates:
-        if str(candidate) not in seen:
-            seen.add(str(candidate))
-            unique.append(candidate)
-    return unique
+    default = default_socket_path()
+    return [default] if default else []
 
 
 def is_socket_file(path: Path) -> bool:
