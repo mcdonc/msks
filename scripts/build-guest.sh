@@ -63,6 +63,12 @@ tar_name=$(cat "$out/image-archive-name")
 rm -f "$guest_dir"/workspace-*.tar
 cp -L "$out/$tar_name" "$guest_dir/$tar_name"
 chmod 0644 "$guest_dir/$tar_name"
+# The name marker lands beside the archive it names: the release
+# workflow's channel step and scripts/image_meta.py read the pair
+# from the guest dir (the marker lived only in the store output
+# before, and every dir consumer had to glob).
+printf '%s\n' "$tar_name" >"$guest_dir/image-archive-name"
+chmod 0644 "$guest_dir/image-archive-name"
 
 echo "msks: $flavor guest assets built into $guest_dir (from $out)"
 if [ "$flavor" = debian ]; then
