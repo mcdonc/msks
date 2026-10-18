@@ -94,8 +94,8 @@ survives the preset, and an empty one counts as unset.
 An unconfigured client — no `MSKSC_URL`, no `MSKSC_SOCKET`, no
 config-file daemon — looks for the default socket a same-host
 daemon binds (`$XDG_RUNTIME_DIR/msks/msksd.sock`) and connects
-through it with no token and
-no TLS (#555); finding none, it exits with the paths it looked for
+through it with no token and no TLS (#555); finding none, it
+exits with the paths it looked for
 and the two settings that name a daemon outright. The client never
 dials a TCP address implicitly — a well-known port could belong to
 any daemon.

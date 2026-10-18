@@ -35,11 +35,17 @@ UNIX_SCHEME = "http+unix://"
 
 #: The message an unconfigured client exits with (#555): the
 #: socket paths it looked for and the two settings that name a
-#: daemon outright.
+#: daemon outright. Without a runtime dir there is nothing to
+#: look for, and the message says that instead of an empty list.
 UNCONFIGURED_MESSAGE = (
-    "no daemon configured and no local socket found (looked for "
-    "{candidates}); set MSKSC_URL (and MSKSC_TOKEN) for a remote "
-    "daemon, MSKSC_SOCKET for a local one, or start msksd"
+    "no daemon configured and no local socket found ({looked}); "
+    "set MSKSC_URL (and MSKSC_TOKEN) for a remote daemon, "
+    "MSKSC_SOCKET for a local one, or start msksd"
+)
+LOOKED_FOR = "looked for {candidates}"
+LOOKED_NOWHERE = (
+    "no $XDG_RUNTIME_DIR to look in — a socket outside it is a "
+    "path MSKSC_SOCKET names"
 )
 
 
@@ -79,6 +85,18 @@ def env_url() -> str:
     return unconfigured_or_default()
 
 
+def looked_for() -> str:
+    """The refusal's parenthetical: the paths a client in this
+    environment actually checks, or — when no runtime dir gives
+    it none — the fact that names what to do about it."""
+    candidates = socket_candidates()
+    if not candidates:
+        return LOOKED_NOWHERE
+    return LOOKED_FOR.format(
+        candidates=", ".join(str(path) for path in candidates)
+    )
+
+
 def unconfigured_or_default() -> str:
     """The unconfigured tail: the default socket a same-host
     daemon left, or the one-line refusal that names both ways to
@@ -87,10 +105,7 @@ def unconfigured_or_default() -> str:
     if found is not None:
         return unix_url(str(found))
     raise SystemExit(
-        "msks: "
-        + UNCONFIGURED_MESSAGE.format(
-            candidates=", ".join(str(path) for path in socket_candidates())
-        )
+        "msks: " + UNCONFIGURED_MESSAGE.format(looked=looked_for())
     )
 
 

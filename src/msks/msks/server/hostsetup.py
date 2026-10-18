@@ -744,8 +744,7 @@ def start_unit(user: str, uid: int) -> None:
 def restart_running_unit(user: str, uid: int) -> None:
     """Restart the daemon, waited out: a stop stops workspaces
     first (the unit allows 180s), so this call carries a matching
-    timeout, and its failure is named — a crash-looping unit must
-    not print as started."""
+    timeout, and the restart command's own failure is named."""
     rc, err = user_manager_call(
         user, uid, ["restart", "msksd.service"], timeout=240.0
     )
@@ -810,7 +809,7 @@ def service_note(user: str, uid: int, manager_up_first: bool) -> str:
 
 
 def install_service(
-    user: str, uid: int, gid: int, home: str, uplink_name: str, kvm_added: bool
+    user: str, uid: int, gid: int, home: str, uplink_name: str
 ) -> str:
     """Land the daemon's systemd user service (#560): the unit in
     the executing user's own config, enable-and-start with linger
@@ -824,9 +823,9 @@ def install_service(
     cause = service_skip_cause(msksd)
     if cause is not None:
         return cause
-    manager_up_first = manager_running(uid)
-    ensure_unit_parents(home, uid, gid)
+    manager_up_first = manager_running(uid) and group_present("kvm")
     try:
+        ensure_unit_parents(home, uid, gid)
         changed = write_unit(home, msksd, uplink_name)
         activate_unit(user, uid, changed)
     except OSError as exc:
@@ -897,9 +896,9 @@ def run_setup(service: bool = True) -> None:
         states = land_modules()
         user, uid, gid, home = executing_user()
         the_uplink = uplink()
-        kvm_note, kvm_added = ensure_kvm_membership(user)
+        kvm_note, _kvm_added = ensure_kvm_membership(user)
         service_note = (
-            install_service(user, uid, gid, home, the_uplink, kvm_added)
+            install_service(user, uid, gid, home, the_uplink)
             if service
             else "skipped (--no-service)"
         )

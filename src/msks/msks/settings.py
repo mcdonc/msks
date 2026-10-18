@@ -172,9 +172,10 @@ class ServerSettings:
     tls_key: str | None = None
     # The local listener (#555): a unix socket same-host clients
     # reach with peer-credential auth and no token. None binds the
-    # default path ($XDG_RUNTIME_DIR or /run, under msks/); the
-    # empty string disables the listener and serves TCP alone;
-    # any other value is the socket path. Startup-bound: a
+    # default path ($XDG_RUNTIME_DIR/msks/msksd.sock, TCP alone
+    # when no runtime dir exists); the empty string disables the
+    # listener and serves TCP alone; any other value is the
+    # socket path. Startup-bound: a
     # SIGHUP reload naming a new path changes nothing until a
     # restart.
     socket: str | None = None

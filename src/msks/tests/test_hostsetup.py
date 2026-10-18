@@ -1183,6 +1183,60 @@ def test_restart_failure_refuses(
     assert "journalctl --user -u msksd" in err
 
 
+def test_a_missing_home_is_a_named_refusal(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """Round-3 blocking: the parent-chain walk over a home that
+    does not exist raises inside the wrap — the operator reads a
+    named refusal, never a traceback out of main."""
+    home = tmp_missing_home(monkeypatch, debian_host)
+    assert main() == 1
+    assert "landing the user unit failed" in capsys.readouterr().err
+    assert home  # the failing home was the one under test
+
+
+def tmp_missing_home(monkeypatch, debian_host):
+    import tempfile
+
+    home = Path(tempfile.mkdtemp()) / "ghost"
+    monkeypatch.setattr(
+        hostsetup, "executing_user", lambda: ("ghost", 1042, 1042, str(home))
+    )
+    return home
+
+
+def test_a_config_that_is_a_file_is_a_named_refusal(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """~/.config as a regular file (a leftover, a mistaken
+    redirect) refuses by name too — the round-3 live repro's
+    second shape."""
+    real_home = Path(hostsetup.executing_user()[3])
+    (real_home / ".config").write_text("not a directory\n")
+    assert main() == 1
+    assert "landing the user unit failed" in capsys.readouterr().err
+
+
+def test_the_kvm_note_needs_a_kvm_group(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A host with no kvm group has no membership the manager
+    could predate — the note stays off and the kvm line names the
+    stack to install."""
+    monkeypatch.setattr(hostsetup, "group_present", lambda name: False)
+    assert main() == 0
+    out = capsys.readouterr().out
+    assert "the manager may predate" not in out
+    assert "the kvm group is absent" in out
+
+
 def test_a_unit_read_error_is_a_named_refusal(
     debian_host: Host,
     monkeypatch: pytest.MonkeyPatch,
