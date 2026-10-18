@@ -151,17 +151,23 @@ jobs:
         run: nix profile add github:cachix/devenv/v2.3.1
 
       # The manifest being replaced: the previous version
-      # release's images.json (a re-tagged release's own manifest
-      # wins when it carries one), so flavors whose derivation did
-      # not change carry their rows — and their built_from —
-      # forward across releases.
+      # release's images.json — the newest tag strictly below
+      # this one (a re-tagged release's own manifest wins when it
+      # carries one) — so flavors whose derivation did not change
+      # carry their rows — and their built_from — forward across
+      # releases.
       - name: Read the previous manifest
         run: |
           set -eu
           if gh release download "$TAG" -p images.json -O prev.json; then
             echo "re-tagged release: keeping its manifest"
           elif prev_tag=$(git tag --sort=-v:refname | grep '^v' | \
-                  grep -vx "$TAG" | head -1) && \
+                  grep -vx "$TAG" | while read -r t; do \
+                    if [ "$t" = "$(printf '%s\n%s\n' "$TAG" "$t" | \
+                                  sort -V | head -1)" ]; then \
+                      echo "$t"; break; \
+                    fi; \
+                  done) && \
                [ -n "$prev_tag" ] && \
                gh release download "$prev_tag" -p images.json -O prev.json
           then
@@ -217,7 +223,8 @@ jobs:
                 --title "$flavor image ($short)" \
                 --notes "Built from $SHA. What changed: https://github.com/$REPO/compare/${prev_from:-$SHA}...$SHA" \
                 "$flavor.tar.zst#$flavor.tar.zst" \
-                || echo "another run created $tag; uploading to it"
+                || gh release upload "$tag" \
+                  "$flavor.tar.zst#$flavor.tar.zst" --clobber
             fi
             meta=$(devenv --quiet -O dotenv.enable:bool false shell -- \
               python scripts/image_meta.py "$dir")

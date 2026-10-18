@@ -106,3 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     json.dump(facts, sys.stdout, indent=2)
     print()
     return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())

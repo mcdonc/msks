@@ -1055,9 +1055,9 @@ shares (#271):
 
 ```text
 $ msks image ls
-ref          hash          default  kernel                description                       imported
-debian:13    9f2c41ab77de  default  6.12.107+deb13 (raw)  Debian 13 cloud image, kernel 6.…  2026-09-22 14:03
-alpine:3.20  33aa9db1c4ef  -        6.12.7 (raw)          -                                 2026-09-19 09:41
+ref            hash          default  kernel                description                      imported
+debian:13.6    9f2c41ab77de  default  6.12.107+deb13 (raw)  Debian 13.6 cloud image, kernel…  2026-09-22 14:03
+alpine:3.20    33aa9db1c4ef  -        6.12.7 (raw)          -                                2026-09-19 09:41
 ```
 
 The image the daemon designates as default carries the `default`
@@ -1194,11 +1194,10 @@ default designation — from the same listing data:
 ```text
 $ msks image info debian:13
 ref          mine:1.4
-origin       debian:13
+origin       debian:13.6
 hash         9f2c41ab77de0000000000000000000000000000000000000000000000000000
 kernel       6.12.107+deb13 (raw)
-description  Debian 13.6 cloud image, kernel 6.12.107+deb13,
-             cloud-init, the egress module set and consent stack
+description  Debian 13.6 cloud image, kernel 6.12.107+deb13, cloud-init, the egress module set and consent stack
 cmdline      console=ttyS0 root=/dev/vda rw
 seed         provisioner - (none declared)
 default      yes

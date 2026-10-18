@@ -145,3 +145,47 @@ def test_image_meta_names_a_missing_archive(tmp_path: Path) -> None:
     (empty / "image-archive-name").write_text("workspace-x-1.tar")
     with pytest.raises(SystemExit, match="no such archive"):
         image_meta.archive_in(empty)
+
+
+def test_the_scripts_run_as_processes(tmp_path: Path) -> None:
+    """The workflow drives both scripts as processes (#564 round-2
+    review): the __main__ guard is what makes the changelog gate
+    refuse and the meta reader answer — pinned by running them the
+    way the workflow does."""
+    import subprocess
+
+    changelog = tmp_path / "changes.md"
+    changelog.write_text(CHANGELOG)
+    ok = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS / "release_notes.py"),
+            "v1.2.3",
+            str(changelog),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert ok.returncode == 0
+    assert "the fix body" in ok.stdout
+    refused = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPTS / "release_notes.py"),
+            "v9.9.9",
+            str(changelog),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert refused.returncode == 1
+    assert "cut the release in the changelog first" in refused.stderr
+
+    guest = build_guest_dir(tmp_path)
+    meta = subprocess.run(
+        [sys.executable, str(SCRIPTS / "image_meta.py"), str(guest)],
+        capture_output=True,
+        text=True,
+    )
+    assert meta.returncode == 0
+    assert json.loads(meta.stdout)["ref"] == "debian:13.6"

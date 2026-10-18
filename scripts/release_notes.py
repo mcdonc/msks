@@ -103,3 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     sys.stdout.write(section)
     return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())
