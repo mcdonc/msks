@@ -503,6 +503,7 @@ def test_global_keys_answer_when_nothing_else_does(
     assert conf.expected_image == "img:global"
     assert conf.env_layer == {
         "MSKSC_URL": "https://global:8660",
+        "MSKSC_SOCKET": "",
         "MSKSC_TOKEN": "filetok",
         "MSKSC_CAFILE": "/global-ca.pem",
         "MSKSC_EXPECTED_IMAGE": "img:global",
@@ -952,7 +953,10 @@ def test_a_socket_entry_resolves_without_a_token(
     assert conf.url == ""
     assert conf.socket == "/run/s"
     assert conf.token is None
-    assert conf.env_layer == {"MSKSC_SOCKET": "/run/s"}
+    assert conf.env_layer == {
+        "MSKSC_SOCKET": "/run/s",
+        "MSKSC_URL": "",  # the exclusive blank: the loser's dial is off
+    }
 
 
 def test_an_active_socket_entry_materializes_the_socket(
@@ -1007,4 +1011,53 @@ def test_a_socket_path_flag_resolves_to_the_socket(
     conf = config.resolve("/run/flagged.sock", "none")
     assert conf.url == ""
     assert conf.socket == "/run/flagged.sock"
-    assert conf.env_layer == {"MSKSC_SOCKET": "/run/flagged.sock"}
+    assert conf.env_layer == {
+        "MSKSC_SOCKET": "/run/flagged.sock",
+        "MSKSC_URL": "",
+    }
+
+
+def test_a_flagged_socket_entry_dials_the_socket_not_the_env_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The flag's pick is exclusive (#555 review): the ambient
+    MSKSC_URL — the devenv shell presets one always — must not
+    take the dial back to TCP."""
+    from msks.client import env
+
+    clean_env(monkeypatch)
+    monkeypatch.setenv("MSKSC_URL", "https://preset:8660")
+    path = write_config(tmp_path, "daemons:\n  local:\n    socket: /run/s\n")
+    config.apply(config.resolve("local", path))
+    assert env.env_url() == env.unix_url("/run/s")
+
+
+def test_an_active_socket_entry_does_not_reach_past_the_env_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """active_daemon is a file-tier pick (#314 precedence): an
+    exported MSKSC_URL outranks it — the flag alone reaches past
+    the environment (#555 review)."""
+    clean_env(monkeypatch)
+    monkeypatch.setenv("MSKSC_URL", "https://preset:8660")
+    path = write_config(
+        tmp_path,
+        "active_daemon: local\ndaemons:\n  local:\n    socket: /run/s\n",
+    )
+    conf = config.resolve(None, path)
+    assert conf.url == "https://preset:8660"
+    assert conf.socket == ""
+
+
+def test_the_environment_cafile_beats_the_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A scalar connect key's env form wins over the file's value
+    and is never materialized (it already lives where the readers
+    look)."""
+    clean_env(monkeypatch)
+    monkeypatch.setenv("MSKSC_CAFILE", "/env-ca.pem")
+    path = write_config(tmp_path, "cafile: /file-ca.pem\n")
+    conf = config.resolve(None, path)
+    assert conf.cafile == "/env-ca.pem"
+    assert "MSKSC_CAFILE" not in conf.env_layer

@@ -807,68 +807,94 @@ def resolved_address(
     nothing did (the readers then look for the default socket,
     #555).
 
-    A raw-URL flag wins outright, and so does an absolute-path
-    flag (its socket form). Below the flags, when both a url and
-    a socket hold the same tier — both in the environment, or
-    both in the file — the url wins; when the socket holds the
-    higher tier (a flagged alias carries ``socket`` against an
-    environment ``MSKSC_URL``), the socket wins: the flag's
-    entry outranks the environment, the same rule every entry
-    key carries.
+    The tiers are the precedence rule itself (#314): the
+    ``--daemon`` flag (3) beats the environment (2) beats the
+    file (1) — an ``active_daemon`` entry's socket does not reach
+    past an exported ``MSKSC_URL``. A tie goes to the url (both
+    in the environment, or both in the file: the url names a
+    daemon anywhere, a socket only this host). The winner is
+    materialized **exclusively** when the flag or the file
+    provided it — the loser's variable is written empty — so the
+    environment readers (:func:`msks.client.env.env_url`, which
+    reads ``MSKSC_URL`` first) dial what this pick chose, not
+    what an ambient export left behind.
     """
+    if (
+        selection.url_override is not None
+        or selection.socket_override is not None
+    ):
+        return flag_address(selection, layer)
+    url, url_tier = address_tier("url", entry, selection.flagged, doc)
+    sock, sock_tier = address_tier("socket", entry, selection.flagged, doc)
+    if url_tier == 0 and sock_tier == 0:
+        return "", ""
+    return sided_pick(url, url_tier, sock, sock_tier, layer)
+
+
+def flag_address(
+    selection: Selection, layer: dict[str, str]
+) -> tuple[str, str]:
+    """A ``--daemon`` flag's address, materialized exclusively."""
     if selection.url_override is not None:
-        layer["MSKSC_URL"] = selection.url_override.rstrip("/")
-        return selection.url_override.rstrip("/"), ""
-    if selection.socket_override is not None:
-        layer["MSKSC_SOCKET"] = selection.socket_override
-        return "", selection.socket_override
-    url, url_from_file = connect_setting("url", entry, selection.flagged, doc)
-    sock, sock_from_file = connect_setting(
-        "socket", entry, selection.flagged, doc
-    )
-    return layered_address(url, url_from_file, sock, sock_from_file, layer)
+        return filed_address(selection.url_override.rstrip("/"), "", layer)
+    return filed_address("", selection.socket_override, layer)
 
 
-def layered_address(
+def sided_pick(
     url: str | None,
-    url_from_file: bool,
+    url_tier: int,
     sock: str | None,
-    sock_from_file: bool,
+    sock_tier: int,
     layer: dict[str, str],
 ) -> tuple[str, str]:
-    """The tiered pick below the flags, filed into *layer* for
-    :func:`apply` when the file provided it."""
-    url, sock = tiered_pick(url, url_from_file, sock, sock_from_file)
-    if url and url_from_file:
-        layer["MSKSC_URL"] = url
-    if sock and sock_from_file:
-        layer["MSKSC_SOCKET"] = sock
-    return url, sock
+    """The below-flag pick: the higher tier wins, a tie goes to
+    the url, and a file-tier winner is materialized exclusively
+    (an environment winner needs no write — the reader already
+    sees it, and the loser's export stays untouched)."""
+    socket_won = sock_tier > url_tier
+    url_value = "" if socket_won else url.rstrip("/")
+    sock_value = sock if socket_won else ""
+    if max(url_tier, sock_tier) in (1, 3):
+        return filed_address(url_value, sock_value, layer)
+    return url_value, sock_value
 
 
-def tiered_pick(
-    url: str | None,
-    url_from_file: bool,
-    sock: str | None,
-    sock_from_file: bool,
+def address_tier(
+    key: str, entry: dict | None, flagged: bool, doc: dict
+) -> tuple[str | None, int]:
+    """One address key's own winner and its precedence tier: the
+    flagged entry (3) beats the environment (2) beats the file
+    (#314)."""
+    if entry is not None and flagged and key in entry:
+        return entry[key], 3
+    env = os.environ.get(GLOBAL_ENV_VARS[key], "")
+    if env:
+        return env, 2
+    return file_tier(key, entry, doc)
+
+
+def file_tier(
+    key: str, entry: dict | None, doc: dict
+) -> tuple[str | None, int]:
+    """The file's side of one address key: the selected alias's
+    entry or the global key, tier 1 either way."""
+    if entry is not None and key in entry:
+        return entry[key], 1
+    value = doc.get(key)
+    if value is not None:
+        return value, 1
+    return None, 0
+
+
+def filed_address(
+    url: str, socket: str, layer: dict[str, str]
 ) -> tuple[str, str]:
-    """One address: the higher tier wins, and a tie goes to the
-    url — both in the environment, or both in the file, the url
-    is the pick (it names a daemon anywhere; a socket only this
-    host)."""
-    if url is None:
-        return "", sock or ""
-    if sock is not None and socket_wins(url_from_file, sock_from_file):
-        return "", sock
-    return url.rstrip("/"), ""
-
-
-def socket_wins(url_from_file: bool, sock_from_file: bool) -> bool:
-    """The socket takes the address when it holds the higher tier:
-    the file provided it against an environment-provided url (a
-    flagged entry outranks the environment, the rule every entry
-    key carries)."""
-    return sock_from_file and not url_from_file
+    """Write the pick exclusively: the winner's variable carries
+    it, the loser's carries the empty (unset) form — one dial,
+    whichever variable a reader checks first."""
+    layer["MSKSC_URL"] = url
+    layer["MSKSC_SOCKET"] = socket
+    return url, socket
 
 
 def resolved_token(

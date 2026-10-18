@@ -115,18 +115,17 @@ def bind(path: Path) -> socket.socket:
 
     The parent directory is created when missing. A stale socket
     file at the path — a daemon that died without unlinking — is
-    replaced; anything else that occupies the name is refused
-    (a regular file there is an operator mistake to surface, not
-    a silent clobber). The mode gives the daemon user and the
+    replaced; a socket a live daemon still answers is refused (a
+    second daemon must not steal the first's listener, #555
+    review); anything else that occupies the name is refused (a
+    regular file there is an operator mistake to surface, not a
+    silent clobber). The mode gives the daemon user and the
     socket's group connect rights and denies the rest; an
     operator widening access to a group chgrps the file, and the
     credential policy below agrees with whatever group it holds.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists() and not path.is_socket():
-        raise OSError(f"{path} exists and is not a socket file")
-    with suppress(FileNotFoundError):
-        path.unlink()
+    refuse_taken_path(path)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
         sock.bind(str(path))
@@ -136,6 +135,37 @@ def bind(path: Path) -> socket.socket:
         sock.close()
         raise
     return sock
+
+
+def refuse_taken_path(path: Path) -> None:
+    """The one-listener rule on the filesystem: a non-socket file
+    at the path is an operator mistake to surface; a socket file
+    someone still answers is a live listener to leave alone
+    (a second daemon must not steal the first's clients, #555
+    review); a socket nobody answers is stale — a daemon that
+    died without unlinking — and is replaced."""
+    if path.exists() and not path.is_socket():
+        raise OSError(f"{path} exists and is not a socket file")
+    if path.is_socket():
+        if answers(path):
+            raise OSError(
+                f"{path}: a daemon is already listening there; a "
+                "second listener would steal its clients"
+            )
+        path.unlink()
+
+
+def answers(path: Path) -> bool:
+    """True when something accepts connections at *path*."""
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.settimeout(1.0)
+        probe.connect(str(path))
+    except OSError:
+        return False
+    finally:
+        probe.close()
+    return True
 
 
 def unlink(path: Path) -> None:
@@ -219,11 +249,15 @@ class QuietServer(uvicorn.Server):
     the shutdown; this class runs the socket server's serve path
     without installing handlers of its own — a second ``capture_signals``
     would replace the first server's handlers and strand it
-    running after a SIGTERM.
+    running after a SIGTERM. The call into uvicorn's private
+    ``_serve`` is the pinned seam: it is everything ``serve`` does
+    without the signal capture, and the end-to-end test holds it —
+    a uvicorn upgrade that renames it fails that test here, not a
+    daemon at runtime.
     """
 
     async def serve(self, sockets: list | None = None) -> None:  # type: ignore[override]
-        await self._serve(sockets)  # noqa: SLF001 — the point of the class
+        await self._serve(sockets=sockets)  # noqa: SLF001 — the point of the class
 
 
 def platform_supported() -> bool:

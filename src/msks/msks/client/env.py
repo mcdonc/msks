@@ -73,7 +73,7 @@ def env_url() -> str:
     url = (os.environ.get("MSKSC_URL", "") or "").rstrip("/")
     if url:
         return url
-    sock = os.environ.get("MSKSC_SOCKET", "").strip()
+    sock = os.path.expanduser(os.environ.get("MSKSC_SOCKET", "").strip())
     if sock:
         return unix_url(sock)
     return unconfigured_or_default()

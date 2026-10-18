@@ -754,12 +754,16 @@ def _server_settings_from_env(
             validate_token_plaintext(bootstrap)
         except ValueError as exc:
             raise ValueError(f"MSKSD_BOOTSTRAP_TOKEN: {exc}") from None
+    # The socket setting keeps its empty string: "" disables the
+    # local listener (#555), and optional_env would collapse it
+    # into the default-path bind.
+    socket_setting = env["MSKSD_SOCKET"] if "MSKSD_SOCKET" in env else None
     return cls(
         host=_env(env, "MSKSD_HOST", cls.host),
         port=_parse_int(env, "MSKSD_PORT", cls.port),
         tls_cert=optional_env(env, "MSKSD_TLS_CERT"),
         tls_key=optional_env(env, "MSKSD_TLS_KEY"),
-        socket=optional_env(env, "MSKSD_SOCKET"),
+        socket=socket_setting,
         db_path=state / "msks.db",
         event_poll_s=poll,
         bootstrap_token=bootstrap,

@@ -42,6 +42,11 @@ def server_config(app, api=None) -> uvicorn.Config:
         port=server.port,
         log_level="info",
         access_log=server.access_log,
+        # No proxy fronts msksd, and the proxy-header middleware
+        # would let a TCP caller rewrite scope["client"] — the
+        # very pair the local listener's policy trusts (#555
+        # review: a forged X-Forwarded-For reached the unix marker).
+        proxy_headers=False,
         **ssl_kwargs,
     )
 
@@ -64,6 +69,7 @@ def socket_config(app, api) -> uvicorn.Config:
         log_level="info",
         access_log=server.access_log,
         lifespan="off",
+        proxy_headers=False,
     )
 
 
@@ -312,7 +318,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.reload:
         arm_reload_watcher()
-    serve(app, args.no_tls)
+    try:
+        serve(app, args.no_tls)
+    except OSError as exc:
+        # A listener bind the kernel refused (a socket path without
+        # permissions, a TCP port taken): one operator-shaped line,
+        # the same shape config and TLS failures take above.
+        print(f"msksd: {exc}", file=sys.stderr)
+        return 2
     return 0
 
 

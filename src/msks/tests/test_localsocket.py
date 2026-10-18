@@ -616,3 +616,55 @@ def test_wrap_protocols_skips_a_ws_disabled_config() -> None:
     config = uvicorn.Config(FastAPI(), lifespan="off", ws="none")
     localsocket.wrap_protocols(config)
     assert config.ws_protocol_class is None
+
+
+# --- review round 1: the proxy-header forgery and the live socket ----
+
+
+def test_both_listener_configs_refuse_proxy_headers() -> None:
+    """uvicorn's proxy-header middleware rewrites scope["client"]
+    from X-Forwarded-For on a TCP connection from 127.0.0.1 — a
+    forged header reached the local-peer marker with it on (#555
+    review). No proxy fronts msksd: both listeners refuse the
+    middleware outright."""
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            settings=SimpleNamespace(
+                server=SimpleNamespace(
+                    host="127.0.0.1",
+                    port=8660,
+                    socket=None,
+                    access_log=False,
+                    tls_cert=None,
+                    tls_key=None,
+                )
+            )
+        )
+    )
+    assert main.server_config(app, api=FastAPI()).proxy_headers is False
+    assert main.socket_config(app, api=FastAPI()).proxy_headers is False
+
+
+def test_bind_refuses_a_live_daemons_socket(tmp_path: Path) -> None:
+    """A second daemon must not steal a first's listener: the bind
+    probes the existing socket and refuses when someone answers
+    (#555 review)."""
+    path = tmp_path / "msksd.sock"
+    live = localsocket.bind(path)
+    try:
+        with pytest.raises(OSError, match="already listening"):
+            localsocket.bind(path)
+    finally:
+        live.close()
+        localsocket.unlink(path)
+
+
+def test_a_socket_setting_survives_the_env_reader() -> None:
+    """MSKSD_SOCKET="" disables the listener (#555 review): the
+    settings read keeps the empty string instead of collapsing it
+    into the default-path bind."""
+    from msks.settings import ServerSettings
+
+    settings = ServerSettings.from_env({"MSKSD_SOCKET": ""})
+    assert settings.socket == ""
+    assert localsocket.enabled(settings.socket) is None

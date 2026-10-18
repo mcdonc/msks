@@ -1534,7 +1534,10 @@ def shared_ssl():
     """The one TLS context for the app's lifetime: building it
     prints the TOFU warning when MSKSC_CAFILE is unset, and building
     it per verdict or per reconnect would spray that warning across
-    the live screen."""
+    the live screen. The local listener (#555) answers None — no
+    TLS rides a unix socket, so no warning exists to print."""
+    if is_unix(env_url()):
+        return None
     if _SHARED_SSL[0] is None:
         _SHARED_SSL[0] = ssl_context()
     return _SHARED_SSL[0]

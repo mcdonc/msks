@@ -2667,3 +2667,14 @@ async def test_the_verdict_keys_leave_when_the_queue_empties() -> None:
         cp.tick()  # the rebuild lands the gate's fresh answer
         await wait_for(lambda: verdict_keys() == [])
         assert data.decided == []
+
+
+def test_shared_ssl_answers_none_over_the_local_socket(
+    monkeypatch,
+) -> None:
+    """No TLS rides a unix socket (#555): the shared context
+    builder returns None — no TOFU warning prints on the TUI."""
+    monkeypatch.setenv("MSKSC_URL", "")
+    monkeypatch.setenv("MSKSC_SOCKET", "/run/msks/msksd.sock")
+    monkeypatch.setattr(consent_ui, "_SHARED_SSL", [None])
+    assert consent_ui.shared_ssl() is None
