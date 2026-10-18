@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.1] - 2026-10-18
+
 ### Added
 
 - **The NixOS workspace guest image (#250).** A second catalog image
