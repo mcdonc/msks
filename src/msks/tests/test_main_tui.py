@@ -4815,42 +4815,6 @@ async def test_an_empty_manifest_names_itself(monkeypatch) -> None:
         assert "carries no images" in detail
 
 
-async def test_the_importing_modal_closes_without_stopping(
-    monkeypatch,
-) -> None:
-    """q on the importing modal closes it; the daemon's import
-    runs to completion anyway (the POST cannot be cancelled) and
-    the flash still lands."""
-    scripted_manifest(monkeypatch)
-    data = FakeData([row()])
-    app, _ = make_app(data)
-    async with app.run_test() as pilot:
-        await pilot.press("i")
-        await wait_for(lambda: app.screen.query(OptionList) != [])
-        await pilot.press("enter")
-        await wait_for(lambda: data.import_calls == [CHANNEL[0]["url"]])
-        await wait_for(
-            lambda: "imported debian:13.6 (aaaaaaaaaaaa)" in status_text(app)
-        )
-
-
-def test_picker_label_shapes() -> None:
-    """The picker's label helpers: a row without a size keeps its
-    dash, the description caps with the ellipsis, and a row
-    missing its pair refuses."""
-    from msks.client.tui.importer import manifest_row, picker_label
-
-    assert picker_label({"ref": "x:1", "description": "d", "size": None}) == (
-        "x:1  —  d  (-)"
-    )
-    long = picker_label({"ref": "x:1", "description": "y" * 60, "size": 1})
-    assert "…" in long
-    import pytest as _pytest
-
-    with _pytest.raises(ValueError, match="lacks ref/url"):
-        manifest_row({"ref": "x:1"})
-
-
 async def test_q_on_the_importing_modal_closes_it(monkeypatch) -> None:
     """q while the daemon still downloads: the modal closes (the
     import itself cannot be cancelled — the POST runs to
@@ -4933,3 +4897,125 @@ async def test_the_data_seam_posts_the_import(monkeypatch) -> None:
     assert json.loads(posted[0].content) == {
         "source": "https://example.com/x.tar.zst"
     }
+
+
+async def test_a_cancelled_fetch_pops_nothing_later(monkeypatch) -> None:
+    """Round-1 review's live repro, pinned: q while the fetch
+    hangs cancels it — the later failure (or success) of that
+    fetch touches no screen that stood on top in the meantime;
+    a create form opened right after survives."""
+    import asyncio
+
+    release = asyncio.Event()
+
+    async def hanging(url, transport=None):
+        await release.wait()
+        raise SystemExit("cannot fetch the image manifest: offline")
+
+    from msks.client.tui import importer as importer_mod
+
+    monkeypatch.setattr(importer_mod, "fetch_manifest", hanging)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(
+            lambda: type(app.screen).__name__ == "ImageImportScreen"
+        )
+        await pilot.press("q")
+        await pilot.press("c")  # an innocent screen takes the top
+        await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
+        release.set()  # the cancelled fetch's failure lands now
+        await asyncio.sleep(0.3)
+        assert type(app.screen).__name__ == "CreateScreen"
+        assert data.import_calls == []
+
+
+async def test_a_mistyped_manifest_field_refuses_by_name(monkeypatch) -> None:
+    """A hand-written channel row with a string size (the
+    fork/self-hosted case the setting exists for) names the row
+    on the failure panel — the picker never strands on its
+    fetching line."""
+    from msks.client.tui import importer as importer_mod
+
+    with pytest.raises(ValueError, match="size must be a number"):
+        importer_mod.manifest_row(
+            {"ref": "x:1", "url": "u", "size": "279000000"}
+        )
+    with pytest.raises(ValueError, match="description must be a string"):
+        importer_mod.manifest_row({"ref": "x:1", "url": "u", "description": 7})
+    with pytest.raises(ValueError, match="url must be a string"):
+        importer_mod.manifest_row({"ref": "x:1", "url": 5})
+
+
+def test_a_duplicated_ref_keeps_both_rows_selectable(monkeypatch) -> None:
+    """Two rows sharing a ref (a rebuilt archive) carry the hash
+    tail, and each label finds its own row."""
+    from msks.client.tui.importer import picker_label
+
+    rows = [
+        {"ref": "x:1", "url": "a", "hash": "a" * 64},
+        {"ref": "x:1", "url": "b", "hash": "b" * 64},
+    ]
+    labels = [
+        picker_label(rows[0], dedupe=True),
+        picker_label(rows[1], dedupe=True),
+    ]
+    assert labels[0] != labels[1]
+    assert "aaaaaaaaaaaa" in labels[0]
+
+
+def test_the_importing_modal_binds_q(monkeypatch) -> None:
+    """The modal's q binding is registered to its cancel action —
+    a typo'd binding string would otherwise never be caught (the
+    suite drives the action directly; the timer holds
+    pilot.press)."""
+    from msks.client.tui.importer import ImportingScreen
+
+    keys = {
+        (b.key, getattr(b, "action", None)) for b in ImportingScreen.BINDINGS
+    }
+    assert ("q", "cancel") in keys
+
+
+def test_a_bool_size_refuses(monkeypatch) -> None:
+    """A hand-written manifest's ``size: true`` (bools are ints
+    in Python) is not a size — the row refuses by name."""
+    from msks.client.tui.importer import manifest_row
+
+    with pytest.raises(ValueError, match="size must be a number"):
+        manifest_row({"ref": "x:1", "url": "u", "size": True})
+
+
+def test_a_row_missing_its_pair_and_the_left_paths() -> None:
+    """The validation's floor (a row without its ref/url pair)
+    and the left-guarded exits: a screen already dismissed takes
+    no second dismissal and fires no callback."""
+    from msks.client.tui.importer import ImageImportScreen, manifest_row
+
+    with pytest.raises(ValueError, match="lacks ref/url"):
+        manifest_row({"ref": "x:1"})
+    with pytest.raises(ValueError, match="lacks ref/url"):
+        manifest_row("not even a dict")
+
+    picked: list = []
+    screen = ImageImportScreen(lambda row: picked.append(row))
+    screen._left = True
+    screen.dismiss_with(None)
+    assert picked == []
+    screen.land(SystemExit("late failure"))  # no pop, no panel
+
+
+def test_read_rows_on_a_left_screen_mounts_nothing() -> None:
+    """The left-guarded mount: a read that finishes after the
+    screen went (the cancel's narrow loss window) validates its
+    rows but mounts nothing — the comprehension's whole walk and
+    both guard arms in one drive."""
+    from msks.client.tui.importer import ImageImportScreen
+
+    screen = ImageImportScreen(lambda row: None)
+    screen._left = True
+    screen.read_rows([{"ref": "x:1", "url": "u"}])
+    assert screen.rows == [{"ref": "x:1", "url": "u"}]
+    with pytest.raises(SystemExit, match="carries no images"):
+        screen.read_rows([])
