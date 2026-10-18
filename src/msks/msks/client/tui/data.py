@@ -57,6 +57,20 @@ class TuiData:
             ssl_ctx=shared_ssl(),
         )
 
+    async def import_image(self, source: str) -> dict:
+        """POST one image import — the TUI's Import image action
+        (#565): the source is a published channel URL; the daemon
+        downloads, verifies, and floor-checks the archive."""
+        return await api_call(
+            "POST",
+            env_url(),
+            env_token(),
+            "/api/v1/images",
+            json_body={"source": source},
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+        )
+
     async def create(self, body: dict) -> dict:
         """POST one workspace (the create form's fields) with the
         operator's configured key for its identity (#486) — the

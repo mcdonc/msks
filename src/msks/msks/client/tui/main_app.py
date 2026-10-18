@@ -253,6 +253,9 @@ class MsksTuiApp(App):
         # status lines read it off the app instead of each holding
         # its own env edge.
         self.url = env_url()
+        # The invocation's resolved config, kept for the screens
+        # that read a setting from it (#565's manifest URL).
+        self.conf = conf
         # The operator's terminal launcher (#341, #562): configured
         # means the page's shell action opens windows through it;
         # None — the default, and a tree without a resolution
