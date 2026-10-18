@@ -86,12 +86,6 @@ SSH_OPTIONS_ENV = "MSKSC_SSH_OPTIONS"
 #: The guest port sshd listens on (#110).
 SSH_PORT = 22
 
-#: ssh's own connection-failure exit (255 — ssh reserves it for
-#: itself: connection refused or reset, unreachable host, a
-#: protocol failure before a session). The TUI's shell flow
-#: treats it as "the session never ran" and takes the console
-#: fallback (#562); any other nonzero code is a session that ran.
-SSH_CONNECT_FAIL = 255
 
 #: How long a just-booted workspace's first ssh attempt keeps
 #: retrying (#168): the daemon reports ``running`` when the VM

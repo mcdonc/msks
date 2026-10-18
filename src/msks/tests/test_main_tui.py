@@ -4499,21 +4499,26 @@ def test_the_ssh_flow_keeps_a_refusal_to_its_first_line(monkeypatch) -> None:
     assert ran == ["w1"]
 
 
-def test_a_failed_connection_takes_the_console(monkeypatch) -> None:
-    """ssh's own connection-failure exit (255) never ran a
-    session: the console takes it, with the code on the note."""
+def test_a_255_exit_reports_only_the_code(monkeypatch) -> None:
+    """255 is ambiguous (ssh's connect failure, or a session whose
+    own exit was 255 — ssh hands it through), and the probe
+    already names every refusal the daemon can spell: a finished
+    session is not followed by a surprise console, code only."""
     monkeypatch.setattr(follow_mod, "ensure_forward", lambda wid: None)
     monkeypatch.setattr(
-        follow_mod,
-        "run_workspace_ssh",
-        lambda wid, p, transport=None: follow_mod.SSH_CONNECT_FAIL,
+        follow_mod, "run_workspace_ssh", lambda wid, p, transport=None: 255
     )
     ran: list[str] = []
     monkeypatch.setattr(follow_mod, "run_workspace_shell", ran.append)
-    assert follow_mod.run_ssh_flow("w1") == (
-        "ssh exited 255 — the console session ran instead"
-    )
-    assert ran == ["w1"]
+    assert follow_mod.run_ssh_flow("w1") == "ssh exited 255"
+    assert ran == []
+
+
+def test_first_line_guards_the_empty_refusal() -> None:
+    """An empty refusal reads as the bare word, never an empty
+    parenthetical on the flash."""
+    assert follow_mod.first_line("") == "refused"
+    assert follow_mod.first_line("one\ntwo") == "one"
 
 
 def test_a_session_that_ran_only_reports_its_code(monkeypatch) -> None:
@@ -4591,25 +4596,68 @@ def test_the_ssh_flow_lets_a_console_refusal_raise(monkeypatch) -> None:
         follow_mod.run_ssh_flow("w1")
 
 
-def test_ensure_forward_probes_the_ssh_port(monkeypatch) -> None:
-    """The real probe wiring (#562): the flow dials the forward
-    websocket for the workspace's ssh port with the session's own
-    connection facts — the same address the ProxyCommand child
-    would build."""
-    seen: dict[str, object] = {}
+async def _record_probe(seen, address, token, ssl_ctx):
+    seen["address"] = address
+    seen["token"] = token
+    seen["ssl"] = ssl_ctx
 
-    async def record(address, token, ssl_ctx):
+
+def test_ensure_forward_boots_then_probes_the_ssh_port(monkeypatch) -> None:
+    """The real wiring (#562, round-2 review): a stopped workspace
+    boots first — the shell action's session boots it itself
+    (#479), and the daemon refuses a stopped forward instantly —
+    then the flow dials the forward websocket for the workspace's
+    ssh port. A unix-socket daemon dials with no TLS context (the
+    spurious not-verified warning would print on every action); a
+    TCP daemon builds one."""
+    seen: dict[str, object] = {}
+    order: list[str] = []
+
+    async def booted(workspace_id, url, token, ssl_ctx=None, transport=None):
+        order.append("boot")
+
+    def record_probe(address, token, ssl_ctx):
+        order.append("probe")
         seen["address"] = address
         seen["token"] = token
         seen["ssl"] = ssl_ctx
 
-    monkeypatch.setattr(follow_mod.forward_mod, "probe", record)
+    async def probe(address, token, ssl_ctx):
+        record_probe(address, token, ssl_ctx)
+
+    monkeypatch.setattr(follow_mod, "ensure_running", booted)
+    monkeypatch.setattr(follow_mod.forward_mod, "probe", probe)
     monkeypatch.setattr(follow_mod, "env_url", lambda: "ws://127.0.0.1:8660")
     monkeypatch.setattr(follow_mod, "env_token", lambda: "tok")
-    monkeypatch.setattr(follow_mod, "ssl_context", lambda: None)
+    monkeypatch.setattr(follow_mod, "ssl_context", lambda: "TLS")
     follow_mod.ensure_forward("w1")
+    assert order == ["boot", "probe"]
     assert seen["address"] == (
         "ws://127.0.0.1:8660/api/v1/workspaces/w1/forward/22"
     )
     assert seen["token"] == "tok"
+    assert seen["ssl"] == "TLS"
+
+
+def test_ensure_forward_dials_a_unix_daemon_without_tls(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    async def booted(workspace_id, url, token, ssl_ctx=None, transport=None):
+        pass
+
+    async def probe(address, token, ssl_ctx):
+        seen["ssl"] = ssl_ctx
+
+    monkeypatch.setattr(follow_mod, "ensure_running", booted)
+    monkeypatch.setattr(follow_mod.forward_mod, "probe", probe)
+    monkeypatch.setattr(
+        follow_mod, "env_url", lambda: "http+unix://%2Frun%2Fx"
+    )
+    monkeypatch.setattr(follow_mod, "env_token", lambda: None)
+    monkeypatch.setattr(
+        follow_mod,
+        "ssl_context",
+        lambda: (_ for _ in ()).throw(AssertionError),
+    )
+    follow_mod.ensure_forward("w1")
     assert seen["ssl"] is None

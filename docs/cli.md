@@ -658,11 +658,14 @@ where it stood, and the tree restarts when the session hands the
 terminal back — it rides ssh rather than the console because the
 console keeps the getty's geometry while ssh carries every resize
 to the guest. A workspace ssh cannot reach — no NIC, no identity
-configured — the flow probes the forward first, and a probe
-that names the refusal, or an ssh that fails to connect (exit
-255), falls back to a `msks console` session one step later; the
-tree's first flash carries why ssh stood down, and an ssh that
-ran a session only reports its exit code. The
+configured — the flow boots a stopped workspace first (the
+ssh session it runs boots it itself, #479), probes the forward,
+and a probe that names the refusal — no NIC, the service not
+listening — falls back to a `msks console` session one step
+later; the tree's first flash carries why ssh stood down. An ssh
+that ran reports only its exit code, 255 included: ssh hands a
+session's own exit through unchanged, and a console after a
+finished session is a surprise, not a fallback. The
 action runs on a stopped workspace too: the ssh session boots the
 workspace itself (it carries the workspace's id, and reads the
 pre-flight's `msks: <id> is stopped; starting it`).

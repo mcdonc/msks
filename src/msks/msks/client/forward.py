@@ -168,9 +168,13 @@ async def dial(address: str, token: str, ssl_ctx):
 
 
 #: How long the probe waits for the guest's first frame — a
-#: listening sshd banners at once; the ceiling only bounds a
-#: silent-but-open forward, which is not the probe's refusal.
-PROBE_TIMEOUT_S = 5.0
+#: listening sshd banners at once. The ceiling sits above the
+#: daemon's own forward dial deadline (settings'
+#: forward_wait_timeout_s, 15s): a running workspace whose service
+#: is down has the daemon retrying the guest dial that long before
+#: its named refusal closes, and the probe must still be reading
+#: when it lands.
+PROBE_TIMEOUT_S = 20.0
 
 
 async def probe(address: str, token: str, ssl_ctx) -> None:
