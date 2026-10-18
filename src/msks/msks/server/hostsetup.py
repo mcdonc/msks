@@ -45,9 +45,10 @@ The plumbing tools the daemon execs (ip, nft, conntrack) install
 through apt when missing. /dev/kvm access arrives through the kvm
 group on the daemon's user, the same supplementary-group grant the
 NixOS unit makes — the tool adds the executing user to the group
-when missing (#560; the user service runs as that account, so the
-membership is the service's gate too — bare runs and new logins
-need it regardless), and the summary names what it found.
+when missing (#560; bare runs and new logins need it on the
+account). A user manager that was already running forked before
+the group write reaches it — the daemon holds the old groups
+until that manager restarts, and the service line says so.
 Idempotent: re-run any time. Re-run after a util-linux
 upgrade — the setpriv copy under /usr/local keeps running the old
 binary until refreshed.
@@ -771,11 +772,11 @@ def activate_unit(user: str, uid: int, changed: bool) -> None:
         restart_running_unit(user, uid)
 
 
-def service_skip_cause() -> str | None:
+def service_skip_cause(msksd: str | None) -> str | None:
     """Why the service phase stands down, as the summary's line
     states it: no msksd beside the tool, or no systemd manager.
     None means the phase proceeds."""
-    if msksd_sibling() is None:
+    if msksd is None:
         return (
             "skipped (no msksd beside this tool; the deployment's "
             "daemon is elsewhere — bare msksd unchanged)"
@@ -787,18 +788,23 @@ def service_skip_cause() -> str | None:
     return None
 
 
-def service_note(user: str, uid: int, stale_manager: bool) -> str:
-    """The summary's service line. A kvm membership added this run
-    under a manager that was already running never reached the
-    daemon (its supplementary groups forked with the manager), and
-    the line names the manager restart that hands it over."""
+def service_note(user: str, uid: int, manager_up_first: bool) -> str:
+    """The summary's service line. A user manager that was already
+    running forked before any kvm membership this run adds — and a
+    re-run cannot prove the manager postdates an older membership
+    either — so whenever the manager predates the proof, the line
+    names the symptom (workspaces failing on /dev/kvm) and the
+    manager restart that hands the daemon the group, with what
+    that restart really stops (the user's units; login sessions
+    survive it)."""
     note = f"user service msksd.service ({user}, enabled, started, lingering)"
-    if stale_manager:
+    if manager_up_first:
         note += (
-            f" — kvm joined this run under a manager already running; "
-            f"restart it to hand the daemon the group: "
+            f" — the manager may predate the kvm membership; if "
+            f"workspaces fail on /dev/kvm, restart it: "
             f"sudo systemctl restart user@{uid}.service "
-            f"(it ends that user's sessions)"
+            f"(it stops that user's units — the daemon and its "
+            f"workspaces; login sessions survive)"
         )
     return note
 
@@ -814,17 +820,18 @@ def install_service(
     its cause instead of refusing (the host pieces above landed,
     and a container or an elsewhere daemon keeps a working
     host)."""
-    cause = service_skip_cause()
+    msksd = msksd_sibling()
+    cause = service_skip_cause(msksd)
     if cause is not None:
         return cause
-    stale_manager = kvm_added and manager_running(uid)
+    manager_up_first = manager_running(uid)
     ensure_unit_parents(home, uid, gid)
     try:
-        changed = write_unit(home, msksd_sibling(), uplink_name)
+        changed = write_unit(home, msksd, uplink_name)
         activate_unit(user, uid, changed)
     except OSError as exc:
         raise HostSetupError(f"landing the user unit failed: {exc}") from exc
-    return service_note(user, uid, stale_manager)
+    return service_note(user, uid, manager_up_first)
 
 
 def consent_line(states: dict[str, str]) -> str:

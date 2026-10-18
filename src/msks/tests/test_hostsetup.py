@@ -1103,13 +1103,30 @@ def test_kvm_joined_under_a_running_manager_names_the_restart(
 ) -> None:
     """The manager a login session already started forked before
     this run's adduser, so the just-started daemon holds the old
-    supplementary groups — the service line names the manager
-    restart that hands the group over, and what it costs."""
+    supplementary groups — the service line names the symptom, the
+    manager restart that hands the group over, and what that
+    restart really stops."""
     assert main() == 0
     out = capsys.readouterr().out
-    assert "kvm joined this run under a manager already running" in out
+    assert "the manager may predate the kvm membership" in out
     assert "sudo systemctl restart user@1000.service" in out
-    assert "it ends that user's sessions" in out
+    assert "login sessions survive" in out
+
+
+def test_kvm_note_survives_a_member_rerun(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The round-2 wash-out: run one added kvm under a running
+    manager; a re-run finds the membership present and the unit
+    unchanged — and still prints the note, because the running
+    daemon's manager cannot be proven to postdate the membership
+    it already carries."""
+    monkeypatch.setattr(hostsetup, "in_group", lambda user, name: True)
+    assert main() == 0
+    out = capsys.readouterr().out
+    assert "the manager may predate the kvm membership" in out
 
 
 def test_kvm_joined_before_the_manager_started_needs_no_restart(
