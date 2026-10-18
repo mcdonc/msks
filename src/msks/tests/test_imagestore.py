@@ -2328,3 +2328,54 @@ def test_a_zstd_archive_imports(tmp_path) -> None:
         "1.0",
         "Zstd 1.0",
     )
+
+
+def test_the_download_trusts_the_system_store_beside_certifi(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#567's intercepted-egress finding: a nested msks downloads
+    through its host's egress interceptor, whose CA the guest seed
+    stages into the SYSTEM store — ``verify=True`` reads only
+    certifi and refuses the re-signed chain. The download's trust
+    is the system store with certifi's bundle behind it: a staged
+    CA lands on top, and the bundle's roots are present whatever
+    the system store holds."""
+    import hashlib
+
+    import certifi
+    from cryptography import x509 as x509_mod
+    from msks.server.tls import generate_ca
+
+    ca_pem, _key = generate_ca()
+    staged = tmp_path / "staged-ca.pem"
+    staged.write_bytes(ca_pem)
+    staged_der = x509_mod.load_pem_x509_certificate(ca_pem).public_bytes(
+        __import__(
+            "cryptography.hazmat.primitives.serialization", fromlist=["x"]
+        ).Encoding.DER
+    )
+    staged_fp = hashlib.sha256(staged_der).hexdigest()
+
+    def fingerprints():
+        return {
+            hashlib.sha256(der).hexdigest()
+            for der in imagestore.fetch_verify_context().get_ca_certs(
+                binary_form=True
+            )
+        }
+
+    monkeypatch.setenv("SSL_CERT_FILE", str(staged))
+    assert staged_fp in fingerprints()  # the staged CA contributes
+
+    monkeypatch.setenv("SSL_CERT_FILE", "/no/such/bundle.pem")
+    # certifi's roots survive an unreadable system store: the
+    # bundle's first certificate is present.
+    raw = Path(certifi.where()).read_bytes()
+    first_b64 = raw.split(b"-----BEGIN CERTIFICATE-----")[1].split(
+        b"-----END CERTIFICATE-----"
+    )[0]
+    first_der = __import__("base64").b64decode(
+        __import__("re").sub(rb"\s+", b"", first_b64)
+    )
+    first_bundle_fp = hashlib.sha256(first_der).hexdigest()
+    assert first_bundle_fp in fingerprints()

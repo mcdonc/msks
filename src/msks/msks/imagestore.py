@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import shutil
+import ssl
 import tarfile
 import time
 import uuid
@@ -34,6 +35,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
+import certifi
 import httpx
 
 from .spec.images import is_hash_shape, newest_rank
@@ -201,6 +203,21 @@ def check_response(response, url: str, max_bytes: int) -> None:
         )
 
 
+def fetch_verify_context() -> ssl.SSLContext:
+    """The download's trust: the system store with certifi's
+    bundle behind it. A nested msks downloads through its host's
+    egress interceptor, whose CA the guest seed stages into the
+    system store (#424); a corporate proxy stages its own the same
+    way — and a container's system store can sit empty, where
+    certifi alone still verifies the public roots.
+    ``verify=True`` would take only certifi's bundle and refuse
+    both."""
+    context = ssl.create_default_context()
+    with contextlib.suppress(OSError):
+        context.load_verify_locations(cafile=certifi.where())
+    return context
+
+
 def fetch_archive(
     url: str,
     state_dir: Path,
@@ -225,7 +242,7 @@ def fetch_archive(
     dest = root / f".dl-{os.getpid()}-{uuid.uuid4().hex[:8]}.tar"
     try:
         with httpx.Client(
-            verify=True,
+            verify=fetch_verify_context(),
             follow_redirects=True,
             timeout=timeout_s,
             transport=transport,
