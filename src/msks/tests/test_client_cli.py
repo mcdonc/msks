@@ -1612,7 +1612,11 @@ def test_create_body_egress_flags() -> None:
 
 
 def image_row(
-    name: str, version: str, digest: str, default: bool = False
+    name: str,
+    version: str,
+    digest: str,
+    default: bool = False,
+    description: str = "",
 ) -> dict:
     return {
         "hash": digest,
@@ -1621,6 +1625,7 @@ def image_row(
         "cmdline": "console=ttyS0 root=/dev/vda rw",
         "kernel_version": "6.12.107+deb13",
         "kernel_format": "raw",
+        "description": description,
         "default": default,
         # Naive on purpose: the rendered cell reads the same wall
         # time in every test timezone.
@@ -1633,6 +1638,69 @@ IMAGES = [
     image_row("debian", "12", "b" * 64),
     image_row("alpine", "3.20", "c" * 64),
 ]
+
+
+def test_image_ls_carries_the_baked_description(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#564: the listing carries the baked identity, capped for
+    the row (the full line reads from image info); an image
+    without one keeps the column with the dash."""
+    rows = [
+        image_row(
+            "debian",
+            "13",
+            "a" * 64,
+            default=True,
+            description="Debian 13, kernel 6.12, cloud-init",
+        ),
+        image_row("alpine", "3.20", "c" * 64, description="x" * 60),
+        image_row("nixos", "26.05", "d" * 64),
+    ]
+    client_env(monkeypatch)
+    rc = cli.cmd_image_ls(
+        transport=mock(lambda req: httpx.Response(200, json=rows))
+    )
+    assert rc == 0
+    lines = capsys.readouterr().out.splitlines()
+    headers = lines[0].split()
+    assert "description" in headers
+    body = lines[1:]
+    assert "Debian 13, kernel 6.12, cloud-init" in body[0]
+    # The cap: 60 characters of identity render as 35 + ellipsis.
+    assert "x" * 35 + "…" in body[1]
+    assert body[2].split()[-3] == "-"
+
+
+def test_image_info_prints_the_full_description(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#564: the full record names the baked identity at length,
+    and a manifest without one says so."""
+    rows = [
+        image_row(
+            "debian",
+            "13",
+            "a" * 64,
+            default=True,
+            description="Debian 13 cloud image, kernel 6.12, "
+            "cloud-init, the egress module set and consent stack",
+        ),
+        image_row("nixos", "26.05", "d" * 64),
+    ]
+    client_env(monkeypatch)
+    rc = cli.cmd_image_info(
+        "debian:13", transport=mock(lambda req: httpx.Response(200, json=rows))
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "description" in out
+    assert "the egress module set and consent stack" in out
+    rc = cli.cmd_image_info(
+        "nixos:26.05",
+        transport=mock(lambda req: httpx.Response(200, json=rows)),
+    )
+    assert "(none baked)" in capsys.readouterr().out
 
 
 def listing_transport(handler=None) -> httpx.MockTransport:
@@ -1948,12 +2016,12 @@ def test_image_info_prints_the_record(
     rc = cli.cmd_image_info("alpine", transport=listing_transport())
     assert rc == 0
     out = capsys.readouterr().out
-    assert "ref      alpine:3.20" in out
-    assert "hash     " + "c" * 64 in out
-    assert "kernel   6.12.107+deb13 (raw)" in out
-    assert "cmdline  console=ttyS0 root=/dev/vda rw" in out
-    assert "seed     provisioner - (none declared)" in out
-    assert "default  no" in out
+    assert "ref          alpine:3.20" in out
+    assert "hash         " + "c" * 64 in out
+    assert "kernel       6.12.107+deb13 (raw)" in out
+    assert "cmdline      console=ttyS0 root=/dev/vda rw" in out
+    assert "seed         provisioner - (none declared)" in out
+    assert "default      no" in out
 
 
 @pytest.mark.parametrize(
@@ -4757,7 +4825,14 @@ def test_image_ls_without_renames_keeps_the_columns(
     )
     assert rc == 0
     lines = capsys.readouterr().out.splitlines()
-    assert lines[0].split() == ["ref", "hash", "default", "kernel", "imported"]
+    assert lines[0].split() == [
+        "ref",
+        "hash",
+        "default",
+        "kernel",
+        "description",
+        "imported",
+    ]
 
 
 def test_image_info_carries_the_origin_pair(

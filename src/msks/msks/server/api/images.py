@@ -155,6 +155,9 @@ def router(app, catalog_lock) -> APIRouter:
                 "kernel_version": image.kernel_version,
                 "kernel_format": image.kernel_format,
                 "provisioner": image.provisioner,
+                # The build-baked human identity (#564): one line,
+                # empty for an image whose manifest carried none.
+                "description": image.description,
                 "default": image.hash == default_hash,
                 # ISO 8601, UTC-aware: the record's stamp (#186) or the
                 # cache-mtime fallback. None only in the rename race.

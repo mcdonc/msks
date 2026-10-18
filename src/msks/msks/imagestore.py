@@ -99,6 +99,11 @@ class ImageRecord:
     # The image's declared first-boot provisioner (#41): None (the
     # field is absent) or one of PROVISIONERS.
     provisioner: str | None = None
+    #: The human identity the build baked (#564): one line naming
+    #: what the image is. Empty for an image whose manifest carries
+    #: none (a foreign import) — every surface prints a dash for
+    #: it, never the empty string.
+    description: str = ""
 
     @property
     def ref(self) -> str:
@@ -638,6 +643,7 @@ def record_from(
         initrd=cache / "initrd",
         rootfs=cache / "rootfs.ext4",
         provisioner=provisioner_of(manifest),
+        description=str(manifest.get("description", "")),
         imported=imported,
     )
 

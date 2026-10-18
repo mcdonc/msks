@@ -46,9 +46,11 @@ def build_containerdisk(
     version: str = "13.6",
     schema: int | None = None,
     members: dict | None = None,
+    description: str | None = None,
 ) -> None:
     """Write a minimal-but-valid container-image tar
-    in containerDisk layout."""
+    in containerDisk layout. *description* bakes the human
+    identity (#564) into the layer's image.json."""
     layer = BytesIO()
     with tarfile.open(fileobj=layer, mode="w") as tar:
         payload = members or {
@@ -63,6 +65,8 @@ def build_containerdisk(
                 "version": version,
                 "cmdline": "console=ttyS0 root=/dev/vda ro",
             }
+            if description is not None:
+                manifest["description"] = description
             payload = dict(payload)
             payload["disk/image.json"] = json.dumps(manifest).encode()
         for member, content in payload.items():
@@ -2257,3 +2261,29 @@ async def test_image_rename_endpoints(tmp_path) -> None:
             )
             assert bad.status_code == 400
             assert "image name override" in bad.json()["detail"]
+
+
+def test_a_baked_description_flows_through_the_catalog(tmp_path) -> None:
+    """#564: the identity the build writes into the layer's
+    image.json rides the import into the record, the listing, and
+    the cached manifest — and an image without one lists empty,
+    never crashing a surface that prints it."""
+    baked = tmp_path / "workspace-baked-1.0.tar"
+    build_containerdisk(
+        baked,
+        name="baked",
+        version="1.0",
+        description="Baked 1.0, kernel 6.12",
+    )
+    record = import_archive(baked, tmp_path)
+    assert record.description == "Baked 1.0, kernel 6.12"
+    listed = list_images(tmp_path)
+    assert listed[0].description == "Baked 1.0, kernel 6.12"
+    # The cached manifest carries it (the listing reloads from it).
+    cached = json.loads(
+        (tmp_path / "images" / record.hash / "image.json").read_text()
+    )
+    assert cached["description"] == "Baked 1.0, kernel 6.12"
+    plain = tmp_path / "workspace-plain-1.0.tar"
+    build_containerdisk(plain, name="plain", version="1.0")
+    assert import_archive(plain, tmp_path).description == ""
