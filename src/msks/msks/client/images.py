@@ -59,18 +59,43 @@ def imported_cell(image: dict) -> str:
     return "-"
 
 
+#: The description column's cap (#564): the baked identity is one
+#: line, and the listing's row stays readable beside the boot
+#: facts — the full line always reads from ``msks image info``.
+DESCRIPTION_CAP = 36
+
+
+def description_cell(row: dict) -> str:
+    """The row's baked identity, capped for the listing; a dash
+    for an image whose manifest carried none (#564)."""
+    text = (row.get("description") or "").strip()
+    if not text:
+        return "-"
+    if len(text) > DESCRIPTION_CAP:
+        return text[: DESCRIPTION_CAP - 1] + "…"
+    return text
+
+
 def image_cells(row: dict, with_origin: bool = False) -> list[str]:
     """One catalog row's cells: ref, origin (#340) when the
     listing carries a renamed row, short hash, default flag,
-    kernel, and the import time (#283) — the same stamped-or-dash
-    cell the storage table renders."""
+    kernel, description (#564), and the import time (#283) — the
+    same stamped-or-dash cell the storage table renders."""
     flag = "default" if row["default"] else "-"
     kernel = f"{row['kernel_version'] or '-'} ({row['kernel_format'] or '-'})"
     ref = f"{row['name']}:{row['version']}"
     cells = [ref]
     if with_origin:
         cells.append(origin_cell(row))
-    cells.extend([row["hash"][:12], flag, kernel, imported_cell(row)])
+    cells.extend(
+        [
+            row["hash"][:12],
+            flag,
+            kernel,
+            description_cell(row),
+            imported_cell(row),
+        ]
+    )
     return cells
 
 
@@ -82,7 +107,7 @@ def render_image_ls(rows: list[dict], as_json: bool) -> str:
     if as_json:
         return json.dumps(rows, indent=2)
     with_origin = any(origin_cell(row) != "-" for row in rows)
-    headers = ["ref", "hash", "default", "kernel", "imported"]
+    headers = ["ref", "hash", "default", "kernel", "description", "imported"]
     if with_origin:
         headers.insert(1, "origin")
     return listing_text(
@@ -234,10 +259,17 @@ def info_pairs(row: dict) -> list[list[str]]:
         ("origin", origin_ref_of(row)),
         ("hash", row["hash"]),
         ("kernel", kernel),
+        ("description", description_of(row)),
         ("cmdline", row["cmdline"]),
         ("seed", f"provisioner {provisioner}"),
         ("default", default),
     ]
+
+
+def description_of(row: dict) -> str:
+    """The record's baked identity at full length (#564); an
+    image whose manifest carried none says so."""
+    return (row.get("description") or "").strip() or "- (none baked)"
 
 
 def origin_ref_of(row: dict) -> str:

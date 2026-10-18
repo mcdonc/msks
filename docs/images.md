@@ -687,3 +687,35 @@ The rules worth knowing:
   boot-complete, not the shell. `cloud-init status --wait` (or the
   serial log) says when provisioning finished; a factory reset
   re-runs the payload from the same seed.
+
+## The published image channel (#564)
+
+Every release publishes the built guest images to a hash-keyed
+channel on this repository's GitHub releases: each image lives on
+its own release tagged `images/<hash-prefix>`, as a
+zstd-compressed archive (`<flavor>.tar.zst`) whose sha256 the
+catalog records — importing the compressed form hashes exactly
+the shipped bytes, and the daemon's import accepts the form
+directly (the archive reader detects it). An unchanged
+derivation publishes nothing: the workflow compares the archive
+derivation's evaluation against the previous manifest and skips
+the build entirely, and a channel slot that already exists is
+never rewritten.
+
+The version release carries `images.json`, the manifest that
+names every published image — `ref`, `description`, `kernel`,
+`size`, `hash`, `url`, and the source facts (`build`,
+`built_from`) — so fetching a published image is one command:
+
+```bash
+# the URL from the manifest row
+msks image import \
+  https://github.com/mcdonc/msks/releases/download/images/<hash>/debian.tar.zst
+```
+
+The description the listing and `image info` print is baked into
+the image itself: the build writes one line into the layer's
+`image.json` naming the distro, kernel, and shipped stack, and it
+rides the import into any catalog. `msks image ls` carries it
+(capped for the row), `msks image info` prints it at full length,
+and the manifest rows carry it for the release channel.

@@ -512,6 +512,7 @@ let
           "cmdline": "${kernelCmdline}",
           "kernel_version": "${kernelVersion}",
           "kernel_format": "bzImage",
+          "description": "NixOS ${imageVersion}, kernel ${kernelVersion}, cloud-init, the egress module set and consent stack",
           "capabilities": {"provisioner": "${imageProvisioner}"}
         }
         EOF

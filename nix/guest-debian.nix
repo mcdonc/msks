@@ -1519,6 +1519,7 @@ let
           "cmdline": "${kernelCmdline}",
           "kernel_version": "$kernel_version",
           "kernel_format": "bzImage",
+          "description": "Debian ${imageVersion} cloud image, kernel $kernel_version, cloud-init, the egress module set and consent stack",
           "capabilities": {"provisioner": "${imageProvisioner}"}
         }
         EOF

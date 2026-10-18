@@ -1,0 +1,248 @@
+# Release (#564): the wheel publishes to PyPI, guest images
+# publish to a hash-keyed channel, and the version release carries
+# the small manifest that ties them together.
+#
+# Three jobs, ordered so each has what it needs:
+#
+# 1. wheel   — build the wheel, publish to PyPI through the
+#              registered trusted publisher (the pending publisher
+#              names this file and the `pypi` environment; no
+#              token lives in the repo).
+# 2. release — create the version release: the changelog's
+#              human-authored section (scripts/release_notes.py
+#              extracts it at the tag) prepended to GitHub's
+#              auto-generated notes, with the wheel and its
+#              checksum attached.
+# 3. images  — the hash-keyed channel, one job walking the flavors
+#              in order (both legs share one images.json merge, so
+#              the merge cannot race itself). Per flavor the nix
+#              evaluation of the archive derivation — building
+#              nothing — is compared against the last manifest; a
+#              changed flavor builds once, compresses with
+#              zstd -19 (the debian archive lands ~266 MiB, the
+#              nixos one ~578 MiB — both under GitHub's 2 GiB asset
+#              ceiling, which the plain nixos tar exceeds), and
+#              uploads to an immutable release tagged
+#              images/<hash> whose title names the flavor and body
+#              links what changed. images.json — ref, hash,
+#              description, kernel, size, url, build, built_from
+#              for every flavor — attaches to the version release,
+#              so `msks image import <url>` pulls straight from
+#              the channel with no manual download.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  wheel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v5
+
+      # The changelog gate, before anything publishes: a tag cut
+      # without its docs/changes.md section refuses here — a live
+      # PyPI package with no GitHub release is the failure this
+      # ordering prevents.
+      - name: Refuse a tag without its changelog section
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python scripts/release_notes.py "$TAG" > /dev/null
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Build the wheel and sdist
+        run: |
+          python -m pip install --quiet build
+          python -m build
+
+      - name: Publish to PyPI (trusted publisher)
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Stage the wheel for the release job
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: dist/
+          retention-days: 1
+
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: wheel
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download the wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist/
+
+      # The human-authored notes come first; GitHub's auto-generated
+      # PR list and compare link follow. release_notes.py refuses a
+      # tag whose changelog section is missing — the section is the
+      # reason the file exists.
+      - name: Compose the release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          python scripts/release_notes.py "$TAG" > notes.md
+          gh api \
+            -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$TAG" \
+            --jq .body > auto.md || printf '' > auto.md
+          cat auto.md >> notes.md
+
+      - name: Create the release with the wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          sha256sum dist/* > dist/SHASUMS
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file notes.md \
+            --verify-tag \
+            dist/*
+
+  images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs: release
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+      SHA: ${{ github.sha }}
+      REPO: ${{ github.repository }}
+    steps:
+      # Full history: the previous-version lookup reads the tag
+      # list, and a depth-1 checkout carries only this tag.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: devenv
+
+      - name: Install devenv.sh
+        run: nix profile add github:cachix/devenv/v2.3.1
+
+      # The manifest being replaced: the previous version
+      # release's images.json — the newest tag strictly below
+      # this one (a re-tagged release's own manifest wins when it
+      # carries one) — so flavors whose derivation did not change
+      # carry their rows — and their built_from — forward across
+      # releases.
+      - name: Read the previous manifest
+        run: |
+          set -eu
+          if gh release download "$TAG" -p images.json -O prev.json; then
+            echo "re-tagged release: keeping its manifest"
+          elif prev_tag=$(git tag --sort=-v:refname | grep '^v' | \
+                  grep -vx "$TAG" | while read -r t; do \
+                    if [ "$t" = "$(printf '%s\n%s\n' "$TAG" "$t" | \
+                                  sort -V | head -1)" ]; then \
+                      echo "$t"; break; \
+                    fi; \
+                  done) && \
+               [ -n "$prev_tag" ] && \
+               gh release download "$prev_tag" -p images.json -O prev.json
+          then
+            echo "carrying forward from $prev_tag's manifest"
+          else
+            printf '{}' > prev.json
+          fi
+
+      # One flavor at a time: each changed flavor publishes its
+      # immutable channel slot, and every flavor (changed or not)
+      # leaves a row in rows.json for the final merge.
+      - name: Publish changed images, collect manifest rows
+        run: |
+          set -eu
+          printf '{}' > rows.json
+          for flavor in debian nixos; do
+            attr=guest
+            dir=.devenv/state/guest
+            if [ "$flavor" = nixos ]; then attr=guest-nixos; dir=.devenv/state/guest-nixos; fi
+            # The single quotes are the point: the devenv shell's
+            # environment expands GUEST_NIXPKGS inside the inner
+            # bash, where it lives.
+            # shellcheck disable=SC2016
+            build=$(devenv --quiet -O dotenv.enable:bool false shell -- \
+              bash -c 'nix eval --raw -I nixpkgs="$GUEST_NIXPKGS" \
+                -f nix/guest.nix "$1.imageArchive.outPath"' \
+                bash "$attr" \
+              | xargs basename)
+            prev_build=$(jq -r --arg f "$flavor" '.[$f].build // empty' prev.json)
+            prev_row=$(jq -c --arg f "$flavor" '.[$f] // empty' prev.json)
+            if [ "$build" = "$prev_build" ] && [ -n "$prev_row" ]; then
+              echo "$flavor: derivation unchanged ($build) — row carries forward"
+              jq --arg f "$flavor" --argjson row "$prev_row" \
+                '.[$f] = $row' rows.json > rows.json.new
+              mv rows.json.new rows.json
+              continue
+            fi
+            echo "$flavor: derivation changed — building"
+            devenv --quiet -O dotenv.enable:bool false shell -- \
+              msks-build-guest "$flavor"
+            zstd -19 -T0 -q "$dir/$(cat "$dir/image-archive-name")" \
+              -o "$flavor.tar.zst"
+            hash=$(sha256sum "$flavor.tar.zst" | cut -d' ' -f1)
+            short=${hash:0:12}
+            tag="images/$short"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "$flavor: channel slot $tag already published"
+            else
+              prev_from=$(jq -r --arg f "$flavor" \
+                '.[$f].built_from // empty' prev.json)
+              gh release create "$tag" \
+                --target "$SHA" \
+                --title "$flavor image ($short)" \
+                --notes "Built from $SHA. What changed: https://github.com/$REPO/compare/${prev_from:-$SHA}...$SHA" \
+                "$flavor.tar.zst#$flavor.tar.zst" \
+                || gh release upload "$tag" \
+                  "$flavor.tar.zst#$flavor.tar.zst" --clobber
+            fi
+            meta=$(devenv --quiet -O dotenv.enable:bool false shell -- \
+              python scripts/image_meta.py "$dir")
+            jq \
+              --arg f "$flavor" \
+              --arg hash "$hash" \
+              --arg url "https://github.com/$REPO/releases/download/$tag/$flavor.tar.zst" \
+              --arg build "$build" \
+              --arg sha "$SHA" \
+              --argjson size "$(stat -c%s "$flavor.tar.zst")" \
+              --argjson meta "$meta" \
+              '.[$f] = {ref: $meta.ref, description: $meta.description,
+                        kernel: $meta.kernel_version, hash: $hash,
+                        size: $size, url: $url, build: $build,
+                        built_from: $sha}' \
+              rows.json > rows.json.new
+            mv rows.json.new rows.json
+          done
+
+      - name: Attach images.json to the version release
+        run: gh release upload "$TAG" rows.json#images.json --clobber

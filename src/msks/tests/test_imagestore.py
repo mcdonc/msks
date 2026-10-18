@@ -46,9 +46,11 @@ def build_containerdisk(
     version: str = "13.6",
     schema: int | None = None,
     members: dict | None = None,
+    description: str | None = None,
 ) -> None:
     """Write a minimal-but-valid container-image tar
-    in containerDisk layout."""
+    in containerDisk layout. *description* bakes the human
+    identity (#564) into the layer's image.json."""
     layer = BytesIO()
     with tarfile.open(fileobj=layer, mode="w") as tar:
         payload = members or {
@@ -63,6 +65,8 @@ def build_containerdisk(
                 "version": version,
                 "cmdline": "console=ttyS0 root=/dev/vda ro",
             }
+            if description is not None:
+                manifest["description"] = description
             payload = dict(payload)
             payload["disk/image.json"] = json.dumps(manifest).encode()
         for member, content in payload.items():
@@ -2257,3 +2261,70 @@ async def test_image_rename_endpoints(tmp_path) -> None:
             )
             assert bad.status_code == 400
             assert "image name override" in bad.json()["detail"]
+
+
+def test_a_baked_description_flows_through_the_catalog(tmp_path) -> None:
+    """#564: the identity the build writes into the layer's
+    image.json rides the import into the record, the listing, and
+    the cached manifest — and an image without one lists empty,
+    never crashing a surface that prints it."""
+    baked = tmp_path / "workspace-baked-1.0.tar"
+    build_containerdisk(
+        baked,
+        name="baked",
+        version="1.0",
+        description="Baked 1.0, kernel 6.12",
+    )
+    record = import_archive(baked, tmp_path)
+    assert record.description == "Baked 1.0, kernel 6.12"
+    listed = list_images(tmp_path)
+    assert listed[0].description == "Baked 1.0, kernel 6.12"
+    # The cached manifest carries it (the listing reloads from it).
+    cached = json.loads(
+        (tmp_path / "images" / record.hash / "image.json").read_text()
+    )
+    assert cached["description"] == "Baked 1.0, kernel 6.12"
+    plain = tmp_path / "workspace-plain-1.0.tar"
+    build_containerdisk(plain, name="plain", version="1.0")
+    assert import_archive(plain, tmp_path).description == ""
+
+
+def test_a_zstd_archive_imports(tmp_path) -> None:
+    """The channel's whole fetch story (#564): the published form
+    is the zstd-compressed archive, and the import reads it —
+    tarfile's transparent detection, pinned so a Python change
+    fails here, not a release-day download."""
+    layer = BytesIO()
+    with tarfile.open(fileobj=layer, mode="w") as tar:
+        manifest = {
+            "schema": 2,
+            "name": "zst",
+            "version": "1.0",
+            "cmdline": "console=ttyS0",
+            "description": "Zstd 1.0",
+        }
+        for name, content in (
+            ("./boot/vmlinuz", b"kernel"),
+            ("./boot/initrd.img", b"initrd"),
+            ("./disk/rootfs.ext4", b"rootfs"),
+            ("./disk/image.json", json.dumps(manifest).encode()),
+        ):
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            tar.addfile(info, BytesIO(content))
+    layer.seek(0)
+    archive = tmp_path / "zst.tar.zst"
+    with tarfile.open(archive, "w:zst") as outer:
+        info = tarfile.TarInfo("layer.tar")
+        info.size = layer.getbuffer().nbytes
+        outer.addfile(info, layer)
+        man = json.dumps([{"Layers": ["layer.tar"]}]).encode()
+        info = tarfile.TarInfo("manifest.json")
+        info.size = len(man)
+        outer.addfile(info, BytesIO(man))
+    record = import_archive(archive, tmp_path)
+    assert (record.name, record.version, record.description) == (
+        "zst",
+        "1.0",
+        "Zstd 1.0",
+    )

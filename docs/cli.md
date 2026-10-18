@@ -1055,13 +1055,17 @@ shares (#271):
 
 ```text
 $ msks image ls
-ref          hash          default  kernel                imported
-debian:13    9f2c41ab77de  default  6.12.107+deb13 (raw)  2026-09-22 14:03
-alpine:3.20  33aa9db1c4ef  -        6.12.7 (raw)          2026-09-19 09:41
+ref            hash          default  kernel                description                      imported
+debian:13.6    9f2c41ab77de  default  6.12.107+deb13 (raw)  Debian 13.6 cloud image, kernel…  2026-09-22 14:03
+alpine:3.20    33aa9db1c4ef  -        6.12.7 (raw)          -                                2026-09-19 09:41
 ```
 
 The image the daemon designates as default carries the `default`
-flag; a bare `msks create` resolves to it. The `imported` column
+flag; a bare `msks create` resolves to it. The `description`
+column (#564) carries the identity the build baked into the
+image, capped for the row; `image info` prints it at full length,
+and an image whose manifest carried none keeps the column with a
+dash. The `imported` column
 shows the moment the archive entered the catalog, in local time
 to the minute — an entry re-imported under the same reference
 moves the time forward with it. A renamed row (#340) adds an
@@ -1189,16 +1193,20 @@ default designation — from the same listing data:
 
 ```text
 $ msks image info debian:13
-ref      mine:1.4
-origin   debian:13
-hash     9f2c41ab77de0000000000000000000000000000000000000000000000000000
-kernel   6.12.107+deb13 (raw)
-cmdline  console=ttyS0 root=/dev/vda rw
-seed     provisioner - (none declared)
-default  yes
+ref          mine:1.4
+origin       debian:13.6
+hash         9f2c41ab77de0000000000000000000000000000000000000000000000000000
+kernel       6.12.107+deb13 (raw)
+description  Debian 13.6 cloud image, kernel 6.12.107+deb13, cloud-init, the egress module set and consent stack
+cmdline      console=ttyS0 root=/dev/vda rw
+seed         provisioner - (none declared)
+default      yes
 ```
 
-The reference forms are the same as `image rm`'s.
+The reference forms are the same as `image rm`'s. The
+`description` row (#564) is the identity the build baked into the
+image's manifest; an image whose manifest carried none prints
+`- (none baked)`.
 
 ### `msks image default`
 
