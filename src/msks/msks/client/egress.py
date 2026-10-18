@@ -5,8 +5,8 @@ import json
 
 import websockets
 
-from . import wsauth
-from .env import env_token, env_url, ssl_context
+from . import wsauth, wsdial
+from .env import env_token, env_url, is_unix, ssl_context
 from .rest import api_client, request
 from .tabular import listing_text
 
@@ -21,12 +21,7 @@ def events_url(base_url: str) -> str:
     """The events websocket URL for a daemon base URL. The token
     rides the handshake's Authorization header (#216), never the
     URL."""
-    scheme, sep, rest = base_url.partition("://")
-    if sep:
-        scheme = "wss" if scheme == "https" else "ws"
-    else:
-        scheme, rest = "wss", base_url
-    return f"{scheme}://{rest.rstrip('/')}/api/v1/events"
+    return wsdial.ws_url(base_url.rstrip("/"), "/api/v1/events")
 
 
 def dest_label(row: dict) -> str:
@@ -215,7 +210,7 @@ async def run_watch(
     token = env_token()
     url = env_url()
     try:
-        async for ws in websockets.connect(**connect_args(url, token)):
+        async for ws in dial_events(url, token):
             try:
                 await watch_one(ws, workspace_id, decide, duration, url, token)
             except websockets.ConnectionClosed as closed:
@@ -241,15 +236,11 @@ def refused(closed: websockets.ConnectionClosed) -> bool:
     )
 
 
-def connect_args(url: str, token: str) -> dict:
-    """The events websocket's connect kwargs: the Authorization
-    header beside the URL (a plain-ws URL takes no ssl argument)."""
-    return {
-        "uri": events_url(url),
-        "additional_headers": wsauth.auth_headers(token),
-        "ssl": None if url.startswith("http://") else ssl_context(),
-        "max_size": 2**22,
-    }
+def dial_events(url: str, token: str | None):
+    """The events websocket connection (the watch loop's dial)."""
+    return wsdial.dial(
+        events_url(url), token, None if is_unix(url) else ssl_context(), 2**22
+    )
 
 
 async def watch_one(ws, workspace_id, decide, duration, url, token) -> None:

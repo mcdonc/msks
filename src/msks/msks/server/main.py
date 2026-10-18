@@ -1,6 +1,9 @@
-"""The msksd entry point: run the API server over TLS (#8)."""
+"""The msksd entry point: run the API server over TLS (#8),
+with the local unix listener beside it (#555)."""
 
 import argparse
+import asyncio
+import contextlib
 import logging
 import signal
 import sys
@@ -12,7 +15,7 @@ from ..app import build_app
 from ..config import load_settings
 from ..settings import Settings
 from ..spec.version import __version__
-from . import doctor
+from . import doctor, localsocket
 from .api import build_api
 from .reload import arm_reload_watcher
 from .tls import load_or_generate
@@ -26,7 +29,7 @@ def ssl_paths(app) -> tuple[str | None, str | None]:
     return server.tls_cert, server.tls_key
 
 
-def server_config(app) -> uvicorn.Config:
+def server_config(app, api=None) -> uvicorn.Config:
     """The uvicorn config for one msks App (testable, not run here)."""
     server = app.state.settings.server
     cert, key = ssl_paths(app)
@@ -34,12 +37,33 @@ def server_config(app) -> uvicorn.Config:
         {"ssl_certfile": cert, "ssl_keyfile": key} if cert and key else {}
     )
     return uvicorn.Config(
-        build_api(app),
+        api if api is not None else build_api(app),
         host=server.host,
         port=server.port,
         log_level="info",
         access_log=server.access_log,
         **ssl_kwargs,
+    )
+
+
+def socket_config(app, api) -> uvicorn.Config:
+    """The local listener's uvicorn config (#555).
+
+    Same app, no TLS (the kernel vouches for both ends of a unix
+    socket), lifespan off — the TCP server beside it owns the
+    application's startup and shutdown, so a shared app runs
+    them exactly once. The peer-credential protocol wrap lands on
+    this config alone: a TCP connection never carries the local
+    marker.
+    """
+    server = app.state.settings.server
+    return uvicorn.Config(
+        api,
+        host="127.0.0.1",
+        port=server.port,
+        log_level="info",
+        access_log=server.access_log,
+        lifespan="off",
     )
 
 
@@ -77,8 +101,71 @@ def serve(app, no_tls: bool) -> None:
 
 
 def run_forever(app) -> None:
-    """Block on uvicorn — structurally untestable, one line."""
-    uvicorn.Server(server_config(app)).run()  # pragma: no cover
+    """Block on the listeners — structurally untestable, one line."""
+    # The TCP config's loop factory keeps the uvloop choice the
+    # single-server path always had.
+    asyncio.run(
+        serve_listeners(app),
+        loop_factory=server_config(app).get_loop_factory(),
+    )  # pragma: no cover
+
+
+async def serve_listeners(app) -> None:
+    """Serve the TCP listener, plus the local listener when on.
+
+    The TCP server owns the process: it runs in this coroutine —
+    its signals, its startup failures, its shutdown are the
+    process's, exactly as the single-listener daemon always ran.
+    The local listener (#555) serves the same app through a
+    :class:`~msks.server.localsocket.QuietServer` under
+    :func:`local_listener` — no signal handlers of its own — and
+    stops when the TCP server stops.
+    """
+    api = build_api(app)
+    tcp_server = uvicorn.Server(server_config(app, api))
+    path = localsocket.enabled(app.state.settings.server.socket)
+    if path is not None and not localsocket.platform_supported():
+        # Non-Linux hosts: the credential plumbing is absent.
+        print(  # pragma: no cover
+            "msksd: the unix listener needs Linux peer credentials; "
+            "serving TCP only",
+            file=sys.stderr,
+        )
+        path = None  # pragma: no cover — the platform gate above
+    if path is None:
+        await tcp_server.serve()
+        # A clean, signal-driven exit of the plain serve.
+        return  # pragma: no cover
+    async with local_listener(app, api, path):
+        await tcp_server.serve()
+
+
+@contextlib.asynccontextmanager
+async def local_listener(app, api, path: Path):
+    """The local listener's lifetime: bind, serve beside the TCP
+    listener, stop and unlink on the way out (#555).
+
+    The socket file is removed when the TCP server ends — a
+    graceful stop or a startup failure — so a restart binds
+    cleanly; a hard kill can leave the file, and ``bind`` replaces
+    a stale socket it finds.
+    """
+    config = socket_config(app, api)
+    localsocket.wrap_protocols(config)
+    sock = localsocket.bind(path)
+    app.state.unix_socket_gid = path.stat().st_gid
+    server = localsocket.QuietServer(config)
+    task = asyncio.create_task(server.serve(sockets=[sock]))
+    try:
+        yield server
+    finally:
+        server.should_exit = True
+        # BaseException: a TCP startup failure raises SystemExit
+        # through the caller, and the loop's teardown can cancel
+        # this await — either way the socket file must go.
+        with contextlib.suppress(BaseException):
+            await task
+        localsocket.unlink(path)
 
 
 def reload_settings(app, config: str | None) -> None:
@@ -127,6 +214,7 @@ def keep_startup_bound(old: Settings, new: Settings) -> None:
         new.server.tls_cert = old.server.tls_cert
     if new.server.tls_key is None:
         new.server.tls_key = old.server.tls_key
+    new.server.socket = old.server.socket
     new.vmm.state_dir = old.vmm.state_dir
     new.server.db_path = old.server.db_path
 

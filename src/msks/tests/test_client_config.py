@@ -9,7 +9,7 @@ import httpx
 import pytest
 import yaml
 from msks.client import cli, config
-from msks.client.env import DEFAULT_URL, env_token, env_url, ssl_context
+from msks.client.env import env_token, env_url, ssl_context
 from msks.server.tls import generate_ca
 
 # The connect/state variables the file can feed, plus the
@@ -18,6 +18,7 @@ from msks.server.tls import generate_ca
 # materialized value never outlives the test that caused it.
 CLIENT_VARS = (
     "MSKSC_URL",
+    "MSKSC_SOCKET",
     "MSKSC_TOKEN",
     "MSKSC_CAFILE",
     "MSKSC_EXPECTED_IMAGE",
@@ -513,7 +514,8 @@ def test_global_keys_answer_when_nothing_else_does(
 def test_defaults_hold_when_nothing_provides_a_value(monkeypatch) -> None:
     clean_env(monkeypatch)
     conf = config.resolve(None, "none")
-    assert conf.url == DEFAULT_URL
+    assert conf.url == ""
+    assert conf.socket == ""
     assert conf.token is None
     assert conf.cafile == ""
     assert conf.expected_image == ""
@@ -586,6 +588,7 @@ def test_a_missing_token_errors_before_network_activity(
     monkeypatch,
 ) -> None:
     clean_env(monkeypatch)
+    monkeypatch.setenv("MSKSC_URL", "https://daemon:8660")
     with pytest.raises(SystemExit, match="token_file"):
         env_token()
 
@@ -604,13 +607,17 @@ def test_the_cafile_expands_a_leading_tilde(
     assert ssl_context().verify_mode.name == "CERT_REQUIRED"
 
 
-def test_an_empty_url_export_falls_to_the_default(monkeypatch) -> None:
+def test_an_empty_url_export_is_the_unset_form(monkeypatch) -> None:
     """Empty is the unset form for the URL too — the reader and the
-    resolver agree on the default, never a "" base URL."""
+    resolver agree, never a "" base URL: an empty URL export leaves
+    the socket layer free to answer (#555)."""
     clean_env(monkeypatch)
     monkeypatch.setenv("MSKSC_URL", "")
-    assert env_url() == DEFAULT_URL
-    assert config.resolve(None, "none").url == DEFAULT_URL
+    monkeypatch.setenv("MSKSC_SOCKET", "/run/msks/msksd.sock")
+    assert env_url() == "http+unix://%2Frun%2Fmsks%2Fmsksd.sock"
+    conf = config.resolve(None, "none")
+    assert conf.url == ""
+    assert conf.socket == "/run/msks/msksd.sock"
 
 
 def test_help_screens_skip_the_config_bootstrap(
@@ -915,3 +922,89 @@ def test_an_unknown_flag_daemon_exits_with_one_line(
     write_config(tmp_path, "daemons:\n  lab:\n    url: https://lab\n")
     with pytest.raises(SystemExit, match="unknown daemon 'ghost'"):
         cli.main(["--daemon", "ghost", "ls"], listing_transport({}))
+
+
+# --- the socket layer (#555) ---------------------------------------------
+
+
+def write_entry_config(tmp_path: Path, entry: str) -> str:
+    return write_config(tmp_path, f"daemons:\n{entry}")
+
+
+def test_an_entry_needs_one_of_url_or_socket(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="needs a url or a socket"):
+        config.load_config(write_entry_config(tmp_path, "  bare: {}\n"))
+
+
+def test_an_entry_refuses_both_url_and_socket(tmp_path: Path) -> None:
+    body = "  both:\n    url: https://d\n    socket: /run/s\n"
+    with pytest.raises(ValueError, match="both a url and a socket"):
+        config.load_config(write_entry_config(tmp_path, body))
+
+
+def test_a_socket_entry_resolves_without_a_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clean_env(monkeypatch)
+    conf = config.resolve(
+        "local", write_entry_config(tmp_path, "  local:\n    socket: /run/s\n")
+    )
+    assert conf.url == ""
+    assert conf.socket == "/run/s"
+    assert conf.token is None
+    assert conf.env_layer == {"MSKSC_SOCKET": "/run/s"}
+
+
+def test_an_active_socket_entry_materializes_the_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clean_env(monkeypatch)
+    path = write_entry_config(tmp_path, "  local:\n    socket: /run/s\n")
+    path = write_config(
+        tmp_path,
+        "active_daemon: local\ndaemons:\n  local:\n    socket: /run/s\n",
+    )
+    config.apply(config.resolve(None, path))
+    assert os.environ["MSKSC_SOCKET"] == "/run/s"
+
+
+def test_the_flag_takes_an_absolute_socket_path(tmp_path: Path) -> None:
+    doc = config.load_config(
+        write_entry_config(tmp_path, "  local:\n    socket: /run/s\n")
+    )
+    assert config.select_daemon("/run/other.sock", doc, "p") == (
+        config.Selection(None, True, None, "/run/other.sock")
+    )
+
+
+def test_a_flagged_socket_entry_beats_the_environment_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clean_env(monkeypatch)
+    monkeypatch.setenv("MSKSC_URL", "https://env:8660")
+    conf = config.resolve(
+        "local", write_entry_config(tmp_path, "  local:\n    socket: /run/s\n")
+    )
+    assert conf.url == ""
+    assert conf.socket == "/run/s"
+
+
+def test_the_environment_url_beats_the_environment_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clean_env(monkeypatch)
+    monkeypatch.setenv("MSKSC_URL", "https://env:8660")
+    monkeypatch.setenv("MSKSC_SOCKET", "/run/s")
+    conf = config.resolve(None, "none")
+    assert conf.url == "https://env:8660"
+    assert conf.socket == ""
+
+
+def test_a_socket_path_flag_resolves_to_the_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clean_env(monkeypatch)
+    conf = config.resolve("/run/flagged.sock", "none")
+    assert conf.url == ""
+    assert conf.socket == "/run/flagged.sock"
+    assert conf.env_layer == {"MSKSC_SOCKET": "/run/flagged.sock"}

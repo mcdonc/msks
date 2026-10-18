@@ -92,6 +92,9 @@ def client_config_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def devenv_shell_presets(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the devenv shell's presets out of the suite.
 
+    # #555: the client no longer dials an implicit default — the
+    # suite's TCP-mode tests start with the pre-#555 default named,
+    # and the tests of the unconfigured refusal clear it themselves.
     The shell presets MSKSC_CACHE_DIR at the worktree's own state
     (#251) and MSKSD_CONFIG_DIR at the worktree
     root (#262); tests exercise the documented defaults (the XDG
@@ -104,3 +107,7 @@ def devenv_shell_presets(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MSKSC_CACHE_DIR", raising=False)
     monkeypatch.delenv("MSKSC_IDENTITY_FILE", raising=False)
     monkeypatch.delenv("MSKSD_CONFIG_DIR", raising=False)
+    monkeypatch.setenv("MSKSC_URL", "https://127.0.0.1:8660")
+    monkeypatch.delenv("MSKSC_SOCKET", raising=False)
+    monkeypatch.delenv("MSKSC_TOKEN", raising=False)
+    monkeypatch.delenv("MSKSC_CAFILE", raising=False)

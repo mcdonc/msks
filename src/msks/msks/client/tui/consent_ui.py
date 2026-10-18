@@ -54,8 +54,9 @@ from textual.widgets import (
 )
 
 from ..egress import events_url
-from ..env import env_token, env_url, ssl_context
+from ..env import env_token, env_url, is_unix, ssl_context
 from ..wsauth import auth_headers
+from ..wsdial import dial as ws_dial
 from .consent import (
     DURATION_DEFAULT,
     DURATIONS,
@@ -1553,6 +1554,10 @@ def ws_connect_kwargs(url: str, token: str, ssl_ctx) -> dict:
 
 def default_ws_factory():
     """The events websocket connection (the decider's stream)."""
-    return websockets.connect(
-        **ws_connect_kwargs(env_url(), env_token(), shared_ssl())
+    url = env_url()
+    return ws_dial(
+        events_url(url),
+        env_token(),
+        None if is_unix(url) else shared_ssl(),
+        max_size=2**22,
     )

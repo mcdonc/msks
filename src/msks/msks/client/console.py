@@ -28,11 +28,11 @@ from urllib.parse import quote
 
 import websockets
 
-from . import wsauth
+from . import wsauth, wsdial
 from .env import (
-    DEFAULT_URL,  # noqa: F401  (re-exported for callers/tests)
     env_token,
     env_url,
+    is_unix,
     ssl_context,
 )
 from .rest import ensure_running
@@ -61,14 +61,9 @@ def ws_url(base_url: str, workspace_id: str) -> str:
     space must become %20, not + — the server percent-decodes
     paths only).
     """
-    scheme, sep, rest = base_url.partition("://")
-    if sep:
-        scheme = "wss" if scheme == "https" else "ws"
-    else:
-        scheme, rest = "wss", base_url
-    return (
-        f"{scheme}://{rest}/api/v1/workspaces/{quote(workspace_id, safe='')}"
-        "/console"
+    return wsdial.ws_url(
+        base_url,
+        f"/api/v1/workspaces/{quote(workspace_id, safe='')}/console",
     )
 
 
@@ -156,14 +151,10 @@ def _connect(address: str, token: str, ssl_ctx):
     """The websocket connection, in hand for a clean close on failure.
 
     The token rides the handshake's Authorization header (#216).
-    A plain-ws URL (http daemon) takes no ssl argument.
+    A plain-ws URL (http daemon) takes no ssl argument; the local
+    listener (#555) dials its socket and carries no token.
     """
-    return websockets.connect(
-        address,
-        additional_headers=wsauth.auth_headers(token),
-        ssl=None if address.startswith("ws://") else ssl_ctx,
-        max_size=2**22,
-    )
+    return wsdial.dial(address, token, ssl_ctx, max_size=2**22)
 
 
 async def dial(address: str, token: str, ssl_ctx, url: str):
@@ -307,8 +298,9 @@ def run_workspace_shell(workspace_id: str) -> int:
     # One TLS context serves the whole command, so its
     # unverified-mode warning prints once. It is built BEFORE raw
     # mode: setraw clears OPOST, so a plain \n printed mid-session
-    # would leave the cursor mid-column.
-    ssl_ctx = ssl_context()
+    # would leave the cursor mid-column. The local listener (#555)
+    # builds none: the kernel vouches for both ends.
+    ssl_ctx = None if is_unix(url) else ssl_context()
     try:
         old = termios.tcgetattr(sys.stdin.fileno())
     except termios.error:

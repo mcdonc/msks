@@ -229,7 +229,7 @@ def root(
         None,
         "--daemon",
         help="the daemon to address: an alias from the config file, "
-        "or a raw URL (#314)",
+        "a raw URL, or an absolute socket path (#314, #555)",
     ),
     config: str = typer.Option(
         None,

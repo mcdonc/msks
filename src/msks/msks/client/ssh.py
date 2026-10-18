@@ -70,7 +70,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 
 from . import agent
-from .env import env_token, env_url, ssl_context
+from .env import env_token, env_url, is_unix, ssl_context
 from .rest import (
     ensure_running,
     fetch_ssh_key,
@@ -1270,7 +1270,7 @@ def staged_session(workspace_id: str, transport=None):
     ``msks ssh`` (#112) and ``msks rsync`` (#190) share it."""
     token = env_token()
     url = env_url()
-    ssl_ctx = ssl_context()
+    ssl_ctx = None if is_unix(url) else ssl_context()
     key, booted = asyncio.run(
         prepare(workspace_id, url, token, ssl_ctx, transport)
     )

@@ -93,6 +93,7 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     # ServerSettings — the API listener.
     "MSKSD_HOST",
     "MSKSD_PORT",
+    "MSKSD_SOCKET",
     "MSKSD_TLS_CERT",
     "MSKSD_TLS_KEY",
     "MSKSD_EVENT_POLL_S",
@@ -464,6 +465,13 @@ def render_template() -> str:
 # --- The API listener ---
 # host: 127.0.0.1           # the listener's bind address
 # port: 8660                # the listener's port
+# socket: ""                # the local listener's socket path
+#                           # (#555): same-host clients connect
+#                           # through it with peer-credential
+#                           # auth and no token. Unset binds the
+#                           # default ($XDG_RUNTIME_DIR or /run,
+#                           # under msks/); the empty string
+#                           # serves TCP alone
 # tls_cert: /etc/msksd/tls.crt  # operator-provided TLS material;
 # tls_key: /etc/msksd/tls.key   # both unset -> a self-signed CA is
 #                           # generated on first run and its

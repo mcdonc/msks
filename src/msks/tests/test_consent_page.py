@@ -2476,17 +2476,19 @@ async def test_close_ws_swallows_a_dead_peer() -> None:
 def test_the_default_ws_factory_dials_the_events_url(
     monkeypatch,
 ) -> None:
-    dialed: list[dict] = []
+    dialed: list[tuple] = []
 
     class FakeConnect:
-        def __init__(self, **kwargs):
-            dialed.append(kwargs)
+        def __init__(self, *args, **kwargs):
+            dialed.append((args, kwargs))
 
-    monkeypatch.setattr(consent_ui.websockets, "connect", FakeConnect)
+    from msks.client import wsdial
+
+    monkeypatch.setattr(wsdial.websockets, "connect", FakeConnect)
     monkeypatch.setenv("MSKSC_URL", "https://d")
     monkeypatch.setenv("MSKSC_TOKEN", "t")
     consent_ui.default_ws_factory()
-    assert dialed[0]["uri"].startswith("wss://d")
+    assert dialed[0][0][0].startswith("wss://d")
 
 
 def test_ws_connect_kwargs_and_shared_ssl(monkeypatch) -> None:

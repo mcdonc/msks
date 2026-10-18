@@ -473,6 +473,7 @@ KEY_CASES = [
     ("e2fsck", "/fsck", "vmm.e2fsck", "/fsck"),
     ("host", "0.0.0.0", "server.host", "0.0.0.0"),
     ("port", 9000, "server.port", 9000),
+    ("socket", "/custom/msksd.sock", "server.socket", "/custom/msksd.sock"),
     ("tls_cert", "/c.pem", "server.tls_cert", "/c.pem"),
     ("tls_key", "/k.pem", "server.tls_key", "/k.pem"),
     ("event_poll_s", 2.5, "server.event_poll_s", 2.5),

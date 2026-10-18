@@ -170,6 +170,14 @@ class ServerSettings:
     port: int = 8660
     tls_cert: str | None = None
     tls_key: str | None = None
+    # The local listener (#555): a unix socket same-host clients
+    # reach with peer-credential auth and no token. None binds the
+    # default path ($XDG_RUNTIME_DIR or /run, under msks/); the
+    # empty string disables the listener and serves TCP alone;
+    # any other value is the socket path. Startup-bound: a
+    # SIGHUP reload naming a new path changes nothing until a
+    # restart.
+    socket: str | None = None
     db_path: Path = field(
         default_factory=lambda: Path(
             "~/.local/state/msksd/msks.db"
@@ -751,6 +759,7 @@ def _server_settings_from_env(
         port=_parse_int(env, "MSKSD_PORT", cls.port),
         tls_cert=optional_env(env, "MSKSD_TLS_CERT"),
         tls_key=optional_env(env, "MSKSD_TLS_KEY"),
+        socket=optional_env(env, "MSKSD_SOCKET"),
         db_path=state / "msks.db",
         event_poll_s=poll,
         bootstrap_token=bootstrap,
