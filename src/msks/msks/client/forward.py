@@ -21,11 +21,11 @@ from urllib.parse import quote
 
 import websockets
 
-from . import wsauth
+from . import wsauth, wsdial
 from .env import (
-    DEFAULT_URL,  # noqa: F401  (re-exported for callers/tests)
     env_token,
     env_url,
+    is_unix,
     ssl_context,
 )
 from .rest import ensure_running
@@ -52,16 +52,11 @@ CLOSE_CODE_REASONS = {
 def ws_url(base_url: str, workspace_id: str, port: int) -> str:
     """The forward websocket's URL. The token travels in the
     handshake's Authorization header (#216), never the URL."""
-    scheme, sep, rest = base_url.partition("://")
-    if sep:
-        scheme = "wss" if scheme == "https" else "ws"
-    else:
-        scheme, rest = "wss", base_url
     # The id is a path segment: quote with no safe chars (a space must
     # become %20, not + — the server percent-decodes paths only).
-    return (
-        f"{scheme}://{rest}/api/v1/workspaces/{quote(workspace_id, safe='')}"
-        f"/forward/{port}"
+    return wsdial.ws_url(
+        base_url,
+        f"/api/v1/workspaces/{quote(workspace_id, safe='')}/forward/{port}",
     )
 
 
@@ -69,14 +64,10 @@ def connect(address: str, token: str, ssl_ctx):
     """The websocket connection, in hand for a clean close on failure.
 
     The token rides the handshake's Authorization header (#216).
-    A plain-ws URL (http daemon) takes no ssl argument.
+    A plain-ws URL (http daemon) takes no ssl argument; the local
+    listener (#555) dials its socket and carries no token.
     """
-    return websockets.connect(
-        address,
-        additional_headers=wsauth.auth_headers(token),
-        ssl=None if address.startswith("ws://") else ssl_ctx,
-        max_size=MAX_FRAME,
-    )
+    return wsdial.dial(address, token, ssl_ctx, max_size=MAX_FRAME)
 
 
 def check_port(port: int) -> int:
@@ -345,7 +336,7 @@ def run_workspace_forward(
         check_port(local)
     token = env_token()
     url = env_url()
-    ssl_ctx = ssl_context()
+    ssl_ctx = None if is_unix(url) else ssl_context()
     asyncio.run(ensure_running(workspace_id, url, token, ssl_ctx=ssl_ctx))
     address = ws_url(url, workspace_id, port)
     if local is not None:

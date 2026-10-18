@@ -112,7 +112,10 @@ conformance_args = 8
 # #500: LEGACY_LOGIN_USER went — four fewer identity imports
 # (the constant left ssh and forms behind).
 identity = 2
-spec = 3
+# #555: the client's connection layer reads the shared local-
+# listener socket vocabulary (env.py's default candidates, the
+# config layer's entry rule, the wsdial/consumer seams).
+spec = 6
 
 [snapshot.config]
 configio = 3
@@ -218,8 +221,10 @@ settings = 4
 # the cache leaf's error vocabulary (module + name).
 secretcache = 2
 # spec grew by one statement: the secret routes seed and serve the
-# probe placeholder (#424)
-spec = 28
+# probe placeholder (#424); #555 adds two more — the local
+# listener's path vocabulary (server.localsocket) and its
+# enablement read in the entry point.
+spec = 30
 storage = 13
 
 [snapshot.settings]

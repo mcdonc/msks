@@ -16,7 +16,6 @@ from pathlib import Path
 import pytest
 from msks.client import cli, console
 from msks.client.console import (
-    DEFAULT_URL,
     DETACH,
     env_token,
     env_url,
@@ -63,9 +62,17 @@ def feed_stdin(data: bytes) -> asyncio.StreamReader:
     return reader
 
 
-def test_env_url_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_env_url_default_refuses_without_a_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No URL, no socket, no default socket to find: the client
+    refuses before dialing (#555) — nothing implicit reaches a
+    well-known port."""
     monkeypatch.delenv("MSKSC_URL", raising=False)
-    assert env_url() == DEFAULT_URL
+    monkeypatch.delenv("MSKSC_SOCKET", raising=False)
+    monkeypatch.setattr("msks.client.env.find_default_socket", lambda: None)
+    with pytest.raises(SystemExit, match="no daemon configured"):
+        env_url()
 
 
 def test_env_url_overridden_and_slash_trimmed(
@@ -82,6 +89,7 @@ def test_env_token_missing_exits(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_env_token_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MSKSC_URL", "https://d:8660")
     monkeypatch.setenv("MSKSC_TOKEN", "sekrit")
     assert env_token() == "sekrit"
 
@@ -549,6 +557,7 @@ def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
         order.append("preflight")
 
     monkeypatch.setattr(sys, "stdin", FdOnly())
+    monkeypatch.setenv("MSKSC_URL", "https://d:8660")
     monkeypatch.setenv("MSKSC_TOKEN", "t")
     monkeypatch.setattr(console, "require_tty", lambda: None)
     monkeypatch.setattr(console, "ensure_running", preflight)
@@ -578,6 +587,7 @@ def test_main_raw_mode_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(sys, "stdin", FdOnly())
+    monkeypatch.setenv("MSKSC_URL", "https://d:8660")
     monkeypatch.setenv("MSKSC_TOKEN", "t")
     monkeypatch.setattr(console, "require_tty", lambda: None)
     monkeypatch.setattr(console, "ensure_running", async_noop)
@@ -710,6 +720,7 @@ def test_run_workspace_shell_preflights_boot(
         )
 
     monkeypatch.setattr(sys, "stdin", FdOnly())
+    monkeypatch.setenv("MSKSC_URL", "https://d:8660")
     monkeypatch.setenv("MSKSC_TOKEN", "t")
     monkeypatch.setenv("MSKSC_URL", "u")
     monkeypatch.setattr(console, "require_tty", lambda: None)

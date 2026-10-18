@@ -23,7 +23,7 @@ from .create import (
     operator_pubkey,
     read_pubkey,
 )
-from .env import env_token, env_url, ssl_context
+from .env import env_token, env_url, is_unix, ssl_context
 from .resize import display_name, resize_message
 from .rest import fetch_ssh_key as rest_fetch_ssh_key
 from .tabular import listing_text
@@ -185,7 +185,8 @@ async def create_workspace(
     """
     # One TLS context serves the create and the boot (an unverified
     # daemon warns once per context — the pair must not warn twice).
-    ssl_ctx = None if transport is not None else ssl_context()
+    # The local listener (#555) builds none: the kernel vouches.
+    ssl_ctx = None if transport is not None or is_unix(url) else ssl_context()
     row = await create_workspace_core(
         url,
         token,

@@ -54,8 +54,9 @@ from textual.widgets import (
 )
 
 from ..egress import events_url
-from ..env import env_token, env_url, ssl_context
+from ..env import env_token, env_url, is_unix, ssl_context
 from ..wsauth import auth_headers
+from ..wsdial import dial as ws_dial
 from .consent import (
     DURATION_DEFAULT,
     DURATIONS,
@@ -1533,7 +1534,10 @@ def shared_ssl():
     """The one TLS context for the app's lifetime: building it
     prints the TOFU warning when MSKSC_CAFILE is unset, and building
     it per verdict or per reconnect would spray that warning across
-    the live screen."""
+    the live screen. The local listener (#555) answers None — no
+    TLS rides a unix socket, so no warning exists to print."""
+    if is_unix(env_url()):
+        return None
     if _SHARED_SSL[0] is None:
         _SHARED_SSL[0] = ssl_context()
     return _SHARED_SSL[0]
@@ -1553,6 +1557,10 @@ def ws_connect_kwargs(url: str, token: str, ssl_ctx) -> dict:
 
 def default_ws_factory():
     """The events websocket connection (the decider's stream)."""
-    return websockets.connect(
-        **ws_connect_kwargs(env_url(), env_token(), shared_ssl())
+    url = env_url()
+    return ws_dial(
+        events_url(url),
+        env_token(),
+        None if is_unix(url) else shared_ssl(),
+        max_size=2**22,
     )

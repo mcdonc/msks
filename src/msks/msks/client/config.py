@@ -76,7 +76,6 @@ from pathlib import Path
 import yaml
 
 from ..configio import UniqueKeyLoader, write_exclusive
-from .env import DEFAULT_URL
 
 # The ``--config=none`` sentinel: env vars + built-in defaults only.
 NO_CONFIG = "none"
@@ -99,6 +98,7 @@ CONFIG_FILENAME = "msks.yaml"
 #: connection.
 GLOBAL_ENV_VARS: dict[str, str] = {
     "url": "MSKSC_URL",
+    "socket": "MSKSC_SOCKET",
     "token_file": "MSKSC_TOKEN",
     "cafile": "MSKSC_CAFILE",
     "expected_image": "MSKSC_EXPECTED_IMAGE",
@@ -108,10 +108,13 @@ GLOBAL_ENV_VARS: dict[str, str] = {
     "terminal_title": "MSKSC_TERMINAL_TITLE",
 }
 
-#: The keys one ``daemons:`` entry may carry. ``url`` is the one
-#: required key; the rest override their global forms for that
-#: alias.
-DAEMON_ENTRY_KEYS = ("url", "token_file", "cafile", "expected_image")
+#: The keys one ``daemons:`` entry may carry. Exactly one of
+#: ``url`` and ``socket`` is required — a remote daemon's address
+#: or a local listener's socket path (#555); the rest override
+#: their global forms for that alias. A ``socket`` entry needs no
+#: ``token_file``: the local listener authenticates by peer
+#: credential.
+DAEMON_ENTRY_KEYS = ("url", "socket", "token_file", "cafile", "expected_image")
 
 #: The terminal-launch setting's variable (#314): the string form
 #: of the file value, overriding it for one shell.
@@ -357,7 +360,8 @@ def daemons_section(value: object, path: str) -> dict[str, dict]:
 
 
 def daemon_entry(alias: object, entry: object, path: str) -> dict:
-    """One alias's settings: the four entry keys, ``url`` required."""
+    """One alias's settings: its keys, with the address rule —
+    exactly one of ``url`` and ``socket`` (#555)."""
     if not isinstance(alias, str) or not alias:
         raise ValueError(
             f"{path}: daemon aliases must be names, got {alias!r}"
@@ -369,9 +373,20 @@ def daemon_entry(alias: object, entry: object, path: str) -> dict:
             f"got {kind}"
         )
     out = entry_keys(alias, entry, path)
-    if "url" not in out:
-        raise ValueError(f"{path}: daemon {alias!r} needs a url")
+    refuse_addressless_entry(out, alias, path)
     return out
+
+
+def refuse_addressless_entry(out: dict, alias: str, path: str) -> None:
+    """The one-address rule: an entry names a url or a socket,
+    never both, never neither."""
+    if "url" not in out and "socket" not in out:
+        raise ValueError(f"{path}: daemon {alias!r} needs a url or a socket")
+    if "url" in out and "socket" in out:
+        raise ValueError(
+            f"{path}: daemon {alias!r} carries both a url and a "
+            "socket; a daemon is reached one way"
+        )
 
 
 def entry_keys(alias: str, entry: dict, path: str) -> dict:
@@ -548,7 +563,8 @@ class Selection:
 
     alias: str | None
     flagged: bool
-    url_override: str | None
+    url_override: str | None = None
+    socket_override: str | None = None
 
 
 def select_daemon(daemon_arg: str | None, doc: dict, path: str) -> Selection:
@@ -563,29 +579,32 @@ def ambient_selection(doc: dict, path: str) -> Selection:
     """The file's own pick: ``active_daemon``, or nothing."""
     active = doc.get("active_daemon")
     if active is None:
-        return Selection(None, False, None)
+        return Selection(None, False, None, None)
     aliases = doc.get("daemons", {})
     if active not in aliases:
         raise ValueError(
             f"{path}: active_daemon {active!r} is not defined by "
             f"this file's daemons ({alias_list(aliases)})"
         )
-    return Selection(active, False, None)
+    return Selection(active, False, None, None)
 
 
 def flag_selection(daemon_arg: str, doc: dict, path: str) -> Selection:
-    """The flag's pick: an alias the file defines first, else a raw
-    URL (an alias named like a URL stays reachable — the table is
-    consulted before the scheme sniff)."""
+    """The flag's pick: an alias the file defines first, else a
+    raw URL, else an absolute path naming a local listener's
+    socket (#555) (an alias named like a URL stays reachable —
+    the table is consulted before the scheme sniff)."""
     aliases = doc.get("daemons", {})
     if daemon_arg in aliases:
-        return Selection(daemon_arg, True, None)
-    if "://" not in daemon_arg:
-        raise ValueError(
-            f"{path}: unknown daemon {daemon_arg!r} "
-            f"(defined: {alias_list(aliases)})"
-        )
-    return Selection(None, True, daemon_arg)
+        return Selection(daemon_arg, True, None, None)
+    if "://" in daemon_arg:
+        return Selection(None, True, daemon_arg, None)
+    if daemon_arg.startswith("/"):
+        return Selection(None, True, None, daemon_arg)
+    raise ValueError(
+        f"{path}: unknown daemon {daemon_arg!r} "
+        f"(defined: {alias_list(aliases)})"
+    )
 
 
 def alias_list(aliases: dict) -> str:
@@ -718,6 +737,7 @@ class ClientConfig:
     """
 
     url: str
+    socket: str
     token: str | None
     cafile: str
     expected_image: str
@@ -747,7 +767,7 @@ def resolve(
     selection = select_daemon(daemon, doc, path)
     entry = selection_entry(doc, selection)
     layer: dict[str, str] = {}
-    url = resolved_url(entry, selection, doc, layer)
+    url, socket = resolved_address(entry, selection, doc, layer)
     token = resolved_token(entry, selection.flagged, doc, path, layer)
     cafile = resolved_scalar("cafile", entry, selection, doc, layer)
     image = resolved_scalar("expected_image", entry, selection, doc, layer)
@@ -757,6 +777,7 @@ def resolve(
     title = resolved_global("terminal_title", doc, layer)
     return ClientConfig(
         url=url,
+        socket=socket,
         token=token,
         cafile=cafile or "",
         expected_image=image or "",
@@ -778,18 +799,102 @@ def selection_entry(doc: dict, selection: Selection) -> dict | None:
     return doc.get("daemons", {}).get(selection.alias)
 
 
-def resolved_url(
+def resolved_address(
     entry: dict | None, selection: Selection, doc: dict, layer: dict
-) -> str:
-    """The daemon's address: the layers' winner, a raw-URL flag's
-    value outranking them all, the built-in default last."""
-    url, from_file = connect_setting("url", entry, selection.flagged, doc)
+) -> tuple[str, str]:
+    """The daemon's address as ``(url, socket)`` — exactly one
+    non-empty when something named a daemon, both empty when
+    nothing did (the readers then look for the default socket,
+    #555).
+
+    The tiers are the precedence rule itself (#314): the
+    ``--daemon`` flag (3) beats the environment (2) beats the
+    file (1) — an ``active_daemon`` entry's socket does not reach
+    past an exported ``MSKSC_URL``. A tie goes to the url (both
+    in the environment, or both in the file: the url names a
+    daemon anywhere, a socket only this host). The winner is
+    materialized **exclusively** when the flag or the file
+    provided it — the loser's variable is written empty — so the
+    environment readers (:func:`msks.client.env.env_url`, which
+    reads ``MSKSC_URL`` first) dial what this pick chose, not
+    what an ambient export left behind.
+    """
+    if (
+        selection.url_override is not None
+        or selection.socket_override is not None
+    ):
+        return flag_address(selection, layer)
+    url, url_tier = address_tier("url", entry, selection.flagged, doc)
+    sock, sock_tier = address_tier("socket", entry, selection.flagged, doc)
+    if url_tier == 0 and sock_tier == 0:
+        return "", ""
+    return sided_pick(url, url_tier, sock, sock_tier, layer)
+
+
+def flag_address(
+    selection: Selection, layer: dict[str, str]
+) -> tuple[str, str]:
+    """A ``--daemon`` flag's address, materialized exclusively."""
     if selection.url_override is not None:
-        url, from_file = selection.url_override, True
-    url = (url if url is not None else DEFAULT_URL).rstrip("/")
-    if from_file:
-        layer["MSKSC_URL"] = url
-    return url
+        return filed_address(selection.url_override.rstrip("/"), "", layer)
+    return filed_address("", selection.socket_override, layer)
+
+
+def sided_pick(
+    url: str | None,
+    url_tier: int,
+    sock: str | None,
+    sock_tier: int,
+    layer: dict[str, str],
+) -> tuple[str, str]:
+    """The below-flag pick: the higher tier wins, a tie goes to
+    the url, and a file-tier winner is materialized exclusively
+    (an environment winner needs no write — the reader already
+    sees it, and the loser's export stays untouched)."""
+    socket_won = sock_tier > url_tier
+    url_value = "" if socket_won else url.rstrip("/")
+    sock_value = sock if socket_won else ""
+    if max(url_tier, sock_tier) in (1, 3):
+        return filed_address(url_value, sock_value, layer)
+    return url_value, sock_value
+
+
+def address_tier(
+    key: str, entry: dict | None, flagged: bool, doc: dict
+) -> tuple[str | None, int]:
+    """One address key's own winner and its precedence tier: the
+    flagged entry (3) beats the environment (2) beats the file
+    (#314)."""
+    if entry is not None and flagged and key in entry:
+        return entry[key], 3
+    env = os.environ.get(GLOBAL_ENV_VARS[key], "")
+    if env:
+        return env, 2
+    return file_tier(key, entry, doc)
+
+
+def file_tier(
+    key: str, entry: dict | None, doc: dict
+) -> tuple[str | None, int]:
+    """The file's side of one address key: the selected alias's
+    entry or the global key, tier 1 either way."""
+    if entry is not None and key in entry:
+        return entry[key], 1
+    value = doc.get(key)
+    if value is not None:
+        return value, 1
+    return None, 0
+
+
+def filed_address(
+    url: str, socket: str, layer: dict[str, str]
+) -> tuple[str, str]:
+    """Write the pick exclusively: the winner's variable carries
+    it, the loser's carries the empty (unset) form — one dial,
+    whichever variable a reader checks first."""
+    layer["MSKSC_URL"] = url
+    layer["MSKSC_SOCKET"] = socket
+    return url, socket
 
 
 def resolved_token(
@@ -837,9 +942,12 @@ def apply(conf: ClientConfig) -> None:
 
     The readers (:func:`msks.client.env.env_url` and its kin) stay
     environment-driven — one materialization point instead of a
-    config object threaded through every call, and a value the
+    config object threaded through every call. A value the
     environment already provided is never rewritten (it won its
-    layer; writing it back would only blur provenance).
+    layer; writing it back would only blur provenance) — with one
+    exception: the address pick (#555) writes the loser's variable
+    empty, deliberately, so an ambient export cannot take the dial
+    back from a flag or file choice.
     """
     for name, value in conf.env_layer.items():
         os.environ[name] = value
@@ -934,20 +1042,23 @@ def render_template() -> str:
 #   - ServerAliveInterval=30
 #
 # --- Named daemon aliases ---
-# One entry per daemon you talk to; url is the one required key,
-# the rest override their global keys for that alias.
+# One entry per daemon you talk to; exactly one of url and socket
+# is required (#555) — a remote daemon's address, or a local
+# listener's socket path (peer-credential auth: no token_file,
+# no cafile). The rest override their global keys for that alias.
 # daemons:
 #   dev:
-#     url: https://127.0.0.1:8660
-#     token_file: ~/projects/msks/.devenv/state/msksd/bootstrap-token
-#     cafile: ~/projects/msks/.devenv/state/msksd/msks-ca.pem
+#     socket: /run/msks/msksd.sock   # the local listener this
+#                                    # host's daemon serves
 #   lab:
 #     url: https://hv-1.lab.example.com:8660
 #     token_file: ~/.config/msks/lab.token
 #     cafile: ~/.config/msks/lab-ca.pem
 #     expected_image: msks/debian13:1.1
 #
-# active_daemon: dev            # the alias a bare msks addresses
+# active_daemon: lab           # the alias a bare msks addresses;
+#                              # unset, a bare msks looks for the
+#                              # default local socket first (#555)
 """
 
 

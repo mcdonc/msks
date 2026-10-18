@@ -473,6 +473,7 @@ KEY_CASES = [
     ("e2fsck", "/fsck", "vmm.e2fsck", "/fsck"),
     ("host", "0.0.0.0", "server.host", "0.0.0.0"),
     ("port", 9000, "server.port", 9000),
+    ("socket", "/custom/msksd.sock", "server.socket", "/custom/msksd.sock"),
     ("tls_cert", "/c.pem", "server.tls_cert", "/c.pem"),
     ("tls_key", "/k.pem", "server.tls_key", "/k.pem"),
     ("event_poll_s", 2.5, "server.event_poll_s", 2.5),
@@ -885,3 +886,42 @@ def test_the_environment_overrides_the_file_list(
     monkeypatch.setenv("MSKSD_LLM_MODELS", "openai/x::sk-env")
     settings = load_settings(str(config))
     assert settings.llm.models == ("openai/x::sk-env",)
+
+
+def test_main_names_a_refused_listener_bind(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, capsys
+) -> None:
+    """A bind the kernel refused is one operator-shaped line and
+    exit 2 (#555 review) — the same shape config and TLS failures
+    take."""
+    import signal
+
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(tmp_path / "state"))
+    previous = signal.getsignal(signal.SIGHUP)
+    try:
+        monkeypatch.setattr(main_mod, "run_forever", raises_bind_refused())
+        config = dump_config(tmp_path, {"port": 9013})
+        assert main_mod.main(["--config", config]) == 2
+        assert "permission denied" in capsys.readouterr().err
+    finally:
+        signal.signal(signal.SIGHUP, previous)
+
+
+def raises_bind_refused():
+    def run_forever(app) -> None:
+        raise OSError(13, "permission denied binding /run/msks/msksd.sock")
+
+    return run_forever
+
+
+def test_an_empty_socket_export_disables_through_a_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """MSKSD_SOCKET="" keeps its meaning through the file layer
+    (#555 review): the layered env treats empty as the unset form
+    everywhere else, and the disable spelling must survive a
+    config file that carries other keys."""
+    monkeypatch.setenv("MSKSD_SOCKET", "")
+    path = dump_config(tmp_path, {"port": 9015})
+    settings = load_settings(path)
+    assert settings.server.socket == ""

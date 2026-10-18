@@ -15,6 +15,10 @@ the daemon's layers speak to each other:
   ordering) the catalog and the client share (#397)
 - ``tokens`` — the bearer-token grammar every minting and parsing
   site validates against
+- ``sockets`` — the local-listener socket paths (#555): the
+  default place the daemon binds its unix listener and the
+  client's dial looks for it, so an unconfigured same-host pair
+  finds each other
 - ``time`` — deadline predicates over naive-UTC stored deadlines
 - ``version`` — the daemon's version string, its single home
   since #407 moved it off the package root

@@ -16,7 +16,7 @@ import time
 
 import httpx
 
-from .env import ssl_context
+from .env import is_unix, ssl_context, unix_path
 
 # Generous read budget: ``POST .../start`` answers only after the
 # VMM boot completes (~3s p50, slower on a loaded host), and the
@@ -36,7 +36,7 @@ BOOT_POLL_S = 1.0
 
 def api_client(
     url: str,
-    token: str,
+    token: str | None,
     transport: httpx.AsyncBaseTransport | None = None,
     ssl_ctx: ssl.SSLContext | None = None,
 ) -> httpx.AsyncClient:
@@ -46,18 +46,32 @@ def api_client(
     mock) into (an ``ssl_ctx`` is unused alongside one); the real
     client dials ``url`` with the #21 TLS story (``ssl_ctx`` lets a
     caller reuse an already-built context, so the unverified-mode
-    warning prints once per invocation).
+    warning prints once per invocation). A ``token`` of None rides
+    the local listener (#555): peer credentials authenticate, no
+    Authorization header exists to send, and the socket path inside
+    the ``http+unix://`` address replaces the dial target — TLS
+    does not apply (the kernel vouches for both ends).
     """
+    headers = (
+        {"Authorization": f"Bearer {token}"} if token is not None else None
+    )
     if transport is not None:
         return httpx.AsyncClient(
             base_url=url,
             transport=transport,
-            headers={"Authorization": f"Bearer {token}"},
+            headers=headers,
+            timeout=TIMEOUT,
+        )
+    if is_unix(url):
+        return httpx.AsyncClient(
+            base_url="http://unix",
+            transport=httpx.AsyncHTTPTransport(uds=unix_path(url)),
+            headers=headers,
             timeout=TIMEOUT,
         )
     return httpx.AsyncClient(
         base_url=url,
-        headers={"Authorization": f"Bearer {token}"},
+        headers=headers,
         timeout=TIMEOUT,
         verify=ssl_ctx if ssl_ctx is not None else ssl_context(),
     )

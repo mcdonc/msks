@@ -2476,17 +2476,19 @@ async def test_close_ws_swallows_a_dead_peer() -> None:
 def test_the_default_ws_factory_dials_the_events_url(
     monkeypatch,
 ) -> None:
-    dialed: list[dict] = []
+    dialed: list[tuple] = []
 
     class FakeConnect:
-        def __init__(self, **kwargs):
-            dialed.append(kwargs)
+        def __init__(self, *args, **kwargs):
+            dialed.append((args, kwargs))
 
-    monkeypatch.setattr(consent_ui.websockets, "connect", FakeConnect)
+    from msks.client import wsdial
+
+    monkeypatch.setattr(wsdial.websockets, "connect", FakeConnect)
     monkeypatch.setenv("MSKSC_URL", "https://d")
     monkeypatch.setenv("MSKSC_TOKEN", "t")
     consent_ui.default_ws_factory()
-    assert dialed[0]["uri"].startswith("wss://d")
+    assert dialed[0][0][0].startswith("wss://d")
 
 
 def test_ws_connect_kwargs_and_shared_ssl(monkeypatch) -> None:
@@ -2665,3 +2667,14 @@ async def test_the_verdict_keys_leave_when_the_queue_empties() -> None:
         cp.tick()  # the rebuild lands the gate's fresh answer
         await wait_for(lambda: verdict_keys() == [])
         assert data.decided == []
+
+
+def test_shared_ssl_answers_none_over_the_local_socket(
+    monkeypatch,
+) -> None:
+    """No TLS rides a unix socket (#555): the shared context
+    builder returns None — no TOFU warning prints on the TUI."""
+    monkeypatch.setenv("MSKSC_URL", "")
+    monkeypatch.setenv("MSKSC_SOCKET", "/run/msks/msksd.sock")
+    monkeypatch.setattr(consent_ui, "_SHARED_SSL", [None])
+    assert consent_ui.shared_ssl() is None

@@ -3261,8 +3261,9 @@ class FakeConnect:
     def __init__(self, connections: list[FakeWS]) -> None:
         self.connections = connections
 
-    def __call__(self, **_kwargs):
-        self.kwargs = _kwargs
+    def __call__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
         return self
 
     def __aiter__(self):
@@ -3346,10 +3347,10 @@ async def test_run_watch_registers_and_streams(monkeypatch, capsys) -> None:
     assert ws1.sent == [
         json.dumps({"type": "egress.decider", "workspace": "ws1"})
     ]
-    # The connection kwargs took the token-free events URL, the auth
-    # header, and the TLS context.
-    assert connect.kwargs["uri"].endswith("events")
-    assert "token" not in connect.kwargs["uri"]
+    # The dial took the token-free events URL, the auth header,
+    # and the TLS context.
+    assert connect.args[0].endswith("events")
+    assert "token" not in connect.args[0]
     assert connect.kwargs["additional_headers"] == [
         ("Authorization", "Bearer tok")
     ]

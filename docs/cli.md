@@ -32,9 +32,10 @@ their file keys below.
 
 | Variable               | Meaning                                                                                                                                                                                                                     | Default                                                   |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `MSKSC_URL`            | The daemon's base URL                                                                                                                                                                                                       | `https://127.0.0.1:8660`                                  |
-| `MSKSC_TOKEN`          | A daemon bearer token (see tokens below)                                                                                                                                                                                    | — (required)                                              |
-| `MSKSC_CAFILE`         | A PEM file to verify the daemon's TLS certificate                                                                                                                                                                           | unverified with warning                                   |
+| `MSKSC_URL`            | The remote daemon's base URL — the TCP + TLS + token shape; the client dials TCP only when a URL names it (#555)                                                                                                            | unset (the local socket answers, else the client refuses) |
+| `MSKSC_SOCKET`         | The local listener's socket path (#555): peer-credential authentication — no token, no TLS                                                                                                                                  | unset (the default socket is looked for)                  |
+| `MSKSC_TOKEN`          | A daemon bearer token (see tokens below); a socket connection needs none (#555)                                                                                                                                             | — (required for a URL)                                    |
+| `MSKSC_CAFILE`         | A PEM file to verify the daemon's TLS certificate; a socket connection verifies nothing — the kernel vouches for both ends (#555)                                                                                           | unverified with warning                                   |
 | `MSKSC_EXPECTED_IMAGE` | An image reference the operator sets; `msks ls` compares it with the image the daemon reports in `/health` and names drift (#160)                                                                                           | unset (no check)                                          |
 | `MSKSC_CACHE_DIR`      | The directory per-workspace host-key caches live under (#251); the per-workspace directories are created below it                                                                                                           | `~/.cache/msks`                                           |
 | `MSKSC_IDENTITY_FILE`  | Your own private key file — the ssh identity `msks create` plants into every workspace (#336, #486; msks generates none); a leading `~` expands                                                                             | unset (`pubkey_file` answers, else `msks create` refuses) |
@@ -76,8 +77,10 @@ while the private half answers from your agent. It wins over
 the same path rules and global-only shape, and `--pubkey`
 still overrides it for one create.
 
-A missing `MSKSC_TOKEN` is an error before any network activity: the
-client names the variable and exits. Tokens come from the daemon:
+A missing `MSKSC_TOKEN` is an error before any network activity:
+the client names the variable and exits — unless the daemon is
+reached through the local socket (#555), where the kernel names
+the client and no token exists to read. Tokens come from the daemon:
 `POST /api/v1/tokens` mints one, and the devenv environment presets
 all three from the worktree's dev-daemon state dir,
 `.devenv/state/msksd/` (token + CA) — once the dev daemon has
@@ -87,6 +90,15 @@ presets `MSKSC_CACHE_DIR` at the worktree's own
 stays its own — one tree's cache entry is never read by another
 (#251); a non-empty value exported before entering the shell
 survives the preset, and an empty one counts as unset.
+
+An unconfigured client — no `MSKSC_URL`, no `MSKSC_SOCKET`, no
+config-file daemon — looks for the default socket a same-host
+daemon binds (`$XDG_RUNTIME_DIR/msks/msksd.sock`, then
+`/run/msks/msksd.sock`) and connects through it with no token and
+no TLS (#555); finding none, it exits with the paths it looked for
+and the two settings that name a daemon outright. The client never
+dials a TCP address implicitly — a well-known port could belong to
+any daemon.
 
 ```bash
 msks ls        # presets: https://127.0.0.1:8660, the worktree's
@@ -166,30 +178,31 @@ config file carries (#46).
 ### Daemon aliases
 
 The file's one structural key is `daemons:` — one entry per daemon
-you talk to. `url` is the entry's one required key; `token_file`,
-`cafile`, and `expected_image` override their global keys for that
-alias:
+you talk to. An entry names its daemon one way (#555): `url` for
+a remote daemon, or `socket` for a local listener (peer-credential
+authentication — the entry carries no `token_file` and no
+`cafile`); `token_file`, `cafile`, and `expected_image` override
+their global keys for that alias:
 
 ```yaml
 url: https://127.0.0.1:8660
 token_file: ~/.config/msks/dev.token
 daemons:
-  dev:
-    url: https://127.0.0.1:8660
-    token_file: ~/projects/msks/.devenv/state/msksd/bootstrap-token
-    cafile: ~/projects/msks/.devenv/state/msksd/msks-ca.pem
   lab:
     url: https://hv-1.lab.example.com:8660
     token_file: ~/.config/msks/lab.token
     cafile: ~/.config/msks/lab-ca.pem
     expected_image: msks/debian13:1.1
+  local:
+    socket: /run/msks/msksd.sock
 
-active_daemon: dev
+active_daemon: lab
 ```
 
 `active_daemon` names the alias a bare `msks` addresses; the
-`--daemon <alias-or-url>` flag picks one for a single invocation and
-also takes a raw URL. The two selections sit at different layers of
+`--daemon <alias-or-url-or-path>` flag picks one for a single
+invocation and also takes a raw URL or an absolute socket path
+(#555). The two selections sit at different layers of
 the precedence rule: a `--daemon` alias outranks the environment for
 that invocation (you named the daemon, so its entry's keys win over
 the ambient exports), while an `active_daemon` alias sits below the

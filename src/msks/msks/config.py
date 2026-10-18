@@ -93,6 +93,7 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     # ServerSettings — the API listener.
     "MSKSD_HOST",
     "MSKSD_PORT",
+    "MSKSD_SOCKET",
     "MSKSD_TLS_CERT",
     "MSKSD_TLS_KEY",
     "MSKSD_EVENT_POLL_S",
@@ -303,6 +304,13 @@ def file_env_overrides(path: str) -> dict:
     return parse_config_doc(Path(path).read_text(encoding="utf-8"), path)
 
 
+#: Variables whose empty string is a real value, not the unset
+#: form (#555 review): the local listener's disable spelling —
+#: everywhere else an empty export means "unset, take the next
+#: layer", and MSKSD_SOCKET="" means "serve TCP alone".
+RAW_EMPTY_VARS = frozenset({"MSKSD_SOCKET"})
+
+
 class LayeredEnv(Mapping):
     """The live environment over the config-file layer (#46).
 
@@ -311,9 +319,11 @@ class LayeredEnv(Mapping):
     string overrides the file's list for the one list-valued key the
     same way). A variable
     set to an empty string is the unset form and falls through to the
-    file, matching the settings parsers' empty-means-default rule.
-    Iteration applies the same rule: an empty-string environment
-    entry does not shadow the file's value.
+    file, matching the settings parsers' empty-means-default rule —
+    except the raw-empty set, whose empty string is a real value
+    (the local listener's disable spelling, #555). Iteration applies
+    the same rule: an empty-string environment entry does not shadow
+    the file's value.
     """
 
     def __init__(self, overrides: Mapping) -> None:
@@ -322,13 +332,19 @@ class LayeredEnv(Mapping):
     def _merged(self) -> dict:
         merged = dict(self._overrides)
         merged.update(
-            {name: value for name, value in os.environ.items() if value}
+            {
+                name: value
+                for name, value in os.environ.items()
+                # Empty is the unset form for every variable except
+                # the raw-empty set below.
+                if value or name in RAW_EMPTY_VARS
+            }
         )
         return merged
 
     def __getitem__(self, name: str):
         value = os.environ.get(name)
-        if value:
+        if value or (name in RAW_EMPTY_VARS and value is not None):
             return value
         return self._overrides[name]
 
@@ -464,6 +480,13 @@ def render_template() -> str:
 # --- The API listener ---
 # host: 127.0.0.1           # the listener's bind address
 # port: 8660                # the listener's port
+# socket: ""                # the local listener's socket path
+#                           # (#555): same-host clients connect
+#                           # through it with peer-credential
+#                           # auth and no token. Unset binds the
+#                           # default ($XDG_RUNTIME_DIR or /run,
+#                           # under msks/); the empty string
+#                           # serves TCP alone
 # tls_cert: /etc/msksd/tls.crt  # operator-provided TLS material;
 # tls_key: /etc/msksd/tls.key   # both unset -> a self-signed CA is
 #                           # generated on first run and its
