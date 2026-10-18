@@ -159,7 +159,7 @@ jobs:
       - name: Read the previous manifest
         run: |
           set -eu
-          if gh release download "$TAG" -p images.json -O prev.json; then
+          if gh release download "$TAG" -p images.json -O published.json; then
             echo "re-tagged release: keeping its manifest"
           elif prev_tag=$(git tag --sort=-v:refname | grep '^v' | \
                   grep -vx "$TAG" | while read -r t; do \
@@ -169,12 +169,17 @@ jobs:
                     fi; \
                   done) && \
                [ -n "$prev_tag" ] && \
-               gh release download "$prev_tag" -p images.json -O prev.json
+               gh release download "$prev_tag" -p images.json -O published.json
           then
             echo "carrying forward from $prev_tag's manifest"
           else
-            printf '{}' > prev.json
+            printf '[]' > published.json
           fi
+          # The published manifest is a LIST of rows (the client's
+          # contract); the gate reads it keyed by flavor, the ref's
+          # name half.
+          jq 'map({key: (.ref | split(":")[0]), value: .}) | from_entries' \
+            published.json > prev.json
 
       # One flavor at a time: each changed flavor publishes its
       # immutable channel slot, and every flavor (changed or not)
@@ -250,4 +255,6 @@ jobs:
           done
 
       - name: Attach images.json to the version release
-        run: gh release upload "$TAG" rows.json#images.json --clobber
+        run: |
+          jq '[.[]]' rows.json > images.json
+          gh release upload "$TAG" images.json --clobber
