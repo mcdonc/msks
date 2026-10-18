@@ -39,7 +39,10 @@ def image_json(archive: Path) -> dict:
     layer — the same read :mod:`msks.imagestore` performs at
     import, on the same layout."""
     with tarfile.open(archive) as outer:
-        manifest = json.loads(outer.extractfile("manifest.json").read())
+        member = outer.extractfile("manifest.json")
+        if member is None:
+            raise SystemExit(f"{TOOL}: no manifest.json in {archive}")
+        manifest = json.loads(member.read())
         layer_member = manifest[0]["Layers"][0]
         with tarfile.open(fileobj=outer.extractfile(layer_member)) as layer:
             member = layer.extractfile(f"./{IMAGE_JSON}")
@@ -65,6 +68,12 @@ def meta(guest_dir: Path) -> dict:
     }
 
 
+def archive_or_dir(exc: Exception, args: argparse.Namespace) -> str:
+    """The path a broken-archive failure names: the archive when
+    the read got that far, the guest dir otherwise."""
+    return getattr(exc, "filename", str(args.guest_dir)) or str(args.guest_dir)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog=TOOL,
@@ -80,8 +89,19 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         facts = meta(args.guest_dir)
-    except (OSError, tarfile.TarError, KeyError, ValueError) as exc:
-        print(f"{TOOL}: {exc}", file=sys.stderr)
+    except (
+        OSError,
+        tarfile.TarError,
+        KeyError,
+        IndexError,
+        TypeError,
+        AttributeError,
+    ) as exc:
+        print(
+            f"{TOOL}: {archive_or_dir(exc, args)} is not a built "
+            f"guest archive: {exc}",
+            file=sys.stderr,
+        )
         return 1
     json.dump(facts, sys.stdout, indent=2)
     print()

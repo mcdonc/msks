@@ -2287,3 +2287,44 @@ def test_a_baked_description_flows_through_the_catalog(tmp_path) -> None:
     plain = tmp_path / "workspace-plain-1.0.tar"
     build_containerdisk(plain, name="plain", version="1.0")
     assert import_archive(plain, tmp_path).description == ""
+
+
+def test_a_zstd_archive_imports(tmp_path) -> None:
+    """The channel's whole fetch story (#564): the published form
+    is the zstd-compressed archive, and the import reads it —
+    tarfile's transparent detection, pinned so a Python change
+    fails here, not a release-day download."""
+    layer = BytesIO()
+    with tarfile.open(fileobj=layer, mode="w") as tar:
+        manifest = {
+            "schema": 2,
+            "name": "zst",
+            "version": "1.0",
+            "cmdline": "console=ttyS0",
+            "description": "Zstd 1.0",
+        }
+        for name, content in (
+            ("./boot/vmlinuz", b"kernel"),
+            ("./boot/initrd.img", b"initrd"),
+            ("./disk/rootfs.ext4", b"rootfs"),
+            ("./disk/image.json", json.dumps(manifest).encode()),
+        ):
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            tar.addfile(info, BytesIO(content))
+    layer.seek(0)
+    archive = tmp_path / "zst.tar.zst"
+    with tarfile.open(archive, "w:zst") as outer:
+        info = tarfile.TarInfo("layer.tar")
+        info.size = layer.getbuffer().nbytes
+        outer.addfile(info, layer)
+        man = json.dumps([{"Layers": ["layer.tar"]}]).encode()
+        info = tarfile.TarInfo("manifest.json")
+        info.size = len(man)
+        outer.addfile(info, BytesIO(man))
+    record = import_archive(archive, tmp_path)
+    assert (record.name, record.version, record.description) == (
+        "zst",
+        "1.0",
+        "Zstd 1.0",
+    )
