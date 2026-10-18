@@ -3607,18 +3607,18 @@ def test_action_rows_paint_two_tones() -> None:
     mutes the whole row behind its reason."""
     muted = rows_mod.muted_style({})
     shell = action_content(PAGE_ACTIONS[0], "running", {}, focused=True)
-    assert str(shell).startswith("▸ Open a shell — ssh — console as fallback")
+    assert str(shell).startswith("▸ Open a shell — ssh; console as fallback")
     assert Span(2, 14, "$text bold") in shell.spans
-    assert Span(17, 42, muted) in shell.spans
+    assert Span(17, 41, muted) in shell.spans
     # Stopped, the shell stays live (#479 — the session boots the
     # workspace itself) and both power rows carry their
     # descriptions (#470 W2); Start keeps its bold beside it.
     shell_off = action_content(PAGE_ACTIONS[0], "stopped", {}, False)
     assert str(shell_off).startswith(
-        "  Open a shell — ssh — console as fallback"
+        "  Open a shell — ssh; console as fallback"
     )
     assert Span(2, 14, "$text bold") in shell_off.spans
-    assert Span(17, 42, muted) in shell_off.spans
+    assert Span(17, 41, muted) in shell_off.spans
     start = action_content(PAGE_ACTIONS[3], "stopped", {}, focused=False)
     assert str(start).startswith("  Start — boot the workspace")
     assert Span(2, 7, "$text bold") in start.spans
@@ -4444,30 +4444,91 @@ async def test_the_data_seam_serves_the_unlock_pair(
     assert ("POST", "/api/v1/secrets/unlock") in asked
 
 
-def test_the_ssh_flow_falls_back_to_the_console(monkeypatch) -> None:
-    """The same-terminal ssh flow's rule (#562): an ssh that
-    refuses — no NIC, no identity — runs the console one step
-    later and answers the note the restarted tree flashes; a
-    console that refuses too raises on (the outer loop flashes
-    that reason)."""
+def test_the_ssh_flow_falls_back_on_the_probes_refusal(monkeypatch) -> None:
+    """The real refusal chain (#562 review): the forward probe
+    lands the daemon's named refusal in this process — the child
+    ssh spawns never surfaces it — and the console runs one step
+    later with the flash note; a console that refuses too raises
+    on (the outer loop flashes that reason)."""
 
-    def refused_ssh(workspace_id, passthrough, transport=None):
-        raise SystemExit("no NIC")
+    def refused_forward(workspace_id):
+        raise SystemExit("msks: forward unavailable — workspace w1 has no NIC")
 
     ran: list[str] = []
 
     def console(workspace_id):
         ran.append(workspace_id)
 
-    monkeypatch.setattr(follow_mod, "run_workspace_ssh", refused_ssh)
+    def never(workspace_id, passthrough, transport=None):
+        raise AssertionError("ssh must not run past the probe")
+
+    monkeypatch.setattr(follow_mod, "ensure_forward", refused_forward)
+    monkeypatch.setattr(follow_mod, "run_workspace_ssh", never)
     monkeypatch.setattr(follow_mod, "run_workspace_shell", console)
     assert follow_mod.run_ssh_flow("w1") == (
-        "ssh refused (no NIC) — the console session ran instead"
+        "ssh refused (msks: forward unavailable — workspace w1 has no NIC)"
+        " — the console session ran instead"
     )
     assert ran == ["w1"]
 
 
+def test_the_ssh_flow_keeps_a_refusal_to_its_first_line(monkeypatch) -> None:
+    """A refusal's recovery paragraph would ellipsize off the
+    flash's one row: the note carries the first line, the part
+    the operator acts on."""
+
+    def refused_forward(workspace_id):
+        raise SystemExit(
+            "msks: no identity configured\nssh-add the key\nthen retry"
+        )
+
+    ran: list[str] = []
+
+    def console(workspace_id):
+        ran.append(workspace_id)
+
+    monkeypatch.setattr(follow_mod, "ensure_forward", refused_forward)
+    monkeypatch.setattr(
+        follow_mod, "run_workspace_ssh", lambda wid, p, transport=None: 0
+    )
+    monkeypatch.setattr(follow_mod, "run_workspace_shell", console)
+    assert follow_mod.run_ssh_flow("w1") == (
+        "ssh refused (msks: no identity configured)"
+        " — the console session ran instead"
+    )
+    assert ran == ["w1"]
+
+
+def test_a_failed_connection_takes_the_console(monkeypatch) -> None:
+    """ssh's own connection-failure exit (255) never ran a
+    session: the console takes it, with the code on the note."""
+    monkeypatch.setattr(follow_mod, "ensure_forward", lambda wid: None)
+    monkeypatch.setattr(
+        follow_mod,
+        "run_workspace_ssh",
+        lambda wid, p, transport=None: follow_mod.SSH_CONNECT_FAIL,
+    )
+    ran: list[str] = []
+    monkeypatch.setattr(follow_mod, "run_workspace_shell", ran.append)
+    assert follow_mod.run_ssh_flow("w1") == (
+        "ssh exited 255 — the console session ran instead"
+    )
+    assert ran == ["w1"]
+
+
+def test_a_session_that_ran_only_reports_its_code(monkeypatch) -> None:
+    """A nonzero code that is not 255 was a session (or the
+    guest's own exit): no console, just the code on the flash."""
+    monkeypatch.setattr(follow_mod, "ensure_forward", lambda wid: None)
+    monkeypatch.setattr(
+        follow_mod, "run_workspace_ssh", lambda wid, p, transport=None: 7
+    )
+    monkeypatch.setattr(follow_mod, "run_workspace_shell", list.append)
+    assert follow_mod.run_ssh_flow("w1") == "ssh exited 7"
+
+
 def test_the_ssh_flow_succeeds_alone(monkeypatch) -> None:
+    monkeypatch.setattr(follow_mod, "ensure_forward", lambda wid: None)
     monkeypatch.setattr(
         follow_mod, "run_workspace_ssh", lambda wid, p, transport=None: 0
     )
@@ -4479,19 +4540,6 @@ def test_the_ssh_flow_succeeds_alone(monkeypatch) -> None:
     monkeypatch.setattr(follow_mod, "run_workspace_shell", console)
     assert follow_mod.run_ssh_flow("w1") is None
     assert ran == []
-
-
-def test_the_ssh_flow_lets_a_console_refusal_raise(monkeypatch) -> None:
-    def refused_ssh(workspace_id, passthrough, transport=None):
-        raise SystemExit("no NIC")
-
-    def refused_console(workspace_id):
-        raise SystemExit("no daemon")
-
-    monkeypatch.setattr(follow_mod, "run_workspace_ssh", refused_ssh)
-    monkeypatch.setattr(follow_mod, "run_workspace_shell", refused_console)
-    with pytest.raises(SystemExit, match="no daemon"):
-        follow_mod.run_ssh_flow("w1")
 
 
 def test_land_flow_carries_notes_and_refusals(monkeypatch) -> None:
@@ -4514,3 +4562,54 @@ def test_land_flow_carries_notes_and_refusals(monkeypatch) -> None:
     monkeypatch.setattr(main_app, "run_follow_up", refused)
     main_app.land_flow(follow, ("ssh", "w1"))
     assert follow.seed == "no daemon"
+
+    def interrupted(a):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(main_app, "run_follow_up", interrupted)
+    main_app.land_flow(follow, ("ssh", "w1"))
+    assert follow.seed == "interrupted — the tree reopened"
+
+
+def test_the_ssh_flow_lets_a_console_refusal_raise(monkeypatch) -> None:
+    """The probe's refusal falls back to the console; a console
+    that refuses too raises on — the outer loop flashes that
+    reason instead of a silently swallowed one."""
+
+    def refused_forward(workspace_id):
+        raise SystemExit("no NIC")
+
+    def refused_console(workspace_id):
+        raise SystemExit("no daemon")
+
+    monkeypatch.setattr(follow_mod, "ensure_forward", refused_forward)
+    monkeypatch.setattr(
+        follow_mod, "run_workspace_ssh", lambda wid, p, transport=None: 0
+    )
+    monkeypatch.setattr(follow_mod, "run_workspace_shell", refused_console)
+    with pytest.raises(SystemExit, match="no daemon"):
+        follow_mod.run_ssh_flow("w1")
+
+
+def test_ensure_forward_probes_the_ssh_port(monkeypatch) -> None:
+    """The real probe wiring (#562): the flow dials the forward
+    websocket for the workspace's ssh port with the session's own
+    connection facts — the same address the ProxyCommand child
+    would build."""
+    seen: dict[str, object] = {}
+
+    async def record(address, token, ssl_ctx):
+        seen["address"] = address
+        seen["token"] = token
+        seen["ssl"] = ssl_ctx
+
+    monkeypatch.setattr(follow_mod.forward_mod, "probe", record)
+    monkeypatch.setattr(follow_mod, "env_url", lambda: "ws://127.0.0.1:8660")
+    monkeypatch.setattr(follow_mod, "env_token", lambda: "tok")
+    monkeypatch.setattr(follow_mod, "ssl_context", lambda: None)
+    follow_mod.ensure_forward("w1")
+    assert seen["address"] == (
+        "ws://127.0.0.1:8660/api/v1/workspaces/w1/forward/22"
+    )
+    assert seen["token"] == "tok"
+    assert seen["ssl"] is None

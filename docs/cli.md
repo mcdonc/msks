@@ -242,7 +242,8 @@ closes itself when the session disconnects.
 ### `terminal_title`
 
 `terminal_title` names the title of every terminal window the
-workspace page's new-terminal shell action opens (#445), with
+workspace page's shell action opens through a configured
+launcher (#445), with
 `{workspace}` resolved to the workspace's id — the token
 `msks ssh` addresses, because that is what the TUI appends to
 the launcher — or `shell`, when the appended command names no
@@ -274,9 +275,10 @@ shell (the dead-launcher fallback) changes nothing.
 ### `ssh_options`
 
 `ssh_options` remembers ssh options for every ssh session msks
-runs — `msks ssh`, the workspace page's new-terminal shell action
-(which runs `msks ssh` in the new window), and `msks rsync`'s ssh
-transport (#385). The value is the ssh options you would type
+runs — `msks ssh`, the workspace page's shell action (which runs
+`msks ssh`, in the TUI's terminal by default or in a window
+through a configured launcher), and `msks rsync`'s ssh transport
+(#385). The value is the ssh options you would type
 after `--` on the `msks ssh` command line — the options
 themselves; a `--` token in the value is refused, because msks
 adds the options to its own and a remembered separator would turn
@@ -315,9 +317,8 @@ command-line passthrough has the same power per invocation; the
 remembered form persists it, so the key is the one to check first
 when a remembered option breaks the seam.
 
-`msks console` and the workspace page's same-terminal shell are
-websocket sessions, not ssh — `ssh_options` applies to the ssh
-surfaces above and leaves them untouched.
+`msks console` is a websocket session, not ssh — `ssh_options`
+applies to the ssh surfaces above and leaves it untouched.
 
 ### `msks-term-popup`: the consent-decider terminal (#379, #467)
 
@@ -657,8 +658,11 @@ where it stood, and the tree restarts when the session hands the
 terminal back — it rides ssh rather than the console because the
 console keeps the getty's geometry while ssh carries every resize
 to the guest. A workspace ssh cannot reach — no NIC, no identity
-configured — falls back to a `msks console` session one step
-later, and the tree's first flash names why ssh stood down. The
+configured — the flow probes the forward first, and a probe
+that names the refusal, or an ssh that fails to connect (exit
+255), falls back to a `msks console` session one step later; the
+tree's first flash carries why ssh stood down, and an ssh that
+ran a session only reports its exit code. The
 action runs on a stopped workspace too: the ssh session boots the
 workspace itself (it carries the workspace's id, and reads the
 pre-flight's `msks: <id> is stopped; starting it`).

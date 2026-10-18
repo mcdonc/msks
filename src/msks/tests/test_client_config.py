@@ -523,9 +523,8 @@ def test_defaults_hold_when_nothing_provides_a_value(monkeypatch) -> None:
     assert conf.cache_dir is None
     assert conf.identity_file is None
     # An unconfigured launcher is None (#562): the TUI's shell
-    # action runs in the tree's own terminal, and DEFAULT_TERMINAL_CMD
-    # stays the documented floor for hosts that opt into windows.
-    assert list(config.DEFAULT_TERMINAL_CMD) == ["xterm", "-e"]
+    # action runs in the tree's own terminal; a host that wants
+    # windows names a launcher in the file or the environment.
     assert conf.terminal_open_cmd is None
     assert conf.env_layer == {}
 

@@ -259,7 +259,7 @@ def action_content(
 #: breathing room between the status lines and the actions.
 PAGE_ACTIONS = (
     PageAction(
-        ACTION_SHELL_WINDOW, "Open a shell", "ssh — console as fallback", True
+        ACTION_SHELL_WINDOW, "Open a shell", "ssh; console as fallback", True
     ),
     PageAction(
         ACTION_CONSENT,
@@ -709,8 +709,9 @@ class WorkspaceScreen(Screen):
         console, because the console sizes its guest pty once at
         connect while ssh carries the terminal's resizes — and the
         tree restarts when the session hands the terminal back; a
-        workspace ssh cannot reach falls back to the console one
-        step later (the flow's own rule). A configured terminal
+        forward the flow's probe names unreachable — or an ssh
+        that fails to connect — falls back to the console one step
+        later (the flow's own rule). A configured terminal
         launcher (``terminal_open_cmd``) opens windows beside the
         running tree instead: the launcher runs the ssh invocation
         as its child, which inherits the tree's materialized

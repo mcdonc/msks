@@ -64,6 +64,13 @@ def land_flow(follow: TuiFollow, action: tuple[str, str]) -> None:
         seed = run_follow_up(action)
         if seed:
             follow.seed = seed
+    except KeyboardInterrupt:
+        # Ctrl-C in a flow's cooked-mode setup (a boot wait, the
+        # identity probe) hands the terminal back to the tree
+        # instead of ending it (#562): the operator keeps their
+        # place. During the session itself ssh's raw mode has
+        # already carried the interrupt to the guest.
+        follow.seed = "interrupted — the tree reopened"
     except SystemExit as exc:
         follow.seed = str(exc)
 

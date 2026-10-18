@@ -133,14 +133,6 @@ TITLE_ENV_VAR = "MSKSC_TERMINAL_TITLE"
 #: shell — the same shape :data:`TERMINAL_ENV_VAR` carries.
 SSH_OPTIONS_ENV = "MSKSC_SSH_OPTIONS"
 
-#: The built-in launcher (#314): ``xterm -e``, the one terminal
-#: most Linux distributions carry, with the msks invocation
-#: appended after ``-e``. A box without it hits the launch
-#: action's unexecutable-launcher rule — an inline error, then the
-#: same-terminal path — so the default is safe where xterm is
-#: absent.
-DEFAULT_TERMINAL_CMD = ("xterm", "-e")
-
 
 def config_dir() -> str:
     """The config-tree root: ``$MSKSC_CONFIG_DIR``, else
