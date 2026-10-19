@@ -1093,7 +1093,7 @@ name NXDOMAIN — an offline workspace, reachable only by ssh).
 `msks tui`'s workspace page is the interface a human decides
 from: while the page is open it registers this client as the
 workspace's decider (holds wait only while one is connected), and
-its consent overlay — pushed by the page's **Egress consent**
+its consent overlay — pushed by the page's **Egress**
 action, or by the first hold of a burst — shows every held
 request with its countdown and sends verdicts through the same
 endpoints the subcommands use. Keys: `a`/`d` allow or deny the

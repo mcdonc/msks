@@ -263,7 +263,7 @@ PAGE_ACTIONS = (
     ),
     PageAction(
         ACTION_CONSENT,
-        "Egress consent",
+        "Egress",
         "decide holds and review rules",
         True,
     ),
@@ -291,9 +291,9 @@ class WorkspaceScreen(Screen):
 
     BINDINGS = [
         Binding("enter", "run", "Run", priority=True),
-        Binding("e", "consent", "Egress consent"),
+        Binding("e", "consent", "Egress"),
         Binding("s", "quick_start", "Start"),
-        Binding("x", "quick_stop", "Stop"),
+        Binding("S", "quick_stop", "Stop"),
         Binding("q", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
     ]
@@ -758,7 +758,7 @@ class WorkspaceScreen(Screen):
         await self.power_key("start")
 
     async def action_quick_stop(self) -> None:
-        """``x``: the list's stop letter, carried onto the page
+        """``S``: the list's stop letter, carried onto the page
         (#470 W5)."""
         await self.power_key("stop")
 

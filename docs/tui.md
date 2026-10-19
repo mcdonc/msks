@@ -17,7 +17,7 @@ my-workspace` opens that workspace's page directly). The tree is
 rooted at the **workspaces list**: every workspace one row —
 newest first, the CREATED column's arrow naming the sort (#470)
 — with creating, starting, stopping, and removing on its keys
-(`c` new, `s` start, `x` stop, `D` remove — asked and confirmed —
+(`c` new, `s` start, `S` stop, `D` remove — asked and confirmed —
 `e` secrets, `r` refresh, `/` a typeahead that jumps the focus
 to the first row whose name starts with what you type, and
 Enter opens the workspace's page). The list re-reads the daemon
@@ -135,7 +135,7 @@ a dimmed row names that reason on the consent line; the bold
 sits on the rows the state invites (the shell in every state —
 its window's `msks ssh` child boots a stopped workspace itself,
 so the action never dims — and Start while the workspace sits
-stopped), and `s`/`x` run start and stop from wherever the
+stopped), and `s`/`S` run start and stop from wherever the
 focus stands — the letters the list binds (the list also binds
 `i`: the image page, #565/#571 — the catalog group first, its
 rows carrying the default marker and each import's date, then
@@ -163,7 +163,7 @@ so the page's layout holds steady. A workspace in `interactive`
 mode holds new flows while the page is open: the page registers
 as the workspace's decider, so holds land on it.
 
-The page's **Egress consent** action and its `e` key
+The page's **Egress** action and its `e` key
 (#358, #454) open the egress consent page: a full-screen visit
 holding the held-request queue and the in-effect verdicts
 together — the consent decider as a page inside the tree, and
