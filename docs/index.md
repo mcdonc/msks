@@ -1,17 +1,22 @@
-# msks: microvm workspaces for AI coding agents
+# msks: microvm workspaces
 
-msks runs each workspace as its own microvm: a cloud-hypervisor
-VM with a per-VM network tap, its own kernel, and a state
-directory an operator can point at any disk. An AI coding agent
-works inside a workspace with the permissions it needs; the host
-and every other workspace stay out of reach.
+_msks_ is a tool that easily allows you to use microvm workspaces. It can be
+used to run AI harnesses securely.
+
+Each microvm is a cloud-hypervisor VM with its own kernel, and a state directory
+an operator can point at any disk.
+
+The microvm also provides services which allow you to avoid keeping secrets and
+keys within the VM and a facility to allow you to approve network egress.
+
+It runs on Linux hosts, and provides tooling to install its dependencies on
+Debian and NixOS systems.
 
 ## The reading order
 
-1. [**Installation**](installation.md): the wheel, and the
-   one command that prepares a Debian host: the capability
-   wrapper, the routing kernel, `/dev/kvm`, and the lingered
-   service that keeps the daemon running.
+1. [**Installation**](installation.md): install the Python wheel, and the one
+   command that prepares a Debian host: the capability wrapper, the routing
+   kernel, `/dev/kvm`, and the lingered service that keeps the daemon running.
 2. [**The identity file**](identity.md): the operator's ssh
    key: which file msks uses and why, the two config keys, the
    agent-first resolution, and the passphrase prompt.
