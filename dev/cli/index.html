@@ -1577,7 +1577,8 @@ remote command:</p>
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-o</span>
 </span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ServerAliveInterval=30</span>
 </span></code></pre></div>
-<p><code>MSKSC_SSH_OPTIONS</code> overrides the file value with the string form.</p>
+<p><code>ssh_options</code>'s environment form (<code>MSKSC_SSH_OPTIONS</code>)
+overrides the file value with the string form.</p>
 <p>The remembered options ride behind the command line's own, so
 an option you pass for one invocation wins over the remembered
 one. msks's own transport settings (the forward as
@@ -2460,7 +2461,7 @@ daemon-held half arrives over the API and goes away with the
 process. A locally-held half, yours, is read from its one file
 and left exactly there. Host keys land in a per-workspace <code>known_hosts</code> under the
 msks cache root, under <code>accept-new</code>. The root is
-<code>MSKSC_CACHE_DIR</code> when it is set, else <code>XDG_CACHE_HOME</code> or
+the <code>cache_dir</code> key (<code>MSKSC_CACHE_DIR</code>) when it is set, else <code>XDG_CACHE_HOME</code> or
 <code>~/.cache/msks</code>, then <code>&lt;workspace-id&gt;/known_hosts</code>. The cache
 keys on the workspace's immutable id, so a workspace recreated
 under the same name starts with a fresh cache and trusts its

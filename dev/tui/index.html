@@ -1020,8 +1020,9 @@ it, the way most terminals take a command after <code>-e</code> /
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">msks ssh</span>
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-e</span>
 </span></code></pre></div>
-<p><code>MSKSC_TERMINAL_OPEN_CMD</code> overrides the file value with the string
-form. Unset (the default), the shell action runs <code>msks ssh</code> in the
+<p><code>terminal_open_cmd</code>'s environment form
+(<code>MSKSC_TERMINAL_OPEN_CMD</code>) overrides the file value with the
+string form. Unset (the default), the shell action runs <code>msks ssh</code> in the
 TUI's own terminal, on every host, with no terminal to launch.
 A configured launcher that fails to execute (a binary that is
 missing or not executable) names its reason on the tree's
@@ -1050,7 +1051,8 @@ workspace that sets its own title from inside the session (a
 <code>PROMPT_COMMAND</code> with a title escape, the way stock ssh sessions
 can) rewrites it there — tmux shields the popup path, and nothing
 shields the plain path.</p>
-<p><code>MSKSC_TERMINAL_TITLE</code> overrides the file value. The default is
+<p><code>terminal_title</code>'s environment form (<code>MSKSC_TERMINAL_TITLE</code>)
+overrides the file value. The default is
 unset: the terminal emulator's own title — the command it runs,
 or whatever its <code>-T</code> / <code>--title</code> flag names — stays in place.
 A <code>msks ssh</code> you type yourself keeps your terminal's title: the

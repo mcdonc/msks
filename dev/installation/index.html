@@ -827,7 +827,7 @@ the unit changed.</p>
 <p>The run ends with a summary: the wrapper and its caps, the
 sysctl, the modules file and the consent verdict, the tools'
 paths, <code>/dev/kvm</code>, the detected uplink (the interface the
-daemon should point at through <code>MSKSD_EGRESS_UPLINK</code>), and the
+daemon's <code>egress_uplink</code> key should point at), and the
 service line. When the service started, the same-user socket
 path prints beside it.</p>
 <h2 id="the-same-host-by-hand">The same host by hand<a class="headerlink" href="#the-same-host-by-hand" title="Permanent link">&para;</a></h2>
@@ -947,8 +947,8 @@ NixOS configuration installs. When the dev tree runs on a host
 NixOS does not manage, <code>DEV_CAPS</code> points at the Debian setup's
 <code>/usr/local/bin/msks-caps</code>.</p>
 <h2 id="first-run">First run<a class="headerlink" href="#first-run" title="Permanent link">&para;</a></h2>
-<p>A bare <code>msksd</code> (no subcommand) serves. A fresh state dir (<code>~/.local/state/msksd</code>, relocated by
-<code>MSKSD_STATE_DIR</code>) gets three things on first serve. The daemon
+<p>A bare <code>msksd</code> (no subcommand) serves. A fresh state dir (<code>~/.local/state/msksd</code>, relocated by the
+<code>state_dir</code> key) gets three things on first serve. The daemon
 mints its CA and certificate and prints the CA fingerprint to
 pin on first connect. The config file generates as a commented
 template (see <a href="../config/">Configuration</a>). The unix listener
