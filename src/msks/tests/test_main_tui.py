@@ -4231,6 +4231,14 @@ async def test_every_footer_fits_the_smallest_terminal(monkeypatch) -> None:
         # scrolls nowhere at 80 columns
         await wait_for(lambda: footer_settled(app))
         assert len(app.screen.query_one("Footer").children) == 10
+        # #581's words render, not just fit: the five that
+        # shortened are the ones the footer shows.
+        labels = {
+            binding.description
+            for _, binding, _, _ in app.screen.active_bindings.values()
+            if binding.show
+        }
+        assert {"Jmp", "Strt", "Stp", "Scrts", "Rload"} <= labels
         await open_page(pilot, app)
         await wait_for(lambda: footer_settled(app))  # the page
         await pilot.press("e")
@@ -4250,7 +4258,7 @@ async def test_every_footer_fits_the_smallest_terminal(monkeypatch) -> None:
 
 
 async def test_the_page_answers_the_lists_power_letters(monkeypatch) -> None:
-    """#470 W5: ``s``/``x`` on the workspace page run the page's
+    """#470 W5: ``s``/``S`` on the workspace page run the page's
     own power exchange — the letters the list binds — and the
     status pre-flight names the skip the dimmed row carries."""
     scripted_link(monkeypatch, [])

@@ -758,7 +758,7 @@ class WorkspaceScreen(Screen):
         await self.power_key("start")
 
     async def action_quick_stop(self) -> None:
-        """``x``: the list's stop letter, carried onto the page
+        """``S``: the list's stop letter, carried onto the page
         (#470 W5)."""
         await self.power_key("stop")
 
