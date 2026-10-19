@@ -55,7 +55,7 @@ jobs:
           # squidfunk's mike fork adapts mike to zensical; it is not on
           # PyPI, so install it from GitHub (see zensical's versioning
           # docs). No mkdocs needed — the fork builds via zensical.
-          pip install git+https://github.com/squidfunk/mike.git@1a3fcd5f1a0e263fa9c2d5475401a1bf56f6c417
+          pip install git+https://github.com/squidfunk/mike.git@2d4ad799442f4592db8ad53b179bfb33db8c69ac
 
       - name: Configure git for gh-pages commits
         run: |
