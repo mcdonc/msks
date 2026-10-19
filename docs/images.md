@@ -86,14 +86,13 @@ boots. A guest image must:
   console — the shipped images run `serial-getty@ttyS0` with an
   autologin drop-in. The kernel console (`console=ttyS0`) shares
   the port: kernel messages interleave with the session, which is
-  exactly what a failsafe console wants (#481). Authentication is
+  exactly what a failsafe console wants. Authentication is
   the daemon's TLS + token listener, the stream is raw bytes with
   no in-band protocol, and the session keeps the getty's own
   terminal geometry for its life (a workspace user's shell with
-  the client's terminal size rides ssh through the forward seam,
-  #108–#112).
+  the client's terminal size rides ssh through the forward seam).
 - **Take an address over DHCP when a NIC is present.** Workspaces
-  are networked by default (#52): the VM boots with a virtio-net NIC
+  are networked by default: the VM boots with a virtio-net NIC
   — Debian's kernel ships `virtio_net`, and the shipped overlay loads
   it at boot — and the daemon's DHCP service offers the address,
   gateway, and its own resolver. The overlay carries a
@@ -102,12 +101,12 @@ boots. A guest image must:
   NIC appears. The offered resolver becomes resolved's per-link
   upstream: `/etc/resolv.conf` names the `127.0.0.53` stub, and the
   lease's resolver in effect is read from `resolvectl dns` (the
-  git-out smoke's probe, #81). A workspace created with
+  git-out smoke's probe). A workspace created with
   `"egress": false` presents no NIC: nothing matches the unit and
   networkd stays idle — the same image serves both postures. The
   shipped base carries no developer toolchain: git, curl, and uv
   all land over the egress NIC when a seed or the operator
-  installs them (#77, #81).
+  installs them.
 - **Answer the ACPI power button.** `stop` presses the power button
   (`vm.power-button`) and waits; the guest's own handler runs the
   clean shutdown that flushes its disks — systemd-logind does this
@@ -115,7 +114,7 @@ boots. A guest image must:
   button is killed at the deadline, and whatever its page cache
   still held is lost.
 - **Tolerate a read-write root.** The daemon boots each workspace's
-  root read-write through a per-workspace qcow2 overlay (#14) — the
+  root read-write through a per-workspace qcow2 overlay — the
   base image stays pristine under copy-on-write — and attaches an
   ext4 volume at `/home`. Mount it by the volume label `msks-home`
   (the daemon formats the volume with that label) so the mount
@@ -126,24 +125,24 @@ boots. A guest image must:
   administer the VM: Debian through a `%wheel` dropin in
   `/etc/sudoers.d` (the image creates the group — Debian's own
   tree carries none), NixOS through a declarative sudo rule. The
-  identity seed (#248) creates a named login user, gives it the
+  identity seed creates a named login user, gives it the
   workspace user's shell, and joins it to the group — the seed
   never writes sudo configuration, so a guest that is rebuilt
   keeps exactly the sudo policy its configuration declares.
 - **Run cloud-init against the cidata seed disk.** A workspace
-  created with `user_data` (#41) or a seeded ssh identity (#111) boots
+  created with `user_data` or a seeded ssh identity boots
   with a third, read-only virtio disk: a small iso9660 filesystem
   labeled `cidata` carrying `user-data` (the operator payload,
   composed beside the identity's seeding script when a key was
   supplied) and `meta-data`
   (`instance-id`, keyed off the workspace id, and
-  `local-hostname`, the workspace's creation name (#370) — the
+  `local-hostname`, the workspace's creation name — the
   minted id when the workspace was created without one) at its
   root — exactly cloud-init's NoCloud seed layout. The hostname
   lands at first boot, and a factory reset re-provisions from the
   seed with it; a stop/start never re-provisions (instance-id
   never changes). A launch heal that rebuilds a lost seed carries
-  the hostname as well, but a guest that booted before #370 keeps
+  the hostname as well, but a guest that booted before keeps
   the hostname it already has — cloud-init sets the hostname per
   instance, and its per-boot update leaves a hostname it never set
   untouched, so only a factory reset moves an older workspace's.
@@ -151,7 +150,7 @@ boots. A guest image must:
   image turns on cloud-init's `manage_etc_hosts` in the mode that
   adds the conventional `127.0.1.1` record naming the host, in
   place, on every boot — the file's other entries stay in place.
-  (A guest first booted before #370 whose healed seed now carries
+  (A guest first booted before whose healed seed now carries
   the name gets the record naming the creation name while its
   kernel hostname keeps the older one — the module reads the seed,
   not the kernel.) Name resolution does not wait on the record:
@@ -202,7 +201,7 @@ relocates it); `scripts/build-guest.sh` and
 `nix/guest-debian.nix` document every step and are the reference for
 what an image build does.
 
-Both images bake the agent toolchain (#266, #268): pinned Node,
+Both images bake the agent toolchain: pinned Node,
 the pinned pi coding agent, the pinned herdr terminal
 workspace manager (herdr.dev, the release's static binary, with
 its license), and pinned Claude Code (the npm wrapper plus its
@@ -228,7 +227,7 @@ the published lock leaves, closed by hash) and installed offline.
 A workspace that already booted keeps the toolchain it booted
 with; a rebuilt image serves the new pins to the next workspace.
 
-pi's own tool dependencies ride the image too (#272): pi resolves
+pi's own tool dependencies ride the image too: pi resolves
 `fd` and `rg` from PATH — at interactive startup and again at
 first tool use — and downloads each from GitHub releases when it
 finds neither: a download a fresh workspace's first agent start
@@ -269,14 +268,14 @@ daemon serves it with nothing keyed off the image's name. The
 output lands under `.devenv/state/guest-nixos/`
 (`GUEST_NIXOS_DIR` relocates it); `nix/guest-nixos.nix`
 documents every step. The image ships the same agent toolchain as
-the Debian one (#268): nixpkgs' own Node and the shared pins
+the Debian one: nixpkgs' own Node and the shared pins
 (`nix/agent-toolchain.nix`) ride the system profile — the
 loader-patched Claude Code and the tmpfiles-planted extension
 staging described above.
 
 #### Rebuilding the system inside a NixOS workspace
 
-A NixOS workspace is `nixos-rebuild`-ready (#274). `nix` runs as
+A NixOS workspace is `nixos-rebuild`-ready. `nix` runs as
 on any NixOS host — the daemon, the build users, and the CLI ship
 enabled — and the image bakes everything a rebuild evaluates
 against:
@@ -312,7 +311,7 @@ against:
   prefers, and the channels profile — ship in `/etc/nix/nix.conf`
   and in every login shell's `NIX_PATH`, so `<nixpkgs>` resolves
   identically for the root rebuild path and for the workspace
-  user at the console (#433).
+  user at the console.
 
 - **The system profile as the boot's init.** The kernel cmdline
   names `init=/nix/var/nix/profiles/system/init` — the
@@ -328,16 +327,16 @@ contract item — the console getty, the sshd posture, cloud-init
 seed handling, the agent toolchain on PATH — because the
 configuration it evaluates is the one that shipped. nix works the
 same way for the unprivileged workspace user logged in on the
-console (#433): `nix-build '<nixpkgs>' -A <pkg>` builds from the
+console: `nix-build '<nixpkgs>' -A <pkg>` builds from the
 baked pin through the daemon, `nix-env -iA nixpkgs.<pkg>` installs
 into the user's own profile, and `nix-shell -p <pkg>` builds and
 enters an environment — fetching what the shipped store lacks
 from `cache.nixos.org` through the workspace's egress path. The
 image
-ships one background consumer of this readiness (#427): the
+ships one background consumer of this readiness: the
 `msks-interceptor-ca` oneshot folds the daemon's interception
 CA (staged by the identity seed under `/etc/msks` — one CA for
-every workspace, #485) into the
+every workspace) into the
 system trust bundle — the module reads the staged certificate at
 evaluation time, the unit runs one `nixos-rebuild switch` per
 fresh certificate after `cloud-final`, and a hash marker keeps
@@ -354,7 +353,7 @@ the nix closure, the validity database, and the nixpkgs source
 grow the NixOS rootfs by roughly a gigabyte uncompressed.
 
 Each image build also executes every staged launcher and fails on
-one that does not run (#272): the Debian build runs `node`, `pi`,
+one that does not run: the Debian build runs `node`, `pi`,
 `claude`, `fdfind`, and `rg` through the tree's own dynamic loader
 and libraries — the same world the guest execs them in, because
 the build sandbox carries no `/usr/bin/env` or `/lib64` — while
@@ -381,7 +380,7 @@ image. The outline, using a distro's own cloud image as the source:
 3. Enable an autologin root getty on `/dev/hvc0`; make sure the
    `virtio_console` module is present so the device exists at boot.
 4. Bring up networking. Workspaces boot with a virtio-net NIC by
-   default (#52), so the image must be able to configure one — how is
+   default, so the image must be able to configure one — how is
    the distro's choice:
    - a kernel with the `virtio_net` driver present (module or
      built-in; on most distros udev autoloads the module when the
@@ -435,7 +434,7 @@ import and in-place inspection cheaper).
 
 The daemon verifies layout and manifest at import, but a tar that
 parses can still carry a guest that does not boot — the layout is
-the only thing the daemon can see. `msks image check <archive>` (#258)
+the only thing the daemon can see. `msks image check <archive>`
 is the gate an image author runs before publishing: it boots the
 archive exactly the way a workspace boots (same driver, overlay,
 home volume, seed disk, and console path — against a throwaway
@@ -495,7 +494,7 @@ curl -X POST https://192.168.77.2:8660/api/v1/images \
 ```
 
 The `source` is a path on the **daemon's** filesystem (the daemon
-reads them from its state dir), or — #258 — an `https://` URL the
+reads them from its state dir), or — — an `https://` URL the
 daemon downloads itself:
 
 ```bash
@@ -520,7 +519,7 @@ underneath the import cannot desync the recorded hash from the
 imported content, and importing the same content twice is idempotent.
 
 An import registers the archive under an operator-chosen pair
-(#340) when `name`/`version` ride the request — `msks image
+when `name`/`version` ride the request — `msks image
 import <path> --name mine --version 1.0` on the CLI, or the keys
 beside `source` over HTTP. Either key alone moves; the other
 falls back to the archive's own manifest. The override changes
@@ -531,7 +530,7 @@ they were; the manifest's pair stays recorded as the row's
 **origin** beside the registered pair, so a usable image's
 provenance reads from the catalog alone.
 
-A cataloged row renames in place under the same rules (#340):
+A cataloged row renames in place under the same rules:
 
 ```bash
 msks image rename debian:13 --name mine --version 1.0
@@ -559,7 +558,7 @@ Rules worth knowing:
 - The **first image imported becomes the default** — the one a bare
   workspace create uses — and keeps the designation while more
   images arrive; `POST /api/v1/images/default` re-designates at any
-  time (#270):
+  time:
 
 ```bash
 # designate by any reference form create's image field takes
@@ -688,7 +687,7 @@ The rules worth knowing:
   serial log) says when provisioning finished; a factory reset
   re-runs the payload from the same seed.
 
-## The published image channel (#564)
+## The published image channel
 
 Every release publishes the built guest images to a hash-keyed
 channel on this repository's GitHub releases: each image lives on

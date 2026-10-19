@@ -23,7 +23,7 @@ alone) removes them.
 <state_dir>/
 ├── vms/<workspace_id>/
 │   ├── root.qcow2        # the root overlay (plus the VM's runtime files)
-│   └── seed.img          # the #41 cidata seed (user_data workspaces only)
+│   └── seed.img          # the cidata seed (user_data workspaces only)
 └── volumes/
     └── <workspace_id>.ext4   # the /home volume (sparse ext4)
 ```
@@ -41,7 +41,7 @@ image" action later; it never happens implicitly.)
 The home volume is a sparse ext4 file: an idle volume costs its
 metadata, not its nominal size, and grows as the guest writes.
 
-The seed (#41) exists exactly when the workspace was created with
+The seed exists exactly when the workspace was created with
 `user_data`: a kilobytes-small iso9660 image labeled `cidata`, built
 with `mkisofs` (genisoimage), attached to the VM **read-only**, and
 installed mode 0600 because the payload can embed tokens (its
@@ -83,7 +83,7 @@ disk would truncate the base filesystem.
 
 Create is not the only time sizes move: `POST
 /api/v1/workspaces/{id}/resize` (`msks resize`) revisits them on a
-**stopped** workspace (#184):
+**stopped** workspace:
 
 - the **/home volume** grows or shrinks. The daemon quiets the
   filesystem's journal with `e2fsck -fy` — a volume a hard stop left
@@ -121,7 +121,7 @@ A completed resize is announced on the events channel
 ## Capacity reporting
 
 `msks storage` answers the operator's three capacity questions,
-each from its own source of truth (#184):
+each from its own source of truth:
 
 ```text
 $ msks storage
@@ -155,7 +155,7 @@ state disk    used 23.4G of 40G    free 16.6G    pressure ok
 - **Ceiling** is the size fixed at create (`root_mib` /
   `home_mib`) — the quota the guest's `df` shows its user.
 - **Imported** is when the archive came in, local time to the
-  minute (#186). Rebuilding an image and importing it again adds a
+  minute. Rebuilding an image and importing it again adds a
   second entry under the same reference; the time tells the
   entries apart, and the short hash `msks image ls` shows names
   the one `msks image rm` removes. Re-importing the same archive
@@ -204,7 +204,7 @@ re-runs on the next boot.
 ## Home volume export and import
 
 The home volume travels through the daemon's authenticated
-listener as byte streams (#80) — the interim mechanism for backup,
+listener as byte streams — the interim mechanism for backup,
 migration to another daemon, and seeding a fresh workspace with
 data:
 
@@ -302,13 +302,13 @@ boot. Deleting the workspace releases the pin.
 | --------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------- |
 | `MSKSD_ROOT_MIB`            | `10240`      | Default overlay (root) size for new workspaces, MiB.                                                              |
 | `MSKSD_HOME_MIB`            | `20480`      | Default `/home` volume size, MiB.                                                                                 |
-| `MSKSD_STORAGE_WARN_PCT`    | `90`         | State-disk percentage used that moves pressure to `warn` (#184).                                                  |
-| `MSKSD_STORAGE_FLOOR_MIB`   | `512`        | Free state-disk MiB below which pressure is `critical` and writes answer `507` (#184).                            |
+| `MSKSD_STORAGE_WARN_PCT`    | `90`         | State-disk percentage used that moves pressure to `warn`.                                                         |
+| `MSKSD_STORAGE_FLOOR_MIB`   | `512`        | Free state-disk MiB below which pressure is `critical` and writes answer `507`.                                   |
 | `MSKSD_QEMU_IMG`            | `qemu-img`   | The `qemu-img` binary that creates overlays.                                                                      |
 | `MSKSD_MKFS_EXT4`           | `mkfs.ext4`  | The mkfs that formats `/home` volumes.                                                                            |
-| `MSKSD_RESIZE2FS`           | `resize2fs`  | The resize2fs that moves `/home` volumes (#184).                                                                  |
-| `MSKSD_E2FSCK`              | `e2fsck`     | The e2fsck that quiets a volume before a resize (#184).                                                           |
-| `MSKSD_MKISOFS`             | `mkisofs`    | The mkisofs (genisoimage) that builds `cidata` seed disks (#41).                                                  |
+| `MSKSD_RESIZE2FS`           | `resize2fs`  | The resize2fs that moves `/home` volumes.                                                                         |
+| `MSKSD_E2FSCK`              | `e2fsck`     | The e2fsck that quiets a volume before a resize.                                                                  |
+| `MSKSD_MKISOFS`             | `mkisofs`    | The mkisofs (genisoimage) that builds `cidata` seed disks.                                                        |
 | `MSKSD_HOST_NAME`           | the hostname | The host recorded as owning locally-created artifacts.                                                            |
 | `MSKSD_SHUTDOWN_TIMEOUT_S`  | `20`         | How long `stop` waits for the guest's clean poweroff before the fallback kill; a stop answers within this bound.  |
 | `MSKSD_MOVE_WAIT_TIMEOUT_S` | `120`        | How long a boot, delete, or volume move waits for the workspace's other volume move before answering a named 409. |
