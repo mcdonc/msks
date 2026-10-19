@@ -156,8 +156,9 @@ def check_str(row: dict, field: str) -> None:
 
 
 def detail_lines(row: dict) -> list[str]:
-    """A catalog row's full record, the facts ``msks image info``
-    prints."""
+    """A catalog row's full record as the page shows it: the
+    boot facts, the baked identity, the import date, and the
+    default designation."""
     kernel = kernel_cell(row)
     return [
         f"ref          {row['name']}:{row['version']}",
@@ -185,7 +186,7 @@ def description_cell(row: dict) -> str:
 
 class ImageDetailScreen(ModalScreen):
     """One catalog row's full record (#571): Enter on a catalog
-    row opens it, any close key or click dismisses."""
+    row opens it; Enter, q, or Escape dismisses."""
 
     BINDINGS = [
         Binding("enter", "close", "Close", show=False),
@@ -198,7 +199,11 @@ class ImageDetailScreen(ModalScreen):
         self.row = row
 
     def compose(self) -> ComposeResult:
-        yield Static("\n".join(detail_lines(self.row)), id="image-detail")
+        yield Static(
+            "\n".join(detail_lines(self.row)),
+            id="image-detail",
+            markup=False,
+        )
 
     def action_close(self) -> None:
         self.dismiss()
@@ -243,8 +248,13 @@ class ImageImportScreen(ModalScreen):
         screen stands on top — Screen.dismiss pops blindly, and
         the operator's next screen is not this one's to take)."""
         self._left = True
-        if self._fetch_task is not None and not self._fetch_task.done():
-            self._fetch_task.cancel()
+        for task in (
+            getattr(self, "_fetch_task", None),
+            getattr(self, "_refresh_task", None),
+            getattr(self, "_detail_task", None),
+        ):
+            if task is not None and not task.done():
+                task.cancel()
 
     def status(self, text: str) -> None:
         self.query_one("#import-picker-status", Static).update(text)
@@ -268,11 +278,14 @@ class ImageImportScreen(ModalScreen):
         self.published = published
         self.mount_rows()
 
-    def labels(self) -> list[str]:
-        """The rendered rows, parallel to :attr:`entries` — both
-        lists are built by :meth:`build_rows` from one walk, so
-        an option's index always finds its own entry."""
-        return [label for _kind, _row, label in self.build_rows()]
+    def render_rows(self) -> list[str]:
+        """Rebuild :attr:`entries` and answer the labels from one
+        walk — every caller (mount, refresh) takes both from
+        here, never one without the other (a refresh that moved
+        the rows moves both together)."""
+        built = self.build_rows()
+        self.entries = [(kind, row) for kind, row, _label in built]
+        return [label for _kind, _row, label in built]
 
     def build_rows(self) -> list[tuple[str, dict | None, str]]:
         """The page's rows in order: the catalog heading, the
@@ -297,27 +310,38 @@ class ImageImportScreen(ModalScreen):
     def mount_rows(self) -> None:
         """Offer the two groups: the catalog first (the default
         marker, the import dates), the published rows under it
-        (their membership markers or build dates)."""
-        built = self.build_rows()
-        self.entries = [(kind, entry) for kind, entry, _label in built]
-        options = OptionList(*[label for _k, _r, label in built])
+        (their membership markers or build dates). The list takes
+        its labels as data — markup parsing would eat the
+        brackets the markers live in (the row-content rule the
+        workspace list follows)."""
+        options = OptionList(*self.render_rows(), markup=False)
         options.add_class("import-picker")
         self.mount(options)
-        # The first actionable row, not a heading: a bare Enter
-        # must act (the mode picker's #465-review rule), and with
-        # an empty catalog that is the first published row.
-        options.highlighted = next(
+        options.highlighted = self.first_actionable()
+        options.focus()
+        if not self.catalog and not self.published:
+            self.status(
+                "the catalog and the channel both carry nothing — "
+                "import from a channel URL once one is published"
+            )
+            return
+        self.status(
+            "Enter imports a published image or opens a catalog "
+            "row's detail; D deletes a catalog row; q closes"
+        )
+
+    def first_actionable(self) -> int:
+        """The first non-heading row's index (a bare Enter must
+        act — the mode picker's #465-review rule; an empty catalog
+        falls to the first published row, and nothing actionable
+        keeps the heading)."""
+        return next(
             (
                 index
                 for index, (kind, _row) in enumerate(self.entries)
                 if kind != "heading"
             ),
             0,
-        )
-        options.focus()
-        self.status(
-            "Enter imports a published image or opens a catalog "
-            "row's detail; D deletes a catalog row; q closes"
         )
 
     def refresh_rows(self) -> None:
@@ -332,22 +356,20 @@ class ImageImportScreen(ModalScreen):
         try:
             self.catalog = await self.app.data.images()
         except (Exception, SystemExit) as exc:
-            self.land(exc)
+            self.land(exc, verb="catalog read")
             return
+        if self._left:
+            return  # closed while the read was in flight
         options = self.query_one(OptionList)
-        labels = self.labels()
+        prior = options.highlighted or 0
         options.clear_options()
-        options.add_options(labels)
-        options.highlighted = next(
-            (
-                index
-                for index, (kind, _row) in enumerate(self.entries)
-                if kind != "heading"
-            ),
-            0,
-        )
+        options.add_options(self.render_rows())
+        # The operator's place survives the refresh, clamped into
+        # the new rows (an imported-then-highlighted row moved;
+        # a deleted one clamps back).
+        options.highlighted = min(prior, len(self.entries) - 1)
 
-    def land(self, exc: BaseException) -> None:
+    def land(self, exc: BaseException, verb: str = "manifest fetch") -> None:
         """A fetch or read that failed while this screen still
         stands lands on the failure panel; a screen already left
         takes nothing (its dismissal cancelled the fetch — the

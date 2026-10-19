@@ -177,12 +177,16 @@ class FakeData:
         return [dict(r) for r in self.images_rows]
 
     async def remove_image(self, digest: str) -> dict:
-        """The image page's delete (#571): recorded; a refusal a
-        test armed raises the way the daemon's would."""
+        """The image page's delete (#571): recorded, the row gone
+        from the catalog a reread answers; a refusal a test armed
+        raises the way the daemon's would."""
         self.removed.append(digest)
         if self.remove_refusal is not None:
             raise SystemExit(self.remove_refusal)
-        return {"deleted": digest}
+        self.images_rows = [
+            row for row in self.images_rows if row["hash"] != digest
+        ]
+        return {"removed": digest}
 
     async def import_image(self, source: str) -> dict:
         """The channel import (#565): recorded; a refusal a test
@@ -5366,3 +5370,127 @@ async def test_the_data_seam_deletes_by_hash(monkeypatch) -> None:
     data = TuiData(transport=httpx.MockTransport(handler))
     await data.remove_image("a" * 64)
     assert deleted == [f"/api/v1/images/{'a' * 64}"]
+
+
+async def test_the_refresh_keeps_entries_and_labels_aligned(
+    monkeypatch,
+) -> None:
+    """Round-1 review's live repro, pinned: after a delete the
+    rebuilt labels and the entries come from one walk — the row
+    count matches, no spacer holds the highlight, and Enter on
+    the highlighted row acts on a row that exists."""
+    scripted_manifest(monkeypatch)
+    data = FakeData([row()])
+    data.images_rows = [
+        catalog_row(),
+        catalog_row(ref="alpine:3.20", digest="b" * 64),
+    ]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        page = app.screen
+        options = page.query_one(OptionList)
+        assert len(options.options) == len(page.entries)
+        await pilot.press("D")
+        await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
+        await pilot.press("y")
+        await wait_for(lambda: data.removed)
+        await wait_for(
+            lambda: (
+                len(page.query_one(OptionList).options) == len(page.entries)
+            )
+        )
+        rebuilt = page.query_one(OptionList)
+        assert len(rebuilt.options) == len(page.entries)  # one walk
+        # The deleted row's entry is gone: every actionable index
+        # maps to a live row.
+        for index, (kind, entry) in enumerate(page.entries):
+            if kind == "catalog":
+                assert entry["hash"] != data.removed[0]
+
+
+async def test_the_markers_render_not_parse(monkeypatch) -> None:
+    """Round-1 review's invisible-marker finding, pinned: the
+    list takes its labels as data — the rendered visual carries
+    the brackets the markers live in."""
+    scripted_manifest(monkeypatch)
+    data = FakeData([row()])
+    data.images_rows = [catalog_row()]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        options = app.screen.query_one(OptionList)
+        assert options._markup is False  # labels are data, not markup
+        # And the data survives: the stored prompt carries the
+        # markers the rendered row would show (markup parsing
+        # would have eaten them at render time — round 1's
+        # invisible-marker finding).
+        assert "[default]" in str(options.options[1].prompt)
+        published = next(
+            i
+            for i, (kind, _r) in enumerate(app.screen.entries)
+            if kind == "published"
+        )
+        assert "[imported]" in str(options.options[published].prompt)
+
+
+async def test_free_text_in_the_detail_does_not_crash(monkeypatch) -> None:
+    """A description carrying a stray closing tag is data, not a
+    markup error — the detail screen opens and shows it."""
+    scripted_manifest(monkeypatch)
+    data = FakeData([row()])
+    data.images_rows = [{**catalog_row(), "description": "kernel [/] test"}]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        await pilot.press("enter")
+        await wait_for(
+            lambda: type(app.screen).__name__ == "ImageDetailScreen"
+        )
+        detail = str(app.screen.query_one("#image-detail").content)
+        assert "kernel [/] test" in detail
+
+
+async def test_a_page_with_nothing_names_it(monkeypatch) -> None:
+    """Both groups empty: the status line says so — headings alone
+    with a silent Enter would read as a broken page."""
+    scripted_manifest(monkeypatch, rows=[])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        status = str(app.screen.query_one("#import-picker-status").content)
+        assert "both carry nothing" in status
+
+
+async def test_a_page_closed_mid_reread_rebuilds_nothing(monkeypatch) -> None:
+    """The read resolves, the page left under it: the second
+    left check returns before any widget work."""
+    scripted_manifest(monkeypatch)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        page = app.screen
+        entries_before = list(page.entries)
+
+        original = data.images
+
+        async def closing_read():
+            rows = await original()
+            page._left = True  # closed while the read was in flight
+            return rows
+
+        data.images = closing_read
+
+        def no_lookup(selector, expect=None):
+            raise AssertionError("a closed page rebuilt its list")
+
+        page.query_one = no_lookup
+        await page.refetch_catalog()
+        assert page.entries == entries_before
