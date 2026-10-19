@@ -8,25 +8,28 @@ and every other workspace stay out of reach.
 
 ## The reading order
 
-1. [**The CLI client**](cli.md) — every command, the TUI, and
-   the client's settings: `msks` against the daemon's HTTP API,
-   the workspace tree, the image page, ssh and rsync over the
-   forward.
-2. [**Configuration**](config.md) — the daemon's settings: every
+1. [**The CLI client**](cli.md) — every command and the
+   client's settings: `msks` against the daemon's HTTP API, ssh
+   and rsync over the forward.
+2. [**The TUI**](tui.md) — the full-screen workspace tree: the
+   workspace, secrets, and image pages, the failure panels, the
+   consent decider, and the terminal windows the shell action
+   opens.
+3. [**Configuration**](config.md) — the daemon's settings: every
    key, its environment variable, and its default, from the
    listener's socket to the egress stack's ceilings.
-3. [**Workspace images**](images.md) — the image contract, the
+4. [**Workspace images**](images.md) — the image contract, the
    shipped builder, and the published channel: import from a
    manifest URL, the descriptions the builds bake, the hash-keyed
    releases.
-4. [**Guest networking**](networking.md) — the per-VM tap, the
+5. [**Guest networking**](networking.md) — the per-VM tap, the
    egress consent postures, the interceptor, and the forward that
    carries ssh and rsync.
-5. [**Storage**](storage.md) — the state disk, the per-workspace
+6. [**Storage**](storage.md) — the state disk, the per-workspace
    volumes, and the capacity report that prices them.
-6. [**Secrets**](secrets.md) — placeholders, the swap on the
+7. [**Secrets**](secrets.md) — placeholders, the swap on the
    wire, and the sentinel discipline.
-7. [**Changelog**](changes.md) — what changed, release by
+8. [**Changelog**](changes.md) — what changed, release by
    release.
 
 ## The quick start
