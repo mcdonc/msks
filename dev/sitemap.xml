@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+      <url>
+        <loc>https://mcdonc.github.io/msks/dev/</loc>
+      </url>
+      <url>
+        <loc>https://mcdonc.github.io/msks/dev/ROADMAP/</loc>
+      </url>
+      <url>
+        <loc>https://mcdonc.github.io/msks/dev/boot-speed/</loc>
+      </url>
+      <url>
+        <loc>https://mcdonc.github.io/msks/dev/changes/</loc>
+      </url>
+      <url>
+        <loc>https://mcdonc.github.io/msks/dev/cli/</loc>
+      </url>
+      <url>
+        <loc>https://mcdonc.github.io/msks/dev/config/</loc>
+      </url>
+      <url>
+        <loc>https://mcdonc.github.io/msks/dev/images/</loc>
+      </url>
+      <url>
+        <loc>https://mcdonc.github.io/msks/dev/networking/</loc>
+      </url>
+      <url>
+        <loc>https://mcdonc.github.io/msks/dev/secrets/</loc>
+      </url>
+      <url>
+        <loc>https://mcdonc.github.io/msks/dev/storage/</loc>
+      </url>
+</urlset>

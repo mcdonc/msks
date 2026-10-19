@@ -1,0 +1,1032 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Microvm workspaces for AI coding agents">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/msks/dev/boot-speed/">
+      
+      
+      
+        <link rel="prev" href="../changes/">
+      
+      
+        <link rel="next" href="../ROADMAP/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.71">
+    
+    
+      
+        <title>Boot Speed - msks</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.e442bf79.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.b60ce83d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="msks" class="md-header__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            msks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Boot Speed
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="msks" class="md-nav__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    msks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Boot Speed
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Boot Speed
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#measuring" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Measuring
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-the-time-goes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Where the time goes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-keeps-it-fast" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What keeps it fast
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What keeps it fast">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-pinned-kernel-with-a-minimal-path-to-root" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A pinned kernel with a minimal path to root
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-minimal-initramfs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A minimal initramfs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-console-that-starts-before-the-boot-finishes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A console that starts before the boot finishes
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-unit-diet" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The unit diet
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-generic-kernel-unification-96" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The generic-kernel unification (#96)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ROADMAP/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Roadmap
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#measuring" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Measuring
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-the-time-goes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Where the time goes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-keeps-it-fast" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What keeps it fast
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What keeps it fast">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-pinned-kernel-with-a-minimal-path-to-root" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A pinned kernel with a minimal path to root
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-minimal-initramfs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A minimal initramfs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-console-that-starts-before-the-boot-finishes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        A console that starts before the boot finishes
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-unit-diet" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The unit diet
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-generic-kernel-unification-96" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The generic-kernel unification (#96)
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="workspace-boot-speed">Workspace boot speed<a class="headerlink" href="#workspace-boot-speed" title="Permanent link">&para;</a></h1>
+<p>From "start this workspace" to "an interactive shell" in under five
+seconds is the performance contract (#37); this chapter documents
+how the time is spent, how to measure it, and what a workspace image
+must do — and must avoid — to keep boots fast. Every number below is
+measured on the reference host (bare-metal KVM) with the shipped
+Debian image.</p>
+<h2 id="measuring">Measuring<a class="headerlink" href="#measuring" title="Permanent link">&para;</a></h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>msks-build-guest<span class="w">                     </span><span class="c1"># the image under test</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>python<span class="w"> </span>scripts/perf-boot.py<span class="w"> </span>--runs<span class="w"> </span><span class="m">5</span>
+</span></code></pre></div>
+<p>The harness boots real workspaces through the local backend and
+reports, per run and as a p50:</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>t_vmm</code></td>
+<td>VMM spawn + VM create + boot accepted</td>
+</tr>
+<tr>
+<td><code>t_kernel</code></td>
+<td>first serial output — the kernel is decompressed and printing</td>
+</tr>
+<tr>
+<td><code>t_console</code></td>
+<td>the console device's socket accepts a connection</td>
+</tr>
+<tr>
+<td><code>t_prompt</code></td>
+<td>the shell rendered its first prompt — <strong>the readiness number</strong></td>
+</tr>
+<tr>
+<td><code>t_login</code></td>
+<td>the serial getty prompt (the last unit of the boot, diagnostic)</td>
+</tr>
+</tbody>
+</table>
+<p>It also reports the host-side cost of the running workspace: the
+VMM's <em>peak</em> resident set (<code>VmHWM</code>) after first boot, next to the
+guest memory the workspace was configured with. A fresh Debian
+workspace measures <strong>165–185 MiB of VMM peak RSS against a 1024 MiB
+guest</strong>: cloud-hypervisor maps guest memory on demand, so an idle
+workspace costs the host only what the guest actually touched.</p>
+<p>The console and the login prompt are measured concurrently on
+purpose: the console getty is the readiness path and answers long
+before the boot's last unit renders the serial prompt.</p>
+<h2 id="where-the-time-goes">Where the time goes<a class="headerlink" href="#where-the-time-goes" title="Permanent link">&para;</a></h2>
+<p>The shipped image, measured start→prompt:</p>
+<table>
+<thead>
+<tr>
+<th>Stage</th>
+<th>t</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>VMM spawn + boot accepted</td>
+<td>~0.15s</td>
+</tr>
+<tr>
+<td>Kernel decompress + first output</td>
+<td>~0.3s</td>
+</tr>
+<tr>
+<td>Minimal initramfs (six modules + mount)</td>
+<td>~0.05s</td>
+</tr>
+<tr>
+<td>systemd to the console service</td>
+<td>~2.5s</td>
+</tr>
+<tr>
+<td><strong>Start → interactive shell</strong></td>
+<td><strong>~3.1s p50</strong></td>
+</tr>
+</tbody>
+</table>
+<p>The dominant remaining cost is systemd bring-up — device manager
+coldplug (<code>dev-vda.device</code> is the slowest single unit at ~0.8s) and
+the standard mount units. Everything before PID 1 is now tens of
+milliseconds; it used to be the single largest lever (see below).</p>
+<h2 id="what-keeps-it-fast">What keeps it fast<a class="headerlink" href="#what-keeps-it-fast" title="Permanent link">&para;</a></h2>
+<p>Three properties of the shipped image carry most of the win. An
+image that regresses any of them pays for it at every boot.</p>
+<h3 id="a-pinned-kernel-with-a-minimal-path-to-root">A pinned kernel with a minimal path to root<a class="headerlink" href="#a-pinned-kernel-with-a-minimal-path-to-root" title="Permanent link">&para;</a></h3>
+<p>Debian's <strong>generic kernel</strong> flavor (<code>linux-image-*-amd64</code>, pinned
+by pool URL and hash in <code>nix/guest-debian.nix</code>) builds virtio-pci
+in and carries the KVM modules, so one flavor serves both the
+workspace guest and nested-KVM workspaces (#96 — one pin, one
+fetch). The
+property that matters is not built-ins but this: nothing sits
+between the kernel and the root mount. Debian's stock initramfs
+for the flavor is a 34 MiB <code>MODULES=most</code> archive that cost ~2.5s
+to unpack and probe before systemd's first line; msks replaces it
+with its own six-module initramfs and mounts root directly (the
+cloud flavor #37 chose dodged the same archive by building ext4
+in — the flavor was never the cost, the general-purpose initramfs
+was). The measured cost of the swap is in the #96 section below.</p>
+<h3 id="a-minimal-initramfs">A minimal initramfs<a class="headerlink" href="#a-minimal-initramfs" title="Permanent link">&para;</a></h3>
+<p>The msks-built initramfs (<code>minimalInitrd</code> in <code>nix/guest-debian.nix</code>)
+is a static busybox, the six modules the generic kernel needs to
+mount the ext4 root (crc16, crc32c_generic, mbcache, jbd2, ext4,
+virtio_blk — dependency order, because busybox <code>insmod</code> resolves
+no dependencies), and an <code>/init</code> that mounts <code>/dev/vda</code>
+read-write (#14: the per-workspace overlay carries the writes) and
+<code>switch_root</code>s into systemd — ~1.4 MiB shipped, unpacked
+and done in tens of milliseconds.</p>
+<p>The runtime module tree is equally closed over: the guest's tree
+is the <code>modprobe --show-depends</code> closure of the modules its
+runtime loads (the console port, virtio_net, virtio_blk, the ACPI
+button pair, isofs for the seed disk), asserted at build time.</p>
+<p>When swapping the kernel or module tree: the Debian deb ships its
+modules <strong>without depmod metadata</strong> (its package postinst generates
+it on the target). The build runs <code>depmod</code> itself; a tree without
+<code>modules.dep</code> boots looking healthy while every <code>modprobe</code> — the
+console port's module load included — silently fails.</p>
+<h3 id="a-console-that-starts-before-the-boot-finishes">A console that starts before the boot finishes<a class="headerlink" href="#a-console-that-starts-before-the-boot-finishes" title="Permanent link">&para;</a></h3>
+<p>The console is the root autologin getty on the serial port
+(<code>serial-getty@ttyS0.service</code> with an autologin drop-in, #481):
+the stock template carries <code>Restart=always</code> and short
+<code>RestartSec</code>, so a start that lands before the shell's dependencies
+are ready respawns a fresh getty on its own. The drop-in pins
+<code>TERM=xterm</code> so the shell's line discipline matches what the
+client terminal sends.</p>
+<p>The same principle applies to anything a workspace image wants on
+the critical path: order it after exactly what it needs, not after
+the boot.</p>
+<h3 id="the-unit-diet">The unit diet<a class="headerlink" href="#the-unit-diet" title="Permanent link">&para;</a></h3>
+<p>Units a workspace never uses are absent from the boot: AppArmor
+profile loading (~0.7s), <code>systemd-timesyncd</code>, <code>grub-common</code>,
+<code>unattended-upgrades</code>, <code>e2scrub_reap</code>. (networkd and resolved run —
+egress workspaces (#52) need the NIC configured; see
+<code>nix/guest-debian.nix</code>.) The wants symlinks are removed at image
+build time, with the reason each removal is safe recorded there.</p>
+<h2 id="the-generic-kernel-unification-96">The generic-kernel unification (#96)<a class="headerlink" href="#the-generic-kernel-unification-96" title="Permanent link">&para;</a></h2>
+<p>The workspace guest moved from Debian's cloud flavor to the
+<strong>generic</strong> flavor, measured on the reference
+host with <code>scripts/perf-boot.py --runs 5</code> (boot to first prompt,
+p50) and its guest-memory probe (MemTotal − MemAvailable at the
+first interactive prompt):</p>
+<table>
+<thead>
+<tr>
+<th>metric</th>
+<th>cloud flavor</th>
+<th>generic flavor</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>boot p50 (start→prompt)</td>
+<td>2.95–3.26 s¹</td>
+<td>3.24 s</td>
+</tr>
+<tr>
+<td>t_kernel (to first serial byte)</td>
+<td>0.44 s</td>
+<td>0.48 s</td>
+</tr>
+<tr>
+<td>guest memory at first prompt</td>
+<td>143.1 MiB</td>
+<td>134–142 MiB</td>
+</tr>
+<tr>
+<td>workspace archive (<code>xz -6 -T0</code>)</td>
+<td>147.8 MiB</td>
+<td>128.7 MiB</td>
+</tr>
+<tr>
+<td>host nix fetches</td>
+<td>two kernel debs (135.8 MiB)</td>
+<td>one (102.9 MiB)</td>
+</tr>
+</tbody>
+</table>
+<p>¹ two sessions on the same host; the spread is host noise, not
+kernel — the six-module initrd's own cost sits inside it. The
+kernel-side delta is decompressing a 0.4 MiB-bigger vmlinuz
+(t_kernel +40 ms).</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a2388154.min.js"></script>
+      
+    
+  </body>
+</html>
