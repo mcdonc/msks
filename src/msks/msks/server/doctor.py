@@ -285,7 +285,8 @@ PACKAGE_HINTS: dict[str, dict[str, str]] = {
     # The KVM stack the /dev/kvm rows point at (#559): the name
     # splits the way the library rows' do — Arch carries KVM in
     # its split qemu packages (qemu-desktop is the x86_64 one),
-    # and Alpine's is the arch-named system emulator.
+    # Alpine's is the arch-named system emulator, and brew's
+    # formula is qemu under either platform.
     "qemu-kvm": {
         "dnf": "qemu-kvm",
         "yum": "qemu-kvm",
@@ -293,6 +294,7 @@ PACKAGE_HINTS: dict[str, dict[str, str]] = {
         "zypper": "qemu-kvm",
         "apk": "qemu-system-x86_64",
         "pacman": "qemu-desktop",
+        "brew": "qemu",
     },
 }
 
