@@ -47,7 +47,7 @@ headroom for adding msksd, networkd's static plan, and the capability
 unit. The comparison is honest about one gap: the spike's store paths
 were warm in the host page cache from the build; a cold-host first
 boot pays more, exactly as the Debian appliance's does (its ~15s fully
-warm vs ~27.5s cold-share numbers in `docs/boot-speed.md`).
+warm vs ~27.5s cold-share numbers in `the boot-speed chapter (since removed)`).
 
 The closure carries a full systemd, a getty, and udev at 699.5 MiB —
 inside the 1.1–1.6G estimate recorded on the issue (the estimate

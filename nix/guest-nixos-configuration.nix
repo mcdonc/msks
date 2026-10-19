@@ -188,7 +188,7 @@ in
   boot.kernelParams = [ "console=ttyS0" ];
 
   # Stage-1 holds the discipline the Debian build's six-module
-  # initramfs established (#37, docs/boot-speed.md): the initrd
+  # initramfs established (#37, the boot-speed measurements (since removed from the docs tree)): the initrd
   # carries the virtio pair plus the ext4 root-fs closure —
   # tens of milliseconds, not a MODULES=most archive. gzip
   # because that is the initramfs compression the VMM line has
