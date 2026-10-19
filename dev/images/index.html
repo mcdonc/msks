@@ -582,10 +582,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-published-image-channel-564" class="md-nav__link">
+  <a href="#the-published-image-channel" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The published image channel (#564)
+        The published image channel
       </span>
     </span>
   </a>
@@ -884,10 +884,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-published-image-channel-564" class="md-nav__link">
+  <a href="#the-published-image-channel" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The published image channel (#564)
+        The published image channel
       </span>
     </span>
   </a>
@@ -1018,14 +1018,13 @@ boots. A guest image must:</p>
   console — the shipped images run <code>serial-getty@ttyS0</code> with an
   autologin drop-in. The kernel console (<code>console=ttyS0</code>) shares
   the port: kernel messages interleave with the session, which is
-  exactly what a failsafe console wants (#481). Authentication is
+  exactly what a failsafe console wants. Authentication is
   the daemon's TLS + token listener, the stream is raw bytes with
   no in-band protocol, and the session keeps the getty's own
   terminal geometry for its life (a workspace user's shell with
-  the client's terminal size rides ssh through the forward seam,
-  #108–#112).</li>
+  the client's terminal size rides ssh through the forward seam).</li>
 <li><strong>Take an address over DHCP when a NIC is present.</strong> Workspaces
-  are networked by default (#52): the VM boots with a virtio-net NIC
+  are networked by default: the VM boots with a virtio-net NIC
   — Debian's kernel ships <code>virtio_net</code>, and the shipped overlay loads
   it at boot — and the daemon's DHCP service offers the address,
   gateway, and its own resolver. The overlay carries a
@@ -1034,12 +1033,12 @@ boots. A guest image must:</p>
   NIC appears. The offered resolver becomes resolved's per-link
   upstream: <code>/etc/resolv.conf</code> names the <code>127.0.0.53</code> stub, and the
   lease's resolver in effect is read from <code>resolvectl dns</code> (the
-  git-out smoke's probe, #81). A workspace created with
+  git-out smoke's probe). A workspace created with
   <code>"egress": false</code> presents no NIC: nothing matches the unit and
   networkd stays idle — the same image serves both postures. The
   shipped base carries no developer toolchain: git, curl, and uv
   all land over the egress NIC when a seed or the operator
-  installs them (#77, #81).</li>
+  installs them.</li>
 <li><strong>Answer the ACPI power button.</strong> <code>stop</code> presses the power button
   (<code>vm.power-button</code>) and waits; the guest's own handler runs the
   clean shutdown that flushes its disks — systemd-logind does this
@@ -1047,7 +1046,7 @@ boots. A guest image must:</p>
   button is killed at the deadline, and whatever its page cache
   still held is lost.</li>
 <li><strong>Tolerate a read-write root.</strong> The daemon boots each workspace's
-  root read-write through a per-workspace qcow2 overlay (#14) — the
+  root read-write through a per-workspace qcow2 overlay — the
   base image stays pristine under copy-on-write — and attaches an
   ext4 volume at <code>/home</code>. Mount it by the volume label <code>msks-home</code>
   (the daemon formats the volume with that label) so the mount
@@ -1058,24 +1057,24 @@ boots. A guest image must:</p>
   administer the VM: Debian through a <code>%wheel</code> dropin in
   <code>/etc/sudoers.d</code> (the image creates the group — Debian's own
   tree carries none), NixOS through a declarative sudo rule. The
-  identity seed (#248) creates a named login user, gives it the
+  identity seed creates a named login user, gives it the
   workspace user's shell, and joins it to the group — the seed
   never writes sudo configuration, so a guest that is rebuilt
   keeps exactly the sudo policy its configuration declares.</li>
 <li><strong>Run cloud-init against the cidata seed disk.</strong> A workspace
-  created with <code>user_data</code> (#41) or a seeded ssh identity (#111) boots
+  created with <code>user_data</code> or a seeded ssh identity boots
   with a third, read-only virtio disk: a small iso9660 filesystem
   labeled <code>cidata</code> carrying <code>user-data</code> (the operator payload,
   composed beside the identity's seeding script when a key was
   supplied) and <code>meta-data</code>
   (<code>instance-id</code>, keyed off the workspace id, and
-  <code>local-hostname</code>, the workspace's creation name (#370) — the
+  <code>local-hostname</code>, the workspace's creation name — the
   minted id when the workspace was created without one) at its
   root — exactly cloud-init's NoCloud seed layout. The hostname
   lands at first boot, and a factory reset re-provisions from the
   seed with it; a stop/start never re-provisions (instance-id
   never changes). A launch heal that rebuilds a lost seed carries
-  the hostname as well, but a guest that booted before #370 keeps
+  the hostname as well, but a guest that booted before keeps
   the hostname it already has — cloud-init sets the hostname per
   instance, and its per-boot update leaves a hostname it never set
   untouched, so only a factory reset moves an older workspace's.
@@ -1083,7 +1082,7 @@ boots. A guest image must:</p>
   image turns on cloud-init's <code>manage_etc_hosts</code> in the mode that
   adds the conventional <code>127.0.1.1</code> record naming the host, in
   place, on every boot — the file's other entries stay in place.
-  (A guest first booted before #370 whose healed seed now carries
+  (A guest first booted before whose healed seed now carries
   the name gets the record naming the creation name while its
   kernel hostname keeps the older one — the module reads the seed,
   not the kernel.) Name resolution does not wait on the record:
@@ -1127,7 +1126,7 @@ image deduplicates across hosts.</p>
 relocates it); <code>scripts/build-guest.sh</code> and
 <code>nix/guest-debian.nix</code> document every step and are the reference for
 what an image build does.</p>
-<p>Both images bake the agent toolchain (#266, #268): pinned Node,
+<p>Both images bake the agent toolchain: pinned Node,
 the pinned pi coding agent, the pinned herdr terminal
 workspace manager (herdr.dev, the release's static binary, with
 its license), and pinned Claude Code (the npm wrapper plus its
@@ -1152,7 +1151,7 @@ prefetched against its shrinkwrap (with the five integrity gaps
 the published lock leaves, closed by hash) and installed offline.
 A workspace that already booted keeps the toolchain it booted
 with; a rebuilt image serves the new pins to the next workspace.</p>
-<p>pi's own tool dependencies ride the image too (#272): pi resolves
+<p>pi's own tool dependencies ride the image too: pi resolves
 <code>fd</code> and <code>rg</code> from PATH — at interactive startup and again at
 first tool use — and downloads each from GitHub releases when it
 finds neither: a download a fresh workspace's first agent start
@@ -1189,12 +1188,12 @@ daemon serves it with nothing keyed off the image's name. The
 output lands under <code>.devenv/state/guest-nixos/</code>
 (<code>GUEST_NIXOS_DIR</code> relocates it); <code>nix/guest-nixos.nix</code>
 documents every step. The image ships the same agent toolchain as
-the Debian one (#268): nixpkgs' own Node and the shared pins
+the Debian one: nixpkgs' own Node and the shared pins
 (<code>nix/agent-toolchain.nix</code>) ride the system profile — the
 loader-patched Claude Code and the tmpfiles-planted extension
 staging described above.</p>
 <h4 id="rebuilding-the-system-inside-a-nixos-workspace">Rebuilding the system inside a NixOS workspace<a class="headerlink" href="#rebuilding-the-system-inside-a-nixos-workspace" title="Permanent link">&para;</a></h4>
-<p>A NixOS workspace is <code>nixos-rebuild</code>-ready (#274). <code>nix</code> runs as
+<p>A NixOS workspace is <code>nixos-rebuild</code>-ready. <code>nix</code> runs as
 on any NixOS host — the daemon, the build users, and the CLI ship
 enabled — and the image bakes everything a rebuild evaluates
 against:</p>
@@ -1230,7 +1229,7 @@ against:</p>
   prefers, and the channels profile — ship in <code>/etc/nix/nix.conf</code>
   and in every login shell's <code>NIX_PATH</code>, so <code>&lt;nixpkgs&gt;</code> resolves
   identically for the root rebuild path and for the workspace
-  user at the console (#433).</p>
+  user at the console.</p>
 </li>
 <li>
 <p><strong>The system profile as the boot's init.</strong> The kernel cmdline
@@ -1248,16 +1247,16 @@ contract item — the console getty, the sshd posture, cloud-init
 seed handling, the agent toolchain on PATH — because the
 configuration it evaluates is the one that shipped. nix works the
 same way for the unprivileged workspace user logged in on the
-console (#433): <code>nix-build '&lt;nixpkgs&gt;' -A &lt;pkg&gt;</code> builds from the
+console: <code>nix-build '&lt;nixpkgs&gt;' -A &lt;pkg&gt;</code> builds from the
 baked pin through the daemon, <code>nix-env -iA nixpkgs.&lt;pkg&gt;</code> installs
 into the user's own profile, and <code>nix-shell -p &lt;pkg&gt;</code> builds and
 enters an environment — fetching what the shipped store lacks
 from <code>cache.nixos.org</code> through the workspace's egress path. The
 image
-ships one background consumer of this readiness (#427): the
+ships one background consumer of this readiness: the
 <code>msks-interceptor-ca</code> oneshot folds the daemon's interception
 CA (staged by the identity seed under <code>/etc/msks</code> — one CA for
-every workspace, #485) into the
+every workspace) into the
 system trust bundle — the module reads the staged certificate at
 evaluation time, the unit runs one <code>nixos-rebuild switch</code> per
 fresh certificate after <code>cloud-final</code>, and a hash marker keeps
@@ -1273,7 +1272,7 @@ is granted). Both images stay the same size class as before —
 the nix closure, the validity database, and the nixpkgs source
 grow the NixOS rootfs by roughly a gigabyte uncompressed.</p>
 <p>Each image build also executes every staged launcher and fails on
-one that does not run (#272): the Debian build runs <code>node</code>, <code>pi</code>,
+one that does not run: the Debian build runs <code>node</code>, <code>pi</code>,
 <code>claude</code>, <code>fdfind</code>, and <code>rg</code> through the tree's own dynamic loader
 and libraries — the same world the guest execs them in, because
 the build sandbox carries no <code>/usr/bin/env</code> or <code>/lib64</code> — while
@@ -1298,7 +1297,7 @@ image. The outline, using a distro's own cloud image as the source:</p>
 <li>Enable an autologin root getty on <code>/dev/hvc0</code>; make sure the
    <code>virtio_console</code> module is present so the device exists at boot.</li>
 <li>Bring up networking. Workspaces boot with a virtio-net NIC by
-   default (#52), so the image must be able to configure one — how is
+   default, so the image must be able to configure one — how is
    the distro's choice:</li>
 <li>a kernel with the <code>virtio_net</code> driver present (module or
      built-in; on most distros udev autoloads the module when the
@@ -1348,7 +1347,7 @@ import and in-place inspection cheaper).</p>
 <h2 id="checking-an-image">Checking an image<a class="headerlink" href="#checking-an-image" title="Permanent link">&para;</a></h2>
 <p>The daemon verifies layout and manifest at import, but a tar that
 parses can still carry a guest that does not boot — the layout is
-the only thing the daemon can see. <code>msks image check &lt;archive&gt;</code> (#258)
+the only thing the daemon can see. <code>msks image check &lt;archive&gt;</code>
 is the gate an image author runs before publishing: it boots the
 archive exactly the way a workspace boots (same driver, overlay,
 home volume, seed disk, and console path — against a throwaway
@@ -1399,7 +1398,7 @@ image default &lt;ref&gt;</code> (see
 </span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"source": "/path/on/the/daemon/workspace-mine-1.0.tar"}'</span>
 </span></code></pre></div>
 <p>The <code>source</code> is a path on the <strong>daemon's</strong> filesystem (the daemon
-reads them from its state dir), or — #258 — an <code>https://</code> URL the
+reads them from its state dir), or — — an <code>https://</code> URL the
 daemon downloads itself:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>msks<span class="w"> </span>image<span class="w"> </span>import<span class="w"> </span>https://images.example.com/workspace-mine-1.0.tar
 </span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>.../api/v1/images<span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"source": "https://images.example.com/workspace-mine-1.0.tar"}'</span>
@@ -1420,7 +1419,7 @@ copies privately and hashes that copy, so a source file changing
 underneath the import cannot desync the recorded hash from the
 imported content, and importing the same content twice is idempotent.</p>
 <p>An import registers the archive under an operator-chosen pair
-(#340) when <code>name</code>/<code>version</code> ride the request — <code>msks image
+when <code>name</code>/<code>version</code> ride the request — <code>msks image
 import &lt;path&gt; --name mine --version 1.0</code> on the CLI, or the keys
 beside <code>source</code> over HTTP. Either key alone moves; the other
 falls back to the archive's own manifest. The override changes
@@ -1430,7 +1429,7 @@ content hash, and the archive's own <code>image.json</code> stay exactly as
 they were; the manifest's pair stays recorded as the row's
 <strong>origin</strong> beside the registered pair, so a usable image's
 provenance reads from the catalog alone.</p>
-<p>A cataloged row renames in place under the same rules (#340):</p>
+<p>A cataloged row renames in place under the same rules:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>msks<span class="w"> </span>image<span class="w"> </span>rename<span class="w"> </span>debian:13<span class="w"> </span>--name<span class="w"> </span>mine<span class="w"> </span>--version<span class="w"> </span><span class="m">1</span>.0
 </span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>PATCH<span class="w"> </span>.../api/v1/images/&lt;hash&gt;<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"name": "mine", "version": "1.0"}'</span>
@@ -1454,7 +1453,7 @@ override renames the row the same way a rename does.</p>
 <li>The <strong>first image imported becomes the default</strong> — the one a bare
   workspace create uses — and keeps the designation while more
   images arrive; <code>POST /api/v1/images/default</code> re-designates at any
-  time (#270):</li>
+  time:</li>
 </ul>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># designate by any reference form create's image field takes</span>
 </span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>.../api/v1/images/default<span class="w"> </span><span class="se">\</span>
@@ -1575,7 +1574,7 @@ own seed disk:</p>
   serial log) says when provisioning finished; a factory reset
   re-runs the payload from the same seed.</li>
 </ul>
-<h2 id="the-published-image-channel-564">The published image channel (#564)<a class="headerlink" href="#the-published-image-channel-564" title="Permanent link">&para;</a></h2>
+<h2 id="the-published-image-channel">The published image channel<a class="headerlink" href="#the-published-image-channel" title="Permanent link">&para;</a></h2>
 <p>Every release publishes the built guest images to a hash-keyed
 channel on this repository's GitHub releases: each image lives on
 its own release tagged <code>images/&lt;hash-prefix&gt;</code>, as a

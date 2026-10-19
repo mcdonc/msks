@@ -811,7 +811,7 @@ alone) removes them.</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>&lt;state_dir&gt;/
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── vms/&lt;workspace_id&gt;/
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│   ├── root.qcow2        # the root overlay (plus the VM's runtime files)
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│   └── seed.img          # the #41 cidata seed (user_data workspaces only)
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│   └── seed.img          # the cidata seed (user_data workspaces only)
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>└── volumes/
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    └── &lt;workspace_id&gt;.ext4   # the /home volume (sparse ext4)
 </span></code></pre></div>
@@ -826,7 +826,7 @@ existing ones. (Rebasing an overlay onto a newer base exists as a
 image" action later; it never happens implicitly.)</p>
 <p>The home volume is a sparse ext4 file: an idle volume costs its
 metadata, not its nominal size, and grows as the guest writes.</p>
-<p>The seed (#41) exists exactly when the workspace was created with
+<p>The seed exists exactly when the workspace was created with
 <code>user_data</code>: a kilobytes-small iso9660 image labeled <code>cidata</code>, built
 with <code>mkisofs</code> (genisoimage), attached to the VM <strong>read-only</strong>, and
 installed mode 0600 because the payload can embed tokens (its
@@ -863,7 +863,7 @@ virtual size never drops below its base image's size — a smaller
 disk would truncate the base filesystem.</p>
 <p>Create is not the only time sizes move: <code>POST
 /api/v1/workspaces/{id}/resize</code> (<code>msks resize</code>) revisits them on a
-<strong>stopped</strong> workspace (#184):</p>
+<strong>stopped</strong> workspace:</p>
 <ul>
 <li>the <strong>/home volume</strong> grows or shrinks. The daemon quiets the
   filesystem's journal with <code>e2fsck -fy</code> — a volume a hard stop left
@@ -899,7 +899,7 @@ A completed resize is announced on the events channel
 (<code>workspace.resized</code>, with the new sizes and topology).</p>
 <h2 id="capacity-reporting">Capacity reporting<a class="headerlink" href="#capacity-reporting" title="Permanent link">&para;</a></h2>
 <p><code>msks storage</code> answers the operator's three capacity questions,
-each from its own source of truth (#184):</p>
+each from its own source of truth:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>$ msks storage
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>state disk    used 23.4G of 40G    free 16.6G    pressure ok
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
@@ -931,7 +931,7 @@ each from its own source of truth (#184):</p>
 <li><strong>Ceiling</strong> is the size fixed at create (<code>root_mib</code> /
   <code>home_mib</code>) — the quota the guest's <code>df</code> shows its user.</li>
 <li><strong>Imported</strong> is when the archive came in, local time to the
-  minute (#186). Rebuilding an image and importing it again adds a
+  minute. Rebuilding an image and importing it again adds a
   second entry under the same reference; the time tells the
   entries apart, and the short hash <code>msks image ls</code> shows names
   the one <code>msks image rm</code> removes. Re-importing the same archive
@@ -973,7 +973,7 @@ markers live under <code>/var/lib/cloud</code>), so future provisioning
 re-runs on the next boot.</p>
 <h2 id="home-volume-export-and-import">Home volume export and import<a class="headerlink" href="#home-volume-export-and-import" title="Permanent link">&para;</a></h2>
 <p>The home volume travels through the daemon's authenticated
-listener as byte streams (#80) — the interim mechanism for backup,
+listener as byte streams — the interim mechanism for backup,
 migration to another daemon, and seeding a fresh workspace with
 data:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>GET /api/v1/workspaces/{id}/home    → the volume file's bytes, streamed
@@ -1075,12 +1075,12 @@ boot. Deleting the workspace releases the pin.</p>
 <tr>
 <td><code>MSKSD_STORAGE_WARN_PCT</code></td>
 <td><code>90</code></td>
-<td>State-disk percentage used that moves pressure to <code>warn</code> (#184).</td>
+<td>State-disk percentage used that moves pressure to <code>warn</code>.</td>
 </tr>
 <tr>
 <td><code>MSKSD_STORAGE_FLOOR_MIB</code></td>
 <td><code>512</code></td>
-<td>Free state-disk MiB below which pressure is <code>critical</code> and writes answer <code>507</code> (#184).</td>
+<td>Free state-disk MiB below which pressure is <code>critical</code> and writes answer <code>507</code>.</td>
 </tr>
 <tr>
 <td><code>MSKSD_QEMU_IMG</code></td>
@@ -1095,17 +1095,17 @@ boot. Deleting the workspace releases the pin.</p>
 <tr>
 <td><code>MSKSD_RESIZE2FS</code></td>
 <td><code>resize2fs</code></td>
-<td>The resize2fs that moves <code>/home</code> volumes (#184).</td>
+<td>The resize2fs that moves <code>/home</code> volumes.</td>
 </tr>
 <tr>
 <td><code>MSKSD_E2FSCK</code></td>
 <td><code>e2fsck</code></td>
-<td>The e2fsck that quiets a volume before a resize (#184).</td>
+<td>The e2fsck that quiets a volume before a resize.</td>
 </tr>
 <tr>
 <td><code>MSKSD_MKISOFS</code></td>
 <td><code>mkisofs</code></td>
-<td>The mkisofs (genisoimage) that builds <code>cidata</code> seed disks (#41).</td>
+<td>The mkisofs (genisoimage) that builds <code>cidata</code> seed disks.</td>
 </tr>
 <tr>
 <td><code>MSKSD_HOST_NAME</code></td>

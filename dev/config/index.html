@@ -970,15 +970,15 @@ directory it lives in, so the tree root must be resolvable before
 the file is located.</p>
 <h2 id="msksd-doctor"><code>msksd doctor</code><a class="headerlink" href="#msksd-doctor" title="Permanent link">&para;</a></h2>
 <p><code>msksd doctor</code> checks the host for the external tools and
-libraries msksd and the msks client exec at runtime (#464) — the
+libraries msksd and the msks client exec at runtime — the
 cloud-hypervisor VMM, the e2fsprogs pair that grows and checks
 workspace volumes, the <code>mkisofs</code> that packs the cidata seed disks,
 the iproute2/nftables/conntrack trio behind each workspace's tap,
 <code>qemu-img</code> for the root overlay,
 secret store, the two libraries the interceptor's NFQUEUE path
 links against, the host tmux at the 3.2 floor the consent
-terminal documents (#379), and the ssh/rsync pair the documented
-workflows run over <code>msks forward</code> (#110/#112). Each result prints
+terminal documents, and the ssh/rsync pair the documented
+workflows run over <code>msks forward</code>. Each result prints
 with a ✓ (present and functional), ⚠ (a client-side tool the
 daemon itself runs without), or ✗ (a core-path dependency)
 marker, and each miss carries an install hint matched to the
@@ -1001,7 +1001,7 @@ ctypes soname load — whichever answers first.</p>
 library rows, and all three run on Linux hosts only: off Linux
 the library is a Linux package, and the binding row names that
 contract instead of hinting packages. On Linux, the vendored
-ctypes binding (#542) dlopens <code>libnetfilter_queue.so.1</code> — the
+ctypes binding dlopens <code>libnetfilter_queue.so.1</code> — the
 same load the consent path performs — so a host whose runtime
 soname is absent fails it even when <code>pkg-config</code> still answers
 for the library. Its fix line names the package that carries the
@@ -1130,7 +1130,7 @@ the file itself carries them all at one level.</p>
 <td><code>MSKSD_SOCKET</code></td>
 <td>string</td>
 <td><em>(unset)</em></td>
-<td>Binds a second, local listener at this unix socket path (#555): same-host clients connect through it with peer-credential authentication — no token, no TLS. Unset binds the default path, <code>$XDG_RUNTIME_DIR/msks/msksd.sock</code>; a daemon without a runtime dir (a container, a hand-written system unit pointing <code>MSKSD_SOCKET</code> at a path its <code>RuntimeDirectory</code> creates) serves TCP alone until this setting names a path; the empty string always serves TCP alone. The socket file is mode 0660 — chgrp it to a shared group to admit that group's members. The systemd <strong>user</strong> unit <code>msks-setup-debian-host</code> generates (#560) creates <code>$XDG_RUNTIME_DIR/msks</code> for this listener through its <code>RuntimeDirectory</code> — the client's own default candidate path. Read at startup; a reload applies a change at restart.</td>
+<td>Binds a second, local listener at this unix socket path: same-host clients connect through it with peer-credential authentication — no token, no TLS. Unset binds the default path, <code>$XDG_RUNTIME_DIR/msks/msksd.sock</code>; a daemon without a runtime dir (a container, a hand-written system unit pointing <code>MSKSD_SOCKET</code> at a path its <code>RuntimeDirectory</code> creates) serves TCP alone until this setting names a path; the empty string always serves TCP alone. The socket file is mode 0660 — chgrp it to a shared group to admit that group's members. The systemd <strong>user</strong> unit <code>msks-setup-debian-host</code> generates creates <code>$XDG_RUNTIME_DIR/msks</code> for this listener through its <code>RuntimeDirectory</code> — the client's own default candidate path. Read at startup; a reload applies a change at restart.</td>
 </tr>
 <tr>
 <td><code>tls_cert</code></td>
@@ -1151,7 +1151,7 @@ the file itself carries them all at one level.</p>
 <td><code>MSKSD_EVENT_POLL_S</code></td>
 <td>float</td>
 <td><code>1.0</code></td>
-<td>Seconds between watcher scans — workspace status reconciles and the state-disk pressure probe (#184) — read at loop start; a running daemon applies a change at restart.</td>
+<td>Seconds between watcher scans — workspace status reconciles and the state-disk pressure probe — read at loop start; a running daemon applies a change at restart.</td>
 </tr>
 <tr>
 <td><code>bootstrap_token</code></td>
@@ -1165,7 +1165,7 @@ the file itself carries them all at one level.</p>
 <td><code>MSKSD_ACCESS_LOG</code></td>
 <td>bool</td>
 <td><code>false</code></td>
-<td>Writes uvicorn's access log — request lines (method, path, query), never headers. Websocket tokens ride the <code>Authorization</code> header (#216), not the URL, so the log holds no credentials.</td>
+<td>Writes uvicorn's access log — request lines (method, path, query), never headers. Websocket tokens ride the <code>Authorization</code> header, not the URL, so the log holds no credentials.</td>
 </tr>
 </tbody>
 </table>
@@ -1284,14 +1284,14 @@ the file itself carries them all at one level.</p>
 <td><code>MSKSD_RESIZE2FS</code></td>
 <td>string</td>
 <td><code>resize2fs</code></td>
-<td>Path to resize2fs, which moves a <code>/home</code> volume's size (#184).</td>
+<td>Path to resize2fs, which moves a <code>/home</code> volume's size.</td>
 </tr>
 <tr>
 <td><code>e2fsck</code></td>
 <td><code>MSKSD_E2FSCK</code></td>
 <td>string</td>
 <td><code>e2fsck</code></td>
-<td>Path to e2fsck, which quiets a volume before a resize (#184).</td>
+<td>Path to e2fsck, which quiets a volume before a resize.</td>
 </tr>
 <tr>
 <td><code>mkisofs</code></td>
@@ -1326,28 +1326,28 @@ the file itself carries them all at one level.</p>
 <td><code>MSKSD_STORAGE_WARN_PCT</code></td>
 <td>int</td>
 <td><code>90</code></td>
-<td>State-disk percentage used that moves pressure to <code>warn</code> (#184); 1–99.</td>
+<td>State-disk percentage used that moves pressure to <code>warn</code>; 1–99.</td>
 </tr>
 <tr>
 <td><code>storage_floor_mib</code></td>
 <td><code>MSKSD_STORAGE_FLOOR_MIB</code></td>
 <td>int</td>
 <td><code>512</code></td>
-<td>Free state-disk MiB below which pressure is <code>critical</code> and workspace creates, image imports, and home-volume imports answer <code>507</code> (#184).</td>
+<td>Free state-disk MiB below which pressure is <code>critical</code> and workspace creates, image imports, and home-volume imports answer <code>507</code>.</td>
 </tr>
 <tr>
 <td><code>image_import_max_mib</code></td>
 <td><code>MSKSD_IMAGE_IMPORT_MAX_MIB</code></td>
 <td>int</td>
 <td><code>8192</code></td>
-<td>The size ceiling a URL image import accepts (#258): a download whose declared or streamed size passes it is refused by name. The storage floor still counts the imported archive twice, like a path import.</td>
+<td>The size ceiling a URL image import accepts: a download whose declared or streamed size passes it is refused by name. The storage floor still counts the imported archive twice, like a path import.</td>
 </tr>
 <tr>
 <td><code>image_import_timeout_s</code></td>
 <td><code>MSKSD_IMAGE_IMPORT_TIMEOUT_S</code></td>
 <td>float</td>
 <td><code>600.0</code></td>
-<td>The overall deadline a URL image import download runs under (#258); a slow source fails with a named error instead of hanging the request.</td>
+<td>The overall deadline a URL image import download runs under; a slow source fails with a named error instead of hanging the request.</td>
 </tr>
 </tbody>
 </table>
@@ -1424,7 +1424,7 @@ the file itself carries them all at one level.</p>
 <td><code>MSKSD_EGRESS_MODE</code></td>
 <td>string</td>
 <td><code>allow</code></td>
-<td>The consent mode workspaces get at create when the request names none (#69): <code>allow</code>, <code>static</code>, or <code>interactive</code>.</td>
+<td>The consent mode workspaces get at create when the request names none: <code>allow</code>, <code>static</code>, or <code>interactive</code>.</td>
 </tr>
 <tr>
 <td><code>egress_consent_timeout_s</code></td>
@@ -1473,14 +1473,14 @@ the file itself carries them all at one level.</p>
 <td><code>MSKSD_INTERCEPTOR_PORT</code></td>
 <td>int</td>
 <td><code>8643</code></td>
-<td>The TCP port every armed workspace's interceptor listener binds on its own tap address (#199).</td>
+<td>The TCP port every armed workspace's interceptor listener binds on its own tap address.</td>
 </tr>
 <tr>
 <td><code>probe_port</code></td>
 <td><code>MSKSD_PROBE_PORT</code></td>
 <td>int</td>
 <td><code>8644</code></td>
-<td>The TCP port every workspace's probe service listener binds on its own tap address (#532). The guest still dials 443 (the redirect catches it); the interceptor repoints its upstream dial to this port, so a host service on 443 cannot break the probe.</td>
+<td>The TCP port every workspace's probe service listener binds on its own tap address. The guest still dials 443 (the redirect catches it); the interceptor repoints its upstream dial to this port, so a host service on 443 cannot break the probe.</td>
 </tr>
 <tr>
 <td><code>audit_hmac_key</code></td>
@@ -1513,21 +1513,21 @@ when the first store operation finds it absent.</p>
 <td><code>MSKSD_SECRET_STORE_UNLOCK_TIMEOUT_S</code></td>
 <td>float</td>
 <td><code>86400.0</code></td>
-<td>How long unlocked plaintext lives in the daemon's cache after the unlock POST that supplied it (#514); the timer resets on an unlock itself — websocket traffic and keepalives never extend it. Zero holds plaintext only while at least one operator websocket stays connected — the last disconnect drops it, and an unlock over HTTP alone holds nothing past the reply.</td>
+<td>How long unlocked plaintext lives in the daemon's cache after the unlock POST that supplied it; the timer resets on an unlock itself — websocket traffic and keepalives never extend it. Zero holds plaintext only while at least one operator websocket stays connected — the last disconnect drops it, and an unlock over HTTP alone holds nothing past the reply.</td>
 </tr>
 <tr>
 <td><code>llm_port</code></td>
 <td><code>MSKSD_LLM_PORT</code></td>
 <td>int</td>
 <td><code>8770</code></td>
-<td>The port each workspace's LLM proxy listener binds on its tap (#259).</td>
+<td>The port each workspace's LLM proxy listener binds on its tap.</td>
 </tr>
 <tr>
 <td><code>llm_models</code></td>
 <td><code>MSKSD_LLM_MODELS</code></td>
 <td>string/list</td>
 <td><code>""</code></td>
-<td>The model list (#259): <code>provider/model:api_base:api_key</code> entries — comma-separated strings, or the file's list of strings and LiteLLM-native dicts; see <code>docs/llm.md</code>.</td>
+<td>The model list: <code>provider/model:api_base:api_key</code> entries — comma-separated strings, or the file's list of strings and LiteLLM-native dicts; see <code>docs/llm.md</code>.</td>
 </tr>
 <tr>
 <td><code>llm_api_key</code></td>
@@ -1557,7 +1557,7 @@ reload naming a new one changes nothing:</p>
 <li><code>default_image</code> (imported into the catalog once, at first boot)</li>
 <li>the watcher scan's <code>event_poll_s</code> (sampled at loop start): both the
   workspace status reconcile and the state-disk pressure probe
-  (#184) ride it</li>
+  ride it</li>
 <li>the egress machinery's startup inputs: <code>egress_enabled</code> (the
   subsystem latches its state when the daemon boots) and the base
   NAT masquerade's <code>egress_uplink</code> (per-workspace firewall rules
