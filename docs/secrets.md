@@ -11,7 +11,7 @@ per-recipient age-encrypted blobs — and in the daemon's unlock
 cache for its window, and it is never echoed back: the mint reply
 carries the sentinel alone.
 
-A mint covers **workspaces** (#339). With no target it is the
+A mint covers **workspaces**. With no target it is the
 **daemon-wide placeholder**: one row, one sentinel, valid on
 every workspace's tap — an operator running several workspaces
 against one daemon mints the credential once and distributes the
@@ -59,8 +59,8 @@ What each request gets:
   certificate reaches the workspace, pinned clients keep working,
   and the sentinel rides raw. Detection of off-allowlist sightings
   is limited to decrypted flows — this blind spot is recorded on
-  the #194 decision doc (`docs/spikes/194-egress-interceptor.md`
-  in the repository).
+  the decision doc of the time
+  (`docs/spikes/194-egress-interceptor.md`, since removed).
 - **The sighting.** A sentinel seen toward a destination its own
   allowlist misses — while another placeholder decrypts the flow —
   passes through unrewritten and publishes a `secret.sighting`
@@ -77,7 +77,7 @@ What each request gets:
 
 While a workspace is armed, the redirect takes its web egress
 (TCP 80 and 443) **before** the kernel's consent queue, so the
-interceptor runs the consent gate for exactly those flows (#452):
+interceptor runs the consent gate for exactly those flows:
 every web connection is decided on the name the wire carries — the
 TLS handshake's SNI on HTTPS, the Host header on plain HTTP —
 bound to the address the naming memory holds for the connection
@@ -94,7 +94,7 @@ interception CA, the
 request refuses, and nothing forwards (a client that pins the
 origin's real certificate fails its handshake instead; refused
 closed either way). See
-[networking](networking.md#egress-consent-69) for the gate's
+[networking](networking.md#egress-consent) for the gate's
 precedence and its per-connection boundaries. The consent modes
 keep gating every other port at the kernel queue as before, and
 the verdict pins and resolver-learned allows they hold in the
@@ -133,14 +133,14 @@ row the database cannot read, answers the request locally with a
 sentinel never leaves the host.
 
 The interceptor presents each connection a leaf certificate signed
-by the daemon's one interception CA (#485) — every workspace's
-guest trusts the same certificate its seed staged (#424: the
+by the daemon's one interception CA — every workspace's
+guest trusts the same certificate its seed staged: the
 identity seed writes `/etc/msks/interceptor-ca.crt` at first boot,
 and the trust-store exports and the NixOS fold register it). A
 workspace whose guest already trusts that CA sees HTTPS toward
 allowlisted destinations validate normally from the first
 placeholder. When the daemon's certificate changes under a
-workspace that already booted — the move from a pre-#485
+workspace that already booted — the move from an earlier
 per-workspace CA, or a future CA rotation — the next boot renews
 the seed: it is rebuilt carrying the daemon's certificate with an
 instance-id suffix keyed to it, cloud-init re-provisions (the seed
@@ -180,14 +180,14 @@ tap 80/443 flow, including one workspace dialing another's
 address, and the interceptor dials the destination from the host,
 where the per-VM forward gates do not apply.
 
-## The seeded probe placeholder (#424)
+## The seeded probe placeholder
 
 A fresh daemon seeds one placeholder itself at first-time
 startup: the daemon-wide row named **`probe`**, allowlisting
 `secretprobe.msks`, carrying the fixed credential blob
 `bXNrczptc2tz` as its secret. It exists so an operator can
 verify interception from inside a workspace with zero minting
-(the [probe endpoint](networking.md#the-probe-endpoint-424)); its
+(the [probe endpoint](networking.md#the-probe-endpoint)); its
 sentinel never needs to be treated as a secret, because the
 credential it swaps to is public and gates nothing beyond the
 probe's own `ok` page.
@@ -204,7 +204,7 @@ credential blob `bXNrczptc2tz` (the value the probe endpoint
 itself serves). The seed's mint rides the audit trail like any
 other.
 
-Under the unlock window (#514) the probe row is armed for the
+Under the unlock window the probe row is armed for the
 window at every boot and again on every `GET /api/v1/probe` read:
 the credential is public, so the daemon re-arms its own row
 rather than leaving the probe locked after the window expires —
@@ -233,7 +233,7 @@ sentinel: mskssec2_9Jm3...kQ
   the mint reply carries the sentinel, not the value. The client and the
   daemon may sit on different machines: the value rides the
   token-authenticated TLS API. The mint stores **ciphertext
-  only** (#514): one age-encrypted blob per covering workspace's
+  only**: one age-encrypted blob per covering workspace's
   identity key, and the plaintext rides the daemon's unlock
   cache until its window ends (below). A covering workspace
   whose key is outside the store's capable set (`ssh-ed25519`,
@@ -266,11 +266,11 @@ sentinel: mskssec2_9Jm3...kQ
   audit omit it (`msks secret ls` never shows one), and the
   daemon serves the row's sentinel back on demand over the
   token-authenticated API — the `msks tui` secrets page's
-  Enter-on-a-row panel (#440) — so a sentinel that scrolled
+  Enter-on-a-row panel — so a sentinel that scrolled
   away reads back from the daemon; the operator's value alone
   is never echoed back.
 
-The `msks tui` secrets page mints too (#393): `c` opens the form
+The `msks tui` secrets page mints too: `c` opens the form
 — name, repeatable destinations, coverage (the daemon-wide row,
 or a multi-select of the workspaces the tree's own list offers),
 the lifetime (`unbounded` by default, an hour to thirty days
@@ -287,7 +287,7 @@ and hides it again, an OSC 52 clipboard copy (over ssh included,
 where the terminal honors it — the copy needs no reveal), and
 the rule that the display ends with the panel.
 Enter (or a click) on a listing row opens the same panel again
-(#440): the page fetches the row's sentinel from the daemon and
+: the page fetches the row's sentinel from the daemon and
 shows it, so the sentinel reads back on demand — the panel is
 one surface for the row, opened at mint and after. Closing the
 panel clears its text.
@@ -301,7 +301,7 @@ secret ls` lists every row with its coverage (`*` for the
 daemon-wide row, the workspace list scoped).
 
 A workspace can exempt itself from daemon-wide placeholders
-(#339): `msks create --secret-coverage scoped` (or
+: `msks create --secret-coverage scoped` (or
 `msks secret coverage myws scoped` later) means only placeholders
 minted directly at that workspace arm it. A daemon-wide sentinel
 used from a scoped workspace publishes an off-allowlist sighting
@@ -309,17 +309,17 @@ and swaps nothing; every new workspace accepts daemon-wide
 coverage unless its own setting says scoped, and flipping the
 setting back to `all` arms it with any live daemon-wide row.
 
-## The unlock window (#514)
+## The unlock window
 
 The daemon holds no plaintext of its own: a mint leaves only the
 per-recipient ciphertext blobs, and the plaintext returns through
-an operator's unlock — the client (#515) decrypts the blobs with
+an operator's unlock — the client decrypts the blobs with
 the workspace identity's private half and posts the values back
 over the token-authenticated API (`POST /api/v1/secrets/unlock`,
 after `GET /api/v1/secrets/pending` serves the ciphertext and
 opens the session window the unlock requires).
 
-### The client's half (#515)
+### The client's half
 
 The unlock reads the identity key file the client already uses
 for ssh — `identity_file` (the client config,
@@ -333,7 +333,7 @@ keyed to different workspaces each unlock their own.
 An agent-held key cannot unlock: ssh-agent exposes signing, and
 the unwrap needs the private key material directly, so the
 unlock reads the file where it lives (ssh login still resolves
-through the agent, #490). A passphrase-encrypted key file
+through the agent). A passphrase-encrypted key file
 prompts once per session — the passphrase loads the identity and
 every row then decrypts through it.
 
@@ -384,11 +384,11 @@ workspace key rotation heals at the next operator session.
 ## Where the real secret lives
 
 A mint stores **ciphertext blobs in the daemon's database**
-(#514): one age file per covering workspace identity key, wrapped
+: one age file per covering workspace identity key, wrapped
 to that workspace's ssh public half — the same file format the
 reference `age` tool writes. The daemon holds no key that opens
 them: only the workspace identity's private half (kept on the
-operator's client machine, #486) unwraps a blob, which is the
+operator's client machine) unwraps a blob, which is the
 whole design — the client decrypts, the daemon swaps. Values
 exist in plaintext only in the operator's memory, the
 token-authenticated request, and the daemon's unlock cache for
@@ -415,7 +415,7 @@ secret-bearing setting is the window above.
 ## At-rest encryption
 
 Every minted value is ciphertext at rest — a per-recipient age
-blob in the database (#514) — and no configuration choice
+blob in the database — and no configuration choice
 changes that posture. The ssh identities, the database, and the
 token hashes keep their own house postures; the blobs name the
 secrets' one, and the blob's recipient list is exactly the row's

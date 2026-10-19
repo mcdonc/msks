@@ -9,13 +9,13 @@ API rendered. This chapter covers the screens; the commands and
 settings the two surfaces share are
 [the CLI client's](cli.md) tables and sections.
 
-## The workspace tree (#309)
+## The workspace tree
 
 A bare `msks` — no arguments at all — launches the full-screen
 workspace tree (`msks tui` names the same command, and `msks tui
 my-workspace` opens that workspace's page directly). The tree is
 rooted at the **workspaces list**: every workspace one row —
-newest first, the CREATED column's arrow naming the sort (#470)
+newest first, the CREATED column's arrow naming the sort
 — with creating, starting, stopping, and removing on its keys
 (`c` new, `s` start, `S` stop, `D` remove — asked and confirmed —
 `e` secrets, `r` refresh, `/` a typeahead that jumps the focus
@@ -25,22 +25,21 @@ every five seconds, so a workspace another surface moved — the
 CLI, another operator — appears without a keypress, and a power
 verb the focused row's own status makes pointless names its
 skip client-side without a round-trip. A refused create
-opens the failure panel (#426): a centered panel over the list
+opens the failure panel: a centered panel over the list
 carrying the daemon's refusal verbatim beside the name the form
 submitted, waiting for dismissal — Enter, Escape, `q`, or the
 Close button — so the detail stays on screen while the operator
 reads it; closing it returns to the list, and a create that
 lands keeps today's flash note. `e` opens the
-**secrets** page (#431). Each row's status
-column carries the state's color behind a filled cue dot (#348
-and #470): a running workspace in the theme's success color,
+**secrets** page. Each row's status
+column carries the state's color behind a filled cue dot: a running workspace in the theme's success color,
 every other state — stopped among them — in the warning color —
 the rest of the row keeps the default foreground, the focused
 row's name takes a bold cue, and the colors follow the active
 theme.
 
 The listing renders inside a rounded frame — the same framing
-the create form carries (#349) — so the rows read as one table
+the create form carries — so the rows read as one table
 between the status bar and the footer. The status bar above it
 sets the workspace count in the bold default foreground with the
 daemon's URL riding after it in muted text (a long URL clips at
@@ -48,8 +47,8 @@ its middle, both ends kept, so the line stays one row); a
 flash message owns the whole line while it lives, and a flash
 longer than the terminal's width crops at the edge with an
 ellipsis marking the cut, so the bar stays one row whatever a
-refusal echoes back (#359). Each row's created column reads a
-relative label (#350), bucketed by whole calendar days:
+refusal echoes back. Each row's created column reads a
+relative label, bucketed by whole calendar days:
 `today`, `yesterday`, then `2d ago` under a week, `3w ago` under
 a month, `1mo ago` under a year, `1y ago` past it — the absolute
 created date reads on the workspace page's header.
@@ -80,7 +79,7 @@ workspace filters (a daemon-wide row's events cover every
 workspace, a scoped row's its members). The audit view holds a
 plain subscription — no decider registration — so it claims no
 holds.
-`c` opens the mint form (#393): name, repeatable destinations
+`c` opens the mint form: name, repeatable destinations
 (an exact host or a label-anchored suffix, comma-separated in
 one field), coverage — the daemon-wide row, or a multi-select
 fed by the tree's own workspace list — the lifetime (`unbounded`
@@ -89,7 +88,7 @@ masked field the operator types or pastes into — the form takes
 the secret's bytes directly. The submit checks the secret store
 first (`msks secret
 check`'s endpoint), then mints; a refused mint opens the failure
-panel (#426) over the form — the daemon's refusal verbatim beside
+panel over the form — the daemon's refusal verbatim beside
 the name the form submitted — and a refused store check opens it
 with the daemon's refusal alone; either way it closes by hand
 (Enter, Escape, `q`, or the Close button), and the fields
@@ -104,13 +103,13 @@ action that writes the sentinel to the terminal's clipboard over
 OSC 52 — the copy path a terminal that honors the sequence
 answers, over ssh included, with no reveal needed — and the closing
 rule: the display ends with the panel. Enter (or a click) on a
-listing row opens the panel again (#440): the page fetches the
+listing row opens the panel again: the page fetches the
 row's sentinel from the daemon and shows it with the same show
 and copy actions — the sentinel reads back on demand, at mint
 and after.
 Closing the panel clears its text, and the minted row
 stands on the page's list. The placeholder-to-workspace
-navigation lands with the cross-references (#394).
+navigation lands with the cross-references.
 
 The **workspace page** carries the per-workspace loop: a
 two-line header — the workspace's name on the first line with
@@ -125,7 +124,7 @@ columns, every grant listed on the workspace's egress consent
 screen), and the page's actions centered in the space the header
 lines and the footer leave — the block capped at 64 columns — in
 three groups: a shell, then egress consent and an edit dialog
-for the sizes and topology (#331), then start and stop. Each action paints its
+for the sizes and topology, then start and stop. Each action paints its
 name with its description muted behind it, and the row Enter
 acts on carries a marker beside the list's own highlight and the
 name in bold. The start and stop rows dim behind their reason
@@ -137,7 +136,7 @@ its window's `msks ssh` child boots a stopped workspace itself,
 so the action never dims — and Start while the workspace sits
 stopped), and `s`/`S` run start and stop from wherever the
 focus stands — the letters the list binds (the list also binds
-`i`: the image page, #565/#571 — the catalog group first, its
+`i`: the image page — the catalog group first, its
 rows carrying the default marker and each import's date, then
 the published channel's rows with their descriptions, sizes, and
 membership markers: `[imported]` when the catalog holds the same
@@ -164,11 +163,11 @@ mode holds new flows while the page is open: the page registers
 as the workspace's decider, so holds land on it.
 
 The page's **Egress** action and its `e` key
-(#358, #454) open the egress consent page: a full-screen visit
+open the egress consent page: a full-screen visit
 holding the held-request queue and the in-effect verdicts
 together — the consent decider as a page inside the tree, and
 the only place verdicts are made. The page carries the same
-two-line header as the workspace page beneath it (#460) — the
+two-line header as the workspace page beneath it — the
 workspace's name with its status (and the pending-hold count
 while any hold waits), then the id, image hash, host, and created
 date muted — so the workspace's identity stays visible while
@@ -192,7 +191,7 @@ row leaves on the daemon's refreshed frame, never
 optimistically), and `m` opens the mode picker (`allow` /
 `static` / `interactive`, the current mode highlighted) — the
 switch's one path since the workspace page's own mode action
-left (#460): picking a mode switches the posture through the same
+left: picking a mode switches the posture through the same
 endpoint `msks egress mode` speaks, without leaving the page.
 The status line names the new mode as the switch lands; a pick
 of `static` with nothing effectively allowed asks the same
@@ -207,18 +206,18 @@ keys live on the page itself, so they cannot collide with the
 workspace page's. `q` or Escape returns to the workspace page
 (holds keep waiting, the header's count keeps counting, `e`
 reopens). The placeholder-token audit lives on the secrets page
-(#390): the consent page keeps the holds, the verdicts, and the
+: the consent page keeps the holds, the verdicts, and the
 mode. See [`msks egress`](cli.md#msks-egress) for what verdicts
 and rules cover.
 
-The page's **Edit settings** action (#331) opens the edit
+The page's **Edit settings** action opens the edit
 dialog: the create form's own layout, seeded with the
 workspace's current values. The sizes and topology (root, home,
 vcpus, memory) are editable — a submit sends the changed values
 through the same endpoint `msks resize` speaks, and the page's
 consent line carries the same outcome line the CLI prints,
 including what waits for the next boot. A workspace that is
-running when Apply lands asks first (#380): confirm and the page
+running when Apply lands asks first: confirm and the page
 stops the workspace, then applies the resize — decline and the
 workspace keeps running with its sizes as they were. Home bytes
 move at once, and root growth and the new topology apply at the
@@ -232,13 +231,13 @@ silently. A size left blank keeps its current value. Escape
 closes the dialog and decides nothing.
 
 The page's **Open a shell** action runs `msks ssh` in the
-TUI's own terminal (#562): the tree exits, the ssh session runs
+TUI's own terminal: the tree exits, the ssh session runs
 where it stood, and the tree restarts when the session hands the
 terminal back — it rides ssh rather than the console because the
 console keeps the getty's geometry while ssh carries every resize
 to the guest. A workspace ssh cannot reach — no NIC, no identity
 configured — the flow boots a stopped workspace first (the
-ssh session it runs boots it itself, #479), probes the forward,
+ssh session it runs boots it itself), probes the forward,
 and a probe that names the refusal — no NIC, the service not
 listening — falls back to a `msks console` session one step
 later; the tree's first flash carries why ssh stood down. An ssh
@@ -262,18 +261,18 @@ Every screen walks with the arrow keys alone: lists move with
 up/down, the create form's fields move with up/down between them,
 and Escape leaves the screen it is on (`q` backs out of a page;
 at the workspaces list, Escape is the tree itself quitting).
-Ctrl+Q exits the client from any screen (#442) — the tree, a
+Ctrl+Q exits the client from any screen — the tree, a
 page, a form field, or a panel stacked over them — the same
 clean exit `q` takes at the workspaces list, and it takes
 priority over the form field's shortcuts while a form field
-holds the focus. A bare Ctrl+C keeps the client running (#442):
+holds the focus. A bare Ctrl+C keeps the client running:
 a form field holds it as the field's own copy shortcut, and
 the tree's own screens answer it with a notification naming the
 quit key. A stacked panel away from its fields — a
 confirmation, a picker, the sentinel
 panel — leaves the key silent: nothing exits, nothing copies,
 nothing shows, the stock Textual modal behavior. Ctrl+Shift+C
-belongs to the terminal (#437): the TUI starts with the kitty
+belongs to the terminal: the TUI starts with the kitty
 keyboard protocol off, so a terminal that binds the combo to
 its own copy handles the gesture and the TUI never sees the
 key. A terminal that passes the key through sends the same byte
@@ -283,7 +282,7 @@ notification — no path of the gesture exits the client.
 ## The shell action's terminal settings
 
 The workspace page's **Open a shell** action runs `msks ssh` —
-in the TUI's own terminal by default (#562), or in a new window
+in the TUI's own terminal by default, or in a new window
 through a configured launcher. Two client settings shape those
 windows; their environment-variable rows sit in
 [the client environment table](cli.md#client-environment), and
@@ -293,7 +292,7 @@ their file keys are documented here.
 
 `terminal_open_cmd` names the launcher the workspace page's
 **Open a shell** action uses to open workspace shells in new
-terminal windows (#314, #341, #562) — the opt-in for hosts that
+terminal windows — the opt-in for hosts that
 want windows beside the running tree; the msks invocation is
 appended after it, the way most terminals take a command after
 `-e` / `--`:
@@ -309,7 +308,7 @@ terminal_open_cmd:                     # list form (no shell quoting)
 
 `MSKSC_TERMINAL_OPEN_CMD` overrides the file value with the string
 form. Unset — the default — the shell action runs `msks ssh` in
-the TUI's own terminal (#562), on every host, with no terminal to
+the TUI's own terminal, on every host, with no terminal to
 launch; a configured launcher that fails to execute (a binary
 that is missing or not executable) names its reason on the tree's
 first flash after the same-terminal shell ends, and the shell
@@ -322,7 +321,7 @@ closes itself when the session disconnects.
 
 `terminal_title` names the title of every terminal window the
 workspace page's shell action opens through a configured
-launcher (#445), with
+launcher, with
 `{workspace}` resolved to the workspace's id — the token
 `msks ssh` addresses, because that is what the TUI appends to
 the launcher — or `shell`, when the appended command names no
@@ -351,7 +350,7 @@ A `msks ssh` you type yourself keeps your terminal's title: the
 setting applies to the windows msks opens, and a same-terminal
 shell (the dead-launcher fallback) changes nothing.
 
-## `msks-term-popup`: the consent-decider terminal (#379, #467)
+## `msks-term-popup`: the consent-decider terminal
 
 `msks-term-popup` is a shipped client command that runs the
 appended shell inside a local tmux session and answers the
@@ -364,7 +363,7 @@ with the arrow keys moving the selection: `a` allows until
 restart and `d` denies the selected hold, while the uppercase
 twins `A` and `D` pick a duration for their verdict (Enter picks,
 Escape cancels). `m` switches the workspace's egress mode
-(#465): the picker offers `allow`, `static`, and `interactive`
+: the picker offers `allow`, `static`, and `interactive`
 with the current mode highlighted (Enter picks, Escape or `q`
 cancels), and picking `static` while nothing is effectively
 allowed asks the empty-static question first — the same
@@ -410,13 +409,13 @@ in another decider window while the verdict was in flight) names
 its reason on the popup's status line. The window the prefix
 opens takes its title from
 `terminal_title` (`msks — {workspace}` resolves the workspace's
-id into it, #445). The session's own status bar names the
-workspace too (#455): the launch resolves the workspace's name
+id into it). The session's own status bar names the
+workspace too: the launch resolves the workspace's name
 and pins it to the status bar's left side — `[project-x]` — with
 the id standing in whenever the lookup cannot land (the daemon
 down, the workspace gone, the wait run out) and `shell`
 for a plain shell; the window list after the label stays empty
-(#458), and so does the bar's right side, which tmux's default
+, and so does the bar's right side, which tmux's default
 fills with the pane's title, the clock, and the date — the
 label is the whole bar.
 The hidden consent session runs on the launch's own socket — one
@@ -428,14 +427,14 @@ hold flags (`konsole --hold`, xterm's
 for a plain shell window.
 
 The pane keeps 10000 lines of scrollback and takes the mouse
-wheel (#434): wheel up scrolls into the pane's history, wheel
+wheel: wheel up scrolls into the pane's history, wheel
 down scrolls back toward the live output, and reaching the bottom
 — or pressing `q` — returns to the plain shell. The keyboard path
 covers the same history: `Ctrl-b [` (or `Ctrl-b PageUp`) opens
 tmux's copy mode, where the arrow keys and PageUp/PageDown move
 through it. `Shift-PageUp` and `Shift-PageDown` page through it
 too, one page per press, entering copy mode on the way up and
-returning to the shell at the bottom (#444); a terminal that
+returning to the shell at the bottom; a terminal that
 keeps the shifted pair for its own view (its scrollback has
 nothing to show on this pane) still has the wheel — Konsole can
 hand the pair to the pane with a keytab rule scoped to the

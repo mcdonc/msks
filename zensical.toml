@@ -35,7 +35,6 @@ nav = [
 # published site (unreadable from the nav, unlisted here on
 # purpose).
 exclude_docs = """
-spikes/*
 llm.md
 """
 

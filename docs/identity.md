@@ -5,7 +5,7 @@ the workspace's operator identity, and every `msks ssh` and
 `msks rsync` session signs with your private half — msks
 generates no key of its own, so the key you configure is the one
 your workspaces answer to. The same key locks workspace secrets
-on the daemon (#515): values a workspace needs at runtime are
+on the daemon: values a workspace needs at runtime are
 sealed under the identity, and the client unlocks them with the
 private half again.
 
@@ -26,7 +26,7 @@ material only. Attribution comes free: each operator's key
 marks which human a workspace answers to, so several operators
 share one daemon with separate keys and no shared secret
 between them. And the same key seals the workspace secrets
-(#515) — one root of trust for both the door and the sealed
+— one root of trust for both the door and the sealed
 values, instead of a separate master secret the daemon would
 have to keep.
 
@@ -52,7 +52,7 @@ environment overrides the file. When both keys are set,
 `identity_file` names your private key file, read in place —
 msks derives the public half from it at create, and the key
 file is never copied into msks's state. Session resolution
-consults your own ssh-agent first (#490): when `SSH_AUTH_SOCK`
+consults your own ssh-agent first: when `SSH_AUTH_SOCK`
 names a live agent holding that key, every session signs
 through the agent, and the file's encryption stops mattering —
 the match is on key material, so the file it came from and its
@@ -68,7 +68,7 @@ session each count as a signing request.
 
 A passphrase-encrypted `identity_file` the daemon's locked
 secret rows need raises the session's one passphrase prompt
-(#515): the TUI asks once when the tree opens, and the answer
+: the TUI asks once when the tree opens, and the answer
 unlocks every locked row for the session — Escape or Cancel
 leaves the rows locked, named on the secrets page and
 re-askable there.
@@ -77,7 +77,7 @@ re-askable there.
 
 `pubkey_file` names a `.pub` file — a create with it set plants
 that one line as the workspace's identity and reads no private
-material at all (#495). This is the form for a key you keep
+material at all. This is the form for a key you keep
 encrypted on disk: the public half sits in the `.pub` file
 while the private half answers from your agent.
 
@@ -97,7 +97,7 @@ Three paths cover every session. An agent-held key stays in
 the agent — msks asks it to sign and the file on disk is never
 opened. A key msks stages itself runs in a transient in-process
 agent that dies with the session. And a session you forward
-your agent into (`ssh_options` with `-A`, #174, #490) carries
+your agent into (`ssh_options` with `-A`) carries
 the agent you named into the workspace — the workspace identity
 msks mints stays separate, and your keys arrive only where you
 forwarded them.

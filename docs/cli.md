@@ -8,7 +8,7 @@ with the same bearer token the REST API uses.
 The command set covers the operator loop:
 
 ```bash
-msks                         # the workspace tree TUI (#309)
+msks                         # the workspace tree TUI
 msks ls                      # what exists, and what state is it in
 msks create ws                # make a workspace
 msks console ws               # boot it if needed, then work inside it
@@ -31,23 +31,23 @@ The list-valued settings (`MSKSC_TERMINAL_OPEN_CMD`,
 file key is documented below, and `MSKSC_TERMINAL_OPEN_CMD`'s in
 [The TUI](tui.md) beside the shell action it configures.
 
-| Variable                   | Meaning                                                                                                                                                                                                                                                                                   | Default                                                   |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `MSKSC_URL`                | The remote daemon's base URL — the TCP + TLS + token shape; the client dials TCP only when a URL names it (#555)                                                                                                                                                                          | unset (the local socket answers, else the client refuses) |
-| `MSKSC_SOCKET`             | The local listener's socket path (#555): peer-credential authentication — no token, no TLS                                                                                                                                                                                                | unset (the default socket is looked for)                  |
-| `MSKSC_TOKEN`              | A daemon bearer token (see tokens below); a socket connection needs none (#555)                                                                                                                                                                                                           | — (required for a URL)                                    |
-| `MSKSC_CAFILE`             | A PEM file to verify the daemon's TLS certificate; a socket connection verifies nothing — the kernel vouches for both ends (#555)                                                                                                                                                         | unverified with warning                                   |
-| `MSKSC_EXPECTED_IMAGE`     | An image reference the operator sets; `msks ls` compares it with the image the daemon reports in `/health` and names drift (#160)                                                                                                                                                         | unset (no check)                                          |
-| `MSKSC_CACHE_DIR`          | The directory per-workspace host-key caches live under (#251); the per-workspace directories are created below it                                                                                                                                                                         | `~/.cache/msks`                                           |
-| `MSKSC_IDENTITY_FILE`      | Your own private key file — the ssh identity `msks create` plants into every workspace (#336, #486; msks generates none; [the identity chapter](identity.md) owns the whole story); a leading `~` expands                                                                                 | unset (`pubkey_file` answers, else `msks create` refuses) |
-| `MSKSC_PUBKEY_FILE`        | Your key's public half — what a bare `msks create` plants instead of reading `identity_file` (#495), the form for a key you keep encrypted (your agent holds it; msks reads no private half); same naming rule, global-only                                                               | unset (`identity_file` answers)                           |
-| `MSKSC_TERMINAL_TITLE`     | The title template for the workspace-shell windows the workspace page opens (#445; the file key's section lives in [The TUI](tui.md)); `{workspace}` resolves to the workspace's id                                                                                                       | unset (the terminal's own title)                          |
-| `MSKSC_IMAGE_MANIFEST_URL` | Where the TUI's Import image action (`i` on the workspace list) reads the published channel's manifest (#565) — a fork's or self-hoster's channel names its own; the picker shows each row's ref, description, and size, and the pick POSTs the row's URL to the daemon's import endpoint | this repository's latest release's `images.json`          |
+| Variable                   | Meaning                                                                                                                                                                                                                                                                            | Default                                                   |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `MSKSC_URL`                | The remote daemon's base URL — the TCP + TLS + token shape; the client dials TCP only when a URL names it                                                                                                                                                                          | unset (the local socket answers, else the client refuses) |
+| `MSKSC_SOCKET`             | The local listener's socket path: peer-credential authentication — no token, no TLS                                                                                                                                                                                                | unset (the default socket is looked for)                  |
+| `MSKSC_TOKEN`              | A daemon bearer token (see tokens below); a socket connection needs none                                                                                                                                                                                                           | — (required for a URL)                                    |
+| `MSKSC_CAFILE`             | A PEM file to verify the daemon's TLS certificate; a socket connection verifies nothing — the kernel vouches for both ends                                                                                                                                                         | unverified with warning                                   |
+| `MSKSC_EXPECTED_IMAGE`     | An image reference the operator sets; `msks ls` compares it with the image the daemon reports in `/health` and names drift                                                                                                                                                         | unset (no check)                                          |
+| `MSKSC_CACHE_DIR`          | The directory per-workspace host-key caches live under; the per-workspace directories are created below it                                                                                                                                                                         | `~/.cache/msks`                                           |
+| `MSKSC_IDENTITY_FILE`      | Your own private key file — the ssh identity `msks create` plants into every workspace (msks generates none; [the identity chapter](identity.md) owns the whole story); a leading `~` expands                                                                                      | unset (`pubkey_file` answers, else `msks create` refuses) |
+| `MSKSC_PUBKEY_FILE`        | Your key's public half — what a bare `msks create` plants instead of reading `identity_file`, the form for a key you keep encrypted (your agent holds it; msks reads no private half); same naming rule, global-only                                                               | unset (`identity_file` answers)                           |
+| `MSKSC_TERMINAL_TITLE`     | The title template for the workspace-shell windows the workspace page opens (the file key's section lives in [The TUI](tui.md)); `{workspace}` resolves to the workspace's id                                                                                                      | unset (the terminal's own title)                          |
+| `MSKSC_IMAGE_MANIFEST_URL` | Where the TUI's Import image action (`i` on the workspace list) reads the published channel's manifest — a fork's or self-hoster's channel names its own; the picker shows each row's ref, description, and size, and the pick POSTs the row's URL to the daemon's import endpoint | this repository's latest release's `images.json`          |
 
 `MSKSC_CACHE_DIR` exists because the host-key cache is
 disposable: a swept cache costs one trust-on-first-use re-pin, so
 pointing it at a per-project, disposable location is the intended
-use (#251).
+use.
 
 Each names its directory directly — the per-workspace directories
 are created below it — and takes an absolute path (a relative
@@ -57,7 +57,7 @@ expands; an empty value counts as unset).
 `MSKSC_IDENTITY_FILE` names a file, not a directory: your own
 private key, read in place. msks derives the public half from it
 at create; `msks ssh` and `msks rsync` sign through your own
-ssh-agent when it holds that key (#490 — `ssh-add` it; the match
+ssh-agent when it holds that key (`ssh-add` it; the match
 is on the key material, so the file it came from and its name do
 not matter), and otherwise stage the private half in memory —
 the key file itself is never copied into msks's state. A key
@@ -71,7 +71,7 @@ at its own cadence — the first-boot probe's retries and the
 session each count as a signing request.
 
 `MSKSC_PUBKEY_FILE` names your key's public half — a `.pub` file
-(#495; [the identity chapter](identity.md) owns the agent
+([the identity chapter](identity.md) owns the agent
 requirement this form carries). A create with it set plants that one line as the
 identity and reads no private material at all: the form for a
 key you keep encrypted, whose public half sits in a `.pub` file
@@ -82,7 +82,7 @@ still overrides it for one create.
 
 A missing `MSKSC_TOKEN` is an error before any network activity:
 the client names the variable and exits — unless the daemon is
-reached through the local socket (#555), where the kernel names
+reached through the local socket, where the kernel names
 the client and no token exists to read. Tokens come from the daemon:
 `POST /api/v1/tokens` mints one, and the devenv environment presets
 all three from the worktree's dev-daemon state dir,
@@ -91,13 +91,13 @@ served once, a fresh devenv shell needs no exports. The same shell
 presets `MSKSC_CACHE_DIR` at the worktree's own
 `.devenv/state/msksc/cache/`, so each checkout's client state
 stays its own — one tree's cache entry is never read by another
-(#251); a non-empty value exported before entering the shell
+; a non-empty value exported before entering the shell
 survives the preset, and an empty one counts as unset.
 
 An unconfigured client — no `MSKSC_URL`, no `MSKSC_SOCKET`, no
 config-file daemon — looks for the default socket a same-host
 daemon binds (`$XDG_RUNTIME_DIR/msks/msksd.sock`) and connects
-through it with no token and no TLS (#555); finding none, it
+through it with no token and no TLS; finding none, it
 exits with the paths it looked for
 and the two settings that name a daemon outright. The client never
 dials a TCP address implicitly — a well-known port could belong to
@@ -109,7 +109,7 @@ msks ls        # presets: https://127.0.0.1:8660, the worktree's
                # (verified TLS)
 ```
 
-Targeting a hand-run bare-host daemon instead (#146 — no managed
+Targeting a hand-run bare-host daemon instead (no managed
 process; `msks-dev-ready` then `msksd` from a shell) takes the
 explicit pair from ITS state, with its own CA:
 
@@ -124,10 +124,10 @@ The daemon serves TLS with a self-signed certificate. Point
 directory) and the client verifies the certificate chain. Without
 `MSKSC_CAFILE` the client proceeds unverified and prints a warning to
 stderr on every invocation — the same trust-on-first-use posture as
-`msks console` (#21), fine for a lab network and worth closing before
+`msks console`, fine for a lab network and worth closing before
 anything real.
 
-## The client config file (#314)
+## The client config file
 
 The environment variables above have a durable home: a YAML file at
 `~/.config/msks/msks.yaml` (relocated by `MSKSC_CONFIG_DIR`, or
@@ -167,7 +167,7 @@ child processes — console shells, the terminal launcher — inherit
 it; the file itself stays the durable, permissioned home. An
 unreadable or empty token file is an error before any network
 activity, naming both places a token can come from.
-`identity_file` (#336) follows the `token_file` pattern for a
+`identity_file` follows the `token_file` pattern for a
 different secret: it names your private key file by path (read in
 place, never copied — see the create default below), and it is
 global-only — a `daemons:` entry that carries it is refused,
@@ -176,12 +176,12 @@ connection.
 
 Unknown keys and duplicate keys are refused at load, each error
 naming the key and the valid ones — the same fail-fast rules msksd's
-config file carries (#46).
+config file carries.
 
 ### Daemon aliases
 
 The file's one structural key is `daemons:` — one entry per daemon
-you talk to. An entry names its daemon one way (#555): `url` for
+you talk to. An entry names its daemon one way: `url` for
 a remote daemon, or `socket` for a local listener (peer-credential
 authentication — the entry carries no `token_file` and no
 `cafile`); `token_file`, `cafile`, and `expected_image` override
@@ -205,7 +205,7 @@ active_daemon: lab
 `active_daemon` names the alias a bare `msks` addresses; the
 `--daemon <alias-or-url-or-path>` flag picks one for a single
 invocation and also takes a raw URL or an absolute socket path
-(#555). The two selections sit at different layers of
+. The two selections sit at different layers of
 the precedence rule: a `--daemon` alias outranks the environment for
 that invocation (you named the daemon, so its entry's keys win over
 the ambient exports), while an `active_daemon` alias sits below the
@@ -219,7 +219,7 @@ names another).
 runs — `msks ssh`, the workspace page's shell action (which runs
 `msks ssh`, in the TUI's terminal by default or in a window
 through a configured launcher — [The TUI](tui.md) documents the
-action), and `msks rsync`'s ssh transport (#385). The value is the ssh options you would type
+action), and `msks rsync`'s ssh transport. The value is the ssh options you would type
 after `--` on the `msks ssh` command line — the options
 themselves; a `--` token in the value is refused, because msks
 adds the options to its own and a remembered separator would turn
@@ -247,7 +247,7 @@ dropped for that invocation and the command line decides alone —
 otherwise a remembered `-A` would reassign a typed `-a`, because
 ssh's flags assign in order. A remembered `-A` forwards your
 agent, the one `SSH_AUTH_SOCK` names, exactly as a typed one does
-(#174) — the guest receives your keys, not the workspace
+— the guest receives your keys, not the workspace
 identity.
 
 The remembered options carry the command-line passthrough's full
@@ -261,7 +261,7 @@ when a remembered option breaks the seam.
 `msks console` is a websocket session, not ssh — `ssh_options`
 applies to the ssh surfaces above and leaves it untouched.
 
-## Workspace identity: a name and an id (#246)
+## Workspace identity: a name and an id
 
 A workspace carries two identity fields. The **name** is the label
 you choose at create — the positional argument of every command,
@@ -294,7 +294,7 @@ the commands the tree renders and the shells it runs:
 Prints one line per workspace the daemon knows, aligned in five
 columns: name, id, status, image hash (first 12 hex chars), and
 owning host. The columns are measured against the values present
-(#271): a long name or image reference widens its column for every
+: a long name or image reference widens its column for every
 row, so each row's columns start at the same offsets — the header
 row included.
 
@@ -327,7 +327,7 @@ empty JSON array under `--json`.
 
 ## `msks storage`
 
-Reports the state-disk budget and its consumers (#184) — the budget
+Reports the state-disk budget and its consumers — the budget
 line, each workspace's cost beside its ceiling, and each catalog
 image's cost:
 
@@ -355,7 +355,7 @@ state disk    used 23.4G of 40G    free 16.6G    pressure ok
   files are sparse), and an overlay's cost rides a little above
   what the guest's own `df` shows for its root (qcow2 bookkeeping).
 - **imported** is when the image archive came in, local time to
-  the minute (#186) — entries that share a reference (a rebuilt
+  the minute — entries that share a reference (a rebuilt
   image imported again) read as distinct through it; the listing
   orders them oldest-first.
 - **ceiling** is the size fixed at create; the guest sees it as its
@@ -382,30 +382,30 @@ carries a `storage.pressure` event whenever the pressure changes.
 ## `msks create`
 
 POSTs the API's create body. The positional argument names the
-workspace (#246) and follows the daemon's workspace charset —
+workspace and follows the daemon's workspace charset —
 lowercase letters, digits, and dashes, starting with a letter or
 digit, up to 64 chars. The daemon mints the workspace's immutable
 id; the name is the label the other commands address it by. The
 create request's field is `name` (an `id` field is accepted as the
-same thing — the pre-#246 spelling).
+same thing — the earlier spelling).
 
 Flags map onto the create request's fields (the identity flags
 below generate theirs):
 
-| Flag          | API field               | Meaning                                                                                   |
-| ------------- | ----------------------- | ----------------------------------------------------------------------------------------- |
-| `--image`     | `image`                 | Catalog ref: `name:version`, bare name, or hash                                           |
-| `--kernel`    | `kernel`                | Explicit kernel path (skips the catalog)                                                  |
-| `--initrd`    | `initrd`                | Explicit initrd path                                                                      |
-| `--rootfs`    | `rootfs`                | Explicit rootfs path (skips the catalog)                                                  |
-| `--cmdline`   | `cmdline`               | Explicit kernel cmdline                                                                   |
-| `--cpus`      | `cpus`                  | vcpus, 1–64 (daemon default: 2)                                                           |
-| `--mem-mib`   | `mem_mib`               | Guest memory MiB, 64–32768 (daemon default: 8192)                                         |
-| `--root-mib`  | `root_mib`              | Persistent root overlay size (daemon default)                                             |
-| `--home-mib`  | `home_mib`              | Persistent /home volume size (daemon default)                                             |
-| `--user-data` | `user_data`             | First-boot provisioning payload file; `-` reads stdin (#41)                               |
-| `--pubkey`    | `ssh_pubkey` (verbatim) | Use a public key you already own as this one workspace's identity (#132); `-` reads stdin |
-| `--user`      | `user`                  | The workspace's login user (#248); default: your username                                 |
+| Flag          | API field               | Meaning                                                                            |
+| ------------- | ----------------------- | ---------------------------------------------------------------------------------- |
+| `--image`     | `image`                 | Catalog ref: `name:version`, bare name, or hash                                    |
+| `--kernel`    | `kernel`                | Explicit kernel path (skips the catalog)                                           |
+| `--initrd`    | `initrd`                | Explicit initrd path                                                               |
+| `--rootfs`    | `rootfs`                | Explicit rootfs path (skips the catalog)                                           |
+| `--cmdline`   | `cmdline`               | Explicit kernel cmdline                                                            |
+| `--cpus`      | `cpus`                  | vcpus, 1–64 (daemon default: 2)                                                    |
+| `--mem-mib`   | `mem_mib`               | Guest memory MiB, 64–32768 (daemon default: 8192)                                  |
+| `--root-mib`  | `root_mib`              | Persistent root overlay size (daemon default)                                      |
+| `--home-mib`  | `home_mib`              | Persistent /home volume size (daemon default)                                      |
+| `--user-data` | `user_data`             | First-boot provisioning payload file; `-` reads stdin                              |
+| `--pubkey`    | `ssh_pubkey` (verbatim) | Use a public key you already own as this one workspace's identity; `-` reads stdin |
+| `--user`      | `user`                  | The workspace's login user; default: your username                                 |
 
 Only the flags you pass are sent — unset flags let the daemon apply
 its own defaults. An `--image` reference resolves against the
@@ -413,7 +413,7 @@ daemon's image catalog (`docs/images.md`); explicit `--kernel` and
 `--rootfs` bypass it. Size ranges are enforced server-side; a value
 outside them comes back as a validation error (below).
 
-`--user NAME` records the workspace's login user (#248): the
+`--user NAME` records the workspace's login user: the
 name rides the row, and the guest's first boot seeds the account
 — `useradd -m`, a home on the persistent `/home` volume populated
 from `/etc/skel`, the workspace identity in its `authorized_keys`,
@@ -433,7 +433,7 @@ charset-valid names like `sync` and `man`) seeds nothing either —
 the first boot says so in its log, and the login stays with the
 accounts the guest already serves; pick a name the image uses
 for no one. Create-time and immutable, like `user_data`: a
-workspace created before #248 records no user of its own — `msks
+workspace created before records no user of its own — `msks
 ssh` and `msks rsync` dial it as `root`, and the image's `msks`
 account stays reachable by naming it directly.
 
@@ -461,7 +461,7 @@ Creating without `--start` prints the same line and exits; boot it
 whenever with `msks start` — or just `msks console` it: the console
 command boots a not-running workspace on its own (below).
 
-`--user-data` is the first-boot provisioning hook (#41): the file's
+`--user-data` is the first-boot provisioning hook: the file's
 contents travel to the daemon and run once on the
 workspace's first boot (see `docs/images.md` for the seed-disk
 mechanism, the payload forms each image provisioner accepts, and
@@ -473,7 +473,7 @@ created ws (id 77eedd0199)
 attach with: msks console ws
 ```
 
-One operator key is the identity (#336, #486): `msks create`
+One operator key is the identity: `msks create`
 plants it as every workspace's identity — one key across
 workspaces, the daemon holding the public half only. The key is
 yours and msks generates nothing: `identity_file` (or
@@ -497,7 +497,7 @@ attach with: msks console my-workspace
 `msks ssh` and `msks rsync` resolve the same key at session time,
 so a workspace re-created under the same name keeps your access —
 a new id, the same key. Session resolution consults your own
-ssh-agent first (#490): when `SSH_AUTH_SOCK` names a live agent
+ssh-agent first: when `SSH_AUTH_SOCK` names a live agent
 holding that key, the session signs through the agent and the
 key file's encryption stops mattering. A key msks stages for its
 own sessions is an unencrypted OpenSSH-format key — `ed25519`,
@@ -507,10 +507,10 @@ that also names `pubkey_file`, the create that reads no private
 half at all). `--pubkey`
 plants any well-formed public line at any type — the guest's sshd
 stays the authority on which key types it authenticates
-(#132, #115).
+.
 
 `--pubkey FILE` builds the workspace around a public key you
-already own (#132): the file's one line travels to the daemon at
+already own: the file's one line travels to the daemon at
 any well-formed key type, the private half stays wherever you keep
 it, and nothing is written client-side. `msks ssh` and `msks
 rsync` work on such a workspace when the operator identity
@@ -547,7 +547,7 @@ my-workspace stopped
 ## `msks resize`
 
 Moves a **stopped** workspace's disk sizes and topology
-(#184, #277) — the ceilings its guest sees as quotas, and the cpus
+— the ceilings its guest sees as quotas, and the cpus
 and memory it boots with — through `POST
 /api/v1/workspaces/{id-or-name}/resize`:
 
@@ -637,7 +637,7 @@ same client environment as the workspace commands.
 One line per registered image — reference, hash (first 12 hex
 chars), the default designation, the kernel facts, and when the
 image entered the catalog — on the measured grid every listing
-shares (#271):
+shares:
 
 ```text
 $ msks image ls
@@ -648,13 +648,13 @@ alpine:3.20    33aa9db1c4ef  -        6.12.7 (raw)          -                   
 
 The image the daemon designates as default carries the `default`
 flag; a bare `msks create` resolves to it. The `description`
-column (#564) carries the identity the build baked into the
+column carries the identity the build baked into the
 image, capped for the row; `image info` prints it at full length,
 and an image whose manifest carried none keeps the column with a
 dash. The `imported` column
 shows the moment the archive entered the catalog, in local time
 to the minute — an entry re-imported under the same reference
-moves the time forward with it. A renamed row (#340) adds an
+moves the time forward with it. A renamed row adds an
 `origin` column beside the ref, showing the archive's own pair
 where it differs from the registered one; rows the archive's own
 pair names keep the column with a dash. `--json` prints the
@@ -668,7 +668,7 @@ scripting.
 Registers an archive in the catalog (`POST /api/v1/images`). The
 source is a **daemon-side** path — the daemon reads the file from
 its own filesystem; the command does not upload anything — or an
-`https://` URL the daemon downloads itself (#258):
+`https://` URL the daemon downloads itself:
 
 ```text
 $ msks image import /srv/images/debian-13.tar
@@ -681,7 +681,7 @@ $ msks image import /srv/images/debian-13.tar --name mine --version 1.0
 imported mine:1.0 (9f2c41ab77de)
 ```
 
-A `--name`/`--version` override (#340) registers the archive
+A `--name`/`--version` override registers the archive
 under an operator-chosen pair — either key alone, the other from
 the archive's own manifest, whose pair stays recorded as the
 row's origin (see `docs/images.md`). The archive bytes and the
@@ -700,7 +700,7 @@ line.
 
 ### `msks image rename`
 
-Changes a cataloged image's registered name/version (#340) — the
+Changes a cataloged image's registered name/version — the
 bytes, the hash, the manifest origin, and workspaces already
 booting the image stay put:
 
@@ -727,7 +727,7 @@ and bare-hash references keep booting the same bytes.
 ### `msks image check`
 
 Boots an image locally and verifies the guest contract point by
-point (#258) — the pre-import gate `docs/images.md` describes. The
+point — the pre-import gate `docs/images.md` describes. The
 command runs on the image author's host: it needs `/dev/kvm` and
 nothing else from msks (no daemon, no state):
 
@@ -774,7 +774,7 @@ only the hash forms still identify one of them.)
 ### `msks image info`
 
 Prints one image's full record — reference, the archive's own
-pair (the origin, #340), hash, kernel facts, cmdline, and the
+pair (the origin), hash, kernel facts, cmdline, and the
 default designation — from the same listing data:
 
 ```text
@@ -790,13 +790,13 @@ default      yes
 ```
 
 The reference forms are the same as `image rm`'s. The
-`description` row (#564) is the identity the build baked into the
+`description` row is the identity the build baked into the
 image's manifest; an image whose manifest carried none prints
 `- (none baked)`.
 
 ### `msks image default`
 
-Designates the image a bare `msks create` boots (#270) — the row
+Designates the image a bare `msks create` boots — the row
 `image ls` marks — or clears the designation with `--unset`:
 
 ```text
@@ -825,7 +825,7 @@ designated again — the line says so.
 
 ## `msks home`
 
-Moves a workspace's `/home` volume through the daemon (#80) —
+Moves a workspace's `/home` volume through the daemon —
 backup, migration to another daemon, seeding a fresh workspace with
 data — as the two byte-stream endpoints `docs/storage.md` documents:
 
@@ -870,7 +870,7 @@ code; the volume moves are for the whole `/home` at once.
 
 ## `msks secret`
 
-Placeholder secrets (#198, #339, #514): mint a sentinel — daemon-wide by
+Placeholder secrets: mint a sentinel — daemon-wide by
 default, scoped with `--workspace` — and the daemon keeps your value
 as per-recipient ciphertext blobs in its database — the workspace
 never holds it (the full story is
@@ -912,7 +912,7 @@ prints a `mskssec1_` sentinel, so the string alone names its
 reach. The mint prints the sentinel;
 the listing and the audit omit it (`secret ls` never shows one),
 and the daemon serves a row's sentinel back on demand over the
-token-authenticated API — the `msks tui` row panel (#440) is
+token-authenticated API — the `msks tui` row panel is
 that surface. `revoke` and `renew` take the same targeting the mint
 took; `revoke` takes effect on the next request and retires the
 whole row everywhere at once, and `renew`
@@ -932,7 +932,7 @@ msks: my-workspace running
 (workspace prompt)
 ```
 
-The session is a root shell (#481): the console is the failsafe
+The session is a root shell: the console is the failsafe
 path, served by the guest's autologin root getty on the
 virtio-console port — a raw byte stream over the daemon's
 authenticated websocket, with no user selection and no in-band
@@ -947,7 +947,7 @@ $ msks console my-workspace
 The getty keeps its own terminal geometry for the session's life:
 the console stream is a raw byte pipe, so a window resized
 mid-session does not reach it. Full-screen work (editors, tmux) belongs to an ssh session through
-the forward (#108–#112): ssh's window-change channel resizes its
+the forward: ssh's window-change channel resizes its
 pty live.
 
 A workspace that is already running attaches with no preamble. Two
@@ -972,7 +972,7 @@ detaches, and the byte that followed the escape is consumed with it,
 so a paste that happens to contain a lone Ctrl-] detaches the session.
 Large pastes travel as a few websocket frames (4,096-byte chunks), not
 one frame per byte. The session needs a tty on both stdin and stdout.
-See the README's workspace-console section (#21) for the transport
+See the README's workspace-console section for the transport
 story.
 
 A session whose guest stream stops carrying bytes while input keeps
@@ -982,7 +982,7 @@ every input byte, so that silence names a wedged stream, and the
 client exits with `console stalled (guest stream wedged; reconnect
 for a fresh session)` — reconnecting opens a fresh shell in the same
 workspace. An idle session stays open indefinitely: the clock runs
-only while client input is waiting for its echo (#103). Two caveats:
+only while client input is waiting for its echo. Two caveats:
 a program that reads with echo off (`read -s` password prompts, `su`)
 also draws no echo, so a prompt left waiting past the window closes
 the session — set the timeout higher or to `0` (off) for such
@@ -1018,7 +1018,7 @@ leaves exit code 0.
 
 The forward authenticates with the websocket handshake's
 `Authorization: Bearer` header (the same scheme as every other
-msks surface, #216): the token never lands in a URL, so proxy and
+msks surface): the token never lands in a URL, so proxy and
 process logs hold no credentials. Only egress workspaces have a
 NIC to forward to — a workspace created `--no-egress` is refused
 with the reason naming it. `forward.opened` and `forward.closed`
@@ -1026,7 +1026,7 @@ events appear on the daemon's events channel for every session.
 
 ## `msks egress`
 
-Egress consent (#69, #195): decide, watch, and inspect a workspace's
+Egress consent: decide, watch, and inspect a workspace's
 outbound-destination verdicts. A workspace in `interactive` mode
 holds each new outbound connection's first packet until a decider
 allows or denies it — for web flows (TCP 80/443) of an armed
@@ -1045,7 +1045,7 @@ msks egress requests ws-dev --decision pending
 msks egress decide ws-dev <request-id> allow --duration 5m
 msks egress decide ws-dev <request-id> deny --duration forever
 msks egress revoke ws-dev <request-id>
-msks egress mode ws-dev interactive          # switch the posture (#280);
+msks egress mode ws-dev interactive          # switch the posture;
 msks egress mode ws-dev static --allow .debian.org   # --allow replaces
 msks egress mode ws-dev static --offline     # ... the allowlist (--offline
                                               # confirms an empty static)
@@ -1067,7 +1067,7 @@ lifetime — replayed at every boot). `revoke` undoes an in-effect
 verdict immediately: the flow rules and the destination's live
 connections drop, and new connections gate again.
 
-`mode` (#280) switches a workspace's posture without recreating
+`mode` switches a workspace's posture without recreating
 it. A running workspace swaps live: the whole firewall table
 re-applies in one transaction, established connections survive
 (an attached `msks ssh` session stays up), the resolver flips
@@ -1104,13 +1104,13 @@ picker — the [workspace tree's](tui.md) overlay section owns
 the overlay's full lifecycle (the auto-open, the park, the
 self-close). The
 placeholder-token audit is the secrets page's daemon-wide view
-(#390). A dropped link reconnects
+. A dropped link reconnects
 with backoff and re-registers (the snapshot re-lands); while
 disconnected the overlay's status line says so — the daemon
 fail-closes new connects, and in-flight holds run their timeout.
 An off-allowlist sighting flashes the surface that owns the
 terminal: the overlay's status line while it is up, the page's
-consent line when it is not (#201's alarm, carried into the
+consent line when it is not (the alarm, carried into the
 tree).
 
 The protocol state (frame parsing, countdowns) is pure and
@@ -1125,20 +1125,20 @@ only, `host:port` scopes a port, and `10.0.0.0/8[:port]` names an
 address range. Name entries gate at the daemon's resolver (the one
 the DHCP lease hands the guest); address entries accept in the
 per-VM kernel chain. `msks egress mode` switches the posture
-after create (#280); the daemon-wide default new workspaces take
+after create; the daemon-wide default new workspaces take
 is `MSKSD_EGRESS_MODE` (`allow` as shipped).
 
 `msks create --secret-coverage scoped` boots the workspace exempt
-from daemon-wide placeholders (#339) — only placeholders minted
+from daemon-wide placeholders — only placeholders minted
 directly at it arm it; the default (`all`) accepts daemon-wide
 coverage, and `msks secret coverage` flips the posture after
 create.
 
 ## `msks key`
 
-The workspace's ssh identity (#111): every workspace a
+The workspace's ssh identity: every workspace a
 local-backend daemon creates carries the public half its create
-sent — the operator's key (#486), whose line the guest's first
+sent — the operator's key, whose line the guest's first
 boot planted into `authorized_keys` for root and the workspace's
 login user. The fetch takes the same
 `MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` environment as every other
@@ -1148,10 +1148,10 @@ command:
 msks key my-workspace                    # the public authorized_keys line
 ```
 
-The command is public-only (#497): the private half is the
+The command is public-only: the private half is the
 operator's own key, and it never crossed the API to begin with —
 it lives wherever `identity_file` names it, or in the agent that
-holds it. A workspace that predates #111 answers 404 with "no ssh
+holds it. A workspace that predates answers 404 with "no ssh
 identity"; a keyless create (a deliberate API call with no key)
 answers the same. The public half persists across daemon restarts
 and workspace stop/start.
@@ -1159,7 +1159,7 @@ and workspace stop/start.
 ## `msks ssh`
 
 Stock ssh into a workspace over the forward, with the identity
-staged in memory (#112) — one command, no key steps:
+staged in memory — one command, no key steps:
 
 ```bash
 msks ssh my-workspace              # as the workspace's login user
@@ -1177,7 +1177,7 @@ not running (the same notices as `msks console`), fetches the
 identity over the authenticated API, and runs `ssh` with the
 forward websocket as its ProxyCommand (`msks forward <ws> 22`). A
 session that booted its workspace waits out the guest's first boot
-(#168): the daemon reports `running` while the guest's sshd is
+: the daemon reports `running` while the guest's sshd is
 already up but the identity seed has yet to land in
 `authorized_keys`, so the command probes the login first (a
 throwaway `true` as the remote command, retried for up to 30s with
@@ -1190,7 +1190,7 @@ quiet flag, and a `true` command — so a session's tunnels and
 other ssh options cannot hold the wait open or alter it; the
 session itself keeps every option. The API serves the public half
 and the private half resolves at session time: your own agent
-first (#490 — when `SSH_AUTH_SOCK` names a live agent holding the
+first (when `SSH_AUTH_SOCK` names a live agent holding the
 workspace's key, matched on the key material so the file it came
 from and its name do not matter, the session signs through that
 agent and the private half never enters the msks process,
@@ -1209,7 +1209,7 @@ process, and a locally-held half — yours — is read from its one
 file and left exactly there. Host keys land in a per-workspace
 `known_hosts` under the msks cache root — `MSKSC_CACHE_DIR` when
 it is set, else `XDG_CACHE_HOME` or `~/.cache/msks`, then
-`<workspace-id>/known_hosts` (#246 — the cache keys on the
+`<workspace-id>/known_hosts` (the cache keys on the
 workspace's immutable id, so a workspace recreated under the same
 name starts with a fresh cache and trusts its own first-boot keys
 again) — under `accept-new`; they persist across stop/start on the
@@ -1220,7 +1220,7 @@ key independently.)
 
 Agent forwarding asked for on the command line (`-A`, or
 `-o ForwardAgent=yes`) forwards **your** agent — the socket
-`SSH_AUTH_SOCK` names (#174): `ssh-add -l` inside the workspace
+`SSH_AUTH_SOCK` names: `ssh-add -l` inside the workspace
 lists the same keys as on the host, and `git push git@github.com`,
 `ssh`, and friends sign with the host's credentials. The session
 authenticates through a transient in-process agent (above), and
@@ -1244,7 +1244,7 @@ passthrough that starts with a plain word is a remote command
 option, ssh's own separator carries a command after the options
 (`msks ssh my-workspace -- -A -- uname -a`). `-A` forwards your
 agent, the same forwarding the paragraphs above describe —
-before #174 it forwarded the session agent, the workspace
+before it forwarded the session agent, the workspace
 identity, which served nested logins to the same workspace (ssh
 from inside to `localhost`). That use now names the identity
 explicitly instead: `identity_file` names your own key, and your
@@ -1257,9 +1257,9 @@ passthrough options override the injected defaults (your own
 `UserKnownHostsFile`, a different `ProxyCommand`) exactly as with
 stock ssh: ssh takes the first value a repeated option receives,
 and the passthrough comes first. The login user is the
-workspace's recorded login user (#248 — the create-time `--user`,
+workspace's recorded login user (the create-time `--user`,
 defaulting to the creating operator's name; a workspace created
-before #248 records none, and the dial is `root` — #500); ssh
+before records none, and the dial is `root` —); ssh
 arguments that name a user
 (`-l root`, `-o User=root`) override it. The host argument ssh
 sees is the workspace id itself — the transport is the proxy, so
@@ -1274,7 +1274,7 @@ configuration that hides all of this).
 ## `msks rsync`
 
 Stock rsync against a workspace over the forward, with the
-identity staged in memory (#190) — one command does the whole
+identity staged in memory — one command does the whole
 setup itself: the workspace boots when needed, the identity
 stages in memory, and the copy opens its own forward:
 
@@ -1315,20 +1315,20 @@ per-workspace `known_hosts` under `accept-new`, and the identity
 staged in a transient in-process ssh-agent — the private half
 exists only in memory, rsync's ssh children name it by its public
 half and sign through the agent socket, and the command writes no
-key file. The operator identity (#486 — `identity_file`), a
-`--pubkey` workspace (#132), and the pre-#486 row shapes
-(daemon-minted #111, client-minted #121) all work: the private
+key file. The operator identity (`identity_file`), a
+`--pubkey` workspace, and the earlier row shapes
+(daemon-minted, client-minted) all work: the private
 half resolves where it lives — through the operator's agent
-first (#490, the same key-material match `msks ssh` applies),
+first (the same key-material match `msks ssh` applies),
 from the operator's own file, over the API, or from the
 per-workspace file — and a key that resolves nowhere on this
 client exits with the line naming where it can be.
 A session that booted its workspace waits out the guest's first
-boot exactly as `msks ssh` does (#168): a probe login retries
+boot exactly as `msks ssh` does: a probe login retries
 behind the identity seed (up to 30s, one line between attempts),
 and the copy runs once the guest accepts the workspace key.
 
-The login user is the workspace's recorded login user (#248),
+The login user is the workspace's recorded login user,
 stated as a generated per-session ssh config — so rsync's own
 `user@` path spelling overrides it (`root@:/root/site/` logs in
 as root). An explicit `-e` in the passthrough replaces msks's
@@ -1357,5 +1357,5 @@ joined on one line — the same facts the API returns, minus the JSON
 scaffolding. A timeout says so explicitly, because the daemon may
 still complete a request the client stopped waiting for. Argument
 errors exit with code 2 — the convention the argparse-era CLI set
-and the typer-based one (#315) keeps; success is 0; a Ctrl-C during
+and the typer-based one keeps; success is 0; a Ctrl-C during
 a long boot prints `msks: interrupted` and exits 130.
