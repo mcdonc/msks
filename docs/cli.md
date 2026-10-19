@@ -41,7 +41,7 @@ file key is documented below, and `MSKSC_TERMINAL_OPEN_CMD`'s in
 | `MSKSC_CACHE_DIR`          | The directory per-workspace host-key caches live under (#251); the per-workspace directories are created below it                                                                                                                                                                         | `~/.cache/msks`                                           |
 | `MSKSC_IDENTITY_FILE`      | Your own private key file — the ssh identity `msks create` plants into every workspace (#336, #486; msks generates none); a leading `~` expands                                                                                                                                           | unset (`pubkey_file` answers, else `msks create` refuses) |
 | `MSKSC_PUBKEY_FILE`        | Your key's public half — what a bare `msks create` plants instead of reading `identity_file` (#495), the form for a key you keep encrypted (your agent holds it; msks reads no private half); same naming rule, global-only                                                               | unset (`identity_file` answers)                           |
-| `MSKSC_TERMINAL_TITLE`     | The title template for the workspace-shell windows the workspace page opens (#445); `{workspace}` resolves to the workspace's id                                                                                                                                                          | unset (the terminal's own title)                          |
+| `MSKSC_TERMINAL_TITLE`     | The title template for the workspace-shell windows the workspace page opens (#445; the file key's section lives in [The TUI](tui.md)); `{workspace}` resolves to the workspace's id                                                                                                       | unset (the terminal's own title)                          |
 | `MSKSC_IMAGE_MANIFEST_URL` | Where the TUI's Import image action (`i` on the workspace list) reads the published channel's manifest (#565) — a fork's or self-hoster's channel names its own; the picker shows each row's ref, description, and size, and the pick POSTs the row's URL to the daemon's import endpoint | this repository's latest release's `images.json`          |
 
 `MSKSC_CACHE_DIR` exists because the host-key cache is
@@ -217,8 +217,8 @@ names another).
 `ssh_options` remembers ssh options for every ssh session msks
 runs — `msks ssh`, the workspace page's shell action (which runs
 `msks ssh`, in the TUI's terminal by default or in a window
-through a configured launcher), and `msks rsync`'s ssh transport
-(#385). The value is the ssh options you would type
+through a configured launcher — [The TUI](tui.md) documents the
+action), and `msks rsync`'s ssh transport (#385). The value is the ssh options you would type
 after `--` on the `msks ssh` command line — the options
 themselves; a `--` token in the value is refused, because msks
 adds the options to its own and a remembered separator would turn
@@ -1099,8 +1099,9 @@ request with its countdown and sends verdicts through the same
 endpoints the subcommands use. Keys: `a`/`d` allow or deny the
 focused hold for the default duration, `A`/`D` open the duration
 picker, `r` the rules screen (with `x` to revoke), `m` the mode
-picker — the `msks` section above owns the overlay's full
-lifecycle (the auto-open, the park, the self-close). The
+picker — the [workspace tree's](tui.md) overlay section owns
+the overlay's full lifecycle (the auto-open, the park, the
+self-close). The
 placeholder-token audit is the secrets page's daemon-wide view
 (#390). A dropped link reconnects
 with backoff and re-registers (the snapshot re-lands); while

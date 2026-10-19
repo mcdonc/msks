@@ -208,8 +208,8 @@ workspace page's. `q` or Escape returns to the workspace page
 (holds keep waiting, the header's count keeps counting, `e`
 reopens). The placeholder-token audit lives on the secrets page
 (#390): the consent page keeps the holds, the verdicts, and the
-mode. See `msks egress` below for what verdicts and rules
-cover.
+mode. See [`msks egress`](cli.md#msks-egress) for what verdicts
+and rules cover.
 
 The page's **Edit settings** action (#331) opens the edit
 dialog: the create form's own layout, seeded with the
