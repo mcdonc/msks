@@ -336,6 +336,32 @@
   
   
     <li class="md-nav__item">
+      <a href="./doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The host doctor
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="./identity/" class="md-nav__link">
         
   
@@ -563,6 +589,32 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development environment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -635,13 +687,12 @@
 
 
 <h1 id="msks-microvm-workspaces">msks: microvm workspaces<a class="headerlink" href="#msks-microvm-workspaces" title="Permanent link">&para;</a></h1>
-<p><em>msks</em> is a tool that easily allows you to use microvm workspaces. It can be
+<p><em>msks</em> is a tool that easily allows you to create microvm workspaces. It can be
 used to run AI harnesses securely.</p>
-<p>Each microvm is a cloud-hypervisor VM with its own kernel, and a state directory
-an operator can point at any disk.</p>
-<p>The microvm also provides services which allow you to avoid keeping secrets and
-keys within the VM and a facility to allow you to approve network egress.</p>
-<p>It runs on Linux hosts, and provides tooling to install its dependencies on
+<p>Each microvm is a cloud-hypervisor VM with its own kernel. It also provides
+services which allow you to avoid keeping secrets and keys within the VM and a
+facility to allow you to approve network egress.</p>
+<p><em>msks</em> runs on Linux hosts, and provides tooling to install its dependencies on
 Debian and NixOS systems.</p>
 <h2 id="the-reading-order">The reading order<a class="headerlink" href="#the-reading-order" title="Permanent link">&para;</a></h2>
 <ol>
@@ -661,6 +712,9 @@ Debian and NixOS systems.</p>
 <li><a href="config/"><strong>Configuration</strong></a>: the daemon's settings: every
    key, its environment variable, and its default, from the
    listener's socket to the egress stack's ceilings.</li>
+<li><a href="doctor/"><strong>The host doctor</strong></a>: the one command that
+   checks the host for every tool the daemon and client exec,
+   and names the fix for each miss.</li>
 <li><a href="images/"><strong>Workspace images</strong></a>: the image contract, the
    shipped builder, and the published channel: import from a
    manifest URL, the descriptions the builds bake, the hash-keyed
@@ -671,9 +725,12 @@ Debian and NixOS systems.</p>
 <li><a href="storage/"><strong>Storage</strong></a>: the state disk, the per-workspace
    volumes, and the capacity report that prices them.</li>
 <li><a href="secrets/"><strong>Secrets</strong></a>: placeholders, the swap on the
-   wire, and the sentinel discipline.</li>
+    wire, and the sentinel discipline.</li>
 <li><a href="changes/"><strong>Changelog</strong></a>: what changed, release by
     release.</li>
+<li><a href="development/"><strong>Development environment</strong></a>: the devenv
+    side of a checkout — the dev daemon, the shell's client
+    presets, the worktree identity.</li>
 </ol>
 
 

@@ -280,6 +280,32 @@
   
   
     <li class="md-nav__item">
+      <a href="../doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The host doctor
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../identity/" class="md-nav__link">
         
   
@@ -709,6 +735,32 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development environment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -969,59 +1021,11 @@ an environment variable: the config file cannot relocate the
 directory it lives in, so the tree root must be resolvable before
 the file is located.</p>
 <h2 id="msksd-doctor"><code>msksd doctor</code><a class="headerlink" href="#msksd-doctor" title="Permanent link">&para;</a></h2>
-<p><code>msksd doctor</code> checks the host for the external tools and
-libraries msksd and the msks client exec at runtime. The set
-covers the cloud-hypervisor VMM, the e2fsprogs pair that grows
-and checks workspace volumes, the <code>mkisofs</code> that packs the
-cidata seed disks, and the iproute2/nftables/conntrack trio
-behind each workspace's tap. It also covers <code>qemu-img</code> for the root overlay and secret
-store, the two libraries the interceptor's NFQUEUE path links
-against, and the host tmux at the 3.2 floor the consent
-terminal documents. Finally, it covers the ssh/rsync pair the
-documented workflows run over <code>msks forward</code>. Each result prints
-with a ✓ (present and functional), ⚠ (a client-side tool the
-daemon itself runs without), or ✗ (a core-path dependency)
-marker, and each miss carries an install hint matched to the
-detected package manager. The run ends with a summary that
-repeats every miss with its fix; the exit code is 0 when every
-check passes or only warns, 1 when any check errors. The check
-set covers runtime requirements only; debugging and
-development tools stay out of it.</p>
-<p>Tool names come from the same settings the daemon will use (the
-<code>--config</code> flag and <code>MSKSD_*</code> variables apply), so doctor checks
-what this host's daemon will actually exec. Doctor takes no side effects. It reads a config when one
-resolves and never generates the first-run template. A config
-that exists but fails to load falls back to environment
-variables and defaults, with a warning naming the error. A
-fresh host with no default config yet falls back silently. The two libraries are verified through
-<code>pkg-config</code>, the linker cache (<code>ldconfig -p</code>), or the binding's
-ctypes soname load, whichever answers first.</p>
-<p>The binding's soname load is its own check row beside the two
-library rows, and all three run on Linux hosts only. Off
-Linux, the library is a Linux package, and the binding row
-names that contract instead of hinting packages. On Linux, the vendored
-ctypes binding dlopens <code>libnetfilter_queue.so.1</code>, the
-same load the consent path performs, so a host whose runtime
-soname is absent fails it even when <code>pkg-config</code> still answers
-for the library. Its fix line names the package that carries the
-runtime soname (<code>libnetfilter-queue1</code> on apt).</p>
-<p>The install hints match each manager's real package names
-(verified against a Debian trixie container: <code>genisoimage</code> serves
-<code>mkisofs</code>, <code>qemu-utils</code> ships <code>qemu-img</code>, <code>conntrack</code> is apt's
-name, and the library rows name the runtime soname packages
-<code>libnetfilter-queue1</code> and <code>libnfnetlink0</code>). Where a fix is not a distro package, the hint names the real
-source: cloud-hypervisor installs from the upstream static
-release, and Debian's archive carries it in none of its
-suites.</p>
-<p>The dev daemon runs bare. <code>scripts/dev-daemon.sh</code> sets
-<code>MSKSD_CONFIG_DIR</code> to the devenv root, and the devenv shell
-presets the same value, so a hand-run <code>msksd</code> resolves the
-same file. The daemon's durable settings therefore live in
-<code>&lt;repo&gt;/msksd.yaml</code>: generated as the commented template on
-first daemon start, and untracked, so local edits stay
-personal. The environment the script exports (API port,
-state dir, egress wiring) wins over file values under the
-precedence above.</p>
+<p><code>msksd doctor</code> checks the host for the tools the daemon and the
+client exec, reading the config the same way the daemon does —
+the <code>--config</code> flag, the environment, and the file, under the
+precedence above. The <a href="../doctor/">host doctor chapter</a> owns the
+check rows, the report's markers and hints, and the exit codes.</p>
 <h2 id="key-mapping">Key mapping<a class="headerlink" href="#key-mapping" title="Permanent link">&para;</a></h2>
 <p>A config-file key is its <code>MSKSD_*</code> variable with the prefix stripped
 and lowercased, one rule with no lookup table:</p>
