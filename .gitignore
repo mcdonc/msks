@@ -28,3 +28,6 @@ result
 # rust (console-helper crate)
 src/console-helper/target/
 src/console-helper/.rustc_info.json
+
+# The locally served docs build (msks-docs)
+/site/

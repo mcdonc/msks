@@ -1,15 +1,13 @@
 # msks: microvm workspaces
 
-_msks_ is a tool that easily allows you to use microvm workspaces. It can be
+_msks_ is a tool that easily allows you to create microvm workspaces. It can be
 used to run AI harnesses securely.
 
-Each microvm is a cloud-hypervisor VM with its own kernel, and a state directory
-an operator can point at any disk.
+Each microvm is a cloud-hypervisor VM with its own kernel. It also provides
+services which allow you to avoid keeping secrets and keys within the VM and a
+facility to allow you to approve network egress.
 
-The microvm also provides services which allow you to avoid keeping secrets and
-keys within the VM and a facility to allow you to approve network egress.
-
-It runs on Linux hosts, and provides tooling to install its dependencies on
+_msks_ runs on Linux hosts, and provides tooling to install its dependencies on
 Debian and NixOS systems.
 
 ## The reading order

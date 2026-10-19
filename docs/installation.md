@@ -1,23 +1,24 @@
 # Installation
 
-msks ships as one Python wheel with everything inside: the
-client (`msks` — the TUI and the commands), the daemon
-(`msksd`), the consent-decider terminal (`msks-term-popup`),
-and the Debian host setup this chapter walks
-(`msks-setup-debian-host`). The wheel needs Python 3.14 or
-newer.
+msks ships as one Python wheel with everything inside: the client (`msks`), the
+daemon (`msksd`), the consent-decider terminal (`msks-term-popup`), and the
+Debian host setup this chapter walks (`msks-setup-debian-host`).
+
+The wheel needs Python 3.14 or newer.
 
 ```console
 pipx install msks        # or: pip install msks
 ```
 
-The daemon runs the workspaces directly on the host:
-cloud-hypervisor on `/dev/kvm`, one network tap per VM, and the
-egress consent stack in the host kernel. The host therefore
-needs pieces the wheel cannot carry. These are kernel modules,
-a routing sysctl, two capabilities for the daemon's user, and a
-service that keeps `msksd` running. On a Debian deployment host, one command lands
-all of it:
+The daemon runs the workspaces directly on the host using cloud-hypervisor on
+`/dev/kvm`, one network tap per VM, and the egress consent stack in the host
+kernel
+
+The host therefore needs pieces the wheel cannot carry. These are software
+dependency packages, kernel modules, a routing sysctl, two capabilities for the
+daemon's user, and a service that keeps `msksd` running.
+
+On a Debian deployment host, one command lands all of it:
 
 ```console
 sudo "$(command -v msks-setup-debian-host)"
@@ -27,11 +28,12 @@ The quoted form matters after a `pipx` install: the console
 script lands in `~/.local/bin`, which sudo's `secure_path` does
 not carry — the bare name would answer "command not found".
 
-Run it as the user the daemon will serve — under `sudo`, the
-`SUDO_USER` account is the executing user, and the service the
-tool registers belongs to that account. The run is idempotent:
-re-run any time, and re-run after a util-linux upgrade (the
-wrapper keeps a copy of `setpriv`; see below).
+Run it as the user the daemon will serve — under `sudo`, the `SUDO_USER`
+account is the executing user, and the service the tool registers belongs to
+that account.
+
+The run is idempotent: re-run any time, and re-run after a util-linux upgrade
+(the wrapper keeps a copy of `setpriv`; see below).
 
 ## What the setup lands
 
@@ -99,7 +101,7 @@ daemon's `egress_uplink` key should point at), and the
 service line. When the service started, the same-user socket
 path prints beside it.
 
-## The same host by hand
+## The same host by hand (if you'd rather not trust `msks-setup-debian-host`)
 
 `msks-setup-debian-host` is a program the wheel ships, and
 running it means running shipped code as root. An operator who
@@ -110,8 +112,13 @@ walk above, pasted and run by hand.
 Start a root shell and install the package set:
 
 ```console
-sudo -i
-apt install iproute2 nftables conntrack procps util-linux libcap2-bin kmod
+sudo -i apt install iproute2 \
+                    nftables \
+                    conntrack \
+                    procps \
+                    util-linux \
+                    libcap2-bin \
+                    kmod
 ```
 
 The capability wrapper — a fresh root-owned copy of `setpriv`,
@@ -201,31 +208,18 @@ loginctl enable-linger <the-user-the-daemon-runs-as>
 it keeps the user manager, and the daemon, running across
 logouts and boots.
 
-## Hosts the unit does not cover
-
-`--no-service` lands every host piece above and skips the
-unit. Choose it for a container, a non-systemd init, or a
-deployment that runs `msksd` its own way. The setup also skips
-the unit on its own when it cannot find an `msksd` beside its
-own install, or when systemd is not the manager, and it says
-so. On such a
-host the daemon runs whatever way the deployment chooses, with
-the wrapper on its exec line for the two capabilities; the
-[Configuration](config.md) chapter documents the settings a
-hand-written unit needs.
-
-## The VMM and the workspace tools
+## The VMM (`cloud-hypervisor`) and the workspace tools
 
 The daemon's workspace machinery execs three more tools by bare
 name, and the wheel carries none of them: `cloud-hypervisor`
 (the VMM), `qemu-img` (the root overlay), and `mkisofs` (the
-seed metadata). `msksd doctor` verifies all three and names the
-install for a miss. On Debian, `qemu-img` and `mkisofs` come
-from `qemu-utils` and `genisoimage`; the egress consent stack's
-library (`libnetfilter_queue`) comes from
-`libnetfilter-queue1`. Cloud Hypervisor's static release
-binary is the sanctioned VMM install — Debian's archive carries
-it not:
+seed metadata).
+
+`msksd doctor` verifies all three and names the install for a miss. On Debian,
+`qemu-img` and `mkisofs` come from `qemu-utils` and `genisoimage`; the egress
+consent stack's library (`libnetfilter_queue`) comes from
+`libnetfilter-queue1`. Cloud Hypervisor's static release binary is the
+sanctioned VMM install — Debian's archive carries it not:
 
 ```console
 curl -L -o cloud-hypervisor-static \
@@ -251,6 +245,18 @@ through `/run/wrappers/bin/msks-caps`, the wrapper the host's
 NixOS configuration installs. When the dev tree runs on a host
 NixOS does not manage, `DEV_CAPS` points at the Debian setup's
 `/usr/local/bin/msks-caps`.
+
+## Distributions the `msks-setup-debian-host` unit does not cover
+
+The `--no-service` flag to `msks-setup-debian-host` lands every host piece
+above and skips the unit. Choose it for a container, a non-systemd init, or a
+deployment that runs `msksd` its own way.
+
+The setup also skips the unit on its own when it cannot find an `msksd` beside
+its own install, or when systemd is not the manager, and it says so. On such a
+host the daemon runs whatever way the deployment chooses, with the wrapper on
+its exec line for the two capabilities; the [Configuration](config.md) chapter
+documents the settings a hand-written unit needs.
 
 ## First run
 
