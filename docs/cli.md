@@ -569,10 +569,16 @@ its window's `msks ssh` child boots a stopped workspace itself,
 so the action never dims — and Start while the workspace sits
 stopped), and `s`/`x` run start and stop from wherever the
 focus stands — the letters the list binds (the list also binds
-`i`: the published-image picker, #565 — the manifest's rows with
-their descriptions, the pick imported through the daemon's URL
-import while a modal holds the terminal with an elapsed timer).
-The page re-reads
+`i`: the image page, #565/#571 — the catalog group first, its
+rows carrying the default marker and each import's date, then
+the published channel's rows with their descriptions, sizes, and
+membership markers: `[imported]` when the catalog holds the same
+archive (an exact hash match), `[in catalog, other build]` when
+it holds the same ref under a different hash. Enter imports a
+published row through the daemon's URL import (a modal holds the
+terminal with an elapsed timer) or opens a catalog row's detail;
+`D` deletes a catalog row through a confirm — the same DELETE
+`msks image rm` makes. The page re-reads
 the workspace each second, so the dimming follows a start or
 stop made anywhere, not only on the page. A workspace
 the listing no longer sees — removed from another surface —

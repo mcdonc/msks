@@ -244,12 +244,13 @@ jobs:
               --arg url "https://github.com/$REPO/releases/download/$tag/$flavor.tar.zst" \
               --arg build "$build" \
               --arg sha "$SHA" \
+              --arg built_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               --argjson size "$(stat -c%s "$flavor.tar.zst")" \
               --argjson meta "$meta" \
               '.[$f] = {ref: $meta.ref, description: $meta.description,
                         kernel: $meta.kernel_version, hash: $hash,
                         size: $size, url: $url, build: $build,
-                        built_from: $sha}' \
+                        built_from: $sha, built_at: $built_at}' \
               rows.json > rows.json.new
             mv rows.json.new rows.json
           done
