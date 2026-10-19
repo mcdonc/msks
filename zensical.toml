@@ -20,16 +20,17 @@ copyright = "Copyright &copy; 2026 Chris McDonough"
 nav = [
   { "Home" = "index.md" },
   { "Installation" = "installation.md" },
+  { "The host doctor" = "doctor.md" },
   { "The identity file" = "identity.md" },
   { "The TUI" = "tui.md" },
   { "The CLI Client" = "cli.md" },
   { "Configuration" = "config.md" },
-  { "The host doctor" = "doctor.md" },
   { "Workspace Images" = "images.md" },
   { "Guest Networking" = "networking.md" },
   { "Storage" = "storage.md" },
   { "Secrets" = "secrets.md" },
   { "Changelog" = "changes.md" },
+  { "Development environment" = "development.md" },
 ]
 
 # The internal design history stays in the repository, off the

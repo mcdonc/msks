@@ -89,12 +89,6 @@ to load falls back the same way, with a warning row naming the
 error. The checks still run either way, so a broken config does
 not hide the host's state.
 
-## The dev host
-
-The dev daemon runs bare: `scripts/dev-daemon.sh` points
-`MSKSD_CONFIG_DIR` at the devenv root. A hand-run `msksd doctor`
-in the shell therefore resolves the same `<repo>/msksd.yaml`
-the daemon serves with. The environment the dev script exports
-(API port, state dir, egress wiring) wins over file values
-under the [precedence](config.md#precedence) the Configuration
-chapter documents.
+On the dev host, doctor resolves the same `<repo>/msksd.yaml`
+the dev daemon serves with; the [Development
+environment](development.md) chapter owns that setup.

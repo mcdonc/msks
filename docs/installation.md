@@ -2,9 +2,12 @@
 
 msks ships as one Python wheel with everything inside: the client (`msks`), the
 daemon (`msksd`), the consent-decider terminal (`msks-term-popup`), and the
-Debian host setup this chapter walks (`msks-setup-debian-host`).
+Debian host setup this chapter describes (`msks-setup-debian-host`).
 
 The wheel needs Python 3.14 or newer.
+
+The [The host doctor](doctor.md) chapter documents the `msks doctor` command
+that can diagnose installation issues.
 
 ```console
 pipx install msks        # or: pip install msks
@@ -44,8 +47,7 @@ with a named error.
 name installs through apt when missing: `iproute2` (`ip`),
 `nftables` (`nft`), `conntrack`, and `procps` (`sysctl`),
 beside the tools the setup itself runs: `util-linux` (`setpriv`),
-`libcap2-bin` (`setcap`), `kmod` (`modprobe`). The daemon's
-workspace tools install separately (below).
+`libcap2-bin` (`setcap`), `kmod` (`modprobe`) and various others.
 
 **The capability wrapper.** `/usr/local/bin/msks-caps` — a
 root-owned copy of util-linux `setpriv` carrying file
@@ -109,7 +111,9 @@ prefers to read every step first can land the same host in an
 interactive root shell — each command below is one phase of the
 walk above, pasted and run by hand.
 
-Start a root shell and install the package set:
+Start a root shell and install the package set — the egress
+plumbing, the setup's own tools, the volume tools the daemon
+execs, and the consent stack's NFQUEUE sonames:
 
 ```console
 sudo -i apt install iproute2 \
@@ -118,7 +122,15 @@ sudo -i apt install iproute2 \
                     procps \
                     util-linux \
                     libcap2-bin \
-                    kmod
+                    kmod \
+                    e2fsprogs \
+                    libnetfilter-queue1 \
+                    libnfnetlink0
+                    qemu-utils \
+                    genisoimage \
+                    tmux \
+                    ssh \
+                    rsync
 ```
 
 The capability wrapper — a fresh root-owned copy of `setpriv`,
@@ -208,19 +220,12 @@ loginctl enable-linger <the-user-the-daemon-runs-as>
 it keeps the user manager, and the daemon, running across
 logouts and boots.
 
-## The VMM (`cloud-hypervisor`) and the workspace tools
+## The VMM (`cloud-hypervisor`)
 
-The daemon's workspace machinery execs three more tools by bare name, and the
-wheel carries none of them: `cloud-hypervisor` (the VMM), `qemu-img` (the root
-overlay), and `mkisofs` (the seed metadata).
-
-```console
-sudo -i apt install qemu-img \
-                    mkisofs \
-```
+The daemon's workspace machinery execs `cloud-hypervisor` (the VMM).
 
 Cloud Hypervisor's static release binary is the
-sanctioned VMM install — Debian's archive carries it not:
+sanctioned VMM install — Debian's archive does not carry it.
 
 ```console
 curl -L -o cloud-hypervisor-static \
@@ -240,12 +245,8 @@ it is scoped to the one service.
 A `nixos-rebuild switch` is the whole host setup.
 
 **A development host** (this repository's checkout) runs the
-daemon through devenv. `msks-dev` seeds a per-worktree state
-dir with its own port, token, and socket, and execs `msksd`
-through `/run/wrappers/bin/msks-caps`, the wrapper the host's
-NixOS configuration installs. When the dev tree runs on a host
-NixOS does not manage, `DEV_CAPS` points at the Debian setup's
-`/usr/local/bin/msks-caps`.
+daemon through devenv; the [Development
+environment](development.md) chapter owns that path.
 
 ## Distributions the `msks-setup-debian-host` unit does not cover
 
@@ -258,6 +259,9 @@ its own install, or when systemd is not the manager, and it says so. On such a
 host the daemon runs whatever way the deployment chooses, with the wrapper on
 its exec line for the two capabilities; the [Configuration](config.md) chapter
 documents the settings a hand-written unit needs.
+
+The [The host doctor](doctor.md) chapter documents the `msks doctor` command
+that can diagnose installation issues.
 
 ## First run
 

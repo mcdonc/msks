@@ -44,3 +44,6 @@ Debian and NixOS systems.
     wire, and the sentinel discipline.
 11. [**Changelog**](changes.md): what changed, release by
     release.
+12. [**Development environment**](development.md): the devenv
+    side of a checkout — the dev daemon, the shell's client
+    presets, the worktree identity.

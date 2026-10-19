@@ -1,34 +1,38 @@
 # The identity file
 
-Every workspace msks creates plants **your** public ssh key
-as the workspace's operator identity. Every `msks ssh` and
-`msks rsync` session signs with your private half. msks
-generates no key of its own: the key you configure is the one
-your workspaces answer to. The same key locks workspace secrets
-on the daemon: values a workspace needs at runtime are
-sealed under the identity, and the client unlocks them with the
+Every workspace msks creates plants your public ssh key as the workspace's
+operator identity.
+
+Every `msks ssh` and `msks rsync` session signs with your private half.
+
+The same key locks workspace secrets on the daemon: values a workspace needs at
+runtime are sealed under the identity, and the client unlocks them with the
 private half again.
+
+msks generates no ssh key of its own: the key you configure is the one your
+workspaces answer to.
+
+You need to configure an ssh key before msksd/msks will work.
 
 ## Why an ssh key
 
 The workspace's door is sshd: the guest runs it, the forward
 carries it. The operator identity is therefore the credential
-that door already speaks, an ssh key. That choice carries four
-things with it. The trust root is a key you already guard, in your agent or
-on a hardware token. msks mints no account, no password, and
-no credential of its own. Nothing new exists to leak, and
-nothing new must be rotated: your key's lifecycle is the whole
-lifecycle. The public half is all msks ever
-stores: planting it on a workspace and sealing secrets under
-it keeps every private half where it already lives, on your
-machine or in your agent; the daemon's catalog holds public
-material only. Attribution comes free: each operator's key
-marks which human a workspace answers to, so several operators
-share one daemon with separate keys and no shared secret
-between them. And the same key seals the workspace secrets
-— one root of trust for both the door and the sealed
-values, instead of a separate master secret the daemon would
-have to keep.
+that door already speaks
+
+That choice carries four things with it. The trust root is a key you already
+guard, in your agent or on a hardware token.
+
+The public half is all msks ever stores: planting it on a workspace and sealing
+secrets under it keeps every private half where it already lives, on your
+machine or in your agent; the daemon's catalog holds public material
+only.
+
+Each operator's key marks which human a workspace answers to, so several
+operators share one daemon with separate keys and no shared secret between
+them. And the same key seals the workspace secrets — one root of trust for both
+the door and the sealed values, instead of a separate master secret the daemon
+would have to keep.
 
 The client names the key in its YAML file
 (`~/.config/msks/msks.yaml`) or its environment, with two keys:
@@ -101,20 +105,8 @@ the agent you named into the workspace. The workspace identity
 msks mints stays separate, and your keys arrive only where you
 forwarded them.
 
-## The devenv shell's identity
-
-A checkout's devenv shell presets `MSKSC_IDENTITY_FILE` at the
-worktree's own dev identity
-(`.devenv/state/msksc/identity`), minted passphrase-less the
-first time the shell opens, so the smokes and `msks-dev` have
-a key without touching yours. The preset fills an unset
-variable: a non-empty `MSKSC_IDENTITY_FILE` you exported
-before entering the shell survives, and so does the file's
-`identity_file` (the environment preset lands only when you
-named nothing). Pointing the dev identity at your own key (a
-symlink over the minted file) works, with this chapter's
-rules: the passphrase prompt appears when the daemon's rows
-are locked under it and no agent holds it.
+The devenv shell seeds a worktree identity of its own; the
+[Development environment](development.md) chapter owns it.
 
 With neither key naming a usable source, `msks create` refuses
 with a line saying so; it is the one command that needs the
