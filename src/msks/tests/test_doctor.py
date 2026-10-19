@@ -110,6 +110,15 @@ def test_install_hint_table_and_managers() -> None:
     assert install_hint("nft", "apk") == "sudo apk add nftables"
 
 
+def test_install_hint_names_the_kvm_stack_per_manager() -> None:
+    """#559: the /dev/kvm rows' stack hint names each manager's
+    real package — Arch's split qemu and Alpine's arch-named
+    emulator, not a qemu-kvm that neither archive carries."""
+    assert install_hint("qemu-kvm", "apt") == "sudo apt install qemu-kvm"
+    assert install_hint("qemu-kvm", "pacman") == "sudo pacman -S qemu-desktop"
+    assert install_hint("qemu-kvm", "apk") == "sudo apk add qemu-system-x86_64"
+
+
 def test_install_hint_fallbacks() -> None:
     assert install_hint("mkisofs", None) == "install mkisofs"
     hint = install_hint("never-packaged", "dnf")
@@ -544,7 +553,9 @@ def kvm_seam(
     )
     monkeypatch.setattr(doctor_mod, "group_present", lambda name: True)
     monkeypatch.setattr(doctor_mod, "in_group", lambda user, name: member)
-    monkeypatch.setattr(doctor_mod.os.path, "exists", lambda path: True)
+    monkeypatch.setattr(
+        doctor_mod.os.path, "exists", lambda path: path == "/dev/kvm"
+    )
     monkeypatch.setattr(
         doctor_mod.grp,
         "getgrnam",
@@ -705,6 +716,7 @@ def test_run_doctor_grades_and_settings_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     all_found(monkeypatch)
+    kvm_seam(monkeypatch)  # the kvm row's answer is host state
     settings = Settings(vmm=VmmSettings(mkisofs="xmkisofs"))
     report = run_doctor(settings)
     names = {r.name for r in report.results}
@@ -762,6 +774,7 @@ def test_run_doctor_warning_rows(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda name: None if name in {"ssh", "rsync"} else f"/usr/bin/{name}",
     )
     monkeypatch.setattr(doctor_mod, "run", probes_ok)
+    kvm_seam(monkeypatch)  # the kvm row's answer is host state
     report = run_doctor(Settings())
     warn_names = {r.name for r in report.warnings}
     assert warn_names == {"ssh", "rsync"}
@@ -774,6 +787,7 @@ def test_run_doctor_error_fails(monkeypatch: pytest.MonkeyPatch) -> None:
         "which",
         lambda name: None if name == "nft" else f"/usr/bin/{name}",
     )
+    kvm_seam(monkeypatch)  # the kvm row's answer is host state
     monkeypatch.setattr(doctor_mod, "run", probes_ok)
     report = run_doctor(Settings())
     assert report.passed is False
@@ -851,6 +865,7 @@ def test_doctor_main_appends_config_notice(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     all_found(monkeypatch)
+    kvm_seam(monkeypatch)  # the kvm row's answer is host state
     monkeypatch.setattr(
         doctor_mod,
         "load_settings",

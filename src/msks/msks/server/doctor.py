@@ -282,6 +282,18 @@ PACKAGE_HINTS: dict[str, dict[str, str]] = {
         "apk": "libnfnetlink",
         "pacman": "libnfnetlink",
     },
+    # The KVM stack the /dev/kvm rows point at (#559): the name
+    # splits the way the library rows' do — Arch carries KVM in
+    # its split qemu packages (qemu-desktop is the x86_64 one),
+    # and Alpine's is the arch-named system emulator.
+    "qemu-kvm": {
+        "dnf": "qemu-kvm",
+        "yum": "qemu-kvm",
+        "apt": "qemu-kvm",
+        "zypper": "qemu-kvm",
+        "apk": "qemu-system-x86_64",
+        "pacman": "qemu-desktop",
+    },
 }
 
 
@@ -313,9 +325,9 @@ def manager_install(manager: str, pkg: str) -> str:
 # The /dev/kvm fix is a group add, not a package install (#559),
 # so its table keys on the detected manager the way the hint
 # table does, with one command shape per platform family. A
-# manager the table lacks falls back to the Debian form — the
-# documented deployment host. brew never reaches it: the row is
-# Linux-only, like the consent stack (#542).
+# manager the table lacks — brew on a brew-only Linux host,
+# above all — falls back to the Debian form, the documented
+# deployment host.
 GROUP_ADD: dict[str, str] = {
     "apt": "sudo adduser {user} kvm",
     "dnf": "sudo usermod -aG kvm {user}",

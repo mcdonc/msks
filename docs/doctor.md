@@ -44,13 +44,19 @@ terminal documents, parsing the version the binary prints.
 On Linux hosts a permission row rides beside the VMM: the
 `/dev/kvm` gate every workspace boot passes. It reads the node's
 presence and the daemon user's `kvm`-group membership — primary
-or supplementary, from the group database — and a miss carries
-the group-add command the detected platform takes, not a
-package install (#559). A login that predates the membership
-gets its own line: the group database and the session's live
-groups can disagree, and a daemon started from the older
-session still meets `EACCES` on the node. A host without the
-node reports the absence itself — never a group failure.
+or supplementary, from the group database. A membership miss
+carries the group-add command the detected platform takes; a
+missing node or missing group carries the KVM stack's install
+hint, each manager under its real package name (#559). A login
+that predates the membership gets its own line: the group
+database and the session's live groups can disagree, and a
+daemon started from the older session still meets `EACCES` on
+the node. The row reads the session it runs in: a daemon under
+a user manager that predates the group add (a linger setup)
+still meets `EACCES` after this row passes — that manager needs
+its own restart, the note `msks-setup-debian-host` prints. A
+host without the node reports the absence itself — never a
+group failure.
 
 The warning-grade rows are the client-side tools the documented
 workflows run over `msks forward`: the ssh client and the host
