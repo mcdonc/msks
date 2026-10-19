@@ -11,6 +11,8 @@ settings the two surfaces share are
 
 ## The workspace tree
 
+![The workspaces list: two rows, the status bar's count and daemon URL](screens/workspaces-list.svg)
+
 A bare `msks` — no arguments at all — launches the full-screen
 workspace tree (`msks tui` names the same command, and `msks tui
 my-workspace` opens that workspace's page directly). The tree is rooted at the **workspaces list**: every
@@ -24,7 +26,13 @@ page. The list re-reads the daemon every five seconds, so a
 workspace another surface moved (the CLI, another operator)
 appears without a keypress. A power verb the focused row's own
 status makes pointless names its skip client-side without a
-round-trip. A refused create opens the failure panel: a centered panel
+round-trip. ![The create form over the list](screens/create-form.svg)
+
+The refused-create path answers on its own panel:
+
+![The failure panel: the daemon's refusal verbatim over the list](screens/failure-panel.svg)
+
+A refused create opens the failure panel: a centered panel
 over the list carrying the daemon's refusal verbatim beside
 the name the form submitted. It waits for dismissal (Enter,
 Escape, `q`, or the Close button), so the detail stays on
@@ -56,6 +64,8 @@ crosses workspaces, and the daemon-wide row belongs to none of
 them), so the secrets page lives at the tree's level: `e` on the
 workspaces list opens it.
 
+![The secrets page: the placeholder list](screens/secrets-page.svg)
+
 The **secrets page** lists every placeholder row the daemon
 holds, in the listing's own five-column shape: coverage (`*` for
 the daemon-wide row, the workspace ids scoped), name,
@@ -66,7 +76,9 @@ what a revoke does (the row retires everywhere at once). `r`
 opens the duration picker over TTL-appropriate choices, an
 hour to thirty days with the choice nearest the row's
 remaining lifetime highlighted, and extends the row in place.
-The sentinel and the row's identity stay as they are. `e` opens the daemon-wide audit view. The newest hundred
+The sentinel and the row's identity stay as they are. ![The audit view: the daemon-wide replay, the sighting highlighted](screens/audit-view.svg)
+
+`e` opens the daemon-wide audit view. The newest hundred
 recorded mints, revokes, expiries, and unlocks replay from
 the audit table at open, newest first, and the wire events
 stream in live beside them. The off-allowlist sighting is
@@ -75,6 +87,8 @@ and workspace filters. A daemon-wide row's events cover every
 workspace; a scoped row's cover its members. The audit view holds a
 plain subscription — no decider registration — so it claims no
 holds.
+![The mint form: fields, coverage, lifetime, the masked value](screens/mint-form.svg)
+
 `c` opens the mint form. The name field comes first, then
 repeatable destinations (an exact host or a label-anchored
 suffix, comma-separated in one field). Coverage follows: the
@@ -88,7 +102,9 @@ failure panel over the form, the daemon's refusal verbatim
 beside the name the form submitted; a refused store check
 opens it with the daemon's refusal alone. Either way it closes
 by hand (Enter, Escape, `q`, or the Close button), and the
-fields stay filled for a retry once it closes. A mint that lands replaces the form with the sentinel's
+fields stay filled for a retry once it closes. ![The sentinel's panel: masked, with Show and Copy](screens/sentinel-panel.svg)
+
+A mint that lands replaces the form with the sentinel's
 panel. The sentinel opens masked, its prefix naming the reach
 (`mskssec1_` scoped to the chosen workspaces, `mskssec2_`
 every accepting workspace) and its body rendering as bullets.
@@ -103,6 +119,8 @@ back on demand, at mint and after.
 Closing the panel clears its text, and the minted row
 stands on the page's list. The placeholder-to-workspace
 navigation lands with the cross-references.
+
+![The workspace page: header, consent line, the three action groups](screens/workspace-page.svg)
 
 The **workspace page** carries the per-workspace loop. Its
 two-line header sets the workspace's name on the first line
@@ -130,13 +148,17 @@ itself, so the action never dims) and Start while the
 workspace sits stopped. `s`/`S` run start and stop from
 wherever the focus stands, the letters the list binds.
 
+![The image page: the catalog group, then the published channel](screens/image-page.svg)
+
 The list also binds `i`: the image page. Its catalog group
 comes first, the rows carrying the default marker and each
 import's date; then the published channel's rows with their
 descriptions, sizes, and membership markers. `[imported]`
 marks a row whose archive the catalog holds (an exact hash
 match); `[in catalog, other build]` marks one whose ref it
-holds under a different hash. Enter imports a published row through the daemon's URL
+holds under a different hash. ![The image detail: description, hash, the built date](screens/image-detail.svg)
+
+Enter imports a published row through the daemon's URL
 import (a modal holds the terminal with an elapsed timer) or
 opens a catalog row's detail. `D` deletes a catalog row through
 a confirm, the same DELETE `msks image rm` makes. The page re-reads
@@ -155,6 +177,8 @@ flashed refusal on the consent line truncates at the edge the
 same way, so the page's layout holds steady. A workspace in `interactive`
 mode holds new flows while the page is open: the page registers
 as the workspace's decider, so holds land on it.
+
+![The egress consent page: a held request over the in-effect verdicts](screens/consent-page.svg)
 
 The page's **Egress** action and its `e` key open the egress
 consent page: a full-screen visit holding the held-request
@@ -179,6 +203,8 @@ or deny the focused hold for the default duration
 alone, and a mis-zoned press names the zone it acts on instead
 of deciding silently. `x` revokes the focused verdict (the row
 leaves on the daemon's refreshed frame, never optimistically).
+![The mode picker: the three postures, the current one highlighted](screens/mode-picker.svg)
+
 `m` opens the mode picker (`allow` / `static` / `interactive`,
 the current mode highlighted), the switch's one path since the
 workspace page's own mode action left. Picking a mode switches
@@ -188,7 +214,9 @@ The status line names the new mode as the switch lands. A
 pick of `static` with nothing effectively allowed asks the
 same offline-workspace confirmation the CLI asks (confirm to
 switch, decline to decide nothing). A refused switch names its
-reason on the status line, where the operator reads it. Enter on a focused hold opens the duration picker: the key
+reason on the status line, where the operator reads it. ![The duration picker over a held request](screens/duration-picker.svg)
+
+Enter on a focused hold opens the duration picker: the key
 answers, the pick decides, and only an explicit letter or a
 picked duration ever decides. While no hold waits, the verdict
 keys stand inert and leave the footer until one lands. The page's
@@ -202,7 +230,9 @@ and rules cover.
 
 The page's **Edit settings** action opens the edit
 dialog: the create form's own layout, seeded with the
-workspace's current values. The sizes and topology (root, home, vcpus, memory) are
+workspace's current values. ![The edit dialog: the sizes and topology, prefilled](screens/edit-dialog.svg)
+
+The sizes and topology (root, home, vcpus, memory) are
 editable. A submit sends the changed values through the same
 endpoint `msks resize` speaks, and the page's consent line
 carries the same outcome line the CLI prints, including what
@@ -347,7 +377,9 @@ appended shell inside a local tmux session and answers the
 workspace's egress consent prompts right there. The launch
 also starts the consent-decider app in a hidden tmux session
 on the same socket, where it holds the workspace's decider
-registration for the window's whole life. The app lists every hold the workspace carries, destination
+registration for the window's whole life. ![The popup's decider app: the held-request queue and verdict keys](screens/term-popup-decider.svg)
+
+The app lists every hold the workspace carries, destination
 and time remaining per row, with the arrow keys moving the
 selection. `a` allows until restart and `d` denies the
 selected hold, while the uppercase twins `A` and `D` pick a
