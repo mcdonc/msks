@@ -1,0 +1,87 @@
+# Docs publishing (#573, the klangk pattern): each v* tag deploys
+# a versioned snapshot of the documentation to GitHub Pages, and
+# every push to main deploys the in-flight "dev" view — mike
+# (squidfunk's zensical-adapted fork) keeps prior versions under
+# their own directories, the "latest" alias as redirect pages, and
+# the root index redirecting there.
+#
+# Zensical builds in strict mode (strict = true in
+# zensical.toml), so a broken internal link fails this workflow
+# the way a lint gate fails a build — the docs cannot ship
+# silently broken. Releases hold the "latest" alias; main's dev
+# view deploys beside it without taking the root.
+name: Deploy Docs
+
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Docs version to deploy (defaults to the ref name minus any v prefix)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gh-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Full history: mike reads prior versions off the gh-pages
+          # branch, which must be present as a remote ref.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install docs toolchain
+        run: |
+          # Pinned: zensical is a fast-moving 0.0.x and mike rides a
+          # fork's master — an upstream break must not red this
+          # workflow at random. Bump deliberately.
+          pip install zensical==0.0.71
+          # squidfunk's mike fork adapts mike to zensical; it is not on
+          # PyPI, so install it from GitHub (see zensical's versioning
+          # docs). No mkdocs needed — the fork builds via zensical.
+          pip install git+https://github.com/squidfunk/mike.git@1a3fcd5f1a0e263fa9c2d5475401a1bf56f6c417
+
+      - name: Configure git for gh-pages commits
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Extract docs version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          # Env indirection, not interpolation: the input never
+          # touches the shell's parser.
+          if [ -n "$INPUT_VERSION" ]; then
+            version="$INPUT_VERSION"
+          elif [[ "$GITHUB_REF_NAME" == v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="dev"  # main's in-flight view
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy docs to gh-pages
+        env:
+          MIKE_DOCS_VERSION: ${{ steps.version.outputs.version }}
+        run: python scripts/deploy-docs.py
+
+      - name: Push gh-pages
+        run: git push origin gh-pages

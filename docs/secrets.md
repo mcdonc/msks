@@ -59,7 +59,8 @@ What each request gets:
   certificate reaches the workspace, pinned clients keep working,
   and the sentinel rides raw. Detection of off-allowlist sightings
   is limited to decrypted flows — this blind spot is recorded on
-  the [#194 decision doc](spikes/194-egress-interceptor.md).
+  the #194 decision doc (`docs/spikes/194-egress-interceptor.md`
+  in the repository).
 - **The sighting.** A sentinel seen toward a destination its own
   allowlist misses — while another placeholder decrypts the flow —
   passes through unrewritten and publishes a `secret.sighting`

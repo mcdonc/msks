@@ -1,0 +1,67 @@
+# msks' docs site (#573): the chapters render in reading order,
+# the changelog rides its own page (AGENTS.md's changelog rules
+# describe this surface), and strict mode makes a broken internal
+# link fail the build the way a lint gate fails — not ship.
+#
+# Versioning is mike's (squidfunk's fork, which builds through
+# zensical): the docs workflow deploys each v* tag as a versioned
+# snapshot, main as the in-flight "dev" view, and "latest" as an
+# alias the root redirects to.
+[project]
+strict = true
+site_name = "msks"
+site_description = "Microvm workspaces for AI coding agents"
+site_author = "Chris McDonough"
+site_url = "https://mcdonc.github.io/msks/"
+repo_url = "https://github.com/mcdonc/msks"
+repo_name = "mcdonc/msks"
+copyright = "Copyright &copy; 2026 Chris McDonough"
+
+nav = [
+  { "Home" = "index.md" },
+  { "The CLI Client" = "cli.md" },
+  { "Configuration" = "config.md" },
+  { "Workspace Images" = "images.md" },
+  { "Guest Networking" = "networking.md" },
+  { "Storage" = "storage.md" },
+  { "Secrets" = "secrets.md" },
+  { "Changelog" = "changes.md" },
+  { "Boot Speed" = "boot-speed.md" },
+  { "Roadmap" = "ROADMAP.md" },
+]
+
+# The internal design history stays in the repository, off the
+# published site (unreadable from the nav, unlisted here on
+# purpose).
+exclude_docs = """
+spikes/*
+llm.md
+"""
+
+[project.theme.palette]
+scheme = "default"
+primary = "green"
+accent = "green"
+
+[project.markdown_extensions.admonition]
+[project.markdown_extensions.attr_list]
+[project.markdown_extensions.def_list]
+[project.markdown_extensions.footnotes]
+[project.markdown_extensions.toc]
+permalink = true
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+line_spans = "__span"
+pygments_lang_class = true
+[project.markdown_extensions.pymdownx.inlinehilite]
+[project.markdown_extensions.pymdownx.superfences]
+custom_fences = [
+  { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+]
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style = true
+[project.markdown_extensions.pymdownx.details]
+
+[project.extra.version]
+provider = "mike"
+default = "latest"
