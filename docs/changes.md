@@ -288,7 +288,7 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
   (`msks-appliance-*`, the #220 update channel, the state-disk
   machinery) and the Kubernetes deployment target are removed:
   updates and rollback come from rebuilding the host's NixOS
-  configuration. See [docs/ROADMAP.md](ROADMAP.md).
+  configuration. The roadmap of the time (docs/ROADMAP.md, since removed) carried the plan.
 - **Plain scripts instead of dependency-free devenv tasks (#166).**
   Every msks devenv task without `after`/`before` ordering is now a
   plain script on the devenv shell's PATH (`msks-build-guest`,
