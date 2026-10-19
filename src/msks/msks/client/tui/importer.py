@@ -1,14 +1,19 @@
-"""The TUI's published-image import (#565): the manifest picker
-and the import-in-progress modal.
+"""The TUI's image page (#565, #571): the catalog and the
+published channel on one screen.
 
-The client fetches the channel's ``images.json`` itself — a small
-public document, no daemon involvement — and offers the rows with
-their human identity (#564's baked descriptions) beside their
-download size, so "which image is which" is answered in the
-picker, before anyone commits to the bytes. The pick POSTs the
-row's URL to the daemon's import endpoint: the daemon fetches,
-hash-verifies, and floor-checks the archive; the modal holds the
-terminal with an honest elapsed time while it does.
+Two labeled groups — *In the catalog* (the daemon's rows, the
+default marker, each import's date) and *Published* (the channel
+manifest's rows with their descriptions, sizes, and build dates)
+— with membership markers that survive rebuilds: a channel
+import's catalog hash equals the manifest row's hash
+(``[imported]``), while the same ref under a different hash
+(the pre-channel plain tar, a locally built archive) reads
+``[in catalog, other build]``. Enter imports a published row
+(the daemon downloads, verifies, and floor-checks; the modal
+holds the terminal with an elapsed timer) and opens the detail
+view for a catalog row; ``D`` deletes a catalog row through the
+confirm screen — the same DELETE the CLI's ``image rm`` makes,
+refusals surfaced on the failure panel.
 """
 
 import asyncio
@@ -20,11 +25,11 @@ from textual.screen import ModalScreen
 from textual.widgets import OptionList, Static
 
 from ..config import DEFAULT_IMAGE_MANIFEST_URL
-from ..images import fetch_manifest
-from .consent_ui import FailurePanel, panel_safe
+from ..images import fetch_manifest, imported_cell
+from .consent_ui import ConfirmScreen, FailurePanel, panel_safe
 
-#: One picker row's label: the ref, the capped description, and
-#: the download size — the fields the manifest carries (#564).
+#: The published description's cap for the row (the full line is
+#: the detail view's and the manifest's own).
 PICKER_CAP = 44
 
 
@@ -38,48 +43,57 @@ def size_label(size: int | None) -> str:
 
 
 def capped_description(row: dict) -> str:
-    """The row's baked identity, capped for the picker's line —
-    the full line is the manifest's own."""
+    """The row's baked identity, capped for the page's line — the
+    full line is the detail view's and the manifest's own."""
     description = (row.get("description") or "").strip() or "-"
     if len(description) > PICKER_CAP:
         description = description[: PICKER_CAP - 1] + "…"
     return description
 
 
-def picker_label(row: dict, dedupe: bool = False) -> str:
-    """One manifest row's picker label: ref, description (capped
-    — the full line is the manifest's own), and size. *dedupe*
-    appends the archive's short hash: two rows sharing a ref (a
-    rebuilt archive) are otherwise the same label, and the second
-    would be unselectable."""
+def membership(row: dict, catalog: list[dict]) -> str:
+    """The published row's marker against the catalog: an exact
+    hash match is ``[imported]``; the same ref under a different
+    hash (the pre-channel plain tar, a locally built archive) is
+    ``[in catalog, other build]`` — a rebuild must not make the
+    marker lie. Anything else carries no marker: the page's
+    default date slot names its build day."""
+    hashes = {image["hash"] for image in catalog}
+    if row.get("hash") in hashes:
+        return "[imported]"
+    refs = {f"{image['name']}:{image['version']}" for image in catalog}
+    if row.get("ref") in refs:
+        return "[in catalog, other build]"
+    return ""
+
+
+def built_label(row: dict) -> str:
+    """The published row's build date (the manifest's ``built_at``
+    date half) or a dash — v0.1's rows predate the field."""
+    built = str(row.get("built_at") or "")[:10]
+    return built or "-"
+
+
+def published_label(row: dict, catalog: list[dict]) -> str:
+    """One published row's label: ref, capped description, size,
+    then the membership marker or the build date."""
     label = (
         f"{row['ref']}  —  {capped_description(row)}  "
         f"({size_label(row.get('size'))})"
     )
-    if dedupe and row.get("hash"):
-        label += f"  [{row['hash'][:12]}]"
-    return label
+    marker = membership(row, catalog)
+    if marker:
+        return f"{label}  {marker}"
+    return f"{label}  built {built_label(row)}"
 
 
-def manifest_row(row: object) -> dict:
-    """One manifest row, validated: ``ref`` and ``url`` are the
-    str pair the pick needs; ``description`` (a str) and ``size``
-    (a number) may sit absent — their dash renders — but a
-    mistyped value is a broken channel, and it refuses by name
-    instead of crashing the picker half-mounted (a hand-written
-    manifest is exactly the fork/self-hosted case the setting
-    exists for)."""
-    check_present(row)
-    check_str_fields(row, ("ref", "url"))
-    for field in ("description", "hash"):
-        check_optional(row, field, check_str)
-    check_optional(row, "size", check_number)
-    return row
-
-
-def check_str(row: dict, field: str) -> None:
-    """One field is a string, or the row refuses by name."""
-    check_str_fields(row, (field,))
+def catalog_label(row: dict) -> str:
+    """One catalog row's label: ref, the default marker, and the
+    import date (#571) — the cell `msks image ls` renders."""
+    default = "[default]" if row.get("default") else ""
+    return f"{row['name']}:{row['version']}  {default}".rstrip() + (
+        f"  imported {imported_cell(row)}"
+    )
 
 
 def check_present(row: object) -> None:
@@ -87,14 +101,6 @@ def check_present(row: object) -> None:
     it refuses."""
     if not isinstance(row, dict) or not row.get("ref") or not row.get("url"):
         raise ValueError(f"manifest row lacks ref/url: {row!r}")
-
-
-def check_optional(row: dict, field: str, check) -> None:
-    """An absent field renders as its dash — an explicit null too
-    (a generator's idiom for absent, common in hand-written
-    channels) — and a present one takes its check."""
-    if row.get(field) is not None:
-        check(row, field)
 
 
 def check_str_fields(row: dict, fields: tuple[str, ...]) -> None:
@@ -120,23 +126,107 @@ def check_number(row: dict, field: str) -> None:
         )
 
 
-class ImageImportScreen(ModalScreen[dict | None]):
-    """The manifest picker: rows from the channel's manifest,
-    Enter choosing one (its row dict rides the callback), ``q``/
-    Escape cancelling. A manifest that cannot be fetched or read
-    names its cause in the failure panel — the default channel
-    needs no configuration, so its failure is the first an
-    operator meets."""
+def manifest_row(row: object) -> dict:
+    """One manifest row, validated: ``ref`` and ``url`` are the
+    str pair the pick needs; ``description``, ``hash``, and
+    ``built_at`` (strs) and ``size`` (a number) may sit absent —
+    their dash renders — but a mistyped value is a broken
+    channel, and it refuses by name instead of crashing the page
+    half-mounted (a hand-written manifest is exactly the
+    fork/self-hosted case the setting exists for)."""
+    check_present(row)
+    check_str_fields(row, ("ref", "url"))
+    for field in ("description", "hash", "built_at"):
+        check_optional(row, field, check_str)
+    check_optional(row, "size", check_number)
+    return row
 
-    BINDINGS = [
-        Binding("q", "cancel", "Cancel", show=False),
-        Binding("escape", "cancel", "Cancel", show=False),
+
+def check_optional(row: dict, field: str, check) -> None:
+    """An absent field renders as its dash — an explicit null too
+    (a generator's idiom for absent, common in hand-written
+    channels) — and a present one takes its check."""
+    if row.get(field) is not None:
+        check(row, field)
+
+
+def check_str(row: dict, field: str) -> None:
+    """One field is a string, or the row refuses by name."""
+    check_str_fields(row, (field,))
+
+
+def detail_lines(row: dict) -> list[str]:
+    """A catalog row's full record, the facts ``msks image info``
+    prints."""
+    kernel = kernel_cell(row)
+    return [
+        f"ref          {row['name']}:{row['version']}",
+        f"hash         {row['hash']}",
+        f"kernel       {kernel}",
+        f"description  {description_cell(row)}",
+        f"imported     {imported_cell(row)}",
+        f"default      {'yes' if row.get('default') else 'no'}",
     ]
 
-    def __init__(self, picked) -> None:
+
+def kernel_cell(row: dict) -> str:
+    """The kernel facts, both halves dashing when absent."""
+    return (
+        f"{row.get('kernel_version') or '-'} "
+        f"({row.get('kernel_format') or '-'})"
+    )
+
+
+def description_cell(row: dict) -> str:
+    """The baked identity at full length; a manifest without one
+    says so."""
+    return (row.get("description") or "").strip() or "- (none baked)"
+
+
+class ImageDetailScreen(ModalScreen):
+    """One catalog row's full record (#571): Enter on a catalog
+    row opens it, any close key or click dismisses."""
+
+    BINDINGS = [
+        Binding("enter", "close", "Close", show=False),
+        Binding("q", "close", "Close"),
+        Binding("escape", "close", "Close", show=False),
+    ]
+
+    def __init__(self, row: dict) -> None:
         super().__init__()
-        self.picked = picked
-        self.rows: list[dict] = []
+        self.row = row
+
+    def compose(self) -> ComposeResult:
+        yield Static("\n".join(detail_lines(self.row)), id="image-detail")
+
+    def action_close(self) -> None:
+        self.dismiss()
+
+
+class ImageImportScreen(ModalScreen):
+    """The image page (#565, #571): the catalog and the published
+    channel in two labeled groups. Enter imports a published row
+    (the importing modal returns here, both groups refreshing) or
+    opens the detail view for a catalog row; ``D`` deletes a
+    catalog row through the confirm screen; ``q``/Escape closes
+    the page. A manifest that cannot be fetched or read names its
+    cause on the failure panel — the default channel needs no
+    configuration, so its failure is the first an operator
+    meets."""
+
+    BINDINGS = [
+        Binding("q", "cancel", "Close", show=False),
+        Binding("escape", "cancel", "Close", show=False),
+        Binding("D", "delete", "Del", show=False),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.catalog: list[dict] = []
+        self.published: list[dict] = []
+        #: The rendered rows: (kind, row) parallel to the options.
+        self.entries: list[tuple[str, dict | None]] = []
         self._left = False
         self._fetch_task = None
 
@@ -144,11 +234,11 @@ class ImageImportScreen(ModalScreen[dict | None]):
         yield Static("", id="import-picker-status")
 
     def on_mount(self) -> None:
-        self.status("fetching the published image manifest…")
+        self.status("fetching the catalog and the published manifest…")
         self._fetch_task = asyncio.create_task(self.fetch_rows())
 
     def on_unmount(self) -> None:
-        """A cancelled picker leaves nothing behind: the in-flight
+        """A closed page leaves nothing behind: the in-flight
         fetch dies here (its later failure must not pop whatever
         screen stands on top — Screen.dismiss pops blindly, and
         the operator's next screen is not this one's to take)."""
@@ -165,21 +255,97 @@ class ImageImportScreen(ModalScreen[dict | None]):
             or DEFAULT_IMAGE_MANIFEST_URL
         )
         try:
-            rows = await fetch_manifest(url)
-            self.read_rows(rows)
+            catalog = await self.app.data.images()
+            published = [
+                manifest_row(row) for row in await fetch_manifest(url)
+            ]
         except asyncio.CancelledError:
             raise
         except (Exception, SystemExit) as exc:
             self.land(exc)
+            return
+        self.catalog = catalog
+        self.published = published
+        self.mount_rows()
 
-    def read_rows(self, rows: list) -> None:
-        """Validate the fetched rows into the picker's list and
-        mount them; an empty manifest reads as its own refusal."""
-        self.rows = [manifest_row(row) for row in rows]
-        if not self.rows:
-            raise SystemExit("the manifest carries no images")
-        if not self._left:
-            self.mount_rows()
+    def labels(self) -> list[str]:
+        """The rendered rows, parallel to :attr:`entries` — both
+        lists are built by :meth:`build_rows` from one walk, so
+        an option's index always finds its own entry."""
+        return [label for _kind, _row, label in self.build_rows()]
+
+    def build_rows(self) -> list[tuple[str, dict | None, str]]:
+        """The page's rows in order: the catalog heading, the
+        catalog rows (default marker, import date), a spacer, the
+        published heading, the published rows (membership marker
+        or build date). One source for the entries and their
+        labels — the selection indexes into both."""
+        rows: list[tuple[str, dict | None, str]] = [
+            ("heading", None, "In the catalog")
+        ]
+        rows += [
+            ("catalog", entry, catalog_label(entry)) for entry in self.catalog
+        ]
+        rows.append(("heading", None, ""))
+        rows.append(("heading", None, "Published"))
+        rows += [
+            ("published", entry, published_label(entry, self.catalog))
+            for entry in self.published
+        ]
+        return rows
+
+    def mount_rows(self) -> None:
+        """Offer the two groups: the catalog first (the default
+        marker, the import dates), the published rows under it
+        (their membership markers or build dates)."""
+        built = self.build_rows()
+        self.entries = [(kind, entry) for kind, entry, _label in built]
+        options = OptionList(*[label for _k, _r, label in built])
+        options.add_class("import-picker")
+        self.mount(options)
+        # The first actionable row, not a heading: a bare Enter
+        # must act (the mode picker's #465-review rule), and with
+        # an empty catalog that is the first published row.
+        options.highlighted = next(
+            (
+                index
+                for index, (kind, _row) in enumerate(self.entries)
+                if kind != "heading"
+            ),
+            0,
+        )
+        options.focus()
+        self.status(
+            "Enter imports a published image or opens a catalog "
+            "row's detail; D deletes a catalog row; q closes"
+        )
+
+    def refresh_rows(self) -> None:
+        """Re-read the catalog after an import or a delete: the
+        published rows' markers move with it. The manifest needs
+        no refetch — the channel's rows did not change."""
+        self._refresh_task = asyncio.create_task(self.refetch_catalog())
+
+    async def refetch_catalog(self) -> None:
+        if self._left:
+            return  # a closed page fetches nothing, rebuilds nothing
+        try:
+            self.catalog = await self.app.data.images()
+        except (Exception, SystemExit) as exc:
+            self.land(exc)
+            return
+        options = self.query_one(OptionList)
+        labels = self.labels()
+        options.clear_options()
+        options.add_options(labels)
+        options.highlighted = next(
+            (
+                index
+                for index, (kind, _row) in enumerate(self.entries)
+                if kind != "heading"
+            ),
+            0,
+        )
 
     def land(self, exc: BaseException) -> None:
         """A fetch or read that failed while this screen still
@@ -195,51 +361,76 @@ class ImageImportScreen(ModalScreen[dict | None]):
         self.dismiss()
         self.app.push_screen(FailurePanel("manifest fetch", None, str(exc)))
 
-    def mount_rows(self) -> None:
-        """Offer the fetched rows: the picker's list, the first
-        row highlighted (a bare Enter must act — the mode
-        picker's #465-review rule), and the one-line hint. A ref
-        the manifest carries twice (a rebuilt archive) takes the
-        hash tail, so every row stays its own selectable label."""
-        seen: set[str] = set()
-        labels: list[str] = []
-        for row in self.rows:
-            duplicate = row["ref"] in seen
-            seen.add(row["ref"])
-            labels.append(picker_label(row, dedupe=duplicate))
-        options = OptionList(*labels)
-        options.add_class("import-picker")
-        self.mount(options)
-        options.highlighted = 0
-        options.focus()
-        self.status(
-            "Enter imports the highlighted image; q cancels — the "
-            "daemon downloads and verifies the archive itself"
-        )
+    def selected_entry(self) -> tuple[str, dict] | None:
+        """The highlighted row's entry, or None when the list is
+        not up (or a heading holds the highlight)."""
+        options = self.query_one(OptionList)
+        index = options.highlighted
+        if index is None or index >= len(self.entries):
+            return None
+        kind, row = self.entries[index]
+        return (kind, row) if kind != "heading" and row is not None else None
 
     def on_option_list_option_selected(
         self, event: OptionList.OptionSelected
     ) -> None:
-        # The prompt names its row (an index read back from the
-        # widget races a rebuild); the pick rides the label.
-        label = str(event.option.prompt)
-        for row in self.rows:
-            if (
-                picker_label(row) == label
-                or picker_label(row, dedupe=True) == label
-            ):
-                self.dismiss_with(row)
-                return
-
-    def dismiss_with(self, row: dict | None) -> None:
-        if self._left:
+        entry = self.selected_entry()
+        if entry is None:
             return
-        self._left = True
-        self.dismiss()
-        self._pick_task = asyncio.create_task(self.picked(row))
+        kind, row = entry
+        if kind == "catalog":
+            self._detail_task = asyncio.create_task(self.await_detail(row))
+        else:
+            self.start_import(row)
+
+    async def await_detail(self, row: dict) -> None:
+        """Hold the page while the detail view stands: its close
+        returns here, the rows untouched."""
+        await self.app.push_screen_wait(ImageDetailScreen(row))
+
+    def start_import(self, row: dict) -> None:
+        """Import a published row through the modal; the page
+        stays mounted and refreshes when the import lands."""
+        self.app.push_screen(ImportingScreen(row, self.refresh_rows))
+
+    def action_delete(self) -> None:
+        """``D``: a catalog row deletes through the confirm
+        screen — the same DELETE the CLI's image rm makes. The row
+        is captured here: the highlight can move while the
+        confirm stands."""
+        entry = self.selected_entry()
+        if entry is None or entry[0] != "catalog":
+            self.status("D deletes a catalog row — highlight one")
+            return
+        row = entry[1]
+        ref = f"{row['name']}:{row['version']}"
+
+        async def answered(answer: bool) -> None:
+            await self.delete_answered(answer, row)
+
+        self.app.push_screen(ConfirmScreen(f"delete image {ref}?", answered))
+
+    async def delete_answered(self, answer: bool, row: dict) -> None:
+        """The confirm's callback: True deletes by hash and
+        refreshes; a refusal lands on the failure panel."""
+        if not answer:
+            return
+        try:
+            await self.app.data.remove_image(row["hash"])
+        except (Exception, SystemExit) as exc:
+            self.app.push_screen(
+                FailurePanel("delete", row.get("hash"), str(exc))
+            )
+            return
+        self.app.flash(f"deleted {row['name']}:{row['version']}")
+        self.refresh_rows()
 
     def action_cancel(self) -> None:
-        self.dismiss_with(None)
+        """``q``/Escape close the page — an import happens only
+        through its own modal, so a close carries no callback."""
+        if not self._left:
+            self._left = True
+            self.dismiss()
 
 
 class ImportingScreen(ModalScreen):
@@ -319,6 +510,6 @@ class ImportingScreen(ModalScreen):
             f"imported {record['ref']} ({record['hash'][:12]}) — "
             "the create form's image list carries it"
         )
-        # The done-callback is a plain refresh (sync): the list's
+        # The done-callback is a plain refresh (sync): the page's
         # rows re-query on the next tick either way.
         self.done()

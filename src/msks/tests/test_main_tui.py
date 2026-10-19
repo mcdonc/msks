@@ -137,6 +137,8 @@ class FakeData:
         # imports and the refusal a test arms.
         self.import_calls: list[str] = []
         self.import_refusal: str | None = None
+        self.removed: list[str] = []
+        self.remove_refusal: str | None = None
         # The secrets page's surface (#390): the placeholder rows,
         # the recorded audit rows, and the calls the page makes.
         self.secret_rows: list[dict] = []
@@ -173,6 +175,14 @@ class FakeData:
         if "images" in self.fail:
             raise RuntimeError(self.refusal)
         return [dict(r) for r in self.images_rows]
+
+    async def remove_image(self, digest: str) -> dict:
+        """The image page's delete (#571): recorded; a refusal a
+        test armed raises the way the daemon's would."""
+        self.removed.append(digest)
+        if self.remove_refusal is not None:
+            raise SystemExit(self.remove_refusal)
+        return {"deleted": digest}
 
     async def import_image(self, source: str) -> dict:
         """The channel import (#565): recorded; a refusal a test
@@ -4733,6 +4743,8 @@ async def test_the_import_key_opens_the_channel_picker(monkeypatch) -> None:
         labels = [str(o.prompt) for o in options.options]
         assert any("debian:13.6" in label for label in labels)
         assert any("(266 MiB)" in label for label in labels)
+        status = str(app.screen.query_one("#import-picker-status").content)
+        assert "D deletes a catalog row" in status
         assert data.import_calls == []
 
 
@@ -4804,15 +4816,25 @@ async def test_a_failed_manifest_fetch_names_the_cause(monkeypatch) -> None:
         assert data.import_calls == []
 
 
-async def test_an_empty_manifest_names_itself(monkeypatch) -> None:
+async def test_an_empty_manifest_leaves_the_catalog_group(
+    monkeypatch,
+) -> None:
+    """#571: the page is the catalog AND the channel — a channel
+    carrying nothing still shows the catalog group (the manifest
+    only failed to list, and the operator's images are real)."""
     scripted_manifest(monkeypatch, rows=[])
     data = FakeData([row()])
+    data.images_rows = [catalog_row()]
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await pilot.press("i")
-        await wait_for(lambda: on_failure(app))
-        detail = str(app.screen.query_one("#failure-detail").render())
-        assert "carries no images" in detail
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        labels = [
+            str(o.prompt) for o in app.screen.query_one(OptionList).options
+        ]
+        assert "In the catalog" in labels
+        assert any("debian:13.6" in label for label in labels)
+        assert not on_failure(app)
 
 
 async def test_q_on_the_importing_modal_closes_it(monkeypatch) -> None:
@@ -4859,20 +4881,26 @@ async def test_q_on_the_importing_modal_closes_it(monkeypatch) -> None:
         )
 
 
-def test_a_foreign_option_prompt_is_ignored() -> None:
-    """A selection whose prompt names no manifest row (a widget
-    rebuilt under the picker) decides nothing — no dismiss, no
-    import."""
-    from types import SimpleNamespace
-
+def test_a_heading_holds_no_action() -> None:
+    """A heading row (or a stale index) selects nothing — the
+    page's actions key off the entry kind, so Enter on a heading
+    decides nothing."""
     from msks.client.tui.importer import ImageImportScreen
 
-    picked: list = []
-    screen = ImageImportScreen(lambda row: picked.append(row))
-    screen.rows = [{"ref": "x:1", "url": "u"}]
-    event = SimpleNamespace(option=SimpleNamespace(prompt="not a row"))
-    screen.on_option_list_option_selected(event)
-    assert picked == []
+    screen = ImageImportScreen()
+    screen.entries = [("heading", None)]
+
+    class FakeOptions:
+        highlighted = 0
+
+    screen.query_one = lambda selector, expect=None: FakeOptions()
+    assert screen.selected_entry() is None
+
+    class Beyond:
+        highlighted = 99  # a stale index past a rebuilt list
+
+    screen.query_one = lambda selector, expect=None: Beyond()
+    assert screen.selected_entry() is None
 
 
 async def test_the_data_seam_posts_the_import(monkeypatch) -> None:
@@ -4960,20 +4988,26 @@ async def test_a_mistyped_manifest_field_refuses_by_name() -> None:
 
 
 def test_a_duplicated_ref_keeps_both_rows_selectable() -> None:
-    """Two rows sharing a ref (a rebuilt archive) carry the hash
-    tail, and each label finds its own row."""
-    from msks.client.tui.importer import picker_label
+    """Two rows sharing a ref (a rebuilt archive) stay separate
+    picks: the page selects by index, so identical labels cannot
+    shadow one another."""
+    from msks.client.tui.importer import ImageImportScreen
 
-    rows = [
-        {"ref": "x:1", "url": "a", "hash": "a" * 64},
-        {"ref": "x:1", "url": "b", "hash": "b" * 64},
+    screen = ImageImportScreen()
+    screen.entries = [
+        ("heading", None),
+        ("published", {"ref": "x:1", "url": "a"}),
+        ("published", {"ref": "x:1", "url": "b"}),
     ]
-    labels = [
-        picker_label(rows[0], dedupe=True),
-        picker_label(rows[1], dedupe=True),
-    ]
-    assert labels[0] != labels[1]
-    assert "aaaaaaaaaaaa" in labels[0]
+
+    class FakeOptions:
+        highlighted = 2
+
+    screen.query_one = lambda selector, expect=None: FakeOptions()
+    assert screen.selected_entry() == (
+        "published",
+        {"ref": "x:1", "url": "b"},
+    )
 
 
 def test_the_importing_modal_binds_q() -> None:
@@ -5020,27 +5054,55 @@ def test_a_row_missing_its_pair_and_the_left_paths() -> None:
     with pytest.raises(ValueError, match="lacks ref/url"):
         manifest_row("not even a dict")
 
-    picked: list = []
-    screen = ImageImportScreen(lambda row: picked.append(row))
+    screen = ImageImportScreen()
     screen._left = True
-    screen.dismiss_with(None)
-    assert picked == []
+    screen.action_cancel()  # already left: a second close is a no-op
     screen.land(SystemExit("late failure"))  # no pop, no panel
 
 
-def test_read_rows_on_a_left_screen_mounts_nothing() -> None:
-    """The left-guarded mount: a read that finishes after the
-    screen went (the cancel's narrow loss window) validates its
-    rows but mounts nothing — the comprehension's whole walk and
-    both guard arms in one drive."""
+async def test_labels_on_a_left_screen_mount_nothing() -> None:
+    """The left-guarded refresh: a re-read that finishes after
+    the screen went rebuilds no list."""
     from msks.client.tui.importer import ImageImportScreen
 
-    screen = ImageImportScreen(lambda row: None)
+    screen = ImageImportScreen()
     screen._left = True
-    screen.read_rows([{"ref": "x:1", "url": "u"}])
-    assert screen.rows == [{"ref": "x:1", "url": "u"}]
-    with pytest.raises(SystemExit, match="carries no images"):
-        screen.read_rows([])
+    screen.catalog = [
+        {
+            "name": "x",
+            "version": "1",
+            "hash": "h",
+            "default": True,
+            "imported": "2026-10-18T13:00:00",
+        }
+    ]
+    screen.published = []
+    screen.entries = []
+
+    async def quiet():
+        screen.catalog = []
+
+    screen.refetch_catalog = quiet
+    screen.refresh_rows()
+    await asyncio.sleep(0)
+    assert screen.entries == []  # a left page rebuilt no list
+
+    # And a reread that completes after the page left rebuilds
+    # nothing — not even a widget lookup.
+    async def late():
+        screen.catalog = []
+
+    screen.refetch_catalog = late
+
+    def no_lookup(selector, expect=None):
+        raise AssertionError("a left page queried its list")
+
+    screen.query_one = no_lookup
+    # The class's own reread (the stub above replaced the bound
+    # one): the left check precedes the fetch, so no app, no
+    # lookup, no rebuild.
+    await type(screen).refetch_catalog(screen)
+    assert screen.entries == []
 
 
 async def test_a_queued_q_cannot_eat_the_failure_panel(monkeypatch) -> None:
@@ -5073,7 +5135,234 @@ async def test_a_queued_q_cannot_eat_the_failure_panel(monkeypatch) -> None:
         # pop would otherwise eat the panel that just landed) —
         # the panel stands, the queue stays empty.
         assert picker._left is True
-        picker.dismiss_with(None)
+        picker.action_cancel()
         await asyncio.sleep(0.2)
         assert on_failure(app)
         assert data.import_calls == []
+
+
+def catalog_row(
+    ref: str = "debian:13.6", digest: str = "a" * 64, default: bool = True
+) -> dict:
+    name, _, version = ref.partition(":")
+    return {
+        "hash": digest,
+        "name": name,
+        "version": version,
+        "default": default,
+        "imported": "2026-10-18T13:00:00",
+        "kernel_version": "6.12",
+        "kernel_format": "bzImage",
+        "description": "the baked line",
+    }
+
+
+async def test_the_page_shows_both_groups_with_dates(monkeypatch) -> None:
+    """#571: the catalog group carries the default marker and the
+    import date; the published rows carry the membership marker
+    or the build date (a dash when the row predates the field)."""
+    scripted_manifest(
+        monkeypatch,
+        rows=[
+            {**CHANNEL[0], "built_at": "2026-10-18T17:00:00Z"},
+            {
+                **CHANNEL[1],
+                "hash": "c" * 64,
+                "built_at": "2026-10-18T17:30:00Z",
+            },
+        ],
+    )
+    data = FakeData([row()])
+    data.images_rows = [catalog_row()]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        labels = [
+            str(o.prompt) for o in app.screen.query_one(OptionList).options
+        ]
+        assert "In the catalog" in labels
+        assert any(
+            "debian:13.6" in label
+            and "[default]" in label
+            and "imported 2026-10-18" in label
+            for label in labels
+        )
+        assert "Published" in labels
+        # CHANNEL[0]'s hash ("a"*64) matches the catalog row.
+        assert any("[imported]" in label for label in labels)
+        # CHANNEL[1] shares debian's ref? no — its ref is nixos
+        # with a foreign hash: it carries the build date.
+        assert any("built 2026-10-18" in label for label in labels)
+
+
+def test_membership_markers() -> None:
+    from msks.client.tui.importer import membership
+
+    same_hash = [catalog_row()]
+    other_build = [catalog_row(digest="b" * 64)]
+    assert (
+        membership({"ref": "debian:13.6", "hash": "a" * 64}, same_hash)
+        == "[imported]"
+    )
+    assert (
+        membership({"ref": "debian:13.6", "hash": "z" * 64}, other_build)
+        == "[in catalog, other build]"
+    )
+    assert membership({"ref": "alpine:3", "hash": "z" * 64}, other_build) == ""
+
+
+async def test_enter_on_a_catalog_row_opens_the_detail(monkeypatch) -> None:
+    """#571: Enter on a catalog row shows the full record; the
+    page waits under it and closes back to it."""
+    scripted_manifest(monkeypatch)
+    data = FakeData([row()])
+    data.images_rows = [catalog_row()]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        await pilot.press("enter")  # the highlight sits on the catalog row
+        await wait_for(
+            lambda: type(app.screen).__name__ == "ImageDetailScreen"
+        )
+        detail = str(app.screen.query_one("#image-detail").content)
+        assert "debian:13.6" in detail
+        assert "the baked line" in detail
+        await pilot.press("q")
+        await wait_for(
+            lambda: type(app.screen).__name__ == "ImageImportScreen"
+        )
+        assert data.import_calls == []
+
+
+async def test_D_deletes_a_catalog_row_through_confirm(monkeypatch) -> None:
+    """#571: D on a catalog row confirms, deletes by hash, and
+    the page refreshes (the row's markers move with the catalog)."""
+    scripted_manifest(monkeypatch)
+    data = FakeData([row()])
+    data.images_rows = [catalog_row()]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        await pilot.press("D")
+        await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
+        await pilot.press("y")
+        await wait_for(lambda: data.removed == ["a" * 64])
+        await wait_for(lambda: "deleted debian:13.6" in status_text(app))
+        assert data.import_calls == []
+
+
+async def test_D_on_a_published_row_names_its_scope(monkeypatch) -> None:
+    """D is the catalog group's key: on a published row (or a
+    heading) it names what it deletes instead of confirming."""
+    scripted_manifest(monkeypatch)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        options = app.screen.query_one(OptionList)
+        options.highlighted = len(options.options) - 1  # a published row
+        await pilot.press("D")
+        await pilot.pause()
+        assert type(app.screen).__name__ == "ImageImportScreen"
+        status = str(app.screen.query_one("#import-picker-status").content)
+        assert "D deletes a catalog row" in status
+        assert data.removed == []
+
+
+async def test_a_refused_deletion_lands_on_the_panel(monkeypatch) -> None:
+    """The daemon's refusal (an image a workspace boots) surfaces
+    its reason — a flash would drop it."""
+    scripted_manifest(monkeypatch)
+    data = FakeData([row()])
+    data.images_rows = [catalog_row()]
+    data.remove_refusal = "image in use by workspace boofus"
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        await pilot.press("D")
+        await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
+        await pilot.press("y")
+        await wait_for(lambda: on_failure(app))
+        detail = str(app.screen.query_one("#failure-detail").render())
+        assert "image in use by workspace boofus" in detail
+
+
+async def test_a_failing_catalog_reread_lands_on_the_panel(
+    monkeypatch,
+) -> None:
+    """The refresh after an import re-reads the catalog; a daemon
+    that refuses mid-refresh names its cause on the panel (the
+    real flow — the import's done-callback drives the reread)."""
+    scripted_manifest(monkeypatch)
+
+    class SecondReadFails(FakeData):
+        def __init__(self, rows):
+            super().__init__(rows)
+            self.reads = 0
+
+        async def images(self) -> list[dict]:
+            self.reads += 1
+            if self.reads > 1:
+                raise RuntimeError("daemon away")
+            return await super().images()
+
+    data = SecondReadFails([row()])
+    data.images_rows = [catalog_row()]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        # Highlight the last published row and import it: the
+        # done-callback's reread fails and lands.
+        options = app.screen.query_one(OptionList)
+        options.highlighted = len(options.options) - 1
+        await pilot.press("enter")
+        await wait_for(lambda: data.import_calls != [])
+        await wait_for(lambda: on_failure(app))
+        await wait_for(lambda: app.screen.query("#failure-detail") != [])
+        detail = str(app.screen.query_one("#failure-detail").render())
+        assert "daemon away" in detail
+
+
+async def test_a_none_selection_and_a_declined_confirm_decide_nothing() -> (
+    None
+):
+    """The two early returns: Enter with nothing actionable
+    selected does nothing, and a declined confirm deletes
+    nothing."""
+    from types import SimpleNamespace
+
+    from msks.client.tui.importer import ImageImportScreen
+
+    screen = ImageImportScreen()
+
+    class FakeOptions:
+        highlighted = None
+
+    screen.query_one = lambda selector, expect=None: FakeOptions()
+    screen.on_option_list_option_selected(SimpleNamespace(option=None))
+    await screen.delete_answered(False, catalog_row())
+
+
+async def test_the_data_seam_deletes_by_hash(monkeypatch) -> None:
+    """The image page's exchange (#571): D resolves to DELETE by
+    hash on the shared TLS context."""
+    import httpx
+    from msks.client.tui.data import TuiData
+
+    deleted: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        deleted.append(request.url.path)
+        return httpx.Response(200, json={"deleted": "x"})
+
+    monkeypatch.setenv("MSKSC_URL", "https://daemon")
+    monkeypatch.setenv("MSKSC_TOKEN", "tok")
+    data = TuiData(transport=httpx.MockTransport(handler))
+    await data.remove_image("a" * 64)
+    assert deleted == [f"/api/v1/images/{'a' * 64}"]

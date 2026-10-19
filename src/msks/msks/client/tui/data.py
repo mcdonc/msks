@@ -57,6 +57,18 @@ class TuiData:
             ssl_ctx=shared_ssl(),
         )
 
+    async def remove_image(self, digest: str) -> dict:
+        """DELETE one image by hash — the image page's D key
+        (#571), the same exchange the CLI's image rm makes."""
+        return await api_call(
+            "DELETE",
+            env_url(),
+            env_token(),
+            f"/api/v1/images/{digest}",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+        )
+
     async def import_image(self, source: str) -> dict:
         """POST one image import — the TUI's Import image action
         (#565): the source is a published channel URL; the daemon
