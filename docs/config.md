@@ -2,8 +2,8 @@
 
 `msksd` reads its settings from a YAML file, from `MSKSD_*`
 environment variables, and from built-in defaults. The file is the
-durable home for a deployment's settings — committed to the
-deployment's own storage and human-reviewable — while the
+durable home for a deployment's settings, committed to the
+deployment's own storage and human-reviewable, while the
 environment variables stay available as per-invocation overrides.
 
 ## Precedence
@@ -36,41 +36,40 @@ the file is located.
 ## `msksd doctor`
 
 `msksd doctor` checks the host for the external tools and
-libraries msksd and the msks client exec at runtime — the
-cloud-hypervisor VMM, the e2fsprogs pair that grows and checks
-workspace volumes, the `mkisofs` that packs the cidata seed disks,
-the iproute2/nftables/conntrack trio behind each workspace's tap,
-`qemu-img` for the root overlay,
-secret store, the two libraries the interceptor's NFQUEUE path
-links against, the host tmux at the 3.2 floor the consent
-terminal documents, and the ssh/rsync pair the documented
-workflows run over `msks forward`. Each result prints
+libraries msksd and the msks client exec at runtime. The set
+covers the cloud-hypervisor VMM, the e2fsprogs pair that grows
+and checks workspace volumes, the `mkisofs` that packs the
+cidata seed disks, and the iproute2/nftables/conntrack trio
+behind each workspace's tap. It also covers `qemu-img` for the root overlay and secret
+store, the two libraries the interceptor's NFQUEUE path links
+against, and the host tmux at the 3.2 floor the consent
+terminal documents. Finally, it covers the ssh/rsync pair the
+documented workflows run over `msks forward`. Each result prints
 with a ✓ (present and functional), ⚠ (a client-side tool the
 daemon itself runs without), or ✗ (a core-path dependency)
 marker, and each miss carries an install hint matched to the
 detected package manager. The run ends with a summary that
 repeats every miss with its fix; the exit code is 0 when every
 check passes or only warns, 1 when any check errors. The check
-set covers runtime requirements only — debugging and development
-tools stay out of it.
+set covers runtime requirements only; debugging and
+development tools stay out of it.
 
 Tool names come from the same settings the daemon will use (the
 `--config` flag and `MSKSD_*` variables apply), so doctor checks
-what this host's daemon will actually exec. Doctor takes no side
-effects: it reads a config when one resolves and never generates
-the first-run template; a config that exists but fails to load
-falls back to environment variables and defaults with a warning
-naming the error, and a fresh host with no default config yet
-falls back silently. The two libraries are verified through
+what this host's daemon will actually exec. Doctor takes no side effects. It reads a config when one
+resolves and never generates the first-run template. A config
+that exists but fails to load falls back to environment
+variables and defaults, with a warning naming the error. A
+fresh host with no default config yet falls back silently. The two libraries are verified through
 `pkg-config`, the linker cache (`ldconfig -p`), or the binding's
-ctypes soname load — whichever answers first.
+ctypes soname load, whichever answers first.
 
 The binding's soname load is its own check row beside the two
-library rows, and all three run on Linux hosts only: off Linux
-the library is a Linux package, and the binding row names that
-contract instead of hinting packages. On Linux, the vendored
-ctypes binding dlopens `libnetfilter_queue.so.1` — the
-same load the consent path performs — so a host whose runtime
+library rows, and all three run on Linux hosts only. Off
+Linux, the library is a Linux package, and the binding row
+names that contract instead of hinting packages. On Linux, the vendored
+ctypes binding dlopens `libnetfilter_queue.so.1`, the
+same load the consent path performs, so a host whose runtime
 soname is absent fails it even when `pkg-config` still answers
 for the library. Its fix line names the package that carries the
 runtime soname (`libnetfilter-queue1` on apt).
@@ -78,25 +77,26 @@ runtime soname (`libnetfilter-queue1` on apt).
 The install hints match each manager's real package names
 (verified against a Debian trixie container: `genisoimage` serves
 `mkisofs`, `qemu-utils` ships `qemu-img`, `conntrack` is apt's
-name, and the library rows name the runtime soname packages —
-`libnetfilter-queue1` and `libnfnetlink0`). Where a fix is not a
-distro package, the hint names the
-real source: cloud-hypervisor installs from the upstream static
-release (Debian's archive carries it in none of its suites) and
+name, and the library rows name the runtime soname packages
+`libnetfilter-queue1` and `libnfnetlink0`). Where a fix is not a distro package, the hint names the real
+source: cloud-hypervisor installs from the upstream static
+release, and Debian's archive carries it in none of its
+suites.
 
-The dev daemon runs bare: `scripts/dev-daemon.sh` sets
-`MSKSD_CONFIG_DIR` to the devenv root (and the devenv shell presets
-the same value, so a hand-run `msksd` resolves the same file), so
-its durable settings live in `<repo>/msksd.yaml` — generated as
-the commented template on first daemon start, untracked (local
-edits are personal). The environment the script exports (API port,
+The dev daemon runs bare. `scripts/dev-daemon.sh` sets
+`MSKSD_CONFIG_DIR` to the devenv root, and the devenv shell
+presets the same value, so a hand-run `msksd` resolves the
+same file. The daemon's durable settings therefore live in
+`<repo>/msksd.yaml`: generated as the commented template on
+first daemon start, and untracked, so local edits stay
+personal. The environment the script exports (API port,
 state dir, egress wiring) wins over file values under the
 precedence above.
 
 ## Key mapping
 
 A config-file key is its `MSKSD_*` variable with the prefix stripped
-and lowercased — one rule, no lookup table:
+and lowercased, one rule with no lookup table:
 
 | Environment variable  | Config-file key |
 | --------------------- | --------------- |
@@ -104,7 +104,8 @@ and lowercased — one rule, no lookup table:
 | `MSKSD_EGRESS_SUBNET` | `egress_subnet` |
 | `MSKSD_STATE_DIR`     | `state_dir`     |
 
-The file is flat — one key per setting, no sections. For example:
+The file is flat: one key per setting, no sections. For
+example:
 
 ```yaml
 host: 0.0.0.0
@@ -118,10 +119,10 @@ key↔variable table is derived mechanically, so the two forms cannot
 drift apart.
 
 The underscore is the canonical spelling, and a hyphen may be
-written for it: `egress-dns-upstream` and `egress_dns_upstream` are
-one key spelled two ways (the same rule the `llm_models` entries'
-keys follow), so an operator used to kebab-case YAML can write it
-naturally. Both spellings of one key in the same file is a startup
+written for it: `egress-dns-upstream` and `egress_dns_upstream`
+are one key spelled two ways. The `llm_models` entries' keys
+follow the same rule, so an operator used to kebab-case YAML
+can write it naturally. Both spellings of one key in the same file is a startup
 error naming the two spellings, and the valid-keys list an unknown
 key reports is the snake_case one.
 
@@ -137,30 +138,32 @@ Numeric, boolean, and string fields accept their natural YAML
 scalars: `port: 8660`, `access_log: true`,
 `socket_wait_timeout_s: 12.5`. Quoted strings (`port: "8660"`) work
 everywhere and parse identically. A key with no value
-(`bootstrap_token:`) is the unset form — the environment (for its
+(`bootstrap_token:`) is the unset form; the environment (for
+its
 variable) and then the default apply. Values must be scalars: a list
 or mapping where a number, boolean, or string belongs is a startup
-error, and so is a duplicate key — a second `port:` does not silently
+error, and so is a duplicate key: a second `port:` does not
+silently
 win. Merge keys (`<<: *anchor`) are refused with their own message: the
 file is flat and every key is spelled out.
 
 Booleans deserve care. `true` and `false` are the spellings to use;
 PyYAML also parses the YAML 1.1 forms `yes`/`no`/`on`/`off` as
-booleans, so those work too. The single letters `y` and `n` are
-plain strings to YAML 1.1 — a boolean key set to either reads as
-**false**, the same string rule the environment variable follows —
-and a bare `1` or `0` is an integer, which also reads as false.
+booleans, so those work too. The single letters `y` and `n` are plain strings to YAML 1.1,
+so a boolean key set to either reads as **false**; the
+environment variable follows the same string rule. A bare `1`
+or `0` is an integer, which also reads as false.
 Write `true` or `false`.
 
 ### Unknown keys fail fast
 
 A key the daemon does not know is a startup error naming the key and
-the valid ones — a typo'd `prot` fails at boot instead of being
-silently ignored. (The environment has no such guard: a typo'd
-variable name is simply never read.)
-
-Invalid values fail the same way whichever source they came from,
-and the error message names the `MSKSD_*` variable —
+the valid ones, so a typo'd `prot` fails at boot instead of
+being
+silently ignored. The environment has no such guard: a typo'd variable name is
+simply never read. Invalid values fail the same way whichever
+source they came from, and the error message names the
+`MSKSD_*` variable —
 `vmm_driver: firecracker` reports `MSKSD_VMM_DRIVER must be one of
 ('local',)`. Non-finite numbers (`.nan`, `.inf`) are rejected
 from either source.
@@ -255,38 +258,44 @@ when the first store operation finds it absent.
 Send `SIGHUP` to a running `msksd` and it re-reads the config file
 (and the environment) into its live settings. Subsystems read
 settings off the app's state at call time, so the swap propagates
-with no per-module reconfiguration — a changed `egress_subnet` or
+with no per-module reconfiguration: a changed `egress_subnet`
+or
 `host_name` applies to the next request that reads it.
 
-Several things keep their startup values until a restart — a
+Several things keep their startup values until a restart. A
 reload naming a new one changes nothing:
 
-- the listener's address, port, TLS material, and access logging
-  (bound — and, for the access log, snapshotted into the listener's
-  config — at startup)
-- `state_dir` and the database path it places (the engine is open,
-  and the local driver resolves every workspace's artifacts from the
-  state dir live — moving it mid-run would orphan running
-  workspaces, so the daemon latches the startup value)
+- the listener's address, port, TLS material, and access
+  logging, all bound at startup; the access log is also
+  snapshotted into the listener's config
+- `state_dir` and the database path it places: the engine is
+  open, and the local driver resolves every workspace's
+  artifacts from the state dir live, so the daemon latches the
+  startup value (moving it mid-run would orphan running
+  workspaces)
 - `default_image` (imported into the catalog once, at first boot)
 - the watcher scan's `event_poll_s` (sampled at loop start): both the
   workspace status reconcile and the state-disk pressure probe
   ride it
-- the egress machinery's startup inputs: `egress_enabled` (the
-  subsystem latches its state when the daemon boots) and the base
-  NAT masquerade's `egress_uplink` (per-workspace firewall rules
-  read the live setting, but the base table that actually
-  masquerades out the uplink keeps its startup value — change
-  `egress_uplink` only with a restart scheduled. One reload does
-  re-stamp the base table: a change that alters the LLM proxy's
-  loopback guard shape (`llm_models` gaining or losing entries,
-  `llm_port`, `egress_subnet`) re-applies it at the next
-  workspace start, masquerade included, from the live `egress_uplink`)
+- the egress machinery's startup inputs. `egress_enabled`
+  latches the subsystem's state when the daemon boots. The base
+  NAT masquerade's `egress_uplink` also latches: per-workspace
+  firewall rules read the live setting, but the base table
+  that actually masquerades out the uplink keeps its startup
+  value, so change `egress_uplink` only with a restart
+  scheduled.
+
+One reload does re-stamp the base table. A change that alters
+the LLM proxy's loopback guard shape (`llm_models` gaining or
+losing entries, `llm_port`, `egress_subnet`) re-applies the
+table at the next workspace start, masquerade included, from
+the live `egress_uplink`.
 
 A config that fails to load or validate is refused: the daemon
 reports the error on stderr and keeps the previous settings. A
 default-path file deleted since startup is likewise refused rather
-than regenerated — a reload is not a first run, and regenerating the
+than regenerated, because a reload is not a first run and
+regenerating the
 template would silently revert every file-set value to its default.
 
 ## Notes for tooling
@@ -298,5 +307,6 @@ template would silently revert every file-set value to its default.
   `MSKSD_CONFIG_DIR`/`MSKSD_STATE_DIR` when the hand-run migration
   must reach a database not at the default location.
 - The generated template is written once, with `0700` on its
-  directory, and never overwrites an existing file — a concurrent
+  directory, and never overwrites an existing file; a
+  concurrent
   `msksd` that wins the race is treated as "the file is there now".

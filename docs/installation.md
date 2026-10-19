@@ -11,12 +11,12 @@ newer.
 pipx install msks        # or: pip install msks
 ```
 
-The daemon runs the workspaces first-level — cloud-hypervisor
-on the host's own `/dev/kvm`, per-VM network taps, the egress
-consent stack in the host kernel — so the host needs pieces the
-wheel cannot carry: kernel modules, a routing sysctl, two
-capabilities for the daemon's user, and a service that keeps
-`msksd` running. On a Debian deployment host, one command lands
+The daemon runs the workspaces directly on the host:
+cloud-hypervisor on `/dev/kvm`, one network tap per VM, and the
+egress consent stack in the host kernel. The host therefore
+needs pieces the wheel cannot carry. These are kernel modules,
+a routing sysctl, two capabilities for the daemon's user, and a
+service that keeps `msksd` running. On a Debian deployment host, one command lands
 all of it:
 
 ```console
@@ -40,8 +40,8 @@ with a named error.
 
 **The packages.** The egress plumbing the daemon execs by bare
 name installs through apt when missing: `iproute2` (`ip`),
-`nftables` (`nft`), `conntrack`, `procps` (`sysctl`) — beside
-the tools the setup itself runs: `util-linux` (`setpriv`),
+`nftables` (`nft`), `conntrack`, and `procps` (`sysctl`),
+beside the tools the setup itself runs: `util-linux` (`setpriv`),
 `libcap2-bin` (`setcap`), `kmod` (`modprobe`). The daemon's
 workspace tools install separately (below).
 
@@ -58,34 +58,34 @@ installing it the setup runs the wrapper and verifies the caps
 arrive ambient.
 
 **The routing kernel.** `/etc/sysctl.d/msks-egress.conf` sets
-`net.ipv4.ip_forward=1` at boot (and the value applies
-immediately): route packets between the per-VM taps and the
+`net.ipv4.ip_forward=1` at boot, and the value applies
+immediately: route packets between the per-VM taps and the
 host uplink. The daemon reads the sysctl at startup and refuses
 every egress workspace, with the cause named, while it reads 0.
 `/etc/modules-load.d/msks.conf` loads the netfilter and tun
-modules at boot — the nftables machinery, NAT, conntrack, the
+modules at boot: the nftables machinery, NAT, conntrack, the
 deny RST, and the interactive consent queue. A module the
 kernel tree lacks lands a warning with the kernel package that
 carries it; interactive egress consent needs its whole module
 set, and the run's summary names the verdict.
 
 **`/dev/kvm`.** Access arrives through the `kvm` group on the
-daemon's user — the setup adds the executing user to the group
+daemon's user; the setup adds the executing user to the group
 when missing. The account picks the group up at the next login; an
 already-running session keeps the old groups until it starts
 anew.
 
 **The systemd user service.** On a host systemd manages, the
 setup writes `~/.config/systemd/user/msksd.service` for the
-executing user and enables it: the unit execs `msksd` through
-the wrapper (the file capabilities grant any executor the same
-posture a root unit would), runs with
+executing user and enables it. The unit execs `msksd` through
+the wrapper, so the file capabilities grant it the same
+posture a root unit would have. It runs with
 `MSKSD_EGRESS_ENABLED=true` and the uplink interface the setup
-detected, creates the unix listener's runtime directory under
-the user's own `$XDG_RUNTIME_DIR` (`RuntimeDirectory=msks` —
-the client's default socket candidate), restarts the daemon on
-failure, and `loginctl enable-linger` keeps the user manager —
-and the daemon — running across logouts and boots. A user
+detected, and it creates the unix listener's runtime directory
+under the user's own `$XDG_RUNTIME_DIR` (`RuntimeDirectory=msks`,
+the client's default socket candidate). It restarts the daemon
+on failure. Finally, `loginctl enable-linger` keeps the user
+manager, and the daemon, running across logouts and boots. A user
 manager that was already running may have forked before the kvm
 group write reached it; the daemon then holds the old groups
 until that manager restarts, and the run's summary says so. A re-run
@@ -204,10 +204,11 @@ logouts and boots.
 ## Hosts the unit does not cover
 
 `--no-service` lands every host piece above and skips the
-unit — for a container, a non-systemd init, or a deployment
-that runs `msksd` its own way (the setup also skips the unit on
-its own when it cannot find an `msksd` beside its own install,
-or when systemd is not the manager, and says so). On such a
+unit. Choose it for a container, a non-systemd init, or a
+deployment that runs `msksd` its own way. The setup also skips
+the unit on its own when it cannot find an `msksd` beside its
+own install, or when systemd is not the manager, and it says
+so. On such a
 host the daemon runs whatever way the deployment chooses, with
 the wrapper on its exec line for the two capabilities; the
 [Configuration](config.md) chapter documents the settings a
@@ -234,39 +235,38 @@ sudo install -m755 cloud-hypervisor-static /usr/local/bin/cloud-hypervisor
 
 ## The alternative paths
 
-**A NixOS deployment host** needs no setup tool: the module in
-`nix/module.nix` sets the sysctl, names the uplink, and grants
-the daemon the same two capabilities through the unit itself
-(`AmbientCapabilities`, bounded) to a dedicated `msksd` user
-whose supplementary groups carry `kvm` — a narrower grant than
-the wrapper's execute permission, scoped to the one service.
+**A NixOS deployment host** needs no setup tool. The module
+in `nix/module.nix` sets the sysctl, names the uplink, and
+grants the daemon the same two capabilities through the unit
+itself (bounded `AmbientCapabilities`). A dedicated `msksd`
+user holds them, with `kvm` among its supplementary groups.
+This grant is narrower than the wrapper's execute permission:
+it is scoped to the one service.
 A `nixos-rebuild switch` is the whole host setup.
 
 **A development host** (this repository's checkout) runs the
-daemon through devenv: `msks-dev` seeds a per-worktree state
-dir (its own port, token, and socket) and execs `msksd` through
-`/run/wrappers/bin/msks-caps` — the NixOS host's own wrapper,
-where its configuration installs it; `DEV_CAPS` points at the
-Debian setup's `/usr/local/bin/msks-caps` when the dev tree
-runs on a host NixOS does not manage.
+daemon through devenv. `msks-dev` seeds a per-worktree state
+dir with its own port, token, and socket, and execs `msksd`
+through `/run/wrappers/bin/msks-caps`, the wrapper the host's
+NixOS configuration installs. When the dev tree runs on a host
+NixOS does not manage, `DEV_CAPS` points at the Debian setup's
+`/usr/local/bin/msks-caps`.
 
 ## First run
 
-A bare `msksd` (no subcommand) serves. On a fresh state dir
-(`~/.local/state/msksd`, relocated by `MSKSD_STATE_DIR`) the
-daemon mints its CA and certificate on first serve and prints
-the CA fingerprint to pin on first connect; the config file
-generates as a commented template on first run (see
-[Configuration](config.md)); and the unix listener binds
-`$XDG_RUNTIME_DIR/msks/msksd.sock` — same-host clients connect
-through it on peer-credential authentication alone, while
-remote ones dial the TLS listener with a bearer token. A workspace image arrives either from the published
+A bare `msksd` (no subcommand) serves. A fresh state dir (`~/.local/state/msksd`, relocated by
+`MSKSD_STATE_DIR`) gets three things on first serve. The daemon
+mints its CA and certificate and prints the CA fingerprint to
+pin on first connect. The config file generates as a commented
+template (see [Configuration](config.md)). The unix listener
+binds `$XDG_RUNTIME_DIR/msks/msksd.sock`: same-host clients
+connect through it on peer-credential authentication alone,
+while remote ones dial the TLS listener with a bearer token. A workspace image arrives either from the published
 channel (`msks image import` in [the TUI](tui.md), or the
 [images](images.md) chapter's URL form) or from a local build.
 
 With the host prepared, the service lingered, and an image
 imported, a bare `msks` on the same account finds the socket,
-lists the workspaces, and creates the next one —
-[the TUI](tui.md) walks the whole loop, and
-[the identity file](identity.md) names the key the workspaces
-will answer to.
+lists the workspaces, and creates the next one. [The TUI](tui.md)
+walks the whole loop, and [the identity file](identity.md)
+names the key the workspaces will answer to.
