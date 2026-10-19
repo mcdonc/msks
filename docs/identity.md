@@ -9,6 +9,27 @@ on the daemon (#515): values a workspace needs at runtime are
 sealed under the identity, and the client unlocks them with the
 private half again.
 
+## Why an ssh key
+
+The workspace's door is sshd — the guest runs it, the forward
+carries it — so the operator identity is the credential that
+door already speaks: an ssh key. That choice carries four
+things with it. The trust root is a key you already guard
+(your agent, your hardware token): msks mints no account, no
+password, and no credential of its own, so nothing new exists
+to leak and nothing new must be rotated — your key's lifecycle
+is the whole lifecycle. The public half is all msks ever
+stores: planting it on a workspace and sealing secrets under
+it keeps every private half where it already lives, on your
+machine or in your agent; the daemon's catalog holds public
+material only. Attribution comes free: each operator's key
+marks which human a workspace answers to, so several operators
+share one daemon with separate keys and no shared secret
+between them. And the same key seals the workspace secrets
+(#515) — one root of trust for both the door and the sealed
+values, instead of a separate master secret the daemon would
+have to keep.
+
 The client names the key in its YAML file
 (`~/.config/msks/msks.yaml`) or its environment, with two keys:
 
