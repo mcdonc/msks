@@ -4,12 +4,6 @@
         <loc>https://mcdonc.github.io/msks/dev/</loc>
       </url>
       <url>
-        <loc>https://mcdonc.github.io/msks/dev/ROADMAP/</loc>
-      </url>
-      <url>
-        <loc>https://mcdonc.github.io/msks/dev/boot-speed/</loc>
-      </url>
-      <url>
         <loc>https://mcdonc.github.io/msks/dev/changes/</loc>
       </url>
       <url>
@@ -20,6 +14,9 @@
       </url>
       <url>
         <loc>https://mcdonc.github.io/msks/dev/images/</loc>
+      </url>
+      <url>
+        <loc>https://mcdonc.github.io/msks/dev/installation/</loc>
       </url>
       <url>
         <loc>https://mcdonc.github.io/msks/dev/networking/</loc>

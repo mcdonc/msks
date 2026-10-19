@@ -17,7 +17,7 @@
       
       
       
-        <link rel="next" href="./cli/">
+        <link rel="next" href="./installation/">
       
       
         
@@ -295,17 +295,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#the-quick-start" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The quick start
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -321,14 +310,14 @@
   
   
     <li class="md-nav__item">
-      <a href="./cli/" class="md-nav__link">
+      <a href="./installation/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  The CLI Client
+  Installation
 
     
   </span>
@@ -355,6 +344,32 @@
     
   
   The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
 
     
   </span>
@@ -522,58 +537,6 @@
   
 
     
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="./boot-speed/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Boot Speed
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="./ROADMAP/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Roadmap
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
   </ul>
 </nav>
                   </div>
@@ -625,17 +588,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#the-quick-start" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The quick start
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -664,13 +616,17 @@ works inside a workspace with the permissions it needs; the host
 and every other workspace stay out of reach.</p>
 <h2 id="the-reading-order">The reading order<a class="headerlink" href="#the-reading-order" title="Permanent link">&para;</a></h2>
 <ol>
-<li><a href="cli/"><strong>The CLI client</strong></a> — every command and the
-   client's settings: <code>msks</code> against the daemon's HTTP API, ssh
-   and rsync over the forward.</li>
+<li><a href="installation/"><strong>Installation</strong></a> — the wheel, and the
+   one command that prepares a Debian host: the capability
+   wrapper, the routing kernel, <code>/dev/kvm</code>, and the lingered
+   service that keeps the daemon running.</li>
 <li><a href="tui/"><strong>The TUI</strong></a> — the full-screen workspace tree: the
    workspace, secrets, and image pages, the failure panels, the
    consent decider, and the terminal windows the shell action
    opens.</li>
+<li><a href="cli/"><strong>The CLI client</strong></a> — every command and the
+   client's settings: <code>msks</code> against the daemon's HTTP API, ssh
+   and rsync over the forward.</li>
 <li><a href="config/"><strong>Configuration</strong></a> — the daemon's settings: every
    key, its environment variable, and its default, from the
    listener's socket to the egress stack's ceilings.</li>
@@ -688,13 +644,6 @@ and every other workspace stay out of reach.</p>
 <li><a href="changes/"><strong>Changelog</strong></a> — what changed, release by
    release.</li>
 </ol>
-<h2 id="the-quick-start">The quick start<a class="headerlink" href="#the-quick-start" title="Permanent link">&para;</a></h2>
-<p>A Debian host prepares itself one command wide
-(<code>msks-setup-debian-host</code>), the daemon serves two listeners —
-TLS on a port for remote clients, a unix socket for same-host
-ones that authenticate by peer credential — and a bare <code>msks</code>
-finds the socket, lists the workspaces, and creates the next one.
-<a href="cli/">The CLI chapter</a> walks the whole loop.</p>
 
 
 

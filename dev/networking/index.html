@@ -254,14 +254,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../cli/" class="md-nav__link">
+      <a href="../installation/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  The CLI Client
+  Installation
 
     
   </span>
@@ -288,6 +288,32 @@
     
   
   The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
 
     
   </span>
@@ -668,58 +694,6 @@
     
   
   Changelog
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../boot-speed/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Boot Speed
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../ROADMAP/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Roadmap
 
     
   </span>
@@ -1374,19 +1348,12 @@ grants the daemon the two capabilities — a <code>nixos-rebuild switch</code>
 is the whole host setup. The dev host's wrapper carries the same
 grant for <code>msks-dev</code> (its uplink default names this dev host's
 interface). A Debian deployment host runs
-<code>msks-setup-debian-host</code> (#546): it installs the same capability
-wrapper, lands the sysctl and the module set, adds the executing
-user to the <code>kvm</code> group when missing, and registers the
-<code>msksd</code> systemd <strong>user</strong> service of the user who ran the setup
-(#560) — the unit execs the daemon through the wrapper (the
-wrapper's file capabilities grant any executor), carries
-<code>MSKSD_EGRESS_ENABLED=true</code> and the uplink it detected, and
-<code>loginctl enable-linger</code> keeps it running across logouts and
-boots; a re-run refreshes the unit and restarts the daemon when
-the unit changed. Hosts the tool
-does not cover (a container, a non-systemd init, an msksd it
-cannot find beside its own install) keep the host pieces without
-the unit. An
+<code>msks-setup-debian-host</code> (#546) — <a href="../installation/">the Installation
+chapter</a> walks the tool end to end. For egress
+it matters that the tool installs the same capability wrapper,
+lands the sysctl and the module set this section names, and
+registers the daemon's systemd user service (#560) with
+<code>MSKSD_EGRESS_ENABLED=true</code> and the detected uplink. An
 operator who sets <code>MSKSD_EGRESS_ENABLED=false</code> arms nothing, and
 every egress workspace then refuses to boot with the cause named.
 The dev-host egress smoke (<code>TEST_EGRESS=1</code>) runs as root:

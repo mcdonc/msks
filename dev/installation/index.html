@@ -1,0 +1,1003 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Microvm workspaces for AI coding agents">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/msks/dev/installation/">
+      
+      
+      
+        <link rel="prev" href="./..">
+      
+      
+        <link rel="next" href="../tui/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.71">
+    
+    
+      
+        <title>Installation - msks</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.e442bf79.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.b60ce83d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="msks" class="md-header__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            msks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Installation
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="msks" class="md-nav__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    msks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-setup-lands" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What the setup lands
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-same-host-by-hand" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The same host by hand
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hosts-the-unit-does-not-cover" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Hosts the unit does not cover
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-vmm-and-the-workspace-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The VMM and the workspace tools
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-alternative-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The alternative paths
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#first-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        First run
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-setup-lands" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What the setup lands
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-same-host-by-hand" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The same host by hand
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#hosts-the-unit-does-not-cover" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Hosts the unit does not cover
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-vmm-and-the-workspace-tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The VMM and the workspace tools
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-alternative-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The alternative paths
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#first-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        First run
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h1>
+<p>msks ships as one Python wheel with everything inside: the
+client (<code>msks</code> — the TUI and the commands), the daemon
+(<code>msksd</code>), the consent-decider terminal (<code>msks-term-popup</code>),
+and the Debian host setup this chapter walks
+(<code>msks-setup-debian-host</code>). The wheel needs Python 3.14 or
+newer.</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">pipx install msks        # or: pip install msks</span>
+</span></code></pre></div>
+<p>The daemon runs the workspaces first-level — cloud-hypervisor
+on the host's own <code>/dev/kvm</code>, per-VM network taps, the egress
+consent stack in the host kernel — so the host needs pieces the
+wheel cannot carry: kernel modules, a routing sysctl, two
+capabilities for the daemon's user, and a service that keeps
+<code>msksd</code> running. On a Debian deployment host, one command lands
+all of it:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">sudo "$(command -v msks-setup-debian-host)"</span>
+</span></code></pre></div>
+<p>The quoted form matters after a <code>pipx</code> install: the console
+script lands in <code>~/.local/bin</code>, which sudo's <code>secure_path</code> does
+not carry — the bare name would answer "command not found".</p>
+<p>Run it as the user the daemon will serve — under <code>sudo</code>, the
+<code>SUDO_USER</code> account is the executing user, and the service the
+tool registers belongs to that account. The run is idempotent:
+re-run any time, and re-run after a util-linux upgrade (the
+wrapper keeps a copy of <code>setpriv</code>; see below).</p>
+<h2 id="what-the-setup-lands">What the setup lands<a class="headerlink" href="#what-the-setup-lands" title="Permanent link">&para;</a></h2>
+<p>Each phase runs in order, and the first refusal stops the run
+with a named error.</p>
+<p><strong>The packages.</strong> The egress plumbing the daemon execs by bare
+name installs through apt when missing: <code>iproute2</code> (<code>ip</code>),
+<code>nftables</code> (<code>nft</code>), <code>conntrack</code>, <code>procps</code> (<code>sysctl</code>) — beside
+the tools the setup itself runs: <code>util-linux</code> (<code>setpriv</code>),
+<code>libcap2-bin</code> (<code>setcap</code>), <code>kmod</code> (<code>modprobe</code>). The daemon's
+workspace tools install separately (below).</p>
+<p><strong>The capability wrapper.</strong> <code>/usr/local/bin/msks-caps</code> — a
+root-owned copy of util-linux <code>setpriv</code> carrying file
+capabilities <code>cap_net_admin</code> and <code>cap_net_bind_service</code>. The
+daemon's per-VM taps and nftables chains need <code>net_admin</code>; the
+egress stack's DHCP (port 67) and DNS (port 53) need
+<code>net_bind_service</code>. The wrapper raises both caps ambient, so
+they flow to the daemon and every tool it execs — and the grant
+surface is the wrapper's execute permission: any local user
+able to run it holds the two capabilities through it. After
+installing it the setup runs the wrapper and verifies the caps
+arrive ambient.</p>
+<p><strong>The routing kernel.</strong> <code>/etc/sysctl.d/msks-egress.conf</code> sets
+<code>net.ipv4.ip_forward=1</code> at boot (and the value applies
+immediately): route packets between the per-VM taps and the
+host uplink. The daemon reads the sysctl at startup and refuses
+every egress workspace, with the cause named, while it reads 0.
+<code>/etc/modules-load.d/msks.conf</code> loads the netfilter and tun
+modules at boot — the nftables machinery, NAT, conntrack, the
+deny RST, and the interactive consent queue. A module the
+kernel tree lacks lands a warning with the kernel package that
+carries it; interactive egress consent needs its whole module
+set, and the run's summary names the verdict.</p>
+<p><strong><code>/dev/kvm</code>.</strong> Access arrives through the <code>kvm</code> group on the
+daemon's user — the setup adds the executing user to the group
+when missing. The account picks the group up at the next login; an
+already-running session keeps the old groups until it starts
+anew.</p>
+<p><strong>The systemd user service.</strong> On a host systemd manages, the
+setup writes <code>~/.config/systemd/user/msksd.service</code> for the
+executing user and enables it: the unit execs <code>msksd</code> through
+the wrapper (the file capabilities grant any executor the same
+posture a root unit would), runs with
+<code>MSKSD_EGRESS_ENABLED=true</code> and the uplink interface the setup
+detected, creates the unix listener's runtime directory under
+the user's own <code>$XDG_RUNTIME_DIR</code> (<code>RuntimeDirectory=msks</code> —
+the client's default socket candidate), restarts the daemon on
+failure, and <code>loginctl enable-linger</code> keeps the user manager —
+and the daemon — running across logouts and boots. A user
+manager that was already running may have forked before the kvm
+group write reached it; the daemon then holds the old groups
+until that manager restarts, and the run's summary says so. A re-run
+rewrites the unit and restarts a running daemon onto it when
+the unit changed.</p>
+<p>The run ends with a summary: the wrapper and its caps, the
+sysctl, the modules file and the consent verdict, the tools'
+paths, <code>/dev/kvm</code>, the detected uplink (the interface the
+daemon should point at through <code>MSKSD_EGRESS_UPLINK</code>), and the
+service line. When the service started, the same-user socket
+path prints beside it.</p>
+<h2 id="the-same-host-by-hand">The same host by hand<a class="headerlink" href="#the-same-host-by-hand" title="Permanent link">&para;</a></h2>
+<p><code>msks-setup-debian-host</code> is a program the wheel ships, and
+running it means running shipped code as root. An operator who
+prefers to read every step first can land the same host in an
+interactive root shell — each command below is one phase of the
+walk above, pasted and run by hand.</p>
+<p>Start a root shell and install the package set:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">sudo -i</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">apt install iproute2 nftables conntrack procps util-linux libcap2-bin kmod</span>
+</span></code></pre></div>
+<p>The capability wrapper — a fresh root-owned copy of <code>setpriv</code>,
+with the two capabilities set and read back (a filesystem
+without capability xattrs takes the <code>setcap</code> and loses it, so
+the readback is the proof):</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">install -o root -g root -m 0755 "$(command -v setpriv)" /usr/local/bin/msks-caps</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">setcap cap_net_admin,cap_net_bind_service+ep /usr/local/bin/msks-caps</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">getcap /usr/local/bin/msks-caps</span>
+</span></code></pre></div>
+<p>The functional proof — the daemon's exact exec line, with the
+ambient set inspected in the process it starts (the <code>CapAmb</code>
+line must carry a nonzero mask):</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">/usr/local/bin/msks-caps --inh-caps=+net_admin,+net_bind_service \</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">  --ambient-caps=+net_admin,+net_bind_service \</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">  -- sh -c "sed -n 's/^CapAmb:[[:space:]]*//p' /proc/self/status"</span>
+</span></code></pre></div>
+<p>Routing, at boot and now:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">printf '%s\n' \</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">  '# route packets between per-VM taps and the host uplink' \</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">  'net.ipv4.ip_forward = 1' &gt; /etc/sysctl.d/msks-egress.conf</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="go">sysctl -p /etc/sysctl.d/msks-egress.conf</span>
+</span></code></pre></div>
+<p>The module set, at boot and now:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">printf '%s\n' tun nf_tables nft_chain_nat nft_masq nft_ct nft_reject \</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">  nf_reject_ipv4 nf_nat nf_conntrack nfnetlink_queue \</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="go">  &gt; /etc/modules-load.d/msks.conf</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="go">modprobe tun nf_tables nft_chain_nat nft_masq nft_ct nft_reject \</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="go">  nf_reject_ipv4 nf_nat nf_conntrack nfnetlink_queue</span>
+</span></code></pre></div>
+<p>Interactive egress consent needs <code>nft_reject</code>,
+<code>nf_reject_ipv4</code>, and <code>nfnetlink_queue</code> loaded — check with
+<code>grep -w &lt;module&gt; /proc/modules</code> (or <code>lsmod</code>) when a load
+landed quietly.</p>
+<p><code>/dev/kvm</code> for the daemon's user, picked up at that account's
+next login:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">usermod -aG kvm &lt;the-user-the-daemon-runs-as&gt;</span>
+</span></code></pre></div>
+<p>The systemd user service is the daemon user's own piece — leave
+the root shell and run it as that user. Write
+<code>~/.config/systemd/user/msksd.service</code> with the unit below
+(adjust the <code>msksd</code> path to where the install put it, and the
+uplink to this host's default-route interface — <code>ip route show
+default</code> names it):</p>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">[Unit]</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="na">Description</span><span class="o">=</span><span class="s">msks daemon (workspaces as cloud-hypervisor microvms)</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="k">[Service]</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/msks-caps --inh-caps=+net_admin,+net_bind_service --ambient-caps=+net_admin,+net_bind_service -- /path/to/msksd</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="na">Environment</span><span class="o">=</span><span class="s">MSKSD_EGRESS_ENABLED=true</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="na">Environment</span><span class="o">=</span><span class="s">MSKSD_EGRESS_UPLINK=&lt;uplink&gt;</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="na">RuntimeDirectory</span><span class="o">=</span><span class="s">msks</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="na">Restart</span><span class="o">=</span><span class="s">always</span>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="na">RestartSec</span><span class="o">=</span><span class="s">1</span>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="na">TimeoutStopSec</span><span class="o">=</span><span class="s">180s</span>
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>
+</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="k">[Install]</span>
+</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="na">WantedBy</span><span class="o">=</span><span class="s">default.target</span>
+</span></code></pre></div>
+<p>Then enable it, as that user:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="go">systemctl --user enable --now msksd.service</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="go">loginctl enable-linger &lt;the-user-the-daemon-runs-as&gt;</span>
+</span></code></pre></div>
+<p><code>loginctl enable-linger</code> is the one root command among these —
+it keeps the user manager, and the daemon, running across
+logouts and boots.</p>
+<h2 id="hosts-the-unit-does-not-cover">Hosts the unit does not cover<a class="headerlink" href="#hosts-the-unit-does-not-cover" title="Permanent link">&para;</a></h2>
+<p><code>--no-service</code> lands every host piece above and skips the
+unit — for a container, a non-systemd init, or a deployment
+that runs <code>msksd</code> its own way (the setup also skips the unit on
+its own when it cannot find an <code>msksd</code> beside its own install,
+or when systemd is not the manager, and says so). On such a
+host the daemon runs whatever way the deployment chooses, with
+the wrapper on its exec line for the two capabilities; the
+<a href="../config/">Configuration</a> chapter documents the settings a
+hand-written unit needs.</p>
+<h2 id="the-vmm-and-the-workspace-tools">The VMM and the workspace tools<a class="headerlink" href="#the-vmm-and-the-workspace-tools" title="Permanent link">&para;</a></h2>
+<p>The daemon's workspace machinery execs three more tools by bare
+name, and the wheel carries none of them: <code>cloud-hypervisor</code>
+(the VMM), <code>qemu-img</code> (the root overlay), and <code>mkisofs</code> (the
+seed metadata). <code>msksd doctor</code> verifies all three and names the
+install for a miss. On Debian, <code>qemu-img</code> and <code>mkisofs</code> come
+from <code>qemu-utils</code> and <code>genisoimage</code>; the egress consent stack's
+library (<code>libnetfilter_queue</code>) comes from
+<code>libnetfilter-queue1</code>. Cloud Hypervisor's static release
+binary is the sanctioned VMM install — Debian's archive carries
+it not:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">curl -L -o cloud-hypervisor-static \</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="go">  https://github.com/cloud-hypervisor/cloud-hypervisor/releases/latest/download/cloud-hypervisor-static</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="go">sudo install -m755 cloud-hypervisor-static /usr/local/bin/cloud-hypervisor</span>
+</span></code></pre></div>
+<h2 id="the-alternative-paths">The alternative paths<a class="headerlink" href="#the-alternative-paths" title="Permanent link">&para;</a></h2>
+<p><strong>A NixOS deployment host</strong> needs no setup tool: the module in
+<code>nix/module.nix</code> sets the sysctl, names the uplink, and grants
+the daemon the same two capabilities through the unit itself
+(<code>AmbientCapabilities</code>, bounded) to a dedicated <code>msksd</code> user
+whose supplementary groups carry <code>kvm</code> — a narrower grant than
+the wrapper's execute permission, scoped to the one service.
+A <code>nixos-rebuild switch</code> is the whole host setup.</p>
+<p><strong>A development host</strong> (this repository's checkout) runs the
+daemon through devenv: <code>msks-dev</code> seeds a per-worktree state
+dir (its own port, token, and socket) and execs <code>msksd</code> through
+<code>/run/wrappers/bin/msks-caps</code> — the NixOS host's own wrapper,
+where its configuration installs it; <code>DEV_CAPS</code> points at the
+Debian setup's <code>/usr/local/bin/msks-caps</code> when the dev tree
+runs on a host NixOS does not manage.</p>
+<h2 id="first-run">First run<a class="headerlink" href="#first-run" title="Permanent link">&para;</a></h2>
+<p>A bare <code>msksd</code> (no subcommand) serves. On a fresh state dir
+(<code>~/.local/state/msksd</code>, relocated by <code>MSKSD_STATE_DIR</code>) the
+daemon mints its CA and certificate on first serve and prints
+the CA fingerprint to pin on first connect; the config file
+generates as a commented template on first run (see
+<a href="../config/">Configuration</a>); and the unix listener binds
+<code>$XDG_RUNTIME_DIR/msks/msksd.sock</code> — same-host clients connect
+through it on peer-credential authentication alone, while
+remote ones dial the TLS listener with a bearer token. A workspace image arrives either from the published
+channel (<code>msks image import</code> in <a href="../tui/">the TUI</a>, or the
+<a href="../images/">images</a> chapter's URL form) or from a local build.</p>
+<p>With the host prepared, the service lingered, and an image
+imported, a bare <code>msks</code> on the same account finds the socket,
+lists the workspaces, and creates the next one —
+<a href="../tui/">the TUI</a> walks the whole loop.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a2388154.min.js"></script>
+      
+    
+  </body>
+</html>
