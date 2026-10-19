@@ -3,13 +3,12 @@
 # workflow would publish, re-rendered in realtime while the
 # docs change.
 #
-# The site is the MAIN branch's docs — the same content the
-# deployed dev view carries — so the script serves only from a
-# checkout whose HEAD is main (a worktree on a feature branch
-# refuses with the rule named; check out main, or merge, first).
-# With the tree on main, `zensical serve` watches the docs and
-# the config and rebuilds on every change, and the browser tab
-# reloads itself: edit a chapter, save, watch the page rerender.
+# The script serves whatever this checkout holds — the current
+# branch's docs, watched live: edits to the chapters, the site
+# config, or the renderings rebuild the site, and the open
+# browser tab reloads itself (edit a chapter, save, watch the
+# page rerender). The deployed dev view on GitHub Pages is
+# always main's docs; this preview is the editor's own tree.
 #
 # zensical is a docs tool, not a project dependency, so it lives
 # in a script-managed venv under the devenv state dir — pinned
@@ -22,17 +21,6 @@ set -euo pipefail
 
 root="${DEVENV_ROOT:?run me from the devenv shell (msks-docs)}"
 port="${DOCS_SERVE_PORT:-8923}"
-
-# The site is main's docs: refuse anything else, naming the rule
-# (the deployed dev view is built from main, and so is this).
-branch="$(git -C "$root" rev-parse --abbrev-ref HEAD)"
-if [ "$branch" != "main" ]; then
-  echo "msks-docs: the docs site serves the main branch's docs" \
-    "(this checkout is on '$branch')" >&2
-  echo "             check out main (git checkout main && git pull)" \
-    "or merge this branch first" >&2
-  exit 1
-fi
 
 # The toolchain venv: pinned beside the devenv's other tool
 # state, keyed to the pinned version (a version bump rebuilds
@@ -55,7 +43,7 @@ cd "$root"
 echo "msks-docs: building (strict — a broken link fails here)" >&2
 "$venv/bin/zensical" build >/dev/null
 
-echo "msks-docs: serving main's docs at http://127.0.0.1:$port/" \
+echo "msks-docs: serving this checkout's docs at http://127.0.0.1:$port/" \
   "(edits re-render in realtime; Ctrl-C stops)" >&2
 exec python3 "$root/scripts/serve-docs.py" \
   "$root/site" "$root/docs" \
