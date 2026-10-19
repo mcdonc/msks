@@ -59,9 +59,15 @@ def deploy_version(version: str) -> None:
         utils.build(None, version)
 
 
-def set_default_redirect() -> None:
-    """Point the gh-pages root index.html at the latest alias."""
-    commands.set_default(LATEST_ALIAS)
+def set_default_redirect(version: str) -> None:
+    """Point the gh-pages root index.html at the latest alias —
+    or, before any release has created it, at the deployed view:
+    the first deploy is main's dev, and the root must land
+    somewhere."""
+    try:
+        commands.set_default(LATEST_ALIAS)
+    except ValueError:
+        commands.set_default(version)
 
 
 def main() -> int:
@@ -77,7 +83,7 @@ def main() -> int:
     sync_gh_pages()
     try:
         deploy_version(version)
-        set_default_redirect()
+        set_default_redirect(version)
     except git_utils.GitEmptyCommit:
         # Re-deploying unchanged docs makes mike roll back the empty
         # commit; that is a successful no-op, not an error.
