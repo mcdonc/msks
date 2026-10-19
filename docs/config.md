@@ -78,7 +78,6 @@ The install hints match each manager's real package names
 (verified against a Debian trixie container: `genisoimage` serves
 `mkisofs`, `qemu-utils` ships `qemu-img`, `conntrack` is apt's
 name, and the library rows name the runtime soname packages
-(
 `libnetfilter-queue1` and `libnfnetlink0`). Where a fix is not a distro package, the hint names the real
 source: cloud-hypervisor installs from the upstream static
 release, and Debian's archive carries it in none of its

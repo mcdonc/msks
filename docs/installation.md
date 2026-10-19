@@ -70,7 +70,7 @@ carries it; interactive egress consent needs its whole module
 set, and the run's summary names the verdict.
 
 **`/dev/kvm`.** Access arrives through the `kvm` group on the
-daemon's user — the setup adds the executing user to the group
+daemon's user; the setup adds the executing user to the group
 when missing. The account picks the group up at the next login; an
 already-running session keeps the old groups until it starts
 anew.

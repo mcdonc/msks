@@ -75,14 +75,14 @@ and workspace filters. A daemon-wide row's events cover every
 workspace; a scoped row's cover its members. The audit view holds a
 plain subscription — no decider registration — so it claims no
 holds.
-`c` opens the mint form. Its fields: name; repeatable
-destinations (an exact host or a label-anchored suffix,
-comma-separated in one field); coverage (the daemon-wide row,
-or a multi-select fed by the tree's own workspace list); the
-lifetime (`unbounded` by default, an hour to thirty days
-beside it); and the value. The value is a masked field the
-operator types or pastes into, so the form takes the secret's
-bytes directly. The submit checks the secret store first (`msks secret
+`c` opens the mint form. The name field comes first, then
+repeatable destinations (an exact host or a label-anchored
+suffix, comma-separated in one field). Coverage follows: the
+daemon-wide row, or a multi-select fed by the tree's own
+workspace list. The lifetime field offers `unbounded` by
+default with an hour to thirty days beside it. The value is a
+masked field the operator types or pastes into, so the form
+takes the secret's bytes directly. The submit checks the secret store first (`msks secret
 check`'s endpoint), then mints. A refused mint opens the
 failure panel over the form, the daemon's refusal verbatim
 beside the name the form submitted; a refused store check
@@ -108,7 +108,9 @@ The **workspace page** carries the per-workspace loop. Its
 two-line header sets the workspace's name on the first line
 with its status beside it in the state's color (the same
 coloring the list uses), and the id, image hash, host, and
-created date muted on the second. A status line for egress consent follows: the mode, then one
+created date muted on the second, its separators carrying
+the same theme-muted span style the header's status takes. A
+status line for egress consent follows: the mode, then one
 granted scope named with its expiry. Two or more grants read
 as a count with the nearest expiry (`5 grants · next expires
 4h`), so the line stays readable at 80 columns; every grant is

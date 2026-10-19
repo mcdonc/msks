@@ -124,7 +124,7 @@ MSKSWS_BASE_URL=http://172.31.0.2:8770/v1
 MSKSWS_API_KEY=msks-local-proxy
 ```
 
-Both guest images ship the agent toolchain beside it. Each
+Both guest images ship the agent toolchain beside it (#266, #268): each
 image bakes pinned Node and the pinned pi coding agent on
 every account's default `PATH`: the Debian image under
 `/usr/local`, the NixOS image through its system profile. Each

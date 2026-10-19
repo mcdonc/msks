@@ -95,7 +95,7 @@ shell survives the preset; an empty one counts as unset.
 
 An unconfigured client (no `MSKSC_URL`, no `MSKSC_SOCKET`, no
 config-file daemon) looks for the default socket a same-host
-daemon binds (`$XDG_RUNTIME_DIR/msks/msks/msksd.sock`) and
+daemon binds (`$XDG_RUNTIME_DIR/msks/msksd.sock`) and
 connects through it with peer credentials alone. Finding none,
 it exits with the paths it looked for and the two settings
 that name a daemon outright. The client never dials a TCP address implicitly: a
@@ -293,7 +293,7 @@ Prints one line per workspace the daemon knows, aligned in five
 columns: name, id, status, image hash (first 12 hex chars), and
 owning host. The columns are measured against the values present
 : a long name or image reference widens its column for every
-row, so each row's columns start at the same offsets (the header
+row, so each row's columns start at the same offsets, header
 row included.
 
 ```text

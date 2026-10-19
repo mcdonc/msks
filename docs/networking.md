@@ -44,9 +44,10 @@ speaks UDP; TCP/53 has no listener, so a query needing TCP fallback
 (DNSSEC validation, very large RRsets) fails fast. The forwarder
 answers queries from its own guest only; anything else arriving on
 the tap is dropped unread, so a spoofed-source datagram cannot turn
-the daemon into a reflection amplifier. grows the naming
-layer — query cache, name learning for prompts, and the lockout that
-keeps DNS from being routed around — behind that same offered
+the daemon into a reflection amplifier. The resolver also grows the
+naming layer: query cache, name learning for prompts, and the
+lockout that keeps DNS from being routed around, all behind that
+same offered
 resolver.
 
 ## What the chain enforces
