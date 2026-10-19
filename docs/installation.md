@@ -20,8 +20,12 @@ capabilities for the daemon's user, and a service that keeps
 all of it:
 
 ```console
-sudo msks-setup-debian-host
+sudo "$(command -v msks-setup-debian-host)"
 ```
+
+The quoted form matters after a `pipx` install: the console
+script lands in `~/.local/bin`, which sudo's `secure_path` does
+not carry — the bare name would answer "command not found".
 
 Run it as the user the daemon will serve — under `sudo`, the
 `SUDO_USER` account is the executing user, and the service the
@@ -34,11 +38,12 @@ wrapper keeps a copy of `setpriv`; see below).
 Each phase runs in order, and the first refusal stops the run
 with a named error.
 
-**The packages.** Every tool the daemon execs by bare name
-installs through apt when missing: `iproute2` (`ip`),
-`nftables` (`nft`), `conntrack`, `kmod` (`modprobe`), `procps`
-(`sysctl`), `libcap2-bin` (`setcap`), and `util-linux`
-(`setpriv`).
+**The packages.** The egress plumbing the daemon execs by bare
+name installs through apt when missing: `iproute2` (`ip`),
+`nftables` (`nft`), `conntrack`, `procps` (`sysctl`) — beside
+the tools the setup itself runs: `util-linux` (`setpriv`),
+`libcap2-bin` (`setcap`), `kmod` (`modprobe`). The daemon's
+workspace tools install separately (below).
 
 **The capability wrapper.** `/usr/local/bin/msks-caps` — a
 root-owned copy of util-linux `setpriv` carrying file
@@ -46,11 +51,11 @@ capabilities `cap_net_admin` and `cap_net_bind_service`. The
 daemon's per-VM taps and nftables chains need `net_admin`; the
 egress stack's DHCP (port 67) and DNS (port 53) need
 `net_bind_service`. The wrapper raises both caps ambient, so
-they flow to the daemon and every tool it execs, and any local
-user able to execute the wrapper holds them through it — the
-same grant surface the NixOS deployment host's wrapper makes.
-After installing it the setup runs the wrapper as the invoking
-user and verifies the caps arrive ambient.
+they flow to the daemon and every tool it execs — and the grant
+surface is the wrapper's execute permission: any local user
+able to run it holds the two capabilities through it. After
+installing it the setup runs the wrapper and verifies the caps
+arrive ambient.
 
 **The routing kernel.** `/etc/sysctl.d/msks-egress.conf` sets
 `net.ipv4.ip_forward=1` at boot (and the value applies
@@ -66,10 +71,9 @@ set, and the run's summary names the verdict.
 
 **`/dev/kvm`.** Access arrives through the `kvm` group on the
 daemon's user — the setup adds the executing user to the group
-when missing. The account picks the group up at the next login
-(a bare re-run of an already-logged-in shell keeps the old
-groups); `msksd doctor` reports the membership as it stands for
-the daemon's own account.
+when missing. The account picks the group up at the next login; an
+already-running session keeps the old groups until it starts
+anew.
 
 **The systemd user service.** On a host systemd manages, the
 setup writes `~/.config/systemd/user/msksd.service` for the
@@ -82,9 +86,9 @@ the user's own `$XDG_RUNTIME_DIR` (`RuntimeDirectory=msks` —
 the client's default socket candidate), restarts the daemon on
 failure, and `loginctl enable-linger` keeps the user manager —
 and the daemon — running across logouts and boots. A user
-manager that was already running forked before the kvm group
-write reaches it; the daemon holds the old groups until that
-manager restarts, and the run's summary says so. A re-run
+manager that was already running may have forked before the kvm
+group write reached it; the daemon then holds the old groups
+until that manager restarts, and the run's summary says so. A re-run
 rewrites the unit and restarts a running daemon onto it when
 the unit changed.
 
@@ -107,20 +111,42 @@ the wrapper on its exec line for the two capabilities; the
 [Configuration](config.md) chapter documents the settings a
 hand-written unit needs.
 
+## The VMM and the workspace tools
+
+The daemon's workspace machinery execs three more tools by bare
+name, and the wheel carries none of them: `cloud-hypervisor`
+(the VMM), `qemu-img` (the root overlay), and `mkisofs` (the
+seed metadata). `msksd doctor` verifies all three and names the
+install for a miss. On Debian, `qemu-img` and `mkisofs` come
+from `qemu-utils` and `genisoimage`; the egress consent stack's
+library (`libnetfilter_queue`) comes from
+`libnetfilter-queue1`. Cloud Hypervisor's static release
+binary is the sanctioned VMM install — Debian's archive carries
+it not:
+
+```console
+curl -L -o cloud-hypervisor-static \
+  https://github.com/cloud-hypervisor/cloud-hypervisor/releases/latest/download/cloud-hypervisor-static
+sudo install -m755 cloud-hypervisor-static /usr/local/bin/cloud-hypervisor
+```
+
 ## The alternative paths
 
 **A NixOS deployment host** needs no setup tool: the module in
-`nix/module.nix` sets the sysctl, names the uplink, grants the
-daemon the same two capabilities through its own wrapper, and
-runs the daemon as a system service — a `nixos-rebuild switch`
-is the whole host setup.
+`nix/module.nix` sets the sysctl, names the uplink, and grants
+the daemon the same two capabilities through the unit itself
+(`AmbientCapabilities`, bounded) to a dedicated `msksd` user
+whose supplementary groups carry `kvm` — a narrower grant than
+the wrapper's execute permission, scoped to the one service.
+A `nixos-rebuild switch` is the whole host setup.
 
 **A development host** (this repository's checkout) runs the
 daemon through devenv: `msks-dev` seeds a per-worktree state
 dir (its own port, token, and socket) and execs `msksd` through
-the host's `msks-caps` wrapper — the same wrapper the Debian
-setup installs, relocated through `DEV_CAPS` when it lives
-somewhere else.
+`/run/wrappers/bin/msks-caps` — the NixOS host's own wrapper,
+where its configuration installs it; `DEV_CAPS` points at the
+Debian setup's `/usr/local/bin/msks-caps` when the dev tree
+runs on a host NixOS does not manage.
 
 ## First run
 
@@ -131,9 +157,8 @@ the CA fingerprint to pin on first connect; the config file
 generates as a commented template on first run (see
 [Configuration](config.md)); and the unix listener binds
 `$XDG_RUNTIME_DIR/msks/msksd.sock` — same-host clients connect
-through it with peer-credential authentication, no token, no
-TLS, while remote ones dial the TLS listener with a bearer
-token. A workspace image arrives either from the published
+through it on peer-credential authentication alone, while
+remote ones dial the TLS listener with a bearer token. A workspace image arrives either from the published
 channel (`msks image import` in [the TUI](tui.md), or the
 [images](images.md) chapter's URL form) or from a local build.
 
