@@ -285,6 +285,14 @@ in
     exec = ''exec bash "$DEVENV_ROOT/scripts/dev-daemon.sh"'';
   };
 
+  # The docs site, served locally (#591): builds what the Deploy
+  # Docs workflow would publish (strict, renderings included) and
+  # serves it on the loopback; DOCS_SERVE_PORT relocates the port.
+  scripts.msks-docs = {
+    description = "Build and serve the docs site locally (strict build, then http://127.0.0.1:8923; Ctrl-C stops)";
+    exec = ''exec bash "$DEVENV_ROOT/scripts/serve-docs.sh" "$@"'';
+  };
+
   scripts.msks-demo-vm = {
     description = "Boot one microvm from the built guest assets (serial console on this terminal)";
     exec = ''exec bash "$DEVENV_ROOT/scripts/demo-vm.sh" "$@"'';
