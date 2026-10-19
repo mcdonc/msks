@@ -41,6 +41,17 @@ answers first.
 The tmux row holds the host tmux to the 3.2 floor the consent
 terminal documents, parsing the version the binary prints.
 
+On Linux hosts a permission row rides beside the VMM: the
+`/dev/kvm` gate every workspace boot passes. It reads the node's
+presence and the daemon user's `kvm`-group membership — primary
+or supplementary, from the group database — and a miss carries
+the group-add command the detected platform takes, not a
+package install (#559). A login that predates the membership
+gets its own line: the group database and the session's live
+groups can disagree, and a daemon started from the older
+session still meets `EACCES` on the node. A host without the
+node reports the absence itself — never a group failure.
+
 The warning-grade rows are the client-side tools the documented
 workflows run over `msks forward`: the ssh client and the host
 rsync it drives. The daemon itself runs without them, so a miss
