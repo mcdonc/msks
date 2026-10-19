@@ -1,6 +1,6 @@
 # Workspace images
 
-A workspace image is one file: a **container-image tar** — the layout
+A workspace image is one file, a **container-image tar**: the layout
 `podman load` and `skopeo` already understand — carrying a kernel, an
 initrd, a rootfs disk, and a manifest that describes all three. This
 chapter covers the image contract, how to build one, how to check
@@ -50,19 +50,20 @@ beside the archive itself.
 
 ### What the host provides
 
-Every workspace artifact the guest touches is owned by msksd at
-runtime: the root and home volumes and the cidata seed disks are
-created under the state dir (`MSKSD_STATE_DIR`, the one relocation
-variable), and the console reaches the guest over the
-virtio-console port of the VMM msksd launched — both deployment shapes (the NixOS module
-and the dev daemon) deliver this without host-side scripting. The
+Every workspace artifact the guest touches is owned by msksd
+at runtime. The root and home volumes and the cidata seed
+disks are created under the state dir (`MSKSD_STATE_DIR`, the
+one relocation variable). The console reaches the guest over
+the virtio-console port of the VMM msksd launched. Both
+deployment shapes (the NixOS module and the dev daemon)
+deliver this without host-side scripting. The
 host itself provides four things, all configuration:
 
 - **`/dev/kvm`**, reachable through the `kvm` group.
 - **Two ambient capabilities** for msksd's service user:
   `CAP_NET_ADMIN` (taps, addresses, nftables) and
   `CAP_NET_BIND_SERVICE` (the DHCP and DNS listeners).
-- **The egress kernel modules** — `tun` and the nftables/NAT set —
+- **The egress kernel modules**: `tun` and the nftables/NAT set,
   loaded at boot (the NixOS module's `boot.kernelModules`).
 - **`net.ipv4.ip_forward=1`**, verified by the daemon at start
   when egress is armed; the module ships it as a sysctl.
@@ -80,22 +81,23 @@ boots. A guest image must:
 - **Boot a kernel with direct-kernel boot support.** cloud-hypervisor
   loads the bzImage and initrd itself and passes `cmdline`; the guest
   never runs its own bootloader. Stock Debian/Ubuntu kernels work.
-- **Serve a root getty on the serial console.** `msks console`
-  bridges the client to the guest's ttyS0 through the VMM's serial
-  socket, so the guest needs an autologin root getty on its serial
-  console — the shipped images run `serial-getty@ttyS0` with an
-  autologin drop-in. The kernel console (`console=ttyS0`) shares
+- **Serve a root getty on the serial console.** `msks
+console` bridges the client to the guest's ttyS0 through the
+  VMM's serial socket, so the guest needs an autologin root
+  getty on its serial console. The shipped images run
+  `serial-getty@ttyS0` with an autologin drop-in. The kernel console (`console=ttyS0`) shares
   the port: kernel messages interleave with the session, which is
-  exactly what a failsafe console wants. Authentication is
-  the daemon's TLS + token listener, the stream is raw bytes with
-  no in-band protocol, and the session keeps the getty's own
-  terminal geometry for its life (a workspace user's shell with
-  the client's terminal size rides ssh through the forward seam).
-- **Take an address over DHCP when a NIC is present.** Workspaces
-  are networked by default: the VM boots with a virtio-net NIC
-  — Debian's kernel ships `virtio_net`, and the shipped overlay loads
-  it at boot — and the daemon's DHCP service offers the address,
-  gateway, and its own resolver. The overlay carries a
+  exactly what a failsafe console wants. Authentication is the daemon's TLS + token listener, and the
+  stream is raw bytes with no in-band protocol. The session
+  keeps the getty's own terminal geometry for its life. A
+  workspace user's shell with the client's terminal size rides
+  ssh through the forward seam.
+- **Take an address over DHCP when a NIC is present.**
+  Workspaces are networked by default: the VM boots with a
+  virtio-net NIC, and the daemon's DHCP service offers the
+  address, gateway, and its own resolver. Debian's kernel
+  ships `virtio_net`, and the shipped overlay loads it at
+  boot. The overlay carries a
   systemd-networkd `.network` unit (`Name=en* eth*`, `DHCP=yes`)
   plus resolved's stub resolv.conf, so the guest configures whatever
   NIC appears. The offered resolver becomes resolved's per-link
@@ -114,58 +116,58 @@ boots. A guest image must:
   button is killed at the deadline, and whatever its page cache
   still held is lost.
 - **Tolerate a read-write root.** The daemon boots each workspace's
-  root read-write through a per-workspace qcow2 overlay — the
-  base image stays pristine under copy-on-write — and attaches an
+  root read-write through a per-workspace qcow2 overlay, so the
+  base image stays pristine under copy-on-write, and attaches an
   ext4 volume at `/home`. Mount it by the volume label `msks-home`
   (the daemon formats the volume with that label) so the mount
   stays on the right device whatever the disk order is; `nofail`
   keeps boots moving when the volume is absent.
-- **Grant passwordless sudo to the `wheel` group.** Both images
-  ship the conventional admin group `wheel` whose members
-  administer the VM: Debian through a `%wheel` dropin in
-  `/etc/sudoers.d` (the image creates the group — Debian's own
-  tree carries none), NixOS through a declarative sudo rule. The
-  identity seed creates a named login user, gives it the
-  workspace user's shell, and joins it to the group — the seed
+- **Grant passwordless sudo to the `wheel` group.** Both
+  images ship the conventional admin group `wheel` whose
+  members administer the VM. Debian does it through a `%wheel`
+  dropin in `/etc/sudoers.d`, and the image creates the group
+  because Debian's own tree carries none. NixOS does it
+  through a declarative sudo rule. The identity seed creates a named login user, gives it the
+  workspace user's shell, and joins it to the group. The seed
   never writes sudo configuration, so a guest that is rebuilt
   keeps exactly the sudo policy its configuration declares.
-- **Run cloud-init against the cidata seed disk.** A workspace
-  created with `user_data` or a seeded ssh identity boots
-  with a third, read-only virtio disk: a small iso9660 filesystem
-  labeled `cidata` carrying `user-data` (the operator payload,
-  composed beside the identity's seeding script when a key was
-  supplied) and `meta-data`
-  (`instance-id`, keyed off the workspace id, and
-  `local-hostname`, the workspace's creation name — the
-  minted id when the workspace was created without one) at its
-  root — exactly cloud-init's NoCloud seed layout. The hostname
+- **Run cloud-init against the cidata seed disk.** A
+  workspace created with `user_data` or a seeded ssh identity
+  boots with a third, read-only virtio disk: a small iso9660
+  filesystem labeled `cidata`, exactly cloud-init's NoCloud
+  seed layout. Its root carries `user-data` (the operator
+  payload, composed beside the identity's seeding script when
+  a key was supplied) and `meta-data`. The meta-data holds
+  `instance-id`, keyed off the workspace id, and
+  `local-hostname`, the workspace's creation name (the minted
+  id when the workspace was created without one). The hostname
   lands at first boot, and a factory reset re-provisions from the
   seed with it; a stop/start never re-provisions (instance-id
-  never changes). A launch heal that rebuilds a lost seed carries
-  the hostname as well, but a guest that booted before keeps
-  the hostname it already has — cloud-init sets the hostname per
-  instance, and its per-boot update leaves a hostname it never set
-  untouched, so only a factory reset moves an older workspace's.
+  never changes). A launch heal that rebuilds a lost seed carries the hostname
+  as well, but a guest that booted before keeps the hostname it
+  already has. cloud-init sets the hostname per instance, and
+  its per-boot update leaves a hostname it never set untouched,
+  so only a factory reset moves an older workspace's.
   `/etc/hosts` carries the workspace's name as well: the Debian
   image turns on cloud-init's `manage_etc_hosts` in the mode that
   adds the conventional `127.0.1.1` record naming the host, in
   place, on every boot — the file's other entries stay in place.
-  (A guest first booted before whose healed seed now carries
-  the name gets the record naming the creation name while its
-  kernel hostname keeps the older one — the module reads the seed,
-  not the kernel.) Name resolution does not wait on the record:
-  both images' resolvers answer the local hostname on their own
-  (the `myhostname` NSS module — Debian's `genericcloud` base
+  A guest first booted before whose healed seed now carries the
+  name gets the record naming the creation name while its kernel
+  hostname keeps the older one; the module reads the seed, not
+  the kernel. Name resolution does not wait on the record: both
+  images' resolvers answer the local hostname on their own, via
+  the `myhostname` NSS module (Debian's `genericcloud` base
   ships `libnss-myhostname`, and it is part of the NixOS base
-  system), so the record is the plain files-source entry a tool
+  system). The record is the plain files-source entry a tool
   reading `/etc/hosts` directly still finds.
-  The image ships cloud-init
-  (the Debian `genericcloud` base does), and dropins pin the
-  behavior the msks contract needs: `datasource_list: [ NoCloud,
-None ]` (the seed disk answers immediately — no EC2 or OpenStack
-  probing, no network timeouts) and `network: {config: disabled}`
-  (the image's own networkd unit owns whatever NIC appears;
-  cloud-init's netplan rendering stays out of the way). Both
+  The image ships cloud-init (the Debian `genericcloud` base
+  does), and dropins pin the behavior the msks contract needs.
+  `datasource_list: [ NoCloud, None ]` makes the seed disk
+  answer immediately, with no EC2 or OpenStack probing and no
+  network timeouts. `network: {config: disabled}` leaves the
+  image's own networkd unit owning whatever NIC appears, with
+  cloud-init's netplan rendering out of the way. Both
   payload forms run: cloud-config YAML and `#!` scripts.
 
   cloud-init's run-once state (the `/var/lib/cloud` cache) lives on
@@ -186,13 +188,13 @@ msks-build-guest
 builds the default image (`workspace-debian-13.6.tar`) from a
 date-pinned, sha512-verified Debian trixie **genericcloud** qcow2 —
 the cloud-init-bearing variant of Debian's cloud image family, so
-cloud-init and its python3 runtime arrive with the base. The build
-converts the qcow2 to raw, extracts the root filesystem, applies the
-msks overlay and boot diet, repacks it as a deterministic ext4
-(`mke2fs -d` under fakeroot; the intermediate rides the nix store as
-one opaque tarball, never as a tree), and wraps the kernel, initrd,
-rootfs, and a generated `image.json` into the container-image tar
-with byte-stable tar flags (`--sort=name --mtime=@1
+cloud-init and its python3 runtime arrive with the base. The build converts the qcow2 to raw, extracts the root
+filesystem, and applies the msks overlay and boot diet. It
+repacks the result as a deterministic ext4 (`mke2fs -d` under
+fakeroot; the intermediate rides the nix store as one opaque
+tarball, never as a tree). It then wraps the kernel, initrd,
+rootfs, and a generated `image.json` into the container-image
+tar with byte-stable tar flags (`--sort=name --mtime=@1
 --numeric-owner`). Identical rebuilds hash identically, so the same
 image deduplicates across hosts.
 
@@ -201,53 +203,55 @@ relocates it); `scripts/build-guest.sh` and
 `nix/guest-debian.nix` document every step and are the reference for
 what an image build does.
 
-Both images bake the agent toolchain: pinned Node,
-the pinned pi coding agent, the pinned herdr terminal
-workspace manager (herdr.dev, the release's static binary, with
-its license), and pinned Claude Code (the npm wrapper plus its
-linux-x64 native binary, staged in npm's global layout with the
-wrapper's own post-install linking done at build time), plus the
-pi model-discovery extension in `/etc/skel` and root's home
-(`docs/llm.md` describes what the extension does at pi
-startup). The staging differs per image: Debian lands the
-official Node tarball and the pinned packages under `/usr/local`;
+Both images bake the agent toolchain: pinned Node, the
+pinned pi coding agent, and the pinned herdr terminal
+workspace manager (herdr.dev, the release's static binary,
+with its license). They also bake pinned Claude Code (the npm
+wrapper plus its linux-x64 native binary, staged in npm's
+global layout with the wrapper's own post-install linking done
+at build time) and the pi model-discovery extension in
+`/etc/skel` and root's home. The internal `docs/llm.md`
+describes what the extension does at pi startup. The staging differs per image. Debian lands the official
+Node tarball and the pinned packages under `/usr/local`.
 NixOS rides nixpkgs' own Node and the same pinned packages
-through the system profile, with Claude Code's native binary
-loader-patched to the closure's glibc (a stock NixOS ships no
-usable loader where the published interpreter points) and the
-extension planted by tmpfiles copy-once rules. The pins —
-`agentNodeTarball` in `nix/guest-debian.nix`; `piTarball`,
-`npmDepsHash` (and, on a pi bump, the table in
-`nix/pi-shrinkwrap-integrity.json`), `agentHerdrBinary` and its
-license pin, and the two `agentClaude*` tarballs in
-`nix/agent-toolchain.nix` — move with an image rebuild, and the
+through the system profile. Claude Code's native binary is
+loader-patched to the closure's glibc, because a stock NixOS
+ships no usable loader where the published interpreter points.
+The extension is planted by tmpfiles copy-once rules. The pins move with an image rebuild: `agentNodeTarball` in
+`nix/guest-debian.nix`; `piTarball`, `npmDepsHash` (and, on a
+pi bump, the table in `nix/pi-shrinkwrap-integrity.json`),
+`agentHerdrBinary` and its license pin, and the two
+`agentClaude*` tarballs in `nix/agent-toolchain.nix`. The
 build stays pure derivations: pi's dependency closure is
-prefetched against its shrinkwrap (with the five integrity gaps
-the published lock leaves, closed by hash) and installed offline.
+prefetched against its shrinkwrap, with the five integrity
+gaps the published lock leaves closed by hash, and installed
+offline.
 A workspace that already booted keeps the toolchain it booted
 with; a rebuilt image serves the new pins to the next workspace.
 
-pi's own tool dependencies ride the image too: pi resolves
-`fd` and `rg` from PATH — at interactive startup and again at
-first tool use — and downloads each from GitHub releases when it
-finds neither: a download a fresh workspace's first agent start
-would otherwise wait on, behind the egress interceptor and the
-GitHub API quota every workspace behind one address shares. The Debian image stages Debian's own `fd-find`
-and `ripgrep` debs (`fdFindDeb` and `ripgrepDeb` in
-`nix/guest-debian.nix`, pinned by pool URL and checksum like the
-kernel and rsync debs) with the same linkage guard rsync gets;
-fd-find's binary lands under `/usr/lib/cargo/bin` with
-`/usr/bin/fdfind` a symlink, exactly the layout `apt install
-fd-find` leaves, and pi accepts the `fdfind` name. The NixOS image
+pi's own tool dependencies ride the image too. pi resolves
+`fd` and `rg` from PATH, at interactive startup and again at
+first tool use, and downloads each from GitHub releases when
+it finds neither. Without them, a fresh workspace's first
+agent start would wait on that download, behind the egress
+interceptor and the GitHub API quota every workspace behind
+one address shares. The Debian image stages Debian's own `fd-find` and `ripgrep`
+debs (`fdFindDeb` and `ripgrepDeb` in `nix/guest-debian.nix`,
+pinned by pool URL and checksum like the kernel and rsync
+debs) with the same linkage guard rsync gets. fd-find's binary
+lands under `/usr/lib/cargo/bin` with `/usr/bin/fdfind` a
+symlink, exactly the layout `apt install fd-find` leaves, and
+pi accepts the `fdfind` name. The NixOS image
 ships nixpkgs' own `fd` and `ripgrep` on the profile PATH the
 toolchain rides. With both present, a first `pi` start needs no
 downloads.
 
-The tools themselves decide some of their own freshness: Claude
-Code checks for updates on startup and installs a newer self into
-the user's home when it finds one (its `autoUpdates` setting and
-the `DISABLE_AUTOUPDATER` environment variable are the switches),
-and herdr's `herdr update` does the same on demand. A workspace
+The tools themselves decide some of their own freshness.
+Claude Code checks for updates on startup and installs a newer
+self into the user's home when it finds one; its
+`autoUpdates` setting and the `DISABLE_AUTOUPDATER`
+environment variable are the switches. herdr's `herdr update`
+does the same on demand. A workspace
 user can therefore run a newer tool than the image pin — the pin
 governs what a fresh workspace starts with, not what a user's home
 accumulates. A no-egress workspace sees these checks fail quietly.
@@ -275,16 +279,16 @@ staging described above.
 
 #### Rebuilding the system inside a NixOS workspace
 
-A NixOS workspace is `nixos-rebuild`-ready. `nix` runs as
-on any NixOS host — the daemon, the build users, and the CLI ship
-enabled — and the image bakes everything a rebuild evaluates
-against:
+A NixOS workspace is `nixos-rebuild`-ready. `nix` runs as on any NixOS host: the daemon, the build
+users, and the CLI ship enabled. The image bakes everything a
+rebuild evaluates against:
 
-- **The store database.** Every store path the image ships is
-  registered valid (the build loads the closure's registration
-  into `/nix/var/nix/db/db.sqlite`), so the guest's nix answers
-  reference queries and a rebuild reuses the shipped closure
-  instead of refetching or rebuilding it.
+- **The store database.** Every store path the image ships
+  is registered valid: the build loads the closure's
+  registration into `/nix/var/nix/db/db.sqlite`. The guest's
+  nix therefore answers reference queries, and a rebuild
+  reuses the shipped closure instead of refetching or
+  rebuilding it.
 - **The pinned nixpkgs source.** The same revision the image was
   built from rides the store as root's channel profile, so
   `<nixpkgs>` resolves with no network. A `nix-channel --update`
@@ -292,26 +296,25 @@ against:
   NixOS posture, and the pin governs what a fresh workspace starts
   with.
 - **`/etc/nixos/configuration.nix`.** It imports
-  `nix/guest-nixos-configuration.nix` — the very module the image
-  build evaluated — with the module's whole import chain (its
-  package files, the shrinkwrap pair) shipped beside it at the
-  same relative paths, and the
-  image build evaluates the shipped chain exactly as a rebuild
-  does, so a configuration a rebuild cannot evaluate fails the
-  build, not a workspace's first boot. A rebuild re-evaluates the
-  shipped configuration; edit the module or add settings in
-  `configuration.nix` and run:
+  `nix/guest-nixos-configuration.nix`, the very module the
+  image build evaluated, with the module's whole import chain
+  (its package files, the shrinkwrap pair) shipped beside it
+  at the same relative paths. The image build evaluates the
+  shipped chain exactly as a rebuild does, so a configuration
+  a rebuild cannot evaluate fails the build, not a
+  workspace's first boot. A rebuild re-evaluates the shipped configuration. Edit the
+  module or add settings in `configuration.nix` and run:
 
   ```bash
   sudo nixos-rebuild switch
   ```
 
-- **The nix search path.** The same four entries — `nixpkgs`,
-  `nixos-config`, the `nixos-system` entrypoint the rebuild tool
-  prefers, and the channels profile — ship in `/etc/nix/nix.conf`
-  and in every login shell's `NIX_PATH`, so `<nixpkgs>` resolves
-  identically for the root rebuild path and for the workspace
-  user at the console.
+- **The nix search path.** The same four entries ship in
+  `/etc/nix/nix.conf` and in every login shell's `NIX_PATH`:
+  `nixpkgs`, `nixos-config`, the `nixos-system` entrypoint the
+  rebuild tool prefers, and the channels profile. `<nixpkgs>`
+  therefore resolves identically for the root rebuild path
+  and for the workspace user at the console.
 
 - **The system profile as the boot's init.** The kernel cmdline
   names `init=/nix/var/nix/profiles/system/init` — the
@@ -325,46 +328,43 @@ against:
 A rebuild that changes nothing but re-activates keeps every msks
 contract item — the console getty, the sshd posture, cloud-init
 seed handling, the agent toolchain on PATH — because the
-configuration it evaluates is the one that shipped. nix works the
-same way for the unprivileged workspace user logged in on the
-console: `nix-build '<nixpkgs>' -A <pkg>` builds from the
-baked pin through the daemon, `nix-env -iA nixpkgs.<pkg>` installs
-into the user's own profile, and `nix-shell -p <pkg>` builds and
-enters an environment — fetching what the shipped store lacks
-from `cache.nixos.org` through the workspace's egress path. The
-image
-ships one background consumer of this readiness: the
-`msks-interceptor-ca` oneshot folds the daemon's interception
-CA (staged by the identity seed under `/etc/msks` — one CA for
-every workspace) into the
-system trust bundle — the module reads the staged certificate at
-evaluation time, the unit runs one `nixos-rebuild switch` per
-fresh certificate after `cloud-final`, and a hash marker keeps
+configuration it evaluates is the one that shipped. nix works the same way for the unprivileged workspace user
+logged in on the console. `nix-build '<nixpkgs>' -A <pkg>`
+builds from the baked pin through the daemon;
+`nix-env -iA nixpkgs.<pkg>` installs into the user's own
+profile; `nix-shell -p <pkg>` builds and enters an
+environment. Fetches the shipped store lacks come from
+`cache.nixos.org` through the workspace's egress path. The image ships one background consumer of this readiness.
+The `msks-interceptor-ca` oneshot folds the daemon's
+interception CA (staged by the identity seed under
+`/etc/msks`, one CA for every workspace) into the system
+trust bundle. The module reads the staged certificate at
+evaluation time; the unit runs one `nixos-rebuild switch` per
+fresh certificate after `cloud-final`; a hash marker keeps
 later boots no-ops. The image build itself refuses a host that
 carries `/etc/msks/interceptor-ca.crt` (the module's assertion
 fails the build), since that evaluation would bake a foreign CA
-into every guest. A workspace
-with egress fetches substitutes from `cache.nixos.org` through the
-workspace's egress path like any other traffic; a no-egress
-workspace rebuilds against what is already in the store (new
-packages that need a fetch fail with nix's own error until egress
-is granted). Both images stay the same size class as before —
+into every guest. A workspace with egress fetches substitutes from
+`cache.nixos.org` through the workspace's egress path like any
+other traffic. A no-egress workspace rebuilds against what is
+already in the store; new packages that need a fetch fail with
+nix's own error until egress is granted. Both images stay the same size class as before —
 the nix closure, the validity database, and the nixpkgs source
 grow the NixOS rootfs by roughly a gigabyte uncompressed.
 
-Each image build also executes every staged launcher and fails on
-one that does not run: the Debian build runs `node`, `pi`,
-`claude`, `fdfind`, and `rg` through the tree's own dynamic loader
-and libraries — the same world the guest execs them in, because
-the build sandbox carries no `/usr/bin/env` or `/lib64` — while
-`herdr`, a static binary, runs as-is; pi's and npm's published
-`#!/usr/bin/env node` shebangs, which that sandbox cannot resolve,
-are asserted byte-exact instead. The NixOS build runs the profile
-binaries directly. The first image that shipped the toolchain
-passed every presence check while `pi` could not start: the npm
-build had rewritten cli.js's shebang to a build-time Nix store
-node no guest carries, and `test -x` on a symlink says nothing
-about the interpreter behind it. The launcher executions turn
+Each image build also executes every staged launcher and
+fails on one that does not run. The Debian build runs `node`,
+`pi`, `claude`, `fdfind`, and `rg` through the tree's own
+dynamic loader and libraries, the same world the guest execs
+them in, because the build sandbox carries no `/usr/bin/env`
+or `/lib64`. `herdr`, a static binary, runs as-is. pi's and
+npm's published `#!/usr/bin/env node` shebangs, which that
+sandbox cannot resolve, are asserted byte-exact instead. The NixOS build runs the profile
+binaries directly. The first image that shipped the toolchain passed every
+presence check while `pi` could not start: the npm build had
+rewritten cli.js's shebang to a build-time Nix store node no
+guest carries. `test -x` on a symlink says nothing about the
+interpreter behind it. The launcher executions turn
 that class of breakage into a build failure.
 
 ### Building your own
@@ -379,9 +379,9 @@ image. The outline, using a distro's own cloud image as the source:
    cloud image's root archive directly).
 3. Enable an autologin root getty on `/dev/hvc0`; make sure the
    `virtio_console` module is present so the device exists at boot.
-4. Bring up networking. Workspaces boot with a virtio-net NIC by
-   default, so the image must be able to configure one — how is
-   the distro's choice:
+4. Bring up networking. Workspaces boot with a virtio-net NIC by default, so the
+   image must be able to configure one. How it does so is the
+   distro's choice:
    - a kernel with the `virtio_net` driver present (module or
      built-in; on most distros udev autoloads the module when the
      device appears);
@@ -434,11 +434,11 @@ import and in-place inspection cheaper).
 
 The daemon verifies layout and manifest at import, but a tar that
 parses can still carry a guest that does not boot — the layout is
-the only thing the daemon can see. `msks image check <archive>`
-is the gate an image author runs before publishing: it boots the
-archive exactly the way a workspace boots (same driver, overlay,
-home volume, seed disk, and console path — against a throwaway
-state dir under `/tmp`) and reports each contract point by name:
+the only thing the daemon can see. `msks image check <archive>` is the gate an image author runs
+before publishing. It boots the archive exactly the way a
+workspace boots (same driver, overlay, home volume, seed disk,
+and console path, against a throwaway state dir under `/tmp`)
+and reports each contract point by name:
 
 ```text
 $ msks image check workspace-mine-1.0.tar
@@ -452,25 +452,26 @@ PASS home-label     /home mounted by label msks-home and its write survived a st
 ```
 
 Any host with `/dev/kvm` runs it — nothing else from msks is
-needed (no daemon, no state). The points map one-to-one onto "What
-a guest must provide" above: the archive layout and manifest, a
-guest whose console getty answers, a root that accepts writes through the overlay,
-`/home` mounted by its label (both surviving a stop/start cycle),
-the seed payload running on first boot (checked when the manifest
-declares a provisioner; a provisioner-less image reports the point
-skipped with that reason), and the ACPI power button producing a
-clean shutdown. A broken point fails its row, the exit code is 1,
+needed (no daemon, no state). The points map one-to-one onto "What a guest must provide"
+above. The checks cover the archive layout and manifest, a
+guest whose console getty answers, a root that accepts writes
+through the overlay, and `/home` mounted by its label (both
+surviving a stop/start cycle). They also cover the seed
+payload running on first boot (checked when the manifest
+declares a provisioner; a provisioner-less image reports the
+point skipped with that reason) and the ACPI power button
+producing a clean shutdown. A broken point fails its row, the exit code is 1,
 and the summary names the first failure; `--keep` preserves the
 throwaway state dir (serial logs included) for inspection.
 
 `--egress` adds the networking point — the guest must take a
 global address over DHCP when the checker boots it with a NIC
-through the daemon's own net stack. That leg needs root (taps,
-nftables, the DHCP and DNS listeners on their privileged ports)
-and an egress-capable default route (`--uplink` names another
-interface); the checker sets `net.ipv4.ip_forward` to 1 for the
-pass and restores what it found — a checker killed outright
-leaves the sysctl at 1. Run the leg on a host that is not serving
+through the daemon's own net stack. That leg needs root (taps, nftables, the DHCP and DNS
+listeners on their privileged ports) and an egress-capable
+default route (`--uplink` names another interface). The
+checker sets `net.ipv4.ip_forward` to 1 for the pass and
+restores what it found; a checker killed outright leaves the
+sysctl at 1. Run the leg on a host that is not serving
 the real daemon: both bind the same privileged DHCP and DNS
 ports. The no-NIC half of the posture is
 the core pass itself: it boots without a NIC and requires a usable
@@ -502,17 +503,17 @@ msks image import https://images.example.com/workspace-mine-1.0.tar
 curl -X POST .../api/v1/images -d '{"source": "https://images.example.com/workspace-mine-1.0.tar"}'
 ```
 
-A URL download lands in the catalog's staging area under a size
-ceiling and a deadline (`MSKSD_IMAGE_IMPORT_MAX_MIB`,
-`MSKSD_IMAGE_IMPORT_TIMEOUT_S`; see `docs/config.md`), verifies
-TLS against the system roots, refuses a redirect that leaves
-https, and imports from the downloaded copy — so the recorded hash
-always reflects the fetched bytes. The ceiling also clamps to the
+A URL download lands in the catalog's staging area under a
+size ceiling and a deadline (`MSKSD_IMAGE_IMPORT_MAX_MIB`,
+`MSKSD_IMAGE_IMPORT_TIMEOUT_S`; see `docs/config.md`). It
+verifies TLS against the system roots, refuses a redirect that
+leaves https, and imports from the downloaded copy, so the
+recorded hash always reflects the fetched bytes. The ceiling also clamps to the
 bytes the storage floor protects, so the download itself cannot
-spend the state disk's headroom. The fetch runs with the calling
-token's authority: a deployment hands its API token to operators
-it trusts to import images, and the URL form reaches whatever
-network the daemon can reach — the same trust a daemon-side path
+spend the state disk's headroom. The fetch runs with the calling token's authority. A
+deployment hands its API token to operators it trusts to
+import images, and the URL form reaches whatever network the
+daemon can reach. That is the same trust a daemon-side path
 import already carries. Either way the daemon
 copies privately and hashes that copy, so a source file changing
 underneath the import cannot desync the recorded hash from the
@@ -538,13 +539,13 @@ curl -X PATCH .../api/v1/images/<hash> \
   -H "authorization: Bearer $TOKEN" -d '{"name": "mine", "version": "1.0"}'
 ```
 
-Either key alone keeps the other at its registered value. A
-rename validates the new pair the same way an import override
-does (non-empty, and free of `:` and `@` — the reference forms
-key on them), refuses with a named error — naming the holder by
-hash, and by its origin when an override or a rename moved it
-there — a pair another row already holds, keeps the origin pair, and changes
-nothing else: the bytes, the hash, the listed import time, and
+Either key alone keeps the other at its registered value. A rename validates the new pair the same way an import
+override does: non-empty, and free of `:` and `@` (the
+reference forms key on them). It refuses, with a named error
+that names the holder by hash and by its origin when an
+override or a rename moved it there, a pair another row
+already holds. It keeps the origin pair and changes nothing
+else: the bytes, the hash, the listed import time, and
 workspaces already booting the image stay put. The refusal holds
 for overrides and renames; a plain import of a rebuilt archive
 under a pair a row already holds stays allowed (the long-standing
@@ -571,25 +572,27 @@ curl -X DELETE .../api/v1/images/default \
   -H "authorization: Bearer $TOKEN"
 ```
 
-- The designation is the catalog's `default` pointer file: it
-  survives restarts, `msks image ls`/`image info` mark the
-  designated row, and with it cleared a bare create falls back to
-  the sole catalog entry — on a catalog holding several images it
-  answers a named error until one is designated again.
+- The designation is the catalog's `default` pointer file.
+  It survives restarts, and `msks image ls`/`image info` mark
+  the designated row. With it cleared, a bare create falls
+  back to the sole catalog entry; on a catalog holding
+  several images it answers a named error until one is
+  designated again.
 - `MSKSD_DEFAULT_IMAGE` (set by the dev daemon from its state dir's
   image) imports and designates at first boot; on later boots the
   daemon only re-checks the hash, not a full re-import.
-- `MSKSD_SEED_IMAGES` (the dev daemon sets it to the NixOS guest's
-  archive whenever `msks-build-guest nixos` has built one) imports
-  at every start — warm when the archive is unchanged, never
-  designated — so a rebuilt guest is what a bare-name create boots
-  without a manual re-import.
+- `MSKSD_SEED_IMAGES` imports at every start, warm when the
+  archive is unchanged and never designated; the dev daemon
+  sets it to the NixOS guest's archive whenever
+  `msks-build-guest nixos` has built one. A rebuilt guest is
+  therefore what a bare-name create boots, without a manual
+  re-import.
 - Listing shows every registered image with its hash, name,
   version, kernel facts, which one is default, and when each
-  entered the catalog (the `imported` field, ISO 8601 UTC); a
+  entered the catalog (the `imported` field, ISO 8601 UTC). A
   renamed row additionally carries its origin pair
-  (`origin_name`/`origin_version`, equal to `name`/`version` for
-  an unrenamed row):
+  (`origin_name`/`origin_version`, equal to `name`/`version`
+  for an unrenamed row):
 
 ```bash
 curl -H "authorization: Bearer $TOKEN" \
@@ -656,10 +659,11 @@ curl -X POST .../api/v1/workspaces -d '{
 The rules worth knowing:
 
 - **Create-time and immutable.** The payload is part of the
-  workspace's identity; `user_data` is accepted only at create
-  (capped at 64 Ki characters — pydantic's 422 names the bound; an
-  empty payload is a 400), and any mutation attempt answers a named
-  405 (delete and recreate to change it). cloud-init keys its
+  workspace's identity; `user_data` is accepted only at
+  create. It is capped at 64 Ki characters (pydantic's 422
+  names the bound), an empty payload is a 400, and any
+  mutation attempt answers a named 405 (delete and recreate to
+  change it). cloud-init keys its
   run-once semantics off the workspace, so changing it after the
   fact would silently do nothing anyway.
 - **The seed is per-workspace state.** It is built at create (a
@@ -679,23 +683,25 @@ The rules worth knowing:
   boots with two disks and no added cost: cloud-init finds no seed,
   applies nothing, and the interactive budget is unchanged (~3.0s
   start→shell).
-- **Failure posture is cloud-init's.** The console getty starts
-  before cloud-init runs (the interactive budget is unaffected —
-  the shipped image measures ~3.0s start→shell), and payloads run
-  in cloud-init's final stage: a slow or hanging payload delays
-  boot-complete, not the shell. `cloud-init status --wait` (or the
+- **Failure posture is cloud-init's.** The console getty
+  starts before cloud-init runs, so the interactive budget is
+  unaffected (the shipped image measures ~3.0s
+  start-to-shell). Payloads run in cloud-init's final stage:
+  a slow or hanging payload delays boot-complete, not the
+  shell. `cloud-init status --wait` (or the
   serial log) says when provisioning finished; a factory reset
   re-runs the payload from the same seed.
 
 ## The published image channel
 
-Every release publishes the built guest images to a hash-keyed
-channel on this repository's GitHub releases: each image lives on
-its own release tagged `images/<hash-prefix>`, as a
-zstd-compressed archive (`<flavor>.tar.zst`) whose sha256 the
-catalog records — importing the compressed form hashes exactly
-the shipped bytes, and the daemon's import accepts the form
-directly (the archive reader detects it). An unchanged
+Every release publishes the built guest images to a
+hash-keyed channel on this repository's GitHub releases. Each
+image lives on its own release tagged
+`images/<hash-prefix>`, as a zstd-compressed archive
+(`<flavor>.tar.zst`) whose sha256 the catalog records.
+Importing the compressed form hashes exactly the shipped
+bytes, and the daemon's import accepts the form directly (the
+archive reader detects it). An unchanged
 derivation publishes nothing: the workflow compares the archive
 derivation's evaluation against the previous manifest and skips
 the build entirely, and a channel slot that already exists is
