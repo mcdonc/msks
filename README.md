@@ -325,6 +325,27 @@ workspace refuses to boot with the cause named (boot those with
 connection) is #69.
 See `docs/networking.md` for the full reference.
 
+### The docs site (#591)
+
+The documentation builds into a static site (the same build the
+`Deploy Docs` workflow publishes to GitHub Pages on every push to
+`main` and every release tag). Preview it locally — the preview
+serves the **main branch's** docs (a feature-branch checkout
+refuses with the rule named), and while it runs, every edit to
+the chapters or the site config re-renders the open tab in
+realtime:
+
+```bash
+git checkout main && git pull
+devenv shell
+msks-docs              # serves http://127.0.0.1:8923/ live
+```
+
+`DOCS_SERVE_PORT` relocates the port. The chapters live under
+`docs/`; the TUI chapter's screen renderings regenerate with
+`RENDER_DOCS_SCREENS=1 pytest -q
+src/msks/tests/test_render_docs_screens.py`.
+
 ### The workspace LLM proxy (#259)
 
 Each workspace's tap carries its own proxy service when the daemon
