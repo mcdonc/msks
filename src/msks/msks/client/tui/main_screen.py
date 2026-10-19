@@ -110,20 +110,20 @@ class MainScreen(Screen):
     workspace's page, ``e`` the secrets page (#431), ``/`` the
     typeahead jump (#470 L4). The footer's descriptions stay
     short (#524): every binding must fit the 80-column footer a
-    24-row terminal shows — the longer words (``Jump`` for the
-    typeahead, ``Del`` for remove, ``Reload`` for the standing
+    24-row terminal shows — the longer words (``Jmp`` for the
+    typeahead, ``Del`` for remove, ``Rload`` for the standing
     refresh) abbreviate their actions without hiding a binding."""
 
     BINDINGS = [
         Binding("enter", "open", "Open", priority=True),
-        Binding("/", "search", "Jump"),
+        Binding("/", "search", "Jmp"),
         Binding("c", "create", "New"),
         Binding("i", "image", "Img"),
-        Binding("s", "start", "Start"),
-        Binding("x", "stop", "Stop"),
+        Binding("s", "start", "Strt"),
+        Binding("S", "stop", "Stp"),
         Binding("D", "remove", "Del"),
-        Binding("e", "secrets", "Secrets"),
-        Binding("r", "refresh", "Reload"),
+        Binding("e", "secrets", "Scrts"),
+        Binding("r", "refresh", "Rload"),
         Binding("q", "quit", "Quit"),
         Binding("escape", "quit", show=False),
     ]

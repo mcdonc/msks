@@ -699,7 +699,7 @@ async def test_start_stop_and_remove_from_the_list(monkeypatch) -> None:
         await wait_for(lambda: list_children(app) == 1)
         await press_until(pilot, "s", lambda: data.calls == [("start", WS)])
         await wait_for(lambda: "alpha running" in status_text(app))
-        await press_until(pilot, "x", lambda: ("stop", WS) in data.calls)
+        await press_until(pilot, "S", lambda: ("stop", WS) in data.calls)
         await wait_for(lambda: "alpha stopped" in status_text(app))
         # D asks; y answers; the row leaves with the listing.
         await pilot.press("D")
@@ -4201,8 +4201,8 @@ async def test_every_footer_fits_the_smallest_terminal(monkeypatch) -> None:
     terminal. The widest shapes — the list's ten bindings and
     the consent page's eight with a hold waiting — abbreviate or
     drop what would not fit: the list's long words shorten
-    (``Jump`` for the typeahead, ``Del`` for remove, ``Reload``
-    for the standing refresh) and the command palette stays off
+    (#581's ``Jmp``, ``Del``, and ``Rload``) and the command
+    palette stays off
     (the tree registers no commands, and its docked key is twelve
     of the columns); nothing is clipped — a footer whose bindings
     outgrew the line scrolled the last of them out of sight."""
@@ -4271,7 +4271,7 @@ async def test_the_page_answers_the_lists_power_letters(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 5)
-        await pilot.press("x")
+        await pilot.press("S")
         await wait_for(
             lambda: "Stop skipped: workspace is stopped" in consent_text(app)
         )
@@ -4280,7 +4280,7 @@ async def test_the_page_answers_the_lists_power_letters(monkeypatch) -> None:
         await pilot.press("s")
         await wait_for(lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "running" in header_text(app))
-        await pilot.press("x")  # stop again — the quick letter
+        await pilot.press("S")  # stop again — the quick letter
         await wait_for(lambda: ("stop", WS) in data.calls)
         await wait_for(lambda: "stopped" in header_text(app))
         # The shell row's selection — the message a mouse click
