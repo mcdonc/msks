@@ -127,7 +127,7 @@ error naming the two spellings, and the valid-keys list an unknown
 key reports is the snake_case one.
 
 One mapping detail worth knowing: **`state_dir` places the database
-too.** `MSKSD_STATE_DIR` feeds both the local driver's workspace
+too.** `state_dir` feeds both the local driver's workspace
 artifacts and the server's sqlite database (`<state_dir>/msks.db`);
 there is no separate `db_path` key, matching the environment
 variable, which also drives both.

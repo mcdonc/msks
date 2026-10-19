@@ -327,8 +327,9 @@ terminal_open_cmd:                     # list form (no shell quoting)
   - -e
 ```
 
-`MSKSC_TERMINAL_OPEN_CMD` overrides the file value with the string
-form. Unset (the default), the shell action runs `msks ssh` in the
+`terminal_open_cmd`'s environment form
+(`MSKSC_TERMINAL_OPEN_CMD`) overrides the file value with the
+string form. Unset (the default), the shell action runs `msks ssh` in the
 TUI's own terminal, on every host, with no terminal to launch.
 A configured launcher that fails to execute (a binary that is
 missing or not executable) names its reason on the tree's
@@ -363,7 +364,8 @@ workspace that sets its own title from inside the session (a
 can) rewrites it there — tmux shields the popup path, and nothing
 shields the plain path.
 
-`MSKSC_TERMINAL_TITLE` overrides the file value. The default is
+`terminal_title`'s environment form (`MSKSC_TERMINAL_TITLE`)
+overrides the file value. The default is
 unset: the terminal emulator's own title — the command it runs,
 or whatever its `-T` / `--title` flag names — stays in place.
 A `msks ssh` you type yourself keeps your terminal's title: the

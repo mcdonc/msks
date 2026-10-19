@@ -230,7 +230,8 @@ ssh_options:                                # list form (tokens stay whole)
   - ServerAliveInterval=30
 ```
 
-`MSKSC_SSH_OPTIONS` overrides the file value with the string form.
+`ssh_options`'s environment form (`MSKSC_SSH_OPTIONS`)
+overrides the file value with the string form.
 
 The remembered options ride behind the command line's own, so
 an option you pass for one invocation wins over the remembered
@@ -1206,7 +1207,7 @@ daemon-held half arrives over the API and goes away with the
 process. A locally-held half, yours, is read from its one file
 and left exactly there. Host keys land in a per-workspace `known_hosts` under the
 msks cache root, under `accept-new`. The root is
-`MSKSC_CACHE_DIR` when it is set, else `XDG_CACHE_HOME` or
+the `cache_dir` key (`MSKSC_CACHE_DIR`) when it is set, else `XDG_CACHE_HOME` or
 `~/.cache/msks`, then `<workspace-id>/known_hosts`. The cache
 keys on the workspace's immutable id, so a workspace recreated
 under the same name starts with a fresh cache and trusts its
