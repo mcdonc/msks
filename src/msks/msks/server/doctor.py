@@ -12,7 +12,10 @@ the documented workflows run on. A missing tool surfaces today as
 a late runtime failure with an opaque error; doctor names each
 one before that, with an install hint matched to the detected
 package manager. The check set covers what msksd and the client
-exec at runtime — debugging and development tools stay out of it.
+exec at runtime — debugging and development tools stay out of
+it. One permission fact sits beside the tools: the ``/dev/kvm``
+group gate every workspace boot passes (#559), read from the
+group database the #555 posture takes.
 
 Design (ported from klangkd doctor, klangk #1612): capabilities
 first, never platform predictions. Every check runs on every
@@ -38,6 +41,8 @@ the error.
 
 from __future__ import annotations
 
+import grp
+import os
 import re
 import shutil
 import subprocess
@@ -46,6 +51,7 @@ from dataclasses import dataclass, field
 
 from ..config import load_settings
 from ..settings import Settings
+from .hostsetup import executing_user, group_present, in_group
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -276,6 +282,20 @@ PACKAGE_HINTS: dict[str, dict[str, str]] = {
         "apk": "libnfnetlink",
         "pacman": "libnfnetlink",
     },
+    # The KVM stack the /dev/kvm rows point at (#559): the name
+    # splits the way the library rows' do — Arch carries KVM in
+    # its split qemu packages (qemu-desktop is the x86_64 one),
+    # Alpine's is the arch-named system emulator, and brew's
+    # formula is qemu under either platform.
+    "qemu-kvm": {
+        "dnf": "qemu-kvm",
+        "yum": "qemu-kvm",
+        "apt": "qemu-kvm",
+        "zypper": "qemu-kvm",
+        "apk": "qemu-system-x86_64",
+        "pacman": "qemu-desktop",
+        "brew": "qemu",
+    },
 }
 
 
@@ -302,6 +322,29 @@ def manager_install(manager: str, pkg: str) -> str:
         # apk's install verb is "add".
         return f"sudo apk add {pkg}"
     return f"sudo {manager} install {pkg}"
+
+
+# The /dev/kvm fix is a group add, not a package install (#559),
+# so its table keys on the detected manager the way the hint
+# table does, with one command shape per platform family. A
+# manager the table lacks — brew on a brew-only Linux host,
+# above all — falls back to the Debian form, the documented
+# deployment host.
+GROUP_ADD: dict[str, str] = {
+    "apt": "sudo adduser {user} kvm",
+    "dnf": "sudo usermod -aG kvm {user}",
+    "yum": "sudo usermod -aG kvm {user}",
+    "zypper": "sudo usermod -aG kvm {user}",
+    "pacman": "sudo gpasswd -a {user} kvm",
+    "apk": "sudo addgroup {user} kvm",
+}
+
+
+def group_add_hint(user: str, manager: str | None) -> str:
+    """The command that puts *user* in the kvm group on the
+    detected manager's platform."""
+    shape = GROUP_ADD.get(manager or "", "sudo adduser {user} kvm")
+    return shape.format(user=user)
 
 
 # ---------------------------------------------------------------------------
@@ -614,6 +657,107 @@ def check_nfq_load(manager: str | None) -> CheckResult:
 
 
 # ---------------------------------------------------------------------------
+# The /dev/kvm group gate (#559)
+# ---------------------------------------------------------------------------
+
+
+def kvm_node_absent(manager: str | None) -> CheckResult:
+    """The host carries no /dev/kvm at all — its own miss, never
+    a group failure: nested virtualization off, or the stack
+    that creates the node missing."""
+    return CheckResult(
+        name="/dev/kvm",
+        ok=False,
+        message=(
+            "/dev/kvm is absent — the daemon cannot boot "
+            "workspaces without it (nested virtualization off, "
+            "or the KVM stack missing)"
+        ),
+        hint=install_hint("qemu-kvm", manager),
+    )
+
+
+def kvm_group_absent(manager: str | None) -> CheckResult:
+    """The node stands but the group database carries no kvm
+    group — the stack that creates it is missing."""
+    return CheckResult(
+        name="/dev/kvm",
+        ok=False,
+        message=(
+            "the kvm group is absent — the KVM stack that "
+            "creates it is missing"
+        ),
+        hint=install_hint("qemu-kvm", manager),
+    )
+
+
+def kvm_not_a_member(user: str, manager: str | None) -> CheckResult:
+    """The database knows the group and the user sits outside it
+    — the row a skipped hostsetup run meets (#559)."""
+    return CheckResult(
+        name="/dev/kvm",
+        ok=False,
+        message=f"{user} is not in the kvm group, which gates /dev/kvm",
+        hint=group_add_hint(user, manager),
+    )
+
+
+def kvm_session_predates(user: str) -> CheckResult:
+    """The database says member, the session's live groups say
+    no — the group landed after this login."""
+    return CheckResult(
+        name="/dev/kvm",
+        ok=False,
+        message=(
+            f"{user} is in the kvm group, but this session "
+            "predates the membership — a daemon started from "
+            "it still meets EACCES on /dev/kvm"
+        ),
+        hint=(
+            "log out and back in (or start msksd under "
+            "newgrp kvm) once the group has landed"
+        ),
+    )
+
+
+def kvm_session_stale(uid: int) -> bool:
+    """Whether the daemon user's own session lacks the group the
+    database grants: the run is that user's (not a sudo lift —
+    a root session cannot speak for the user's login), and
+    neither the live supplementary groups nor the primary gid
+    carries the group."""
+    if os.geteuid() != uid:
+        return False
+    kvm_gid = grp.getgrnam("kvm").gr_gid
+    return kvm_gid not in os.getgroups() and os.getgid() != kvm_gid
+
+
+def kvm_access_result(manager: str | None) -> CheckResult:
+    """The gate every workspace boot passes on a KVM host: the
+    node's presence, and the daemon user's kvm-group membership —
+    the same group-database read #555's peer policy and
+    hostsetup's membership step take, primary or supplementary,
+    never a platform guess. A login that predates the membership
+    fails on its own line: the database says yes, the session's
+    live groups say no, and a daemon started from that session
+    still meets EACCES on the node. A sudo-lifted run cannot
+    read the daemon user's session — there the row stands on
+    the database answer alone."""
+    user, uid, _gid, _home = executing_user()
+    if not os.path.exists("/dev/kvm"):
+        return kvm_node_absent(manager)
+    if not group_present("kvm"):
+        return kvm_group_absent(manager)
+    if not in_group(user, "kvm"):
+        return kvm_not_a_member(user, manager)
+    if kvm_session_stale(uid):
+        return kvm_session_predates(user)
+    return CheckResult(
+        name="/dev/kvm", ok=True, message=f"/dev/kvm ok ({user} in kvm)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # The check set
 # ---------------------------------------------------------------------------
 
@@ -634,6 +778,12 @@ def run_doctor(settings: Settings) -> DoctorReport:
             use="the VMM behind the local backend (#1)",
         )
     )
+    if sys.platform == "linux":
+        # The node's group gate rides beside the VMM that opens
+        # it — Linux-only like the consent-stack rows (#542):
+        # /dev/kvm is a Linux node, and every group-add command
+        # the row can hint at prescribes one on another platform.
+        report.add(kvm_access_result(manager))
     report.add(
         check_binary(
             vmm.mkfs_ext4,

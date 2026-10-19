@@ -2,6 +2,7 @@
 
 import argparse
 import subprocess
+from types import SimpleNamespace
 
 import msks.server.doctor as doctor_mod
 import msks.server.main as main_mod
@@ -18,7 +19,9 @@ from msks.server.doctor import (
     detect_package_manager,
     doctor_main,
     format_report,
+    group_add_hint,
     install_hint,
+    kvm_access_result,
     library_probe_result,
     parse_tmux_version,
     result_marker,
@@ -105,6 +108,15 @@ def test_install_hint_table_and_managers() -> None:
     assert install_hint("mkisofs", "brew") == "brew install cdrtools"
     assert install_hint("rsync", "zypper") == "sudo zypper install rsync"
     assert install_hint("nft", "apk") == "sudo apk add nftables"
+
+
+def test_install_hint_names_the_kvm_stack_per_manager() -> None:
+    """#559: the /dev/kvm rows' stack hint names each manager's
+    real package — Arch's split qemu and Alpine's arch-named
+    emulator, not a qemu-kvm that neither archive carries."""
+    assert install_hint("qemu-kvm", "apt") == "sudo apt install qemu-kvm"
+    assert install_hint("qemu-kvm", "pacman") == "sudo pacman -S qemu-desktop"
+    assert install_hint("qemu-kvm", "apk") == "sudo apk add qemu-system-x86_64"
 
 
 def test_install_hint_fallbacks() -> None:
@@ -519,6 +531,166 @@ def test_run_doctor_off_linux_skips_the_library_rows(
 
 
 # ---------------------------------------------------------------------------
+# The /dev/kvm gate (#559)
+# ---------------------------------------------------------------------------
+
+
+def kvm_seam(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    member: bool = True,
+    session_carries: bool = True,
+    sudo_lifted: bool = False,
+) -> None:
+    """Pin the kvm row's seams: a daemon user `op` (uid 1000), a
+    kvm group at gid 108, a node that exists, and the two
+    database answers the row reads. *session_carries* says the
+    live session holds the gid (supplementary list or primary);
+    *sudo_lifted* makes the effective uid root's, the run that
+    cannot read the daemon user's session."""
+    monkeypatch.setattr(
+        doctor_mod, "executing_user", lambda: ("op", 1000, 1000, "/home/op")
+    )
+    monkeypatch.setattr(doctor_mod, "group_present", lambda name: True)
+    monkeypatch.setattr(doctor_mod, "in_group", lambda user, name: member)
+    monkeypatch.setattr(
+        doctor_mod.os.path, "exists", lambda path: path == "/dev/kvm"
+    )
+    monkeypatch.setattr(
+        doctor_mod.grp,
+        "getgrnam",
+        lambda name: SimpleNamespace(gr_gid=108),
+    )
+    monkeypatch.setattr(
+        doctor_mod.os, "geteuid", lambda: 0 if sudo_lifted else 1000
+    )
+    monkeypatch.setattr(
+        doctor_mod.os,
+        "getgroups",
+        lambda: [108] if session_carries else [24, 27],
+    )
+    monkeypatch.setattr(doctor_mod.os, "getgid", lambda: 1000)
+
+
+def test_the_kvm_row_passes_for_a_member(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kvm_seam(monkeypatch)
+    result = kvm_access_result("apt")
+    assert result.name == "/dev/kvm"
+    assert result.ok and "op in kvm" in result.message
+
+
+def test_the_kvm_row_passes_when_the_primary_group_is_kvm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Primary-group membership counts (in_group's second gate,
+    the #555 posture): the session carries the gid as its
+    primary, the supplementary list stays empty."""
+    kvm_seam(monkeypatch)
+    monkeypatch.setattr(doctor_mod.os, "getgroups", lambda: [])
+    monkeypatch.setattr(doctor_mod.os, "getgid", lambda: 108)
+    result = kvm_access_result("apt")
+    assert result.ok and "op in kvm" in result.message
+
+
+def test_the_kvm_row_errors_when_the_user_is_not_a_member(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kvm_seam(monkeypatch, member=False)
+    result = kvm_access_result("apt")
+    assert result.ok is False and result.is_warning is False
+    assert "op is not in the kvm group" in result.message
+    assert result.hint == "sudo adduser op kvm"
+
+
+def test_the_kvm_group_add_hint_matches_the_manager() -> None:
+    assert group_add_hint("op", "dnf") == "sudo usermod -aG kvm op"
+    assert group_add_hint("op", "zypper") == "sudo usermod -aG kvm op"
+    assert group_add_hint("op", "pacman") == "sudo gpasswd -a op kvm"
+    assert group_add_hint("op", "apk") == "sudo addgroup op kvm"
+    # No manager detected falls back to the Debian form — the
+    # documented deployment host.
+    assert group_add_hint("op", None) == "sudo adduser op kvm"
+
+
+def test_the_kvm_row_names_a_session_that_predates_the_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The database says member, the live session says no — the
+    group landed after this login, and a daemon started from the
+    session still meets EACCES (#559's second acceptance)."""
+    kvm_seam(monkeypatch, session_carries=False)
+    result = kvm_access_result("apt")
+    assert result.ok is False and result.is_warning is False
+    assert "predates the membership" in result.message
+    assert "newgrp kvm" in result.hint
+
+
+def test_a_sudo_lifted_run_stands_on_the_database_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A root session cannot speak for the daemon user's login:
+    the live-group line stays off, and the database's yes passes
+    even though root's own groups lack the gid."""
+    kvm_seam(monkeypatch, session_carries=False, sudo_lifted=True)
+    result = kvm_access_result("apt")
+    assert result.ok and "op in kvm" in result.message
+
+
+def test_the_kvm_row_names_the_missing_node(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A host without /dev/kvm (a VM without nested virt) reports
+    the node's absence — its own message, never a group
+    failure."""
+    kvm_seam(monkeypatch)
+    monkeypatch.setattr(doctor_mod.os.path, "exists", lambda path: False)
+    result = kvm_access_result("apt")
+    assert result.ok is False
+    assert "/dev/kvm is absent" in result.message
+    assert "group" not in result.message
+    assert result.hint == "sudo apt install qemu-kvm"
+
+
+def test_the_kvm_row_names_the_missing_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kvm_seam(monkeypatch)
+    monkeypatch.setattr(doctor_mod, "group_present", lambda name: False)
+    result = kvm_access_result("apt")
+    assert result.ok is False
+    assert "kvm group is absent" in result.message
+    assert result.hint == "sudo apt install qemu-kvm"
+
+
+def test_run_doctor_carries_the_kvm_row_on_linux(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The row rides beside the cloud-hypervisor check — the VMM
+    opens the node the group gates (#559)."""
+    all_found(monkeypatch)
+    kvm_seam(monkeypatch)
+    report = run_doctor(Settings())
+    names = [r.name for r in report.results]
+    assert "/dev/kvm" in names
+    assert names.index("/dev/kvm") == names.index("cloud-hypervisor") + 1
+
+
+def test_run_doctor_off_linux_skips_the_kvm_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The row is Linux-only like the consent stack (#542):
+    /dev/kvm is a Linux node, and the group-add commands the row
+    hints at prescribe Linux ones elsewhere."""
+    all_found(monkeypatch)
+    kvm_seam(monkeypatch)
+    monkeypatch.setattr(doctor_mod.sys, "platform", "darwin")
+    report = run_doctor(Settings())
+    assert "/dev/kvm" not in {r.name for r in report.results}
+
+
+# ---------------------------------------------------------------------------
 # The check set
 # ---------------------------------------------------------------------------
 
@@ -544,6 +716,7 @@ def test_run_doctor_grades_and_settings_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     all_found(monkeypatch)
+    kvm_seam(monkeypatch)  # the kvm row's answer is host state
     settings = Settings(vmm=VmmSettings(mkisofs="xmkisofs"))
     report = run_doctor(settings)
     names = {r.name for r in report.results}
@@ -601,6 +774,7 @@ def test_run_doctor_warning_rows(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda name: None if name in {"ssh", "rsync"} else f"/usr/bin/{name}",
     )
     monkeypatch.setattr(doctor_mod, "run", probes_ok)
+    kvm_seam(monkeypatch)  # the kvm row's answer is host state
     report = run_doctor(Settings())
     warn_names = {r.name for r in report.warnings}
     assert warn_names == {"ssh", "rsync"}
@@ -613,6 +787,7 @@ def test_run_doctor_error_fails(monkeypatch: pytest.MonkeyPatch) -> None:
         "which",
         lambda name: None if name == "nft" else f"/usr/bin/{name}",
     )
+    kvm_seam(monkeypatch)  # the kvm row's answer is host state
     monkeypatch.setattr(doctor_mod, "run", probes_ok)
     report = run_doctor(Settings())
     assert report.passed is False
@@ -676,19 +851,21 @@ def test_doctor_main_exit_codes_and_output(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     all_found(monkeypatch)
+    kvm_seam(monkeypatch)  # the kvm row's answer is host state
     monkeypatch.setattr(
         doctor_mod, "load_settings", lambda config, generate: Settings()
     )
     assert doctor_main(None) == 0
     out = capsys.readouterr().out
     assert "msksd doctor" in out
-    assert "All 15 checks passed." in out
+    assert "All 16 checks passed." in out
 
 
 def test_doctor_main_appends_config_notice(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     all_found(monkeypatch)
+    kvm_seam(monkeypatch)  # the kvm row's answer is host state
     monkeypatch.setattr(
         doctor_mod,
         "load_settings",
