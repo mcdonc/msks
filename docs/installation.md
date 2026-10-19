@@ -95,7 +95,7 @@ the unit changed.
 The run ends with a summary: the wrapper and its caps, the
 sysctl, the modules file and the consent verdict, the tools'
 paths, `/dev/kvm`, the detected uplink (the interface the
-daemon should point at through `MSKSD_EGRESS_UPLINK`), and the
+daemon's `egress_uplink` key should point at), and the
 service line. When the service started, the same-user socket
 path prints beside it.
 
@@ -254,8 +254,8 @@ NixOS does not manage, `DEV_CAPS` points at the Debian setup's
 
 ## First run
 
-A bare `msksd` (no subcommand) serves. A fresh state dir (`~/.local/state/msksd`, relocated by
-`MSKSD_STATE_DIR`) gets three things on first serve. The daemon
+A bare `msksd` (no subcommand) serves. A fresh state dir (`~/.local/state/msksd`, relocated by the
+`state_dir` key) gets three things on first serve. The daemon
 mints its CA and certificate and prints the CA fingerprint to
 pin on first connect. The config file generates as a commented
 template (see [Configuration](config.md)). The unix listener
