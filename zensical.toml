@@ -20,6 +20,7 @@ copyright = "Copyright &copy; 2026 Chris McDonough"
 nav = [
   { "Home" = "index.md" },
   { "The CLI Client" = "cli.md" },
+  { "The TUI" = "tui.md" },
   { "Configuration" = "config.md" },
   { "Workspace Images" = "images.md" },
   { "Guest Networking" = "networking.md" },
