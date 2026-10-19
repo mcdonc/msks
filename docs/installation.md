@@ -99,6 +99,108 @@ daemon should point at through `MSKSD_EGRESS_UPLINK`), and the
 service line. When the service started, the same-user socket
 path prints beside it.
 
+## The same host by hand
+
+`msks-setup-debian-host` is a program the wheel ships, and
+running it means running shipped code as root. An operator who
+prefers to read every step first can land the same host in an
+interactive root shell — each command below is one phase of the
+walk above, pasted and run by hand.
+
+Start a root shell and install the package set:
+
+```console
+sudo -i
+apt install iproute2 nftables conntrack procps util-linux libcap2-bin kmod
+```
+
+The capability wrapper — a fresh root-owned copy of `setpriv`,
+with the two capabilities set and read back (a filesystem
+without capability xattrs takes the `setcap` and loses it, so
+the readback is the proof):
+
+```console
+install -o root -g root -m 0755 "$(command -v setpriv)" /usr/local/bin/msks-caps
+setcap cap_net_admin,cap_net_bind_service+ep /usr/local/bin/msks-caps
+getcap /usr/local/bin/msks-caps
+```
+
+The functional proof — the daemon's exact exec line, with the
+ambient set inspected in the process it starts (the `CapAmb`
+line must carry a nonzero mask):
+
+```console
+/usr/local/bin/msks-caps --inh-caps=+net_admin,+net_bind_service \
+  --ambient-caps=+net_admin,+net_bind_service \
+  -- sh -c "sed -n 's/^CapAmb:[[:space:]]*//p' /proc/self/status"
+```
+
+Routing, at boot and now:
+
+```console
+printf '%s\n' \
+  '# route packets between per-VM taps and the host uplink' \
+  'net.ipv4.ip_forward = 1' > /etc/sysctl.d/msks-egress.conf
+sysctl -p /etc/sysctl.d/msks-egress.conf
+```
+
+The module set, at boot and now:
+
+```console
+printf '%s\n' tun nf_tables nft_chain_nat nft_masq nft_ct nft_reject \
+  nf_reject_ipv4 nf_nat nf_conntrack nfnetlink_queue \
+  > /etc/modules-load.d/msks.conf
+modprobe tun nf_tables nft_chain_nat nft_masq nft_ct nft_reject \
+  nf_reject_ipv4 nf_nat nf_conntrack nfnetlink_queue
+```
+
+Interactive egress consent needs `nft_reject`,
+`nf_reject_ipv4`, and `nfnetlink_queue` loaded — check with
+`grep -w <module> /proc/modules` (or `lsmod`) when a load
+landed quietly.
+
+`/dev/kvm` for the daemon's user, picked up at that account's
+next login:
+
+```console
+usermod -aG kvm <the-user-the-daemon-runs-as>
+```
+
+The systemd user service is the daemon user's own piece — leave
+the root shell and run it as that user. Write
+`~/.config/systemd/user/msksd.service` with the unit below
+(adjust the `msksd` path to where the install put it, and the
+uplink to this host's default-route interface — `ip route show
+default` names it):
+
+```ini
+[Unit]
+Description=msks daemon (workspaces as cloud-hypervisor microvms)
+
+[Service]
+ExecStart=/usr/local/bin/msks-caps --inh-caps=+net_admin,+net_bind_service --ambient-caps=+net_admin,+net_bind_service -- /path/to/msksd
+Environment=MSKSD_EGRESS_ENABLED=true
+Environment=MSKSD_EGRESS_UPLINK=<uplink>
+RuntimeDirectory=msks
+Restart=always
+RestartSec=1
+TimeoutStopSec=180s
+
+[Install]
+WantedBy=default.target
+```
+
+Then enable it, as that user:
+
+```console
+systemctl --user enable --now msksd.service
+loginctl enable-linger <the-user-the-daemon-runs-as>
+```
+
+`loginctl enable-linger` is the one root command among these —
+it keeps the user manager, and the daemon, running across
+logouts and boots.
+
 ## Hosts the unit does not cover
 
 `--no-service` lands every host piece above and skips the
