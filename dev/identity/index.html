@@ -725,23 +725,23 @@
 
 
 <h1 id="the-identity-file">The identity file<a class="headerlink" href="#the-identity-file" title="Permanent link">&para;</a></h1>
-<p>Every workspace msks creates plants <strong>your</strong> public ssh key as
-the workspace's operator identity, and every <code>msks ssh</code> and
-<code>msks rsync</code> session signs with your private half — msks
-generates no key of its own, so the key you configure is the one
+<p>Every workspace msks creates plants <strong>your</strong> public ssh key
+as the workspace's operator identity. Every <code>msks ssh</code> and
+<code>msks rsync</code> session signs with your private half. msks
+generates no key of its own: the key you configure is the one
 your workspaces answer to. The same key locks workspace secrets
 on the daemon: values a workspace needs at runtime are
 sealed under the identity, and the client unlocks them with the
 private half again.</p>
 <h2 id="why-an-ssh-key">Why an ssh key<a class="headerlink" href="#why-an-ssh-key" title="Permanent link">&para;</a></h2>
-<p>The workspace's door is sshd — the guest runs it, the forward
-carries it — so the operator identity is the credential that
-door already speaks: an ssh key. That choice carries four
-things with it. The trust root is a key you already guard
-(your agent, your hardware token): msks mints no account, no
-password, and no credential of its own, so nothing new exists
-to leak and nothing new must be rotated — your key's lifecycle
-is the whole lifecycle. The public half is all msks ever
+<p>The workspace's door is sshd: the guest runs it, the forward
+carries it. The operator identity is therefore the credential
+that door already speaks, an ssh key. That choice carries four
+things with it. The trust root is a key you already guard, in your agent or
+on a hardware token. msks mints no account, no password, and
+no credential of its own. Nothing new exists to leak, and
+nothing new must be rotated: your key's lifecycle is the whole
+lifecycle. The public half is all msks ever
 stores: planting it on a workspace and sealing secrets under
 it keeps every private half where it already lives, on your
 machine or in your agent; the daemon's catalog holds public
@@ -758,7 +758,7 @@ have to keep.</p>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">pubkey_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/id_ed25519.pub</span><span class="w"> </span><span class="c1"># the public half alone</span>
 </span></code></pre></div>
 <p>A leading <code>~</code> expands; an empty value counts as unset; both are
-global-only — a <code>daemons:</code> entry that carries either is
+global-only, and a <code>daemons:</code> entry that carries either is
 refused, because an ssh identity belongs to you, not to one
 daemon connection. Each key has its <code>MSKSC_*</code> variable
 (<code>MSKSC_IDENTITY_FILE</code>, <code>MSKSC_PUBKEY_FILE</code>), and the
@@ -766,32 +766,30 @@ environment overrides the file. When both keys are set,
 <code>pubkey_file</code> wins and <code>identity_file</code> is never consulted; a
 <code>--pubkey</code> flag overrides both for one create.</p>
 <h2 id="identity_file-the-private-half"><code>identity_file</code>: the private half<a class="headerlink" href="#identity_file-the-private-half" title="Permanent link">&para;</a></h2>
-<p><code>identity_file</code> names your private key file, read in place —
+<p><code>identity_file</code> names your private key file, read in place;
 msks derives the public half from it at create, and the key
-file is never copied into msks's state. Session resolution
-consults your own ssh-agent first: when <code>SSH_AUTH_SOCK</code>
-names a live agent holding that key, every session signs
-through the agent, and the file's encryption stops mattering —
-the match is on key material, so the file it came from and its
-name do not matter (<code>ssh-add</code> it). A key no agent holds is
-staged in memory — an unencrypted OpenSSH-format key
+file is never copied into msks's state. Session resolution consults your own ssh-agent first. When
+<code>SSH_AUTH_SOCK</code> names a live agent holding that key, every
+session signs through the agent and the file's encryption stops
+mattering. The match is on key material, so the file it came
+from and its name do not matter (<code>ssh-add</code> it). A key no agent holds is
+staged in memory as an unencrypted OpenSSH-format key
 (<code>ed25519</code>, <code>ecdsa</code> P-256/P-384/P-521, or <code>rsa</code>); msks never
 types a passphrase. An encrypted key no agent holds is refused
 with a line naming <code>ssh-add</code> as the first fix, then decrypting
 a copy, then <code>--pubkey</code> at create. An agent that asks for
 confirmation per signature (a hardware token's touch) asks at
-its own cadence — the first-boot probe's retries and the
+its own cadence: the first-boot probe's retries and the
 session each count as a signing request.</p>
-<dl>
-<dt>A passphrase-encrypted <code>identity_file</code> the daemon's locked</dt>
-<dt>secret rows need raises the session's one passphrase prompt</dt>
-<dd>the TUI asks once when the tree opens, and the answer
-unlocks every locked row for the session — Escape or Cancel
-leaves the rows locked, named on the secrets page and
-re-askable there.</dd>
-</dl>
+<p>A passphrase-encrypted <code>identity_file</code> raises the session's
+one passphrase prompt when the daemon's locked secret rows
+need it. The TUI asks once when the tree opens, and the answer
+unlocks every locked row for the session. Escape or Cancel
+leaves the rows locked; they stay named on the secrets page
+and re-askable there.</p>
 <h2 id="pubkey_file-the-public-half-alone"><code>pubkey_file</code>: the public half alone<a class="headerlink" href="#pubkey_file-the-public-half-alone" title="Permanent link">&para;</a></h2>
-<p><code>pubkey_file</code> names a <code>.pub</code> file — a create with it set plants
+<p><code>pubkey_file</code> names a <code>.pub</code> file, and a create with it set
+plants
 that one line as the workspace's identity and reads no private
 material at all. This is the form for a key you keep
 encrypted on disk: the public half sits in the <code>.pub</code> file
@@ -799,36 +797,35 @@ while the private half answers from your agent.</p>
 <p><strong>The requirement</strong>: your ssh-agent holds the actual key.
 <code>msks ssh</code> and <code>msks rsync</code> on such a workspace authenticate
 through <code>SSH_AUTH_SOCK</code>'s agent, so <code>ssh-add</code> the key in the
-shell you run msks from. An agent holding the key makes the
-sessions work with the private half never read from disk; a
-shell whose agent does not hold it leaves the workspace's key
-auth without an answer (the console route still works), and
-<code>msks ssh</code> exits with a line saying the identity resolves
-nowhere.</p>
+shell you run msks from. An agent holding the key makes the sessions work with the
+private half never read from disk. A shell whose agent does
+not hold it leaves the workspace's key auth without an answer,
+and <code>msks ssh</code> exits with a line saying the identity resolves
+nowhere. The console route still works.</p>
 <h2 id="where-the-private-half-lives-at-runtime">Where the private half lives at runtime<a class="headerlink" href="#where-the-private-half-lives-at-runtime" title="Permanent link">&para;</a></h2>
 <p>Three paths cover every session. An agent-held key stays in
-the agent — msks asks it to sign and the file on disk is never
-opened. A key msks stages itself runs in a transient in-process
+the agent: msks asks it to sign, and the file on disk is
+never opened. A key msks stages itself runs in a transient in-process
 agent that dies with the session. And a session you forward
 your agent into (<code>ssh_options</code> with <code>-A</code>) carries
-the agent you named into the workspace — the workspace identity
+the agent you named into the workspace. The workspace identity
 msks mints stays separate, and your keys arrive only where you
 forwarded them.</p>
 <h2 id="the-devenv-shells-identity">The devenv shell's identity<a class="headerlink" href="#the-devenv-shells-identity" title="Permanent link">&para;</a></h2>
 <p>A checkout's devenv shell presets <code>MSKSC_IDENTITY_FILE</code> at the
 worktree's own dev identity
-(<code>.devenv/state/msksc/identity</code>) — minted passphrase-less the
+(<code>.devenv/state/msksc/identity</code>), minted passphrase-less the
 first time the shell opens, so the smokes and <code>msks-dev</code> have
 a key without touching yours. The preset fills an unset
 variable: a non-empty <code>MSKSC_IDENTITY_FILE</code> you exported
 before entering the shell survives, and so does the file's
 <code>identity_file</code> (the environment preset lands only when you
-named nothing). Pointing the dev identity at your own key — a
-symlink over the minted file — works, with this chapter's
+named nothing). Pointing the dev identity at your own key (a
+symlink over the minted file) works, with this chapter's
 rules: the passphrase prompt appears when the daemon's rows
 are locked under it and no agent holds it.</p>
 <p>With neither key naming a usable source, <code>msks create</code> refuses
-with a line saying so — the one command that needs the
+with a line saying so; it is the one command that needs the
 identity at its start.</p>
 
 
