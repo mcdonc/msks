@@ -267,4 +267,6 @@ channel (`msks image import` in [the TUI](tui.md), or the
 With the host prepared, the service lingered, and an image
 imported, a bare `msks` on the same account finds the socket,
 lists the workspaces, and creates the next one —
-[the TUI](tui.md) walks the whole loop.
+[the TUI](tui.md) walks the whole loop, and
+[the identity file](identity.md) names the key the workspaces
+will answer to.

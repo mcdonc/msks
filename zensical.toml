@@ -20,6 +20,7 @@ copyright = "Copyright &copy; 2026 Chris McDonough"
 nav = [
   { "Home" = "index.md" },
   { "Installation" = "installation.md" },
+  { "The identity file" = "identity.md" },
   { "The TUI" = "tui.md" },
   { "The CLI Client" = "cli.md" },
   { "Configuration" = "config.md" },
