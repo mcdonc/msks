@@ -19,7 +19,7 @@
         <link rel="prev" href="./..">
       
       
-        <link rel="next" href="../config/">
+        <link rel="next" href="../tui/">
       
       
         
@@ -347,43 +347,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#terminal_open_cmd" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>terminal_open_cmd</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#terminal_title" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>terminal_title</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#ssh_options" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         <code>ssh_options</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#msks-term-popup-the-consent-decider-terminal-379-467" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>msks-term-popup</code>: the consent-decider terminal (#379, #467)
       </span>
     </span>
   </a>
@@ -407,10 +374,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#msks-the-workspace-tree-tui-309" class="md-nav__link">
+  <a href="#the-tui" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        <code>msks</code> — the workspace tree TUI (#309)
+        The TUI
       </span>
     </span>
   </a>
@@ -719,6 +686,32 @@
   
   
     <li class="md-nav__item">
+      <a href="../tui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../config/" class="md-nav__link">
         
   
@@ -995,43 +988,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#terminal_open_cmd" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>terminal_open_cmd</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#terminal_title" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>terminal_title</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#ssh_options" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         <code>ssh_options</code>
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#msks-term-popup-the-consent-decider-terminal-379-467" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        <code>msks-term-popup</code>: the consent-decider terminal (#379, #467)
       </span>
     </span>
   </a>
@@ -1055,10 +1015,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#msks-the-workspace-tree-tui-309" class="md-nav__link">
+  <a href="#the-tui" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        <code>msks</code> — the workspace tree TUI (#309)
+        The TUI
       </span>
     </span>
   </a>
@@ -1395,8 +1355,9 @@ with the same bearer token the REST API uses.</p>
 <code>MSKSC_</code> (client) to stay apart from the daemon's <code>MSKSD_*</code> (server)
 namespace — a box that runs both can export each side independently.
 The list-valued settings (<code>MSKSC_TERMINAL_OPEN_CMD</code>,
-<code>MSKSC_SSH_OPTIONS</code>) carry their string form and are documented with
-their file keys below.</p>
+<code>MSKSC_SSH_OPTIONS</code>) carry their string form; <code>MSKSC_SSH_OPTIONS</code>'s
+file key is documented below, and <code>MSKSC_TERMINAL_OPEN_CMD</code>'s in
+<a href="../tui/">The TUI</a> beside the shell action it configures.</p>
 <table>
 <thead>
 <tr>
@@ -1448,7 +1409,7 @@ their file keys below.</p>
 </tr>
 <tr>
 <td><code>MSKSC_TERMINAL_TITLE</code></td>
-<td>The title template for the workspace-shell windows the workspace page opens (#445); <code>{workspace}</code> resolves to the workspace's id</td>
+<td>The title template for the workspace-shell windows the workspace page opens (#445; the file key's section lives in <a href="../tui/">The TUI</a>); <code>{workspace}</code> resolves to the workspace's id</td>
 <td>unset (the terminal's own title)</td>
 </tr>
 <tr>
@@ -1602,72 +1563,21 @@ the ambient exports), while an <code>active_daemon</code> alias sits below the
 environment (the devenv presets keep winning, so a worktree shell
 still talks to its own dev daemon beside a user config file that
 names another).</p>
-<h3 id="terminal_open_cmd"><code>terminal_open_cmd</code><a class="headerlink" href="#terminal_open_cmd" title="Permanent link">&para;</a></h3>
-<p><code>terminal_open_cmd</code> names the launcher the workspace page's
-<strong>Open a shell</strong> action uses to open workspace shells in new
-terminal windows (#314, #341, #562) — the opt-in for hosts that
-want windows beside the running tree; the msks invocation is
-appended after it, the way most terminals take a command after
-<code>-e</code> / <code>--</code>:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">konsole -e</span><span class="w">          </span><span class="c1"># string form (shell-split)</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w">                     </span><span class="c1"># list form (no shell quoting)</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">alacritty</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-T</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">msks ssh</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-e</span>
-</span></code></pre></div>
-<p><code>MSKSC_TERMINAL_OPEN_CMD</code> overrides the file value with the string
-form. Unset — the default — the shell action runs <code>msks ssh</code> in
-the TUI's own terminal (#562), on every host, with no terminal to
-launch; a configured launcher that fails to execute (a binary
-that is missing or not executable) names its reason on the tree's
-first flash after the same-terminal shell ends, and the shell
-runs in the same terminal. A holding variant
-(<code>konsole --hold -e</code>, xterm's <code>-hold</code>) keeps the window open after
-the session ends, for reading final output; without one the window
-closes itself when the session disconnects.</p>
-<h3 id="terminal_title"><code>terminal_title</code><a class="headerlink" href="#terminal_title" title="Permanent link">&para;</a></h3>
-<p><code>terminal_title</code> names the title of every terminal window the
-workspace page's shell action opens through a configured
-launcher (#445), with
-<code>{workspace}</code> resolved to the workspace's id — the token
-<code>msks ssh</code> addresses, because that is what the TUI appends to
-the launcher — or <code>shell</code>, when the appended command names no
-workspace:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">terminal_title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">msks — {workspace}</span>
-</span></code></pre></div>
-<p>Two paths write it. A launcher that runs <code>msks-term-popup</code>
-writes the title before it attaches tmux, and the launch's own
-tmux server pins <code>set-titles</code> off, so the title stays for the
-window's lifetime — a workspace shell inside the window cannot
-rewrite it. Every other launcher gets the title from the
-appended <code>msks ssh</code> itself: the window msks opens is marked at
-spawn, and the command names it before the session starts. A
-workspace that sets its own title from inside the session (a
-<code>PROMPT_COMMAND</code> with a title escape, the way stock ssh sessions
-can) rewrites it there — tmux shields the popup path, and nothing
-shields the plain path.</p>
-<p><code>MSKSC_TERMINAL_TITLE</code> overrides the file value. The default is
-unset: the terminal emulator's own title — the command it runs,
-or whatever its <code>-T</code> / <code>--title</code> flag names — stays in place.
-A <code>msks ssh</code> you type yourself keeps your terminal's title: the
-setting applies to the windows msks opens, and a same-terminal
-shell (the dead-launcher fallback) changes nothing.</p>
 <h3 id="ssh_options"><code>ssh_options</code><a class="headerlink" href="#ssh_options" title="Permanent link">&para;</a></h3>
 <p><code>ssh_options</code> remembers ssh options for every ssh session msks
 runs — <code>msks ssh</code>, the workspace page's shell action (which runs
 <code>msks ssh</code>, in the TUI's terminal by default or in a window
-through a configured launcher), and <code>msks rsync</code>'s ssh transport
-(#385). The value is the ssh options you would type
+through a configured launcher — <a href="../tui/">The TUI</a> documents the
+action), and <code>msks rsync</code>'s ssh transport (#385). The value is the ssh options you would type
 after <code>--</code> on the <code>msks ssh</code> command line — the options
 themselves; a <code>--</code> token in the value is refused, because msks
 adds the options to its own and a remembered separator would turn
 msks's transport into the remote command:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">ssh_options</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-A -o ServerAliveInterval=30</span><span class="w">   </span><span class="c1"># string form (shell-split)</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="nt">ssh_options</span><span class="p">:</span><span class="w">                                </span><span class="c1"># list form (tokens stay whole)</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-A</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-o</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ServerAliveInterval=30</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">ssh_options</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-A -o ServerAliveInterval=30</span><span class="w">   </span><span class="c1"># string form (shell-split)</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nt">ssh_options</span><span class="p">:</span><span class="w">                                </span><span class="c1"># list form (tokens stay whole)</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-A</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-o</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ServerAliveInterval=30</span>
 </span></code></pre></div>
 <p><code>MSKSC_SSH_OPTIONS</code> overrides the file value with the string form.</p>
 <p>The remembered options ride behind the command line's own, so an
@@ -1693,99 +1603,6 @@ remembered form persists it, so the key is the one to check first
 when a remembered option breaks the seam.</p>
 <p><code>msks console</code> is a websocket session, not ssh — <code>ssh_options</code>
 applies to the ssh surfaces above and leaves it untouched.</p>
-<h3 id="msks-term-popup-the-consent-decider-terminal-379-467"><code>msks-term-popup</code>: the consent-decider terminal (#379, #467)<a class="headerlink" href="#msks-term-popup-the-consent-decider-terminal-379-467" title="Permanent link">&para;</a></h3>
-<p><code>msks-term-popup</code> is a shipped client command that runs the
-appended shell inside a local tmux session and answers the
-workspace's egress consent prompts right there: the launch also
-starts the consent-decider app in a hidden tmux session on the
-same socket, where it holds the workspace's decider registration
-for the window's whole life. The app lists every hold the
-workspace carries — destination and time remaining per row —
-with the arrow keys moving the selection: <code>a</code> allows until
-restart and <code>d</code> denies the selected hold, while the uppercase
-twins <code>A</code> and <code>D</code> pick a duration for their verdict (Enter picks,
-Escape cancels). <code>m</code> switches the workspace's egress mode
-(#465): the picker offers <code>allow</code>, <code>static</code>, and <code>interactive</code>
-with the current mode highlighted (Enter picks, Escape or <code>q</code>
-cancels), and picking <code>static</code> while nothing is effectively
-allowed asks the empty-static question first — the same
-confirmation the consent page asks. The switch goes through the
-same endpoint <code>msks egress mode</code> speaks; the status line names
-the current mode beside the connection state, a landed switch
-flashes its effect there (<code>in effect now</code>, or <code>takes effect at
-next start</code> for a stopped workspace), and a switch the daemon
-refuses names its reason on the same line. A hold leaves the
-list the moment the daemon resolves it — a verdict from another
-decider window or the hold's own timeout — and the popup viewer
-hides itself when the list empties.</p>
-<p>A hold arriving with the popup closed raises a popup viewer
-over the shell that attaches to the hidden session, and the
-bindings map rides the popup's bottom edge: the verdict keys,
-the mode switch, and the hide/show entry. <code>q</code>, <code>Esc</code>, or <code>C-b</code>
-hide the viewer
-— the decider keeps running, its queue keeps living, and <code>C-b p</code>
-brings the popup back; a popup the app raised returns the same
-way on the next hold. The session ends with its window, and the
-decider registration ends with the server. It works with any
-terminal that runs a command: name your terminal and its command
-flag in <code>terminal_open_cmd</code>, and <code>msks-term-popup</code> right after it
-(tmux 3.2 or newer must be on PATH):</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">konsole -e msks-term-popup</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">xterm -e msks-term-popup</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w">                     </span><span class="c1"># list form (no shell quoting)</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">alacritty</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-T</span>
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">msks ssh</span>
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-e</span>
-</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">msks-term-popup</span>
-</span></code></pre></div>
-<p>The popup viewer keeps its own attach to the hidden session, so
-a hold that arrives while it stands is already in the list, and
-verdicts posted from it land through the same REST contract as
-the consent page — a post that cannot land (the request resolved
-in another decider window while the verdict was in flight) names
-its reason on the popup's status line. The window the prefix
-opens takes its title from
-<code>terminal_title</code> (<code>msks — {workspace}</code> resolves the workspace's
-id into it, #445). The session's own status bar names the
-workspace too (#455): the launch resolves the workspace's name
-and pins it to the status bar's left side — <code>[project-x]</code> — with
-the id standing in whenever the lookup cannot land (the daemon
-down, the workspace gone, the wait run out) and <code>shell</code>
-for a plain shell; the window list after the label stays empty
-(#458), and so does the bar's right side, which tmux's default
-fills with the pane's title, the clock, and the date — the
-label is the whole bar.
-The hidden consent session runs on the launch's own socket — one
-small server per window — and the app retires when the window
-has been gone for a stretch, taking the session and the server
-with it; the window's own
-hold flags (<code>konsole --hold</code>, xterm's
-<code>-hold</code>) keep the window open after the session ends as they do
-for a plain shell window.</p>
-<p>The pane keeps 10000 lines of scrollback and takes the mouse
-wheel (#434): wheel up scrolls into the pane's history, wheel
-down scrolls back toward the live output, and reaching the bottom
-— or pressing <code>q</code> — returns to the plain shell. The keyboard path
-covers the same history: <code>Ctrl-b [</code> (or <code>Ctrl-b PageUp</code>) opens
-tmux's copy mode, where the arrow keys and PageUp/PageDown move
-through it. <code>Shift-PageUp</code> and <code>Shift-PageDown</code> page through it
-too, one page per press, entering copy mode on the way up and
-returning to the shell at the bottom (#444); a terminal that
-keeps the shifted pair for its own view (its scrollback has
-nothing to show on this pane) still has the wheel — Konsole can
-hand the pair to the pane with a keytab rule scoped to the
-alternate screen, sending <code>\E[5;2~</code> and <code>\E[6;2~</code>. The bare
-PageUp/PageDown reach the shell untouched. These settings — the
-status bar's name among them — ride
-the window's own tmux server (the
-launch's dedicated socket); an operator's own running tmux server
-keeps its own settings. With tmux's mouse mode on, a plain drag
-selects text in tmux's buffer, and holding Shift while dragging
-selects the terminal's native text (most terminals hand Shift
-drags to their own selection). A consent popup raised while the
-pane is scrolled still takes its verdict keys: the popup overlays
-the scrolled pane, and the next keypress answers it.</p>
 <h2 id="workspace-identity-a-name-and-an-id-246">Workspace identity: a name and an id (#246)<a class="headerlink" href="#workspace-identity-a-name-and-an-id-246" title="Permanent link">&para;</a></h2>
 <p>A workspace carries two identity fields. The <strong>name</strong> is the label
 you choose at create — the positional argument of every command,
@@ -1803,268 +1620,12 @@ with a fresh host-key cache of its own.</p>
 <code>msks console ws</code> and <code>msks console 1a2b3c4d5e</code> reach the same
 workspace. The name is the everyday reference; the id is the
 reference no other workspace shares.</p>
-<h2 id="msks-the-workspace-tree-tui-309"><code>msks</code> — the workspace tree TUI (#309)<a class="headerlink" href="#msks-the-workspace-tree-tui-309" title="Permanent link">&para;</a></h2>
-<p>A bare <code>msks</code> — no arguments at all — launches the full-screen
-workspace tree (<code>msks tui</code> names the same command, and <code>msks tui
-my-workspace</code> opens that workspace's page directly). The tree is
-rooted at the <strong>workspaces list</strong>: every workspace one row —
-newest first, the CREATED column's arrow naming the sort (#470)
-— with creating, starting, stopping, and removing on its keys
-(<code>c</code> new, <code>s</code> start, <code>x</code> stop, <code>D</code> remove — asked and confirmed —
-<code>e</code> secrets, <code>r</code> refresh, <code>/</code> a typeahead that jumps the focus
-to the first row whose name starts with what you type, and
-Enter opens the workspace's page). The list re-reads the daemon
-every five seconds, so a workspace another surface moved — the
-CLI, another operator — appears without a keypress, and a power
-verb the focused row's own status makes pointless names its
-skip client-side without a round-trip. A refused create
-opens the failure panel (#426): a centered panel over the list
-carrying the daemon's refusal verbatim beside the name the form
-submitted, waiting for dismissal — Enter, Escape, <code>q</code>, or the
-Close button — so the detail stays on screen while the operator
-reads it; closing it returns to the list, and a create that
-lands keeps today's flash note. <code>e</code> opens the
-<strong>secrets</strong> page (#431). Each row's status
-column carries the state's color behind a filled cue dot (#348
-and #470): a running workspace in the theme's success color,
-every other state — stopped among them — in the warning color —
-the rest of the row keeps the default foreground, the focused
-row's name takes a bold cue, and the colors follow the active
-theme.</p>
-<p>The listing renders inside a rounded frame — the same framing
-the create form carries (#349) — so the rows read as one table
-between the status bar and the footer. The status bar above it
-sets the workspace count in the bold default foreground with the
-daemon's URL riding after it in muted text (a long URL clips at
-its middle, both ends kept, so the line stays one row); a
-flash message owns the whole line while it lives, and a flash
-longer than the terminal's width crops at the edge with an
-ellipsis marking the cut, so the bar stays one row whatever a
-refusal echoes back (#359). Each row's created column reads a
-relative label (#350), bucketed by whole calendar days:
-<code>today</code>, <code>yesterday</code>, then <code>2d ago</code> under a week, <code>3w ago</code> under
-a month, <code>1mo ago</code> under a year, <code>1y ago</code> past it — the absolute
-created date reads on the workspace page's header.</p>
-<p>A placeholder row is a daemon-wide object (its coverage set
-crosses workspaces, and the daemon-wide row belongs to none of
-them), so the secrets page lives at the tree's level: <code>e</code> on the
-workspaces list opens it.</p>
-<p>The <strong>secrets page</strong> lists every placeholder row the daemon
-holds, in the listing's own five-column shape: coverage (<code>*</code> for
-the daemon-wide row, the workspace ids scoped), name,
-destinations, the remaining lifetime, the created date. The
-lifetime cell is a live countdown — <code>2h</code>, then <code>1h</code>, repainted
-every second — and reads <code>never</code> on an unbounded row. <code>x</code> revokes
-the focused row after a confirmation that names what a revoke
-does (the row retires everywhere at once); <code>r</code> opens the duration
-picker over TTL-appropriate choices — an hour to thirty days,
-the choice nearest the row's remaining lifetime highlighted —
-and extends the row in place: the sentinel and the row's identity
-stay as they are. <code>e</code> opens the daemon-wide audit view: the
-newest hundred recorded mints, revokes, expiries, and unlocks
-replayed
-from the audit table at open, newest first, then the wire events
-streaming in live beside them, with the off-allowlist sighting
-highlighted as the exfil signal and <code>k</code>/<code>w</code> picking the kind and
-workspace filters (a daemon-wide row's events cover every
-workspace, a scoped row's its members). The audit view holds a
-plain subscription — no decider registration — so it claims no
-holds.
-<code>c</code> opens the mint form (#393): name, repeatable destinations
-(an exact host or a label-anchored suffix, comma-separated in
-one field), coverage — the daemon-wide row, or a multi-select
-fed by the tree's own workspace list — the lifetime (<code>unbounded</code>
-by default, an hour to thirty days beside it), and the value: a
-masked field the operator types or pastes into — the form takes
-the secret's bytes directly. The submit checks the secret store
-first (<code>msks secret
-check</code>'s endpoint), then mints; a refused mint opens the failure
-panel (#426) over the form — the daemon's refusal verbatim beside
-the name the form submitted — and a refused store check opens it
-with the daemon's refusal alone; either way it closes by hand
-(Enter, Escape, <code>q</code>, or the Close button), and the fields
-stay filled for a retry once it closes. A mint
-that lands replaces the form
-with the sentinel's panel: the sentinel opens masked — its
-prefix names the reach (<code>mskssec1_</code> scoped to the chosen
-workspaces, <code>mskssec2_</code> every accepting workspace), the body
-renders as bullets — with an <code>s</code> Show action that reveals and
-hides it again, and a <code>c</code> copy
-action that writes the sentinel to the terminal's clipboard over
-OSC 52 — the copy path a terminal that honors the sequence
-answers, over ssh included, with no reveal needed — and the closing
-rule: the display ends with the panel. Enter (or a click) on a
-listing row opens the panel again (#440): the page fetches the
-row's sentinel from the daemon and shows it with the same show
-and copy actions — the sentinel reads back on demand, at mint
-and after.
-Closing the panel clears its text, and the minted row
-stands on the page's list. The placeholder-to-workspace
-navigation lands with the cross-references (#394).</p>
-<p>The <strong>workspace page</strong> carries the per-workspace loop: a
-two-line header — the workspace's name on the first line with
-its status beside it in the state's color (the same coloring the
-list uses), the id, image hash, host, and created date muted on
-the second, its separators carrying the same theme-muted span
-style the header's status takes — a status line for egress
-consent (the mode, then one granted scope named with its expiry;
-two or more grants read as a count with the nearest expiry — <code>5
-grants · next expires 4h</code> — so the line stays readable at 80
-columns, every grant listed on the workspace's egress consent
-screen), and the page's actions centered in the space the header
-lines and the footer leave — the block capped at 64 columns — in
-three groups: a shell, then egress consent and an edit dialog
-for the sizes and topology (#331), then start and stop. Each action paints its
-name with its description muted behind it, and the row Enter
-acts on carries a marker beside the list's own highlight and the
-name in bold. The start and stop rows dim behind their reason
-while the workspace's status makes the verb pointless — a stop
-on a stopped workspace, a start on a running one — and Enter on
-a dimmed row names that reason on the consent line; the bold
-sits on the rows the state invites (the shell in every state —
-its window's <code>msks ssh</code> child boots a stopped workspace itself,
-so the action never dims — and Start while the workspace sits
-stopped), and <code>s</code>/<code>x</code> run start and stop from wherever the
-focus stands — the letters the list binds (the list also binds
-<code>i</code>: the image page, #565/#571 — the catalog group first, its
-rows carrying the default marker and each import's date, then
-the published channel's rows with their descriptions, sizes, and
-membership markers: <code>[imported]</code> when the catalog holds the same
-archive (an exact hash match), <code>[in catalog, other build]</code> when
-it holds the same ref under a different hash. Enter imports a
-published row through the daemon's URL import (a modal holds the
-terminal with an elapsed timer) or opens a catalog row's detail;
-<code>D</code> deletes a catalog row through a confirm — the same DELETE
-<code>msks image rm</code> makes. The page re-reads
-the workspace each second, so the dimming follows a start or
-stop made anywhere, not only on the page. A workspace
-the listing no longer sees — removed from another surface —
-closes its page and names the removal on the list's status
-line. The
-header's first line also counts pending holds (<code>egress to
-decide: N</code> while any hold waits, refreshed each second). The
-header's meta line clips each field to its own budget — the id,
-the image hash, the host — so the created date stays whole at 80
-columns and the metadata owns its own line: a name truncates
-only when it alone no longer fits the line — and a flashed
-refusal on the consent line truncates at the edge the same way,
-so the page's layout holds steady. A workspace in <code>interactive</code>
-mode holds new flows while the page is open: the page registers
-as the workspace's decider, so holds land on it.</p>
-<p>The page's <strong>Egress consent</strong> action and its <code>e</code> key
-(#358, #454) open the egress consent page: a full-screen visit
-holding the held-request queue and the in-effect verdicts
-together — the consent decider as a page inside the tree, and
-the only place verdicts are made. The page carries the same
-two-line header as the workspace page beneath it (#460) — the
-workspace's name with its status (and the pending-hold count
-while any hold waits), then the id, image hash, host, and created
-date muted — so the workspace's identity stays visible while
-verdicts are made. A hold's arrival pushes nothing: the
-header's <code>egress to decide: N</code> counts what waits on both pages'
-headers (a hold waits
-about two minutes before it times out denied), and the
-workspace page's consent line beneath flashes the held
-destination with the key in — a burst of
-first-seen holds names its count instead, and a hold that lands
-while another screen owns the terminal flashes on the first tick
-after that screen leaves. Keys on the
-page: the arrows walk the held requests and cross into the
-verdict rows beneath (and back), <code>a</code>/<code>d</code> allow or deny the
-focused hold for the default duration (<code>tilrestart</code>), <code>A</code>/<code>D</code>
-pick a duration first (<code>once / 5m / 15m / tilrestart /
-forever</code>) — the letters act on the holds alone, and a
-mis-zoned press names the zone it acts on instead of deciding
-silently — <code>x</code> revokes the focused verdict (the
-row leaves on the daemon's refreshed frame, never
-optimistically), and <code>m</code> opens the mode picker (<code>allow</code> /
-<code>static</code> / <code>interactive</code>, the current mode highlighted) — the
-switch's one path since the workspace page's own mode action
-left (#460): picking a mode switches the posture through the same
-endpoint <code>msks egress mode</code> speaks, without leaving the page.
-The status line names the new mode as the switch lands; a pick
-of <code>static</code> with nothing effectively allowed asks the same
-offline-workspace confirmation the CLI asks (confirm to switch,
-decline to decide nothing), and a refused switch names its reason
-on the status line, where the operator reads it. Enter on a
-focused hold opens the duration picker — the key answers, the
-pick decides; only an explicit letter or a picked duration ever
-decides — and while no hold waits the verdict keys stand inert
-and leave the footer until one lands. The page's
-keys live on the page itself, so they cannot collide with the
-workspace page's. <code>q</code> or Escape returns to the workspace page
-(holds keep waiting, the header's count keeps counting, <code>e</code>
-reopens). The placeholder-token audit lives on the secrets page
-(#390): the consent page keeps the holds, the verdicts, and the
-mode. See <code>msks egress</code> below for what verdicts and rules
-cover.</p>
-<p>The page's <strong>Edit settings</strong> action (#331) opens the edit
-dialog: the create form's own layout, seeded with the
-workspace's current values. The sizes and topology (root, home,
-vcpus, memory) are editable — a submit sends the changed values
-through the same endpoint <code>msks resize</code> speaks, and the page's
-consent line carries the same outcome line the CLI prints,
-including what waits for the next boot. A workspace that is
-running when Apply lands asks first (#380): confirm and the page
-stops the workspace, then applies the resize — decline and the
-workspace keeps running with its sizes as they were. Home bytes
-move at once, and root growth and the new topology apply at the
-next boot; a resize the daemon still refuses — a root shrink,
-among them — names its reason on the consent line. The name,
-image, and user fields show their current values read-only,
-marked <code>*</code> as create-time — changing
-them is a delete-and-recreate, and the dialog refuses a changed
-value with a note naming the field instead of accepting it
-silently. A size left blank keeps its current value. Escape
-closes the dialog and decides nothing.</p>
-<p>The page's <strong>Open a shell</strong> action runs <code>msks ssh</code> in the
-TUI's own terminal (#562): the tree exits, the ssh session runs
-where it stood, and the tree restarts when the session hands the
-terminal back — it rides ssh rather than the console because the
-console keeps the getty's geometry while ssh carries every resize
-to the guest. A workspace ssh cannot reach — no NIC, no identity
-configured — the flow boots a stopped workspace first (the
-ssh session it runs boots it itself, #479), probes the forward,
-and a probe that names the refusal — no NIC, the service not
-listening — falls back to a <code>msks console</code> session one step
-later; the tree's first flash carries why ssh stood down. An ssh
-that ran reports only its exit code, 255 included: ssh hands a
-session's own exit through unchanged, and a console after a
-finished session is a surprise, not a fallback. The
-action runs on a stopped workspace too: the ssh session boots the
-workspace itself (it carries the workspace's id, and reads the
-pre-flight's <code>msks: &lt;id&gt; is stopped; starting it</code>).</p>
-<p>A host that wants shells in windows beside the running tree
-configures a terminal launcher (<code>terminal_open_cmd</code> below): the
-action then spawns the launcher with a <code>msks ssh</code> invocation
-appended, and the spawned shell inherits the tree's resolved
-connection, so it reaches the same daemon. A launcher that cannot
-start — a missing binary, one without the execute bit — names its
-reason on the tree's first flash and the shell runs in this
-terminal instead: a chained <code>msks console</code> session.</p>
-<p>Every screen walks with the arrow keys alone: lists move with
-up/down, the create form's fields move with up/down between them,
-and Escape leaves the screen it is on (<code>q</code> backs out of a page;
-at the workspaces list, Escape is the tree itself quitting).
-Ctrl+Q exits the client from any screen (#442) — the tree, a
-page, a form field, or a panel stacked over them — the same
-clean exit <code>q</code> takes at the workspaces list, and it takes
-priority over the form field's shortcuts while a form field
-holds the focus. A bare Ctrl+C keeps the client running (#442):
-a form field holds it as the field's own copy shortcut, and
-the tree's own screens answer it with a notification naming the
-quit key. A stacked panel away from its fields — a
-confirmation, a picker, the sentinel
-panel — leaves the key silent: nothing exits, nothing copies,
-nothing shows, the stock Textual modal behavior. Ctrl+Shift+C
-belongs to the terminal (#437): the TUI starts with the kitty
-keyboard protocol off, so a terminal that binds the combo to
-its own copy handles the gesture and the TUI never sees the
-key. A terminal that passes the key through sends the same byte
-as Ctrl+C, and the tree's own screens answer it with the
-notification — no path of the gesture exits the client. The TUI speaks the same REST
-surface the <code>msksc</code> commands speak (<code>MSKSC_URL</code>, <code>MSKSC_TOKEN</code>,
-<code>MSKSC_CAFILE</code>) and reads no daemon state directly.</p>
+<h2 id="the-tui">The TUI<a class="headerlink" href="#the-tui" title="Permanent link">&para;</a></h2>
+<p>The full-screen workspace tree — the workspace, secrets, and
+image pages, the failure panels, the consent decider — is
+<a href="../tui/">its own chapter</a>. The command reference below covers
+the commands the tree renders and the shells it runs:
+<code>msks ssh</code>, <code>msks console</code>, <code>msks image</code>, and the rest.</p>
 <h2 id="msks-ls"><code>msks ls</code><a class="headerlink" href="#msks-ls" title="Permanent link">&para;</a></h2>
 <p>Prints one line per workspace the daemon knows, aligned in five
 columns: name, id, status, image hash (first 12 hex chars), and
@@ -2072,10 +1633,10 @@ owning host. The columns are measured against the values present
 (#271): a long name or image reference widens its column for every
 row, so each row's columns start at the same offsets — the header
 row included.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>$ msks ls
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>name          id          status   image         host
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>my-workspace  1a2b3c4d5e  running  9f2c41ab77de  hv-1
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>scratch       77eedd0199  created  -             hv-1
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>$ msks ls
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>name          id          status   image         host
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>my-workspace  1a2b3c4d5e  running  9f2c41ab77de  hv-1
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>scratch       77eedd0199  created  -             hv-1
 </span></code></pre></div>
 <p>The status column speaks the daemon's lifecycle vocabulary —
 <code>created</code> (row exists, never booted), <code>starting</code>, <code>running</code>,
@@ -2088,7 +1649,7 @@ paths instead of a catalog image.</p>
 workspace rows verbatim (id, name, kernel, initrd, rootfs, cmdline,
 cpus, mem_mib, image_hash, image_ref, host, root_mib, home_mib,
 status, created_at):</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>msks<span class="w"> </span>ls<span class="w"> </span>--json<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">'.[] | select(.status == "running") | .name'</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>msks<span class="w"> </span>ls<span class="w"> </span>--json<span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">'.[] | select(.status == "running") | .name'</span>
 </span></code></pre></div>
 <p>A daemon with zero workspaces prints nothing (an empty table) and an
 empty JSON array under <code>--json</code>.</p>
@@ -2096,22 +1657,22 @@ empty JSON array under <code>--json</code>.</p>
 <p>Reports the state-disk budget and its consumers (#184) — the budget
 line, each workspace's cost beside its ceiling, and each catalog
 image's cost:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>$ msks storage
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>state disk    used 23.4G of 40G    free 16.6G    pressure ok
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━┓
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>┃ workspace ┃ root cost/ceiling ┃ home cost/ceiling ┃ cost ┃
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━┩
-</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>│ ws4       │ 3.1G / 10G        │ 812M / 2G         │ 3.9G │
-</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>│ scratch   │ 61M / 10G         │ 12M / 2G          │ 73M  │
-</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>└───────────┴───────────────────┴───────────────────┴──────┘
-</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>
-</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━┓
-</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>┃ image     ┃ imported         ┃ cost ┃
-</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━┩
-</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>│ debian:13 │ 2026-09-21 12:03 │ 3G   │
-</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>│ debian:13 │ 2026-08-02 05:11 │ 3G   │
-</span><span id="__span-11-16"><a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a>└───────────┴───────────────────┴──────┘
+<div class="language-text highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>$ msks storage
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>state disk    used 23.4G of 40G    free 16.6G    pressure ok
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━┳━━━━━━┓
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>┃ workspace ┃ root cost/ceiling ┃ home cost/ceiling ┃ cost ┃
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━╇━━━━━━┩
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>│ ws4       │ 3.1G / 10G        │ 812M / 2G         │ 3.9G │
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>│ scratch   │ 61M / 10G         │ 12M / 2G          │ 73M  │
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>└───────────┴───────────────────┴───────────────────┴──────┘
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━┓
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>┃ image     ┃ imported         ┃ cost ┃
+</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━┩
+</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>│ debian:13 │ 2026-09-21 12:03 │ 3G   │
+</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>│ debian:13 │ 2026-08-02 05:11 │ 3G   │
+</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>└───────────┴───────────────────┴──────┘
 </span></code></pre></div>
 <ul>
 <li><strong>cost</strong> is the disk blocks the artifact occupies on the state
@@ -2252,18 +1813,18 @@ workspace created before #248 records no user of its own — <code>msks
 ssh</code> and <code>msks rsync</code> dial it as <code>root</code>, and the image's <code>msks</code>
 account stays reachable by naming it directly.</p>
 <p><code>--start</code> boots the workspace right after creating it:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>$<span class="w"> </span>msks<span class="w"> </span>create<span class="w"> </span>my-workspace<span class="w"> </span>--image<span class="w"> </span>debian:13<span class="w"> </span>--start
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>created<span class="w"> </span>my-workspace<span class="w"> </span><span class="o">(</span>id<span class="w"> </span>9f2c41ab77<span class="o">)</span>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>attach<span class="w"> </span>with:<span class="w"> </span>msks<span class="w"> </span>console<span class="w"> </span>my-workspace
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>$<span class="w"> </span>msks<span class="w"> </span>create<span class="w"> </span>my-workspace<span class="w"> </span>--image<span class="w"> </span>debian:13<span class="w"> </span>--start
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>created<span class="w"> </span>my-workspace<span class="w"> </span><span class="o">(</span>id<span class="w"> </span>9f2c41ab77<span class="o">)</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>attach<span class="w"> </span>with:<span class="w"> </span>msks<span class="w"> </span>console<span class="w"> </span>my-workspace
 </span></code></pre></div>
 <p>The confirmation line prints both halves of the workspace's
 identity — the label you chose and the id the daemon minted — as
 soon as the create succeeds and before the boot is
 attempted. A failed boot still leaves the workspace created — the
 error message says so and names the recovery command:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>created my-workspace (id 9f2c41ab77)
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>msks: 503: vmm launch failed
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>msks: 9f2c41ab77 is created; boot it later with: msks start my-workspace
+<div class="language-text highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>created my-workspace (id 9f2c41ab77)
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>msks: 503: vmm launch failed
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>msks: 9f2c41ab77 is created; boot it later with: msks start my-workspace
 </span></code></pre></div>
 <p>Creating without <code>--start</code> prints the same line and exits; boot it
 whenever with <code>msks start</code> — or just <code>msks console</code> it: the console
@@ -2273,9 +1834,9 @@ contents travel to the daemon and run once on the
 workspace's first boot (see <code>docs/images.md</code> for the seed-disk
 mechanism, the payload forms each image provisioner accepts, and
 the create-time immutability). It composes with <code>--start</code>:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>$<span class="w"> </span><span class="nb">printf</span><span class="w"> </span><span class="s1">'#!/bin/sh\napt-get update\n'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>msks<span class="w"> </span>create<span class="w"> </span>ws<span class="w"> </span>--user-data<span class="w"> </span>-<span class="w"> </span>--start
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>created<span class="w"> </span>ws<span class="w"> </span><span class="o">(</span>id<span class="w"> </span>77eedd0199<span class="o">)</span>
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>attach<span class="w"> </span>with:<span class="w"> </span>msks<span class="w"> </span>console<span class="w"> </span>ws
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>$<span class="w"> </span><span class="nb">printf</span><span class="w"> </span><span class="s1">'#!/bin/sh\napt-get update\n'</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>msks<span class="w"> </span>create<span class="w"> </span>ws<span class="w"> </span>--user-data<span class="w"> </span>-<span class="w"> </span>--start
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>created<span class="w"> </span>ws<span class="w"> </span><span class="o">(</span>id<span class="w"> </span>77eedd0199<span class="o">)</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>attach<span class="w"> </span>with:<span class="w"> </span>msks<span class="w"> </span>console<span class="w"> </span>ws
 </span></code></pre></div>
 <p>One operator key is the identity (#336, #486): <code>msks create</code>
 plants it as every workspace's identity — one key across
@@ -2289,10 +1850,10 @@ to take. The create sends the key's derived public half only and
 writes nothing per-workspace; your private key file stays where it
 lives — msks reads it in place and copies it nowhere. The
 confirmation names the identity it used:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>$<span class="w"> </span>msks<span class="w"> </span>create<span class="w"> </span>my-workspace<span class="w"> </span>--image<span class="w"> </span>debian:13<span class="w"> </span>--start
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>created<span class="w"> </span>my-workspace<span class="w"> </span><span class="o">(</span>id<span class="w"> </span>9f2c41ab77<span class="o">)</span>
-</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>identity:<span class="w"> </span>/home/you/.ssh/id_ed25519
-</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>attach<span class="w"> </span>with:<span class="w"> </span>msks<span class="w"> </span>console<span class="w"> </span>my-workspace
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>$<span class="w"> </span>msks<span class="w"> </span>create<span class="w"> </span>my-workspace<span class="w"> </span>--image<span class="w"> </span>debian:13<span class="w"> </span>--start
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>created<span class="w"> </span>my-workspace<span class="w"> </span><span class="o">(</span>id<span class="w"> </span>9f2c41ab77<span class="o">)</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>identity:<span class="w"> </span>/home/you/.ssh/id_ed25519
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>attach<span class="w"> </span>with:<span class="w"> </span>msks<span class="w"> </span>console<span class="w"> </span>my-workspace
 </span></code></pre></div>
 <p><code>msks ssh</code> and <code>msks rsync</code> resolve the same key at session time,
 so a workspace re-created under the same name keeps your access —
@@ -2320,8 +1881,8 @@ at it — and <code>msks ssh</code> exits with a line saying exactly that.</p>
 <h2 id="msks-start"><code>msks start</code><a class="headerlink" href="#msks-start" title="Permanent link">&para;</a></h2>
 <p>Boots one created workspace (<code>POST /api/v1/workspaces/{id-or-name}/start</code>)
 and prints the result:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>$<span class="w"> </span>msks<span class="w"> </span>start<span class="w"> </span>my-workspace
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>my-workspace<span class="w"> </span>running
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>$<span class="w"> </span>msks<span class="w"> </span>start<span class="w"> </span>my-workspace
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>my-workspace<span class="w"> </span>running
 </span></code></pre></div>
 <p>The start request answers after the VMM finishes booting — a few
 seconds on an idle host, longer under load. The client waits up to
@@ -2330,20 +1891,20 @@ that the daemon may still finish the boot.</p>
 <h2 id="msks-stop"><code>msks stop</code><a class="headerlink" href="#msks-stop" title="Permanent link">&para;</a></h2>
 <p>Powers one running workspace off (<code>POST /api/v1/workspaces/{id-or-name}/stop</code>)
 and prints the result, mirroring <code>msks start</code>:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>$<span class="w"> </span>msks<span class="w"> </span>stop<span class="w"> </span>my-workspace
-</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>my-workspace<span class="w"> </span>stopped
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>$<span class="w"> </span>msks<span class="w"> </span>stop<span class="w"> </span>my-workspace
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>my-workspace<span class="w"> </span>stopped
 </span></code></pre></div>
 <h2 id="msks-resize"><code>msks resize</code><a class="headerlink" href="#msks-resize" title="Permanent link">&para;</a></h2>
 <p>Moves a <strong>stopped</strong> workspace's disk sizes and topology
 (#184, #277) — the ceilings its guest sees as quotas, and the cpus
 and memory it boots with — through <code>POST
 /api/v1/workspaces/{id-or-name}/resize</code>:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>$ msks resize ws4 --home-mib 4096
-</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>resized ws4: root 10240 MiB, home 4096 MiB
-</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>
-</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>$ msks resize ws4 --cpus 4 --mem-mib 4096
-</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>resized ws4: root 10240 MiB, home 4096 MiB, cpus 4, mem 4096 MiB
-</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>(the new topology applies on its next boot)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>$ msks resize ws4 --home-mib 4096
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>resized ws4: root 10240 MiB, home 4096 MiB
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>$ msks resize ws4 --cpus 4 --mem-mib 4096
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>resized ws4: root 10240 MiB, home 4096 MiB, cpus 4, mem 4096 MiB
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>(the new topology applies on its next boot)
 </span></code></pre></div>
 <ul>
 <li><code>--home-mib</code> grows or shrinks the <code>/home</code> volume. The daemon
@@ -2392,11 +1953,11 @@ not come back; creating a workspace under the same name mints a
 fresh id and starts from the image's pristine root, with nothing
 of the deleted instance left to collide with. One workspace or
 several:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>$<span class="w"> </span>msks<span class="w"> </span>rm<span class="w"> </span>my-workspace
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>my-workspace<span class="w"> </span>deleted
-</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>$<span class="w"> </span>msks<span class="w"> </span>rm<span class="w"> </span>scratch-1<span class="w"> </span>scratch-2
-</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>scratch-1<span class="w"> </span>deleted
-</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>scratch-2<span class="w"> </span>deleted
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>$<span class="w"> </span>msks<span class="w"> </span>rm<span class="w"> </span>my-workspace
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>my-workspace<span class="w"> </span>deleted
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>$<span class="w"> </span>msks<span class="w"> </span>rm<span class="w"> </span>scratch-1<span class="w"> </span>scratch-2
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>scratch-1<span class="w"> </span>deleted
+</span><span id="__span-16-5"><a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>scratch-2<span class="w"> </span>deleted
 </span></code></pre></div>
 <p>Workspaces are removed one at a time, in the order given; a failure
 stops the run there with the API's one-line error, and the ones
@@ -2414,10 +1975,10 @@ same client environment as the workspace commands.</p>
 chars), the default designation, the kernel facts, and when the
 image entered the catalog — on the measured grid every listing
 shares (#271):</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>$ msks image ls
-</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>ref            hash          default  kernel                description                      imported
-</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>debian:13.6    9f2c41ab77de  default  6.12.107+deb13 (raw)  Debian 13.6 cloud image, kernel…  2026-09-22 14:03
-</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>alpine:3.20    33aa9db1c4ef  -        6.12.7 (raw)          -                                2026-09-19 09:41
+<div class="language-text highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>$ msks image ls
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>ref            hash          default  kernel                description                      imported
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>debian:13.6    9f2c41ab77de  default  6.12.107+deb13 (raw)  Debian 13.6 cloud image, kernel…  2026-09-22 14:03
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>alpine:3.20    33aa9db1c4ef  -        6.12.7 (raw)          -                                2026-09-19 09:41
 </span></code></pre></div>
 <p>The image the daemon designates as default carries the <code>default</code>
 flag; a bare <code>msks create</code> resolves to it. The <code>description</code>
@@ -2440,14 +2001,14 @@ scripting.</p>
 source is a <strong>daemon-side</strong> path — the daemon reads the file from
 its own filesystem; the command does not upload anything — or an
 <code>https://</code> URL the daemon downloads itself (#258):</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>$ msks image import /srv/images/debian-13.tar
-</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>imported debian:13 (9f2c41ab77de)
-</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>
-</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>$ msks image import https://images.example.com/debian-13.tar
-</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>imported debian:13 (9f2c41ab77de)
-</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>
-</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a>$ msks image import /srv/images/debian-13.tar --name mine --version 1.0
-</span><span id="__span-21-8"><a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a>imported mine:1.0 (9f2c41ab77de)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>$ msks image import /srv/images/debian-13.tar
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>imported debian:13 (9f2c41ab77de)
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>$ msks image import https://images.example.com/debian-13.tar
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>imported debian:13 (9f2c41ab77de)
+</span><span id="__span-18-6"><a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a>
+</span><span id="__span-18-7"><a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>$ msks image import /srv/images/debian-13.tar --name mine --version 1.0
+</span><span id="__span-18-8"><a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a>imported mine:1.0 (9f2c41ab77de)
 </span></code></pre></div>
 <p>A <code>--name</code>/<code>--version</code> override (#340) registers the archive
 under an operator-chosen pair — either key alone, the other from
@@ -2468,11 +2029,11 @@ line.</p>
 <p>Changes a cataloged image's registered name/version (#340) — the
 bytes, the hash, the manifest origin, and workspaces already
 booting the image stay put:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>$ msks image rename debian:13 --name mine --version 1.4
-</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>renamed debian:13 to mine:1.4 (9f2c41ab77de)
-</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>
-</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>$ msks image rename mine:1.4 --version 1.5
-</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>renamed mine:1.4 to mine:1.5 (9f2c41ab77de)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>$ msks image rename debian:13 --name mine --version 1.4
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>renamed debian:13 to mine:1.4 (9f2c41ab77de)
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>$ msks image rename mine:1.4 --version 1.5
+</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>renamed mine:1.4 to mine:1.5 (9f2c41ab77de)
 </span></code></pre></div>
 <p>Either key alone keeps the other at its registered value; pass
 at least one. The reference forms are the same as <code>image rm</code>'s
@@ -2490,14 +2051,14 @@ and bare-hash references keep booting the same bytes.</p>
 point (#258) — the pre-import gate <code>docs/images.md</code> describes. The
 command runs on the image author's host: it needs <code>/dev/kvm</code> and
 nothing else from msks (no daemon, no state):</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>$ msks image check workspace-mine-1.0.tar
-</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>PASS archive        imported mine:1.0 (1d6a5e782fc0), root autologin getty on the console port
-</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>PASS boot           guest answered the console in 3.4s (kernel 6.12.107+deb13-amd64)
-</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a>PASS console        root autologin getty on the console port
-</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>PASS user-data      seed payload ran on first boot
-</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a>PASS acpi-shutdown  clean shutdown within 120s
-</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a>PASS root-rw        root is writable and the write survived a stop/start (overlay)
-</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>PASS home-label     /home mounted by label msks-home and its write survived a stop/start (volume)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>$ msks image check workspace-mine-1.0.tar
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>PASS archive        imported mine:1.0 (1d6a5e782fc0), root autologin getty on the console port
+</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>PASS boot           guest answered the console in 3.4s (kernel 6.12.107+deb13-amd64)
+</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>PASS console        root autologin getty on the console port
+</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>PASS user-data      seed payload ran on first boot
+</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>PASS acpi-shutdown  clean shutdown within 120s
+</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>PASS root-rw        root is writable and the write survived a stop/start (overlay)
+</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a>PASS home-label     /home mounted by label msks-home and its write survived a stop/start (volume)
 </span></code></pre></div>
 <p>A broken contract point fails its row and the exit code is 1,
 naming the first failure; <code>--keep</code> preserves the throwaway state
@@ -2511,8 +2072,8 @@ the daemon resolves for workspace create — <code>name:version</code>, a bare
 name (its newest version), <code>name@hash</code> (the full 64-hex hash), a
 full hash — and a unique hash prefix (the 12 chars <code>image ls</code>
 prints):</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>$ msks image rm debian:12
-</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>debian:12 deleted
+<div class="language-text highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>$ msks image rm debian:12
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>debian:12 deleted
 </span></code></pre></div>
 <p>The removal is keyed by the image's hash after resolving the
 reference against the listing. An image a workspace still boots is
@@ -2526,15 +2087,15 @@ only the hash forms still identify one of them.)</p>
 <p>Prints one image's full record — reference, the archive's own
 pair (the origin, #340), hash, kernel facts, cmdline, and the
 default designation — from the same listing data:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>$ msks image info debian:13
-</span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>ref          mine:1.4
-</span><span id="__span-25-3"><a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>origin       debian:13.6
-</span><span id="__span-25-4"><a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a>hash         9f2c41ab77de0000000000000000000000000000000000000000000000000000
-</span><span id="__span-25-5"><a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a>kernel       6.12.107+deb13 (raw)
-</span><span id="__span-25-6"><a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a>description  Debian 13.6 cloud image, kernel 6.12.107+deb13, cloud-init, the egress module set and consent stack
-</span><span id="__span-25-7"><a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a>cmdline      console=ttyS0 root=/dev/vda rw
-</span><span id="__span-25-8"><a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a>seed         provisioner - (none declared)
-</span><span id="__span-25-9"><a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a>default      yes
+<div class="language-text highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>$ msks image info debian:13
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>ref          mine:1.4
+</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>origin       debian:13.6
+</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>hash         9f2c41ab77de0000000000000000000000000000000000000000000000000000
+</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>kernel       6.12.107+deb13 (raw)
+</span><span id="__span-22-6"><a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>description  Debian 13.6 cloud image, kernel 6.12.107+deb13, cloud-init, the egress module set and consent stack
+</span><span id="__span-22-7"><a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a>cmdline      console=ttyS0 root=/dev/vda rw
+</span><span id="__span-22-8"><a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a>seed         provisioner - (none declared)
+</span><span id="__span-22-9"><a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a>default      yes
 </span></code></pre></div>
 <p>The reference forms are the same as <code>image rm</code>'s. The
 <code>description</code> row (#564) is the identity the build baked into the
@@ -2543,12 +2104,12 @@ image's manifest; an image whose manifest carried none prints
 <h3 id="msks-image-default"><code>msks image default</code><a class="headerlink" href="#msks-image-default" title="Permanent link">&para;</a></h3>
 <p>Designates the image a bare <code>msks create</code> boots (#270) — the row
 <code>image ls</code> marks — or clears the designation with <code>--unset</code>:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>$ msks image default debian:13.6
-</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>designated debian:13.6 (98ccf2e1f2db) as the default image
-</span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>
-</span><span id="__span-26-4"><a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a>$ msks image default --unset
-</span><span id="__span-26-5"><a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a>default designation removed; a bare create falls back to the sole
-</span><span id="__span-26-6"><a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a>entry debian:13.6 (98ccf2e1f2db)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>$ msks image default debian:13.6
+</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>designated debian:13.6 (98ccf2e1f2db) as the default image
+</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>
+</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a>$ msks image default --unset
+</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>default designation removed; a bare create falls back to the sole
+</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a>entry debian:13.6 (98ccf2e1f2db)
 </span></code></pre></div>
 <p>The reference forms are the same as <code>image rm</code>'s — <code>name:version</code>,
 a bare name (its newest version), <code>name@hash</code>, a full hash, a
@@ -2567,11 +2128,11 @@ designated again — the line says so.</p>
 <p>Moves a workspace's <code>/home</code> volume through the daemon (#80) —
 backup, migration to another daemon, seeding a fresh workspace with
 data — as the two byte-stream endpoints <code>docs/storage.md</code> documents:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-27-1"><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>my-workspace<span class="w">              </span><span class="c1"># writes my-workspace.ext4</span>
-</span><span id="__span-27-2"><a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>my-workspace<span class="w"> </span>other.ext4<span class="w">   </span><span class="c1"># names the output file</span>
-</span><span id="__span-27-3"><a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>my-workspace<span class="w"> </span>-<span class="w"> </span><span class="p">|</span><span class="w"> </span>gzip<span class="w"> </span>&gt;<span class="w"> </span>backup.ext4.gz
-</span><span id="__span-27-4"><a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a>msks<span class="w"> </span>home<span class="w"> </span>import<span class="w"> </span>fresh-ws<span class="w"> </span>my-workspace.ext4
-</span><span id="__span-27-5"><a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a>msks<span class="w"> </span>home<span class="w"> </span>import<span class="w"> </span>fresh-ws<span class="w"> </span>-<span class="w"> </span>&lt;<span class="w"> </span>backup.ext4
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>my-workspace<span class="w">              </span><span class="c1"># writes my-workspace.ext4</span>
+</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>my-workspace<span class="w"> </span>other.ext4<span class="w">   </span><span class="c1"># names the output file</span>
+</span><span id="__span-24-3"><a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>my-workspace<span class="w"> </span>-<span class="w"> </span><span class="p">|</span><span class="w"> </span>gzip<span class="w"> </span>&gt;<span class="w"> </span>backup.ext4.gz
+</span><span id="__span-24-4"><a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a>msks<span class="w"> </span>home<span class="w"> </span>import<span class="w"> </span>fresh-ws<span class="w"> </span>my-workspace.ext4
+</span><span id="__span-24-5"><a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a>msks<span class="w"> </span>home<span class="w"> </span>import<span class="w"> </span>fresh-ws<span class="w"> </span>-<span class="w"> </span>&lt;<span class="w"> </span>backup.ext4
 </span></code></pre></div>
 <p>The workspace must be stopped (a volume under a running VM answers
 <code>409</code> — stop it first; <code>msks stop</code> is enough). A boot that arrives
@@ -2607,26 +2168,26 @@ default, scoped with <code>--workspace</code> — and the daemon keeps your valu
 as per-recipient ciphertext blobs in its database — the workspace
 never holds it (the full story is
 <a href="../secrets/">docs/secrets.md</a>):</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="c1"># from a password manager, nothing touches disk: daemon-wide,</span>
-</span><span id="__span-28-2"><a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="c1"># one sentinel for every workspace on the daemon</span>
-</span><span id="__span-28-3"><a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a>op<span class="w"> </span><span class="nb">read</span><span class="w"> </span><span class="s1">'op://Vault/github/credential'</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-28-4"><a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>msks<span class="w"> </span>secret<span class="w"> </span>mint<span class="w"> </span>--name<span class="w"> </span>github_api<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-28-5"><a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a><span class="w">      </span>--dest<span class="w"> </span>api.github.com<span class="w"> </span>--secret-file<span class="w"> </span>-
-</span><span id="__span-28-6"><a id="__codelineno-28-6" name="__codelineno-28-6" href="#__codelineno-28-6"></a>
-</span><span id="__span-28-7"><a id="__codelineno-28-7" name="__codelineno-28-7" href="#__codelineno-28-7"></a>msks<span class="w"> </span>secret<span class="w"> </span>mint<span class="w"> </span>--workspace<span class="w"> </span>myws<span class="w"> </span>--name<span class="w"> </span>pypi<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-28-8"><a id="__codelineno-28-8" name="__codelineno-28-8" href="#__codelineno-28-8"></a><span class="w">  </span>--dest<span class="w"> </span>.pypi.org<span class="w"> </span>--dest<span class="w"> </span>pypi.org<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-28-9"><a id="__codelineno-28-9" name="__codelineno-28-9" href="#__codelineno-28-9"></a><span class="w">  </span>--ttl<span class="w"> </span><span class="m">86400</span><span class="w"> </span>--secret-file<span class="w"> </span>./token<span class="w">    </span><span class="c1"># scoped, suffix + exact</span>
-</span><span id="__span-28-10"><a id="__codelineno-28-10" name="__codelineno-28-10" href="#__codelineno-28-10"></a>
-</span><span id="__span-28-11"><a id="__codelineno-28-11" name="__codelineno-28-11" href="#__codelineno-28-11"></a>msks<span class="w"> </span>secret<span class="w"> </span>mint<span class="w"> </span>--workspace<span class="w"> </span>ci,deploy<span class="w"> </span>--name<span class="w"> </span>pypi<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-28-12"><a id="__codelineno-28-12" name="__codelineno-28-12" href="#__codelineno-28-12"></a><span class="w">  </span>--dest<span class="w"> </span>.pypi.org<span class="w"> </span>--secret-file<span class="w"> </span>./token<span class="w">   </span><span class="c1"># one row, two workspaces</span>
-</span><span id="__span-28-13"><a id="__codelineno-28-13" name="__codelineno-28-13" href="#__codelineno-28-13"></a>
-</span><span id="__span-28-14"><a id="__codelineno-28-14" name="__codelineno-28-14" href="#__codelineno-28-14"></a>msks<span class="w"> </span>secret<span class="w"> </span>ls<span class="w">                           </span><span class="c1"># placeholders + coverage + lock state</span>
-</span><span id="__span-28-15"><a id="__codelineno-28-15" name="__codelineno-28-15" href="#__codelineno-28-15"></a>msks<span class="w"> </span>secret<span class="w"> </span>unlock<span class="w">                      </span><span class="c1"># decrypt the pending blobs the</span>
-</span><span id="__span-28-16"><a id="__codelineno-28-16" name="__codelineno-28-16" href="#__codelineno-28-16"></a><span class="w">                                         </span><span class="c1"># configured identity key opens</span>
-</span><span id="__span-28-17"><a id="__codelineno-28-17" name="__codelineno-28-17" href="#__codelineno-28-17"></a>msks<span class="w"> </span>secret<span class="w"> </span>renew<span class="w"> </span>--workspace<span class="w"> </span>myws<span class="w"> </span>--name<span class="w"> </span>pypi<span class="w"> </span>--ttl<span class="w"> </span><span class="m">86400</span>
-</span><span id="__span-28-18"><a id="__codelineno-28-18" name="__codelineno-28-18" href="#__codelineno-28-18"></a>msks<span class="w"> </span>secret<span class="w"> </span>revoke<span class="w"> </span>--name<span class="w"> </span>github_api<span class="w">     </span><span class="c1"># the daemon-wide row of the label</span>
-</span><span id="__span-28-19"><a id="__codelineno-28-19" name="__codelineno-28-19" href="#__codelineno-28-19"></a>msks<span class="w"> </span>secret<span class="w"> </span>revoke<span class="w"> </span>--workspace<span class="w"> </span>ci,deploy<span class="w"> </span>--name<span class="w"> </span>pypi
-</span><span id="__span-28-20"><a id="__codelineno-28-20" name="__codelineno-28-20" href="#__codelineno-28-20"></a>msks<span class="w"> </span>secret<span class="w"> </span>coverage<span class="w"> </span>myws<span class="w"> </span>scoped<span class="w">         </span><span class="c1"># exempt myws from daemon-wide rows</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="c1"># from a password manager, nothing touches disk: daemon-wide,</span>
+</span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="c1"># one sentinel for every workspace on the daemon</span>
+</span><span id="__span-25-3"><a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>op<span class="w"> </span><span class="nb">read</span><span class="w"> </span><span class="s1">'op://Vault/github/credential'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-25-4"><a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>msks<span class="w"> </span>secret<span class="w"> </span>mint<span class="w"> </span>--name<span class="w"> </span>github_api<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-25-5"><a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a><span class="w">      </span>--dest<span class="w"> </span>api.github.com<span class="w"> </span>--secret-file<span class="w"> </span>-
+</span><span id="__span-25-6"><a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a>
+</span><span id="__span-25-7"><a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a>msks<span class="w"> </span>secret<span class="w"> </span>mint<span class="w"> </span>--workspace<span class="w"> </span>myws<span class="w"> </span>--name<span class="w"> </span>pypi<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-25-8"><a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a><span class="w">  </span>--dest<span class="w"> </span>.pypi.org<span class="w"> </span>--dest<span class="w"> </span>pypi.org<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-25-9"><a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a><span class="w">  </span>--ttl<span class="w"> </span><span class="m">86400</span><span class="w"> </span>--secret-file<span class="w"> </span>./token<span class="w">    </span><span class="c1"># scoped, suffix + exact</span>
+</span><span id="__span-25-10"><a id="__codelineno-25-10" name="__codelineno-25-10" href="#__codelineno-25-10"></a>
+</span><span id="__span-25-11"><a id="__codelineno-25-11" name="__codelineno-25-11" href="#__codelineno-25-11"></a>msks<span class="w"> </span>secret<span class="w"> </span>mint<span class="w"> </span>--workspace<span class="w"> </span>ci,deploy<span class="w"> </span>--name<span class="w"> </span>pypi<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-25-12"><a id="__codelineno-25-12" name="__codelineno-25-12" href="#__codelineno-25-12"></a><span class="w">  </span>--dest<span class="w"> </span>.pypi.org<span class="w"> </span>--secret-file<span class="w"> </span>./token<span class="w">   </span><span class="c1"># one row, two workspaces</span>
+</span><span id="__span-25-13"><a id="__codelineno-25-13" name="__codelineno-25-13" href="#__codelineno-25-13"></a>
+</span><span id="__span-25-14"><a id="__codelineno-25-14" name="__codelineno-25-14" href="#__codelineno-25-14"></a>msks<span class="w"> </span>secret<span class="w"> </span>ls<span class="w">                           </span><span class="c1"># placeholders + coverage + lock state</span>
+</span><span id="__span-25-15"><a id="__codelineno-25-15" name="__codelineno-25-15" href="#__codelineno-25-15"></a>msks<span class="w"> </span>secret<span class="w"> </span>unlock<span class="w">                      </span><span class="c1"># decrypt the pending blobs the</span>
+</span><span id="__span-25-16"><a id="__codelineno-25-16" name="__codelineno-25-16" href="#__codelineno-25-16"></a><span class="w">                                         </span><span class="c1"># configured identity key opens</span>
+</span><span id="__span-25-17"><a id="__codelineno-25-17" name="__codelineno-25-17" href="#__codelineno-25-17"></a>msks<span class="w"> </span>secret<span class="w"> </span>renew<span class="w"> </span>--workspace<span class="w"> </span>myws<span class="w"> </span>--name<span class="w"> </span>pypi<span class="w"> </span>--ttl<span class="w"> </span><span class="m">86400</span>
+</span><span id="__span-25-18"><a id="__codelineno-25-18" name="__codelineno-25-18" href="#__codelineno-25-18"></a>msks<span class="w"> </span>secret<span class="w"> </span>revoke<span class="w"> </span>--name<span class="w"> </span>github_api<span class="w">     </span><span class="c1"># the daemon-wide row of the label</span>
+</span><span id="__span-25-19"><a id="__codelineno-25-19" name="__codelineno-25-19" href="#__codelineno-25-19"></a>msks<span class="w"> </span>secret<span class="w"> </span>revoke<span class="w"> </span>--workspace<span class="w"> </span>ci,deploy<span class="w"> </span>--name<span class="w"> </span>pypi
+</span><span id="__span-25-20"><a id="__codelineno-25-20" name="__codelineno-25-20" href="#__codelineno-25-20"></a>msks<span class="w"> </span>secret<span class="w"> </span>coverage<span class="w"> </span>myws<span class="w"> </span>scoped<span class="w">         </span><span class="c1"># exempt myws from daemon-wide rows</span>
 </span></code></pre></div>
 <p><code>--secret-file</code> takes a path or <code>-</code> for a pipe (the value is
 whitespace-stripped at both ends); the secret is
@@ -2651,10 +2212,10 @@ extends a <code>--ttl</code> lifetime in place with the sentinel unchanged.</p>
 websocket. The command boots the workspace first when the daemon
 reports it as not running — the notices print on stderr while the
 boot runs, then the session attaches:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-29-1"><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>$ msks console my-workspace
-</span><span id="__span-29-2"><a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>msks: my-workspace is stopped; starting it
-</span><span id="__span-29-3"><a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a>msks: my-workspace running
-</span><span id="__span-29-4"><a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a>(workspace prompt)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>$ msks console my-workspace
+</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>msks: my-workspace is stopped; starting it
+</span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>msks: my-workspace running
+</span><span id="__span-26-4"><a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a>(workspace prompt)
 </span></code></pre></div>
 <p>The session is a root shell (#481): the console is the failsafe
 path, served by the guest's autologin root getty on the
@@ -2662,8 +2223,8 @@ virtio-console port — a raw byte stream over the daemon's
 authenticated websocket, with no user selection and no in-band
 protocol. Reach a workspace user's shell with <code>su - &lt;name&gt;</code> inside
 the session, or over ssh for the full interactive posture:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>$ msks console my-workspace
-</span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>(workspace prompt, as root)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-27-1"><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>$ msks console my-workspace
+</span><span id="__span-27-2"><a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>(workspace prompt, as root)
 </span></code></pre></div>
 <p>The getty keeps its own terminal geometry for the session's life:
 the console stream is a raw byte pipe, so a window resized
@@ -2718,8 +2279,8 @@ command boots the workspace first when the daemon reports it as not
 running (the same notices as <code>msks console</code>), then bridges bytes
 unexamined in both directions: a tty is not required, and binary
 protocols (ssh, rsync) ride it cleanly:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-31-1"><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a>msks<span class="w"> </span>forward<span class="w"> </span>my-workspace<span class="w"> </span><span class="m">22</span><span class="w">                 </span><span class="c1"># stdio: ProxyCommand shape</span>
-</span><span id="__span-31-2"><a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>msks<span class="w"> </span>forward<span class="w"> </span>my-workspace<span class="w"> </span><span class="m">8080</span><span class="w"> </span>--local<span class="w"> </span><span class="m">8080</span><span class="w">   </span><span class="c1"># loopback listener</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>msks<span class="w"> </span>forward<span class="w"> </span>my-workspace<span class="w"> </span><span class="m">22</span><span class="w">                 </span><span class="c1"># stdio: ProxyCommand shape</span>
+</span><span id="__span-28-2"><a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>msks<span class="w"> </span>forward<span class="w"> </span>my-workspace<span class="w"> </span><span class="m">8080</span><span class="w"> </span>--local<span class="w"> </span><span class="m">8080</span><span class="w">   </span><span class="c1"># loopback listener</span>
 </span></code></pre></div>
 <p><code>--local PORT</code> binds <code>127.0.0.1:PORT</code> instead of stdio; every
 accepted connection opens its own forward websocket, so parallel
@@ -2745,23 +2306,23 @@ handshake or its first HTTP request and shares the same rows and
 durations; <code>static</code> workspaces allow only their
 create-time allowlist; <code>allow</code> workspaces (the create default)
 record off-list destinations and pass them.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>msks tui                          # THE decider: the workspace page's
-</span><span id="__span-32-2"><a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>                                  # egress consent page (see `msks` above)
-</span><span id="__span-32-3"><a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a>msks egress rules ws-dev          # the mode, allowlist, and in-effect verdicts
-</span><span id="__span-32-4"><a id="__codelineno-32-4" name="__codelineno-32-4" href="#__codelineno-32-4"></a>msks egress requests ws-dev       # the consent rows (audit trail), newest first
-</span><span id="__span-32-5"><a id="__codelineno-32-5" name="__codelineno-32-5" href="#__codelineno-32-5"></a>msks egress requests ws-dev --decision pending
-</span><span id="__span-32-6"><a id="__codelineno-32-6" name="__codelineno-32-6" href="#__codelineno-32-6"></a>msks egress decide ws-dev &lt;request-id&gt; allow --duration 5m
-</span><span id="__span-32-7"><a id="__codelineno-32-7" name="__codelineno-32-7" href="#__codelineno-32-7"></a>msks egress decide ws-dev &lt;request-id&gt; deny --duration forever
-</span><span id="__span-32-8"><a id="__codelineno-32-8" name="__codelineno-32-8" href="#__codelineno-32-8"></a>msks egress revoke ws-dev &lt;request-id&gt;
-</span><span id="__span-32-9"><a id="__codelineno-32-9" name="__codelineno-32-9" href="#__codelineno-32-9"></a>msks egress mode ws-dev interactive          # switch the posture (#280);
-</span><span id="__span-32-10"><a id="__codelineno-32-10" name="__codelineno-32-10" href="#__codelineno-32-10"></a>msks egress mode ws-dev static --allow .debian.org   # --allow replaces
-</span><span id="__span-32-11"><a id="__codelineno-32-11" name="__codelineno-32-11" href="#__codelineno-32-11"></a>msks egress mode ws-dev static --offline     # ... the allowlist (--offline
-</span><span id="__span-32-12"><a id="__codelineno-32-12" name="__codelineno-32-12" href="#__codelineno-32-12"></a>                                              # confirms an empty static)
-</span><span id="__span-32-13"><a id="__codelineno-32-13" name="__codelineno-32-13" href="#__codelineno-32-13"></a>msks egress watch ws-dev          # stream frames; registers this client as
-</span><span id="__span-32-14"><a id="__codelineno-32-14" name="__codelineno-32-14" href="#__codelineno-32-14"></a>                                  # a decider (holds wait only while one is
-</span><span id="__span-32-15"><a id="__codelineno-32-15" name="__codelineno-32-15" href="#__codelineno-32-15"></a>                                  # connected)
-</span><span id="__span-32-16"><a id="__codelineno-32-16" name="__codelineno-32-16" href="#__codelineno-32-16"></a>msks egress watch ws-dev --decide --duration forever
-</span><span id="__span-32-17"><a id="__codelineno-32-17" name="__codelineno-32-17" href="#__codelineno-32-17"></a>                                  # the same, prompting y/n per request
+<div class="language-text highlight"><pre><span></span><code><span id="__span-29-1"><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>msks tui                          # THE decider: the workspace page's
+</span><span id="__span-29-2"><a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>                                  # egress consent page (see `msks` above)
+</span><span id="__span-29-3"><a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a>msks egress rules ws-dev          # the mode, allowlist, and in-effect verdicts
+</span><span id="__span-29-4"><a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a>msks egress requests ws-dev       # the consent rows (audit trail), newest first
+</span><span id="__span-29-5"><a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a>msks egress requests ws-dev --decision pending
+</span><span id="__span-29-6"><a id="__codelineno-29-6" name="__codelineno-29-6" href="#__codelineno-29-6"></a>msks egress decide ws-dev &lt;request-id&gt; allow --duration 5m
+</span><span id="__span-29-7"><a id="__codelineno-29-7" name="__codelineno-29-7" href="#__codelineno-29-7"></a>msks egress decide ws-dev &lt;request-id&gt; deny --duration forever
+</span><span id="__span-29-8"><a id="__codelineno-29-8" name="__codelineno-29-8" href="#__codelineno-29-8"></a>msks egress revoke ws-dev &lt;request-id&gt;
+</span><span id="__span-29-9"><a id="__codelineno-29-9" name="__codelineno-29-9" href="#__codelineno-29-9"></a>msks egress mode ws-dev interactive          # switch the posture (#280);
+</span><span id="__span-29-10"><a id="__codelineno-29-10" name="__codelineno-29-10" href="#__codelineno-29-10"></a>msks egress mode ws-dev static --allow .debian.org   # --allow replaces
+</span><span id="__span-29-11"><a id="__codelineno-29-11" name="__codelineno-29-11" href="#__codelineno-29-11"></a>msks egress mode ws-dev static --offline     # ... the allowlist (--offline
+</span><span id="__span-29-12"><a id="__codelineno-29-12" name="__codelineno-29-12" href="#__codelineno-29-12"></a>                                              # confirms an empty static)
+</span><span id="__span-29-13"><a id="__codelineno-29-13" name="__codelineno-29-13" href="#__codelineno-29-13"></a>msks egress watch ws-dev          # stream frames; registers this client as
+</span><span id="__span-29-14"><a id="__codelineno-29-14" name="__codelineno-29-14" href="#__codelineno-29-14"></a>                                  # a decider (holds wait only while one is
+</span><span id="__span-29-15"><a id="__codelineno-29-15" name="__codelineno-29-15" href="#__codelineno-29-15"></a>                                  # connected)
+</span><span id="__span-29-16"><a id="__codelineno-29-16" name="__codelineno-29-16" href="#__codelineno-29-16"></a>msks egress watch ws-dev --decide --duration forever
+</span><span id="__span-29-17"><a id="__codelineno-29-17" name="__codelineno-29-17" href="#__codelineno-29-17"></a>                                  # the same, prompting y/n per request
 </span></code></pre></div>
 <p><code>decide</code> and <code>revoke</code> name the request by the id <code>watch</code> and
 <code>requests</code> print (the full id, copy-pasteable); both act only on
@@ -2804,8 +2365,9 @@ request with its countdown and sends verdicts through the same
 endpoints the subcommands use. Keys: <code>a</code>/<code>d</code> allow or deny the
 focused hold for the default duration, <code>A</code>/<code>D</code> open the duration
 picker, <code>r</code> the rules screen (with <code>x</code> to revoke), <code>m</code> the mode
-picker — the <code>msks</code> section above owns the overlay's full
-lifecycle (the auto-open, the park, the self-close). The
+picker — the <a href="../tui/">workspace tree's</a> overlay section owns
+the overlay's full lifecycle (the auto-open, the park, the
+self-close). The
 placeholder-token audit is the secrets page's daemon-wide view
 (#390). A dropped link reconnects
 with backoff and re-registers (the snapshot re-lands); while
@@ -2841,7 +2403,7 @@ boot planted into <code>authorized_keys</code> for root and the workspace's
 login user. The fetch takes the same
 <code>MSKSC_URL</code>/<code>MSKSC_TOKEN</code>/<code>MSKSC_CAFILE</code> environment as every other
 command:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>msks<span class="w"> </span>key<span class="w"> </span>my-workspace<span class="w">                    </span><span class="c1"># the public authorized_keys line</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>msks<span class="w"> </span>key<span class="w"> </span>my-workspace<span class="w">                    </span><span class="c1"># the public authorized_keys line</span>
 </span></code></pre></div>
 <p>The command is public-only (#497): the private half is the
 operator's own key, and it never crossed the API to begin with —
@@ -2853,10 +2415,10 @@ and workspace stop/start.</p>
 <h2 id="msks-ssh"><code>msks ssh</code><a class="headerlink" href="#msks-ssh" title="Permanent link">&para;</a></h2>
 <p>Stock ssh into a workspace over the forward, with the identity
 staged in memory (#112) — one command, no key steps:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-34-1"><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w">              </span><span class="c1"># as the workspace's login user</span>
-</span><span id="__span-34-2"><a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-l<span class="w"> </span>root<span class="w">   </span><span class="c1"># the recovery login</span>
-</span><span id="__span-34-3"><a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-A<span class="w">        </span><span class="c1"># forward your agent ($SSH_AUTH_SOCK)</span>
-</span><span id="__span-34-4"><a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-L<span class="w"> </span><span class="m">8080</span>:localhost:80
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-31-1"><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w">              </span><span class="c1"># as the workspace's login user</span>
+</span><span id="__span-31-2"><a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-l<span class="w"> </span>root<span class="w">   </span><span class="c1"># the recovery login</span>
+</span><span id="__span-31-3"><a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-A<span class="w">        </span><span class="c1"># forward your agent ($SSH_AUTH_SOCK)</span>
+</span><span id="__span-31-4"><a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-L<span class="w"> </span><span class="m">8080</span>:localhost:80
 </span></code></pre></div>
 <p>Options you pass here win for the invocation; the config file's
 <code>ssh_options</code> key remembers a set for every session instead — see
@@ -2962,9 +2524,9 @@ configuration that hides all of this).</p>
 identity staged in memory (#190) — one command does the whole
 setup itself: the workspace boots when needed, the identity
 stages in memory, and the copy opens its own forward:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-35-1"><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-av<span class="w"> </span>./site/<span class="w"> </span>root@:/root/site/<span class="w">    </span><span class="c1"># push</span>
-</span><span id="__span-35-2"><a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-av<span class="w"> </span>root@:/root/out.tar<span class="w"> </span>./out.tar<span class="w">  </span><span class="c1"># pull</span>
-</span><span id="__span-35-3"><a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-aP<span class="w"> </span>./src/<span class="w"> </span>:src/<span class="w">         </span><span class="c1"># as the login user</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-av<span class="w"> </span>./site/<span class="w"> </span>root@:/root/site/<span class="w">    </span><span class="c1"># push</span>
+</span><span id="__span-32-2"><a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-av<span class="w"> </span>root@:/root/out.tar<span class="w"> </span>./out.tar<span class="w">  </span><span class="c1"># pull</span>
+</span><span id="__span-32-3"><a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-aP<span class="w"> </span>./src/<span class="w"> </span>:src/<span class="w">         </span><span class="c1"># as the login user</span>
 </span></code></pre></div>
 <p>Everything after the workspace id (the <code>--</code> is optional) is given
 to rsync; msks parses no rsync flags. The one shaping pass is
@@ -3019,11 +2581,11 @@ passthrough options have. The host prerequisites are <code>ssh</code> and
 <h2 id="errors-exit-codes-and-timeouts">Errors, exit codes, and timeouts<a class="headerlink" href="#errors-exit-codes-and-timeouts" title="Permanent link">&para;</a></h2>
 <p>Every command fails with one readable line on stderr and exit code 1
 — never a traceback:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-36-1"><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a>msks: set MSKSC_TOKEN to a daemon token (MSKSC_URL for a non-default daemon)
-</span><span id="__span-36-2"><a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a>msks: cannot reach https://192.168.77.2:8660: [Errno 113] ...
-</span><span id="__span-36-3"><a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a>msks: 401: invalid or revoked token
-</span><span id="__span-36-4"><a id="__codelineno-36-4" name="__codelineno-36-4" href="#__codelineno-36-4"></a>msks: 409: workspace exists
-</span><span id="__span-36-5"><a id="__codelineno-36-5" name="__codelineno-36-5" href="#__codelineno-36-5"></a>msks: 422: body.id: String should match pattern '^[a-z0-9][a-z0-9-]*$'
+<div class="language-text highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>msks: set MSKSC_TOKEN to a daemon token (MSKSC_URL for a non-default daemon)
+</span><span id="__span-33-2"><a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>msks: cannot reach https://192.168.77.2:8660: [Errno 113] ...
+</span><span id="__span-33-3"><a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a>msks: 401: invalid or revoked token
+</span><span id="__span-33-4"><a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a>msks: 409: workspace exists
+</span><span id="__span-33-5"><a id="__codelineno-33-5" name="__codelineno-33-5" href="#__codelineno-33-5"></a>msks: 422: body.id: String should match pattern '^[a-z0-9][a-z0-9-]*$'
 </span></code></pre></div>
 <p>The status lines carry the daemon's <code>detail</code> field verbatim. A
 validation failure (422) reports each problem as <code>field: message</code>,
