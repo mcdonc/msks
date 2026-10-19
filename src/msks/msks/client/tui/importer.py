@@ -234,6 +234,7 @@ class ImageImportScreen(ModalScreen):
         self.entries: list[tuple[str, dict | None]] = []
         self._left = False
         self._fetch_task = None
+        self._refresh_task = None
 
     def compose(self) -> ComposeResult:
         yield Static("", id="import-picker-status")
@@ -248,11 +249,7 @@ class ImageImportScreen(ModalScreen):
         screen stands on top — Screen.dismiss pops blindly, and
         the operator's next screen is not this one's to take)."""
         self._left = True
-        for task in (
-            getattr(self, "_fetch_task", None),
-            getattr(self, "_refresh_task", None),
-            getattr(self, "_detail_task", None),
-        ):
+        for task in (self._fetch_task, self._refresh_task):
             if task is not None and not task.done():
                 task.cancel()
 
@@ -354,20 +351,29 @@ class ImageImportScreen(ModalScreen):
         if self._left:
             return  # a closed page fetches nothing, rebuilds nothing
         try:
-            self.catalog = await self.app.data.images()
+            catalog = await self.app.data.images()
         except (Exception, SystemExit) as exc:
             self.land(exc, verb="catalog read")
             return
         if self._left:
             return  # closed while the read was in flight
+        self.catalog = catalog
         options = self.query_one(OptionList)
-        prior = options.highlighted or 0
+        self.rerender(options.highlighted or 0)
+
+    def rerender(self, prior: int) -> None:
+        """Rebuild the list from one walk, restoring the
+        operator's place clamped into the new rows (an
+        imported-then-highlighted row moved; a deleted one clamps
+        back) — and never onto a heading, where Enter would go
+        dead."""
+        options = self.query_one(OptionList)
         options.clear_options()
         options.add_options(self.render_rows())
-        # The operator's place survives the refresh, clamped into
-        # the new rows (an imported-then-highlighted row moved;
-        # a deleted one clamps back).
-        options.highlighted = min(prior, len(self.entries) - 1)
+        clamped = min(prior, len(self.entries) - 1)
+        if self.entries[clamped][0] == "heading":
+            clamped = self.first_actionable()
+        options.highlighted = clamped
 
     def land(self, exc: BaseException, verb: str = "manifest fetch") -> None:
         """A fetch or read that failed while this screen still
@@ -381,7 +387,7 @@ class ImageImportScreen(ModalScreen):
         # this just pushed.
         self._left = True
         self.dismiss()
-        self.app.push_screen(FailurePanel("manifest fetch", None, str(exc)))
+        self.app.push_screen(FailurePanel(verb, None, str(exc)))
 
     def selected_entry(self) -> tuple[str, dict] | None:
         """The highlighted row's entry, or None when the list is
@@ -401,14 +407,12 @@ class ImageImportScreen(ModalScreen):
             return
         kind, row = entry
         if kind == "catalog":
-            self._detail_task = asyncio.create_task(self.await_detail(row))
+            # A plain push (not push_screen_wait, which demands a
+            # worker): the page stands under the detail view, and
+            # its close returns here with nothing to resume.
+            self.app.push_screen(ImageDetailScreen(row))
         else:
             self.start_import(row)
-
-    async def await_detail(self, row: dict) -> None:
-        """Hold the page while the detail view stands: its close
-        returns here, the rows untouched."""
-        await self.app.push_screen_wait(ImageDetailScreen(row))
 
     def start_import(self, row: dict) -> None:
         """Import a published row through the modal; the page

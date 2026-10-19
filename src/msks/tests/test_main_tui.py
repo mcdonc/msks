@@ -5494,3 +5494,76 @@ async def test_a_page_closed_mid_reread_rebuilds_nothing(monkeypatch) -> None:
         page.query_one = no_lookup
         await page.refetch_catalog()
         assert page.entries == entries_before
+
+
+async def test_the_marker_moves_with_the_catalog(monkeypatch) -> None:
+    """The refresh's headline behavior (#571): deleting the
+    [imported] twin flips the published row to its build date;
+    the failed panel names a catalog read, not a manifest fetch."""
+    scripted_manifest(
+        monkeypatch,
+        rows=[
+            {**CHANNEL[0], "built_at": "2026-10-18T17:00:00Z"},
+        ],
+    )
+    data = FakeData([row()])
+    data.images_rows = [catalog_row()]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        page = app.screen
+        published = next(
+            i
+            for i, (kind, _r) in enumerate(page.entries)
+            if kind == "published"
+        )
+        assert "[imported]" in str(
+            page.query_one(OptionList).options[published].prompt
+        )
+        await pilot.press("D")
+        await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
+        await pilot.press("y")
+        await wait_for(lambda: data.removed)
+
+        def prompts():
+            return [str(o.prompt) for o in page.query_one(OptionList).options]
+
+        # The shrunken list moved the row: wait by content, not by
+        # the pre-refresh index.
+        await wait_for(lambda: all("[imported]" not in p for p in prompts()))
+        assert any(
+            "debian:13.6" in p and "built 2026-10-18" in p for p in prompts()
+        )
+
+
+async def test_a_failed_catalog_read_names_its_verb(monkeypatch) -> None:
+    """The panel's title names the exchange that failed — a
+    catalog re-read is not a manifest fetch."""
+    scripted_manifest(monkeypatch)
+
+    class SecondReadFails(FakeData):
+        def __init__(self, rows):
+            super().__init__(rows)
+            self.reads = 0
+
+        async def images(self) -> list[dict]:
+            self.reads += 1
+            if self.reads > 1:
+                raise RuntimeError("daemon away")
+            return await super().images()
+
+    data = SecondReadFails([row()])
+    data.images_rows = [catalog_row()]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        options = app.screen.query_one(OptionList)
+        options.highlighted = len(options.options) - 1
+        await pilot.press("enter")
+        await wait_for(lambda: data.import_calls != [])
+        await wait_for(lambda: on_failure(app))
+        await wait_for(lambda: app.screen.query("#failure-title") != [])
+        title = str(app.screen.query_one("#failure-title").content)
+        assert "catalog read failed" in title
