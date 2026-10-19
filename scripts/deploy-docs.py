@@ -6,9 +6,9 @@ Zensical has no native versioning support; the official bridge is
 squidfunk's fork of mike (installed from GitHub in CI — it is not
 published on PyPI). This script drives that fork's Python API:
 
-1. sync the local gh-pages branch from origin (creating it on the
-   first deploy — without this, deploying would clobber every
-   earlier version),
+1. sync the local gh-pages branch from origin (the branch
+   itself is created by mike's first deploy — without the sync,
+   deploying would clobber every earlier version),
 2. build the docs with ``zensical build``, with
    ``MIKE_DOCS_VERSION`` exported so the site prefixes its URLs
    with the version,
@@ -33,6 +33,7 @@ from mike import commands, git_utils, utils
 
 GH_PAGES_BRANCH = "gh-pages"
 LATEST_ALIAS = "latest"
+DEV_VERSION = "dev"
 
 
 def sync_gh_pages() -> None:
@@ -41,12 +42,17 @@ def sync_gh_pages() -> None:
 
 
 def deploy_version(version: str) -> None:
-    """Build the site and commit it as a versioned gh-pages deployment."""
+    """Build the site and commit it as a versioned gh-pages
+    deployment. A release deploy holds the ``latest`` alias; the
+    dev view never does — main pushes far outnumber tags, and an
+    unconditional alias update would hand the site's root to
+    unreleased docs minutes after every merge."""
     cfg = utils.load_config()
+    aliases = [] if version == DEV_VERSION else [LATEST_ALIAS]
     with commands.deploy(
         cfg,
         version,
-        aliases=[LATEST_ALIAS],
+        aliases=aliases,
         update_aliases=True,
         alias_type=commands.AliasType.redirect,
     ):
