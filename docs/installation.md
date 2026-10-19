@@ -210,15 +210,16 @@ logouts and boots.
 
 ## The VMM (`cloud-hypervisor`) and the workspace tools
 
-The daemon's workspace machinery execs three more tools by bare
-name, and the wheel carries none of them: `cloud-hypervisor`
-(the VMM), `qemu-img` (the root overlay), and `mkisofs` (the
-seed metadata).
+The daemon's workspace machinery execs three more tools by bare name, and the
+wheel carries none of them: `cloud-hypervisor` (the VMM), `qemu-img` (the root
+overlay), and `mkisofs` (the seed metadata).
 
-`msksd doctor` verifies all three and names the install for a miss. On Debian,
-`qemu-img` and `mkisofs` come from `qemu-utils` and `genisoimage`; the egress
-consent stack's library (`libnetfilter_queue`) comes from
-`libnetfilter-queue1`. Cloud Hypervisor's static release binary is the
+```console
+sudo -i apt install qemu-img \
+                    mkisofs \
+```
+
+Cloud Hypervisor's static release binary is the
 sanctioned VMM install — Debian's archive carries it not:
 
 ```console

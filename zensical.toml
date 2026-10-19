@@ -24,6 +24,7 @@ nav = [
   { "The TUI" = "tui.md" },
   { "The CLI Client" = "cli.md" },
   { "Configuration" = "config.md" },
+  { "The host doctor" = "doctor.md" },
   { "Workspace Images" = "images.md" },
   { "Guest Networking" = "networking.md" },
   { "Storage" = "storage.md" },
