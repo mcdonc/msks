@@ -1,15 +1,13 @@
 # msks: microvm workspaces
 
-_msks_ is a tool that easily allows you to use microvm workspaces. It can be
+_msks_ is a tool that easily allows you to create microvm workspaces. It can be
 used to run AI harnesses securely.
 
-Each microvm is a cloud-hypervisor VM with its own kernel, and a state directory
-an operator can point at any disk.
+Each microvm is a cloud-hypervisor VM with its own kernel. It also provides
+services which allow you to avoid keeping secrets and keys within the VM and a
+facility to allow you to approve network egress.
 
-The microvm also provides services which allow you to avoid keeping secrets and
-keys within the VM and a facility to allow you to approve network egress.
-
-It runs on Linux hosts, and provides tooling to install its dependencies on
+_msks_ runs on Linux hosts, and provides tooling to install its dependencies on
 Debian and NixOS systems.
 
 ## The reading order
@@ -30,16 +28,22 @@ Debian and NixOS systems.
 5. [**Configuration**](config.md): the daemon's settings: every
    key, its environment variable, and its default, from the
    listener's socket to the egress stack's ceilings.
-6. [**Workspace images**](images.md): the image contract, the
+6. [**The host doctor**](doctor.md): the one command that
+   checks the host for every tool the daemon and client exec,
+   and names the fix for each miss.
+7. [**Workspace images**](images.md): the image contract, the
    shipped builder, and the published channel: import from a
    manifest URL, the descriptions the builds bake, the hash-keyed
    releases.
-7. [**Guest networking**](networking.md): the per-VM tap, the
+8. [**Guest networking**](networking.md): the per-VM tap, the
    egress consent postures, the interceptor, and the forward that
    carries ssh and rsync.
-8. [**Storage**](storage.md): the state disk, the per-workspace
+9. [**Storage**](storage.md): the state disk, the per-workspace
    volumes, and the capacity report that prices them.
-9. [**Secrets**](secrets.md): placeholders, the swap on the
-   wire, and the sentinel discipline.
-10. [**Changelog**](changes.md): what changed, release by
+10. [**Secrets**](secrets.md): placeholders, the swap on the
+    wire, and the sentinel discipline.
+11. [**Changelog**](changes.md): what changed, release by
     release.
+12. [**Development environment**](development.md): the devenv
+    side of a checkout — the dev daemon, the shell's client
+    presets, the worktree identity.

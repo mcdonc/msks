@@ -14,6 +14,7 @@ msks create ws                # make a workspace
 msks console ws               # boot it if needed, then work inside it
 msks forward ws 22            # bridge a guest TCP port to stdio
 msks key ws                   # fetch the workspace's ssh identity
+msks ssh ws                   # log in over the forward (boots it if needed)
 msks rsync ws -- -av ./src/ root@:/src/  # copy files over the forward
 msks home export ws           # download its /home volume (backup, seed)
 msks start ws                 # boot it without attaching
@@ -84,14 +85,9 @@ A missing `MSKSC_TOKEN` is an error before any network
 activity (the client names the variable and exits), unless the
 daemon is reached through the local socket, where the kernel names
 the client and no token exists to read. Tokens come from the daemon: `POST /api/v1/tokens` mints one.
-The devenv environment presets all three from the worktree's
-dev-daemon state dir, `.devenv/state/msksd/` (token + CA), so
-once the dev daemon has served once, a fresh devenv shell
-needs no exports. The same shell presets `MSKSC_CACHE_DIR` at the worktree's
-own `.devenv/state/msksc/cache/`, so each checkout's client
-state stays its own and one tree's cache entry is never read
-by another. A non-empty value exported before entering the
-shell survives the preset; an empty one counts as unset.
+The devenv shell presets all three from the worktree's own dev
+daemon — the [Development environment](development.md) chapter
+owns what the shell seeds.
 
 An unconfigured client (no `MSKSC_URL`, no `MSKSC_SOCKET`, no
 config-file daemon) looks for the default socket a same-host
@@ -100,22 +96,6 @@ connects through it with peer credentials alone. Finding none,
 it exits with the paths it looked for and the two settings
 that name a daemon outright. The client never dials a TCP address implicitly: a
 well-known port could belong to any daemon.
-
-```bash
-msks ls        # presets: https://127.0.0.1:8660, the worktree's
-               # token, and .devenv/state/msksd/msks-ca.pem
-               # (verified TLS)
-```
-
-Targeting a hand-run bare-host daemon instead (no managed
-process; `msks-dev-ready` then `msksd` from a shell) takes the
-explicit pair from ITS state, with its own CA:
-
-```bash
-export MSKSC_URL=https://127.0.0.1:8660
-export MSKSC_TOKEN=$(cat .devenv/state/msksd/bootstrap-token)
-export MSKSC_CAFILE=.devenv/state/msksd/msks-ca.pem
-```
 
 The daemon serves TLS with a self-signed certificate. Point
 `MSKSC_CAFILE` at the daemon's CA (`msks-ca.pem` under its state

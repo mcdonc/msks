@@ -35,63 +35,11 @@ the file is located.
 
 ## `msksd doctor`
 
-`msksd doctor` checks the host for the external tools and
-libraries msksd and the msks client exec at runtime. The set
-covers the cloud-hypervisor VMM, the e2fsprogs pair that grows
-and checks workspace volumes, the `mkisofs` that packs the
-cidata seed disks, and the iproute2/nftables/conntrack trio
-behind each workspace's tap. It also covers `qemu-img` for the root overlay and secret
-store, the two libraries the interceptor's NFQUEUE path links
-against, and the host tmux at the 3.2 floor the consent
-terminal documents. Finally, it covers the ssh/rsync pair the
-documented workflows run over `msks forward`. Each result prints
-with a ✓ (present and functional), ⚠ (a client-side tool the
-daemon itself runs without), or ✗ (a core-path dependency)
-marker, and each miss carries an install hint matched to the
-detected package manager. The run ends with a summary that
-repeats every miss with its fix; the exit code is 0 when every
-check passes or only warns, 1 when any check errors. The check
-set covers runtime requirements only; debugging and
-development tools stay out of it.
-
-Tool names come from the same settings the daemon will use (the
-`--config` flag and `MSKSD_*` variables apply), so doctor checks
-what this host's daemon will actually exec. Doctor takes no side effects. It reads a config when one
-resolves and never generates the first-run template. A config
-that exists but fails to load falls back to environment
-variables and defaults, with a warning naming the error. A
-fresh host with no default config yet falls back silently. The two libraries are verified through
-`pkg-config`, the linker cache (`ldconfig -p`), or the binding's
-ctypes soname load, whichever answers first.
-
-The binding's soname load is its own check row beside the two
-library rows, and all three run on Linux hosts only. Off
-Linux, the library is a Linux package, and the binding row
-names that contract instead of hinting packages. On Linux, the vendored
-ctypes binding dlopens `libnetfilter_queue.so.1`, the
-same load the consent path performs, so a host whose runtime
-soname is absent fails it even when `pkg-config` still answers
-for the library. Its fix line names the package that carries the
-runtime soname (`libnetfilter-queue1` on apt).
-
-The install hints match each manager's real package names
-(verified against a Debian trixie container: `genisoimage` serves
-`mkisofs`, `qemu-utils` ships `qemu-img`, `conntrack` is apt's
-name, and the library rows name the runtime soname packages
-`libnetfilter-queue1` and `libnfnetlink0`). Where a fix is not a distro package, the hint names the real
-source: cloud-hypervisor installs from the upstream static
-release, and Debian's archive carries it in none of its
-suites.
-
-The dev daemon runs bare. `scripts/dev-daemon.sh` sets
-`MSKSD_CONFIG_DIR` to the devenv root, and the devenv shell
-presets the same value, so a hand-run `msksd` resolves the
-same file. The daemon's durable settings therefore live in
-`<repo>/msksd.yaml`: generated as the commented template on
-first daemon start, and untracked, so local edits stay
-personal. The environment the script exports (API port,
-state dir, egress wiring) wins over file values under the
-precedence above.
+`msksd doctor` checks the host for the tools the daemon and the
+client exec, reading the config the same way the daemon does —
+the `--config` flag, the environment, and the file, under the
+precedence above. The [host doctor chapter](doctor.md) owns the
+check rows, the report's markers and hints, and the exit codes.
 
 ## Key mapping
 

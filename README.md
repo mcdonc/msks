@@ -330,13 +330,12 @@ See `docs/networking.md` for the full reference.
 The documentation builds into a static site (the same build the
 `Deploy Docs` workflow publishes to GitHub Pages on every push to
 `main` and every release tag). Preview it locally — the preview
-serves the **main branch's** docs (a feature-branch checkout
-refuses with the rule named), and while it runs, every edit to
-the chapters or the site config re-renders the open tab in
-realtime:
+serves whatever the checkout holds (the current branch's docs,
+so edits review against the tree that will ship), and while it
+runs, every edit to the chapters or the site config re-renders
+the open tab in realtime:
 
 ```bash
-git checkout main && git pull
 devenv shell
 msks-docs              # serves http://127.0.0.1:8923/ live
 ```
