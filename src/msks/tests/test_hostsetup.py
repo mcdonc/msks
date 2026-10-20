@@ -452,7 +452,7 @@ def test_cloud_hypervisor_download_failure_names_the_source(
     capsys: pytest.CaptureFixture,
 ) -> None:
     """A network failure is a named refusal carrying the URL,
-    before any host piece past apt runs (#598)."""
+    after every other host piece landed (#598)."""
 
     def no_network(url: str, dest: str) -> None:
         raise OSError("connection refused")

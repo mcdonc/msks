@@ -132,8 +132,13 @@ sudo -i apt install iproute2 \
                     libnfnetlink0 \
                     openssh-client \
                     rsync \
-                    tmux
+                    tmux \
+                    ca-certificates
 ```
+
+`ca-certificates` is the set's one self-serving package: the CA
+bundle the next step's `curl` to github.com needs for its TLS
+verification.
 
 The capability wrapper — a fresh root-owned copy of `setpriv`,
 with the two capabilities set and read back (a filesystem
