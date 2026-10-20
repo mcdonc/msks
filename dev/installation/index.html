@@ -910,9 +910,9 @@ running it means running shipped code as root. An operator who
 prefers to read every step first can land the same host in an
 interactive root shell — each command below is one phase of the
 walk above, pasted and run by hand.</p>
-<p>Start a root shell and install the package set — the egress
-plumbing, the setup's own tools, the volume tools the daemon
-execs, and the consent stack's NFQUEUE sonames:</p>
+<p>Start a root shell and install the package set — the same set
+<code>msks-setup-debian-host</code> lands, so a host finished by hand
+comes up clean under the doctor too:</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">sudo -i apt install iproute2 \</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">                    nftables \</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">                    conntrack \</span>
@@ -921,14 +921,18 @@ execs, and the consent stack's NFQUEUE sonames:</p>
 </span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="go">                    libcap2-bin \</span>
 </span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="go">                    kmod \</span>
 </span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="go">                    e2fsprogs \</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="go">                    libnetfilter-queue1 \</span>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="go">                    libnfnetlink0</span>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="go">                    qemu-utils \</span>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="go">                    genisoimage \</span>
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="go">                    tmux \</span>
-</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="go">                    ssh \</span>
-</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="go">                    rsync</span>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="go">                    qemu-utils \</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="go">                    genisoimage \</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="go">                    libnetfilter-queue1 \</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="go">                    libnfnetlink0 \</span>
+</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="go">                    openssh-client \</span>
+</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="go">                    rsync \</span>
+</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="go">                    tmux \</span>
+</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="go">                    ca-certificates</span>
 </span></code></pre></div>
+<p><code>ca-certificates</code> is the set's one self-serving package: the CA
+bundle the next step's <code>curl</code> to github.com needs for its TLS
+verification.</p>
 <p>The capability wrapper — a fresh root-owned copy of <code>setpriv</code>,
 with the two capabilities set and read back (a filesystem
 without capability xattrs takes the <code>setcap</code> and loses it, so
