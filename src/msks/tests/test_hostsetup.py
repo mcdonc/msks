@@ -41,6 +41,15 @@ class Host:
         self.modprobe_fails: set[str] = set()
         self.modprobe_absent: set[str] = set()
         self.ambient = "0000000000001400"
+        # ldconfig answers with both NFQUEUE sonames present by
+        # default (#598); starving it dials the library install.
+        self.ldconfig_answer = (
+            "        libnetfilter_queue.so.1 "
+            "(libc6,x86-64) => /lib/x86_64-linux-gnu/"
+            "libnetfilter_queue.so.1\n"
+            "        libnfnetlink.so.0 "
+            "(libc6,x86-64) => /lib/x86_64-linux-gnu/libnfnetlink.so.0\n"
+        )
         # The service phase's dials (#560): is-active's answer, the
         # systemctl subcommands a run must fail on, and adduser's.
         self.is_active = 0
@@ -54,6 +63,8 @@ class Host:
         head = cmd[0]
         if head == "getcap":
             return 0, self.getcap_answer, ""
+        if head == "ldconfig":
+            return 0, self.ldconfig_answer, ""
         if head == WRAPPER:
             return 0, f"{self.ambient}\n", ""
         if head == "sysctl":
@@ -240,6 +251,233 @@ def test_missing_tools_install_via_apt(
     apt = debian_host.ran("apt-get")
     assert apt[0] == ["apt-get", "-qq", "update"]
     assert apt[1] == ["apt-get", "install", "-y", "conntrack"]
+
+
+def test_every_doctor_tool_gains_its_package(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The daemon's volume/image tools and the client-side pair
+    install through apt like the plumbing set (#598): each tool's
+    absence lands the package doctor's fix names."""
+    real_which = hostsetup.which
+
+    def lacking(tool):
+        return (
+            None
+            if tool in {"mkfs.ext4", "qemu-img", "tmux"}
+            else (real_which(tool))
+        )
+
+    monkeypatch.setattr(hostsetup, "which", lacking)
+    assert main() == 0
+    apt = debian_host.ran("apt-get")
+    assert apt[1] == [
+        "apt-get",
+        "install",
+        "-y",
+        "e2fsprogs",
+        "qemu-utils",
+        "tmux",
+    ]
+
+
+def test_fetch_upstream_streams_to_disk(tmp_path: Path) -> None:
+    """The network seam itself: one source, one destination,
+    byte-identical (a file:// URL keeps the test offline)."""
+    source = tmp_path / "release"
+    source.write_bytes(b"BINARY\n")
+    dest = tmp_path / "dest"
+    hostsetup.fetch_upstream(source.as_uri(), str(dest))
+    assert dest.read_bytes() == b"BINARY\n"
+
+
+def test_absent_sonames_install_their_packages(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A linker cache without the NFQUEUE sonames lands the
+    soname packages; a complete host installs nothing (#598)."""
+    debian_host.ldconfig_answer = (
+        "        libcap.so.2 (libc6) => /lib/libcap.so.2\n"
+    )
+    assert main() == 0
+    apt = debian_host.ran("apt-get")
+    assert apt[1][-2:] == ["libnetfilter-queue1", "libnfnetlink0"]
+
+
+def test_an_unreadable_linker_cache_installs_the_sonames(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A probe that cannot run counts as absent: the packages
+    land rather than pass silently (#598)."""
+
+    def broken_sh(cmd, timeout=10.0, env=None):
+        if cmd[0] == "ldconfig":
+            return 1, "", "ldconfig: cannot read"
+        return debian_host.sh(cmd, timeout=timeout, env=env)
+
+    monkeypatch.setattr(hostsetup, "sh", broken_sh)
+    assert main() == 0
+    apt = debian_host.ran("apt-get")
+    assert "libnetfilter-queue1" in apt[1]
+
+
+def test_cloud_hypervisor_lands_from_upstream_when_absent(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """No VMM on the host: the tool streams the upstream static
+    release to /usr/local/bin, executable, atomically (#598)."""
+    real_which = hostsetup.which
+    fetched: list[str] = []
+    target = tmp_path / "cloud-hypervisor"
+
+    def lacking(tool):
+        return None if tool == "cloud-hypervisor" else real_which(tool)
+
+    def fake_fetch(url: str, dest: str) -> None:
+        fetched.append(url)
+        Path(dest).write_bytes(b"CH-BINARY\n")
+
+    monkeypatch.setattr(hostsetup, "which", lacking)
+    monkeypatch.setattr(hostsetup, "fetch_upstream", fake_fetch)
+    monkeypatch.setattr(hostsetup, "CLOUD_HYPERVISOR_BIN", str(target))
+    assert main() == 0
+    assert fetched == [hostsetup.cloud_hypervisor_url()]
+    assert debian_host.ran(str(target)) == [[str(target), "--version"]]
+    assert target.read_bytes() == b"CH-BINARY\n"
+    assert target.stat().st_mode & 0o111  # executable
+    assert not (tmp_path / "cloud-hypervisor.part").exists()
+    assert "cloud-hypervisor: landed" in capsys.readouterr().out
+
+
+def test_a_present_cloud_hypervisor_stays_untouched(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The host's own VMM install wins: nothing downloads, no
+    fetch seam even runs (#598)."""
+    fetched: list[str] = []
+    monkeypatch.setattr(
+        hostsetup,
+        "fetch_upstream",
+        lambda url, dest: fetched.append(url),
+    )
+    assert main() == 0
+    assert fetched == []
+
+
+def test_the_asset_matches_the_machine(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One static build per architecture: aarch64 hosts fetch
+    the -aarch64 asset, everything else the x86-64 default
+    (#598)."""
+    import collections
+
+    Uname = collections.namedtuple("Uname", "machine")
+    monkeypatch.setattr(hostsetup.os, "uname", lambda: Uname("aarch64"))
+    assert hostsetup.cloud_hypervisor_url().endswith(
+        "cloud-hypervisor-static-aarch64"
+    )
+    monkeypatch.setattr(hostsetup.os, "uname", lambda: Uname("x86_64"))
+    assert hostsetup.cloud_hypervisor_url().endswith("cloud-hypervisor-static")
+    # an unknown machine falls back to the x86-64 asset, the
+    # release's unsuffixed build
+    monkeypatch.setattr(hostsetup.os, "uname", lambda: Uname("riscv64"))
+    assert hostsetup.cloud_hypervisor_url().endswith("cloud-hypervisor-static")
+
+
+def test_a_binary_that_does_not_run_is_removed_and_named(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The post-landing --version probe: a truncated or
+    wrong-architecture download is removed, and the refusal
+    names the machine and the URL — the next run downloads
+    again instead of defending a broken binary (#598)."""
+    real_which = hostsetup.which
+    target = tmp_path / "cloud-hypervisor"
+
+    def lacking(tool):
+        return None if tool == "cloud-hypervisor" else real_which(tool)
+
+    def broken_sh(cmd, timeout=10.0, env=None):
+        if cmd[0] == str(target):
+            return 126, "", "cannot execute binary file\n"
+        return debian_host.sh(cmd, timeout=timeout, env=env)
+
+    monkeypatch.setattr(hostsetup, "which", lacking)
+    monkeypatch.setattr(
+        hostsetup,
+        "fetch_upstream",
+        lambda url, dest: Path(dest).write_bytes(b"X"),
+    )
+    monkeypatch.setattr(hostsetup, "CLOUD_HYPERVISOR_BIN", str(target))
+    monkeypatch.setattr(hostsetup, "sh", broken_sh)
+    assert main() == 1
+    err = capsys.readouterr().err
+    assert "does not run" in err
+    assert hostsetup.os.uname().machine in err
+    assert hostsetup.cloud_hypervisor_url() in err
+    assert not target.exists()
+
+
+def test_the_apt_list_carries_each_package_once(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Three tools share e2fsprogs; a slim host missing all of
+    them installs the package once (#598)."""
+    real_which = hostsetup.which
+
+    def lacking(tool):
+        return (
+            None
+            if tool in {"mkfs.ext4", "resize2fs", "e2fsck"}
+            else real_which(tool)
+        )
+
+    monkeypatch.setattr(hostsetup, "which", lacking)
+    assert main() == 0
+    apt = debian_host.ran("apt-get")
+    assert apt[1].count("e2fsprogs") == 1
+
+
+def test_cloud_hypervisor_download_failure_names_the_source(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A network failure is a named refusal carrying the URL,
+    after every other host piece landed (#598)."""
+
+    def no_network(url: str, dest: str) -> None:
+        raise OSError("connection refused")
+
+    real_which = hostsetup.which
+
+    def lacking(tool):
+        return None if tool == "cloud-hypervisor" else real_which(tool)
+
+    monkeypatch.setattr(hostsetup, "which", lacking)
+    monkeypatch.setattr(hostsetup, "fetch_upstream", no_network)
+    monkeypatch.setattr(
+        hostsetup, "CLOUD_HYPERVISOR_BIN", str(tmp_path / "ch")
+    )
+    assert main() == 1
+    err = capsys.readouterr().err
+    assert "cloud-hypervisor download failed" in err
+    assert hostsetup.cloud_hypervisor_url() in err
+    # The VMM lands last: every other piece (the wrapper, the
+    # sysctl, the modules) landed before the refusal, and the
+    # partial download left nothing behind.
+    assert debian_host.ran("setcap") == [["setcap", f"{CAPS}+ep", WRAPPER]]
+    assert SYSCTL_FILE in debian_host.writes
+    assert not (tmp_path / "ch").exists()
+    assert not (tmp_path / "ch.part").exists()
 
 
 def test_getcap_mismatch_refuses(
