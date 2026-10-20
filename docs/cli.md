@@ -41,7 +41,7 @@ file key is documented below, and `MSKSC_TERMINAL_OPEN_CMD`'s in
 | `MSKSC_CAFILE`             | A PEM file to verify the daemon's TLS certificate; a socket connection verifies nothing — the kernel vouches for both ends                                                                                                                                                         | unverified with warning                                   |
 | `MSKSC_EXPECTED_IMAGE`     | An image reference the operator sets; `msks ls` compares it with the image the daemon reports in `/health` and names drift                                                                                                                                                         | unset (no check)                                          |
 | `MSKSC_CACHE_DIR`          | The directory per-workspace host-key caches live under; the per-workspace directories are created below it                                                                                                                                                                         | `~/.cache/msks`                                           |
-| `MSKSC_IDENTITY_FILE`      | Your own private key file, the ssh identity `msks create` plants into every workspace (msks generates none; [the identity chapter](identity.md) owns the whole story); a leading `~` expands                                                                                       | unset (`pubkey_file` answers, else `msks create` refuses) |
+| `MSKSC_IDENTITY_FILE`      | Your own private key file, the ssh identity `msks create` plants into every workspace (msks generates none; [the identity section](first-run.md#the-identity-file) owns the whole story); a leading `~` expands                                                                    | unset (`pubkey_file` answers, else `msks create` refuses) |
 | `MSKSC_PUBKEY_FILE`        | Your key's public half, what a bare `msks create` plants instead of reading `identity_file`, the form for a key you keep encrypted (your agent holds it; msks reads no private half); same naming rule, global-only                                                                | unset (`identity_file` answers)                           |
 | `MSKSC_TERMINAL_TITLE`     | The title template for the workspace-shell windows the workspace page opens (the file key's section lives in [The TUI](tui.md)); `{workspace}` resolves to the workspace's id                                                                                                      | unset (the terminal's own title)                          |
 | `MSKSC_IMAGE_MANIFEST_URL` | Where the TUI's Import image action (`i` on the workspace list) reads the published channel's manifest — a fork's or self-hoster's channel names its own; the picker shows each row's ref, description, and size, and the pick POSTs the row's URL to the daemon's import endpoint | this repository's latest release's `images.json`          |
@@ -72,7 +72,7 @@ for confirmation per signature (a hardware token's touch) asks at its own cadenc
 the session each count as a signing request.
 
 `MSKSC_PUBKEY_FILE` names your key's public half, a `.pub` file
-([the identity chapter](identity.md) owns the agent
+([the identity section](first-run.md#the-identity-file) owns the agent
 requirement this form carries). A create with it set plants that one line as the identity and
 reads no private material at all. It is the form for a key you
 keep encrypted: the public half sits in a `.pub` file while

@@ -73,7 +73,7 @@ environment preset lands only when you named nothing). Pointing the
 dev identity at your own key (a symlink over the minted file)
 works, with the identity chapter's rules: the passphrase prompt
 appears when the daemon's rows are locked under it and no agent
-holds it. See [The identity file](identity.md).
+holds it. See [The identity file](first-run.md#the-identity-file).
 
 ## Doctor on the dev host
 
