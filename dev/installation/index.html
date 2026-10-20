@@ -313,6 +313,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#setup-using-msks-setup-debian-host-console-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Setup using <code>msks-setup-debian-host</code> console script
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-the-setup-lands" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -713,6 +724,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#setup-using-msks-setup-debian-host-console-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Setup using <code>msks-setup-debian-host</code> console script
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-the-setup-lands" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -807,21 +829,22 @@ Debian host setup this chapter describes (<code>msks-setup-debian-host</code>).<
 that can diagnose installation issues.</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">pipx install msks        # or: pip install msks</span>
 </span></code></pre></div>
-<p>The daemon runs the workspaces directly on the host using cloud-hypervisor on
-<code>/dev/kvm</code>, one network tap per VM, and the egress consent stack in the host
-kernel</p>
+<h2 id="setup-using-msks-setup-debian-host-console-script">Setup using <code>msks-setup-debian-host</code> console script<a class="headerlink" href="#setup-using-msks-setup-debian-host-console-script" title="Permanent link">&para;</a></h2>
+<p>The msks daemon runs the workspaces directly on the host using
+<a href="https://github.com/cloud-hypervisor/cloud-hypervisor">cloud-hypervisor</a>.</p>
 <p>The host therefore needs pieces the wheel cannot carry. These are software
 dependency packages, kernel modules, a routing sysctl, two capabilities for the
 daemon's user, and a service that keeps <code>msksd</code> running.</p>
-<p>On a Debian deployment host, one command lands all of it:</p>
+<p>On a Debian deployment host, use <code>msks-setup-debian-host</code> console script
+(installed by the wheel) to do those things:</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">sudo "$(command -v msks-setup-debian-host)"</span>
 </span></code></pre></div>
-<p>The quoted form matters after a <code>pipx</code> install: the console
-script lands in <code>~/.local/bin</code>, which sudo's <code>secure_path</code> does
-not carry — the bare name would answer "command not found".</p>
-<p>Run it as the user the daemon will serve — under <code>sudo</code>, the <code>SUDO_USER</code>
-account is the executing user, and the service the tool registers belongs to
-that account.</p>
+<p>The quoted form matters: the console script lands in <code>~/.local/bin</code>, which
+sudo's <code>secure_path</code> does not carry — the bare name would answer "command not
+found".</p>
+<p>Run it as the user the daemon will serve (usually your normal user account) —
+under <code>sudo</code>, the <code>SUDO_USER</code> account is the executing user, and the service
+the tool registers belongs to that account.</p>
 <p>The run is idempotent: re-run any time, and re-run after a util-linux upgrade
 (the wrapper keeps a copy of <code>setpriv</code>; see below).</p>
 <h2 id="what-the-setup-lands">What the setup lands<a class="headerlink" href="#what-the-setup-lands" title="Permanent link">&para;</a></h2>
