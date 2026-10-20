@@ -13,27 +13,29 @@ that can diagnose installation issues.
 pipx install msks        # or: pip install msks
 ```
 
-The daemon runs the workspaces directly on the host using cloud-hypervisor on
-`/dev/kvm`, one network tap per VM, and the egress consent stack in the host
-kernel
+## Setup using `msks-setup-debian-host` console script
+
+The msks daemon runs the workspaces directly on the host using
+[cloud-hypervisor](https://github.com/cloud-hypervisor/cloud-hypervisor).
 
 The host therefore needs pieces the wheel cannot carry. These are software
 dependency packages, kernel modules, a routing sysctl, two capabilities for the
 daemon's user, and a service that keeps `msksd` running.
 
-On a Debian deployment host, one command lands all of it:
+On a Debian deployment host, use `msks-setup-debian-host` console script
+(installed by the wheel) to do those things:
 
 ```console
 sudo "$(command -v msks-setup-debian-host)"
 ```
 
-The quoted form matters after a `pipx` install: the console
-script lands in `~/.local/bin`, which sudo's `secure_path` does
-not carry — the bare name would answer "command not found".
+The quoted form matters: the console script lands in `~/.local/bin`, which
+sudo's `secure_path` does not carry — the bare name would answer "command not
+found".
 
-Run it as the user the daemon will serve — under `sudo`, the `SUDO_USER`
-account is the executing user, and the service the tool registers belongs to
-that account.
+Run it as the user the daemon will serve (usually your normal user account) —
+under `sudo`, the `SUDO_USER` account is the executing user, and the service
+the tool registers belongs to that account.
 
 The run is idempotent: re-run any time, and re-run after a util-linux upgrade
 (the wrapper keeps a copy of `setpriv`; see below).
