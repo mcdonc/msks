@@ -344,7 +344,8 @@ def test_cloud_hypervisor_lands_from_upstream_when_absent(
     monkeypatch.setattr(hostsetup, "fetch_upstream", fake_fetch)
     monkeypatch.setattr(hostsetup, "CLOUD_HYPERVISOR_BIN", str(target))
     assert main() == 0
-    assert fetched == [hostsetup.CLOUD_HYPERVISOR_URL]
+    assert fetched == [hostsetup.cloud_hypervisor_url()]
+    assert debian_host.ran(str(target)) == [[str(target), "--version"]]
     assert target.read_bytes() == b"CH-BINARY\n"
     assert target.stat().st_mode & 0o111  # executable
     assert not (tmp_path / "cloud-hypervisor.part").exists()
@@ -366,6 +367,84 @@ def test_a_present_cloud_hypervisor_stays_untouched(
     assert fetched == []
 
 
+def test_the_asset_matches_the_machine(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One static build per architecture: aarch64 hosts fetch
+    the -aarch64 asset, everything else the x86-64 default
+    (#598)."""
+    import collections
+
+    Uname = collections.namedtuple("Uname", "machine")
+    monkeypatch.setattr(hostsetup.os, "uname", lambda: Uname("aarch64"))
+    assert hostsetup.cloud_hypervisor_url().endswith(
+        "cloud-hypervisor-static-aarch64"
+    )
+    monkeypatch.setattr(hostsetup.os, "uname", lambda: Uname("x86_64"))
+    assert hostsetup.cloud_hypervisor_url().endswith("cloud-hypervisor-static")
+    # an unknown machine falls back to the x86-64 asset, the
+    # release's unsuffixed build
+    monkeypatch.setattr(hostsetup.os, "uname", lambda: Uname("riscv64"))
+    assert hostsetup.cloud_hypervisor_url().endswith("cloud-hypervisor-static")
+
+
+def test_a_binary_that_does_not_run_is_removed_and_named(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The post-landing --version probe: a truncated or
+    wrong-architecture download is removed, and the refusal
+    names the machine and the URL — the next run downloads
+    again instead of defending a broken binary (#598)."""
+    real_which = hostsetup.which
+    target = tmp_path / "cloud-hypervisor"
+
+    def lacking(tool):
+        return None if tool == "cloud-hypervisor" else real_which(tool)
+
+    def broken_sh(cmd, timeout=10.0, env=None):
+        if cmd[0] == str(target):
+            return 126, "", "cannot execute binary file\n"
+        return debian_host.sh(cmd, timeout=timeout, env=env)
+
+    monkeypatch.setattr(hostsetup, "which", lacking)
+    monkeypatch.setattr(
+        hostsetup,
+        "fetch_upstream",
+        lambda url, dest: Path(dest).write_bytes(b"X"),
+    )
+    monkeypatch.setattr(hostsetup, "CLOUD_HYPERVISOR_BIN", str(target))
+    monkeypatch.setattr(hostsetup, "sh", broken_sh)
+    assert main() == 1
+    err = capsys.readouterr().err
+    assert "does not run" in err
+    assert hostsetup.os.uname().machine in err
+    assert hostsetup.cloud_hypervisor_url() in err
+    assert not target.exists()
+
+
+def test_the_apt_list_carries_each_package_once(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Three tools share e2fsprogs; a slim host missing all of
+    them installs the package once (#598)."""
+    real_which = hostsetup.which
+
+    def lacking(tool):
+        return (
+            None
+            if tool in {"mkfs.ext4", "resize2fs", "e2fsck"}
+            else real_which(tool)
+        )
+
+    monkeypatch.setattr(hostsetup, "which", lacking)
+    assert main() == 0
+    apt = debian_host.ran("apt-get")
+    assert apt[1].count("e2fsprogs") == 1
+
+
 def test_cloud_hypervisor_download_failure_names_the_source(
     debian_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -378,7 +457,12 @@ def test_cloud_hypervisor_download_failure_names_the_source(
     def no_network(url: str, dest: str) -> None:
         raise OSError("connection refused")
 
-    monkeypatch.setattr(hostsetup, "which", lambda tool: None)
+    real_which = hostsetup.which
+
+    def lacking(tool):
+        return None if tool == "cloud-hypervisor" else real_which(tool)
+
+    monkeypatch.setattr(hostsetup, "which", lacking)
     monkeypatch.setattr(hostsetup, "fetch_upstream", no_network)
     monkeypatch.setattr(
         hostsetup, "CLOUD_HYPERVISOR_BIN", str(tmp_path / "ch")
@@ -386,10 +470,14 @@ def test_cloud_hypervisor_download_failure_names_the_source(
     assert main() == 1
     err = capsys.readouterr().err
     assert "cloud-hypervisor download failed" in err
-    assert hostsetup.CLOUD_HYPERVISOR_URL in err
-    # The refusal stopped the run before the wrapper landed.
-    assert debian_host.ran("setcap") == []
+    assert hostsetup.cloud_hypervisor_url() in err
+    # The VMM lands last: every other piece (the wrapper, the
+    # sysctl, the modules) landed before the refusal, and the
+    # partial download left nothing behind.
+    assert debian_host.ran("setcap") == [["setcap", f"{CAPS}+ep", WRAPPER]]
+    assert SYSCTL_FILE in debian_host.writes
     assert not (tmp_path / "ch").exists()
+    assert not (tmp_path / "ch.part").exists()
 
 
 def test_getcap_mismatch_refuses(

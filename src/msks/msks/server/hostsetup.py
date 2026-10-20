@@ -49,8 +49,12 @@ openssh-client, rsync, and tmux, and the consent stack's two
 NFQUEUE soname packages (probed through the linker cache, the
 same evidence doctor's library rows read). The VMM lands from
 the upstream static release — Debian's archive carries
-cloud-hypervisor in no suite — when the host has none; a
-present binary stays untouched. /dev/kvm access arrives through the kvm
+cloud-hypervisor in no suite — when the host has none, for the
+host's own architecture, and the landed binary answers
+``--version`` before the run calls it landed; a present binary
+stays untouched. The phase runs last, so a host whose egress
+passes the Debian mirror but not github.com still finishes
+every other piece. /dev/kvm access arrives through the kvm
 group on the daemon's user, the same supplementary-group grant the
 NixOS unit makes — the tool adds the executing user to the group
 when missing (#560; bare runs and new logins need it on the
@@ -128,10 +132,9 @@ MODULES = (
     "nfnetlink_queue",
 )
 
-# command → package for every bare-name tool `msksd doctor` checks
-# (#598): the wrapper path, the daemon's egress rulesets, its
-# volume and image machinery, and the client-side workflows that
-# warn when absent.
+# command → package for the wrapper path, the phases the setup
+# itself runs, and the daemon's and client's bare-name exec
+# surface — the tools `msksd doctor` probes (#598).
 TOOL_PACKAGES = {
     "setpriv": "util-linux",
     "setcap": "libcap2-bin",
@@ -155,11 +158,15 @@ TOOL_PACKAGES = {
     "ssh": "openssh-client",
     "rsync": "rsync",
     "tmux": "tmux",
+    # the VMM download's own trust root: slim images ship no
+    # CA bundle, and urllib refuses the TLS handshake without
+    # one. The package's probeable command names it.
+    "update-ca-certificates": "ca-certificates",
 }
 
 # soname → package for the consent stack's NFQUEUE libraries
 # (#598): no binary answers a `which`, so the linker cache is
-# the probe — the same evidence doctor's library rows read.
+# the probe.
 SONAME_PACKAGES = {
     "libnetfilter_queue.so.1": "libnetfilter-queue1",
     "libnfnetlink.so.0": "libnfnetlink0",
@@ -168,11 +175,27 @@ SONAME_PACKAGES = {
 # The VMM (#598): Debian's archive carries cloud-hypervisor in
 # no suite, so the tool lands the documented upstream static
 # release itself (docs/installation.md names the same source).
-CLOUD_HYPERVISOR_URL = (
+# The release carries one static build per architecture; the
+# unsuffixed asset is x86-64, aarch64's carries -aarch64 —
+# doctor's own fix hint names the same pair.
+CLOUD_HYPERVISOR_RELEASE = (
     "https://github.com/cloud-hypervisor/cloud-hypervisor/releases"
-    "/latest/download/cloud-hypervisor-static"
+    "/latest/download"
 )
+CLOUD_HYPERVISOR_ASSETS = {
+    "x86_64": "cloud-hypervisor-static",
+    "aarch64": "cloud-hypervisor-static-aarch64",
+}
 CLOUD_HYPERVISOR_BIN = "/usr/local/bin/cloud-hypervisor"
+
+
+def cloud_hypervisor_url() -> str:
+    """The upstream static-release URL for this host's machine —
+    kernel_package()'s uname() probe is the in-file precedent."""
+    asset = CLOUD_HYPERVISOR_ASSETS.get(
+        os.uname().machine, "cloud-hypervisor-static"
+    )
+    return f"{CLOUD_HYPERVISOR_RELEASE}/{asset}"
 
 
 class HostSetupError(Exception):
@@ -269,7 +292,7 @@ def missing_packages() -> list[str]:
 
 
 def missing_soname_packages() -> list[str]:
-    """The NFQUEUE soname packages the linker cache cannot show.
+    """The NFQUEUE soname packages the linker cache does not show.
 
     A probe that cannot run counts as absent: the install is
     idempotent, and a host doctor cannot read stays honest when
@@ -313,23 +336,46 @@ def fetch_upstream(url: str, dest: str) -> None:
 def install_cloud_hypervisor() -> str | None:
     """The VMM from the upstream static release (#598): Debian's
     archive carries it in no suite, so the tool lands the binary
-    the Installation chapter documents. Returns the binary's
-    path when it landed, None when the host already had one —
-    a present binary stays untouched (an operator's own install,
-    a pinned release, wins)."""
+    the Installation chapter documents, for this host's
+    architecture. Returns the binary's path when it landed, None
+    when the host already had one — a present binary stays
+    untouched (an operator's own install, a pinned release,
+    wins). The landed binary answers `--version` before the run
+    calls it landed: a truncated download, an architecture
+    mismatch, or a dead redirect is a refusal that removes what
+    it downloaded, not a broken VMM the next run defends."""
     if which("cloud-hypervisor") is not None:
         return None
+    url = cloud_hypervisor_url()
     partial = CLOUD_HYPERVISOR_BIN + ".part"
     try:
-        fetch_upstream(CLOUD_HYPERVISOR_URL, partial)
+        fetch_upstream(url, partial)
     except Exception as exc:  # any network failure, named for the fix
+        _silent_unlink(partial)
         raise HostSetupError(
             f"cloud-hypervisor download failed ({exc}); install the "
-            f"upstream static release from {CLOUD_HYPERVISOR_URL}"
+            f"upstream static release from {url}"
         ) from exc
     os.chmod(partial, 0o755)
     os.replace(partial, CLOUD_HYPERVISOR_BIN)
+    rc, out, err = sh([CLOUD_HYPERVISOR_BIN, "--version"])
+    if rc != 0:
+        _silent_unlink(CLOUD_HYPERVISOR_BIN)
+        raise HostSetupError(
+            f"the downloaded cloud-hypervisor does not run ({err.strip()} "
+            f"or {out.strip()}); install the upstream static release "
+            f"for {os.uname().machine} from {url}"
+        )
     return CLOUD_HYPERVISOR_BIN
+
+
+def _silent_unlink(path: str) -> None:
+    """Best-effort cleanup on the refusal paths; the error that
+    caused the refusal is the message, not the cleanup's."""
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 def install_wrapper() -> None:
@@ -972,12 +1018,11 @@ def run_setup(service: bool = True) -> None:
     os.environ["PATH"] = DEBIAN_PATH + ":" + saved
     try:
         check_root_and_platform()
-        missing = missing_packages() + missing_soname_packages()
+        missing = list(
+            dict.fromkeys(missing_packages() + missing_soname_packages())
+        )
         if missing:
             install_packages(missing)
-        vmm = install_cloud_hypervisor()
-        if vmm is not None:
-            say(f"cloud-hypervisor: landed {vmm} (upstream static release)")
         install_wrapper()
         ambient = wrapper_ambient_proof()
         say(f"wrapper {WRAPPER} carries {CAPS}+ep (CapAmb {ambient})")
@@ -992,6 +1037,15 @@ def run_setup(service: bool = True) -> None:
             else "skipped (--no-service)"
         )
         summary(ambient, states, kvm_note, service_note, the_uplink)
+        # The VMM lands last and after the summary: it is the one
+        # phase that needs the open internet (a host behind an
+        # egress policy that passes the Debian mirror but not
+        # github.com still gets every other piece), and its
+        # refusal names the manual install the Installation
+        # chapter documents.
+        vmm = install_cloud_hypervisor()
+        if vmm is not None:
+            say(f"cloud-hypervisor: landed {vmm} (upstream static release)")
     finally:
         os.environ["PATH"] = saved
 
