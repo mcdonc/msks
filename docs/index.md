@@ -31,19 +31,22 @@ Debian and NixOS systems.
 6. [**The host doctor**](doctor.md): the one command that
    checks the host for every tool the daemon and client exec,
    and names the fix for each miss.
-7. [**Workspace images**](images.md): the image contract, the
+7. [**First run**](first-run.md): what the daemon lands on its
+   first serve — the CA, the config template, the socket — and
+   the first workspace.
+8. [**Workspace images**](images.md): the image contract, the
    shipped builder, and the published channel: import from a
    manifest URL, the descriptions the builds bake, the hash-keyed
    releases.
-8. [**Guest networking**](networking.md): the per-VM tap, the
+9. [**Guest networking**](networking.md): the per-VM tap, the
    egress consent postures, the interceptor, and the forward that
    carries ssh and rsync.
-9. [**Storage**](storage.md): the state disk, the per-workspace
-   volumes, and the capacity report that prices them.
-10. [**Secrets**](secrets.md): placeholders, the swap on the
+10. [**Storage**](storage.md): the state disk, the per-workspace
+    volumes, and the capacity report that prices them.
+11. [**Secrets**](secrets.md): placeholders, the swap on the
     wire, and the sentinel discipline.
-11. [**Changelog**](changes.md): what changed, release by
+12. [**Changelog**](changes.md): what changed, release by
     release.
-12. [**Development environment**](development.md): the devenv
+13. [**Development environment**](development.md): the devenv
     side of a checkout — the dev daemon, the shell's client
     presets, the worktree identity.

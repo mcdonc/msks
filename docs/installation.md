@@ -6,11 +6,10 @@ Debian host setup this chapter describes (`msks-setup-debian-host`).
 
 The wheel needs Python 3.14 or newer.
 
-The [The host doctor](doctor.md) chapter documents the `msks doctor` command
-that can diagnose installation issues.
-
-```console
-pipx install msks        # or: pip install msks
+```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
+   source $HOME/.local/bin/env
+   uv tool install --python 3.14 msks
 ```
 
 ## Setup using `msks-setup-debian-host` console script
@@ -37,6 +36,8 @@ Run it as the user the daemon will serve (usually your normal user account) —
 under `sudo`, the `SUDO_USER` account is the executing user, and the service
 the tool registers belongs to that account.
 
+![A successful run of msks-setup-debian-host](screens/msks-setup-debian-host.png)
+
 The run is idempotent: re-run any time, and re-run after a util-linux upgrade
 (the wrapper keeps a copy of `setpriv`; see below).
 
@@ -44,12 +45,6 @@ The run is idempotent: re-run any time, and re-run after a util-linux upgrade
 
 Each phase runs in order, and the first refusal stops the run
 with a named error.
-
-**The packages.** The egress plumbing the daemon execs by bare
-name installs through apt when missing: `iproute2` (`ip`),
-`nftables` (`nft`), `conntrack`, and `procps` (`sysctl`),
-beside the tools the setup itself runs: `util-linux` (`setpriv`),
-`libcap2-bin` (`setcap`), `kmod` (`modprobe`) and various others.
 
 **The capability wrapper.** `/usr/local/bin/msks-caps` — a
 root-owned copy of util-linux `setpriv` carrying file
@@ -240,6 +235,37 @@ loginctl enable-linger <the-user-the-daemon-runs-as>
 it keeps the user manager, and the daemon, running across
 logouts and boots.
 
+## Adjusting the PATH
+
+`/usr/sbin` must be on the PATH for `msksd` to find various programs.
+
+```bash
+  echo 'PATH="/usr/sbin:$PATH"' >> ~/.profile
+  export PATH=/usr/sbin:$PATH
+```
+
+## The packages
+
+_msksd_ also requires various packages:
+
+```console
+sudo -i apt install iproute2 \
+                    nftables \
+                    conntrack \
+                    procps \
+                    util-linux \
+                    libcap2-bin \
+                    kmod \
+                    e2fsprogs \
+                    libnetfilter-queue1 \
+                    libnfnetlink0
+                    qemu-utils \
+                    genisoimage \
+                    tmux \
+                    ssh \
+                    rsync
+```
+
 ## The VMM (`cloud-hypervisor`)
 
 The daemon's workspace machinery execs `cloud-hypervisor` (the VMM).
@@ -250,8 +276,16 @@ sanctioned VMM install — Debian's archive does not carry it.
 ```console
 curl -L -o cloud-hypervisor-static \
   https://github.com/cloud-hypervisor/cloud-hypervisor/releases/latest/download/cloud-hypervisor-static
+curl -L -o ch-remote-static \
+  https://github.com/cloud-hypervisor/cloud-hypervisor/releases/latest/download/ch-remote-static
 sudo install -m755 cloud-hypervisor-static /usr/local/bin/cloud-hypervisor
+sudo install -m755 ch-remote-static /usr/local/bin/ch-remote-static
 ```
+
+## The host doctor
+
+The [The host doctor](doctor.md) chapter documents the `msks doctor` command
+that can diagnose installation issues.
 
 ## The alternative paths
 
@@ -282,22 +316,3 @@ documents the settings a hand-written unit needs.
 
 The [The host doctor](doctor.md) chapter documents the `msks doctor` command
 that can diagnose installation issues.
-
-## First run
-
-A bare `msksd` (no subcommand) serves. A fresh state dir (`~/.local/state/msksd`, relocated by the
-`state_dir` key) gets three things on first serve. The daemon
-mints its CA and certificate and prints the CA fingerprint to
-pin on first connect. The config file generates as a commented
-template (see [Configuration](config.md)). The unix listener
-binds `$XDG_RUNTIME_DIR/msks/msksd.sock`: same-host clients
-connect through it on peer-credential authentication alone,
-while remote ones dial the TLS listener with a bearer token. A workspace image arrives either from the published
-channel (`msks image import` in [the TUI](tui.md), or the
-[images](images.md) chapter's URL form) or from a local build.
-
-With the host prepared, the service lingered, and an image
-imported, a bare `msks` on the same account finds the socket,
-lists the workspaces, and creates the next one. [The TUI](tui.md)
-walks the whole loop, and [the identity file](identity.md)
-names the key the workspaces will answer to.

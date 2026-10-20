@@ -21,6 +21,7 @@ nav = [
   { "Home" = "index.md" },
   { "Installation" = "installation.md" },
   { "The host doctor" = "doctor.md" },
+  { "First run" = "first-run.md" },
   { "The identity file" = "identity.md" },
   { "The TUI" = "tui.md" },
   { "The CLI Client" = "cli.md" },
