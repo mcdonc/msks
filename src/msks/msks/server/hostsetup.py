@@ -42,7 +42,15 @@ whatever deployment brought it; this tool owns the host only:
    above, no unit.
 
 The plumbing tools the daemon execs (ip, nft, conntrack) install
-through apt when missing. /dev/kvm access arrives through the kvm
+through apt when missing — and with #598, so does every other
+package `msksd doctor` reads: the volume trio's e2fsprogs, the
+image pair's qemu-utils and genisoimage, the client workflows'
+openssh-client, rsync, and tmux, and the consent stack's two
+NFQUEUE soname packages (probed through the linker cache, the
+same evidence doctor's library rows read). The VMM lands from
+the upstream static release — Debian's archive carries
+cloud-hypervisor in no suite — when the host has none; a
+present binary stays untouched. /dev/kvm access arrives through the kvm
 group on the daemon's user, the same supplementary-group grant the
 NixOS unit makes — the tool adds the executing user to the group
 when missing (#560; bare runs and new logins need it on the
@@ -62,6 +70,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 TOOL = "msks-setup-debian-host"
@@ -119,8 +128,10 @@ MODULES = (
     "nfnetlink_queue",
 )
 
-# command → package for every tool the wrapper path or the daemon's
-# egress rulesets exec by bare name.
+# command → package for every bare-name tool `msksd doctor` checks
+# (#598): the wrapper path, the daemon's egress rulesets, its
+# volume and image machinery, and the client-side workflows that
+# warn when absent.
 TOOL_PACKAGES = {
     "setpriv": "util-linux",
     "setcap": "libcap2-bin",
@@ -131,7 +142,37 @@ TOOL_PACKAGES = {
     # the routing phase's load step; procps ships on full Debian
     # and is absent from slim images (#546's container run found it)
     "sysctl": "procps",
+    # the workspace-volume trio (#184) and the image tools the
+    # daemon execs: the root overlay's prober and the seed
+    # disk's packer
+    "mkfs.ext4": "e2fsprogs",
+    "resize2fs": "e2fsprogs",
+    "e2fsck": "e2fsprogs",
+    "qemu-img": "qemu-utils",
+    "mkisofs": "genisoimage",
+    # the client-side pair the documented workflows run over the
+    # forward, and the consent terminal's host tmux (3.2 floor)
+    "ssh": "openssh-client",
+    "rsync": "rsync",
+    "tmux": "tmux",
 }
+
+# soname → package for the consent stack's NFQUEUE libraries
+# (#598): no binary answers a `which`, so the linker cache is
+# the probe — the same evidence doctor's library rows read.
+SONAME_PACKAGES = {
+    "libnetfilter_queue.so.1": "libnetfilter-queue1",
+    "libnfnetlink.so.0": "libnfnetlink0",
+}
+
+# The VMM (#598): Debian's archive carries cloud-hypervisor in
+# no suite, so the tool lands the documented upstream static
+# release itself (docs/installation.md names the same source).
+CLOUD_HYPERVISOR_URL = (
+    "https://github.com/cloud-hypervisor/cloud-hypervisor/releases"
+    "/latest/download/cloud-hypervisor-static"
+)
+CLOUD_HYPERVISOR_BIN = "/usr/local/bin/cloud-hypervisor"
 
 
 class HostSetupError(Exception):
@@ -227,6 +268,19 @@ def missing_packages() -> list[str]:
     return missing
 
 
+def missing_soname_packages() -> list[str]:
+    """The NFQUEUE soname packages the linker cache cannot show.
+
+    A probe that cannot run counts as absent: the install is
+    idempotent, and a host doctor cannot read stays honest when
+    the packages land anyway.
+    """
+    rc, out, _err = sh(["ldconfig", "-p"])
+    if rc != 0:
+        return list(SONAME_PACKAGES.values())
+    return [p for soname, p in SONAME_PACKAGES.items() if soname not in out]
+
+
 def apt_env() -> dict[str, str]:
     """The script's guarantee, kept: debconf never reaches for the
     terminal (a postinst under an interactive frontend can block on
@@ -244,6 +298,38 @@ def install_packages(packages: list[str]) -> None:
     )
     if rc != 0:
         raise HostSetupError(f"apt install failed: {err}")
+
+
+def fetch_upstream(url: str, dest: str) -> None:
+    """Stream one upstream artifact to dest — the network seam
+    the tests rig; no shell, no pipeline."""
+    with (
+        urllib.request.urlopen(url, timeout=60) as response,
+        open(dest, "wb") as sink,
+    ):
+        shutil.copyfileobj(response, sink)
+
+
+def install_cloud_hypervisor() -> str | None:
+    """The VMM from the upstream static release (#598): Debian's
+    archive carries it in no suite, so the tool lands the binary
+    the Installation chapter documents. Returns the binary's
+    path when it landed, None when the host already had one —
+    a present binary stays untouched (an operator's own install,
+    a pinned release, wins)."""
+    if which("cloud-hypervisor") is not None:
+        return None
+    partial = CLOUD_HYPERVISOR_BIN + ".part"
+    try:
+        fetch_upstream(CLOUD_HYPERVISOR_URL, partial)
+    except Exception as exc:  # any network failure, named for the fix
+        raise HostSetupError(
+            f"cloud-hypervisor download failed ({exc}); install the "
+            f"upstream static release from {CLOUD_HYPERVISOR_URL}"
+        ) from exc
+    os.chmod(partial, 0o755)
+    os.replace(partial, CLOUD_HYPERVISOR_BIN)
+    return CLOUD_HYPERVISOR_BIN
 
 
 def install_wrapper() -> None:
@@ -886,9 +972,12 @@ def run_setup(service: bool = True) -> None:
     os.environ["PATH"] = DEBIAN_PATH + ":" + saved
     try:
         check_root_and_platform()
-        missing = missing_packages()
+        missing = missing_packages() + missing_soname_packages()
         if missing:
             install_packages(missing)
+        vmm = install_cloud_hypervisor()
+        if vmm is not None:
+            say(f"cloud-hypervisor: landed {vmm} (upstream static release)")
         install_wrapper()
         ambient = wrapper_ambient_proof()
         say(f"wrapper {WRAPPER} carries {CAPS}+ep (CapAmb {ambient})")

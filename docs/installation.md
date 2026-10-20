@@ -113,9 +113,9 @@ prefers to read every step first can land the same host in an
 interactive root shell — each command below is one phase of the
 walk above, pasted and run by hand.
 
-Start a root shell and install the package set — the egress
-plumbing, the setup's own tools, the volume tools the daemon
-execs, and the consent stack's NFQUEUE sonames:
+Start a root shell and install the package set — the same set
+`msks-setup-debian-host` lands, so a host finished by hand
+comes up clean under the doctor too:
 
 ```console
 sudo -i apt install iproute2 \
@@ -126,13 +126,13 @@ sudo -i apt install iproute2 \
                     libcap2-bin \
                     kmod \
                     e2fsprogs \
-                    libnetfilter-queue1 \
-                    libnfnetlink0
                     qemu-utils \
                     genisoimage \
-                    tmux \
-                    ssh \
-                    rsync
+                    libnetfilter-queue1 \
+                    libnfnetlink0 \
+                    openssh-client \
+                    rsync \
+                    tmux
 ```
 
 The capability wrapper — a fresh root-owned copy of `setpriv`,
