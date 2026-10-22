@@ -880,6 +880,9 @@ def test_run_doctor_error_fails(monkeypatch: pytest.MonkeyPatch) -> None:
         "which",
         lambda name: None if name == "nft" else f"/usr/bin/{name}",
     )
+    # The daemon-shaped extension stays out: a host whose /usr/sbin
+    # really carries nft (CI runners) must not rescue the miss.
+    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
     kvm_seam(monkeypatch)  # the kvm row's answer is host state
     monkeypatch.setattr(doctor_mod, "run", probes_ok)
     report = run_doctor(Settings())
