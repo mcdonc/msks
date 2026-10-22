@@ -7,8 +7,8 @@ Each microvm is a cloud-hypervisor VM with its own kernel. It also provides
 services which allow you to avoid keeping secrets and keys within the VM and a
 facility to allow you to approve network egress.
 
-_msks_ runs on Linux hosts, and provides tooling to install its dependencies on
-Debian and NixOS systems.
+_msks_ runs on Linux hosts, and provides tooling to install its host
+dependencies on Debian-based systems.
 
 ## The reading order
 

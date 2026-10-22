@@ -12,10 +12,16 @@ The wheel needs Python 3.14 or newer.
    uv tool install --python 3.14 msks
 ```
 
+There is an automated setup for the remainder on Debian-derived hosts. It's
+currently bridge-out for any other type of Linux host, save for NixOS, which
+remains undocumented now, apologies.
+
 ## Setup using `msks-setup-debian-host` console script
 
 The msks daemon runs the workspaces directly on the host using
-[cloud-hypervisor](https://github.com/cloud-hypervisor/cloud-hypervisor).
+[cloud-hypervisor](https://github.com/cloud-hypervisor/cloud-hypervisor) and
+various networking and kernel-y bits need to be satisfied for it to work
+properly.
 
 The host therefore needs pieces the wheel cannot carry. These are software
 dependency packages, kernel modules, a routing sysctl, two capabilities for the
@@ -29,12 +35,12 @@ sudo "$(command -v msks-setup-debian-host)"
 ```
 
 The quoted form matters: the console script lands in `~/.local/bin`, which
-sudo's `secure_path` does not carry — the bare name would answer "command not
+sudo's path does not carry — the bare name would answer "command not
 found".
 
 Run it as the user the daemon will serve (usually your normal user account) —
 under `sudo`, the `SUDO_USER` account is the executing user, and the service
-the tool registers belongs to that account.
+the tool registers belongs to your normal user account.
 
 ![A successful run of msks-setup-debian-host](screens/msks-setup-debian-host.png)
 
@@ -44,7 +50,10 @@ The run is idempotent: re-run any time, and re-run after a util-linux upgrade
 ## What the setup lands
 
 Each phase runs in order, and the first refusal stops the run
-with a named error.
+with an associated error.
+
+**Apt packages**. The apt packages required by the server and the
+client.
 
 **The capability wrapper.** `/usr/local/bin/msks-caps` — a
 root-owned copy of util-linux `setpriv` carrying file
@@ -55,8 +64,7 @@ egress stack's DHCP (port 67) and DNS (port 53) need
 they flow to the daemon and every tool it execs — and the grant
 surface is the wrapper's execute permission: any local user
 able to run it holds the two capabilities through it. After
-installing it the setup runs the wrapper and verifies the caps
-arrive ambient.
+installing it the setup runs the wrapper and verifies the caps.
 
 **The routing kernel.** `/etc/sysctl.d/msks-egress.conf` sets
 `net.ipv4.ip_forward=1` at boot, and the value applies
@@ -118,10 +126,9 @@ path prints beside it.
 `msks-setup-debian-host` is a program the wheel ships, and
 running it means running shipped code as root. An operator who
 prefers to read every step first can land the same host in an
-interactive root shell — each command below is one phase of the
-walk above, pasted and run by hand.
+interactive root shell.
 
-Start a root shell and install the package set — the same set
+To do so, install the package set — the same set
 `msks-setup-debian-host` lands, so a host finished by hand
 comes up clean under the doctor too:
 
@@ -178,7 +185,7 @@ printf '%s\n' \
 sysctl -p /etc/sysctl.d/msks-egress.conf
 ```
 
-The module set, at boot and now:
+The kernel module set, at boot and now:
 
 ```console
 printf '%s\n' tun nf_tables nft_chain_nat nft_masq nft_ct nft_reject \
@@ -235,39 +242,6 @@ loginctl enable-linger <the-user-the-daemon-runs-as>
 it keeps the user manager, and the daemon, running across
 logouts and boots.
 
-## Adjusting the PATH
-
-`/usr/sbin` must be on the PATH for `msksd` to find various programs.
-
-```bash
-  echo 'PATH="/usr/sbin:$PATH"' >> ~/.profile
-  export PATH=/usr/sbin:$PATH
-```
-
-## The packages
-
-_msksd_ also requires various packages:
-
-```console
-sudo -i apt install iproute2 \
-                    nftables \
-                    conntrack \
-                    procps \
-                    util-linux \
-                    libcap2-bin \
-                    kmod \
-                    e2fsprogs \
-                    libnetfilter-queue1 \
-                    libnfnetlink0
-                    qemu-utils \
-                    genisoimage \
-                    tmux \
-                    ssh \
-                    rsync
-```
-
-## The VMM (`cloud-hypervisor`)
-
 The daemon's workspace machinery execs `cloud-hypervisor` (the VMM).
 
 Cloud Hypervisor's static release binary is the
@@ -289,30 +263,6 @@ that can diagnose installation issues.
 
 ## The alternative paths
 
-**A NixOS deployment host** needs no setup tool. The module
-in `nix/module.nix` sets the sysctl, names the uplink, and
-grants the daemon the same two capabilities through the unit
-itself (bounded `AmbientCapabilities`). A dedicated `msksd`
-user holds them, with `kvm` among its supplementary groups.
-This grant is narrower than the wrapper's execute permission:
-it is scoped to the one service.
-A `nixos-rebuild switch` is the whole host setup.
-
 **A development host** (this repository's checkout) runs the
-daemon through devenv; the [Development
+daemon through Nix and devenv; the [Development
 environment](development.md) chapter owns that path.
-
-## Distributions the `msks-setup-debian-host` unit does not cover
-
-The `--no-service` flag to `msks-setup-debian-host` lands every host piece
-above and skips the unit. Choose it for a container, a non-systemd init, or a
-deployment that runs `msksd` its own way.
-
-The setup also skips the unit on its own when it cannot find an `msksd` beside
-its own install, or when systemd is not the manager, and it says so. On such a
-host the daemon runs whatever way the deployment chooses, with the wrapper on
-its exec line for the two capabilities; the [Configuration](config.md) chapter
-documents the settings a hand-written unit needs.
-
-The [The host doctor](doctor.md) chapter documents the `msks doctor` command
-that can diagnose installation issues.
