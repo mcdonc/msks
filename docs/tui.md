@@ -1,83 +1,51 @@
 # The TUI
 
-The terminal UI and the command-line client are one program.
-The TUI uses the same REST surface the CLI commands speak
-(the same `MSKSC_URL`, `MSKSC_TOKEN`, and `MSKSC_CAFILE`
-environment variables, the same config file, the same daemon
-aliases) and reads no daemon state directly: every page is the
-API rendered.
+The terminal UI and the command-line client are one program. The TUI uses the
+same REST surface the CLI commands speak (the same environment variables, the
+same config file, the same daemon aliases) and reads no daemon state directly:
+every page uses the API.
 
 This chapter covers the screens; the commands and settings the two surfaces
 share are [the CLI client's](cli.md) tables and sections.
+
+A bare `msks` — no arguments at all — launches the full-screen
+workspace tree (`msks tui` names the same command, and `msks tui
+my-workspace` opens that workspace's page directly).
 
 ## The workspace tree
 
 ![The workspaces list: two rows, the status bar's count and daemon URL](screens/workspaces-list.svg)
 
-A bare `msks` — no arguments at all — launches the full-screen
-workspace tree (`msks tui` names the same command, and `msks tui
-my-workspace` opens that workspace's page directly). The tree is rooted at the **workspaces list**: every
-workspace one row, newest first, with the CREATED column's
-arrow naming the sort. Creating, starting, stopping, and removing sit on its keys:
-`c` new, `s` start, `S` stop, `D` remove (asked and
-confirmed), `e` secrets, and `r` refresh. `/` is a typeahead
-that jumps the focus to the first row whose name starts with
-what you type. Enter opens the workspace's
-page. The list re-reads the daemon every five seconds, so a
-workspace another surface moved (the CLI, another operator)
-appears without a keypress. A power verb the focused row's own
-status makes pointless names its skip client-side without a
-round-trip. ![The create form over the list](screens/create-form.svg)
+The tree is rooted at the **workspaces list**: every workspace one row, newest
+first, with the CREATED column's arrow naming the sort. Creating, starting,
+stopping, and removing sit on its keys: `c` new, `s` start, `S` stop, `D`
+remove (asked and confirmed), `e` secrets, and `r` refresh. `/` is a typeahead
+that jumps the focus to the first row whose name starts with what you
+type. Enter opens the workspace's page. The list re-reads the daemon every five
+seconds, so a workspace another surface moved (the CLI, another operator)
+appears without a keypress. A power verb the focused row's own status makes
+pointless names its skip client-side without a round-trip. ![The create form
+over the list](screens/create-form.svg)
 
 The refused-create path answers on its own panel:
 
 ![The failure panel: the daemon's refusal verbatim over the list](screens/failure-panel.svg)
 
-A refused create opens the failure panel: a centered panel
-over the list carrying the daemon's refusal verbatim beside
-the name the form submitted. It waits for dismissal (Enter,
-Escape, `q`, or the Close button), so the detail stays on
-screen while the operator reads it. Closing it returns to the
-list, and a create that lands keeps today's flash note. `e` opens the
-**secrets** page. Each row's status column carries the state's color behind a
-filled cue dot: a running workspace in the theme's success
-color, every other state (stopped among them) in the warning
-color. The rest of the row keeps the default foreground, the
-focused row's name takes a bold cue, and the colors follow the
-active theme.
-
-The listing renders inside a rounded frame — the same framing
-the create form carries — so the rows read as one table
-between the status bar and the footer. The status bar above it sets the workspace count in the bold
-default foreground, with the daemon's URL riding after it in
-muted text; a long URL clips at its middle, both ends kept, so
-the line stays one row. A flash message owns the whole line
-while it lives, and a flash longer than the terminal's width
-crops at the edge with an ellipsis marking the cut, so the bar
-stays one row whatever a refusal echoes back. Each row's created column reads a relative label, bucketed
-by whole calendar days: `today`, `yesterday`, then `2d ago`
-under a week, `3w ago` under a month, `1mo ago` under a year,
-and `1y ago` past it. The absolute created date reads on the
-workspace page's header.
-
-A placeholder row is a daemon-wide object (its coverage set
-crosses workspaces, and the daemon-wide row belongs to none of
-them), so the secrets page lives at the tree's level: `e` on the
-workspaces list opens it.
-
-![The secrets page: the placeholder list](screens/secrets-page.svg)
-
 The **secrets page** lists every placeholder row the daemon
 holds, in the listing's own five-column shape: coverage (`*` for
 the daemon-wide row, the workspace ids scoped), name,
-destinations, the remaining lifetime, the created date. The
-lifetime cell is a live countdown — `2h`, then `1h`, repainted
-every second — and reads `never` on an unbounded row. `x` revokes the focused row after a confirmation that names
-what a revoke does (the row retires everywhere at once). `r`
-opens the duration picker over TTL-appropriate choices, an
-hour to thirty days with the choice nearest the row's
-remaining lifetime highlighted, and extends the row in place.
-The sentinel and the row's identity stay as they are. ![The audit view: the daemon-wide replay, the sighting highlighted](screens/audit-view.svg)
+destinations, the remaining lifetime, the created date.
+
+![The secrets page: the placeholder list](screens/secrets-page.svg)
+
+The lifetime cell is a live countdown — `2h`, then `1h`, repainted every second
+— and reads `never` on an unbounded row. `x` revokes the focused row after a
+confirmation that names what a revoke does (the row retires everywhere at
+once). `r` opens the duration picker over TTL-appropriate choices, an hour to
+thirty days with the choice nearest the row's remaining lifetime highlighted,
+and extends the row in place. The sentinel and the row's identity stay as they
+are. ![The audit view: the daemon-wide replay, the sighting
+highlighted](screens/audit-view.svg)
 
 `e` opens the daemon-wide audit view. The newest hundred
 recorded mints, revokes, expiries, and unlocks replay from
