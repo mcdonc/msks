@@ -24,6 +24,16 @@ The errors cover the dependencies, and the cloud-hypervisor VMM and various
 configuration settings. The check set covers runtime requirements
 only. Debugging and development tools stay out of it.
 
+Tool names resolve on the daemon's search path, not the caller's:
+Debian's admin directories (`/usr/local/sbin`, `/usr/sbin`,
+`/sbin`) answer first to the session's own PATH, because the
+systemd user manager's default PATH carries them — the daemon
+finds what a non-root login shell cannot type. A session whose
+PATH lacks the directories still gets the daemon's truth, and
+when a tool was found only through them, the run adds a warning
+row suggesting the relogin (the setup tool's `~/.profile` block)
+or the `PATH=` export.
+
 ## Reading the report
 
 Every row prints with a marker:

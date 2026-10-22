@@ -321,6 +321,74 @@ def test_an_unreadable_linker_cache_installs_the_sonames(
     assert "libnetfilter-queue1" in apt[1]
 
 
+def test_the_login_path_block_lands_once(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """The operator's ~/.profile gains the guarded /usr/sbin and
+    /sbin additions (#601): once, idempotently, and the summary
+    names the next-login application."""
+    assert main() == 0
+    home = hostsetup.executing_user()[3]
+    profile_text = debian_host.writes[f"{home}/.profile"]
+    assert hostsetup.PROFILE_MARKER in profile_text
+    assert 'PATH="/usr/sbin:$PATH"' in profile_text
+    assert 'PATH="/sbin:$PATH"' in profile_text
+    out = capsys.readouterr().out
+    assert "login PATH:" in out
+    assert "next login" in out
+
+
+def test_the_login_path_block_never_duplicates(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A re-run over a profile that already carries the marker
+    writes nothing (#601)."""
+    home = hostsetup.executing_user()[3]
+    debian_host.writes[f"{home}/.profile"] = (
+        "export EDITOR=vi\n" + hostsetup.PROFILE_PATH_BLOCK
+    )
+    written: dict[str, str] = {}
+    monkeypatch.setattr(
+        hostsetup,
+        "write_file",
+        lambda path, text: written.update({path: text}),
+    )
+    assert main() == 0
+    assert f"{home}/.profile" not in written
+
+
+def test_an_unreadable_profile_reads_as_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A ~/.profile that cannot be read (absent, or a permission
+    the tool cannot see) starts the block from nothing (#601)."""
+
+    def raising(path: str) -> str:
+        raise OSError("no such file")
+
+    written: dict[str, str] = {}
+    monkeypatch.setattr(hostsetup, "read_file", raising)
+    monkeypatch.setattr(
+        hostsetup, "write_file", lambda p, text: written.update({p: text})
+    )
+    note = hostsetup.land_user_path(str(tmp_path))
+    assert "gains /usr/sbin and /sbin" in note
+    assert written[f"{tmp_path}/.profile"].startswith(hostsetup.PROFILE_MARKER)
+
+
+def test_a_missing_profile_is_created(
+    debian_host: Host, tmp_path: Path
+) -> None:
+    """No ~/.profile at all (a slim account): the block lands in a
+    fresh file (#601)."""
+    home = hostsetup.executing_user()[3]
+    assert f"{home}/.profile" not in debian_host.writes
+    assert main() == 0
+    assert debian_host.writes[f"{home}/.profile"].startswith(
+        hostsetup.PROFILE_MARKER
+    )
+
+
 def test_cloud_hypervisor_lands_from_upstream_when_absent(
     debian_host: Host,
     monkeypatch: pytest.MonkeyPatch,

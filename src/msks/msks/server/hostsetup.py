@@ -262,6 +262,49 @@ def which(tool: str) -> str | None:
     return shutil.which(tool)
 
 
+#: Debian's admin directories: the systemd user manager's default
+#: PATH carries them (the daemon's own search path), while a
+#: non-root login shell's may not (#601).
+PATH_EXTRA_DIRS = ("/usr/local/sbin", "/usr/sbin", "/sbin")
+
+#: The idempotent marker for the ~/.profile block (#601).
+PROFILE_MARKER = "# msks: Debian keeps the admin tools in /usr/sbin and /sbin"
+
+#: The block the tool appends to the operator's ~/.profile (#601):
+#: guarded additions, so a login that already carries the
+#: directories changes nothing, and the export lands once.
+PROFILE_PATH_BLOCK = f"""\
+{PROFILE_MARKER}# (added by msks-setup-debian-host; applies at the next login)
+case ":$PATH:" in
+  *":/usr/sbin:"*) ;;
+  *) PATH="/usr/sbin:$PATH" ;;
+esac
+case ":$PATH:" in
+  *":/sbin:"*) ;;
+  *) PATH="/sbin:$PATH" ;;
+esac
+export PATH
+"""
+
+
+def land_user_path(home: str) -> str:
+    """Persist the admin directories on the operator's login PATH
+    (#601): an idempotent block in their ~/.profile, so the
+    session that typed the command — and the next one — sees the
+    tools the package phases land. Re-runs never duplicate the
+    block; the marker answers."""
+    profile = Path(home) / ".profile"
+    try:
+        text = read_file(str(profile))
+    except OSError:
+        text = ""
+    if PROFILE_MARKER in text:
+        return "already there (the next login carries /usr/sbin)"
+    separator = "" if not text or text.endswith("\n") else "\n"
+    write_file(str(profile), text + separator + PROFILE_PATH_BLOCK)
+    return f"{profile} gains /usr/sbin and /sbin at the next login"
+
+
 def invoked_as() -> str:
     """The entrypoint's own absolute path, for the sudo hint: an
     install root's PATH does not carry (a venv's bin, above all),
@@ -985,6 +1028,7 @@ def summary(
     kvm: str,
     service: str,
     uplink_name: str,
+    login_path: str = "",
 ) -> None:
     say("done —")
     print(f"  wrapper:    {WRAPPER} (setpriv, {CAPS}+ep)")
@@ -996,6 +1040,7 @@ def summary(
         f"conntrack={which('conntrack')}"
     )
     print(f"  /dev/kvm:   {kvm}")
+    print(f"  login PATH: {login_path}")
     print(f"  consent:    {consent_line(states)}")
     print(
         "  uplink:     point the daemon at this host's default-route "
@@ -1031,12 +1076,20 @@ def run_setup(service: bool = True) -> None:
         user, uid, gid, home = executing_user()
         the_uplink = uplink()
         kvm_note, _kvm_added = ensure_kvm_membership(user)
+        path_note = land_user_path(home)
         service_note = (
             install_service(user, uid, gid, home, the_uplink)
             if service
             else "skipped (--no-service)"
         )
-        summary(ambient, states, kvm_note, service_note, the_uplink)
+        summary(
+            ambient,
+            states,
+            kvm_note,
+            service_note,
+            the_uplink,
+            login_path=path_note,
+        )
         # The VMM lands last and after the summary: it is the one
         # phase that needs the open internet (a host behind an
         # egress policy that passes the Debian mirror but not

@@ -48,10 +48,11 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ..config import load_settings
 from ..settings import Settings
-from .hostsetup import executing_user, group_present, in_group
+from .hostsetup import PATH_EXTRA_DIRS, executing_user, group_present, in_group
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -374,6 +375,65 @@ def run(cmd: list[str], timeout: float = 10.0) -> tuple[int, str, str]:
         return -1, "", f"{cmd[0]}: {exc}"
 
 
+def admin_dir_candidate(name: str) -> str | None:
+    """The first admin directory carrying an executable *name*."""
+    for directory in PATH_EXTRA_DIRS:
+        candidate = Path(directory) / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def probe_which(name: str) -> str | None:
+    """Find a binary on the daemon-shaped search path (#601): the
+    caller's own PATH first, then Debian's admin directories —
+    the systemd user manager's default PATH carries them, so
+    the daemon finds what lives in /usr/sbin. A login shell
+    without the admin directories therefore reports the
+    daemon's truth, not the shell's."""
+    found = shutil.which(name)
+    if found is not None:
+        return found
+    if os.pathsep in name or "/" in name:
+        return None  # an explicit path needs no extension
+    return admin_dir_candidate(name)
+
+
+def rescued_from_admin_dirs(name: str) -> bool:
+    """Whether the daemon-shaped path found a binary the caller's
+    own PATH cannot see (#601) — the relogin note's trigger."""
+    return probe_which(name) is not None and shutil.which(name) is None
+
+
+def session_lacks_admin_dirs() -> bool:
+    """Whether the caller's own PATH skips every admin directory
+    (#601) — the relogin note's condition."""
+    session = os.environ.get("PATH", "")
+    return not any(d in session.split(os.pathsep) for d in PATH_EXTRA_DIRS)
+
+
+def path_note_result() -> CheckResult:
+    """The relogin encouragement (#601): a warning row, never an
+    error — the daemon's own PATH is fine; this is the operator's
+    shell that will keep typing `nft` by hand."""
+    return CheckResult(
+        name="PATH",
+        ok=False,
+        is_warning=True,
+        message=(
+            "this session's PATH lacks /usr/sbin and /sbin, where "
+            "Debian puts nft, conntrack, and the e2fsprogs trio — "
+            "the daemon's own PATH (the systemd user manager's "
+            "default) carries them, so only interactive use is hit"
+        ),
+        hint=(
+            "log out and back in (msks-setup-debian-host adds the "
+            "directories to ~/.profile), or export "
+            "PATH=/usr/sbin:/sbin:$PATH"
+        ),
+    )
+
+
 def binary_missing(
     name: str,
     manager: str | None,
@@ -408,7 +468,7 @@ def check_binary(
     worth trusting). *use* names the path that needs the tool, and
     appears in the missing message so the operator knows what breaks.
     """
-    path = shutil.which(name)
+    path = probe_which(name)
     if not path:
         return binary_missing(name, manager, is_warning=is_warning, use=use)
     if not probe:
@@ -762,6 +822,19 @@ def kvm_access_result(manager: str | None) -> CheckResult:
 # ---------------------------------------------------------------------------
 
 
+def add_path_note(report: DoctorReport) -> None:
+    """The relogin note (#601): a session without the admin
+    directories whose tools only the daemon-shaped probe found —
+    every row the daemon will exec reads green, and the operator
+    learns why their own shell cannot type the same names."""
+    if session_lacks_admin_dirs() and any(
+        rescued_from_admin_dirs(result.name)
+        for result in report.results
+        if result.ok
+    ):
+        report.add(path_note_result())
+
+
 def run_doctor(settings: Settings) -> DoctorReport:
     """Run every check against one settings set, return the report."""
     report = DoctorReport()
@@ -870,6 +943,7 @@ def run_doctor(settings: Settings) -> DoctorReport:
             use="host-side sync over the forward (#110)",
         )
     )
+    add_path_note(report)
     return report
 
 
