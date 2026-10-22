@@ -1,13 +1,14 @@
 # The TUI
 
 The terminal UI and the command-line client are one program.
-The TUI speaks the same REST surface the CLI commands speak
+The TUI uses the same REST surface the CLI commands speak
 (the same `MSKSC_URL`, `MSKSC_TOKEN`, and `MSKSC_CAFILE`
 environment variables, the same config file, the same daemon
 aliases) and reads no daemon state directly: every page is the
-API rendered. This chapter covers the screens; the commands and
-settings the two surfaces share are
-[the CLI client's](cli.md) tables and sections.
+API rendered.
+
+This chapter covers the screens; the commands and settings the two surfaces
+share are [the CLI client's](cli.md) tables and sections.
 
 ## The workspace tree
 
