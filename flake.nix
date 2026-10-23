@@ -13,7 +13,10 @@
       pkgs = import nixpkgs {
         inherit system;
         config = { };
-        overlays = [ ];
+        # certifi above the pinned channel's (#606): nix/certifi-overlay.nix
+        # replaces it across the python package set so every dependent in
+        # the msksd closure resolves the one wheel the pyproject floor names.
+        overlays = [ (import ./nix/certifi-overlay.nix) ];
       };
       msksd = pkgs.python314.pkgs.callPackage ./nix/msks-pkg.nix {
         textual = pkgs.python314.pkgs.callPackage ./nix/textual-pkg.nix { };

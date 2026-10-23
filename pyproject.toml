@@ -8,8 +8,12 @@ dependencies = [
   "alembic>=1.14",
   # The platform CA bundle (#424): the interceptor's upstream
   # verification loads a bundle file when the option is set, so
-  # the probe CA rides appended to certifi's platform roots.
-  "certifi>=2024.10",
+  # the probe CA rides appended to certifi's platform roots. The
+  # floor holds the Mozilla root store past the emSign root
+  # removals (#606, GHSA-6q48-6c7w-9gw2); nix/certifi-pkg.nix
+  # builds the wheel the floor names for every nix closure — the
+  # pinned nixpkgs still carries an older one.
+  "certifi>=2026.10.23",
   "cryptography>=44",
   "fastapi>=0.115",
   "httpx>=0.28",

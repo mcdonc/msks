@@ -67,9 +67,15 @@ let
   # pinned textual. The NFQUEUE binding is vendored ctypes
   # (#542): the wheel needs no compiled dependency, and the
   # module loads the platform's libnetfilter_queue at runtime
-  # (the service's environment carries it).
-  msksd = pkgs.python314.pkgs.callPackage ./msks-pkg.nix {
-    textual = pkgs.python314.pkgs.callPackage ./textual-pkg.nix { };
+  # (the service's environment carries it). msksdPkgs carries the
+  # certifi overlay (#606) — the host's nixpkgs may hold a certifi
+  # older than the wheel's >=2026.10.23 floor, and the overlay
+  # replaces it across the whole python set so every dependent
+  # (httpx, mitmproxy) resolves the one build nix/certifi-pkg.nix
+  # pins.
+  msksdPkgs = pkgs.extend (import ./certifi-overlay.nix);
+  msksd = msksdPkgs.python314.pkgs.callPackage ./msks-pkg.nix {
+    textual = msksdPkgs.python314.pkgs.callPackage ./textual-pkg.nix { };
   };
 
   # The generated msksd.yaml (docs/config.md is the key reference):

@@ -30,6 +30,7 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 PKG_NIX = REPO_ROOT / "nix" / "msks-pkg.nix"
 CLIENT_PKG_NIX = REPO_ROOT / "nix" / "msks-client-pkg.nix"
 TEXTUAL_PKG = REPO_ROOT / "nix" / "textual-pkg.nix"
+CERTIFI_PKG = REPO_ROOT / "nix" / "certifi-pkg.nix"
 DEVENV_LOCK = REPO_ROOT / "devenv.lock"
 FLAKE_LOCK = REPO_ROOT / "flake.lock"
 PKG_ROOT = REPO_ROOT / "src" / "msks" / "msks"
@@ -214,35 +215,62 @@ def test_both_locks_pin_the_same_nixpkgs_revision() -> None:
     )
 
 
-def test_the_hand_pinned_textual_floor_covers_pyproject() -> None:
-    """pyproject's textual floor stays within what textual-pkg.nix
-    pins. textual is the one dependency this repo builds by hand from
-    an exact wheel, so a floor bump in pyproject that the nix pin
-    misses cannot fail the runtime check (8.2.9 required, 8.2.8
-    shipped) and no smoke covers the TUI focus semantics the floor
-    exists for — this test is that net."""
+def assert_hand_pinned_floor_covers_pyproject(
+    pkg_nix: Path, name: str, stake: str
+) -> None:
+    """The hand-pinned wheel a *-pkg.nix file builds satisfies
+    pyproject's >= floor for *name*: the runtime check refuses a
+    build whose pin sits below the floor, and the pin is the only
+    nix-side version guarantee for a dependency built by hand."""
     specifier = next(
         d
         for d in tomllib.loads(PYPROJECT.read_text())["project"][
             "dependencies"
         ]
-        if re.split(r"[><=~!;\[]", d)[0].strip().lower() == "textual"
+        if re.split(r"[><=~!;\[]", d)[0].strip().lower() == name
     )
     floor = re.search(r">=\s*(\d+(?:\.\d+)*)", specifier)
     assert floor is not None, (
-        f"pyproject's textual specifier {specifier!r} declares no "
-        f">= floor for nix/textual-pkg.nix to cover"
+        f"pyproject's {name} specifier {specifier!r} declares no "
+        f">= floor for {pkg_nix.name} to cover"
     )
     pin = re.search(
-        r'version = "([^"]+)"', strip_comments(TEXTUAL_PKG.read_text())
+        r'version = "([^"]+)"', strip_comments(pkg_nix.read_text())
     )
-    assert pin is not None, "nix/textual-pkg.nix lost its version pin"
+    assert pin is not None, f"{pkg_nix.name} lost its version pin"
     pin_v = version_tuple(pin.group(1))
     floor_v = version_tuple(floor.group(1))
     assert pin_v >= floor_v, (
-        f"pyproject wants textual>={floor.group(1)}; "
-        f"nix/textual-pkg.nix pins {pin.group(1)} — bump the pin "
-        f"(wheel URL, hash, and propagatedBuildInputs from the new "
-        f"METADATA) or the TUI runs on a textual older than its "
-        f"declared floor"
+        f"pyproject wants {name}>={floor.group(1)}; "
+        f"nix/{pkg_nix.name} pins {pin.group(1)} — bump the pin "
+        f"(wheel URL and hash from the new uv.lock entry) or the "
+        f"closure runs on a {name} older than its declared floor, "
+        f"past {stake}"
+    )
+
+
+def test_the_hand_pinned_textual_floor_covers_pyproject() -> None:
+    """pyproject's textual floor stays within what textual-pkg.nix
+    pins. textual is a dependency this repo builds by hand from an
+    exact wheel, so a floor bump in pyproject that the nix pin
+    misses cannot fail the runtime check (8.2.9 required, 8.2.8
+    shipped) and no smoke covers the TUI focus semantics the floor
+    exists for — this test is that net."""
+    assert_hand_pinned_floor_covers_pyproject(
+        TEXTUAL_PKG, "textual", "the TUI focus semantics the floor exists for"
+    )
+
+
+def test_the_hand_pinned_certifi_floor_covers_pyproject() -> None:
+    """pyproject's certifi floor stays within what certifi-pkg.nix
+    pins (#606). certifi is built by hand for the same reason
+    textual is — the pinned channel sits below the floor — and the
+    root-store refreshes the floor names (the emSign root removals)
+    are exactly what a stale pin would silently drop: the nix-built
+    daemon would keep verifying upstream TLS against roots the
+    floor retired."""
+    assert_hand_pinned_floor_covers_pyproject(
+        CERTIFI_PKG,
+        "certifi",
+        "the root-store refreshes the floor names",
     )
