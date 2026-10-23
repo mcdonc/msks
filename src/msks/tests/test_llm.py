@@ -44,8 +44,8 @@ def real_litellm():
     litellm's ``__init__`` pulls every provider adapter (~5 s of
     import work, irreducible from here). Requested only by the
     real-Router tests, the tax lands in one named module setup
-    instead of each test's call time; the xdist group keeps all
-    three on one worker, so the whole suite pays it once."""
+    instead of each test's call time; the xdist group keeps them
+    all on one worker, so the whole suite pays it once."""
     import litellm
 
     return litellm
@@ -1115,6 +1115,23 @@ def test_a_dict_list_reaches_a_real_litellm_router(real_litellm) -> None:
     )
     assert not router.passthrough
     assert router.get_model_names() == ["cl-sonnet", "one"]
+
+
+@pytest.mark.xdist_group("litellm-import")
+def test_a_real_litellm_router_never_rides_the_aiohttp_transport(
+    real_litellm,
+) -> None:
+    """Building the real Router leaves litellm's aiohttp transport
+    off: litellm's async handlers default to an aiohttp ClientSession
+    wrapped as an httpx transport, and the closure's aiohttp sits
+    below litellm's own floor (nix/litellm-pkg.nix records the
+    CVE-bearing history), so the daemon's completions stay on plain
+    httpx — the transport the passthrough mode already uses. A
+    litellm upgrade that drops this flag would put the below-floor
+    aiohttp back on the request path; this pins the contract."""
+    router = LlmRouter()
+    router.ensure(llm_settings(("openai/one::sk-1",)))
+    assert real_litellm.disable_aiohttp_transport is True
 
 
 def test_a_baseless_passthrough_entry_is_a_named_configure_error() -> None:

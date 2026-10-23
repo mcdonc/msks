@@ -79,7 +79,17 @@ def hand_pinned_floor_covers_pyproject(dep: str, nix_path: Path) -> bool:
     )
     if pin is None:
         raise AssertionError(f"{nix_path} lost its version pin")
-    return version_tuple(pin.group(1)) >= version_tuple(floor.group(1))
+    pin_v = version_tuple(pin.group(1))
+    floor_v = version_tuple(floor.group(1))
+    if pin_v < floor_v:
+        raise AssertionError(
+            f"pyproject wants {dep}>={floor.group(1)}; {nix_path} "
+            f"pins {pin.group(1)} — bump the pin (wheel URL, hash, "
+            f"and propagatedBuildInputs from the new METADATA) or "
+            f"the closure runs on a {dep} older than its declared "
+            f"floor"
+        )
+    return True
 
 
 def nix_dependency_block(nix_path: Path) -> str:
@@ -247,9 +257,7 @@ def test_the_hand_pinned_textual_floor_covers_pyproject() -> None:
     nix pin misses cannot fail the runtime check (8.2.9 required,
     8.2.8 shipped) and no smoke covers the TUI focus semantics the
     floor exists for — this test is that net."""
-    assert hand_pinned_floor_covers_pyproject("textual", TEXTUAL_PKG), (
-        "nix/textual-pkg.nix pins below pyproject's textual floor"
-    )
+    hand_pinned_floor_covers_pyproject("textual", TEXTUAL_PKG)
 
 
 def test_the_hand_pinned_litellm_floor_covers_pyproject() -> None:
@@ -260,6 +268,4 @@ def test_the_hand_pinned_litellm_floor_covers_pyproject() -> None:
     build time — this test fails at pytest time instead, naming
     the pin to bump (wheel URL, hash, and propagatedBuildInputs
     from the new METADATA)."""
-    assert hand_pinned_floor_covers_pyproject("litellm", LITELLM_PKG), (
-        "nix/litellm-pkg.nix pins below pyproject's litellm floor"
-    )
+    hand_pinned_floor_covers_pyproject("litellm", LITELLM_PKG)

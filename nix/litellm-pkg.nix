@@ -17,21 +17,32 @@
 # vs >=3.14.2), pydantic-settings (2.12.0 vs >=2.14.1), boto3
 # (1.42.31 vs >=1.43.1) — relax here, on the precedent of
 # nixpkgs' own litellm expression (its pythonRelaxDeps relaxes
-# aiohttp and boto3 among others): the msks surface is
-# Router/acompletion/get_model_names over openai-compatible
-# upstreams, which rides httpx and the openai SDK, while aiohttp
-# serves provider transports msks never configures,
-# pydantic-settings the proxy-server settings tree, and boto3
-# bedrock — all unused here. importlib-metadata relaxes the other
-# way: nixpkgs' 9.0.0 sits above litellm's <9.0 ceiling, on the
-# same nixpkgs precedent.
+# aiohttp, click, importlib-metadata, jsonschema, openai, and
+# python-dotenv). What each carries on the msks surface:
+#
+# - aiohttp is litellm's DEFAULT async transport — but
+#   msks.msks.llm's build_litellm_router sets
+#   litellm.disable_aiohttp_transport, so the daemon's
+#   completions ride plain httpx and the closure's below-floor
+#   aiohttp never carries a request (a transport it did carry
+#   would matter: aiohttp <= 3.14.2 has CVE-2026-69244, a
+#   malformed-response OOB heap read, and a configured upstream
+#   is exactly the server a workspace's completions hit).
+# - pydantic-settings loads at `from litellm import Router` (the
+#   OTEL integration's config models) — verified working on
+#   2.12.0; it never takes a proxy-server settings tree here.
+# - boto3 (bedrock) is never imported on the msks path.
 #
 # Bump workflow: bump `version` and swap `src.url`/`hash` to the
 # new wheel uv.lock pins (nix prints the real hash on mismatch),
 # then diff the wheel's METADATA Requires-Dist against
 # propagatedBuildInputs and pythonRelaxDeps — a base entry the new
 # wheel adds needs a hand-edit here, or the runtime check fails
-# only at package build time (#203's blast radius).
+# only at package build time (#203's blast radius). The relax list
+# is calibrated to the PINNED nixpkgs rev: nix/module.nix builds
+# against the consuming host's nixpkgs, so a host set that serves
+# any bound outside litellm's ranges (a newer filelock than the
+# <4.0 ceiling, say) fails the runtime check until the list grows.
 {
   lib,
   autoPatchelfHook,
@@ -101,7 +112,9 @@ buildPythonPackage {
   # The pinned nixpkgs serves aiohttp/pydantic-settings/boto3
   # below litellm's floors and importlib-metadata above its
   # ceiling (see the header comment); the bounds drop, the
-  # presence stays.
+  # presence stays. aiohttp's bound stays dropped only because
+  # msks disables that transport — if llm.py ever lets litellm
+  # use it again, pin aiohttp at litellm's floor instead.
   pythonRelaxDeps = [
     "aiohttp"
     "boto3"

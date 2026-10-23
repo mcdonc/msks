@@ -427,9 +427,18 @@ class LlmRouter:
     def build_litellm_router(self, model_list: list[dict]):
         """Construct the litellm Router (the module's lazy import —
         its ~5 s tax stays off paths that never configure models)."""
-        from litellm import Router  # allow-deferred-import (module top)
+        import litellm  # allow-deferred-import (module top)
 
-        return Router(
+        # litellm's async handlers default to an aiohttp transport
+        # (an aiohttp ClientSession wrapped as an httpx transport).
+        # The daemon's completions ride plain httpx instead — the
+        # same client the passthrough mode already uses — so the
+        # closure's aiohttp (the pinned nixpkgs serves it below
+        # litellm's own floor; nix/litellm-pkg.nix records why)
+        # never carries a request: it stays an import-time
+        # requirement of litellm's metadata, nothing more.
+        litellm.disable_aiohttp_transport = True
+        return litellm.Router(
             model_list=model_list,
             routing_strategy="simple-shuffle",
             num_retries=2,
