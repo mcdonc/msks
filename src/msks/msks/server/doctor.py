@@ -406,30 +406,33 @@ def rescued_from_admin_dirs(name: str) -> bool:
 
 
 def session_lacks_admin_dirs() -> bool:
-    """Whether the caller's own PATH skips every admin directory
-    (#601) — the relogin note's condition."""
+    """Whether the caller's own PATH skips /usr/sbin (#601) — the
+    directory the relogin note names; /usr/local/sbin alone does
+    not carry the tools the note is about."""
     session = os.environ.get("PATH", "")
-    return not any(d in session.split(os.pathsep) for d in PATH_EXTRA_DIRS)
+    return "/usr/sbin" not in session.split(os.pathsep)
 
 
 def path_note_result() -> CheckResult:
     """The relogin encouragement (#601): a warning row, never an
-    error — the daemon's own PATH is fine; this is the operator's
-    shell that will keep typing `nft` by hand."""
+    error. The message names both deployment shapes honestly — a
+    daemon under the systemd user unit finds the directories on
+    its own PATH, while a hand-started or dev daemon inherits
+    this session's PATH and needs the same fix."""
     return CheckResult(
         name="PATH",
         ok=False,
         is_warning=True,
         message=(
             "this session's PATH lacks /usr/sbin and /sbin, where "
-            "Debian puts nft, conntrack, and the e2fsprogs trio — "
-            "the daemon's own PATH (the systemd user manager's "
-            "default) carries them, so only interactive use is hit"
+            "Debian puts nft, conntrack, and the e2fsprogs trio; "
+            "a daemon started from it inherits the gap, while the "
+            "systemd user unit's own PATH carries the directories"
         ),
         hint=(
             "log out and back in (msks-setup-debian-host adds the "
             "directories to ~/.profile), or export "
-            "PATH=/usr/sbin:/sbin:$PATH"
+            "PATH=$PATH:/usr/sbin:/sbin"
         ),
     )
 
@@ -473,7 +476,10 @@ def check_binary(
         return binary_missing(name, manager, is_warning=is_warning, use=use)
     if not probe:
         return CheckResult(name=name, ok=True, message=f"{name} ok ({path})")
-    rc, _out, err = run(probe)
+    # The probe execs the resolved path, never the bare name: a
+    # tool found only through the admin directories would exec
+    # through the session PATH again and miss (#601 review).
+    rc, _out, err = run([path, *probe[1:]])
     if rc != 0:
         detail = (err or f"exit {rc}").strip()[:200]
         return CheckResult(
@@ -509,7 +515,7 @@ def check_ssh(manager: str | None) -> CheckResult:
     by release (0 or 1), so the rc check steps aside for the
     "OpenSSH" banner in the probe's output instead.
     """
-    path = shutil.which("ssh")
+    path = probe_which("ssh")
     if not path:
         return ssh_result(
             manager,
@@ -586,7 +592,7 @@ def check_tmux(manager: str | None) -> CheckResult:
     an older or unparseable tmux is an error — the consent flow
     cannot launch its terminal on it.
     """
-    path = shutil.which("tmux")
+    path = probe_which("tmux")
     if not path:
         return CheckResult(
             name="tmux",

@@ -67,6 +67,7 @@ binary until refreshed.
 """
 
 import argparse
+import contextlib
 import grp
 import os
 import pwd
@@ -258,6 +259,11 @@ def read_file(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
+def replace_file(source: Path, target: Path) -> None:
+    """One atomic rename — the seam the tests rig."""
+    os.replace(source, target)
+
+
 def which(tool: str) -> str | None:
     return shutil.which(tool)
 
@@ -271,37 +277,69 @@ PATH_EXTRA_DIRS = ("/usr/local/sbin", "/usr/sbin", "/sbin")
 PROFILE_MARKER = "# msks: Debian keeps the admin tools in /usr/sbin and /sbin"
 
 #: The block the tool appends to the operator's ~/.profile (#601):
-#: guarded additions, so a login that already carries the
-#: directories changes nothing, and the export lands once.
+#: guarded additions at the tail of PATH — Debian's own order puts
+#: /usr/local and the account's own bins ahead, so the block never
+#: shadows a user-local tool that shares a name with an sbin one.
 PROFILE_PATH_BLOCK = f"""\
-{PROFILE_MARKER}# (added by msks-setup-debian-host; applies at the next login)
+{PROFILE_MARKER}
+# added by msks-setup-debian-host; applies at the next login
 case ":$PATH:" in
   *":/usr/sbin:"*) ;;
-  *) PATH="/usr/sbin:$PATH" ;;
+  *) PATH="$PATH:/usr/sbin" ;;
 esac
 case ":$PATH:" in
   *":/sbin:"*) ;;
-  *) PATH="/sbin:$PATH" ;;
+  *) PATH="$PATH:/sbin" ;;
 esac
 export PATH
 """
 
 
-def land_user_path(home: str) -> str:
+def profile_text(profile: Path) -> str:
+    """The profile's current text; absent reads as empty, and a
+    decode failure is the named refusal (the tool never truncates
+    a profile it cannot parse)."""
+    try:
+        return read_file(str(profile))
+    except OSError:
+        return ""
+    except ValueError:
+        raise HostSetupError(
+            f"{profile} is not UTF-8 text; add /usr/sbin and /sbin "
+            "to your PATH by hand"
+        ) from None
+
+
+def land_user_path(home: str, uid: int, gid: int) -> str:
     """Persist the admin directories on the operator's login PATH
     (#601): an idempotent block in their ~/.profile, so the
     session that typed the command — and the next one — sees the
     tools the package phases land. Re-runs never duplicate the
-    block; the marker answers."""
+    block; the marker answers. The file lands atomically (a
+    sibling temp, one rename) and stays the operator's own —
+    root-owned dotfiles would lock the account out of its own
+    profile; anything unreadable is a named refusal, and a
+    re-run leaves an unparseable profile untouched."""
     profile = Path(home) / ".profile"
-    try:
-        text = read_file(str(profile))
-    except OSError:
-        text = ""
+    text = profile_text(profile)
     if PROFILE_MARKER in text:
-        return "already there (the next login carries /usr/sbin)"
+        return "already there (the next login carries /usr/sbin and /sbin)"
     separator = "" if not text or text.endswith("\n") else "\n"
-    write_file(str(profile), text + separator + PROFILE_PATH_BLOCK)
+    fresh = text + separator + PROFILE_PATH_BLOCK
+    partial = profile.with_name(".profile.msks-new")
+    try:
+        write_file(str(partial), fresh)
+        replace_file(partial, profile)
+    except OSError as exc:
+        # The refusal leaves no partial behind (the VMM phase's
+        # #599 pattern): best-effort, the error is the message.
+        with contextlib.suppress(OSError):
+            Path(partial).unlink(missing_ok=True)
+        raise HostSetupError(
+            f"cannot write {profile} ({exc}); add /usr/sbin and "
+            "/sbin to your PATH by hand"
+        ) from exc
+    chown_path(profile, uid, gid)
     return f"{profile} gains /usr/sbin and /sbin at the next login"
 
 
@@ -1076,7 +1114,7 @@ def run_setup(service: bool = True) -> None:
         user, uid, gid, home = executing_user()
         the_uplink = uplink()
         kvm_note, _kvm_added = ensure_kvm_membership(user)
-        path_note = land_user_path(home)
+        path_note = land_user_path(home, uid, gid)
         service_note = (
             install_service(user, uid, gid, home, the_uplink)
             if service

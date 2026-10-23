@@ -88,9 +88,11 @@ login PATH: the setup appends a guarded block to that account's
 Debian keeps `nft`, `conntrack`, and the e2fsprogs trio in
 `/usr/sbin`, and a non-root login shell does not carry the
 directory — the block means the operator's next login can type
-the names the daemon execs. The daemon itself is unaffected: its
-systemd user unit inherits a PATH that already carries the
-directories.
+the names the daemon execs. A daemon started by the systemd
+user unit finds the directories on its own PATH (the unit
+manager's default carries them); a daemon started by hand
+(`msks-dev`, a bare `msksd`) inherits the session's PATH, so
+the same login carries the fix to both shapes.
 
 **The systemd user service.** On a host systemd manages, the
 setup writes `~/.config/systemd/user/msksd.service` for the
