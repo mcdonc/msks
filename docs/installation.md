@@ -47,6 +47,27 @@ normal user account.
 The run is idempotent: re-run any time, and re-run after a util-linux upgrade
 (the wrapper keeps a copy of `setpriv`; see below).
 
+## Taking the setup back off
+
+`msks-setup-debian-host --uninstall` reverses the run: it stops and
+disables the `msksd` user service and removes its unit file (the stop lets
+the daemon finish its shutdown cycle, workspaces included), turns the
+boot-time `ip_forward` sysctl off and removes the two `/etc` files the
+run landed, removes the capability wrapper and the cloud-hypervisor
+binary, takes the executing user out of the `kvm` group, and strips the
+PATH block from `~/.profile`. Kernel modules already loaded stay loaded
+until the next reboot.
+
+The apt packages the run installed stay installed — they are shared
+Debian packages, and other software on the host may use them. The
+uninstall summary prints the ones whose probes answer present, with a
+copy-paste `apt-get remove --purge ...` line, so you can remove the ones
+nothing else needs yourself.
+
+The uninstall run is idempotent the same way: a piece already gone is a
+line in the summary, not an error. `--no-service` holds its meaning —
+the service is left alone, every other piece still leaves.
+
 ## What the setup lands
 
 Each phase runs in order, and the first refusal stops the run with an error.

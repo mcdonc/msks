@@ -56,7 +56,15 @@ class Host:
         self.fail_systemctl: set[str] = set()
         self.loginctl_rc = 0
         self.adduser_rc = 0
+        self.deluser_rc = 0
+        self.sysctl_rc = 0
         self.bus_fails = 0
+        # The uninstall phases' dials (#604): the landed files the
+        # existence probe answers, the removals a run performed,
+        # and the paths whose unlink refuses.
+        self.files: set[str] = set()
+        self.removals: list[str] = []
+        self.fail_remove: set[str] = set()
 
     def sh(self, cmd, timeout=10.0, env=None):
         self.commands.append(cmd)
@@ -68,7 +76,10 @@ class Host:
         if head == WRAPPER:
             return 0, f"{self.ambient}\n", ""
         if head == "sysctl":
-            return 0, "", ""
+            return self.sysctl_rc, "", ""
+        if head == "deluser":
+            if self.deluser_rc != 0:
+                return self.deluser_rc, "", "deluser: refused\n"
         if head == "modprobe":
             fail_set = (
                 self.modprobe_absent
@@ -97,6 +108,17 @@ class Host:
 
     def write(self, path: str, text: str) -> None:
         self.writes[path] = text
+
+    def remove_file(self, path: str) -> bool:
+        if path in self.fail_remove:
+            raise hostsetup.HostSetupError(
+                f"cannot remove {path} (Permission denied)"
+            )
+        if path not in self.files:
+            return False
+        self.files.discard(path)
+        self.removals.append(path)
+        return True
 
     def read(self, path: str) -> str:
         if path.endswith("ip_forward"):
@@ -150,6 +172,8 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(hostsetup, "sh", host.sh)
     monkeypatch.setattr(hostsetup, "write_file", host.write)
     monkeypatch.setattr(hostsetup, "read_file", host.read)
+    monkeypatch.setattr(hostsetup, "file_exists", lambda p: p in host.files)
+    monkeypatch.setattr(hostsetup, "remove_file", host.remove_file)
     # The profile phase's atomic rename: the fake write_file
     # records in memory, so the real rename has nothing to move.
     monkeypatch.setattr(hostsetup, "replace_file", lambda source, target: None)
@@ -1620,3 +1644,322 @@ def test_a_unit_read_error_is_a_named_refusal(
     monkeypatch.setattr(hostsetup, "read_file", broken_unit_read)
     assert main() == 1
     assert "landing the user unit failed" in capsys.readouterr().err
+
+
+def landed_host(debian_host: Host) -> Host:
+    """A host the install run finished on: every landed piece in
+    the fake filesystem, the kvm membership on the account."""
+    home = hostsetup.executing_user()[3]
+    debian_host.files.update(
+        {
+            hostsetup.unit_path(home),
+            SYSCTL_FILE,
+            hostsetup.MODULES_FILE,
+            WRAPPER,
+            hostsetup.CLOUD_HYPERVISOR_BIN,
+        }
+    )
+    debian_host.writes[f"{home}/.profile"] = (
+        "export EDITOR=vi\n" + hostsetup.PROFILE_PATH_BLOCK
+    )
+    return debian_host
+
+
+def test_uninstall_removes_every_piece(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """#604: the mirror takes down the service (stop, disable,
+    unit file, linger), the kernel and networking files, the
+    wrapper, the VMM, the kvm membership, and the profile block —
+    and the summary names the apt line for the packages that
+    stay."""
+    host = landed_host(debian_host)
+    monkeypatch.setattr(hostsetup, "in_group", lambda user, name: True)
+    assert main(["--uninstall"]) == 0
+    home = hostsetup.executing_user()[3]
+    # The service teardown, in order: disable --now (waited out),
+    # the unit file, daemon-reload, linger off.
+
+    def run(args):
+        return hostsetup.user_systemctl("chrism", 1000, args)
+
+    assert systemctl_ran(host, "disable") == [
+        run(["disable", "--now", "msksd.service"])
+    ]
+    assert systemctl_ran(host, "daemon-reload") == [run(["daemon-reload"])]
+    assert host.ran("loginctl") == [["loginctl", "disable-linger", "chrism"]]
+    # The kvm membership and the live forwarding value follow.
+    assert host.ran("deluser") == [["deluser", "chrism", "kvm"]]
+    assert host.ran("sysctl") == [["sysctl", "-w", "net.ipv4.ip_forward=0"]]
+    # Every landed file, in the run's teardown order.
+    assert host.removals == [
+        hostsetup.unit_path(home),
+        SYSCTL_FILE,
+        hostsetup.MODULES_FILE,
+        WRAPPER,
+        hostsetup.CLOUD_HYPERVISOR_BIN,
+    ]
+    # The profile keeps the operator's own lines, block gone.
+    fresh = host.writes[f"{home}/.profile.msks-new"]
+    assert fresh == "export EDITOR=vi\n"
+    assert hostsetup.PROFILE_MARKER not in fresh
+    out = capsys.readouterr().out
+    assert (
+        "service:    user service msksd.service stopped, disabled, "
+        "and removed (chrism, lingering off)" in out
+    )
+    assert f"wrapper:    {WRAPPER} removed" in out
+    assert f"VMM:        {hostsetup.CLOUD_HYPERVISOR_BIN} removed" in out
+    assert "removed chrism from kvm (adduser chrism kvm restores it)" in out
+    assert f"{hostsetup.MODULES_FILE} removed (loaded modules stay" in out
+    assert "login PATH:" in out and "operator's own lines only" in out
+    assert (
+        "apt-get remove --purge util-linux libcap2-bin iproute2 "
+        "nftables conntrack kmod procps e2fsprogs qemu-utils "
+        "genisoimage openssh-client rsync tmux ca-certificates "
+        "libnetfilter-queue1 libnfnetlink0" in out
+    )
+
+
+def test_uninstall_without_anything_landed_is_all_lines(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """The idempotent re-run: a host with none of the pieces (or a
+    second --uninstall) is all summary lines, no commands, and the
+    service line names linger's by-hand fix — the tool never
+    removes state it cannot see."""
+    assert main(["--uninstall"]) == 0
+    host = debian_host
+    assert host.ran("runuser") == []
+    assert host.ran("loginctl") == []
+    assert host.ran("deluser") == []
+    assert host.ran("sysctl") == []
+    assert host.removals == []
+    out = capsys.readouterr().out
+    home = hostsetup.executing_user()[3]
+    assert f"no msksd.service under {home} — lingering may remain" in out
+    assert f"{SYSCTL_FILE} already absent" in out
+    assert f"{hostsetup.MODULES_FILE} already absent" in out
+    assert f"{WRAPPER} already absent" in out
+    assert f"{hostsetup.CLOUD_HYPERVISOR_BIN} already absent" in out
+    assert "chrism is not a member of kvm" in out
+    assert f"no msks block in {home}/.profile" in out
+
+
+def test_uninstall_no_service_flag_skips_the_service(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """--no-service holds its install meaning on the way out: the
+    service is left alone, every other piece still leaves."""
+    host = landed_host(debian_host)
+    home = hostsetup.executing_user()[3]
+    unit = hostsetup.unit_path(home)
+    assert main(["--uninstall", "--no-service"]) == 0
+    assert host.ran("runuser") == []
+    assert host.ran("loginctl") == []
+    assert unit in host.files
+    assert SYSCTL_FILE in host.removals
+    assert "service:    skipped (--no-service)" in capsys.readouterr().out
+
+
+def test_uninstall_service_skips_without_a_systemd_manager(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A container or another init: the manager probe answers no
+    and the phase stands down, naming it — the unit file on disk
+    stays, dead text either way."""
+    host = landed_host(debian_host)
+    monkeypatch.setattr(hostsetup, "SYSTEMD_MANAGER", "/no/such/manager")
+    assert main(["--uninstall"]) == 0
+    assert host.ran("runuser") == []
+    home = hostsetup.executing_user()[3]
+    assert hostsetup.unit_path(home) in host.files
+    assert "service:    skipped (no systemd manager" in (
+        capsys.readouterr().out
+    )
+
+
+def test_uninstall_disable_failure_refuses(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A service that will not stop is a named refusal naming the
+    journal — and the run stops there: the pieces behind the
+    service stay."""
+    host = landed_host(debian_host)
+    host.fail_systemctl = {"disable"}
+    assert main(["--uninstall"]) == 1
+    err = capsys.readouterr().err
+    assert "disable --now msksd.service failed" in err
+    assert "journalctl --user -u msksd" in err
+    assert host.removals == []
+    assert SYSCTL_FILE in host.files
+
+
+def test_uninstall_daemon_reload_failure_refuses(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The manager that cannot forget the unit is a named refusal
+    — the unit file is already gone, and the refusal names the
+    step that failed."""
+    host = landed_host(debian_host)
+    host.fail_systemctl = {"daemon-reload"}
+    assert main(["--uninstall"]) == 1
+    assert "daemon-reload failed" in capsys.readouterr().err
+    home = hostsetup.executing_user()[3]
+    assert hostsetup.unit_path(home) in host.removals
+
+
+def test_uninstall_linger_failure_refuses(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A linger the manager will not drop is a named refusal that
+    says what keeps running."""
+    host = landed_host(debian_host)
+    host.loginctl_rc = 1
+    assert main(["--uninstall"]) == 1
+    assert "loginctl disable-linger chrism failed" in capsys.readouterr().err
+
+
+def test_uninstall_sysctl_write_failure_refuses(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The boot-time file leaves; a live value the kernel will not
+    take back is a named refusal naming the reboot that clears
+    it."""
+    host = landed_host(debian_host)
+    host.sysctl_rc = 1
+    assert main(["--uninstall"]) == 1
+    err = capsys.readouterr().err
+    assert "returning net.ipv4.ip_forward to 0 failed" in err
+    assert "until this host reboots" in err
+    assert SYSCTL_FILE in host.removals
+
+
+def test_uninstall_deluser_failure_refuses(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A membership the group database will not give up is a named
+    refusal, adduser's own failure text included."""
+    host = landed_host(debian_host)
+    monkeypatch.setattr(hostsetup, "in_group", lambda user, name: True)
+    host.deluser_rc = 1
+    assert main(["--uninstall"]) == 1
+    assert "deluser chrism kvm failed" in capsys.readouterr().err
+
+
+def test_uninstall_remove_failure_refuses(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """A file the tool cannot remove is a named refusal; the run
+    stops there (the first-refusal rule the install run carries)."""
+    host = landed_host(debian_host)
+    host.fail_remove = {WRAPPER}
+    assert main(["--uninstall"]) == 1
+    assert f"cannot remove {WRAPPER}" in capsys.readouterr().err
+    assert hostsetup.CLOUD_HYPERVISOR_BIN in host.files
+
+
+def test_uninstall_kvm_group_absent_names_it(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A host with no kvm group has no membership to remove — the
+    line says so and deluser never runs."""
+    monkeypatch.setattr(hostsetup, "group_present", lambda name: False)
+    assert main(["--uninstall"]) == 0
+    assert debian_host.ran("deluser") == []
+    assert "the kvm group is absent (nothing was removed)" in (
+        capsys.readouterr().out
+    )
+
+
+def test_uninstall_edited_profile_block_stays(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """A block the operator edited inside stays put with the
+    by-hand fix named — the tool never rewrites a profile it
+    cannot recognize."""
+    host = landed_host(debian_host)
+    home = hostsetup.executing_user()[3]
+    edited = hostsetup.PROFILE_MARKER + "\n# hand-edited\n"
+    host.writes[f"{home}/.profile"] = edited
+    assert main(["--uninstall"]) == 0
+    assert host.writes[f"{home}/.profile"] == edited
+    out = capsys.readouterr().out
+    assert "edited by hand — remove it yourself" in out
+
+
+def test_uninstall_names_only_the_present_packages(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """The apt line names the packages whose probes answer present
+    — a tool the host lost (or a soname the cache lost) keeps its
+    package off the line."""
+    host = landed_host(debian_host)
+    real_which = hostsetup.which
+
+    def lacking(tool):
+        return None if tool in ("tmux", "ssh") else real_which(tool)
+
+    monkeypatch.setattr(hostsetup, "which", lacking)
+    host.ldconfig_answer = ""
+    assert main(["--uninstall"]) == 0
+    line = [
+        text
+        for text in capsys.readouterr().out.splitlines()
+        if "apt-get remove" in text
+    ][0]
+    assert " conntrack" in line
+    assert " tmux" not in line
+    assert "openssh-client" not in line
+    assert "libnetfilter-queue1" not in line
+
+
+def test_uninstall_with_no_packages_present_names_none(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A host whose probes all miss (the packages already gone by
+    hand) gets the none-present line, not an empty apt command."""
+    monkeypatch.setattr(hostsetup, "which", lambda tool: None)
+    debian_host.ldconfig_answer = ""
+    assert main(["--uninstall"]) == 0
+    out = capsys.readouterr().out
+    assert "none of the msks dependency packages are present" in out
+    assert "apt-get remove" not in out
+
+
+def test_the_remove_seams_touch_the_filesystem(tmp_path: Path) -> None:
+    """file_exists/remove_file run for real against the tree (the
+    write_file/read_file seams' test): present removes and answers
+    True, absent answers False, an unlink that fails is a named
+    refusal."""
+    target = tmp_path / "landed"
+    target.write_text("piece\n")
+    assert hostsetup.file_exists(str(target)) is True
+    assert hostsetup.remove_file(str(target)) is True
+    assert not target.exists()
+    assert hostsetup.remove_file(str(target)) is False
+    blocker = tmp_path / "blocker"
+    blocker.mkdir()
+    with pytest.raises(hostsetup.HostSetupError) as raised:
+        hostsetup.remove_file(str(blocker))
+    assert "cannot remove" in str(raised.value)
