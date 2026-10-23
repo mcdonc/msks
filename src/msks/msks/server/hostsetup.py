@@ -68,7 +68,8 @@ binary until refreshed.
 ``--uninstall`` (#604) is the mirror, in teardown order: the
 service stops first (workspaces included, inside the unit's
 180s stop grace — a user manager that is down runs no stop at
-all, because no manager means no daemon), then the sysctl and
+all, because no manager means no daemon), then the unit file
+and its enablement symlink, the sysctl and
 modules files leave (``sysctl --system`` re-applies every
 remaining sysctl.d file, so a second owner's setting survives),
 the wrapper, the kvm membership (the tool keeps no state, so
@@ -1263,41 +1264,76 @@ def disable_linger(user: str) -> None:
         )
 
 
-def uninstall_service(user: str, uid: int, home: str) -> str:
-    """The service phase's mirror (#604): stop and disable the
-    daemon, remove the unit, have the manager forget it, and
-    drop the linger. A unit file without a running user manager
-    needs no stop at all (the daemon was a user unit — no
-    manager, no daemon), so the systemctl calls stand down and
-    the file and linger still leave. A unit file that is already
-    gone stands down with linger's by-hand fix named — the tool
-    never removes state it cannot see. Returns the summary's
-    service line."""
-    if not systemd_manages():
-        return "skipped (no systemd manager on this host)"
-    path = unit_path(home)
-    if not file_exists(path):
+def wants_path(home: str) -> str:
+    """The enablement symlink `enable --now` lands (the unit's
+    WantedBy) — the piece `disable --now` is otherwise the only
+    thing that removes, so a teardown without a bus call takes
+    it by path."""
+    return str(
+        Path(home) / ".config/systemd/user/default.target.wants/msksd.service"
+    )
+
+
+def teardown_running_service(
+    user: str, uid: int, unit: str, wants: str
+) -> str:
+    """The manager-up teardown: stop and disable (the stop waits
+    out the unit's shutdown grace), both files, the reload that
+    forgets the unit, and the linger — the summary line names
+    linger's restore."""
+    stop_unit(user, uid)
+    remove_file(unit)
+    remove_file(wants)
+    forget_unit(user, uid)
+    disable_linger(user)
+    return (
+        f"user service msksd.service stopped, disabled, and "
+        f"removed ({user}; lingering off — loginctl "
+        f"enable-linger {user} restores it)"
+    )
+
+
+def teardown_busless_service(
+    user: str, home: str, unit: str, wants: str
+) -> str:
+    """The no-stop teardown: a down user manager runs no daemon,
+    and a unit file that is already gone left none behind — the
+    files and the linger leave by path, no bus call involved, so
+    the teardown holds its every-piece-leaves contract anyway.
+    Neither piece on disk is the stand-down: the linger hint
+    names the by-hand fix, and the tool never removes state it
+    cannot see."""
+    unit_present = file_exists(unit)
+    if not unit_present and not file_exists(wants):
         return (
             f"no msksd.service under {home} — lingering may remain; "
             f"loginctl disable-linger {user} turns it off"
         )
-    if manager_running(uid):
-        stop_unit(user, uid)
-        remove_file(path)
-        forget_unit(user, uid)
-        disable_linger(user)
-        return (
-            f"user service msksd.service stopped, disabled, and "
-            f"removed ({user}; lingering off — loginctl "
-            f"enable-linger {user} restores it)"
-        )
-    remove_file(path)
+    remove_file(unit)
+    remove_file(wants)
     disable_linger(user)
+    if unit_present:
+        return (
+            f"user service msksd.service removed ({user}; the user "
+            "manager was down — no daemon was running; lingering off)"
+        )
     return (
-        f"user service msksd.service removed ({user}; the user "
-        f"manager was down — no daemon was running, and nothing "
-        f"needed a stop)"
+        "the msksd.service unit file was already gone; its enablement "
+        f"symlink left with it and lingering is off ({user})"
     )
+
+
+def uninstall_service(user: str, uid: int, home: str) -> str:
+    """The service phase's mirror (#604): the full stop when a
+    manager is up and the unit file is there, the busless path
+    otherwise. Returns the summary's service line."""
+    if not systemd_manages():
+        return "skipped (no systemd manager on this host)"
+    unit = unit_path(home)
+    wants = wants_path(home)
+    if manager_running(uid) and file_exists(unit):
+        return teardown_running_service(user, uid, unit, wants)
+    return teardown_busless_service(user, home, unit, wants)
 
 
 def drop_sysctl() -> str:
@@ -1319,7 +1355,11 @@ def drop_sysctl() -> str:
             "the remaining sysctl.d files apply at the next boot",
             file=sys.stderr,
         )
-    return f"{SYSCTL_FILE} removed (sysctl --system re-applied the rest)"
+    return (
+        f"{SYSCTL_FILE} removed (sysctl --system re-applied the rest — "
+        "net.ipv4.ip_forward keeps its live value until the host reboots;"
+        " sysctl -w net.ipv4.ip_forward=0 turns it off now)"
+    )
 
 
 def drop_modules_file() -> str:
@@ -1340,9 +1380,11 @@ def drop_wrapper() -> str:
 
 def drop_cloud_hypervisor() -> str:
     """The VMM's mirror: the binary the tool lands at
-    /usr/local/bin goes (#598's own documented location), and the
-    `.part` sibling a killed download can leave goes with it."""
-    remove_file(CLOUD_HYPERVISOR_BIN + ".part")
+    /usr/local/bin goes (#598's own documented location). The
+    `.part` sibling a killed download can leave goes with it,
+    best-effort the install's own refusal paths made it — residue
+    cleanup never refuses the phase."""
+    _silent_unlink(CLOUD_HYPERVISOR_BIN + ".part")
     if not remove_file(CLOUD_HYPERVISOR_BIN):
         return f"{CLOUD_HYPERVISOR_BIN} already absent"
     return f"{CLOUD_HYPERVISOR_BIN} removed"

@@ -1658,6 +1658,7 @@ def landed_host(debian_host: Host) -> Host:
     debian_host.files.update(
         {
             hostsetup.unit_path(home),
+            hostsetup.wants_path(home),
             SYSCTL_FILE,
             hostsetup.MODULES_FILE,
             WRAPPER,
@@ -1698,9 +1699,11 @@ def test_uninstall_removes_every_piece(
     # The kvm membership and the sysctl reload follow.
     assert host.ran("deluser") == [["deluser", "chrism", "kvm"]]
     assert host.ran("sysctl") == [["sysctl", "--system"]]
-    # Every landed file, in the run's teardown order.
+    # Every landed file, in the run's teardown order — the unit
+    # and its enablement symlink, then the host pieces.
     assert host.removals == [
         hostsetup.unit_path(home),
+        hostsetup.wants_path(home),
         SYSCTL_FILE,
         hostsetup.MODULES_FILE,
         WRAPPER,
@@ -1720,6 +1723,11 @@ def test_uninstall_removes_every_piece(
     assert f"VMM:        {hostsetup.CLOUD_HYPERVISOR_BIN} removed" in out
     assert "removed chrism from kvm (adduser chrism kvm restores it)" in out
     assert f"{hostsetup.MODULES_FILE} removed (loaded modules stay" in out
+    assert (
+        f"{SYSCTL_FILE} removed (sysctl --system re-applied the rest — "
+        "net.ipv4.ip_forward keeps its live value until the host reboots;"
+        " sysctl -w net.ipv4.ip_forward=0 turns it off now)" in out
+    )
     assert "login PATH:" in out and "operator's own lines only" in out
     assert (
         "apt-get remove --purge util-linux libcap2-bin iproute2 "
@@ -1850,10 +1858,28 @@ def test_uninstall_sysctl_reload_failure_is_a_warning(
     captured = capsys.readouterr()
     assert "WARNING sysctl --system failed" in captured.err
     assert "apply at the next boot" in captured.err
-    assert f"{SYSCTL_FILE} removed (sysctl --system re-applied" in (
-        captured.out
+    assert (
+        f"{SYSCTL_FILE} removed (sysctl --system re-applied the rest — "
+        in (captured.out)
     )
     assert hostsetup.MODULES_FILE in host.removals
+
+
+def test_uninstall_with_the_unit_gone_takes_the_symlink_and_linger(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """A unit file removed by hand still leaves the tool's
+    enablement symlink and linger — the teardown takes both by
+    path, no bus call involved."""
+    host = landed_host(debian_host)
+    home = hostsetup.executing_user()[3]
+    host.files.discard(hostsetup.unit_path(home))
+    assert main(["--uninstall"]) == 0
+    assert host.ran("runuser") == []
+    assert hostsetup.wants_path(home) in host.removals
+    assert host.ran("loginctl") == [["loginctl", "disable-linger", "chrism"]]
+    out = capsys.readouterr().out
+    assert "unit file was already gone; its enablement symlink left" in out
 
 
 def test_uninstall_deluser_failure_refuses(
@@ -2006,8 +2032,11 @@ def test_uninstall_with_the_user_manager_down_needs_no_stop(
     assert host.ran("loginctl") == [["loginctl", "disable-linger", "chrism"]]
     home = hostsetup.executing_user()[3]
     assert hostsetup.unit_path(home) in host.removals
+    assert hostsetup.wants_path(home) in host.removals
     out = capsys.readouterr().out
-    assert "user manager was down — no daemon was running" in out
+    assert (
+        "user manager was down — no daemon was running; lingering off" in out
+    )
     assert SYSCTL_FILE in host.removals
 
 
@@ -2034,7 +2063,12 @@ def test_install_uninstall_install_round_trip(
     """#604's round-trip criterion: a plain setup run brings the
     host back to a working setup after an uninstall. The fake's
     replace seam moves the partial for real, so the profile the
-    first install creates rides the whole cycle."""
+    first install creates rides the whole cycle. The wrapper
+    (landed through the install command, not the write seam),
+    the VMM (which answers present, so nothing downloads), and
+    the kvm membership (pinned absent) stay outside the fake's
+    file cycle — their landing and teardown are pinned by their
+    own tests."""
     host = debian_host
 
     def moving_replace(source, target):
