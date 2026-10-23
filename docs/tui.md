@@ -42,19 +42,8 @@ The lifetime cell is a live countdown — `2h`, then `1h`, repainted every secon
 confirmation that names what a revoke does (the row retires everywhere at
 once). `r` opens the duration picker over TTL-appropriate choices, an hour to
 thirty days with the choice nearest the row's remaining lifetime highlighted,
-and extends the row in place. The sentinel and the row's identity stay as they
-are. ![The audit view: the daemon-wide replay, the sighting
-highlighted](screens/audit-view.svg)
+and extends the row in place.
 
-`e` opens the daemon-wide audit view. The newest hundred
-recorded mints, revokes, expiries, and unlocks replay from
-the audit table at open, newest first, and the wire events
-stream in live beside them. The off-allowlist sighting is
-highlighted as the exfil signal, and `k`/`w` pick the kind
-and workspace filters. A daemon-wide row's events cover every
-workspace; a scoped row's cover its members. The audit view holds a
-plain subscription — no decider registration — so it claims no
-holds.
 ![The mint form: fields, coverage, lifetime, the masked value](screens/mint-form.svg)
 
 `c` opens the mint form. The name field comes first, then
@@ -65,12 +54,9 @@ workspace list. The lifetime field offers `unbounded` by
 default with an hour to thirty days beside it. The value is a
 masked field the operator types or pastes into, so the form
 takes the secret's bytes directly. The submit checks the secret store first (`msks secret
-check`'s endpoint), then mints. A refused mint opens the
-failure panel over the form, the daemon's refusal verbatim
-beside the name the form submitted; a refused store check
-opens it with the daemon's refusal alone. Either way it closes
-by hand (Enter, Escape, `q`, or the Close button), and the
-fields stay filled for a retry once it closes. ![The sentinel's panel: masked, with Show and Copy](screens/sentinel-panel.svg)
+check`'s endpoint), then mints.
+
+![The sentinel's panel: masked, with Show and Copy](screens/sentinel-panel.svg)
 
 A mint that lands replaces the form with the sentinel's
 panel. The sentinel opens masked, its prefix naming the reach
@@ -92,57 +78,34 @@ navigation lands with the cross-references.
 
 The **workspace page** allows users to operate against an already-created
 workspace. Its two-line header sets the workspace's name on the first line with
-its status beside it in the state's color (the same coloring the list uses),
-and the id, image hash, host, and created date muted on the second, its
-separators carrying the same theme-muted span style the header's status
-takes.
+its status beside it in the state's color, and the id, image hash, host, and
+created date.
 
 A status line for egress consent follows: the mode, then one granted scope
 named with its expiry. Two or more grants read as a count with the nearest
-expiry (`5 grants · next expires 4h`), so the line stays readable at 80
-columns; every grant is listed on the workspace's egress consent screen. The
-page's actions center in the space the header lines and the footer leave, the
-block capped at 64 columns, in three groups. A shell; egress consent and an
-edit dialog for the sizes and topology; and start and stop. Each action paints
-its name with its description muted behind it, and the row Enter acts on
-carries a marker beside the list's own highlight and the name in bold. The
-start and stop rows dim behind their reason while the workspace's status makes
-the verb pointless: a stop on a stopped workspace, a start on a running
-one. Enter on a dimmed row names that reason on the consent line. The bold sits
-on the rows the state invites: the shell in every state (its window's `msks
-ssh` child boots a stopped workspace itself, so the action never dims) and
-Start while the workspace sits stopped. `s`/`S` run start and stop from
-wherever the focus stands, the letters the list binds.
+expiry (`5 grants · next expires 4h`); grant detail is listed on the
+workspace's egress consent screen.
+
+The page's actions center in three groups. A shell; egress consent and an edit
+dialog for the sizes and topology; and start and stop.
 
 ![The image page: the catalog group, then the published channel](screens/image-page.svg)
 
-The list also binds `i`: the image page. Its catalog group
-comes first, the rows carrying the default marker and each
-import's date; then the published channel's rows with their
-descriptions, sizes, and membership markers. `[imported]`
-marks a row whose archive the catalog holds (an exact hash
-match); `[in catalog, other build]` marks one whose ref it
-holds under a different hash. ![The image detail: description, hash, the built date](screens/image-detail.svg)
+`i`: the image page. Its catalog group comes first, the rows carrying the
+default marker and each import's date; then the published channel's rows with
+their descriptions, sizes, and membership markers. `[imported]` marks a row
+whose archive the catalog holds (an exact hash match); `[in catalog, other
+build]` marks one whose ref it holds under a different hash. ![The image
+detail: description, hash, the built date](screens/image-detail.svg)
 
-Enter imports a published row through the daemon's URL
-import (a modal holds the terminal with an elapsed timer) or
-opens a catalog row's detail. `D` deletes a catalog row through
-a confirm, the same DELETE `msks image rm` makes. The page re-reads
-the workspace each second, so the dimming follows a start or
-stop made anywhere, not only on the page. A workspace
-the listing no longer sees — removed from another surface —
-closes its page and names the removal on the list's status
-line. The
-header's first line also counts pending holds (`egress to
-decide: N` while any hold waits, refreshed each second). The header's meta line clips each field to its own budget
-(the id, the image hash, the host), so the created date stays
-whole at 80 columns and the metadata owns its own line. A
-name truncates only when it alone no longer fits the
-line. A
-flashed refusal on the consent line truncates at the edge the
-same way, so the page's layout holds steady. A workspace in `interactive`
-mode holds new flows while the page is open: the page registers
-as the workspace's decider, so holds land on it.
+Enter imports a published row through the daemon's URL import or opens a
+catalog row's detail.
+
+`D` deletes a catalog row through a confirm, the same DELETE `msks image rm`
+makes. The page re-reads the workspace each second, so the dimming follows a
+start or stop made anywhere, not only on the page. A workspace the listing no
+longer sees — removed from another surface — closes its page and names the
+removal on the list's status line.
 
 ![The egress consent page: a held request over the in-effect verdicts](screens/consent-page.svg)
 
@@ -150,18 +113,15 @@ The page's **Egress** action and its `e` key open the egress
 consent page: a full-screen visit holding the held-request
 queue and the in-effect verdicts together. It is the consent
 decider as a page inside the tree, and the only place
-verdicts are made. The page carries the same two-line header as the workspace
+verdicts are made.
+
+The page carries the same two-line header as the workspace
 page beneath it: the workspace's name with its status (and the
 pending-hold count while any hold waits), then the id, image
 hash, host, and created date muted. The workspace's identity
-stays visible while verdicts are made. A hold's arrival pushes nothing. The header's `egress to
-decide: N` counts what waits on both pages' headers (a hold
-waits about two minutes before it times out denied), and the
-workspace page's consent line beneath flashes the held
-destination with the key in. A burst of first-seen holds names
-its count instead, and a hold that lands while another screen
-owns the terminal flashes on the first tick after that screen
-leaves. Keys on the page: the arrows walk the held requests and
+stays visible while verdicts are made.
+
+Keys on the page: the arrows navigate the held requests and
 cross into the verdict rows beneath (and back). `a`/`d` allow
 or deny the focused hold for the default duration
 (`tilrestart`); `A`/`D` pick a duration first (`once / 5m /
@@ -169,6 +129,7 @@ or deny the focused hold for the default duration
 alone, and a mis-zoned press names the zone it acts on instead
 of deciding silently. `x` revokes the focused verdict (the row
 leaves on the daemon's refreshed frame, never optimistically).
+
 ![The mode picker: the three postures, the current one highlighted](screens/mode-picker.svg)
 
 `m` opens the mode picker (`allow` / `static` / `interactive`,
@@ -180,19 +141,15 @@ The status line names the new mode as the switch lands. A
 pick of `static` with nothing effectively allowed asks the
 same offline-workspace confirmation the CLI asks (confirm to
 switch, decline to decide nothing). A refused switch names its
-reason on the status line, where the operator reads it. ![The duration picker over a held request](screens/duration-picker.svg)
+reason on the status line, where the operator reads it.
 
-Enter on a focused hold opens the duration picker: the key
-answers, the pick decides, and only an explicit letter or a
-picked duration ever decides. While no hold waits, the verdict
-keys stand inert and leave the footer until one lands. The page's
-keys live on the page itself, so they cannot collide with the
-workspace page's. `q` or Escape returns to the workspace page
-(holds keep waiting, the header's count keeps counting, `e`
-reopens). The placeholder-token audit lives on the secrets page
-: the consent page keeps the holds, the verdicts, and the
-mode. See [`msks egress`](cli.md#msks-egress) for what verdicts
-and rules cover.
+![The duration picker over a held request](screens/duration-picker.svg)
+
+Enter on a focused hold opens the duration picker: the key answers, the pick
+decides, and only an explicit letter or a picked duration ever decides. While
+no hold waits, the verdict keys stand inert and leave the footer until one
+lands. See [`msks egress`](cli.md#msks-egress) for what verdicts and rules
+cover.
 
 The page's **Edit settings** action opens the edit
 dialog: the create form's own layout, seeded with the
@@ -202,38 +159,34 @@ The sizes and topology (root, home, vcpus, memory) are
 editable. A submit sends the changed values through the same
 endpoint `msks resize` speaks, and the page's consent line
 carries the same outcome line the CLI prints, including what
-waits for the next boot. A workspace that is
-running when Apply lands asks first: confirm and the page
-stops the workspace, then applies the resize — decline and the
-workspace keeps running with its sizes as they were. Home bytes
-move at once, and root growth and the new topology apply at the
-next boot; a resize the daemon still refuses — a root shrink,
-among them — names its reason on the consent line. The name,
-image, and user fields show their current values read-only,
-marked `*` as create-time — changing
-them is a delete-and-recreate, and the dialog refuses a changed
-value with a note naming the field instead of accepting it
-silently. A size left blank keeps its current value. Escape
-closes the dialog and decides nothing.
+waits for the next boot.
 
-The page's **Open a shell** action runs `msks ssh` in the
-TUI's own terminal: the tree exits, the ssh session runs where
-it stood, and the tree restarts when the session hands the
-terminal back. It rides ssh rather than the console because
-the console keeps the getty's geometry while ssh carries every
-resize to the guest. A workspace ssh cannot reach (no NIC, no identity
-configured) takes a longer path. The flow boots a stopped
-workspace first (the ssh session it runs boots it itself) and
-probes the forward. A probe that names the refusal (no NIC,
-the service not listening) falls back to a `msks console`
-session one step later, and the tree's first flash carries why
-ssh stood down. An ssh
-that ran reports only its exit code, 255 included: ssh hands a
-session's own exit through unchanged, and a console after a
-finished session is a surprise, not a fallback. The
-action runs on a stopped workspace too: the ssh session boots the
-workspace itself (it carries the workspace's id, and reads the
-pre-flight's `msks: <id> is stopped; starting it`).
+A workspace that is running when Apply lands asks first: confirm and the page
+stops the workspace, then applies the resize — decline and the workspace keeps
+running with its sizes as they were. Home bytes move at once, and root growth
+and the new topology apply at the next boot; a resize the daemon still refuses
+— a root shrink, among them — names its reason on the consent line. The name,
+image, and user fields show their current values read-only, marked `*` as
+create-time — changing them is a delete-and-recreate, and the dialog refuses a
+changed value with a note naming the field instead of accepting it silently. A
+size left blank keeps its current value. Escape closes the dialog and decides
+nothing.
+
+The page's **Open a shell** action runs `msks ssh` in the TUI's own terminal:
+the tree exits, the ssh session runs where it stood, and the tree restarts when
+the session hands the terminal back. It rides ssh rather than the console
+because the console keeps the getty's geometry while ssh carries every resize
+to the guest. A workspace ssh cannot reach (no NIC, no identity configured)
+takes a longer path. The flow boots a stopped workspace first (the ssh session
+it runs boots it itself) and probes the forward. A probe that names the refusal
+(no NIC, the service not listening) falls back to a `msks console` session one
+step later, and the tree's first flash carries why ssh stood down.
+
+An ssh that ran reports only its exit code, 255 included: ssh hands a session's
+own exit through unchanged, and a console after a finished session is a
+surprise, not a fallback. The action runs on a stopped workspace too: the ssh
+session boots the workspace itself (it carries the workspace's id, and reads
+the pre-flight's `msks: <id> is stopped; starting it`).
 
 A host that wants shells in windows beside the running tree
 configures a terminal launcher (`terminal_open_cmd` below).
@@ -244,27 +197,12 @@ start — a missing binary, one without the execute bit — names its
 reason on the tree's first flash and the shell runs in this
 terminal instead: a chained `msks console` session.
 
-Every screen walks with the arrow keys alone. Lists move with
-up/down, the create form's fields move with up/down between
-them, and Escape leaves the screen it is on. `q` backs out of
-a page; at the workspaces list, Escape is the tree itself
-quitting.
-Ctrl+Q exits the client from any screen (the tree, a page, a
-form field, or a panel stacked over them), the same clean exit
-`q` takes at the workspaces list. It takes priority over the
-form field's shortcuts while a form field holds the focus. A bare Ctrl+C keeps the client running:
-a form field holds it as the field's own copy shortcut, and
-the tree's own screens answer it with a notification naming the
-quit key. A stacked panel away from its fields — a
-confirmation, a picker, the sentinel
-panel — leaves the key silent: nothing exits, nothing copies,
-nothing shows, the stock Textual modal behavior. Ctrl+Shift+C
-belongs to the terminal: the TUI starts with the kitty
-keyboard protocol off, so a terminal that binds the combo to
-its own copy handles the gesture and the TUI never sees the
-key. A terminal that passes the key through sends the same byte
-as Ctrl+C, and the tree's own screens answer it with the
-notification — no path of the gesture exits the client.
+Every screen is navigable with arrow keys. Lists move with up/down, the create
+form's fields move with up/down between them, and Escape leaves the screen it
+is on. `q` backs out of a page; at the workspaces list, Escape is the tree
+itself quitting. Ctrl+Q exits the client from any screen (the tree, a page, a
+form field, or a panel stacked over them), the same clean exit `q` takes at the
+workspaces list.
 
 ## The shell action's terminal settings
 
@@ -300,10 +238,7 @@ TUI's own terminal, on every host, with no terminal to launch.
 A configured launcher that fails to execute (a binary that is
 missing or not executable) names its reason on the tree's
 first flash after the same-terminal shell ends, and the shell
-runs in the same terminal. A holding variant
-(`konsole --hold -e`, xterm's `-hold`) keeps the window open after
-the session ends, for reading final output; without one the window
-closes itself when the session disconnects.
+runs in the same terminal.
 
 ## `terminal_title`
 
