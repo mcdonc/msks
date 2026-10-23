@@ -341,7 +341,7 @@ def buffered(flow: http.HTTPFlow) -> bool:
     return not response.stream and response.raw_content is not None
 
 
-def unframed(response) -> bool:
+def unframed(response: http.Response) -> bool:
     """Whether neither a length nor a transfer coding rides the
     response."""
     return (
