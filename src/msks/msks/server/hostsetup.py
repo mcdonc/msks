@@ -64,6 +64,22 @@ until that manager restarts, and the service line says so.
 Idempotent: re-run any time. Re-run after a util-linux
 upgrade — the setpriv copy under /usr/local keeps running the old
 binary until refreshed.
+
+``--uninstall`` (#604) is the mirror, in teardown order: the
+service stops first (workspaces included, inside the unit's
+180s stop grace — a user manager that is down runs no stop at
+all, because no manager means no daemon), then the unit file
+and its enablement symlink, the sysctl and
+modules files leave (``sysctl --system`` re-applies every
+remaining sysctl.d file, so a second owner's setting survives),
+the wrapper, the kvm membership (the tool keeps no state, so
+any member leaves — the line names the restore), the
+``~/.profile`` block, and the cloud-hypervisor binary — while
+the apt packages stay (they are shared Debian packages; the
+summary names the ones present with the ``apt-get`` line that
+removes them). Idempotent the same way: re-run any time; a
+piece already gone is a line in the summary, not a refusal,
+and the first real refusal stops the run, the setup run's rule.
 """
 
 import argparse
@@ -259,6 +275,36 @@ def read_file(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
+def file_exists(path: str) -> bool:
+    """Whether one landed file is there — the existence probe the
+    uninstall phases gate on (write_file's read-side twin). A
+    dangling symlink counts as present: the tool lands real
+    files, so a link at a landed path is a stranger's, and the
+    unlink that follows removes the link itself, never its
+    target."""
+    target = Path(path)
+    return target.exists() or target.is_symlink()
+
+
+def remove_file(path: str) -> bool:
+    """Remove one landed file — write_file's mirror, the seam the
+    tests rig. True when the file was there, False when it was
+    already gone (the idempotent re-run — including a file that
+    vanishes between the probe and the unlink); an unlink that
+    itself fails is a named refusal."""
+    if not file_exists(path):
+        return False
+    try:
+        Path(path).unlink()
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise HostSetupError(
+            f"cannot remove {path} ({exc.strerror or exc})"
+        ) from None
+    return True
+
+
 def replace_file(source: Path, target: Path) -> None:
     """One atomic rename — the seam the tests rig."""
     os.replace(source, target)
@@ -310,37 +356,80 @@ def profile_text(profile: Path) -> str:
         ) from None
 
 
-def land_user_path(home: str, uid: int, gid: int) -> str:
-    """Persist the admin directories on the operator's login PATH
-    (#601): an idempotent block in their ~/.profile, so the
-    session that typed the command — and the next one — sees the
-    tools the package phases land. Re-runs never duplicate the
-    block; the marker answers. The file lands atomically (a
-    sibling temp, one rename) and stays the operator's own —
-    root-owned dotfiles would lock the account out of its own
-    profile; anything unreadable is a named refusal, and a
-    re-run leaves an unparseable profile untouched."""
-    profile = Path(home) / ".profile"
-    text = profile_text(profile)
-    if PROFILE_MARKER in text:
-        return "already there (the next login carries /usr/sbin and /sbin)"
-    separator = "" if not text or text.endswith("\n") else "\n"
-    fresh = text + separator + PROFILE_PATH_BLOCK
+def write_profile(
+    profile: Path, text: str, uid: int, gid: int, fix: str
+) -> None:
+    """The profile's atomic write, both directions' shared tail:
+    a sibling temp, one rename, the operator's own ownership
+    (root-owned dotfiles would lock the account out of its own
+    profile). *fix* is the by-hand remediation a refusal names."""
     partial = profile.with_name(".profile.msks-new")
     try:
-        write_file(str(partial), fresh)
+        write_file(str(partial), text)
         replace_file(partial, profile)
     except OSError as exc:
         # The refusal leaves no partial behind (the VMM phase's
         # #599 pattern): best-effort, the error is the message.
         with contextlib.suppress(OSError):
             Path(partial).unlink(missing_ok=True)
-        raise HostSetupError(
-            f"cannot write {profile} ({exc}); add /usr/sbin and "
-            "/sbin to your PATH by hand"
-        ) from exc
+        raise HostSetupError(f"cannot write {profile} ({exc}); {fix}") from exc
     chown_path(profile, uid, gid)
+
+
+def land_user_path(home: str, uid: int, gid: int) -> str:
+    """Persist the admin directories on the operator's login PATH
+    (#601): an idempotent block in their ~/.profile, so the
+    session that typed the command — and the next one — sees the
+    tools the package phases land. Re-runs never duplicate the
+    block; the marker answers. The file lands atomically and
+    stays the operator's own; anything unreadable is a named
+    refusal, and a re-run leaves an unparseable profile
+    untouched."""
+    profile = Path(home) / ".profile"
+    text = profile_text(profile)
+    if PROFILE_MARKER in text:
+        return "already there (the next login carries /usr/sbin and /sbin)"
+    separator = "" if not text or text.endswith("\n") else "\n"
+    fresh = text + separator + PROFILE_PATH_BLOCK
+    write_profile(
+        profile,
+        fresh,
+        uid,
+        gid,
+        fix="add /usr/sbin and /sbin to your PATH by hand",
+    )
     return f"{profile} gains /usr/sbin and /sbin at the next login"
+
+
+def drop_user_path(home: str, uid: int, gid: int) -> str:
+    """The ~/.profile block's mirror (#604): the block leaves with
+    the tool and the operator's own lines stay — a profile that
+    held nothing else was the tool's own file and goes whole. A
+    block the operator edited inside stays put with the by-hand
+    fix named — the tool never rewrites a profile it cannot
+    recognize."""
+    profile = Path(home) / ".profile"
+    text = profile_text(profile)
+    if PROFILE_MARKER not in text:
+        return f"no msks block in {profile}"
+    if PROFILE_PATH_BLOCK not in text:
+        return (
+            f"the block in {profile} was edited by hand — remove it "
+            "yourself (it runs from the msks marker line to the "
+            "export)"
+        )
+    stripped = text.replace(PROFILE_PATH_BLOCK, "")
+    if not stripped.strip():
+        remove_file(str(profile))
+        return f"{profile} held only the block (removed)"
+    write_profile(
+        profile,
+        stripped.rstrip("\n") + "\n",
+        uid,
+        gid,
+        fix="remove the msks block by hand",
+    )
+    return f"{profile} carries the operator's own lines only"
 
 
 def invoked_as() -> str:
@@ -1141,6 +1230,277 @@ def run_setup(service: bool = True) -> None:
         os.environ["PATH"] = saved
 
 
+def stop_unit(user: str, uid: int) -> None:
+    """Disable and stop the service, waited out: a stop stops
+    workspaces first (the unit allows 180s), so this call carries
+    a matching timeout, and the failure names the journal that
+    holds the cause — start_unit's refusal, mirrored."""
+    rc, err = user_manager_call(
+        user, uid, ["disable", "--now", "msksd.service"], timeout=240.0
+    )
+    if rc != 0:
+        raise HostSetupError(
+            f"systemctl --user disable --now msksd.service failed: {err} "
+            f"(as {user}: journalctl --user -u msksd names the cause)"
+        )
+
+
+def forget_unit(user: str, uid: int) -> None:
+    """daemon-reload once the unit file is gone, so the manager
+    forgets it — load_unit's refusal, mirrored."""
+    rc, err = user_manager_call(user, uid, ["daemon-reload"])
+    if rc != 0:
+        raise HostSetupError(f"systemctl --user daemon-reload failed: {err}")
+
+
+def disable_linger(user: str) -> None:
+    """The linger the service phase armed leaves with it; the
+    call is idempotent, and the failure names it."""
+    rc, _out, err = sh(["loginctl", "disable-linger", user])
+    if rc != 0:
+        raise HostSetupError(
+            f"loginctl disable-linger {user} failed: {err} "
+            "(the user manager keeps running across logouts)"
+        )
+
+
+def wants_path(home: str) -> str:
+    """The enablement symlink `enable --now` lands (the unit's
+    WantedBy) — the piece `disable --now` is otherwise the only
+    thing that removes, so a teardown without a bus call takes
+    it by path. Derived from USER_UNIT_RELATIVE so the basename
+    and the unit's own location stay one name."""
+    relative = Path(USER_UNIT_RELATIVE)
+    return str(
+        Path(home) / relative.parent / "default.target.wants" / relative.name
+    )
+
+
+def teardown_running_service(
+    user: str, uid: int, unit: str, wants: str
+) -> str:
+    """The manager-up teardown: stop and disable (the stop waits
+    out the unit's shutdown grace), both files, the reload that
+    forgets the unit, and the linger — the summary line names
+    linger's restore."""
+    stop_unit(user, uid)
+    remove_file(unit)
+    remove_file(wants)
+    forget_unit(user, uid)
+    disable_linger(user)
+    return (
+        f"user service msksd.service stopped, disabled, and "
+        f"removed ({user}; lingering off — loginctl "
+        f"enable-linger {user} restores it)"
+    )
+
+
+def teardown_busless_service(
+    user: str, uid: int, home: str, unit: str, wants: str, manager_up: bool
+) -> str:
+    """The no-stop teardown: a down user manager runs no daemon,
+    and a unit file that is already gone left none behind — the
+    files and the linger leave by path, no stop call involved, so
+    the teardown holds its every-piece-leaves contract anyway. A
+    manager that is up still hears the reload, so it forgets the
+    unit the files no longer name. Neither piece on disk is the
+    stand-down: the linger hint names the by-hand fix, and the
+    tool never removes state it cannot see."""
+    unit_present = file_exists(unit)
+    if not unit_present and not file_exists(wants):
+        return (
+            f"no msksd.service under {home} — lingering may remain; "
+            f"loginctl disable-linger {user} turns it off"
+        )
+    remove_file(unit)
+    remove_file(wants)
+    if manager_up:
+        forget_unit(user, uid)
+    disable_linger(user)
+    if unit_present:
+        return (
+            f"user service msksd.service removed ({user}; the user "
+            "manager was down — no daemon was running; lingering off)"
+        )
+    return (
+        "the msksd.service unit file was already gone; the enablement "
+        f"symlink is removed and lingering is off ({user})"
+    )
+
+
+def uninstall_service(user: str, uid: int, home: str) -> str:
+    """The service phase's mirror (#604): the full stop when a
+    manager is up and the unit file is there, the busless path
+    otherwise. Returns the summary's service line."""
+    if not systemd_manages():
+        return "skipped (no systemd manager on this host)"
+    unit = unit_path(home)
+    wants = wants_path(home)
+    manager_up = manager_running(uid)
+    if manager_up and file_exists(unit):
+        return teardown_running_service(user, uid, unit, wants)
+    return teardown_busless_service(user, uid, home, unit, wants, manager_up)
+
+
+def drop_sysctl() -> str:
+    """The forwarding sysctl's mirror: the boot-time file leaves,
+    then `sysctl --system` re-applies every remaining sysctl.d
+    file — the same set a boot applies. A second owner that
+    wrote its own file keeps its value; a live-only setter the
+    tool never saw (a container runtime's own forwarding) keeps
+    its value too, because --system names nothing itself. A
+    --system run that trips on some other file's keys is a
+    warning, not a refusal — the file removal is this tool's
+    piece, the rest of sysctl.d is not."""
+    if not remove_file(SYSCTL_FILE):
+        return f"{SYSCTL_FILE} already absent"
+    rc, _out, err = sh(["sysctl", "--system"])
+    if rc != 0:
+        print(
+            f"{TOOL}: WARNING sysctl --system failed ({err.strip()}) — "
+            "the remaining sysctl.d files apply at the next boot",
+            file=sys.stderr,
+        )
+    return (
+        f"{SYSCTL_FILE} removed (sysctl --system re-applied the rest — "
+        "net.ipv4.ip_forward keeps its live value until the host reboots "
+        "where no remaining file names it; sysctl -w "
+        "net.ipv4.ip_forward=0 turns it off now)"
+    )
+
+
+def drop_modules_file() -> str:
+    """The modules file's mirror: the boot-time list leaves; the
+    loaded modules stay — the kernel shares them with whatever
+    else loaded them, and a reboot clears the live set."""
+    if not remove_file(MODULES_FILE):
+        return f"{MODULES_FILE} already absent"
+    return f"{MODULES_FILE} removed (loaded modules stay until reboot)"
+
+
+def drop_wrapper() -> str:
+    """The capability wrapper leaves — the caps rode on it."""
+    if not remove_file(WRAPPER):
+        return f"{WRAPPER} already absent"
+    return f"{WRAPPER} removed"
+
+
+def drop_cloud_hypervisor() -> str:
+    """The VMM's mirror: the binary the tool lands at
+    /usr/local/bin goes (#598's own documented location). The
+    `.part` sibling a killed download can leave goes with it,
+    best-effort the install's own refusal paths made it — residue
+    cleanup never refuses the phase."""
+    _silent_unlink(CLOUD_HYPERVISOR_BIN + ".part")
+    if not remove_file(CLOUD_HYPERVISOR_BIN):
+        return f"{CLOUD_HYPERVISOR_BIN} already absent"
+    return f"{CLOUD_HYPERVISOR_BIN} removed"
+
+
+def remove_kvm_membership(user: str) -> str:
+    """The kvm membership's mirror: the account leaves the kvm
+    group. The tool cannot prove which run added a membership —
+    it keeps no state — so any member leaves, including one the
+    tool never added, and the line names the restore because
+    /dev/kvm is a node other uses share."""
+    if not group_present("kvm"):
+        return "the kvm group is absent (nothing was removed)"
+    if not in_group(user, "kvm"):
+        return f"{user} is not a member of kvm"
+    rc, _out, err = sh(["deluser", user, "kvm"])
+    if rc != 0:
+        raise HostSetupError(f"deluser {user} kvm failed: {err}")
+    return f"removed {user} from kvm (adduser {user} kvm restores it)"
+
+
+def present_packages() -> list[str]:
+    """The dependency map's packages whose probes answer present
+    on this host — the ones the uninstall summary names for the
+    operator's own apt run. The probes are the install's own
+    (which() and the linker cache), so the list on the way out
+    reads the same evidence the list on the way in did."""
+    missing_sonames = missing_soname_packages()
+    packages = [
+        package
+        for tool, package in TOOL_PACKAGES.items()
+        if which(tool) is not None
+    ]
+    packages += [
+        package
+        for soname, package in SONAME_PACKAGES.items()
+        if package not in missing_sonames
+    ]
+    return list(dict.fromkeys(packages))
+
+
+def uninstall_summary(
+    service: str,
+    forwarding: str,
+    modules: str,
+    wrapper: str,
+    kvm: str,
+    login_path: str,
+    vmm: str,
+    packages: list[str],
+) -> None:
+    """The uninstall summary: every piece the run removed, in the
+    install summary's shape, plus the apt line — the dependency
+    packages stay, and the operator removes the ones present
+    himself when nothing else uses them."""
+    say("done —")
+    print(f"  service:    {service}")
+    print(f"  forwarding: {forwarding}")
+    print(f"  modules:    {modules}")
+    print(f"  wrapper:    {wrapper}")
+    print(f"  /dev/kvm:   {kvm}")
+    print(f"  login PATH: {login_path}")
+    print(f"  VMM:        {vmm}")
+    if not packages:
+        print("  packages:   none of the msks dependency packages are present")
+        return
+    print(
+        "  packages:   the msks dependency packages stay installed; "
+        "remove the ones present yourself when nothing else uses them:"
+    )
+    print(f"               apt-get remove --purge {' '.join(packages)}")
+
+
+def run_uninstall(service: bool = True) -> None:
+    """The setup's mirror (#604), in teardown order: the service
+    stops first — its wrapper and caps vanish next — then every
+    host piece leaves, and the summary names the dependency
+    packages for the operator's own apt call. The first refusal
+    stops the run, the install run's rule."""
+    saved = os.environ.get("PATH", "")
+    os.environ["PATH"] = DEBIAN_PATH + ":" + saved
+    try:
+        check_root_and_platform()
+        user, uid, gid, home = executing_user()
+        service_note = (
+            uninstall_service(user, uid, home)
+            if service
+            else "skipped (--no-service)"
+        )
+        forwarding = drop_sysctl()
+        modules = drop_modules_file()
+        wrapper = drop_wrapper()
+        kvm = remove_kvm_membership(user)
+        login_path = drop_user_path(home, uid, gid)
+        vmm = drop_cloud_hypervisor()
+        uninstall_summary(
+            service_note,
+            forwarding,
+            modules,
+            wrapper,
+            kvm,
+            login_path,
+            vmm,
+            present_packages(),
+        )
+    finally:
+        os.environ["PATH"] = saved
+
+
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog=TOOL,
@@ -1155,6 +1515,15 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         "container, a non-systemd init, a deployment that runs "
         "msksd its own way)",
     )
+    parser.add_argument(
+        "--uninstall",
+        action="store_true",
+        help="undo the setup (#604): stop and remove the msksd "
+        "service, remove the wrapper, the routing kernel files, "
+        "the cloud-hypervisor binary, the kvm membership, and the "
+        "profile block — the apt packages stay, and the summary "
+        "names them",
+    )
     return parser.parse_args(argv)
 
 
@@ -1162,7 +1531,10 @@ def main(argv: list[str] | None = None) -> int:
     """The console entry: 0 on success, 1 on a named refusal."""
     args = parse_args(argv)
     try:
-        run_setup(service=not args.no_service)
+        if args.uninstall:
+            run_uninstall(service=not args.no_service)
+        else:
+            run_setup(service=not args.no_service)
     except HostSetupError as exc:
         print(f"{TOOL}: {exc}", file=sys.stderr)
         return 1
