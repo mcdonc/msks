@@ -13,7 +13,9 @@
 # would rebuild off the binary cache — a C-chain rebuild whose
 # sandbox test failures have nothing to do with msks. The override
 # composes with whatever packageOverrides the host nixpkgs already
-# carries.
+# carries, and whatever certifi the host's set holds — older or
+# newer — the pinned wheel is the one every python 3.14 dependent
+# resolves.
 #
 # Applied by flake.nix (the nix build path), devenv.nix (the release
 # outputs' twin path), and module.nix (a consuming host's own

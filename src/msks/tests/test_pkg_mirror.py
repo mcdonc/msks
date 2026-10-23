@@ -216,7 +216,7 @@ def test_both_locks_pin_the_same_nixpkgs_revision() -> None:
 
 
 def assert_hand_pinned_floor_covers_pyproject(
-    pkg_nix: Path, name: str, stake: str
+    pkg_nix: Path, name: str, stake: str, bump_hint: str
 ) -> None:
     """The hand-pinned wheel a *-pkg.nix file builds satisfies
     pyproject's >= floor for *name*: the runtime check refuses a
@@ -242,10 +242,9 @@ def assert_hand_pinned_floor_covers_pyproject(
     floor_v = version_tuple(floor.group(1))
     assert pin_v >= floor_v, (
         f"pyproject wants {name}>={floor.group(1)}; "
-        f"nix/{pkg_nix.name} pins {pin.group(1)} — bump the pin "
-        f"(wheel URL and hash from the new uv.lock entry) or the "
-        f"closure runs on a {name} older than its declared floor, "
-        f"past {stake}"
+        f"nix/{pkg_nix.name} pins {pin.group(1)} — {bump_hint}, or "
+        f"the closure runs on a {name} older than its declared "
+        f"floor, past {stake}"
     )
 
 
@@ -257,7 +256,12 @@ def test_the_hand_pinned_textual_floor_covers_pyproject() -> None:
     shipped) and no smoke covers the TUI focus semantics the floor
     exists for — this test is that net."""
     assert_hand_pinned_floor_covers_pyproject(
-        TEXTUAL_PKG, "textual", "the TUI focus semantics the floor exists for"
+        TEXTUAL_PKG,
+        "textual",
+        "the TUI focus semantics the floor exists for",
+        "bump the pin per the file's bump-workflow header (wheel "
+        "URL, hash, and propagatedBuildInputs from the new wheel's "
+        "METADATA)",
     )
 
 
@@ -273,4 +277,5 @@ def test_the_hand_pinned_certifi_floor_covers_pyproject() -> None:
         CERTIFI_PKG,
         "certifi",
         "the root-store refreshes the floor names",
+        "bump the pin (wheel URL and hash from the new uv.lock entry)",
     )
