@@ -51,12 +51,18 @@ The run is idempotent: re-run any time, and re-run after a util-linux upgrade
 
 `msks-setup-debian-host --uninstall` reverses the run: it stops and
 disables the `msksd` user service and removes its unit file (the stop lets
-the daemon finish its shutdown cycle, workspaces included), turns the
-boot-time `ip_forward` sysctl off and removes the two `/etc` files the
-run landed, removes the capability wrapper and the cloud-hypervisor
-binary, takes the executing user out of the `kvm` group, and strips the
-PATH block from `~/.profile`. Kernel modules already loaded stay loaded
-until the next reboot.
+the daemon finish its shutdown cycle, workspaces included), turns linger
+off, removes the two `/etc` files the run landed, removes the capability
+wrapper and the cloud-hypervisor binary, takes the executing user out of
+the `kvm` group (the tool keeps no record of which run added a membership,
+so any member leaves — the summary names the `adduser` line that restores
+it), and strips the PATH block from `~/.profile`. Kernel modules already
+loaded stay loaded until the next reboot.
+
+After the sysctl file leaves, `sysctl --system` re-applies every remaining
+sysctl.d file — the same set a boot applies. A second owner that wrote its
+own forwarding file keeps its setting; a live-only forwarder the tool never
+saw keeps its value too.
 
 The apt packages the run installed stay installed — they are shared
 Debian packages, and other software on the host may use them. The
@@ -65,8 +71,9 @@ copy-paste `apt-get remove --purge ...` line, so you can remove the ones
 nothing else needs yourself.
 
 The uninstall run is idempotent the same way: a piece already gone is a
-line in the summary, not an error. `--no-service` holds its meaning —
-the service is left alone, every other piece still leaves.
+line in the summary, not an error, and the first real refusal stops the
+run — the setup run's rule. `--no-service` holds its meaning — the
+service is left alone, every other piece still leaves.
 
 ## What the setup lands
 
