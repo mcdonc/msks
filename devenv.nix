@@ -67,18 +67,22 @@ let
   # default image; the NixOS archive builds standalone the same
   # way. flake.nix re-exposes the same set for `nix build` — the
   # devenv-less release path this split is the first step of.
-  msksServer = pkgs.python314.withPackages (ps: [
+  # releasePkgs carries the certifi overlay (#606) — the same one
+  # flake.nix applies to its pkgs — so both halves build identical
+  # store paths while the dev shell's plain pkgs stays untouched.
+  releasePkgs = pkgs.extend (import ./nix/certifi-overlay.nix);
+  msksServer = releasePkgs.python314.withPackages (ps: [
     (ps.callPackage ./nix/msks-pkg.nix {
       textual = ps.callPackage ./nix/textual-pkg.nix { };
       litellm = ps.callPackage ./nix/litellm-pkg.nix { };
     })
   ]);
-  msksClient = pkgs.python314.withPackages (ps: [
+  msksClient = releasePkgs.python314.withPackages (ps: [
     (ps.callPackage ./nix/msks-client-pkg.nix {
       textual = ps.callPackage ./nix/textual-pkg.nix { };
     })
   ]);
-  guestImages = import ./nix/guest.nix { inherit pkgs; };
+  guestImages = import ./nix/guest.nix { pkgs = releasePkgs; };
 in
 {
   # msks dev environment: Python 3.14 + cloud-hypervisor toolchain (#2).

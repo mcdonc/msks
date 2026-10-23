@@ -47,6 +47,38 @@ normal user account.
 The run is idempotent: re-run any time, and re-run after a util-linux upgrade
 (the wrapper keeps a copy of `setpriv`; see below).
 
+## Taking the setup back off
+
+`msks-setup-debian-host --uninstall` reverses the run: it stops and
+disables the `msksd` user service and removes its unit file and its
+enablement symlink (the stop lets the daemon finish its shutdown
+cycle, workspaces included), turns linger off, removes the two `/etc`
+files the run landed, removes the capability wrapper, takes the
+executing user out of the `kvm` group (the tool keeps no record of
+which run added a membership, so any member leaves — the summary
+names the `adduser` line that restores it), strips the PATH block
+from `~/.profile`, and removes the cloud-hypervisor binary. Kernel
+modules already loaded stay loaded until the next reboot.
+
+After the sysctl file leaves, `sysctl --system` re-applies every remaining
+sysctl.d file — the same set a boot applies. A second owner that wrote its
+own forwarding file keeps its setting; a live-only forwarder the tool never
+saw keeps its value too. On a host where no remaining file names
+`net.ipv4.ip_forward`, the live value the setup run set stays on until the
+next reboot — the summary names `sysctl -w net.ipv4.ip_forward=0` for
+the operator who wants it off immediately.
+
+The apt packages the run installed stay installed — they are shared
+Debian packages, and other software on the host may use them. The
+uninstall summary prints the ones whose probes answer present, with a
+copy-paste `apt-get remove --purge ...` line, so you can remove the ones
+nothing else needs yourself.
+
+The uninstall run is idempotent the same way: a piece already gone is a
+line in the summary, not an error, and the first real refusal stops the
+run — the setup run's rule. `--no-service` holds its meaning — the
+service is left alone, every other piece still leaves.
+
 ## What the setup lands
 
 Each phase runs in order, and the first refusal stops the run with an error.

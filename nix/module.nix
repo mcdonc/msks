@@ -67,10 +67,16 @@ let
   # pinned textual/litellm. The NFQUEUE binding is vendored ctypes
   # (#542): the wheel needs no compiled dependency, and the
   # module loads the platform's libnetfilter_queue at runtime
-  # (the service's environment carries it).
-  msksd = pkgs.python314.pkgs.callPackage ./msks-pkg.nix {
-    textual = pkgs.python314.pkgs.callPackage ./textual-pkg.nix { };
-    litellm = pkgs.python314.pkgs.callPackage ./litellm-pkg.nix { };
+  # (the service's environment carries it). msksdPkgs carries the
+  # certifi overlay (#606): whatever certifi the host's nixpkgs
+  # carries, the overlay resolves the wheel nix/certifi-pkg.nix
+  # pins across the whole python set, so every dependent (httpx,
+  # mitmproxy) builds against the one certifi the wheel's
+  # >=2026.10.23 floor names.
+  msksdPkgs = pkgs.extend (import ./certifi-overlay.nix);
+  msksd = msksdPkgs.python314.pkgs.callPackage ./msks-pkg.nix {
+    textual = msksdPkgs.python314.pkgs.callPackage ./textual-pkg.nix { };
+    litellm = msksdPkgs.python314.pkgs.callPackage ./litellm-pkg.nix { };
   };
 
   # The generated msksd.yaml (docs/config.md is the key reference):
@@ -122,8 +128,14 @@ in
     package = lib.mkOption {
       type = lib.types.package;
       default = msksd;
-      defaultText = lib.literalExpression "pkgs.python314.pkgs.callPackage ./nix/msks-pkg.nix";
-      description = "The msksd package to run.";
+      defaultText = lib.literalExpression "let p = pkgs.extend (import ./nix/certifi-overlay.nix); in p.python314.pkgs.callPackage ./nix/msks-pkg.nix { ... }";
+      description = ''
+        The msksd package to run. The default builds the one wheel
+        against a python package set whose certifi is the wheel
+        nix/certifi-pkg.nix pins (#606) — a package set of your own
+        resolves certifi itself, and the wheel's >=2026.10.23 floor
+        holds only when that set carries a certifi at or above it.
+      '';
     };
 
     cloudHypervisor = lib.mkOption {
