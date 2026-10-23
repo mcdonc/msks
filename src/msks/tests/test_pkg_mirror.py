@@ -30,6 +30,7 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 PKG_NIX = REPO_ROOT / "nix" / "msks-pkg.nix"
 CLIENT_PKG_NIX = REPO_ROOT / "nix" / "msks-client-pkg.nix"
 TEXTUAL_PKG = REPO_ROOT / "nix" / "textual-pkg.nix"
+LITELLM_PKG = REPO_ROOT / "nix" / "litellm-pkg.nix"
 DEVENV_LOCK = REPO_ROOT / "devenv.lock"
 FLAKE_LOCK = REPO_ROOT / "flake.lock"
 PKG_ROOT = REPO_ROOT / "src" / "msks" / "msks"
@@ -54,6 +55,31 @@ def version_tuple(text: str) -> tuple[int, ...]:
     """`"8.2.8"` → `(8, 2, 8)`: numeric compare, so `8.2.10` sorts
     above `8.2.9` where the strings compare below it."""
     return tuple(int(part) for part in text.split("."))
+
+
+def hand_pinned_floor_covers_pyproject(dep: str, nix_path: Path) -> bool:
+    """Whether a hand-pinned nix wheel package's version pin covers
+    pyproject's `>=` floor for `dep` — the shared body of the
+    textual/litellm pin guards."""
+    specifier = next(
+        d
+        for d in tomllib.loads(PYPROJECT.read_text())["project"][
+            "dependencies"
+        ]
+        if re.split(r"[><=~!;\[]", d)[0].strip().lower() == dep
+    )
+    floor = re.search(r">=\s*(\d+(?:\.\d+)*)", specifier)
+    if floor is None:
+        raise AssertionError(
+            f"pyproject's {dep} specifier {specifier!r} declares no "
+            f">= floor for {nix_path.name} to cover"
+        )
+    pin = re.search(
+        r'version = "([^"]+)"', strip_comments(nix_path.read_text())
+    )
+    if pin is None:
+        raise AssertionError(f"{nix_path} lost its version pin")
+    return version_tuple(pin.group(1)) >= version_tuple(floor.group(1))
 
 
 def nix_dependency_block(nix_path: Path) -> str:
@@ -216,33 +242,24 @@ def test_both_locks_pin_the_same_nixpkgs_revision() -> None:
 
 def test_the_hand_pinned_textual_floor_covers_pyproject() -> None:
     """pyproject's textual floor stays within what textual-pkg.nix
-    pins. textual is the one dependency this repo builds by hand from
-    an exact wheel, so a floor bump in pyproject that the nix pin
-    misses cannot fail the runtime check (8.2.9 required, 8.2.8
-    shipped) and no smoke covers the TUI focus semantics the floor
-    exists for — this test is that net."""
-    specifier = next(
-        d
-        for d in tomllib.loads(PYPROJECT.read_text())["project"][
-            "dependencies"
-        ]
-        if re.split(r"[><=~!;\[]", d)[0].strip().lower() == "textual"
+    pins. textual is one of the dependencies this repo builds by
+    hand from an exact wheel, so a floor bump in pyproject that the
+    nix pin misses cannot fail the runtime check (8.2.9 required,
+    8.2.8 shipped) and no smoke covers the TUI focus semantics the
+    floor exists for — this test is that net."""
+    assert hand_pinned_floor_covers_pyproject("textual", TEXTUAL_PKG), (
+        "nix/textual-pkg.nix pins below pyproject's textual floor"
     )
-    floor = re.search(r">=\s*(\d+(?:\.\d+)*)", specifier)
-    assert floor is not None, (
-        f"pyproject's textual specifier {specifier!r} declares no "
-        f">= floor for nix/textual-pkg.nix to cover"
-    )
-    pin = re.search(
-        r'version = "([^"]+)"', strip_comments(TEXTUAL_PKG.read_text())
-    )
-    assert pin is not None, "nix/textual-pkg.nix lost its version pin"
-    pin_v = version_tuple(pin.group(1))
-    floor_v = version_tuple(floor.group(1))
-    assert pin_v >= floor_v, (
-        f"pyproject wants textual>={floor.group(1)}; "
-        f"nix/textual-pkg.nix pins {pin.group(1)} — bump the pin "
-        f"(wheel URL, hash, and propagatedBuildInputs from the new "
-        f"METADATA) or the TUI runs on a textual older than its "
-        f"declared floor"
+
+
+def test_the_hand_pinned_litellm_floor_covers_pyproject() -> None:
+    """pyproject's litellm floor stays within what litellm-pkg.nix
+    pins. litellm is the other hand-built wheel (nixpkgs' 1.86.0
+    predates the >=1.106.2 floor, #607), and a floor bump the nix
+    pin misses fails only the msks package's runtime check at nix
+    build time — this test fails at pytest time instead, naming
+    the pin to bump (wheel URL, hash, and propagatedBuildInputs
+    from the new METADATA)."""
+    assert hand_pinned_floor_covers_pyproject("litellm", LITELLM_PKG), (
+        "nix/litellm-pkg.nix pins below pyproject's litellm floor"
     )
