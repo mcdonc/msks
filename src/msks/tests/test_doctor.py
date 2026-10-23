@@ -547,6 +547,29 @@ def test_probe_which_finds_sbin_tools_the_session_lacks(
     assert doctor_mod.rescued_from_admin_dirs("nft") is True
 
 
+def test_the_real_probe_execs_a_rescued_tool(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The real run(), no rigging: a tool visible only through the
+    admin directories execs by its resolved path and the row
+    reads green (#601 review round 2). A silent revert to the
+    bare name fails this test with the false error the round
+    found."""
+    sbin = tmp_path / "sbin"
+    sbin.mkdir()
+    tool = sbin / "faketool"
+    tool.write_text("#!/bin/sh\necho 'faketool 9.9'\n")
+    tool.chmod(0o755)
+    monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: None)
+    monkeypatch.setattr(doctor_mod, "PATH_EXTRA_DIRS", (str(sbin),))
+    monkeypatch.delenv("PATH", raising=False)
+    result = doctor_mod.check_binary(
+        "faketool", ["faketool", "--version"], None
+    )
+    assert result.ok, result.message
+    assert result.message == f"faketool ok ({tool})"
+
+
 def test_session_lacks_admin_dirs_reads_the_session_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

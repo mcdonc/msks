@@ -419,7 +419,6 @@ def test_a_profile_that_is_a_directory_refuses_by_name(
     )
     with pytest.raises(hostsetup.HostSetupError) as caught:
         hostsetup.land_user_path(str(tmp_path), 1000, 1000)
-        hostsetup.land_user_path(str(tmp_path), 1000, 1000)
     assert "cannot write" in str(caught.value)
     assert not (tmp_path / ".profile.msks-new").exists()
     assert (tmp_path / ".profile").is_dir()

@@ -424,9 +424,9 @@ def path_note_result() -> CheckResult:
         ok=False,
         is_warning=True,
         message=(
-            "this session's PATH lacks /usr/sbin and /sbin, where "
-            "Debian puts nft, conntrack, and the e2fsprogs trio; "
-            "a daemon started from it inherits the gap, while the "
+            "this session's PATH lacks /usr/sbin, where Debian "
+            "puts nft, conntrack, and the e2fsprogs trio; a "
+            "daemon started from it inherits the gap, while the "
             "systemd user unit's own PATH carries the directories"
         ),
         hint=(
@@ -522,7 +522,9 @@ def check_ssh(manager: str | None) -> CheckResult:
             "ssh not found on PATH (the documented ssh workflow "
             "and the forward-path smoke run over `msks forward`)",
         )
-    rc, out, err = run(["ssh", "-V"])
+    # The resolved path, never the bare name: a session without
+    # the admin directories would exec through it again (#601).
+    rc, out, err = run([path, "-V"])
     if ssh_banner_ok(rc, err):
         return CheckResult(name="ssh", ok=True, message=f"ssh ok ({path})")
     detail = (err.strip() or out.strip() or f"exit {rc}")[:200]
@@ -600,7 +602,8 @@ def check_tmux(manager: str | None) -> CheckResult:
             message="tmux not found on PATH",
             hint=install_hint("tmux", manager),
         )
-    rc, out, _err = run(["tmux", "-V"])
+    # Same as ssh: exec the resolved path (#601).
+    rc, out, _err = run([path, "-V"])
     version = parse_tmux_version(out) if rc == 0 else None
     if version is None:
         return tmux_unparseable(out, manager)
