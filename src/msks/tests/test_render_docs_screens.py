@@ -357,6 +357,47 @@ async def test_the_image_detail(monkeypatch) -> None:
         await export(app, "image-detail")
 
 
+async def test_the_first_run_import(monkeypatch) -> None:
+    """The first run's image page (first-run chapter, Importing a
+    guest VM image): the catalog group empty, the published
+    channel enumerated beneath it, and the import modal holding
+    the terminal mid-download with its elapsed timer."""
+    import asyncio
+
+    scripted_manifest(monkeypatch, CHANNEL)
+    release = asyncio.Event()
+
+    class Held(FakeData):
+        async def import_image(self, source: str) -> dict:
+            self.import_calls.append(source)
+            await release.wait()
+            return {
+                "ref": "debian:13.6",
+                "hash": "a" * 64,
+                "name": "debian",
+                "version": "13.6",
+            }
+
+    data = Held([row()])
+    data.images_rows = []  # first run: nothing imported yet
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: screen_name(app) == "ImageImportScreen")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        await pilot.press("enter")
+        await wait_for(lambda: screen_name(app) == "ImportingScreen")
+        await wait_for(lambda: data.import_calls == [CHANNEL[0]["url"]])
+        # One elapsed tick paints the label (the ref and the
+        # running seconds) before the shot.
+        app.screen.tick()
+        await pilot.pause()
+        await export(app, "first-run-import")
+        app.screen.action_cancel()
+        await wait_for(lambda: screen_name(app) != "ImportingScreen")
+        release.set()
+
+
 async def test_the_term_popup_decider() -> None:
     """The popup's own app: the held-request queue and verdict
     keys `msks-term-popup` runs inside its hidden tmux session

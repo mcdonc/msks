@@ -5,12 +5,9 @@ same REST surface the CLI commands speak (the same environment variables, the
 same config file, the same daemon aliases) and reads no daemon state directly:
 every page uses the API.
 
-This chapter covers the screens; the commands and settings the two surfaces
-share are [the CLI client's](cli.md) tables and sections.
-
 A bare `msks` — no arguments at all — launches the full-screen
-workspace tree (`msks tui` names the same command, and `msks tui
-my-workspace` opens that workspace's page directly).
+workspace tree. `msks tui` names the same command, and `msks tui
+my-workspace` opens that workspace's page directly.
 
 ## The workspace tree
 
@@ -21,15 +18,14 @@ first, with the CREATED column's arrow naming the sort. Creating, starting,
 stopping, and removing sit on its keys: `c` new, `s` start, `S` stop, `D`
 remove (asked and confirmed), `e` secrets, and `r` refresh. `/` is a typeahead
 that jumps the focus to the first row whose name starts with what you
-type. Enter opens the workspace's page. The list re-reads the daemon every five
-seconds, so a workspace another surface moved (the CLI, another operator)
-appears without a keypress. A power verb the focused row's own status makes
-pointless names its skip client-side without a round-trip. ![The create form
-over the list](screens/create-form.svg)
+type. Enter opens the workspace's page.
 
-The refused-create path answers on its own panel:
+The list re-reads the daemon every five seconds, so a workspace another surface
+moved (the CLI, another operator) appears without a keypress.
 
-![The failure panel: the daemon's refusal verbatim over the list](screens/failure-panel.svg)
+When you create a workspace, it looks like this:
+
+![The create form over the list](screens/create-form.svg)
 
 The **secrets page** lists every placeholder row the daemon
 holds, in the listing's own five-column shape: coverage (`*` for
@@ -37,6 +33,9 @@ the daemon-wide row, the workspace ids scoped), name,
 destinations, the remaining lifetime, the created date.
 
 ![The secrets page: the placeholder list](screens/secrets-page.svg)
+
+You can register secret placeholders for your workspace to use instead of
+putting actual secrets into VMs.
 
 The lifetime cell is a live countdown — `2h`, then `1h`, repainted every second
 — and reads `never` on an unbounded row. `x` revokes the focused row after a
@@ -91,30 +90,28 @@ navigation lands with the cross-references.
 
 ![The workspace page: header, consent line, the three action groups](screens/workspace-page.svg)
 
-The **workspace page** carries the per-workspace loop. Its
-two-line header sets the workspace's name on the first line
-with its status beside it in the state's color (the same
-coloring the list uses), and the id, image hash, host, and
-created date muted on the second, its separators carrying
-the same theme-muted span style the header's status takes. A
-status line for egress consent follows: the mode, then one
-granted scope named with its expiry. Two or more grants read
-as a count with the nearest expiry (`5 grants · next expires
-4h`), so the line stays readable at 80 columns; every grant is
-listed on the workspace's egress consent screen. The page's actions center in the space the header lines and
-the footer leave, the block capped at 64 columns, in three
-groups. A shell; egress consent and an edit dialog for the
-sizes and topology; and start and stop. Each action paints its
-name with its description muted behind it, and the row Enter
-acts on carries a marker beside the list's own highlight and the
-name in bold. The start and stop rows dim behind their reason while the
-workspace's status makes the verb pointless: a stop on a
-stopped workspace, a start on a running one. Enter on a dimmed
-row names that reason on the consent line. The bold
-sits on the rows the state invites: the shell in every state
-(its window's `msks ssh` child boots a stopped workspace
-itself, so the action never dims) and Start while the
-workspace sits stopped. `s`/`S` run start and stop from
+The **workspace page** allows users to operate against an already-created
+workspace. Its two-line header sets the workspace's name on the first line with
+its status beside it in the state's color (the same coloring the list uses),
+and the id, image hash, host, and created date muted on the second, its
+separators carrying the same theme-muted span style the header's status
+takes.
+
+A status line for egress consent follows: the mode, then one granted scope
+named with its expiry. Two or more grants read as a count with the nearest
+expiry (`5 grants · next expires 4h`), so the line stays readable at 80
+columns; every grant is listed on the workspace's egress consent screen. The
+page's actions center in the space the header lines and the footer leave, the
+block capped at 64 columns, in three groups. A shell; egress consent and an
+edit dialog for the sizes and topology; and start and stop. Each action paints
+its name with its description muted behind it, and the row Enter acts on
+carries a marker beside the list's own highlight and the name in bold. The
+start and stop rows dim behind their reason while the workspace's status makes
+the verb pointless: a stop on a stopped workspace, a start on a running
+one. Enter on a dimmed row names that reason on the consent line. The bold sits
+on the rows the state invites: the shell in every state (its window's `msks
+ssh` child boots a stopped workspace itself, so the action never dims) and
+Start while the workspace sits stopped. `s`/`S` run start and stop from
 wherever the focus stands, the letters the list binds.
 
 ![The image page: the catalog group, then the published channel](screens/image-page.svg)

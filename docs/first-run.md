@@ -23,11 +23,6 @@ configured by default.
 With the host prepared, the service lingered, and an image imported, invoking
 the `msks` (the client) on the same account will find the socket.
 
-On first run, a workspace image has not been imported, so you are not able to
-create guest VMs. A workspace image arrives either from the published channel
-(`msks image import` in [the TUI](tui.md), or the [images](images.md) chapter's
-URL form) or from a local build.
-
 ## The identity file
 
 Every workspace msks uses your public ssh key as the workspace's operator
@@ -108,3 +103,16 @@ you forwarded them.
 With neither key naming a usable source, `msks create` refuses
 with a line saying so; it is the one command that needs the
 identity at its start.
+
+## Importing a guest VM image
+
+On first run, a workspace image has not been imported, so you are not able to
+create guest VMs. A workspace image arrives either from the published channel
+(`msks image import` in [the TUI](tui.md), or the [images](images.md) chapter's
+URL form) or from a local build.
+
+These images are hosted on github, and the TUI enumerates them for you and
+allows you to import one. There are currently Debian and NixOS guest images
+corresponding with the most recent msks release.
+
+![The first run's image page: the catalog empty, the published channel enumerated; the import modal holds the terminal while the daemon downloads](screens/first-run-import.svg)
