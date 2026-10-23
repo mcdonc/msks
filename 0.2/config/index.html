@@ -1,0 +1,1695 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Microvm workspaces for AI coding agents">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/msks/0.2/config/">
+      
+      
+      
+        <link rel="prev" href="../cli/">
+      
+      
+        <link rel="next" href="../images/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.71">
+    
+    
+      
+        <title>Configuration - msks</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.e442bf79.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.b60ce83d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="msks" class="md-header__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            msks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Configuration
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="msks" class="md-nav__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    msks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The host doctor
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  First run
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#precedence" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Precedence
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-config-flag" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The <code>--config</code> flag
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#msksd-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>msksd doctor</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Key mapping
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Key mapping">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#native-scalar-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Native scalar types
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unknown-keys-fail-fast" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Unknown keys fail fast
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Key reference
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Key reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-api-listener" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The API listener
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-local-cloud-hypervisor-driver" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The local cloud-hypervisor driver
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-workspace-egress-networking" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Per-workspace egress networking
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-placeholder-secret-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The placeholder secret store
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sighup-reload" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        SIGHUP reload
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes-for-tooling" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Notes for tooling
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development environment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#precedence" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Precedence
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-config-flag" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The <code>--config</code> flag
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#msksd-doctor" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>msksd doctor</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Key mapping
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Key mapping">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#native-scalar-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Native scalar types
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unknown-keys-fail-fast" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Unknown keys fail fast
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Key reference
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Key reference">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-api-listener" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The API listener
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-local-cloud-hypervisor-driver" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The local cloud-hypervisor driver
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-workspace-egress-networking" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Per-workspace egress networking
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-placeholder-secret-store" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The placeholder secret store
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sighup-reload" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        SIGHUP reload
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes-for-tooling" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Notes for tooling
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="the-msksd-configuration-file">The msksd configuration file<a class="headerlink" href="#the-msksd-configuration-file" title="Permanent link">&para;</a></h1>
+<p><code>msksd</code> reads its settings from a YAML file, from <code>MSKSD_*</code>
+environment variables, and from built-in defaults. The file is the
+durable home for a deployment's settings, committed to the
+deployment's own storage and human-reviewable, while the
+environment variables stay available as per-invocation overrides.</p>
+<h2 id="precedence">Precedence<a class="headerlink" href="#precedence" title="Permanent link">&para;</a></h2>
+<p>Values resolve in this order (highest first):</p>
+<ol>
+<li><strong>Environment variables</strong> (<code>MSKSD_*</code>) — override the file</li>
+<li><strong>The config file</strong> — the YAML file <code>msksd</code> resolves at startup</li>
+<li><strong>Built-in defaults</strong> — the settings dataclass defaults</li>
+</ol>
+<p>A variable set in the process wins over the same key in the file; a
+key set nowhere uses the default. An environment variable set to an
+empty string is the unset form: the file value applies.</p>
+<h2 id="the-config-flag">The <code>--config</code> flag<a class="headerlink" href="#the-config-flag" title="Permanent link">&para;</a></h2>
+<p><code>msksd</code> resolves its config file in three modes:</p>
+<table>
+<thead>
+<tr>
+<th>Invocation</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>msksd</code></td>
+<td>Reads <code>$MSKSD_CONFIG_DIR/msksd.yaml</code> (default <code>~/.config/msksd/msksd.yaml</code>, honoring <code>$XDG_CONFIG_HOME</code>). A missing file is <strong>generated</strong> as a commented template pointing at this chapter — the first run writes the file so its location is discoverable, and the daemon then runs on environment variables and defaults.</td>
+</tr>
+<tr>
+<td><code>msksd --config /path/to/msksd.yaml</code></td>
+<td>Reads exactly that file. A missing file is a startup error naming the path. Explicit paths are never auto-generated.</td>
+</tr>
+<tr>
+<td><code>msksd --config=none</code></td>
+<td>Reads environment variables and built-in defaults only — the in-tree user is the smoke-test daemon; the deployment-host module passes an explicit <code>--config</code> path.</td>
+</tr>
+</tbody>
+</table>
+<p><code>MSKSD_CONFIG_DIR</code> is read before anything else and exists only as
+an environment variable: the config file cannot relocate the
+directory it lives in, so the tree root must be resolvable before
+the file is located.</p>
+<h2 id="msksd-doctor"><code>msksd doctor</code><a class="headerlink" href="#msksd-doctor" title="Permanent link">&para;</a></h2>
+<p><code>msksd doctor</code> checks the host for the tools the daemon and the
+client exec, reading the config the same way the daemon does —
+the <code>--config</code> flag, the environment, and the file, under the
+precedence above. The <a href="../doctor/">host doctor chapter</a> owns the
+check rows, the report's markers and hints, and the exit codes.</p>
+<h2 id="key-mapping">Key mapping<a class="headerlink" href="#key-mapping" title="Permanent link">&para;</a></h2>
+<p>A config-file key is its <code>MSKSD_*</code> variable with the prefix stripped
+and lowercased, one rule with no lookup table:</p>
+<table>
+<thead>
+<tr>
+<th>Environment variable</th>
+<th>Config-file key</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MSKSD_PORT</code></td>
+<td><code>port</code></td>
+</tr>
+<tr>
+<td><code>MSKSD_EGRESS_SUBNET</code></td>
+<td><code>egress_subnet</code></td>
+</tr>
+<tr>
+<td><code>MSKSD_STATE_DIR</code></td>
+<td><code>state_dir</code></td>
+</tr>
+</tbody>
+</table>
+<p>The file is flat: one key per setting, no sections. For
+example:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">host</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.0.0.0</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">8660</span>
+</span></code></pre></div>
+<p>sets the same settings <code>MSKSD_HOST</code>, <code>MSKSD_PORT</code>, and
+<code>MSKSD_CONSOLE_WAIT_TIMEOUT_S</code> would. Either spelling is recoverable from
+the other by the rule, and the daemon enforces it in code: the
+key↔variable table is derived mechanically, so the two forms cannot
+drift apart.</p>
+<p>The underscore is the canonical spelling, and a hyphen may be
+written for it: <code>egress-dns-upstream</code> and <code>egress_dns_upstream</code>
+are one key spelled two ways. The <code>llm_models</code> entries' keys
+follow the same rule, so an operator used to kebab-case YAML
+can write it naturally. Both spellings of one key in the same file is a startup
+error naming the two spellings, and the valid-keys list an unknown
+key reports is the snake_case one.</p>
+<p>One mapping detail worth knowing: <strong><code>state_dir</code> places the database
+too.</strong> <code>state_dir</code> feeds both the local driver's workspace
+artifacts and the server's sqlite database (<code>&lt;state_dir&gt;/msks.db</code>);
+there is no separate <code>db_path</code> key, matching the environment
+variable, which also drives both.</p>
+<h3 id="native-scalar-types">Native scalar types<a class="headerlink" href="#native-scalar-types" title="Permanent link">&para;</a></h3>
+<p>Numeric, boolean, and string fields accept their natural YAML
+scalars: <code>port: 8660</code>, <code>access_log: true</code>,
+<code>socket_wait_timeout_s: 12.5</code>. Quoted strings (<code>port: "8660"</code>) work
+everywhere and parse identically. A key with no value
+(<code>bootstrap_token:</code>) is the unset form; the environment (for
+its
+variable) and then the default apply. Values must be scalars: a list
+or mapping where a number, boolean, or string belongs is a startup
+error, and so is a duplicate key: a second <code>port:</code> does not
+silently
+win. Merge keys (<code>&lt;&lt;: *anchor</code>) are refused with their own message: the
+file is flat and every key is spelled out.</p>
+<p>Booleans deserve care. <code>true</code> and <code>false</code> are the spellings to use;
+PyYAML also parses the YAML 1.1 forms <code>yes</code>/<code>no</code>/<code>on</code>/<code>off</code> as
+booleans, so those work too. The single letters <code>y</code> and <code>n</code> are plain strings to YAML 1.1,
+so a boolean key set to either reads as <strong>false</strong>; the
+environment variable follows the same string rule. A bare <code>1</code>
+or <code>0</code> is an integer, which also reads as false.
+Write <code>true</code> or <code>false</code>.</p>
+<h3 id="unknown-keys-fail-fast">Unknown keys fail fast<a class="headerlink" href="#unknown-keys-fail-fast" title="Permanent link">&para;</a></h3>
+<p>A key the daemon does not know is a startup error naming the key and
+the valid ones, so a typo'd <code>prot</code> fails at boot instead of
+being
+silently ignored. The environment has no such guard: a typo'd variable name is
+simply never read. Invalid values fail the same way whichever
+source they came from, and the error message names the
+<code>MSKSD_*</code> variable —
+<code>vmm_driver: firecracker</code> reports <code>MSKSD_VMM_DRIVER must be one of
+('local',)</code>. Non-finite numbers (<code>.nan</code>, <code>.inf</code>) are rejected
+from either source.</p>
+<h2 id="key-reference">Key reference<a class="headerlink" href="#key-reference" title="Permanent link">&para;</a></h2>
+<p>The tables below group the keys by the subsystem that reads them;
+the file itself carries them all at one level.</p>
+<h3 id="the-api-listener">The API listener<a class="headerlink" href="#the-api-listener" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Environment variable</th>
+<th>Type</th>
+<th>Default</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>host</code></td>
+<td><code>MSKSD_HOST</code></td>
+<td>string</td>
+<td><code>127.0.0.1</code></td>
+<td>The HTTPS + WSS listener's bind address.</td>
+</tr>
+<tr>
+<td><code>port</code></td>
+<td><code>MSKSD_PORT</code></td>
+<td>int</td>
+<td><code>8660</code></td>
+<td>The listener's port.</td>
+</tr>
+<tr>
+<td><code>socket</code></td>
+<td><code>MSKSD_SOCKET</code></td>
+<td>string</td>
+<td><em>(unset)</em></td>
+<td>Binds a second, local listener at this unix socket path: same-host clients connect through it with peer-credential authentication — no token, no TLS. Unset binds the default path, <code>$XDG_RUNTIME_DIR/msks/msksd.sock</code>; a daemon without a runtime dir (a container, a hand-written system unit pointing <code>MSKSD_SOCKET</code> at a path its <code>RuntimeDirectory</code> creates) serves TCP alone until this setting names a path; the empty string always serves TCP alone. The socket file is mode 0660 — chgrp it to a shared group to admit that group's members. The systemd <strong>user</strong> unit <code>msks-setup-debian-host</code> generates creates <code>$XDG_RUNTIME_DIR/msks</code> for this listener through its <code>RuntimeDirectory</code> — the client's own default candidate path. Read at startup; a reload applies a change at restart.</td>
+</tr>
+<tr>
+<td><code>tls_cert</code></td>
+<td><code>MSKSD_TLS_CERT</code></td>
+<td>string</td>
+<td><em>(unset)</em></td>
+<td>Path to the operator-provided TLS certificate. Both cert and key unset: a self-signed CA is generated on first run and its fingerprint printed for trust-on-first-use pinning.</td>
+</tr>
+<tr>
+<td><code>tls_key</code></td>
+<td><code>MSKSD_TLS_KEY</code></td>
+<td>string</td>
+<td><em>(unset)</em></td>
+<td>Path to the operator-provided TLS key.</td>
+</tr>
+<tr>
+<td><code>event_poll_s</code></td>
+<td><code>MSKSD_EVENT_POLL_S</code></td>
+<td>float</td>
+<td><code>1.0</code></td>
+<td>Seconds between watcher scans — workspace status reconciles and the state-disk pressure probe — read at loop start; a running daemon applies a change at restart.</td>
+</tr>
+<tr>
+<td><code>bootstrap_token</code></td>
+<td><code>MSKSD_BOOTSTRAP_TOKEN</code></td>
+<td>string</td>
+<td><em>(unset)</em></td>
+<td>Seeds the first bearer token at first boot. The plaintext must fit the HTTP <code>token</code> grammar (letters, digits, and the separator characters RFC 9110 allows): the token rides the <code>Authorization</code> header on the REST surface and the websocket handshake alike, whose value grammar rejects the rest.</td>
+</tr>
+<tr>
+<td><code>access_log</code></td>
+<td><code>MSKSD_ACCESS_LOG</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Writes uvicorn's access log — request lines (method, path, query), never headers. Websocket tokens ride the <code>Authorization</code> header, not the URL, so the log holds no credentials.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="the-local-cloud-hypervisor-driver">The local cloud-hypervisor driver<a class="headerlink" href="#the-local-cloud-hypervisor-driver" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Environment variable</th>
+<th>Type</th>
+<th>Default</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vmm_driver</code></td>
+<td><code>MSKSD_VMM_DRIVER</code></td>
+<td>string</td>
+<td><code>local</code></td>
+<td>The backend that runs workspaces: <code>local</code> (cloud-hypervisor).</td>
+</tr>
+<tr>
+<td><code>state_dir</code></td>
+<td><code>MSKSD_STATE_DIR</code></td>
+<td>string</td>
+<td><code>~/.local/state/msksd</code></td>
+<td>The daemon's state directory: the sqlite database (<code>&lt;state_dir&gt;/msks.db</code>) and per-workspace artifacts. <code>~</code> expands.</td>
+</tr>
+<tr>
+<td><code>cloud_hypervisor</code></td>
+<td><code>MSKSD_CLOUD_HYPERVISOR</code></td>
+<td>string</td>
+<td><code>cloud-hypervisor</code></td>
+<td>Path to the cloud-hypervisor binary the local driver execs.</td>
+</tr>
+<tr>
+<td><code>socket_wait_timeout_s</code></td>
+<td><code>MSKSD_SOCKET_WAIT_TIMEOUT_S</code></td>
+<td>float</td>
+<td><code>10.0</code></td>
+<td>Seconds the driver waits for the VMM's API socket at workspace start.</td>
+</tr>
+<tr>
+<td><code>request_timeout_s</code></td>
+<td><code>MSKSD_REQUEST_TIMEOUT_S</code></td>
+<td>float</td>
+<td><code>5.0</code></td>
+<td>Seconds per cloud-hypervisor API request.</td>
+</tr>
+<tr>
+<td><code>shutdown_timeout_s</code></td>
+<td><code>MSKSD_SHUTDOWN_TIMEOUT_S</code></td>
+<td>float</td>
+<td><code>20.0</code></td>
+<td>Seconds a workspace stop waits for the guest to power off.</td>
+</tr>
+<tr>
+<td><code>console_wait_timeout_s</code></td>
+<td><code>MSKSD_CONSOLE_WAIT_TIMEOUT_S</code></td>
+<td>float</td>
+<td><code>15.0</code></td>
+<td>Seconds to wait for the guest's console device at boot (generous: nested-virt guests arm the device slower).</td>
+</tr>
+<tr>
+<td><code>forward_wait_timeout_s</code></td>
+<td><code>MSKSD_FORWARD_WAIT_TIMEOUT_S</code></td>
+<td>float</td>
+<td><code>15.0</code></td>
+<td>Seconds a forward websocket retries its guest dial at boot (a freshly booted guest races DHCP against its services); past the deadline the refusal names the cause.</td>
+</tr>
+<tr>
+<td><code>console_stall_timeout_s</code></td>
+<td><code>MSKSD_CONSOLE_STALL_TIMEOUT_S</code></td>
+<td>float</td>
+<td><code>60.0</code></td>
+<td>Seconds a console session stays open after client input drew no guest bytes; then the websocket closes with 4502. <code>0</code> disables the close. An idle session (no input) never trips it.</td>
+</tr>
+<tr>
+<td><code>move_wait_timeout_s</code></td>
+<td><code>MSKSD_MOVE_WAIT_TIMEOUT_S</code></td>
+<td>float</td>
+<td><code>120.0</code></td>
+<td>Seconds a boot or volume move waits for the workspace's other volume move (a stalled export reader holds its lock as long as its connection lives); the waiter answers a named 409 past the bound instead of hanging. <code>0</code> is fail-fast.</td>
+</tr>
+<tr>
+<td><code>default_image</code></td>
+<td><code>MSKSD_DEFAULT_IMAGE</code></td>
+<td>string</td>
+<td><em>(unset)</em></td>
+<td>A container-image tar imported into the catalog and designated default on first boot.</td>
+</tr>
+<tr>
+<td><code>seed_images</code></td>
+<td><code>MSKSD_SEED_IMAGES</code></td>
+<td>list</td>
+<td><em>(unset)</em></td>
+<td>Container-image tars imported into the catalog at every start, warm when unchanged; never designated default. A bare-name image reference resolves the newest version, with import recency breaking ties between builds whose versions carry the same leading numbers.</td>
+</tr>
+<tr>
+<td><code>qemu_img</code></td>
+<td><code>MSKSD_QEMU_IMG</code></td>
+<td>string</td>
+<td><code>qemu-img</code></td>
+<td>Path to qemu-img, which builds the per-workspace root overlay.</td>
+</tr>
+<tr>
+<td><code>mkfs_ext4</code></td>
+<td><code>MSKSD_MKFS_EXT4</code></td>
+<td>string</td>
+<td><code>mkfs.ext4</code></td>
+<td>Path to mkfs.ext4, which builds the per-workspace <code>/home</code> volume.</td>
+</tr>
+<tr>
+<td><code>resize2fs</code></td>
+<td><code>MSKSD_RESIZE2FS</code></td>
+<td>string</td>
+<td><code>resize2fs</code></td>
+<td>Path to resize2fs, which moves a <code>/home</code> volume's size.</td>
+</tr>
+<tr>
+<td><code>e2fsck</code></td>
+<td><code>MSKSD_E2FSCK</code></td>
+<td>string</td>
+<td><code>e2fsck</code></td>
+<td>Path to e2fsck, which quiets a volume before a resize.</td>
+</tr>
+<tr>
+<td><code>mkisofs</code></td>
+<td><code>MSKSD_MKISOFS</code></td>
+<td>string</td>
+<td><code>mkisofs</code></td>
+<td>Path to mkisofs, which builds the <code>user_data</code> cidata seed disk.</td>
+</tr>
+<tr>
+<td><code>host_name</code></td>
+<td><code>MSKSD_HOST_NAME</code></td>
+<td>string</td>
+<td><em>(the hostname)</em></td>
+<td>The host name recorded as owning locally-created workspaces.</td>
+</tr>
+<tr>
+<td><code>root_mib</code></td>
+<td><code>MSKSD_ROOT_MIB</code></td>
+<td>int</td>
+<td><code>10240</code></td>
+<td>Default workspace root overlay size, MiB (a per-create request overrides).</td>
+</tr>
+<tr>
+<td><code>home_mib</code></td>
+<td><code>MSKSD_HOME_MIB</code></td>
+<td>int</td>
+<td><code>20480</code></td>
+<td>Default workspace <code>/home</code> volume size, MiB (a per-create request overrides).</td>
+</tr>
+<tr>
+<td><code>storage_warn_pct</code></td>
+<td><code>MSKSD_STORAGE_WARN_PCT</code></td>
+<td>int</td>
+<td><code>90</code></td>
+<td>State-disk percentage used that moves pressure to <code>warn</code>; 1–99.</td>
+</tr>
+<tr>
+<td><code>storage_floor_mib</code></td>
+<td><code>MSKSD_STORAGE_FLOOR_MIB</code></td>
+<td>int</td>
+<td><code>512</code></td>
+<td>Free state-disk MiB below which pressure is <code>critical</code> and workspace creates, image imports, and home-volume imports answer <code>507</code>.</td>
+</tr>
+<tr>
+<td><code>image_import_max_mib</code></td>
+<td><code>MSKSD_IMAGE_IMPORT_MAX_MIB</code></td>
+<td>int</td>
+<td><code>8192</code></td>
+<td>The size ceiling a URL image import accepts: a download whose declared or streamed size passes it is refused by name. The storage floor still counts the imported archive twice, like a path import.</td>
+</tr>
+<tr>
+<td><code>image_import_timeout_s</code></td>
+<td><code>MSKSD_IMAGE_IMPORT_TIMEOUT_S</code></td>
+<td>float</td>
+<td><code>600.0</code></td>
+<td>The overall deadline a URL image import download runs under; a slow source fails with a named error instead of hanging the request.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="per-workspace-egress-networking">Per-workspace egress networking<a class="headerlink" href="#per-workspace-egress-networking" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Environment variable</th>
+<th>Type</th>
+<th>Default</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>egress_enabled</code></td>
+<td><code>MSKSD_EGRESS_ENABLED</code></td>
+<td>bool</td>
+<td><code>false</code></td>
+<td>Arms per-workspace NICs, DHCP, NAT egress, and the DNS forwarder at startup (needs <code>CAP_NET_ADMIN</code>); a running daemon applies a change at restart.</td>
+</tr>
+<tr>
+<td><code>egress_subnet</code></td>
+<td><code>MSKSD_EGRESS_SUBNET</code></td>
+<td>string</td>
+<td><code>172.31.0.0/16</code></td>
+<td>The IPv4 pool per-workspace /30 slices are carved from.</td>
+</tr>
+<tr>
+<td><code>egress_uplink</code></td>
+<td><code>MSKSD_EGRESS_UPLINK</code></td>
+<td>string</td>
+<td><code>eth0</code></td>
+<td>The host interface egress is NAT-masqueraded out of (the base NAT table applies at startup; per-workspace rules read the live value).</td>
+</tr>
+<tr>
+<td><code>egress_dns_upstream</code></td>
+<td><code>MSKSD_EGRESS_DNS_UPSTREAM</code></td>
+<td>string</td>
+<td><em>(unset)</em></td>
+<td>The resolver the daemon's DNS forwarder relays to; unset reads the host's own <code>/etc/resolv.conf</code>.</td>
+</tr>
+<tr>
+<td><code>ip_tool</code></td>
+<td><code>MSKSD_IP_TOOL</code></td>
+<td>string</td>
+<td><code>ip</code></td>
+<td>Path to the <code>ip</code> binary (taps and addresses).</td>
+</tr>
+<tr>
+<td><code>nft_tool</code></td>
+<td><code>MSKSD_NFT_TOOL</code></td>
+<td>string</td>
+<td><code>nft</code></td>
+<td>Path to the <code>nft</code> binary (per-VM firewall tables).</td>
+</tr>
+<tr>
+<td><code>egress_lease_s</code></td>
+<td><code>MSKSD_EGRESS_LEASE_S</code></td>
+<td>int</td>
+<td><code>3600</code></td>
+<td>DHCP lease seconds offered to guests.</td>
+</tr>
+<tr>
+<td><code>egress_dns_timeout_s</code></td>
+<td><code>MSKSD_EGRESS_DNS_TIMEOUT_S</code></td>
+<td>float</td>
+<td><code>3.0</code></td>
+<td>Seconds the forwarder waits on the upstream resolver.</td>
+</tr>
+<tr>
+<td><code>egress_mode</code></td>
+<td><code>MSKSD_EGRESS_MODE</code></td>
+<td>string</td>
+<td><code>allow</code></td>
+<td>The consent mode workspaces get at create when the request names none: <code>allow</code>, <code>static</code>, or <code>interactive</code>.</td>
+</tr>
+<tr>
+<td><code>egress_consent_timeout_s</code></td>
+<td><code>MSKSD_EGRESS_CONSENT_TIMEOUT_S</code></td>
+<td>float</td>
+<td><code>120.0</code></td>
+<td>Seconds a held first packet waits for a decider before the hold expires to a deny (inside the kernel's ~127 s SYN budget).</td>
+</tr>
+<tr>
+<td><code>egress_consent_rate_limit</code></td>
+<td><code>MSKSD_EGRESS_CONSENT_RATE_LIMIT</code></td>
+<td>int</td>
+<td><code>8</code></td>
+<td>The per-workspace pending-prompt cap (the prompt-spam bound); <code>0</code> removes it.</td>
+</tr>
+<tr>
+<td><code>egress_consent_retention_days</code></td>
+<td><code>MSKSD_EGRESS_CONSENT_RETENTION_DAYS</code></td>
+<td>int</td>
+<td><code>30</code></td>
+<td>Days a consent row lives past its terminal timestamp; <code>0</code> disables retention pruning.</td>
+</tr>
+<tr>
+<td><code>egress_consent_row_cap</code></td>
+<td><code>MSKSD_EGRESS_CONSENT_ROW_CAP</code></td>
+<td>int</td>
+<td><code>1000</code></td>
+<td>The per-workspace consent-row ceiling (the flood bound); <code>0</code> disables the cap.</td>
+</tr>
+<tr>
+<td><code>egress_queue_base</code></td>
+<td><code>MSKSD_EGRESS_QUEUE_BASE</code></td>
+<td>int</td>
+<td><code>1024</code></td>
+<td>The base per-workspace NFQUEUE numbers derive from (<code>base + pool slice</code>); must leave room under 65535.</td>
+</tr>
+<tr>
+<td><code>conntrack_tool</code></td>
+<td><code>MSKSD_CONNTRACK_TOOL</code></td>
+<td>string</td>
+<td><code>conntrack</code></td>
+<td>The tool revocation uses to drop a revoked destination's established connections.</td>
+</tr>
+<tr>
+<td><code>interceptor_port</code></td>
+<td><code>MSKSD_INTERCEPTOR_PORT</code></td>
+<td>int</td>
+<td><code>8643</code></td>
+<td>The TCP port every armed workspace's interceptor listener binds on its own tap address.</td>
+</tr>
+<tr>
+<td><code>probe_port</code></td>
+<td><code>MSKSD_PROBE_PORT</code></td>
+<td>int</td>
+<td><code>8644</code></td>
+<td>The TCP port every workspace's probe service listener binds on its own tap address. The guest still dials 443 (the redirect catches it); the interceptor repoints its upstream dial to this port, so a host service on 443 cannot break the probe.</td>
+</tr>
+<tr>
+<td><code>audit_hmac_key</code></td>
+<td><code>MSKSD_AUDIT_HMAC_KEY</code></td>
+<td>string</td>
+<td><em>(unset)</em></td>
+<td>When set, every consent row is written with an HMAC-SHA256 tag over its data columns (tamper-evident audit); unset stores no tags.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="the-placeholder-secret-store">The placeholder secret store<a class="headerlink" href="#the-placeholder-secret-store" title="Permanent link">&para;</a></h3>
+<p>Where the real secrets behind placeholder tokens live (<a href="../secrets/">secrets
+chapter</a> for the flow). The store is one
+per-recipient ciphertext blobs; plaintext returns only through an
+operator's unlock
+when the first store operation finds it absent.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Environment variable</th>
+<th>Type</th>
+<th>Default</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>secret_store_unlock_timeout_s</code></td>
+<td><code>MSKSD_SECRET_STORE_UNLOCK_TIMEOUT_S</code></td>
+<td>float</td>
+<td><code>86400.0</code></td>
+<td>How long unlocked plaintext lives in the daemon's cache after the unlock POST that supplied it; the timer resets on an unlock itself — websocket traffic and keepalives never extend it. Zero holds plaintext only while at least one operator websocket stays connected — the last disconnect drops it, and an unlock over HTTP alone holds nothing past the reply.</td>
+</tr>
+<tr>
+<td><code>llm_port</code></td>
+<td><code>MSKSD_LLM_PORT</code></td>
+<td>int</td>
+<td><code>8770</code></td>
+<td>The port each workspace's LLM proxy listener binds on its tap.</td>
+</tr>
+<tr>
+<td><code>llm_models</code></td>
+<td><code>MSKSD_LLM_MODELS</code></td>
+<td>string/list</td>
+<td><code>""</code></td>
+<td>The model list: <code>provider/model:api_base:api_key</code> entries — comma-separated strings, or the file's list of strings and LiteLLM-native dicts; see <code>docs/llm.md</code>.</td>
+</tr>
+<tr>
+<td><code>llm_api_key</code></td>
+<td><code>MSKSD_LLM_API_KEY</code></td>
+<td>string</td>
+<td><code>""</code></td>
+<td>A default key for entries that name none; <code>file:</code>/<code>cmd:</code> indirection works.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="sighup-reload">SIGHUP reload<a class="headerlink" href="#sighup-reload" title="Permanent link">&para;</a></h2>
+<p>Send <code>SIGHUP</code> to a running <code>msksd</code> and it re-reads the config file
+(and the environment) into its live settings. Subsystems read
+settings off the app's state at call time, so the swap propagates
+with no per-module reconfiguration: a changed <code>egress_subnet</code>
+or
+<code>host_name</code> applies to the next request that reads it.</p>
+<p>Several things keep their startup values until a restart. A
+reload naming a new one changes nothing:</p>
+<ul>
+<li>the listener's address, port, TLS material, and access
+  logging, all bound at startup; the access log is also
+  snapshotted into the listener's config</li>
+<li><code>state_dir</code> and the database path it places: the engine is
+  open, and the local driver resolves every workspace's
+  artifacts from the state dir live, so the daemon latches the
+  startup value (moving it mid-run would orphan running
+  workspaces)</li>
+<li><code>default_image</code> (imported into the catalog once, at first boot)</li>
+<li>the watcher scan's <code>event_poll_s</code> (sampled at loop start): both the
+  workspace status reconcile and the state-disk pressure probe
+  ride it</li>
+<li>the egress machinery's startup inputs. <code>egress_enabled</code>
+  latches the subsystem's state when the daemon boots. The base
+  NAT masquerade's <code>egress_uplink</code> also latches: per-workspace
+  firewall rules read the live setting, but the base table
+  that actually masquerades out the uplink keeps its startup
+  value, so change <code>egress_uplink</code> only with a restart
+  scheduled.</li>
+</ul>
+<p>One reload does re-stamp the base table. A change that alters
+the LLM proxy's loopback guard shape (<code>llm_models</code> gaining or
+losing entries, <code>llm_port</code>, <code>egress_subnet</code>) re-applies the
+table at the next workspace start, masquerade included, from
+the live <code>egress_uplink</code>.</p>
+<p>A config that fails to load or validate is refused: the daemon
+reports the error on stderr and keeps the previous settings. A
+default-path file deleted since startup is likewise refused rather
+than regenerated, because a reload is not a first run and
+regenerating the
+template would silently revert every file-set value to its default.</p>
+<h2 id="notes-for-tooling">Notes for tooling<a class="headerlink" href="#notes-for-tooling" title="Permanent link">&para;</a></h2>
+<ul>
+<li>A bare <code>alembic</code> CLI run derives its database URL the way a bare
+  <code>msksd</code> would: the default config file when one is present (never
+  generated by <code>alembic</code>), else environment variables and defaults.
+  The daemon always passes its own live path programmatically. Use
+  <code>MSKSD_CONFIG_DIR</code>/<code>MSKSD_STATE_DIR</code> when the hand-run migration
+  must reach a database not at the default location.</li>
+<li>The generated template is written once, with <code>0700</code> on its
+  directory, and never overwrites an existing file; a
+  concurrent
+  <code>msksd</code> that wins the race is treated as "the file is there now".</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a2388154.min.js"></script>
+      
+    
+  </body>
+</html>

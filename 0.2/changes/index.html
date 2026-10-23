@@ -1,0 +1,1455 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Microvm workspaces for AI coding agents">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/msks/0.2/changes/">
+      
+      
+      
+        <link rel="prev" href="../secrets/">
+      
+      
+        <link rel="next" href="../development/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.71">
+    
+    
+      
+        <title>Changelog - msks</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.e442bf79.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.b60ce83d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="msks" class="md-header__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            msks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Changelog
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="msks" class="md-nav__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    msks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The host doctor
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  First run
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#unreleased" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        [Unreleased]
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v01-2026-10-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        [v0.1] - 2026-10-18
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[v0.1] - 2026-10-18">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Added
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#breaking" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Breaking
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Changed
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Fixed
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development environment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#unreleased" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        [Unreleased]
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#v01-2026-10-18" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        [v0.1] - 2026-10-18
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="[v0.1] - 2026-10-18">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Added
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#breaking" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Breaking
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Changed
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Fixed
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h1>
+<p>All notable changes to msks are documented here. The format follows
+<a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>; versions are
+tagged <code>vX.Y.Z</code>.</p>
+<h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h2 id="v01-2026-10-18">[v0.1] - 2026-10-18<a class="headerlink" href="#v01-2026-10-18" title="Permanent link">&para;</a></h2>
+<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>The NixOS workspace guest image (#250).</strong> A second catalog image
+  built from the devenv-pinned nixpkgs with
+  <code>msks-build-guest nixos</code> (into <code>.devenv/state/guest-nixos</code>;
+  <code>GUEST_NIXOS_DIR</code> relocates it), registering under the
+  <code>nixos</code> name beside <code>debian</code>. The archive carries the same
+  containerDisk contract and the same declared capabilities —
+  cloud-init, the prelude-v1 console — so the daemon serves it
+  with no new machinery and nothing keyed off the image's name.
+  See <a href="../images/#the-shipped-builder">docs/images.md</a>.</li>
+<li><strong><code>msks egress tui</code> (#195).</strong> The consent decider TUI: a textual app
+  that registers as the workspace's decider, shows held requests with
+  countdowns (<code>a</code>/<code>d</code> verdicts, <code>A</code>/<code>D</code> duration picker), and adds a
+  rules screen with revocation — over the frames and endpoints #69
+  serves, reconnecting with backoff (reset after each healthy
+  connection). Countdowns follow the deadline the daemon carries on
+  each request frame, and a registration the daemon rejects (an
+  unknown workspace) exits with the reason instead of waiting. The
+  <code>watch</code>/<code>decide</code>/<code>revoke</code> subcommands remain the scripting
+  surface. See <a href="../cli/#msks-egress">docs/cli.md</a>.</li>
+<li><strong>Placeholder secret store, <code>msks secret</code> commands (#198).</strong>
+  Mint a sentinel for a workspace (<code>msks secret mint &lt;ws&gt; --name
+&lt;label&gt; --dest &lt;hosts&gt; --secret-file &lt;path&gt;|-</code>) and the real
+  secret lives in a SecretSpec-backed store, provider as a setting
+  (<code>secret_store_provider</code>: <code>file</code> default, <code>age</code> for at-rest
+  encryption, <code>awssm</code>, <code>bws</code>), never in the workspace; <code>ls</code>,
+  <code>renew --ttl</code>, <code>revoke</code>, and <code>check</code> round out the surface.
+  Secrets ride stdin or a file, never argv; each lifecycle event
+  (mint, revoke, expiry) lands in the audit table. See
+  <a href="../secrets/">docs/secrets.md</a>, the <a href="../config/">key reference</a>,
+  and <a href="../cli/#msks-secret">cli.md</a>.</li>
+<li><strong><code>msks rsync</code> (#190).</strong> Zero-setup file copies over the forward:
+  <code>msks rsync &lt;ws&gt; -- -av ./site/ root@:/root/site/</code> boots the workspace
+  when the daemon reports it as not running, stages the ssh
+  identity in memory the way <code>msks ssh</code> does, and runs the host
+  rsync through a forward the copy opens itself — push and pull,
+  with the identity in memory only and no key file written. A
+  path with an empty host (<code>:src/</code>, <code>root@:/root/site/</code>) targets
+  the workspace the command names, its login user riding the
+  paths' own <code>user@</code> spelling; a <code>--pubkey</code> workspace exits
+  naming the recovery for its private half. See
+  <a href="../cli/#msks-rsync">docs/cli.md</a>.</li>
+<li>
+<p><strong>Egress consent (#69).</strong> Workspaces pick a consent posture at
+  create (<code>--egress-mode allow|static|interactive</code> plus repeatable
+  <code>--allow</code> specs; <code>allow</code> is the default and preserves the current
+  unrestricted egress). <code>static</code> resolves and reaches only the
+  allowlist (off-list names answer NXDOMAIN and are recorded);
+  <code>interactive</code> holds each new connection's first packet in the
+  deployment host's kernel until a decider answers over the events channel —
+  <code>msks egress watch/decide/revoke/rules/requests</code> drive the whole
+  verdict lifecycle (<code>once</code>/<code>5m</code>/<code>15m</code>/<code>tilrestart</code>/<code>forever</code>), with
+  revocation also dropping a destination's live connections. Ports
+  53/853 drop toward anything but the daemon's resolver (the naming
+  layer), verdicts pin names not just addresses, and the queue
+  fails closed (msksd down or a full queue drops). New settings
+  <code>MSKSD_EGRESS_MODE</code>, <code>MSKSD_EGRESS_CONSENT_TIMEOUT_S</code>,
+  <code>MSKSD_EGRESS_CONSENT_RATE_LIMIT</code>,
+  <code>MSKSD_EGRESS_CONSENT_RETENTION_DAYS</code>,
+  <code>MSKSD_EGRESS_CONSENT_ROW_CAP</code>, <code>MSKSD_EGRESS_QUEUE_BASE</code>,
+  <code>MSKSD_CONNTRACK_TOOL</code>, and <code>MSKSD_AUDIT_HMAC_KEY</code> (consent rows
+  carry HMAC tags when it is set). See
+  <a href="../networking/#egress-consent">docs/networking.md</a> and
+  <a href="../cli/#msks-egress">docs/cli.md</a>.</p>
+</li>
+<li>
+<p><strong><code>msks storage</code> image import times (#186).</strong> Each catalog row
+  in the image cost table shows when the archive came in (local
+  time to the minute) and the <code>GET /api/v1/storage</code> image entries
+  carry the time beside the hash, so entries sharing a reference
+  (a rebuilt image imported again) read as distinct; the table
+  orders them oldest-first. Re-importing the same archive
+  refreshes the time. See
+  <a href="../storage/#capacity-reporting">docs/storage.md</a>.</p>
+</li>
+<li><strong><code>msks resize</code> and <code>POST /api/v1/workspaces/{id}/resize</code> (#184).</strong>
+  A stopped workspace's disk sizes move after create: the <code>/home</code>
+  volume grows or shrinks (<code>e2fsck</code> quiets the journal, <code>resize2fs</code>
+  moves the filesystem, a shrink below used blocks answers a named
+  <code>409</code>), and the root overlay grows with the next start's
+  cloud-init filling the larger device. The row, <code>msks ls --json</code>,
+  and <code>msks storage</code> report the new ceiling immediately, and a
+  completed resize announces <code>workspace.resized</code>. New settings
+  <code>MSKSD_RESIZE2FS</code> and <code>MSKSD_E2FSCK</code> name the tools.</li>
+<li><strong><code>msks storage</code> and <code>GET /api/v1/storage</code> (#184).</strong> The daemon
+  reports the state-disk budget (<code>used</code>/<code>free</code> with a named
+  <code>pressure</code> condition), each workspace's cost beside its size
+  ceiling, and each catalog image's cost. The watcher publishes a
+  <code>storage.pressure</code> event on every change with a named log line,
+  and workspace creates, image imports, and home-volume imports
+  answer <code>507</code> below <code>MSKSD_STORAGE_FLOOR_MIB</code> (default 512 MiB;
+  the warn line sits at <code>MSKSD_STORAGE_WARN_PCT</code>, default 90),
+  with imports sized when their bytes are knowable (the archive
+  counted twice; a <code>Content-Length</code> body counted once), instead of
+  filling the disk until guests see I/O errors.</li>
+<li>
+<p><strong><code>msks ssh -- -A</code> forwards the operator's agent (#174).</strong> A
+  command-line <code>-A</code> (or <code>-o ForwardAgent=yes</code>) now names the agent
+  behind <code>SSH_AUTH_SOCK</code> explicitly, so <code>ssh-add -l</code> and
+  <code>git push</code> inside the workspace use the operator's keys — no
+  <code>Host msks-*</code> ssh-config block needed. The workspace identity
+  stays the session's authentication credential; the guest
+  receives the operator's keys and nothing else. An explicit
+  <code>-o ForwardAgent=&lt;path&gt;</code> keeps its own socket (it wins over
+  every flag and value, as with stock ssh), and a line stock ssh
+  resolves to off — including <code>-A -a</code> — passes through untouched.
+  The explicit form needs an OpenSSH client of 8.2 or newer (the
+  previous behavior forwards the session agent on older clients).</p>
+</li>
+<li>
+<p><strong>Console challenge-response (#123, first half).</strong> The guest
+  console demands a signature the daemon cannot produce: workspaces
+  seeded with an identity now also plant an allowed_signers trust
+  store, and each console connection carries a fresh nonce the
+  client must sign (SSHSIG, <code>msks-console</code> namespace) before any
+  shell — verified by the guest's own ssh-keygen, refused closed
+  otherwise. <code>msks console</code> answers transparently with the same key
+  as ssh (escrow, client data root, or the operator's ssh-agent,
+  hardware keys included — msks never reads an agent-held half).
+  Pre-change guests serve no challenge. Enrollment, minted-key
+  rotation, and the audited re-enable follow in the second half.</p>
+</li>
+<li><strong>Operator-supplied ssh key at create (#132).</strong> <code>msks create
+--pubkey FILE</code> (or <code>-</code> on stdin) builds the workspace around a
+  public key the operator already owns, at any well-formed key
+  type: the daemon accepts the supplied line as-is (shape-checked,
+  re-annotated, seeded like any identity) and holds no private
+  half. Minted keys keep the FIPS-approvable type set; login uses
+  the operator's own key, and <code>msks ssh</code>'s recovery text names it.
+  See <code>docs/networking.md</code>.</li>
+<li><strong>Client-minted workspace identity as the create default (#121).</strong>
+  <code>msks create</code> mints the workspace's ssh keypair on the client and
+  sends the public half only: the daemon stores and seeds that half
+  exactly like its own minted one and holds no private half — <code>msks
+key</code> answers the public line, and <code>msks ssh</code> serves the private
+  half from the client data root
+  (<code>~/.local/share/msks/&lt;id&gt;/identity</code>, mode 0600). <code>--daemon-mint</code>
+  keeps the daemon-minted escrow mode (#111); <code>--key-type</code> selects
+  the type
+  (<code>ed25519</code> default, #138). See <code>docs/networking.md</code>.</li>
+<li><strong>git-out through egress with a forwarded agent (#81).</strong> The
+  dogfood loop's outbound half is proven end to end by a new opt-in
+  root smoke, <code>test_local_egress_git_out</code> (it runs in the KVM
+  workflow's egress step): the workspace installs git from Debian's
+  mirrors and fetches an unrelated HTTPS host through the NAT'd
+  uplink, then pushes a commit to a scratch git server on the host
+  through a test-widened input pin, authenticating only with an
+  operator key that rode the forward as a forwarded agent — no
+  credential in the image or the seed. The workflow and its
+  ControlMaster caveat are in <code>docs/networking.md</code>.</li>
+<li><strong><code>msks ssh</code> (#112).</strong> One command logs into a workspace with stock
+  ssh over the forward websocket: it boots the workspace if needed,
+  fetches the minted identity over the authenticated API, and serves
+  the private half from a transient in-process ssh-agent — ssh names
+  the identity by its public half and signs through the socket, so
+  the key never becomes a file on the client. Logs in as the <code>msks</code>
+  workspace user by default (<code>-l root</code> for recovery); per-workspace
+  <code>known_hosts</code> under <code>accept-new</code>. See <code>docs/cli.md</code> and the alias
+  workflow in <code>docs/networking.md</code>.</li>
+<li><strong>Home-volume export/import (#80).</strong> A workspace's <code>/home</code> volume
+  now moves through the daemon's authenticated listener as byte
+  streams: <code>GET</code>/<code>PUT /api/v1/workspaces/{id}/home</code> stream the
+  volume file out and replace it from an uploaded ext4 image, with
+  <code>msks home export</code> / <code>msks home import</code> on top (<code>-</code> speaks stdio,
+  so the bytes compose with gzip or ssh). The workspace must be
+  stopped (<code>unknown</code> refuses too — the VM may be live), moves
+  serialize against boots and deletes per workspace (waiters
+  answer a named 409 after <code>MSKSD_MOVE_WAIT_TIMEOUT_S</code>, and the
+  daemon re-checks the live VMM under the lock), an upload that
+  fails the ext4 check or dies mid-body leaves the existing volume
+  in place, all-zero windows come back sparse, and each completed
+  move publishes a <code>home.exported</code> / <code>home.imported</code> event. See
+  <a href="/storage/#home-volume-export-and-import">storage</a> and
+  <a href="/cli/#msks-home">the CLI</a>.</li>
+<li><strong>Minted workspace identity and <code>msks key</code> (#111).</strong> msksd mints a
+  per-workspace ssh keypair at create — Ed25519 by default (#115,
+  #138), with the type configurable via
+  <code>MSKSD_SSH_KEY_TYPE</code> — and stores both halves with the workspace's
+  state. The public half is planted into <code>authorized_keys</code> for root
+  and the <code>msks</code> workspace user through the first-boot seed (composed
+  with any <code>user_data</code> payload), so a fresh workspace accepts ssh
+  with no manual key steps. <code>msks key &lt;ws&gt;</code> fetches the identity over
+  the token-gated API; <code>--private</code> prints the private half, <code>--out</code>
+  writes it mode 0600. The halves persist across daemon restarts and
+  workspace stop/start.</li>
+<li><strong>Guest sshd and rsync (#110).</strong> The workspace image serves TCP on
+  its forward path: sshd (Debian's own package, enabled) listens on
+  all interfaces behind a boot-time unit that waits for the NIC's
+  address (15s ceiling), with key-only login (<code>PasswordAuthentication
+no</code>, <code>PermitRootLogin prohibit-password</code>) pinned by a config dropin,
+  and rsync ships in the image. Host keys are generated on first boot
+  into the persistent root overlay, so they survive stop/start — the
+  recorded <code>known_hosts</code> entry keeps matching. The egress input
+  rules admit the conntrack-established replies to the
+  daemon-originated forward dial; guest-initiated connections
+  arrive state NEW and still drop. See
+  <a href="/networking/#reaching-guest-services-the-forward">networking</a>.</li>
+<li>
+<p><strong><code>msks forward</code> and the forward websocket (#109).</strong> A workspace's
+  guest TCP ports reach the client through a new authenticated
+  endpoint, <code>WS /api/v1/workspaces/{id}/forward/{port}</code>: the daemon
+  dials the workspace's deterministic tap address (retrying through
+  the DHCP/service bring-up race) and pumps raw bytes both ways —
+  one websocket per guest TCP connection, no framing, with
+  <code>forward.opened</code>/<code>forward.closed</code> events on the events channel.
+  The client command bridges stdio (the ssh ProxyCommand shape) or,
+  with <code>--local PORT</code>, a loopback listener where every accepted
+  connection gets its own forward. The token authenticates through
+  the <code>Authorization</code> header — the REST surface's Bearer form, kept
+  out of URLs and their logs; a workspace without egress is refused
+  with the reason naming the missing NIC. See <code>docs/cli.md</code>.</p>
+</li>
+<li>
+<p><strong>The dev-workspace bootstrap seed (#77).</strong>
+  <code>scripts/dev-workspace.sh</code>, passed to <code>msks create --user-data</code>,
+  bootstraps an msks development environment inside a workspace over
+  its own egress NIC at first boot: uv (with its own Python 3.14),
+  the repo checkout, and <code>uv sync</code> — the venv the <code>unit-tests</code>
+  invocation runs from — all on the persistent root overlay; stop/
+  start keeps it, a factory reset re-provisions, re-running is a
+  no-op. Proved end to end by the <code>TEST_EGRESS=1</code> root
+  smokes.</p>
+</li>
+<li>
+<p><strong><code>msks shell --user</code> and the console identity prelude (#63).</strong> The
+  vsock console now serves shells as root or the image's workspace
+  user: a guest-side helper negotiates the identity, the client
+  terminal's size, and its TERM value in-band on each connection, and
+  the listener accepts host-originated connections only (guest-local
+  peers are refused). A workspace bound to an image whose record
+  cannot be read is refused with close code 4501 — the console never
+  silently downgrades to a raw root shell. Images declare
+  <code>console_protocol: prelude-v1</code> and
+  <code>console_users</code> in their manifest; older images keep today's raw
+  root shell through the daemon's legacy path. The helper is a Rust
+  crate under <code>src/console-helper</code>, gated at 100% line and branch
+  coverage (<code>.github/workflows/rust.yml</code>).</p>
+</li>
+<li><strong>YAML config file for msksd (#46).</strong> <code>msksd</code> reads <code>msksd.yaml</code> — <code>--config &lt;path&gt;</code> for an explicit file, <code>--config=none</code> for env-vars-only, and a bare <code>msksd</code> resolves <code>$MSKSD_CONFIG_DIR/msksd.yaml</code> (default <code>~/.config/msksd/msksd.yaml</code>), generating a commented template on first run. Precedence is <code>MSKSD_*</code> env vars &gt; file &gt; defaults; a config key is its variable minus the prefix, lowercased (<code>MSKSD_PORT</code> → <code>port</code>, <code>MSKSD_EGRESS_SUBNET</code> → <code>egress_subnet</code> — flat, klangkd's convention, derived by one rule so the spellings cannot drift), keys take native YAML scalars, and unknown keys, duplicate keys, or invalid values fail at startup. SIGHUP re-reads the file into the live settings without a restart. The deployment-host module (#229) generates the file for the service with the build's store paths, and a bare <code>alembic</code> run resolves the database URL from the default file when present. See <code>docs/config.md</code> for the key-by-key reference.</li>
+<li>
+<p><strong><code>msks-preflight</code> (#43).</strong> One command delivers the Python-side pre-commit gates' complete feedback before the first commit attempt: every ruff and deferred-import finding, every xenon offender, the jscpd report, and — when sources under <code>src/msks/</code> changed — the gated suite run followed by every missing coverage line and branch arc for the changed files (<code>scripts/covgaps.py</code>). AGENTS.md makes it part of the loop: fix everything it names in one editing pass, re-run, then commit. The xenon and jscpd gates now also grade untracked-but-present files, so a new file grades from the moment it exists.</p>
+</li>
+<li>
+<p><strong>Doubled-escape and chunked input in <code>msks shell</code> (#36).</strong> The client reads stdin in 4,096-byte chunks and sends one websocket frame per chunk, so a large paste lands a few frames instead of one TLS frame per byte. Ctrl-] Ctrl-] — the second press within 50 ms, or both bytes in one chunk — sends one literal Ctrl-] (0x1d) to the guest; a single Ctrl-] still detaches, and bytes typed before the escape are delivered before the session closes. See <code>docs/cli.md</code>.</p>
+</li>
+<li>
+<p><strong>Per-workspace <code>user_data</code> provisioning (#41).</strong> A workspace created with <code>user_data</code> (API field; <code>msks create --user-data FILE</code>, <code>-</code> for stdin, ≤64 Ki characters) runs the payload on its first boot through cloud-init: the daemon builds a <code>cidata</code>-labeled iso9660 seed disk (NoCloud's own format, <code>MSKSD_MKISOFS</code>), attaches it read-only, stores it mode 0600, and deletes it with the workspace; both <code>#!</code> scripts and cloud-config documents run. The payload is create-time and immutable (<code>PUT</code>/<code>PATCH</code> answer a named 405). See <code>docs/images.md</code>.</p>
+</li>
+<li>
+<p><strong>Pre-commit hook suite (#72).</strong> Eleven hooks join the commit-time suite: the deferred-imports checker (<code>scripts/check_deferred_imports.py</code>, ported from klangk — imports live at module scope, with <code># allow-deferred-import</code> as the escape hatch), shfmt, shellcheck, check-executables-have-shebangs, markdownlint, actionlint, trufflehog, nixfmt, check-toml, yamllint, and prettier. <code>devenv shell</code> writes a generated <code>.prettierignore</code>; the lint rules live in <code>devenv.nix</code>; CI's lint workflow runs the whole suite (<code>pre-commit run --all-files</code>). trufflehog scans staged file contents and fails only on credentials that verify live (the stock git-history variant scans no commits at commit time). The tree was formatted once to the new gates (docs, workflows, Nix, shell scripts).</p>
+</li>
+<li>
+<p><strong><code>msks image</code> catalog commands (#65).</strong> The CLI now manages the image catalog without curl: <code>msks image ls</code> prints one line per image (reference, short hash, default designation, kernel facts; <code>--json</code> for the raw listing), <code>msks image import &lt;path&gt;</code> registers a daemon-side archive and prints the imported reference (the help states the daemon reads the path — nothing is uploaded), <code>msks image rm &lt;ref&gt;</code> removes by any catalog reference form (<code>name:version</code>, bare name, <code>name@hash</code>, full hash, or a unique hash prefix) and surfaces the 409 naming a workspace that boots the image, and <code>msks image info &lt;ref&gt;</code> prints one image's full record. See <code>docs/cli.md</code>.</p>
+</li>
+<li>
+<p><strong><code>msks-jscpd</code> token-clone gate (#71).</strong> The jscpd scanner (5.0.16, a pinned per-platform prebuilt binary fetched from npm — linux x64/arm64 gnu and macOS arm64/x64; unsupported platforms fail at eval time — ported from klangk #2904) joins the dev environment as both a report (<code>msks-jscpd</code>) and a pre-commit gate: <code>scripts/jscpd-gate.sh</code> is the single definition of the invocation (tracked sources in <code>src/msks/msks</code>, <code>--min-tokens 70</code>), shared with the <code>msks-xenon</code> pattern. A commit fails when any exact clone of ≥ 70 tokens exists among those sources; the backend baselines clean (0 clones), so the gate starts from zero.</p>
+</li>
+<li>
+<p><strong>Workspace egress networking, on by default (#52).</strong> Workspaces are networked from creation: each boots with a virtio-net NIC onto a per-VM tap on the deployment host, takes its address, gateway, and the daemon's resolver over DHCP from a per-workspace /30 of <code>MSKSD_EGRESS_SUBNET</code> (the slice recorded on the row, so the address is stable across restarts), resolves through the daemon's UDP forwarder, and NATs out the host uplink through a per-VM nftables table (forward: the guest's source out the uplink and established replies back, all else drops; input: DHCP and the resolver only, so guests cannot reach the daemon's own services) — create with <code>"egress": false</code> (<code>msks create ws --no-egress</code>) to boot NIC-less. The plumbing arms while <code>MSKSD_EGRESS_ENABLED=true</code> and the daemon holds <code>CAP_NET_ADMIN</code>; the host's forwarding comes from the msks module (#229). The guest overlay ships the DHCP client (systemd-networkd unit + resolved stub). Consent gating also arrives with #69. See <code>docs/networking.md</code>.</p>
+</li>
+<li>
+<p><strong>Client CLI: <code>msks stop</code>, <code>msks rm</code>, and the workspace listing named <code>msks ls</code> (#66).</strong> <code>msks stop &lt;id&gt;</code> powers a running workspace off — a graceful, deadline-bounded guest shutdown — and prints <code>&lt;id&gt; stopped</code>; <code>msks rm &lt;id&gt;…</code> deletes one or more workspaces (stopped or running) together with their persistent root overlay and <code>/home</code> volume, printing one <code>&lt;id&gt; deleted</code> line per id. The workspace listing command is <code>msks ls</code> (the <code>#59</code> behavior under its final name, matching <code>msks image ls</code>), completing the lifecycle set: ls / create / start / stop / rm / shell. Missing workspaces (404), workspaces recorded on another host (409), and missed shutdown deadlines (503) print one readable line and exit non-zero. See <code>docs/cli.md</code>.</p>
+</li>
+<li>
+<p><strong>Client CLI: <code>msks ls</code>, <code>msks create</code>, and <code>msks start</code> (#59).</strong> <code>msks ls</code> prints one line per workspace (id, status, image hash, host; <code>--json</code> for a machine-readable document), and <code>msks create</code> POSTs the API's create body — <code>--image</code> for a catalog reference, <code>--cpus</code>/<code>--mem-mib</code>/<code>--root-mib</code>/<code>--home-mib</code> for sizing, explicit <code>--kernel</code>/<code>--rootfs</code> to bypass the catalog — printing the new workspace's id; <code>--start</code> also boots it, and <code>msks start &lt;id&gt;</code> boots an existing workspace later. <code>msks shell</code> now boots a not-running workspace itself before attaching (notices on stderr). All commands use the <code>MSKSC_URL</code>/<code>MSKSC_TOKEN</code>/<code>MSKSC_CAFILE</code> conventions from <code>msks shell</code>; connection failures, timeouts, and API or validation errors print one readable line, not a traceback. See <code>docs/cli.md</code> for the command and environment reference.</p>
+</li>
+<li>
+<p><strong>Per-workspace persistent state (#14).</strong> Every workspace owns two persistent artifacts created with it: a root overlay (qcow2, copy-on-write over its image — package installs and root edits persist across <code>stop</code>/<code>start</code>) and a <code>/home</code> volume (ext4, labeled <code>msks-home</code>, mounted at <code>/home</code>). Both survive stop/start and are removed with <code>delete</code>; the new <code>POST /api/v1/workspaces/{id}/reset</code> drops only the overlay; sizes come from the create request (<code>root_mib</code>/<code>home_mib</code>) with <code>MSKSD_ROOT_MIB</code>/<code>MSKSD_HOME_MIB</code> defaults, and the workspace row records the owning host, so a start/stop/reset/delete from another host answers a named 409. The shipped image boots its root read-write through the overlay. See <code>docs/storage.md</code> for the layout, lifecycle, and env-var reference.</p>
+</li>
+<li>
+<p><strong>Workspace boot performance (#37).</strong> Start → interactive shell is now ~3.1s p50 on the reference host (was 6.7s; goal &lt; 5s), measured by the new <code>scripts/perf-boot.py</code> harness, which also reports the VMM's peak resident set (165–185 MiB for a 1024 MiB guest). The shipped image boots Debian's cloud kernel (ext4/virtio-pci built in) with a msks-built minimal initramfs (one module, ~0.05s) and starts the vsock console before the boot completes; AppArmor, networkd, timesyncd, resolved, unattended-upgrades, and e2scrub units are off the boot. <code>docs/boot-speed.md</code> documents the breakdown and the measurement.</p>
+</li>
+<li>
+<p><strong>Workspace image guide (#38).</strong> <code>docs/images.md</code> documents the image contract (container-image tar, containerDisk layout, <code>disk/image.json</code> schema 2), building an image (the shipped builder and a from-scratch outline), registering via <code>POST /api/v1/images</code> (default designation, storage cost, removal rules), and referencing images from workspace create (<code>name:version</code>, bare name, <code>name@hash</code>, bare hash).</p>
+</li>
+<li>
+<p><strong>Workspace image catalog with containerDisk images (#40).</strong> The canonical image is now a container-image tar (<code>podman load</code> compatible) in the containerDisk convention (<code>workspace-&lt;name&gt;-&lt;version&gt;.tar</code>: <code>boot/vmlinuz</code>, <code>boot/initrd.img</code>, <code>disk/rootfs.ext4</code>, <code>disk/image.json</code> schema 2) — importable with stock tools. <code>GET/POST /api/v1/images</code> list and import (per-hash boot-file cache; workspace launches never unpack); workspace create accepts <code>"image": "name:version"</code> (or bare name, or hash) and falls back to the designated default, so a bare create works on a fresh deployment — <code>MSKSD_DEFAULT_IMAGE</code> imports and designates at first boot. Explicit <code>kernel</code>/<code>rootfs</code> fields still win.</p>
+</li>
+<li>
+<p><strong>Workspace shell (#21).</strong> <code>msks shell &lt;workspace-id&gt;</code> gives an interactive shell inside a running workspace microvm, from any host that can reach the daemon: the client speaks the authenticated <code>/api/v1/workspaces/{id}/console</code> websocket (TLS + token, Ctrl-] detach, raw tty mode), and the daemon proxies it over virtio-vsock — the VM's vsock unix socket after a <code>CONNECT &lt;port&gt;</code> handshake — into a per-connection busybox ash on a pty served by static socat in the guest (root shell today, per #5's guest userland; <code>MSKSC_URL</code>/<code>MSKSC_TOKEN</code>/<code>MSKSC_CAFILE</code> configure the client). The guest assets gained the vsock module, <code>/dev/vsock</code> creation, devpts/ptmx setup, and socat; the daemon retries the console handshake across the guest's post-boot bring-up window.</p>
+</li>
+</ul>
+<h3 id="breaking">Breaking<a class="headerlink" href="#breaking" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Dev state moved under <code>.devenv/state/</code> (#156).</strong> The repo-root
+  state dirs — <code>.guest/</code>, <code>.msksd/</code> — now live at
+  <code>.devenv/state/{guest,msksd}/</code>, each relocatable via
+  <code>GUEST_DIR</code> or <code>MSKSD_STATE_DIR</code> (the daemon's own setting;
+  use an absolute value so the tasks and the daemon land in the same
+  place). Existing state does not migrate: move the directory you
+  want to keep or rebuild (<code>devenv processes up -d</code>,
+  <code>msks-dev-ready</code>), then delete the old dirs — they are no longer
+  gitignored. The devenv shell also prunes its own stale one-shot
+  wrappers (<code>.devenv/shell-*.sh</code> older than an hour) automatically.</li>
+</ul>
+<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>The NixOS deployment host (#229).</strong> msks ships as a flake
+  whose NixOS module runs msksd and cloud-hypervisor directly on a
+  NixOS deployment host; workspaces boot under cloud-hypervisor on
+  the host's <code>/dev/kvm</code> — one VM boundary between a workspace and
+  the metal — and egress consent is enforced in the host kernel
+  (per-VM taps, the nftables/NFQUEUE consent path, DHCP, DNS, and
+  NAT arrive with the module). The appliance layer
+  (<code>msks-appliance-*</code>, the #220 update channel, the state-disk
+  machinery) and the Kubernetes deployment target are removed:
+  updates and rollback come from rebuilding the host's NixOS
+  configuration. The roadmap of the time (docs/ROADMAP.md, since removed) carried the plan.</li>
+<li>
+<p><strong>Plain scripts instead of dependency-free devenv tasks (#166).</strong>
+  Every msks devenv task without <code>after</code>/<code>before</code> ordering is now a
+  plain script on the devenv shell's PATH (<code>msks-build-guest</code>,
+  <code>msks-preflight</code>, and the rest) — run it from a devenv shell
+  directly or <code>devenv --quiet -O dotenv.enable:bool false shell --
+&lt;name&gt;</code> from outside; <code>msks:uv-sync</code> remains the one task. The
+  pinned nixpkgs source is exported as <code>GUEST_NIXPKGS</code> to every
+  devenv context, and the build and lifecycle scripts print their
+  start and outcome.</p>
+</li>
+<li>
+<p><strong>Minted identity keys default to <code>ed25519</code> (#138).</strong> The
+  client mint (<code>--key-type</code>, <code>msks create</code>) and the daemon mint
+  (<code>ssh_key_type</code> / <code>MSKSD_SSH_KEY_TYPE</code>) now mint Ed25519 keys —
+  FIPS-approvable (FIPS 186-5) and accepted by ssh clients
+  restricted to the common <code>ssh-ed25519,ssh-rsa</code> set, so <code>msks ssh</code>
+  into a default-created workspace needs no algorithm passthrough.
+  <code>--key-type ecdsa</code> (the former default) and <code>--key-type rsa</code>
+  remain available for deployments whose validated crypto module
+  predates EdDSA. See <code>docs/networking.md</code>.</p>
+</li>
+<li>
+<p><strong><code>msks console</code> (#117).</strong> The interactive workspace command is
+  renamed from <code>msks shell</code> to <code>msks console</code>, matching the
+  <code>/api/v1/workspaces/{id}/console</code> websocket it speaks. A hard
+  rename: <code>msks shell</code> now exits with the standard unknown-command
+  error. See <code>docs/cli.md</code>.</p>
+</li>
+<li>
+<p><strong>msksd runs as a non-root service user (#101).</strong> The msks
+  module's systemd unit executes the daemon as a dedicated <code>msksd</code>
+  system user holding exactly two ambient capabilities —
+  <code>CAP_NET_ADMIN</code> (taps, nftables, and the VMM's tap opens) and
+  <code>CAP_NET_BIND_SERVICE</code> (DHCP 67, DNS 53) — and nothing in its
+  process tree runs as uid 0; <code>/dev/kvm</code> reaches it through the
+  <code>kvm</code> group, and the state directory is service-user-owned
+  (<code>/var/lib/msksd</code>). <code>net.ipv4.ip_forward=1</code> is a host setting the
+  module carries when egress is enabled: msksd verifies it and
+  refuses egress with the cause naming <code>net.ipv4.ip_forward</code> when it
+  reads <code>0</code>. See <code>docs/networking.md</code>.</p>
+</li>
+<li>
+<p><strong>The workspace guest boots Debian's generic kernel (#96).</strong> The
+  workspace image archive shrinks ~19 MiB compressed (147.8 → 128.7
+  MiB xz)
+  as Debian's full cloud module tree leaves in favor of the
+  twelve-file runtime closure the build derives from <code>modprobe</code>
+  metadata (and pins by comparing the full tree's closure against
+  the shipped tree's at build time). Boot
+  speed holds (p50 start→prompt 3.24 s against the cloud flavor's
+  2.95–3.26 s host spread; goal &lt; 5 s), and guest memory at first
+  prompt is unchanged (~140 MiB); numbers recorded in
+  <code>docs/boot-speed.md</code>.</p>
+</li>
+<li>
+<p><strong>The workspace image ships cloud-init (#41).</strong> The image is built from Debian's <code>genericcloud</code> cloud image instead of the cloud-init-free <code>nocloud</code> variant: cloud-init and its python3 runtime arrive with the base (~130M larger), and two dropins pin NoCloud as the only datasource and keep cloud-init off the guest's networking. The interactive boot budget is unchanged (vsock shell ~3.0s p50); existing workspaces keep the images they were created with — recreate workspaces to move them onto the new image.</p>
+</li>
+<li>
+<p><strong>Workspace stop is now a clean poweroff (#14).</strong> The local backend's stop presses the ACPI power button (<code>vm.power-button</code>) and the guest's systemd-logind runs a full shutdown before the VMM exits. The endpoint stop used before was cloud-hypervisor v52's hard stop: the guest was never notified, and with persistent disks every stop dropped the writes still sitting in the guest's page cache.</p>
+</li>
+<li>
+<p><strong>The workspace guest is Debian 13 trixie (#30).</strong> The rootfs comes from Debian's official nocloud cloud image (pinned by dated URL + sha512): systemd as PID 1, apt (present but inert while the root is read-only), and Debian's own kernel direct-booted. <code>msks-build-guest</code>, the manifest contract, and the smoke path are unchanged; the busybox guest is gone. See the README for build details, timings, and the setuid/ownership notes.</p>
+</li>
+<li>
+<p><strong>Local-driver and TLS hardening fixes from the first e2e (#10).</strong> The local driver now honors the absent-VM contract on stop/kill (a stale api socket behind a dead VMM reported ECONNREFUSED and delete-after-stop 500'd), the rootfs disk is declared <code>readonly</code> + <code>image_type: Raw</code> in <code>vm.create</code> (v52's autodetection otherwise disables sector-0 writes, and O_RDWR on the read-only store share fails), and <code>tls._write</code> loops <code>os.write</code> (a short write through virtio-backed storage left a truncated CA key).</p>
+</li>
+<li>
+<p><strong>The <code>msksd</code> daemon and its <code>/api/v1</code> API (#8).</strong> msksd now serves versioned endpoints over one HTTPS+WSS listener — public health, hashed bearer-token auth with revocation (<code>MSKSD_BOOTSTRAP_TOKEN</code> seeds the first credential), workspace create/list/status/start/stop/delete driving cloud-hypervisor through the microvm seam, and a websocket event channel for lifecycle transitions. TLS is operator-provided (<code>MSKSD_TLS_CERT</code>/<code>KEY</code>) or a self-signed CA generated on first run whose fingerprint is logged for trust-on-first-use pinning; <code>--no-tls</code> serves plain HTTP for development. State lives in an SQLite database under the state dir (<code>MSKSD_STATE_DIR</code>), managed by Alembic migrations.</p>
+</li>
+<li>
+<p><strong>Nix-built guest assets (<code>msks-build-guest</code>, <code>msks-demo-vm</code>).</strong> The devenv now produces everything needed to boot a microvm — kernel, initrd, read-only ext4 rootfs into the guest state dir (<code>.devenv/state/guest/</code>) — from the nixpkgs revision devenv itself pins, on any Linux host with nix; the manual-download flow is gone. Boot tests pick the built artifacts up automatically (explicit <code>TEST_VMLINUX</code>/<code>TEST_ROOTFS</code>/<code>TEST_INITRD</code> variables keep precedence) and skip themselves when the guest was never built or <code>/dev/kvm</code> is unusable. <code>msks-demo-vm</code> boots one interactive VM from the artifacts with <code>ch-remote</code> ready (#5).</p>
+</li>
+<li>
+<p><strong><code>msksd --reload</code> (development, #144).</strong> The daemon gains a
+  development flag that watches the msks package tree it runs from
+  and restarts the process when it changes.</p>
+</li>
+</ul>
+<h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
+<ul>
+<li>
+<p><strong>Console websocket closes protocol-clean (#217).</strong> The console
+  bridge now ends every session with a close frame instead of
+  dropping the TCP: a guest that refuses the console signature
+  closes with 4403 and the guest's <code>MSKS ERR</code> text as the reason
+  (watched until the helper's AUTH OK verdict, so a logged ERR line
+  in later shell output is not one), a guest stream that ends
+  (shell exit) closes with 1000, and only a client disconnect ends
+  without one. Clients can tell refusal apart from transport death.</p>
+</li>
+<li>
+<p><strong>The nix-built msks package ships <code>textual</code> (#203).</strong> The
+  package set shipped without <code>textual</code>: the msks wheel build
+  failed its runtime dependency check, and a daemon built from it
+  crashed at import time. <code>nix/textual-pkg.nix</code> builds the pinned
+  8.2.8 wheel into the closure, and a new test keeps
+  <code>nix/msks-pkg.nix</code> mirroring <code>[project.dependencies]</code> — the next
+  dependency addition fails a unit test instead of the nix build.</p>
+</li>
+<li>
+<p><strong>Guest images keep the base image's file
+  ownership (#179).</strong> <code>apt</code> inside a workspace now sees the
+  stock Debian metadata the base image ships: <code>mandb</code>'s cache is
+  <code>man:man</code> again (an <code>apt upgrade</code> printed <code>Permission denied</code> on
+  the whole man cache), and every other non-root owner — the
+  shadow-group password files, <code>utmp</code> logs, the
+  <code>systemd-network</code>, <code>dbus</code>, and <code>polkit</code> state directories —
+  round-trips with it. Build-time pins fail the image build when
+  <code>sudo</code> loses its setuid bit or the man cache loses its owner.
+  Workspaces must be recreated to pick up a rebuilt image.</p>
+</li>
+<li>
+<p><strong>Workspace home and the guest's account list (#171).</strong> The
+  first-boot identity seed now creates <code>/home/msks</code> owned by the
+  workspace user and populates it from <code>/etc/skel</code> (a home left
+  root-owned is repaired on the next provisioning), and the guest
+  image ships a cloud-init dropin that keeps the Debian cloud
+  image's own default account (<code>debian</code>, with <code>/home/debian</code> and a
+  passwordless-sudo entry) from ever being created — a workspace
+  created from this image carries <code>msks</code> as its only account.</p>
+</li>
+<li>
+<p><strong><code>msks ssh</code> waits out a just-booted workspace's identity seed
+  (#168).</strong> The first <code>msks ssh</code> against a freshly created
+  workspace could exit <code>Permission denied (publickey)</code>: the guest's
+  sshd answers before first-boot provisioning has written
+  <code>authorized_keys</code>, and a bare retry succeeds. A session whose
+  pre-flight booted the workspace now probes the login (a
+  throwaway <code>true</code> command, retried up to 30s) before opening the
+  real session, which runs exactly once either way.</p>
+</li>
+<li>
+<p><strong>Workspace <code>sudo</code> works — the guest image keeps the setuid bits
+  (#169).</strong> The image build extracts the Debian root unprivileged,
+  which dropped every setuid/setgid bit (<code>sudo</code>, <code>su</code>, <code>mount</code>, …);
+  the <code>msks</code> workspace user hit sudo's refusal — "must be owned by
+  uid 0 and have the setuid bit set". The build now restores the
+  bits from the source image's own inode modes, and the image
+  grants the <code>msks</code> user passwordless sudo (the locked password
+  makes NOPASSWD the only form that can run), so <code>sudo apt update</code>
+  works over a workspace console or ssh. Workspaces created from an
+  older image keep their old backing rootfs until recreated
+  (<code>msks rm</code>, then <code>msks create</code>).</p>
+</li>
+<li>
+<p><strong>Failed starts keep an actionable status (#158).</strong> A <code>vm.boot</code>
+  failure reaps the half-created VMM and the watcher's dead-socket
+  probe consults the identity check, so the workspace reports
+  <code>stopped</code> — not the incident's <code>unknown</code>, which a bare pid check
+  satisfied with a recycled pid — and the next <code>msks start</code>
+  retries. The incident's exact shape, recycled-pid trigger
+  included, is pinned by tests, and a stop/start lands a merged
+  fix.</p>
+</li>
+<li>
+<p><strong>Stale workspace sockets no longer break start (#151).</strong> A VMM
+  killed without cleanup (host crash, hard stop) left
+  <code>api.sock</code>/<code>vsock.sock</code> behind under <code>vms/&lt;id&gt;/</code>; the next start
+  died binding them and surfaced a misleading
+  unreachable-API/ENOENT 503. The start path now sweeps refused
+  sockets (a live listener is never unlinked), removes the stale
+  <code>ch.pid</code> (a recycled pid after a host reboot no longer blocks
+  starts with "already exists"), and a VMM that dies at spawn names
+  its own cause in the error (the tail of its ch.log) instead of a
+  bare exit code. VMM liveness is identity-checked against
+  <code>/proc/&lt;pid&gt;/cmdline</code>: a pid that is not this workspace's VMM is
+  never signaled, and one owned by another user is named in the
+  error instead of silently reported stopped.</p>
+</li>
+<li><strong>Legacy CA crash-loop on leaf remint (#148).</strong> A CA minted before
+  the strict-clean change parses but carries no Subject Key
+  Identifier; the leaf remint that a host change triggers read the
+  missing extension and exited, and <code>Restart=always</code> looped the
+  daemon forever (observed live on a long-lived state disk after
+  #146 changed the bind host). Such a CA is now replaced wholesale —
+  a stderr line names the replacement beside the new fingerprint —
+  instead of crash-looping. Current
+  strict-clean pairs keep leaf-only remints (same CA fingerprint).</li>
+<li><strong>Strict-clean minted TLS certificates (#141).</strong> The CA and leaf
+  msksd generates now carry Subject/Authority Key Identifiers and
+  the CA a <code>keyCertSign</code> KeyUsage, so Python 3.14 clients — whose
+  default SSL context enables <code>VERIFY_X509_STRICT</code> — verify the pair
+  instead of rejecting it. Existing state directories keep their
+  current pair; removing the <code>msks-ca*.pem</code>/<code>msks-cert*.pem</code> files
+  under the state dir lets the next start mint the strict-clean
+  replacement.</li>
+<li><strong>Mid-session console stalls no longer wedge a session open (#103).</strong>
+  The guest console helper's byte pump blocked on whichever direction
+  stalled first, so a wedged vsock transport froze the whole session —
+  input echoed but never executed, no output, no close. The pump now
+  moves each direction independently and a stream that accepts no
+  writes for 300 s ends the session; on the daemon side,
+  <code>console_stall_timeout_s</code> (<code>MSKSD_CONSOLE_STALL_TIMEOUT_S</code>, 60 s
+  default, <code>0</code> disables) closes a console websocket with 4502 when
+  client input draws no guest bytes for the window — <code>msks shell</code>
+  names the close, and reconnecting opens a fresh session. The
+  echo-off caveat (password prompts) and the helper-window
+  relationship are documented in <code>docs/cli.md</code> and <code>docs/config.md</code>.</li>
+<li>
+<p><strong>Egress DHCP/DNS under uvloop-running daemons (#144).</strong> The
+  development venv pulls uvloop (via <code>uvicorn[standard]</code>), which
+  does not implement <code>loop.sock_recvfrom</code>/<code>sock_sendto</code>; egress
+  workspaces created by such a daemon never received a DHCP lease
+  or DNS answer. The DHCP and DNS services now receive datagrams
+  through a loop-portable helper and behave identically under
+  asyncio and uvloop. This was also the real cause behind the
+  "guest NIC up but no frames" symptom recorded on #143 — not the
+  container boundary.</p>
+</li>
+<li>
+<p><strong><code>/home</code> could fail to mount on slow boots (#14).</strong> The guest fstab mounted the home volume by label under <code>x-systemd.device-timeout=2s</code>; that clock starts at sysinit job enqueue, before udevd runs, and on a first boot from a fresh overlay (every root read a copy-on-write miss) the udev label probe can exceed what is left of the budget — <code>home.mount</code> then fails for the whole boot (<code>nofail</code> keeps the boot moving and never retries). The device timeout is now 30s, so the mount rides out a slow coldplug; a boot with no volume at all waits the same 30s once and continues.</p>
+</li>
+<li>
+<p><strong>Egress workspaces never took a DHCP lease on fast hosts (#36).</strong> The guest reaches multi-user immediately after sysinit, and a networkd that enumerates its NIC while udev is still renaming it (eth0 to ens3) never manages the renamed link — DHCP never runs. The guest image orders networkd after <code>systemd-udev-trigger.service</code> and <code>systemd-udevd.service</code>, so the interface name is final before the first enumeration.</p>
+</li>
+<li>
+<p><strong><code>ws_url</code> quotes the token and workspace id (#36).</strong> The console URL interpolates <code>MSKSC_TOKEN</code> raw into the query string; minted tokens are urlsafe today, so this was theoretical, but any future charset with <code>+</code>, <code>&amp;</code>, <code>=</code>, or <code>%</code> would have mangled it. The token now passes through <code>urllib.parse.quote_plus</code> (a query value), and the workspace id through <code>urllib.parse.quote</code> with no safe characters (a path segment, where <code>+</code> would reach the server literally).</p>
+</li>
+<li>
+<p><strong>Workspace cleanup and image import release their resources (#56).</strong> <code>cleanup</code> now stops the workspace's VMM before deleting its directory — tracked or pidfile, like <code>kill</code> — where it previously orphaned the process. Image import closes the container-image archive after unpacking; each import previously left the archive's file handle open until garbage collection.</p>
+</li>
+<li><strong>Workspace shell input now echoes (#61).</strong> The vsock console's
+  guest pty ran with <code>echo=0,icanon=0</code> while the client keeps the
+  local tty raw, and the service environment's <code>TERM=dumb</code> left
+  bash's readline off — so typed characters reached nothing that
+  would show them. The pty is now a plain canonical terminal
+  (<code>echo=1,icanon=1</code>) and the unit sets <code>TERM=xterm</code>: line editing
+  and history work, and programs reading stdin directly get normal
+  tty echo. The console ships in the workspace image; a workspace
+  keeps the image it was created with, so delete existing
+  workspaces and the old image from the catalog — new workspaces
+  then bind the new image.</li>
+<li><strong><code>devenv shell</code> no longer runs the pre-commit suite at shell entry (#32).</strong> A devenv 2.3.x scheduler regression pulled <code>devenv:git-hooks:run</code> into the shell's task graph, so a failing hook (e.g. the xenon complexity gate) aborted shell entry before it opened — with no way to use the shell to fix the failure. The suite still runs on <code>git commit</code> and as the <code>msks-xenon</code> task.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a2388154.min.js"></script>
+      
+    
+  </body>
+</html>
