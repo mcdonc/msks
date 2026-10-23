@@ -806,3 +806,101 @@ def test_the_dial_follows_the_running_listener_not_the_setting(
         connect_data(FakeClient(sni="secretprobe.msks"), server)
     )
     assert server.address == (TAP, 9000)
+
+
+# --- the framing tier (#600) -------------------------------------------------
+
+
+def translated_flow(
+    version: bytes = b"HTTP/2.0",
+    status: int = 200,
+    content: bytes = b"payload",
+    method: str = "GET",
+):
+    """A response-facing flow with mitmproxy's own message objects:
+    an HTTP/2-sourced response carries no length (the stream framed
+    it), and the request names its method."""
+    from mitmproxy import http
+
+    flow = SimpleNamespace(
+        request=http.Request.make(method, "https://api.example.com/echo"),
+        response=http.Response.make(status, content),
+    )
+    flow.response.http_version = version
+    # make() sets a length of its own; the translation case this tier
+    # patches carries none (the stream framed the body).
+    if "content-length" in flow.response.headers:
+        del flow.response.headers["content-length"]
+    return flow
+
+
+def test_response_frames_a_translated_body_with_a_length(authority) -> None:
+    addon = engine.InterceptorAddon(FakeOwner({}, authority))
+    flow = translated_flow(content=b"x" * 4096)
+    addon.response(flow)
+    assert flow.response.headers["content-length"] == "4096"
+
+
+def test_response_frames_an_empty_translated_body(authority) -> None:
+    """The GitHub root shape (#600): a 200 whose body is empty still
+    needs a length — without one the guest reads to connection
+    close and takes the close mid-stream."""
+    addon = engine.InterceptorAddon(FakeOwner({}, authority))
+    flow = translated_flow(content=b"")
+    addon.response(flow)
+    assert flow.response.headers["content-length"] == "0"
+
+
+def test_response_leaves_http1_responses_alone(authority) -> None:
+    addon = engine.InterceptorAddon(FakeOwner({}, authority))
+    flow = translated_flow(version=b"HTTP/1.1", content=b"x" * 10)
+    addon.response(flow)
+    assert "content-length" not in flow.response.headers
+
+
+def test_response_frames_an_h3_response_too(authority) -> None:
+    """The same translation gap for an HTTP/3 origin's responses."""
+    addon = engine.InterceptorAddon(FakeOwner({}, authority))
+    flow = translated_flow(version=b"HTTP/3", content=b"x" * 10)
+    addon.response(flow)
+    assert flow.response.headers["content-length"] == "10"
+
+
+def test_response_leaves_a_streamed_response_alone(authority) -> None:
+    """A streamed response's head is already on the wire and its
+    body never buffers (review round 1): no length exists to name,
+    and stamping one would corrupt the already-started transfer."""
+    addon = engine.InterceptorAddon(FakeOwner({}, authority))
+    flow = translated_flow(content=b"x" * 10)
+    flow.response.stream = True
+    flow.response.raw_content = None
+    addon.response(flow)
+    assert "content-length" not in flow.response.headers
+
+
+@pytest.mark.parametrize(
+    "status,method,headers",
+    [
+        (204, "GET", {}),
+        (304, "GET", {}),
+        (100, "GET", {}),
+        (200, "HEAD", {}),
+        (200, "GET", {"content-length": "7"}),
+        (200, "GET", {"transfer-encoding": "chunked"}),
+    ],
+)
+def test_response_leaves_framed_or_bodiless_responses_alone(
+    authority, status, method, headers
+) -> None:
+    addon = engine.InterceptorAddon(FakeOwner({}, authority))
+    flow = translated_flow(status=status, method=method)
+    for name, value in headers.items():
+        flow.response.headers[name] = value
+    addon.response(flow)
+    for name in headers:
+        assert flow.response.headers[name] == headers[name]
+    # No length rides alongside a transfer coding or a bodiless
+    # status — the smuggling shape the inbound validator rejects
+    # elsewhere.
+    if "content-length" not in headers:
+        assert "content-length" not in flow.response.headers

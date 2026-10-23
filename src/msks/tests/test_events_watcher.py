@@ -17,6 +17,7 @@ from msks.server.api.events import decider_loop
 from msks.server.watcher import scan_once, scan_workspace, watch_loop
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
 from msks.spec.vm import VmInfo, VmStatus
+from msks.storage import MIB
 from test_api import TOKEN, StubMicrovm, auth
 
 from msks import events
@@ -282,10 +283,15 @@ async def test_watch_loop_logs_scan_failure(tmp_path: Path) -> None:
             pass
 
 
-async def test_scan_storage_publishes_pressure_changes(tmp_path: Path) -> None:
+async def test_scan_storage_publishes_pressure_changes(
+    tmp_path: Path, monkeypatch
+) -> None:
     """The state-disk probe is edge-triggered (#184): a pressure
     change publishes once, a steady state publishes nothing, and the
-    floor can move the pressure back the other way."""
+    floor can move the pressure back the other way. The probe reads
+    a rigged usage — the volume under a test host's tmp carries
+    whatever the host mounted, so no share of it is stable from
+    host to host."""
     from msks.server.watcher import scan_storage
 
     settings = Settings(
@@ -300,11 +306,14 @@ async def test_scan_storage_publishes_pressure_changes(tmp_path: Path) -> None:
     app = build_app(settings)
     hub = EventHub()
     queue = hub.subscribe()
-    # tmp_path sits on a real filesystem whose used share varies
-    # by host (a near-empty CI disk stays under a 1% line): the
-    # warn line at 0 makes any usage at all warn, so the
-    # assertion holds on every filesystem shape.
-    app.state.settings.vmm.storage_warn_pct = 0
+    total, used = 100 * MIB, 50 * MIB
+    usage = {"total": total, "used": used, "free": total - used}
+    monkeypatch.setattr(watcher_mod, "state_usage", lambda state_dir: usage)
+    # Both lines derive from the rigged bytes: the warn line sits
+    # under the used half (so the first probe warns) and the floor
+    # under the free half (so it stays out of the way).
+    app.state.settings.vmm.storage_warn_pct = 100 * used // total // 2
+    app.state.settings.vmm.storage_floor_mib = usage["free"] // MIB // 2
     assert await scan_storage(app, hub) is True
     message = json.loads(queue.get_nowait())
     assert message["event"] == "storage.pressure"
@@ -313,10 +322,9 @@ async def test_scan_storage_publishes_pressure_changes(tmp_path: Path) -> None:
     # Steady state: no second publish.
     assert await scan_storage(app, hub) is False
     assert queue.empty()
-    # An absurd floor drags it to critical — one more publish. (A
-    # mere terabyte is not absurd enough: the host tmp filesystem
-    # can carry more free than that.)
-    app.state.settings.vmm.storage_floor_mib = (1 << 50) // (1024 * 1024)
+    # A floor one mebibyte above the free half drags the probe to
+    # critical — one more publish.
+    app.state.settings.vmm.storage_floor_mib = usage["free"] // MIB + 1
     assert await scan_storage(app, hub) is True
     assert json.loads(queue.get_nowait())["data"]["pressure"] == "critical"
 

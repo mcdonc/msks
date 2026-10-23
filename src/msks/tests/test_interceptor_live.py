@@ -16,6 +16,9 @@ import tempfile
 import time
 from pathlib import Path
 
+import h2.config
+import h2.connection
+import h2.events
 import pytest
 from cryptography.hazmat.primitives import serialization
 from msks.app import build_app
@@ -29,6 +32,11 @@ API = "api.example.com"
 OTHER = "other.example.com"
 OTHER2 = "other2.example.net"
 PLAIN = "plain.example.net"
+
+#: One streamed h2 response body (#600): large enough to cross the
+#: protocol's initial flow-control windows many times over.
+STREAM_BODY = 512 * 1024
+STREAM_CHUNK = 64 * 1024
 
 
 class FakeNet:
@@ -158,6 +166,162 @@ class PlainOrigin(Origin):
 
     async def start(self) -> None:
         self.server = await asyncio.start_server(self.serve, self.addr, 0)
+
+
+class H2Origin(Origin):
+    """The GitHub-shaped origin (#600): negotiates h2 when the dial
+    offers it, streams one large body per request (flow control
+    honored, connection kept alive), and records the protocol each
+    connection negotiated so a test can pin the translation shape."""
+
+    def __init__(self, tmp: Path, name: str, hosts: list[str]) -> None:
+        super().__init__(tmp, name, hosts)
+        self.negotiated: list[str | None] = []
+
+    async def start(self) -> None:
+        chain = self.dir / "chain.pem"
+        chain.write_bytes(pem(self.leaf) + self.ca_pem)
+        leaf_key = self.dir / "leaf.key"
+        leaf_key.write_bytes(key_pem(self.leaf_key))
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.set_alpn_protocols(["h2", "http/1.1"])
+        context.load_cert_chain(chain, leaf_key)
+        self.server = await asyncio.start_server(
+            self.serve, self.addr, 0, ssl=context
+        )
+
+    async def serve(self, reader, writer) -> None:
+        tls = writer.get_extra_info("ssl_object")
+        alpn = tls.selected_alpn_protocol() if tls else None
+        self.negotiated.append(alpn)
+        if alpn != "h2":
+            await super().serve(reader, writer)
+            return
+        config = h2.config.H2Configuration(
+            client_side=False, header_encoding="utf-8"
+        )
+        conn = h2.connection.H2Connection(config=config)
+        conn.initiate_connection()
+        writer.write(conn.data_to_send())
+        await writer.drain()
+        pending: dict[int, int] = {}  # stream id -> bytes left to send
+
+        async def pump(stream_id: int) -> None:
+            while pending[stream_id] > 0:
+                window = min(
+                    conn.local_flow_control_window(stream_id),
+                    conn.max_outbound_frame_size,
+                )
+                if window <= 0:
+                    return  # a WindowUpdated event resumes the pump
+                size = min(window, STREAM_CHUNK, pending[stream_id])
+                conn.send_data(stream_id, b"x" * size)
+                pending[stream_id] -= size
+                out = conn.data_to_send()
+                if out:
+                    writer.write(out)
+                    await writer.drain()
+            conn.end_stream(stream_id)
+            out = conn.data_to_send()
+            if out:
+                writer.write(out)
+                await writer.drain()
+
+        try:
+            while True:
+                data = await reader.read(65536)
+                if not data:
+                    break
+                for event in conn.receive_data(data):
+                    if isinstance(event, h2.events.RequestReceived):
+                        conn.send_headers(
+                            event.stream_id,
+                            [(":status", "200")],
+                        )
+                        pending[event.stream_id] = STREAM_BODY
+                        await pump(event.stream_id)
+                    elif isinstance(event, h2.events.WindowUpdated):
+                        for sid in list(pending):
+                            if pending[sid] > 0:
+                                await pump(sid)
+                    elif isinstance(event, h2.events.DataReceived):
+                        conn.acknowledge_received_data(
+                            event.flow_controlled_length, event.stream_id
+                        )
+                out = conn.data_to_send()
+                if out:
+                    writer.write(out)
+                    await writer.drain()
+        except Exception:  # noqa: BLE001 - a flaked origin fails the test
+            pass
+        finally:
+            writer.close()
+
+
+def read_framed(tls) -> dict:
+    """One HTTP/1.1 response with its framing honored: the status
+    line, the headers, then exactly the framed body. A response with
+    no length of its own reads to connection close — the shape that
+    broke git (#600) — and reports itself closed."""
+    raw = b""
+    while b"\r\n\r\n" not in raw:
+        chunk = tls.recv(65536)
+        if not chunk:
+            raise AssertionError(f"EOF mid-headers, got {raw!r}")
+        raw += chunk
+    head, _, rest = raw.partition(b"\r\n\r\n")
+    lines = head.decode().split("\r\n")
+    status = int(lines[0].split()[1])
+    headers = {}
+    for row in lines[1:]:
+        name, _, value = row.partition(":")
+        headers[name.strip().lower()] = value.strip()
+    body = bytearray(rest)
+    if "content-length" in headers:
+        length = int(headers["content-length"])
+        while len(body) < length:
+            chunk = tls.recv(65536)
+            if not chunk:
+                raise AssertionError(
+                    f"EOF after {len(body)}/{length} body bytes"
+                )
+            body += chunk
+        del body[length:]
+        closed = False
+    else:
+        while chunk := tls.recv(65536):
+            body += chunk
+        closed = True
+    return {
+        "status": status,
+        "headers": headers,
+        "body": bytes(body),
+        "closed": closed,
+    }
+
+
+def alpn_gets(
+    listener_port, sni, paths: list[str], cafile
+) -> tuple[str | None, list[dict]]:
+    """The git/curl guest (#600): offers ALPN h2 + http/1.1 (so the
+    upstream dial carries both and an h2 origin answers h2), speaks
+    HTTP/1.1 on whatever the interceptor selects, and sends one
+    request per path on a single kept-alive connection."""
+    context = ssl.create_default_context(cafile=cafile)
+    context.set_alpn_protocols(["h2", "http/1.1"])
+    out = []
+    with socket.create_connection((TAP_IP, listener_port), timeout=60) as sock:
+        with context.wrap_socket(sock, server_hostname=sni) as tls:
+            alpn = tls.selected_alpn_protocol()
+            for path in paths:
+                tls.sendall(
+                    (
+                        f"GET {path} HTTP/1.1\r\nHost: {sni}\r\n"
+                        "User-Agent: git/2.39.5\r\nAccept: */*\r\n\r\n"
+                    ).encode()
+                )
+                out.append(read_framed(tls))
+    return alpn, out
 
 
 def read_response(sock: socket.socket) -> tuple[int, str]:
@@ -586,3 +750,80 @@ async def test_the_live_consent_gate(tmp_path, monkeypatch) -> None:
         await interceptor.stop()
         for origin in origins.values():
             origin.close()
+
+
+@pytest.mark.timeout(180)
+async def test_the_decrypted_path_frames_translated_streams(
+    tmp_path, monkeypatch
+) -> None:
+    """#600, live: the guest offers ALPN h2 + http/1.1 — git and curl
+    both do — and the interceptor's client context selects none, so
+    the guest speaks HTTP/1.1 while the upstream dial carries the h2
+    offer and the origin answers h2, whose responses carry no length
+    of their own. The decrypted path frames them: every streamed
+    response arrives whole behind a matching Content-Length, and the
+    kept-alive connection serves the next request instead of dying
+    mid-stream (the git-clone failure)."""
+    scratch = Path(tempfile.mkdtemp(prefix="msks-h2-"))
+    origin = H2Origin(scratch, "gh", [API])
+    await origin.start()
+
+    port = free_port()
+    app = build_app(
+        Settings(
+            vmm=VmmSettings(state_dir=tmp_path),
+            net=NetSettings(interceptor_port=port),
+            server=ServerSettings(db_path=tmp_path / "msks.db"),
+        )
+    )
+    app.state.model.migrate()
+    app.state.net = FakeNet()
+    app.state.secrets = FakeSecrets()
+    interceptor = Interceptor(app)
+    app.state.interceptor = interceptor
+
+    holder: dict = {}
+
+    def fake_original_addr(sock) -> tuple[str, int]:
+        return holder["dst"]
+
+    import mitmproxy.platform
+
+    monkeypatch.setattr(
+        mitmproxy.platform, "original_addr", fake_original_addr
+    )
+
+    await seed(app, "api", [API], "real-secret-one")
+    await interceptor.refresh("ws-live")
+    master = interceptor._master
+    assert master is not None
+    bundle = scratch / "upstream-bundle.pem"
+    bundle.write_bytes(origin.ca_pem)
+    master.options.update(ssl_verify_upstream_trusted_ca=str(bundle))
+    ws_ca = str(tmp_path / ca.CA_CERT_FILE)
+
+    try:
+        holder["dst"] = ("127.0.0.1", origin.port)
+        alpn, responses = await asyncio.to_thread(
+            alpn_gets,
+            port,
+            API,
+            ["/info/refs?service=git-upload-pack", "/git-upload-pack"],
+            ws_ca,
+        )
+        # The translation shape: the guest fell back to HTTP/1.1
+        # (the client context selects no ALPN) while the origin
+        # negotiated h2 — the mixed pair whose framing #600 pinned.
+        assert alpn is None
+        assert "h2" in origin.negotiated
+        assert len(responses) == 2
+        for response in responses:
+            assert response["status"] == 200
+            assert response["headers"].get("content-length") == str(
+                STREAM_BODY
+            )
+            assert response["body"] == b"x" * STREAM_BODY
+            assert response["closed"] is False
+    finally:
+        await interceptor.stop()
+        origin.close()
