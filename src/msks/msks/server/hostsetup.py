@@ -1268,9 +1268,11 @@ def wants_path(home: str) -> str:
     """The enablement symlink `enable --now` lands (the unit's
     WantedBy) — the piece `disable --now` is otherwise the only
     thing that removes, so a teardown without a bus call takes
-    it by path."""
+    it by path. Derived from USER_UNIT_RELATIVE so the basename
+    and the unit's own location stay one name."""
+    relative = Path(USER_UNIT_RELATIVE)
     return str(
-        Path(home) / ".config/systemd/user/default.target.wants/msksd.service"
+        Path(home) / relative.parent / "default.target.wants" / relative.name
     )
 
 
@@ -1294,15 +1296,16 @@ def teardown_running_service(
 
 
 def teardown_busless_service(
-    user: str, home: str, unit: str, wants: str
+    user: str, uid: int, home: str, unit: str, wants: str, manager_up: bool
 ) -> str:
     """The no-stop teardown: a down user manager runs no daemon,
     and a unit file that is already gone left none behind — the
-    files and the linger leave by path, no bus call involved, so
-    the teardown holds its every-piece-leaves contract anyway.
-    Neither piece on disk is the stand-down: the linger hint
-    names the by-hand fix, and the tool never removes state it
-    cannot see."""
+    files and the linger leave by path, no stop call involved, so
+    the teardown holds its every-piece-leaves contract anyway. A
+    manager that is up still hears the reload, so it forgets the
+    unit the files no longer name. Neither piece on disk is the
+    stand-down: the linger hint names the by-hand fix, and the
+    tool never removes state it cannot see."""
     unit_present = file_exists(unit)
     if not unit_present and not file_exists(wants):
         return (
@@ -1311,6 +1314,8 @@ def teardown_busless_service(
         )
     remove_file(unit)
     remove_file(wants)
+    if manager_up:
+        forget_unit(user, uid)
     disable_linger(user)
     if unit_present:
         return (
@@ -1318,8 +1323,8 @@ def teardown_busless_service(
             "manager was down — no daemon was running; lingering off)"
         )
     return (
-        "the msksd.service unit file was already gone; its enablement "
-        f"symlink left with it and lingering is off ({user})"
+        "the msksd.service unit file was already gone; the enablement "
+        f"symlink is removed and lingering is off ({user})"
     )
 
 
@@ -1331,9 +1336,10 @@ def uninstall_service(user: str, uid: int, home: str) -> str:
         return "skipped (no systemd manager on this host)"
     unit = unit_path(home)
     wants = wants_path(home)
-    if manager_running(uid) and file_exists(unit):
+    manager_up = manager_running(uid)
+    if manager_up and file_exists(unit):
         return teardown_running_service(user, uid, unit, wants)
-    return teardown_busless_service(user, home, unit, wants)
+    return teardown_busless_service(user, uid, home, unit, wants, manager_up)
 
 
 def drop_sysctl() -> str:
@@ -1357,8 +1363,9 @@ def drop_sysctl() -> str:
         )
     return (
         f"{SYSCTL_FILE} removed (sysctl --system re-applied the rest — "
-        "net.ipv4.ip_forward keeps its live value until the host reboots;"
-        " sysctl -w net.ipv4.ip_forward=0 turns it off now)"
+        "net.ipv4.ip_forward keeps its live value until the host reboots "
+        "where no remaining file names it; sysctl -w "
+        "net.ipv4.ip_forward=0 turns it off now)"
     )
 
 

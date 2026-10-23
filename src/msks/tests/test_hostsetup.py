@@ -182,6 +182,12 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     # The profile phase's atomic rename: the fake write_file
     # records in memory, so the real rename has nothing to move.
     monkeypatch.setattr(hostsetup, "replace_file", lambda source, target: None)
+    # The VMM's landed path lives under tmp_path: the .part sweep
+    # runs a real best-effort unlink, and the suite never touches
+    # the host's /usr/local/bin (the fake's one real-FS escape).
+    monkeypatch.setattr(
+        hostsetup, "CLOUD_HYPERVISOR_BIN", str(tmp_path / "cloud-hypervisor")
+    )
     monkeypatch.setattr(hostsetup, "OS_RELEASE", str(release))
     monkeypatch.setattr(hostsetup.os, "geteuid", lambda: 0)
     monkeypatch.setattr(hostsetup, "which", lambda tool: f"/usr/bin/{tool}")
@@ -1725,8 +1731,9 @@ def test_uninstall_removes_every_piece(
     assert f"{hostsetup.MODULES_FILE} removed (loaded modules stay" in out
     assert (
         f"{SYSCTL_FILE} removed (sysctl --system re-applied the rest — "
-        "net.ipv4.ip_forward keeps its live value until the host reboots;"
-        " sysctl -w net.ipv4.ip_forward=0 turns it off now)" in out
+        "net.ipv4.ip_forward keeps its live value until the host reboots "
+        "where no remaining file names it; sysctl -w "
+        "net.ipv4.ip_forward=0 turns it off now)" in out
     )
     assert "login PATH:" in out and "operator's own lines only" in out
     assert (
@@ -1860,7 +1867,7 @@ def test_uninstall_sysctl_reload_failure_is_a_warning(
     assert "apply at the next boot" in captured.err
     assert (
         f"{SYSCTL_FILE} removed (sysctl --system re-applied the rest — "
-        in (captured.out)
+        in captured.out
     )
     assert hostsetup.MODULES_FILE in host.removals
 
@@ -1870,16 +1877,22 @@ def test_uninstall_with_the_unit_gone_takes_the_symlink_and_linger(
 ) -> None:
     """A unit file removed by hand still leaves the tool's
     enablement symlink and linger — the teardown takes both by
-    path, no bus call involved."""
+    path, and the manager that is up hears the reload so it
+    forgets the unit; no stop call is involved."""
     host = landed_host(debian_host)
     home = hostsetup.executing_user()[3]
     host.files.discard(hostsetup.unit_path(home))
     assert main(["--uninstall"]) == 0
-    assert host.ran("runuser") == []
+    assert systemctl_ran(host, "daemon-reload") == [
+        hostsetup.user_systemctl("chrism", 1000, ["daemon-reload"])
+    ]
+    assert systemctl_ran(host, "disable") == []
     assert hostsetup.wants_path(home) in host.removals
     assert host.ran("loginctl") == [["loginctl", "disable-linger", "chrism"]]
     out = capsys.readouterr().out
-    assert "unit file was already gone; its enablement symlink left" in out
+    assert "unit file was already gone; the enablement symlink is removed" in (
+        out
+    )
 
 
 def test_uninstall_deluser_failure_refuses(
@@ -2092,3 +2105,19 @@ def test_install_uninstall_install_round_trip(
     assert main() == 0
     assert pieces <= host.files
     assert hostsetup.PROFILE_MARKER in host.writes[f"{home}/.profile"]
+
+
+def test_uninstall_sweeps_the_part_sibling(
+    debian_host: Host, tmp_path: Path
+) -> None:
+    """The `.part` a killed download leaves goes with the binary —
+    best-effort (_silent_unlink, the install refusal paths' own
+    pattern), so residue never refuses the phase. The fixture
+    parks CLOUD_HYPERVISOR_BIN under tmp_path, so the sweep runs
+    against the suite's own tree, never the host's /usr/local/bin."""
+    partial = Path(hostsetup.CLOUD_HYPERVISOR_BIN + ".part")
+    partial.write_text("half a download\n")
+    host = landed_host(debian_host)
+    assert main(["--uninstall"]) == 0
+    assert not partial.exists()
+    assert hostsetup.CLOUD_HYPERVISOR_BIN in host.removals
