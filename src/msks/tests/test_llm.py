@@ -1126,12 +1126,18 @@ def test_a_real_litellm_router_never_rides_the_aiohttp_transport(
     wrapped as an httpx transport, and the closure's aiohttp sits
     below litellm's own floor (nix/litellm-pkg.nix records the
     CVE-bearing history), so the daemon's completions stay on plain
-    httpx — the transport the passthrough mode already uses. A
-    litellm upgrade that drops this flag would put the below-floor
-    aiohttp back on the request path; this pins the contract."""
+    httpx — the transport the passthrough mode already uses. Both
+    halves of the contract are pinned: msks sets the module flag,
+    and litellm's own transport selector — the same function its
+    health endpoints report — answers that no aiohttp transport is
+    used, so a litellm upgrade that renames or drops the flag fails
+    here instead of silently reverting the request path."""
     router = LlmRouter()
     router.ensure(llm_settings(("openai/one::sk-1",)))
     assert real_litellm.disable_aiohttp_transport is True
+    from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
+
+    assert AsyncHTTPHandler.should_use_aiohttp_transport() is False
 
 
 def test_a_baseless_passthrough_entry_is_a_named_configure_error() -> None:

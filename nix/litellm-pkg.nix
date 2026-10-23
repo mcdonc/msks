@@ -21,7 +21,7 @@
 # python-dotenv). What each carries on the msks surface:
 #
 # - aiohttp is litellm's DEFAULT async transport — but
-#   msks.msks.llm's build_litellm_router sets
+#   msks.llm's build_litellm_router sets
 #   litellm.disable_aiohttp_transport, so the daemon's
 #   completions ride plain httpx and the closure's below-floor
 #   aiohttp never carries a request (a transport it did carry
@@ -114,7 +114,8 @@ buildPythonPackage {
   # ceiling (see the header comment); the bounds drop, the
   # presence stays. aiohttp's bound stays dropped only because
   # msks disables that transport — if llm.py ever lets litellm
-  # use it again, pin aiohttp at litellm's floor instead.
+  # use it again, pin aiohttp at the CVE-2026-69244 fix (3.14.3,
+  # above litellm's own >=3.14.2 floor) or later instead.
   pythonRelaxDeps = [
     "aiohttp"
     "boto3"
