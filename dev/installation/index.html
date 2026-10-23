@@ -324,6 +324,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#taking-the-setup-back-off" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Taking the setup back off
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-the-setup-lands" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -739,6 +750,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#taking-the-setup-back-off" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Taking the setup back off
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-the-setup-lands" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -835,6 +857,33 @@ normal user account.</p>
 <p><img alt="A successful run of msks-setup-debian-host" src="../screens/msks-setup-debian-host.png" /></p>
 <p>The run is idempotent: re-run any time, and re-run after a util-linux upgrade
 (the wrapper keeps a copy of <code>setpriv</code>; see below).</p>
+<h2 id="taking-the-setup-back-off">Taking the setup back off<a class="headerlink" href="#taking-the-setup-back-off" title="Permanent link">&para;</a></h2>
+<p><code>msks-setup-debian-host --uninstall</code> reverses the run: it stops and
+disables the <code>msksd</code> user service and removes its unit file and its
+enablement symlink (the stop lets the daemon finish its shutdown
+cycle, workspaces included), turns linger off, removes the two <code>/etc</code>
+files the run landed, removes the capability wrapper, takes the
+executing user out of the <code>kvm</code> group (the tool keeps no record of
+which run added a membership, so any member leaves — the summary
+names the <code>adduser</code> line that restores it), strips the PATH block
+from <code>~/.profile</code>, and removes the cloud-hypervisor binary. Kernel
+modules already loaded stay loaded until the next reboot.</p>
+<p>After the sysctl file leaves, <code>sysctl --system</code> re-applies every remaining
+sysctl.d file — the same set a boot applies. A second owner that wrote its
+own forwarding file keeps its setting; a live-only forwarder the tool never
+saw keeps its value too. On a host where no remaining file names
+<code>net.ipv4.ip_forward</code>, the live value the setup run set stays on until the
+next reboot — the summary names <code>sysctl -w net.ipv4.ip_forward=0</code> for
+the operator who wants it off immediately.</p>
+<p>The apt packages the run installed stay installed — they are shared
+Debian packages, and other software on the host may use them. The
+uninstall summary prints the ones whose probes answer present, with a
+copy-paste <code>apt-get remove --purge ...</code> line, so you can remove the ones
+nothing else needs yourself.</p>
+<p>The uninstall run is idempotent the same way: a piece already gone is a
+line in the summary, not an error, and the first real refusal stops the
+run — the setup run's rule. <code>--no-service</code> holds its meaning — the
+service is left alone, every other piece still leaves.</p>
 <h2 id="what-the-setup-lands">What the setup lands<a class="headerlink" href="#what-the-setup-lands" title="Permanent link">&para;</a></h2>
 <p>Each phase runs in order, and the first refusal stops the run with an error.</p>
 <p><strong>Apt packages</strong>. The apt packages required by the server and the
