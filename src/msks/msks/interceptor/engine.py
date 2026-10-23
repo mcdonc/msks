@@ -47,6 +47,16 @@ gate (:mod:`msks.interceptor.egress`) before anything else moves:
   connection, and a ``once`` verdict must not re-prompt per request
   on a kept-alive connection — except a duplicate-race denial, which
   is not final and re-gates until the destination's decision lands.
+- ``response`` frames translated responses (#600): the guest speaks
+  HTTP/1.1 on the decrypted path (the client-facing context selects
+  no ALPN), while the upstream dials with the guest's offered
+  protocols and an HTTP/2 origin answers HTTP/2 — whose responses
+  carry no length of their own, the stream framed them. mitmproxy's
+  translation writes them without a length header, so the guest
+  reads the body to connection close and the close it takes mid-
+  stream breaks the transfer (a git clone dies on it). The buffered
+  body's length becomes a Content-Length, so the guest frames the
+  response itself and the connection stays reusable.
 """
 
 import logging
@@ -311,6 +321,37 @@ async def swap_on_flow(owner, workspace, entry, host, flow) -> None:
     await owner.publish_swap(workspace, entry, host)
 
 
+def bodiless(flow: http.HTTPFlow) -> bool:
+    """Whether this exchange's response carries no body by
+    definition: an informational (1xx) status, 204, 304, or a HEAD
+    request — framing its status already settles."""
+    response = flow.response
+    if 100 <= response.status_code < 200 or response.status_code in (
+        204,
+        304,
+    ):
+        return True
+    return flow.request.method.upper() == "HEAD"
+
+
+def frames_with_a_length(flow: http.HTTPFlow) -> bool:
+    """Whether this response needs the translation's length added
+    (#600): a body-carrying response from an HTTP/2 or HTTP/3 origin
+    that arrived with no framing of its own — the stream framed the
+    body, and the translation to HTTP/1.1 writes no length header.
+    A response that already carries a length or a transfer coding
+    passes."""
+    response = flow.response
+    if not (response.is_http2 or response.is_http3):
+        return False  # an HTTP/1.x origin frames its own responses
+    if bodiless(flow):
+        return False
+    return (
+        "content-length" not in response.headers
+        and "transfer-encoding" not in response.headers
+    )
+
+
 class InterceptorAddon:
     """The hooks: consent, splice, leaf, rewrite."""
 
@@ -509,6 +550,23 @@ class InterceptorAddon:
         if verdict.reason != "duplicate":
             self._per_connection.setdefault(client, {})[key] = verdict
         return None if verdict.allowed else verdict.reason
+
+    def response(self, flow: http.HTTPFlow) -> None:
+        """Frame a translated response for the HTTP/1.1 guest (#600):
+        an HTTP/2 or HTTP/3 origin's response carries no length of
+        its own (the stream framed it), and the translation to
+        HTTP/1.1 adds none — the guest would read the body to
+        connection close, and the close the proxy then makes to
+        delimit it reads as a mid-stream failure (git clone's GnuTLS
+        -110, curl's unexpected EOF after the last byte). The body
+        is buffered whole by the time this hook runs; its length
+        becomes a Content-Length, so the guest frames the response
+        itself and the kept-alive connection stays reusable."""
+        if frames_with_a_length(flow):
+            response = flow.response
+            response.headers["content-length"] = str(
+                len(response.raw_content or b"")
+            )
 
 
 class LogBridge:
