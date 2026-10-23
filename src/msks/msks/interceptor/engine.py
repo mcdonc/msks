@@ -334,22 +334,38 @@ def bodiless(flow: http.HTTPFlow) -> bool:
     return flow.request.method.upper() == "HEAD"
 
 
+def buffered(flow: http.HTTPFlow) -> bool:
+    """Whether the response's body arrived whole: nothing streamed,
+    and the raw bytes are present."""
+    response = flow.response
+    return not response.stream and response.raw_content is not None
+
+
+def unframed(response) -> bool:
+    """Whether neither a length nor a transfer coding rides the
+    response."""
+    return (
+        "content-length" not in response.headers
+        and "transfer-encoding" not in response.headers
+    )
+
+
 def frames_with_a_length(flow: http.HTTPFlow) -> bool:
     """Whether this response needs the translation's length added
     (#600): a body-carrying response from an HTTP/2 or HTTP/3 origin
     that arrived with no framing of its own — the stream framed the
     body, and the translation to HTTP/1.1 writes no length header.
     A response that already carries a length or a transfer coding
-    passes."""
+    passes. A streamed response passes too: its head is already on
+    the wire and its body never buffers, so no length exists to
+    name — such a response keeps the close-delimited framing the
+    streaming path chose."""
     response = flow.response
     if not (response.is_http2 or response.is_http3):
         return False  # an HTTP/1.x origin frames its own responses
-    if bodiless(flow):
+    if bodiless(flow) or not buffered(flow):
         return False
-    return (
-        "content-length" not in response.headers
-        and "transfer-encoding" not in response.headers
-    )
+    return unframed(response)
 
 
 class InterceptorAddon:
@@ -564,9 +580,7 @@ class InterceptorAddon:
         itself and the kept-alive connection stays reusable."""
         if frames_with_a_length(flow):
             response = flow.response
-            response.headers["content-length"] = str(
-                len(response.raw_content or b"")
-            )
+            response.headers["content-length"] = str(len(response.raw_content))
 
 
 class LogBridge:

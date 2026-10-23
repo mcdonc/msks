@@ -866,6 +866,18 @@ def test_response_frames_an_h3_response_too(authority) -> None:
     assert flow.response.headers["content-length"] == "10"
 
 
+def test_response_leaves_a_streamed_response_alone(authority) -> None:
+    """A streamed response's head is already on the wire and its
+    body never buffers (review round 1): no length exists to name,
+    and stamping one would corrupt the already-started transfer."""
+    addon = engine.InterceptorAddon(FakeOwner({}, authority))
+    flow = translated_flow(content=b"x" * 10)
+    flow.response.stream = True
+    flow.response.raw_content = None
+    addon.response(flow)
+    assert "content-length" not in flow.response.headers
+
+
 @pytest.mark.parametrize(
     "status,method,headers",
     [
@@ -887,5 +899,8 @@ def test_response_leaves_framed_or_bodiless_responses_alone(
     addon.response(flow)
     for name in headers:
         assert flow.response.headers[name] == headers[name]
-    if not headers:
+    # No length rides alongside a transfer coding or a bodiless
+    # status — the smuggling shape the inbound validator rejects
+    # elsewhere.
+    if "content-length" not in headers:
         assert "content-length" not in flow.response.headers
