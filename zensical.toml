@@ -28,6 +28,7 @@ nav = [
   { "Workspace Images" = "images.md" },
   { "Guest Networking" = "networking.md" },
   { "Storage" = "storage.md" },
+  { "LLM Proxy" = "llm.md" },
   { "Secrets" = "secrets.md" },
   { "Changelog" = "changes.md" },
   { "Development environment" = "development.md" },
@@ -37,7 +38,6 @@ nav = [
 # published site (unreadable from the nav, unlisted here on
 # purpose).
 exclude_docs = """
-llm.md
 """
 
 [project.theme.palette]

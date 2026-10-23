@@ -12,12 +12,13 @@ is a systemd user unit, lingered so it survives logout):
 ```
 
 When msksd is first started, it creates a state dir
-(`~/.local/state/msksd`). The `msksd.yaml` config file is generated as a
-commented template (see [Configuration](config.md)) within the directory.
+(`~/.local/state/msksd`). The `msksd.yaml` config file is generated within it
+as a commented template (see [Configuration](config.md)).
 
 The unix listener binds `$XDG_RUNTIME_DIR/msks/msksd.sock`. Same-host clients
-connect through it on peer-credential authentication (remote can, if
-configiured, contact a TLS/https listener with a bearer token).
+connect through it on peer-credential authentication. A remote can, if
+configured, contact a TLS/https listener with a bearer token, but it is not
+configured by default.
 
 With the host prepared, the service lingered, and an image imported, invoking
 the `msks` (the client) on the same account will find the socket.
@@ -66,7 +67,7 @@ saved in your ssh-agent, you needn't name the private half of your key in msks
 config, only the public one (`pubkey_file`), and the private half need not be
 on disk.
 
-But if your ssh key is not already in an agent, a key no agent holds is staged
+If your ssh key is not already in an agent, a key no agent holds is staged
 in memory as an unencrypted OpenSSH-format key (`ed25519`, `ecdsa`
 P-256/P-384/P-521, or `rsa`); msks never types a passphrase. An encrypted key
 no agent holds is refused with a line naming `ssh-add` as the first fix, then

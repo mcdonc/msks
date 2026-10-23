@@ -38,9 +38,9 @@ The quoted form matters: the console script lands in `~/.local/bin`, which
 sudo's path does not carry — the bare name would answer "command not
 found".
 
-Run it as the user the daemon will serve (usually your normal user account) —
-under `sudo`, the `SUDO_USER` account is the executing user, and the service
-the tool registers belongs to your normal user account.
+Run it as the user the daemon will serve under `sudo`, the `SUDO_USER` account
+is the executing user, and the service the tool registers will belong to your
+normal user account.
 
 ![A successful run of msks-setup-debian-host](screens/msks-setup-debian-host.png)
 
@@ -49,8 +49,7 @@ The run is idempotent: re-run any time, and re-run after a util-linux upgrade
 
 ## What the setup lands
 
-Each phase runs in order, and the first refusal stops the run
-with an associated error.
+Each phase runs in order, and the first refusal stops the run with an error.
 
 **Apt packages**. The apt packages required by the server and the
 client.
@@ -114,12 +113,17 @@ until that manager restarts, and the run's summary says so. A re-run
 rewrites the unit and restarts a running daemon onto it when
 the unit changed.
 
-The run ends with a summary: the wrapper and its caps, the
-sysctl, the modules file and the consent verdict, the tools'
-paths, `/dev/kvm`, the detected uplink (the interface the
-daemon's `egress_uplink` key should point at), and the
-service line. When the service started, the same-user socket
-path prints beside it.
+**Cloud Hypervisor's static release binary**. So guest VMs can be started.
+
+**PATH manipulation.** Adds `/usr/sbin` to the sudoing user's `PATH` so various
+binaries can be found.
+
+The run ends with a summary: the wrapper and its caps, the sysctl, the modules
+file and the consent verdict, the tools' paths, `/dev/kvm`, the detected
+uplink, and the service line.
+
+You will need to log out and back in for `msksd doctor` to return clean after
+using the host installer.
 
 ## The same host by hand (if you'd rather not trust `msks-setup-debian-host`)
 
@@ -258,7 +262,7 @@ sudo install -m755 ch-remote-static /usr/local/bin/ch-remote-static
 
 ## The host doctor
 
-The [The host doctor](doctor.md) chapter documents the `msks doctor` command
+The [The host doctor](doctor.md) chapter documents the `msksd doctor` command
 that can diagnose installation issues.
 
 ## The alternative paths
