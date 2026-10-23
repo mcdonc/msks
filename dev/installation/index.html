@@ -346,10 +346,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-vmm-cloud-hypervisor" class="md-nav__link">
+  <a href="#the-host-doctor" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The VMM (<code>cloud-hypervisor</code>)
+        The host doctor
       </span>
     </span>
   </a>
@@ -361,28 +361,6 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         The alternative paths
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#distributions-the-msks-setup-debian-host-unit-does-not-cover" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Distributions the <code>msks-setup-debian-host</code> unit does not cover
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#first-run" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        First run
       </span>
     </span>
   </a>
@@ -430,14 +408,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../identity/" class="md-nav__link">
+      <a href="../first-run/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  The identity file
+  First run
 
     
   </span>
@@ -612,6 +590,32 @@
   
   
     <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../secrets/" class="md-nav__link">
         
   
@@ -757,10 +761,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-vmm-cloud-hypervisor" class="md-nav__link">
+  <a href="#the-host-doctor" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The VMM (<code>cloud-hypervisor</code>)
+        The host doctor
       </span>
     </span>
   </a>
@@ -772,28 +776,6 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         The alternative paths
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#distributions-the-msks-setup-debian-host-unit-does-not-cover" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Distributions the <code>msks-setup-debian-host</code> unit does not cover
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#first-run" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        First run
       </span>
     </span>
   </a>
@@ -825,13 +807,18 @@
 daemon (<code>msksd</code>), the consent-decider terminal (<code>msks-term-popup</code>), and the
 Debian host setup this chapter describes (<code>msks-setup-debian-host</code>).</p>
 <p>The wheel needs Python 3.14 or newer.</p>
-<p>The <a href="../doctor/">The host doctor</a> chapter documents the <code>msks doctor</code> command
-that can diagnose installation issues.</p>
-<div class="language-console highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">pipx install msks        # or: pip install msks</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="w">   </span>curl<span class="w"> </span>-LsSf<span class="w"> </span>https://astral.sh/uv/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">   </span><span class="nb">source</span><span class="w"> </span><span class="nv">$HOME</span>/.local/bin/env
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">   </span>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.14<span class="w"> </span>msks
 </span></code></pre></div>
+<p>There is an automated setup for the remainder on Debian-derived hosts. It's
+currently bridge-out for any other type of Linux host, save for NixOS, which
+remains undocumented now, apologies.</p>
 <h2 id="setup-using-msks-setup-debian-host-console-script">Setup using <code>msks-setup-debian-host</code> console script<a class="headerlink" href="#setup-using-msks-setup-debian-host-console-script" title="Permanent link">&para;</a></h2>
 <p>The msks daemon runs the workspaces directly on the host using
-<a href="https://github.com/cloud-hypervisor/cloud-hypervisor">cloud-hypervisor</a>.</p>
+<a href="https://github.com/cloud-hypervisor/cloud-hypervisor">cloud-hypervisor</a> and
+various networking and kernel-y bits need to be satisfied for it to work
+properly.</p>
 <p>The host therefore needs pieces the wheel cannot carry. These are software
 dependency packages, kernel modules, a routing sysctl, two capabilities for the
 daemon's user, and a service that keeps <code>msksd</code> running.</p>
@@ -840,21 +827,18 @@ daemon's user, and a service that keeps <code>msksd</code> running.</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="go">sudo "$(command -v msks-setup-debian-host)"</span>
 </span></code></pre></div>
 <p>The quoted form matters: the console script lands in <code>~/.local/bin</code>, which
-sudo's <code>secure_path</code> does not carry — the bare name would answer "command not
+sudo's path does not carry — the bare name would answer "command not
 found".</p>
-<p>Run it as the user the daemon will serve (usually your normal user account) —
-under <code>sudo</code>, the <code>SUDO_USER</code> account is the executing user, and the service
-the tool registers belongs to that account.</p>
+<p>Run it as the user the daemon will serve under <code>sudo</code>, the <code>SUDO_USER</code> account
+is the executing user, and the service the tool registers will belong to your
+normal user account.</p>
+<p><img alt="A successful run of msks-setup-debian-host" src="../screens/msks-setup-debian-host.png" /></p>
 <p>The run is idempotent: re-run any time, and re-run after a util-linux upgrade
 (the wrapper keeps a copy of <code>setpriv</code>; see below).</p>
 <h2 id="what-the-setup-lands">What the setup lands<a class="headerlink" href="#what-the-setup-lands" title="Permanent link">&para;</a></h2>
-<p>Each phase runs in order, and the first refusal stops the run
-with a named error.</p>
-<p><strong>The packages.</strong> The egress plumbing the daemon execs by bare
-name installs through apt when missing: <code>iproute2</code> (<code>ip</code>),
-<code>nftables</code> (<code>nft</code>), <code>conntrack</code>, and <code>procps</code> (<code>sysctl</code>),
-beside the tools the setup itself runs: <code>util-linux</code> (<code>setpriv</code>),
-<code>libcap2-bin</code> (<code>setcap</code>), <code>kmod</code> (<code>modprobe</code>) and various others.</p>
+<p>Each phase runs in order, and the first refusal stops the run with an error.</p>
+<p><strong>Apt packages</strong>. The apt packages required by the server and the
+client.</p>
 <p><strong>The capability wrapper.</strong> <code>/usr/local/bin/msks-caps</code> — a
 root-owned copy of util-linux <code>setpriv</code> carrying file
 capabilities <code>cap_net_admin</code> and <code>cap_net_bind_service</code>. The
@@ -864,8 +848,7 @@ egress stack's DHCP (port 67) and DNS (port 53) need
 they flow to the daemon and every tool it execs — and the grant
 surface is the wrapper's execute permission: any local user
 able to run it holds the two capabilities through it. After
-installing it the setup runs the wrapper and verifies the caps
-arrive ambient.</p>
+installing it the setup runs the wrapper and verifies the caps.</p>
 <p><strong>The routing kernel.</strong> <code>/etc/sysctl.d/msks-egress.conf</code> sets
 <code>net.ipv4.ip_forward=1</code> at boot, and the value applies
 immediately: route packets between the per-VM taps and the
@@ -910,19 +893,20 @@ group write reached it; the daemon then holds the old groups
 until that manager restarts, and the run's summary says so. A re-run
 rewrites the unit and restarts a running daemon onto it when
 the unit changed.</p>
-<p>The run ends with a summary: the wrapper and its caps, the
-sysctl, the modules file and the consent verdict, the tools'
-paths, <code>/dev/kvm</code>, the detected uplink (the interface the
-daemon's <code>egress_uplink</code> key should point at), and the
-service line. When the service started, the same-user socket
-path prints beside it.</p>
+<p><strong>Cloud Hypervisor's static release binary</strong>. So guest VMs can be started.</p>
+<p><strong>PATH manipulation.</strong> Adds <code>/usr/sbin</code> to the sudoing user's <code>PATH</code> so various
+binaries can be found.</p>
+<p>The run ends with a summary: the wrapper and its caps, the sysctl, the modules
+file and the consent verdict, the tools' paths, <code>/dev/kvm</code>, the detected
+uplink, and the service line.</p>
+<p>You will need to log out and back in for <code>msksd doctor</code> to return clean after
+using the host installer.</p>
 <h2 id="the-same-host-by-hand-if-youd-rather-not-trust-msks-setup-debian-host">The same host by hand (if you'd rather not trust <code>msks-setup-debian-host</code>)<a class="headerlink" href="#the-same-host-by-hand-if-youd-rather-not-trust-msks-setup-debian-host" title="Permanent link">&para;</a></h2>
 <p><code>msks-setup-debian-host</code> is a program the wheel ships, and
 running it means running shipped code as root. An operator who
 prefers to read every step first can land the same host in an
-interactive root shell — each command below is one phase of the
-walk above, pasted and run by hand.</p>
-<p>Start a root shell and install the package set — the same set
+interactive root shell.</p>
+<p>To do so, install the package set — the same set
 <code>msks-setup-debian-host</code> lands, so a host finished by hand
 comes up clean under the doctor too:</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">sudo -i apt install iproute2 \</span>
@@ -966,7 +950,7 @@ line must carry a nonzero mask):</p>
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">  'net.ipv4.ip_forward = 1' &gt; /etc/sysctl.d/msks-egress.conf</span>
 </span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="go">sysctl -p /etc/sysctl.d/msks-egress.conf</span>
 </span></code></pre></div>
-<p>The module set, at boot and now:</p>
+<p>The kernel module set, at boot and now:</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">printf '%s\n' tun nf_tables nft_chain_nat nft_masq nft_ct nft_reject \</span>
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">  nf_reject_ipv4 nf_nat nf_conntrack nfnetlink_queue \</span>
 </span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="go">  &gt; /etc/modules-load.d/msks.conf</span>
@@ -1009,53 +993,23 @@ default</code> names it):</p>
 <p><code>loginctl enable-linger</code> is the one root command among these —
 it keeps the user manager, and the daemon, running across
 logouts and boots.</p>
-<h2 id="the-vmm-cloud-hypervisor">The VMM (<code>cloud-hypervisor</code>)<a class="headerlink" href="#the-vmm-cloud-hypervisor" title="Permanent link">&para;</a></h2>
 <p>The daemon's workspace machinery execs <code>cloud-hypervisor</code> (the VMM).</p>
 <p>Cloud Hypervisor's static release binary is the
 sanctioned VMM install — Debian's archive does not carry it.</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">curl -L -o cloud-hypervisor-static \</span>
 </span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="go">  https://github.com/cloud-hypervisor/cloud-hypervisor/releases/latest/download/cloud-hypervisor-static</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="go">sudo install -m755 cloud-hypervisor-static /usr/local/bin/cloud-hypervisor</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="go">curl -L -o ch-remote-static \</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="go">  https://github.com/cloud-hypervisor/cloud-hypervisor/releases/latest/download/ch-remote-static</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="go">sudo install -m755 cloud-hypervisor-static /usr/local/bin/cloud-hypervisor</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="go">sudo install -m755 ch-remote-static /usr/local/bin/ch-remote-static</span>
 </span></code></pre></div>
-<h2 id="the-alternative-paths">The alternative paths<a class="headerlink" href="#the-alternative-paths" title="Permanent link">&para;</a></h2>
-<p><strong>A NixOS deployment host</strong> needs no setup tool. The module
-in <code>nix/module.nix</code> sets the sysctl, names the uplink, and
-grants the daemon the same two capabilities through the unit
-itself (bounded <code>AmbientCapabilities</code>). A dedicated <code>msksd</code>
-user holds them, with <code>kvm</code> among its supplementary groups.
-This grant is narrower than the wrapper's execute permission:
-it is scoped to the one service.
-A <code>nixos-rebuild switch</code> is the whole host setup.</p>
-<p><strong>A development host</strong> (this repository's checkout) runs the
-daemon through devenv; the <a href="../development/">Development
-environment</a> chapter owns that path.</p>
-<h2 id="distributions-the-msks-setup-debian-host-unit-does-not-cover">Distributions the <code>msks-setup-debian-host</code> unit does not cover<a class="headerlink" href="#distributions-the-msks-setup-debian-host-unit-does-not-cover" title="Permanent link">&para;</a></h2>
-<p>The <code>--no-service</code> flag to <code>msks-setup-debian-host</code> lands every host piece
-above and skips the unit. Choose it for a container, a non-systemd init, or a
-deployment that runs <code>msksd</code> its own way.</p>
-<p>The setup also skips the unit on its own when it cannot find an <code>msksd</code> beside
-its own install, or when systemd is not the manager, and it says so. On such a
-host the daemon runs whatever way the deployment chooses, with the wrapper on
-its exec line for the two capabilities; the <a href="../config/">Configuration</a> chapter
-documents the settings a hand-written unit needs.</p>
-<p>The <a href="../doctor/">The host doctor</a> chapter documents the <code>msks doctor</code> command
+<h2 id="the-host-doctor">The host doctor<a class="headerlink" href="#the-host-doctor" title="Permanent link">&para;</a></h2>
+<p>The <a href="../doctor/">The host doctor</a> chapter documents the <code>msksd doctor</code> command
 that can diagnose installation issues.</p>
-<h2 id="first-run">First run<a class="headerlink" href="#first-run" title="Permanent link">&para;</a></h2>
-<p>A bare <code>msksd</code> (no subcommand) serves. A fresh state dir (<code>~/.local/state/msksd</code>, relocated by the
-<code>state_dir</code> key) gets three things on first serve. The daemon
-mints its CA and certificate and prints the CA fingerprint to
-pin on first connect. The config file generates as a commented
-template (see <a href="../config/">Configuration</a>). The unix listener
-binds <code>$XDG_RUNTIME_DIR/msks/msksd.sock</code>: same-host clients
-connect through it on peer-credential authentication alone,
-while remote ones dial the TLS listener with a bearer token. A workspace image arrives either from the published
-channel (<code>msks image import</code> in <a href="../tui/">the TUI</a>, or the
-<a href="../images/">images</a> chapter's URL form) or from a local build.</p>
-<p>With the host prepared, the service lingered, and an image
-imported, a bare <code>msks</code> on the same account finds the socket,
-lists the workspaces, and creates the next one. <a href="../tui/">The TUI</a>
-walks the whole loop, and <a href="../identity/">the identity file</a>
-names the key the workspaces will answer to.</p>
+<h2 id="the-alternative-paths">The alternative paths<a class="headerlink" href="#the-alternative-paths" title="Permanent link">&para;</a></h2>
+<p><strong>A development host</strong> (this repository's checkout) runs the
+daemon through Nix and devenv; the <a href="../development/">Development
+environment</a> chapter owns that path.</p>
 
 
 

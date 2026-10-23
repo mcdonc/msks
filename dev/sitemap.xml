@@ -19,13 +19,16 @@
         <loc>https://mcdonc.github.io/msks/dev/doctor/</loc>
       </url>
       <url>
-        <loc>https://mcdonc.github.io/msks/dev/identity/</loc>
+        <loc>https://mcdonc.github.io/msks/dev/first-run/</loc>
       </url>
       <url>
         <loc>https://mcdonc.github.io/msks/dev/images/</loc>
       </url>
       <url>
         <loc>https://mcdonc.github.io/msks/dev/installation/</loc>
+      </url>
+      <url>
+        <loc>https://mcdonc.github.io/msks/dev/llm/</loc>
       </url>
       <url>
         <loc>https://mcdonc.github.io/msks/dev/networking/</loc>

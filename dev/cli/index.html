@@ -306,14 +306,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../identity/" class="md-nav__link">
+      <a href="../first-run/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  The identity file
+  First run
 
     
   </span>
@@ -894,6 +894,32 @@
   
   
     <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../secrets/" class="md-nav__link">
         
   
@@ -1416,6 +1442,7 @@ file key is documented below, and <code>MSKSC_TERMINAL_OPEN_CMD</code>'s in
 <thead>
 <tr>
 <th>Variable</th>
+<th>Config file key</th>
 <th>Meaning</th>
 <th>Default</th>
 </tr>
@@ -1423,51 +1450,61 @@ file key is documented below, and <code>MSKSC_TERMINAL_OPEN_CMD</code>'s in
 <tbody>
 <tr>
 <td><code>MSKSC_URL</code></td>
+<td><code>url</code></td>
 <td>The remote daemon's base URL, the TCP + TLS + token shape; the client dials TCP only when a URL names it</td>
 <td>unset (the local socket answers, else the client refuses)</td>
 </tr>
 <tr>
 <td><code>MSKSC_SOCKET</code></td>
+<td><code>socket</code></td>
 <td>The local listener's socket path: peer-credential authentication, with no token and no TLS</td>
 <td>unset (the default socket is looked for)</td>
 </tr>
 <tr>
 <td><code>MSKSC_TOKEN</code></td>
+<td><code>token_file</code></td>
 <td>A daemon bearer token (see tokens below); a socket connection needs none</td>
 <td>— (required for a URL)</td>
 </tr>
 <tr>
 <td><code>MSKSC_CAFILE</code></td>
+<td><code>cafile</code></td>
 <td>A PEM file to verify the daemon's TLS certificate; a socket connection verifies nothing — the kernel vouches for both ends</td>
 <td>unverified with warning</td>
 </tr>
 <tr>
 <td><code>MSKSC_EXPECTED_IMAGE</code></td>
+<td><code>expected_image</code></td>
 <td>An image reference the operator sets; <code>msks ls</code> compares it with the image the daemon reports in <code>/health</code> and names drift</td>
 <td>unset (no check)</td>
 </tr>
 <tr>
 <td><code>MSKSC_CACHE_DIR</code></td>
+<td><code>cache_dir</code></td>
 <td>The directory per-workspace host-key caches live under; the per-workspace directories are created below it</td>
 <td><code>~/.cache/msks</code></td>
 </tr>
 <tr>
 <td><code>MSKSC_IDENTITY_FILE</code></td>
-<td>Your own private key file, the ssh identity <code>msks create</code> plants into every workspace (msks generates none; <a href="../identity/">the identity chapter</a> owns the whole story); a leading <code>~</code> expands</td>
+<td><code>identity_file</code></td>
+<td>Your own private key file, the ssh identity <code>msks create</code> plants into every workspace (msks generates none; <a href="../first-run/#the-identity-file">the identity section</a> owns the whole story); a leading <code>~</code> expands</td>
 <td>unset (<code>pubkey_file</code> answers, else <code>msks create</code> refuses)</td>
 </tr>
 <tr>
 <td><code>MSKSC_PUBKEY_FILE</code></td>
+<td><code>pubkey_file</code></td>
 <td>Your key's public half, what a bare <code>msks create</code> plants instead of reading <code>identity_file</code>, the form for a key you keep encrypted (your agent holds it; msks reads no private half); same naming rule, global-only</td>
 <td>unset (<code>identity_file</code> answers)</td>
 </tr>
 <tr>
 <td><code>MSKSC_TERMINAL_TITLE</code></td>
+<td><code>terminal_title</code></td>
 <td>The title template for the workspace-shell windows the workspace page opens (the file key's section lives in <a href="../tui/">The TUI</a>); <code>{workspace}</code> resolves to the workspace's id</td>
 <td>unset (the terminal's own title)</td>
 </tr>
 <tr>
 <td><code>MSKSC_IMAGE_MANIFEST_URL</code></td>
+<td><code>image_manifest_url</code></td>
 <td>Where the TUI's Import image action (<code>i</code> on the workspace list) reads the published channel's manifest — a fork's or self-hoster's channel names its own; the picker shows each row's ref, description, and size, and the pick POSTs the row's URL to the daemon's import endpoint</td>
 <td>this repository's latest release's <code>images.json</code></td>
 </tr>
@@ -1496,7 +1533,7 @@ a copy, then <code>--pubkey</code> at create. An agent that asks
 for confirmation per signature (a hardware token's touch) asks at its own cadence: the first-boot probe's retries and
 the session each count as a signing request.</p>
 <p><code>MSKSC_PUBKEY_FILE</code> names your key's public half, a <code>.pub</code> file
-(<a href="../identity/">the identity chapter</a> owns the agent
+(<a href="../first-run/#the-identity-file">the identity section</a> owns the agent
 requirement this form carries). A create with it set plants that one line as the identity and
 reads no private material at all. It is the form for a key you
 keep encrypted: the public half sits in a <code>.pub</code> file while

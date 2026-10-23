@@ -362,14 +362,14 @@
   
   
     <li class="md-nav__item">
-      <a href="./identity/" class="md-nav__link">
+      <a href="./first-run/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  The identity file
+  First run
 
     
   </span>
@@ -544,6 +544,32 @@
   
   
     <li class="md-nav__item">
+      <a href="./llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="./secrets/" class="md-nav__link">
         
   
@@ -692,16 +718,13 @@ used to run AI harnesses securely.</p>
 <p>Each microvm is a cloud-hypervisor VM with its own kernel. It also provides
 services which allow you to avoid keeping secrets and keys within the VM and a
 facility to allow you to approve network egress.</p>
-<p><em>msks</em> runs on Linux hosts, and provides tooling to install its dependencies on
-Debian and NixOS systems.</p>
+<p><em>msks</em> runs on Linux hosts, and provides tooling to install its host
+dependencies on Debian-based systems.</p>
 <h2 id="the-reading-order">The reading order<a class="headerlink" href="#the-reading-order" title="Permanent link">&para;</a></h2>
 <ol>
 <li><a href="installation/"><strong>Installation</strong></a>: install the Python wheel, and the one
    command that prepares a Debian host: the capability wrapper, the routing
    kernel, <code>/dev/kvm</code>, and the lingered service that keeps the daemon running.</li>
-<li><a href="identity/"><strong>The identity file</strong></a>: the operator's ssh
-   key: which file msks uses and why, the two config keys, the
-   agent-first resolution, and the passphrase prompt.</li>
 <li><a href="tui/"><strong>The TUI</strong></a>: the full-screen workspace tree: the
    workspace, secrets, and image pages, the failure panels, the
    consent decider, and the terminal windows the shell action
@@ -715,6 +738,9 @@ Debian and NixOS systems.</p>
 <li><a href="doctor/"><strong>The host doctor</strong></a>: the one command that
    checks the host for every tool the daemon and client exec,
    and names the fix for each miss.</li>
+<li><a href="first-run/"><strong>First run</strong></a>: what the daemon lands on its
+   first serve — the CA, the config template, the socket — and
+   the first workspace.</li>
 <li><a href="images/"><strong>Workspace images</strong></a>: the image contract, the
    shipped builder, and the published channel: import from a
    manifest URL, the descriptions the builds bake, the hash-keyed
@@ -724,6 +750,8 @@ Debian and NixOS systems.</p>
    carries ssh and rsync.</li>
 <li><a href="storage/"><strong>Storage</strong></a>: the state disk, the per-workspace
    volumes, and the capacity report that prices them.</li>
+<li><a href="llm/"><strong>LLM Proxy</strong></a>: how to make use of msksd's built-in
+    LLM proxy.</li>
 <li><a href="secrets/"><strong>Secrets</strong></a>: placeholders, the swap on the
     wire, and the sentinel discipline.</li>
 <li><a href="changes/"><strong>Changelog</strong></a>: what changed, release by
