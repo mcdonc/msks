@@ -300,9 +300,11 @@ async def test_scan_storage_publishes_pressure_changes(tmp_path: Path) -> None:
     app = build_app(settings)
     hub = EventHub()
     queue = hub.subscribe()
-    # tmp_path sits on a real filesystem with plenty free: warn past
-    # any percentage once the warn line is 1.
-    app.state.settings.vmm.storage_warn_pct = 1
+    # tmp_path sits on a real filesystem whose used share varies
+    # by host (a near-empty CI disk stays under a 1% line): the
+    # warn line at 0 makes any usage at all warn, so the
+    # assertion holds on every filesystem shape.
+    app.state.settings.vmm.storage_warn_pct = 0
     assert await scan_storage(app, hub) is True
     message = json.loads(queue.get_nowait())
     assert message["event"] == "storage.pressure"

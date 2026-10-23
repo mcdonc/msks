@@ -150,6 +150,9 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(hostsetup, "sh", host.sh)
     monkeypatch.setattr(hostsetup, "write_file", host.write)
     monkeypatch.setattr(hostsetup, "read_file", host.read)
+    # The profile phase's atomic rename: the fake write_file
+    # records in memory, so the real rename has nothing to move.
+    monkeypatch.setattr(hostsetup, "replace_file", lambda source, target: None)
     monkeypatch.setattr(hostsetup, "OS_RELEASE", str(release))
     monkeypatch.setattr(hostsetup.os, "geteuid", lambda: 0)
     monkeypatch.setattr(hostsetup, "which", lambda tool: f"/usr/bin/{tool}")
@@ -319,6 +322,119 @@ def test_an_unreadable_linker_cache_installs_the_sonames(
     assert main() == 0
     apt = debian_host.ran("apt-get")
     assert "libnetfilter-queue1" in apt[1]
+
+
+def test_the_login_path_block_lands_once(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """The operator's ~/.profile gains the guarded /usr/sbin and
+    /sbin additions (#601): once, idempotently, and the summary
+    names the next-login application."""
+    assert main() == 0
+    home = hostsetup.executing_user()[3]
+    profile_text = debian_host.writes[f"{home}/.profile.msks-new"]
+    assert profile_text.startswith(hostsetup.PROFILE_MARKER + "\n")
+    assert 'PATH="$PATH:/usr/sbin"' in profile_text
+    assert 'PATH="$PATH:/sbin"' in profile_text
+    # The profile stays the operator's own: root wrote it, the
+    # phase hands it back (#601 review).
+    assert (f"{home}/.profile", 1000, 1000) in debian_host.chowns
+    out = capsys.readouterr().out
+    assert "login PATH:" in out
+    assert "next login" in out
+
+
+def test_the_login_path_block_never_duplicates(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A re-run over a profile that already carries the marker
+    writes nothing (#601)."""
+    home = hostsetup.executing_user()[3]
+    debian_host.writes[f"{home}/.profile"] = (
+        "export EDITOR=vi\n" + hostsetup.PROFILE_PATH_BLOCK
+    )
+    written: dict[str, str] = {}
+    monkeypatch.setattr(
+        hostsetup,
+        "write_file",
+        lambda path, text: written.update({path: text}),
+    )
+    assert main() == 0
+    assert f"{home}/.profile" not in written
+
+
+def test_an_unreadable_profile_reads_as_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A ~/.profile that cannot be read (absent, or a permission
+    the tool cannot see) starts the block from nothing: the text
+    lands in the sibling temp, one rename away (#601)."""
+
+    def raising(path: str) -> str:
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr(hostsetup, "read_file", raising)
+    monkeypatch.setattr(
+        hostsetup,
+        "write_file",
+        lambda path, text: Path(path).write_text(text, encoding="utf-8"),
+    )
+    note = hostsetup.land_user_path(str(tmp_path), os.getuid(), os.getgid())
+    assert "gains /usr/sbin and /sbin" in note
+    assert (
+        (tmp_path / ".profile")
+        .read_text()
+        .startswith(hostsetup.PROFILE_MARKER)
+    )
+
+
+def test_a_non_utf8_profile_is_a_named_refusal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A ~/.profile the tool cannot decode is left untouched and
+    named — never truncated into shape (#601 review)."""
+
+    def raising(path: str) -> str:
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(hostsetup, "read_file", raising)
+    with pytest.raises(hostsetup.HostSetupError) as caught:
+        hostsetup.land_user_path(str(tmp_path), 1000, 1000)
+    assert "not UTF-8" in str(caught.value)
+    assert not (tmp_path / ".profile").exists()
+    assert not (tmp_path / ".profile.msks-new").exists()
+
+
+def test_a_profile_that_is_a_directory_refuses_by_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ~/.profile that is a directory cannot be replaced by the
+    file the phase writes: the rename refuses with the path
+    named, and nothing partial survives (#601 review)."""
+    (tmp_path / ".profile").mkdir()
+    monkeypatch.setattr(
+        hostsetup,
+        "write_file",
+        lambda path, text: Path(path).write_text(text, encoding="utf-8"),
+    )
+    with pytest.raises(hostsetup.HostSetupError) as caught:
+        hostsetup.land_user_path(str(tmp_path), 1000, 1000)
+    assert "cannot write" in str(caught.value)
+    assert not (tmp_path / ".profile.msks-new").exists()
+    assert (tmp_path / ".profile").is_dir()
+
+
+def test_a_missing_profile_is_created(
+    debian_host: Host, tmp_path: Path
+) -> None:
+    """No ~/.profile at all (a slim account): the block lands in a
+    fresh file (#601)."""
+    home = hostsetup.executing_user()[3]
+    assert f"{home}/.profile" not in debian_host.writes
+    assert main() == 0
+    assert debian_host.writes[f"{home}/.profile.msks-new"].startswith(
+        hostsetup.PROFILE_MARKER
+    )
 
 
 def test_cloud_hypervisor_lands_from_upstream_when_absent(
@@ -1329,7 +1445,19 @@ def test_the_units_parent_chain_lands_user_owned(
     assert main() == 0
     for level in chain:
         assert level.is_dir()
-    assert debian_host.chowns == [(str(level), 1000, 1000) for level in chain]
+    # The profile handover (#601) rides first; the unit's parent
+    # chain follows.
+    home = hostsetup.executing_user()[3]
+    assert debian_host.chowns[0] == (f"{home}/.profile", 1000, 1000)
+    assert debian_host.chowns[1:] == [
+        (str(level), 1000, 1000) for level in chain
+    ]
+    # The no-op replace seam leaves the text under the temp's
+    # key; mirror the rename, then the re-run chowns nothing (the
+    # marker answers) and writes nothing.
+    debian_host.writes[f"{home}/.profile"] = debian_host.writes.pop(
+        f"{home}/.profile.msks-new"
+    )
     debian_host.commands.clear()
     debian_host.chowns.clear()
     assert main() == 0

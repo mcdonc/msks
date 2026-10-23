@@ -1,6 +1,8 @@
 """``msksd doctor`` (#464): report logic, probes, hints, dispatch."""
 
 import argparse
+import os
+import pathlib
 import subprocess
 from types import SimpleNamespace
 
@@ -515,6 +517,120 @@ def test_nfq_load_off_linux_names_the_platform_contract(
     assert result.hint == "run msksd on a Linux host"
 
 
+def test_probe_which_finds_sbin_tools_the_session_lacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The daemon-shaped probe (#601): a tool the session's PATH
+    cannot see but /usr/sbin carries answers, so a login shell
+    without the admin directories still reports the daemon's
+    truth; an explicit settings path is never extended."""
+    monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: None)
+    monkeypatch.setattr(doctor_mod, "PATH_EXTRA_DIRS", ("/mock/sbin",))
+    root = pathlib.Path("/mock/sbin")
+    real_is_file = pathlib.Path.is_file
+    real_access = os.access
+
+    monkeypatch.setattr(
+        pathlib.Path,
+        "is_file",
+        lambda self: str(self).startswith(str(root)) or real_is_file(self),
+    )
+    monkeypatch.setattr(
+        doctor_mod.os,
+        "access",
+        lambda path, mode: (
+            str(path).startswith(str(root)) or real_access(path, mode)
+        ),
+    )
+    assert doctor_mod.probe_which("nft") == "/mock/sbin/nft"
+    assert doctor_mod.probe_which("/opt/nft") is None  # explicit path
+    assert doctor_mod.rescued_from_admin_dirs("nft") is True
+
+
+def test_the_real_probe_execs_a_rescued_tool(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The real run(), no rigging: a tool visible only through the
+    admin directories execs by its resolved path and the row
+    reads green (#601 review round 2). A silent revert to the
+    bare name fails this test with the false error the round
+    found."""
+    sbin = tmp_path / "sbin"
+    sbin.mkdir()
+    tool = sbin / "faketool"
+    tool.write_text("#!/bin/sh\necho 'faketool 9.9'\n")
+    tool.chmod(0o755)
+    monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: None)
+    monkeypatch.setattr(doctor_mod, "PATH_EXTRA_DIRS", (str(sbin),))
+    monkeypatch.delenv("PATH", raising=False)
+    result = doctor_mod.check_binary(
+        "faketool", ["faketool", "--version"], None
+    )
+    assert result.ok, result.message
+    assert result.message == f"faketool ok ({tool})"
+
+
+def test_session_lacks_admin_dirs_reads_the_session_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
+    assert doctor_mod.session_lacks_admin_dirs() is True
+    monkeypatch.setenv("PATH", "/usr/local/bin:/usr/sbin:/usr/bin")
+    assert doctor_mod.session_lacks_admin_dirs() is False
+
+
+def test_a_rescued_tool_adds_the_relogin_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A session without the admin directories whose tools only
+    the daemon-shaped probe found gains the PATH warning row
+    (#601) — a warning, never an error, and never when the
+    session already carries the directories."""
+    all_found(monkeypatch)  # session which() finds everything
+    kvm_seam(monkeypatch)
+    monkeypatch.setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
+    report = run_doctor(Settings())
+    names = [r.name for r in report.results]
+    assert "PATH" not in names  # nothing rescued: the session sees all
+
+    # Now only the daemon-shaped probe finds the sbin trio.
+    monkeypatch.setattr(
+        doctor_mod.shutil,
+        "which",
+        lambda name: (
+            None
+            if name in {"nft", "conntrack", "mkfs.ext4"}
+            else f"/usr/bin/{name}"
+        ),
+    )
+    monkeypatch.setattr(doctor_mod, "PATH_EXTRA_DIRS", ("/mock/sbin",))
+    real_is_file = pathlib.Path.is_file
+    monkeypatch.setattr(
+        pathlib.Path,
+        "is_file",
+        lambda self: str(self).startswith("/mock/sbin") or real_is_file(self),
+    )
+    real_access = os.access
+    monkeypatch.setattr(
+        doctor_mod.os,
+        "access",
+        lambda path, mode: (
+            str(path).startswith("/mock/sbin") or real_access(path, mode)
+        ),
+    )
+    report = run_doctor(Settings())
+    row = next(r for r in report.results if r.name == "PATH")
+    assert row.is_warning and not row.ok
+    assert "log out and back in" in row.hint
+    assert report.passed is True  # the note never fails the run
+
+    # A session that carries the directories gets no note at all.
+    monkeypatch.setattr(doctor_mod, "PATH_EXTRA_DIRS", ("/usr/sbin", "/sbin"))
+    monkeypatch.setenv("PATH", "/usr/local/bin:/usr/sbin:/usr/bin")
+    report = run_doctor(Settings())
+    assert "PATH" not in [r.name for r in report.results]
+
+
 def test_run_doctor_off_linux_skips_the_library_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -787,6 +903,9 @@ def test_run_doctor_error_fails(monkeypatch: pytest.MonkeyPatch) -> None:
         "which",
         lambda name: None if name == "nft" else f"/usr/bin/{name}",
     )
+    # The daemon-shaped extension stays out: a host whose /usr/sbin
+    # really carries nft (CI runners) must not rescue the miss.
+    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
     kvm_seam(monkeypatch)  # the kvm row's answer is host state
     monkeypatch.setattr(doctor_mod, "run", probes_ok)
     report = run_doctor(Settings())

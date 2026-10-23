@@ -81,6 +81,19 @@ when missing. The account picks the group up at the next login; an
 already-running session keeps the old groups until it starts
 anew.
 
+**The login PATH.** The account that typed the command (the
+`SUDO_USER` under sudo) gains `/usr/sbin` and `/sbin` on its
+login PATH: the setup appends a guarded block to that account's
+`~/.profile`, idempotently, so a re-run never duplicates it.
+Debian keeps `nft`, `conntrack`, and the e2fsprogs trio in
+`/usr/sbin`, and a non-root login shell does not carry the
+directory — the block means the operator's next login can type
+the names the daemon execs. A daemon started by the systemd
+user unit finds the directories on its own PATH (the unit
+manager's default carries them); a daemon started by hand
+(`msks-dev`, a bare `msksd`) inherits the session's PATH, so
+the same login carries the fix to both shapes.
+
 **The systemd user service.** On a host systemd manages, the
 setup writes `~/.config/systemd/user/msksd.service` for the
 executing user and enables it. The unit execs `msksd` through

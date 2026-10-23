@@ -48,10 +48,11 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from ..config import load_settings
 from ..settings import Settings
-from .hostsetup import executing_user, group_present, in_group
+from .hostsetup import PATH_EXTRA_DIRS, executing_user, group_present, in_group
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -374,6 +375,68 @@ def run(cmd: list[str], timeout: float = 10.0) -> tuple[int, str, str]:
         return -1, "", f"{cmd[0]}: {exc}"
 
 
+def admin_dir_candidate(name: str) -> str | None:
+    """The first admin directory carrying an executable *name*."""
+    for directory in PATH_EXTRA_DIRS:
+        candidate = Path(directory) / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def probe_which(name: str) -> str | None:
+    """Find a binary on the daemon-shaped search path (#601): the
+    caller's own PATH first, then Debian's admin directories —
+    the systemd user manager's default PATH carries them, so
+    the daemon finds what lives in /usr/sbin. A login shell
+    without the admin directories therefore reports the
+    daemon's truth, not the shell's."""
+    found = shutil.which(name)
+    if found is not None:
+        return found
+    if os.pathsep in name or "/" in name:
+        return None  # an explicit path needs no extension
+    return admin_dir_candidate(name)
+
+
+def rescued_from_admin_dirs(name: str) -> bool:
+    """Whether the daemon-shaped path found a binary the caller's
+    own PATH cannot see (#601) — the relogin note's trigger."""
+    return probe_which(name) is not None and shutil.which(name) is None
+
+
+def session_lacks_admin_dirs() -> bool:
+    """Whether the caller's own PATH skips /usr/sbin (#601) — the
+    directory the relogin note names; /usr/local/sbin alone does
+    not carry the tools the note is about."""
+    session = os.environ.get("PATH", "")
+    return "/usr/sbin" not in session.split(os.pathsep)
+
+
+def path_note_result() -> CheckResult:
+    """The relogin encouragement (#601): a warning row, never an
+    error. The message names both deployment shapes honestly — a
+    daemon under the systemd user unit finds the directories on
+    its own PATH, while a hand-started or dev daemon inherits
+    this session's PATH and needs the same fix."""
+    return CheckResult(
+        name="PATH",
+        ok=False,
+        is_warning=True,
+        message=(
+            "this session's PATH lacks /usr/sbin, where Debian "
+            "puts nft, conntrack, and the e2fsprogs trio; a "
+            "daemon started from it inherits the gap, while the "
+            "systemd user unit's own PATH carries the directories"
+        ),
+        hint=(
+            "log out and back in (msks-setup-debian-host adds the "
+            "directories to ~/.profile), or export "
+            "PATH=$PATH:/usr/sbin:/sbin"
+        ),
+    )
+
+
 def binary_missing(
     name: str,
     manager: str | None,
@@ -408,12 +471,15 @@ def check_binary(
     worth trusting). *use* names the path that needs the tool, and
     appears in the missing message so the operator knows what breaks.
     """
-    path = shutil.which(name)
+    path = probe_which(name)
     if not path:
         return binary_missing(name, manager, is_warning=is_warning, use=use)
     if not probe:
         return CheckResult(name=name, ok=True, message=f"{name} ok ({path})")
-    rc, _out, err = run(probe)
+    # The probe execs the resolved path, never the bare name: a
+    # tool found only through the admin directories would exec
+    # through the session PATH again and miss (#601 review).
+    rc, _out, err = run([path, *probe[1:]])
     if rc != 0:
         detail = (err or f"exit {rc}").strip()[:200]
         return CheckResult(
@@ -449,14 +515,16 @@ def check_ssh(manager: str | None) -> CheckResult:
     by release (0 or 1), so the rc check steps aside for the
     "OpenSSH" banner in the probe's output instead.
     """
-    path = shutil.which("ssh")
+    path = probe_which("ssh")
     if not path:
         return ssh_result(
             manager,
             "ssh not found on PATH (the documented ssh workflow "
             "and the forward-path smoke run over `msks forward`)",
         )
-    rc, out, err = run(["ssh", "-V"])
+    # The resolved path, never the bare name: a session without
+    # the admin directories would exec through it again (#601).
+    rc, out, err = run([path, "-V"])
     if ssh_banner_ok(rc, err):
         return CheckResult(name="ssh", ok=True, message=f"ssh ok ({path})")
     detail = (err.strip() or out.strip() or f"exit {rc}")[:200]
@@ -526,7 +594,7 @@ def check_tmux(manager: str | None) -> CheckResult:
     an older or unparseable tmux is an error — the consent flow
     cannot launch its terminal on it.
     """
-    path = shutil.which("tmux")
+    path = probe_which("tmux")
     if not path:
         return CheckResult(
             name="tmux",
@@ -534,7 +602,8 @@ def check_tmux(manager: str | None) -> CheckResult:
             message="tmux not found on PATH",
             hint=install_hint("tmux", manager),
         )
-    rc, out, _err = run(["tmux", "-V"])
+    # Same as ssh: exec the resolved path (#601).
+    rc, out, _err = run([path, "-V"])
     version = parse_tmux_version(out) if rc == 0 else None
     if version is None:
         return tmux_unparseable(out, manager)
@@ -762,6 +831,19 @@ def kvm_access_result(manager: str | None) -> CheckResult:
 # ---------------------------------------------------------------------------
 
 
+def add_path_note(report: DoctorReport) -> None:
+    """The relogin note (#601): a session without the admin
+    directories whose tools only the daemon-shaped probe found —
+    every row the daemon will exec reads green, and the operator
+    learns why their own shell cannot type the same names."""
+    if session_lacks_admin_dirs() and any(
+        rescued_from_admin_dirs(result.name)
+        for result in report.results
+        if result.ok
+    ):
+        report.add(path_note_result())
+
+
 def run_doctor(settings: Settings) -> DoctorReport:
     """Run every check against one settings set, return the report."""
     report = DoctorReport()
@@ -870,6 +952,7 @@ def run_doctor(settings: Settings) -> DoctorReport:
             use="host-side sync over the forward (#110)",
         )
     )
+    add_path_note(report)
     return report
 
 
