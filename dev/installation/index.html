@@ -882,6 +882,18 @@ daemon's user; the setup adds the executing user to the group
 when missing. The account picks the group up at the next login; an
 already-running session keeps the old groups until it starts
 anew.</p>
+<p><strong>The login PATH.</strong> The account that typed the command (the
+<code>SUDO_USER</code> under sudo) gains <code>/usr/sbin</code> and <code>/sbin</code> on its
+login PATH: the setup appends a guarded block to that account's
+<code>~/.profile</code>, idempotently, so a re-run never duplicates it.
+Debian keeps <code>nft</code>, <code>conntrack</code>, and the e2fsprogs trio in
+<code>/usr/sbin</code>, and a non-root login shell does not carry the
+directory — the block means the operator's next login can type
+the names the daemon execs. A daemon started by the systemd
+user unit finds the directories on its own PATH (the unit
+manager's default carries them); a daemon started by hand
+(<code>msks-dev</code>, a bare <code>msksd</code>) inherits the session's PATH, so
+the same login carries the fix to both shapes.</p>
 <p><strong>The systemd user service.</strong> On a host systemd manages, the
 setup writes <code>~/.config/systemd/user/msksd.service</code> for the
 executing user and enables it. The unit execs <code>msksd</code> through
