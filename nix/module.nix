@@ -64,7 +64,7 @@ let
 
   # The daemon closure, built against the consuming host's nixpkgs
   # (the same wiring the appliance used): python 3.14 and the
-  # pinned textual. The NFQUEUE binding is vendored ctypes
+  # pinned textual/litellm. The NFQUEUE binding is vendored ctypes
   # (#542): the wheel needs no compiled dependency, and the
   # module loads the platform's libnetfilter_queue at runtime
   # (the service's environment carries it). msksdPkgs carries the
@@ -76,6 +76,7 @@ let
   msksdPkgs = pkgs.extend (import ./certifi-overlay.nix);
   msksd = msksdPkgs.python314.pkgs.callPackage ./msks-pkg.nix {
     textual = msksdPkgs.python314.pkgs.callPackage ./textual-pkg.nix { };
+    litellm = msksdPkgs.python314.pkgs.callPackage ./litellm-pkg.nix { };
   };
 
   # The generated msksd.yaml (docs/config.md is the key reference):

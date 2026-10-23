@@ -74,6 +74,7 @@ let
   msksServer = releasePkgs.python314.withPackages (ps: [
     (ps.callPackage ./nix/msks-pkg.nix {
       textual = ps.callPackage ./nix/textual-pkg.nix { };
+      litellm = ps.callPackage ./nix/litellm-pkg.nix { };
     })
   ]);
   msksClient = releasePkgs.python314.withPackages (ps: [

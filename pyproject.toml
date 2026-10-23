@@ -40,7 +40,7 @@ dependencies = [
   # the allowlist posture to the 1.x kwargs semantics it was
   # reviewed against (call-site api_base/api_key overrides) — lift
   # it only alongside a re-review of CHAT_FIELDS.
-  "litellm>=1.86,<2",
+  "litellm>=1.106.2,<2",
   # Egress consent's NFQUEUE consumer (#69) uses the vendored
   # ctypes binding (msks/net/nfqbind.py, #542): no compiled
   # dependency ships with the wheel, and the platform's

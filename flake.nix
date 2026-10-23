@@ -20,6 +20,7 @@
       };
       msksd = pkgs.python314.pkgs.callPackage ./nix/msks-pkg.nix {
         textual = pkgs.python314.pkgs.callPackage ./nix/textual-pkg.nix { };
+        litellm = pkgs.python314.pkgs.callPackage ./nix/litellm-pkg.nix { };
       };
 
       # The release artifacts (#537), the flake half of the devenv

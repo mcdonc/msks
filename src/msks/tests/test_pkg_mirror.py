@@ -30,6 +30,7 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 PKG_NIX = REPO_ROOT / "nix" / "msks-pkg.nix"
 CLIENT_PKG_NIX = REPO_ROOT / "nix" / "msks-client-pkg.nix"
 TEXTUAL_PKG = REPO_ROOT / "nix" / "textual-pkg.nix"
+LITELLM_PKG = REPO_ROOT / "nix" / "litellm-pkg.nix"
 CERTIFI_PKG = REPO_ROOT / "nix" / "certifi-pkg.nix"
 DEVENV_LOCK = REPO_ROOT / "devenv.lock"
 FLAKE_LOCK = REPO_ROOT / "flake.lock"
@@ -278,4 +279,21 @@ def test_the_hand_pinned_certifi_floor_covers_pyproject() -> None:
         "certifi",
         "the root-store refreshes the floor names",
         "bump the pin (wheel URL and hash from the new uv.lock entry)",
+    )
+
+
+def test_the_hand_pinned_litellm_floor_covers_pyproject() -> None:
+    """pyproject's litellm floor stays within what litellm-pkg.nix
+    pins (#607). litellm is built by hand for the same reason
+    textual and certifi are — the pinned channel sits below the
+    floor — and the miss fails only the msks package's runtime
+    check at nix build time; this test fails at pytest time
+    instead, naming the pin to bump."""
+    assert_hand_pinned_floor_covers_pyproject(
+        LITELLM_PKG,
+        "litellm",
+        "the >=1.106.2 Router semantics llm.py was reviewed against",
+        "bump the pin per the file's bump-workflow header (wheel "
+        "URL, hash, and propagatedBuildInputs from the new wheel's "
+        "METADATA)",
     )

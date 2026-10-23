@@ -47,7 +47,9 @@
   # when a typer without one serves the closure).
   typer,
   # The LLM router's multi-provider mode (#259), lazily imported
-  # (the passthrough mode runs without it).
+  # (the passthrough mode runs without it), pinned to the
+  # >=1.106.2 floor pyproject declares — nixpkgs' 1.86.0 predates
+  # it (nix/litellm-pkg.nix).
   litellm,
 }:
 
