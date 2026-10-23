@@ -6,6 +6,10 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.2] - 2026-10-23
+
+- Guest image updates, docs changes.
+
 ## \[v0.1] - 2026-10-18
 
 ### Added
