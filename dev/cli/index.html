@@ -478,17 +478,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-tui" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The TUI
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#msks-ls" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -711,23 +700,6 @@
       </span>
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="msks egress">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#the-decider-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The decider surface
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -1119,17 +1091,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-tui" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The TUI
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#msks-ls" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1352,23 +1313,6 @@
       </span>
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="msks egress">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#the-decider-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        The decider surface
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -1720,12 +1664,6 @@ first try, with a fresh host-key cache of its own.</p>
 <code>msks console ws</code> and <code>msks console 1a2b3c4d5e</code> reach the same
 workspace. The name is the everyday reference; the id is the
 reference no other workspace shares.</p>
-<h2 id="the-tui">The TUI<a class="headerlink" href="#the-tui" title="Permanent link">&para;</a></h2>
-<p>The full-screen workspace tree — the workspace, secrets, and
-image pages, the failure panels, the consent decider — is
-<a href="../tui/">its own chapter</a>. The command reference below covers
-the commands the tree renders and the shells it runs:
-<code>msks ssh</code>, <code>msks console</code>, <code>msks image</code>, and the rest.</p>
 <h2 id="msks-ls"><code>msks ls</code><a class="headerlink" href="#msks-ls" title="Permanent link">&para;</a></h2>
 <dl>
 <dt>Prints one line per workspace the daemon knows, aligned in five</dt>
@@ -2459,46 +2397,6 @@ with a message naming the fix: pass <code>--allow</code> entries, or pass
 <code>--offline</code> to run the switch anyway. That posture answers
 every name NXDOMAIN, an offline workspace reachable only by
 ssh.</p>
-<h3 id="the-decider-surface">The decider surface<a class="headerlink" href="#the-decider-surface" title="Permanent link">&para;</a></h3>
-<p><code>msks tui</code>'s workspace page is the interface a human decides
-from. While the page is open, it registers this client as the
-workspace's decider (holds wait only while one is connected).
-Its consent overlay, pushed by the page's <strong>Egress</strong> action or
-by the first hold of a burst, shows every held request with
-its countdown and sends verdicts through the same endpoints
-the subcommands use. Keys: <code>a</code>/<code>d</code> allow or deny the focused hold for the default
-duration, <code>A</code>/<code>D</code> open the duration picker, <code>r</code> the rules
-screen (with <code>x</code> to revoke), and <code>m</code> the mode picker. The
-<a href="../tui/">workspace tree's</a> overlay section owns the overlay's
-full lifecycle (the auto-open, the park, the self-close). The
-placeholder-token audit is the secrets page's daemon-wide view
-. A dropped link reconnects
-with backoff and re-registers (the snapshot re-lands); while
-disconnected the overlay's status line says so — the daemon
-fail-closes new connects, and in-flight holds run their timeout.
-An off-allowlist sighting flashes the surface that owns the
-terminal: the overlay's status line while it is up, the page's
-consent line when it is not (the alarm, carried into the
-tree).</p>
-<p>The protocol state (frame parsing, countdowns) is pure and
-unit-tested; the <code>watch</code>/<code>decide</code>/<code>revoke</code> subcommands remain the
-scripting surface (<code>watch</code> prints frames as lines).</p>
-<p>The create-time posture (<code>msks create --egress-mode</code>,
-<code>--allow</code>) sets the first mode: <code>--egress-mode
-allow|static|interactive</code> and repeatable <code>--allow SPEC</code>
-entries. A bare host matches the apex only, <code>.host</code> includes
-subdomains, <code>*.host</code> matches subdomains only, <code>host:port</code>
-scopes a port, and <code>10.0.0.0/8[:port]</code> names an address
-range. Name entries gate at the daemon's resolver (the one
-the DHCP lease hands the guest); address entries accept in the
-per-VM kernel chain. <code>msks egress mode</code> switches the posture
-after create; the daemon-wide default new workspaces take
-is <code>MSKSD_EGRESS_MODE</code> (<code>allow</code> as shipped).</p>
-<p><code>msks create --secret-coverage scoped</code> boots the workspace exempt
-from daemon-wide placeholders — only placeholders minted
-directly at it arm it; the default (<code>all</code>) accepts daemon-wide
-coverage, and <code>msks secret coverage</code> flips the posture after
-create.</p>
 <h2 id="msks-key"><code>msks key</code><a class="headerlink" href="#msks-key" title="Permanent link">&para;</a></h2>
 <p>The workspace's ssh identity: every workspace a
 local-backend daemon creates carries the public half its create
