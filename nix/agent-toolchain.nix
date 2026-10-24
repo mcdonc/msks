@@ -151,7 +151,7 @@ let
     pname = "pi-coding-agent";
     version = "1.4.0";
     src = patchedPiSource;
-    npmDepsHash = "sha256-d+01Gb8dbDArQT1Q3uj+fgmuQPgU9tCZU9jbfjfu2GE=";
+    npmDepsHash = "sha256-dD5aGD0rNJtBVZWmcwf49bR7nBrTwhvwDx7i+XysxaM=";
     # The published package ships dist/ prebuilt; there is nothing
     # to compile.
     buildPhase = ''
