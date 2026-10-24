@@ -71,19 +71,35 @@ def rebase_lock_root(lock: dict, pkg: dict) -> bool:
     dropping the agent's registry self-entry. Returns whether the
     lock is an install lock needing the rebase — a root already
     naming the agent (a future upstream that ships its own lock
-    again) is left as it comes."""
+    again) is left as it comes. The self-entry's version must
+    equal the manifest's: the tarball pin and the lock pin move
+    together, and a bump that updates one without the other fails
+    here, at patch time, instead of downstream inside npm."""
     root = lock["packages"].get("", {})
     if root.get("name") != INSTALL_ROOT_NAME:
         return False
+    self_entry = lock["packages"].get(SELF_ENTRY)
+    if self_entry is not None and (
+        self_entry.get("version") != pkg["version"]
+    ):
+        raise SystemExit(
+            f"the install lock pins {SELF_ENTRY} at "
+            f"{self_entry.get('version')!r} but the tarball's "
+            f"manifest names {pkg['version']!r} — the two pins "
+            f"drifted; bump them together"
+        )
     lock["name"] = pkg["name"]
     lock["version"] = pkg["version"]
-    lock["packages"][""] = {
+    rebuilt = {
         "name": pkg["name"],
         "version": pkg["version"],
         "license": pkg.get("license"),
         "engines": pkg.get("engines"),
         "dependencies": pkg.get("dependencies", {}),
     }
+    if "overrides" in pkg:
+        rebuilt["overrides"] = pkg["overrides"]
+    lock["packages"][""] = rebuilt
     lock["packages"].pop(SELF_ENTRY, None)
     return True
 

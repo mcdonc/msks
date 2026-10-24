@@ -35,18 +35,11 @@ let
 
   # The pi pin's lock (#616): upstream stopped shipping a
   # shrinkwrap inside the tarball, but keeps the pi.dev
-  # installer's lock root in the monorepo — a package.json whose
-  # sole dependency is the agent plus the package-lock.json that
-  # pins its whole runtime closure. Both are digest-pinned to the
-  # v1.4.0 tag; the patch step rebases the lock's root onto the
-  # agent itself (the wrapper's shape is the installer's, not a
-  # build root).
-  piInstallLockManifest = pkgs.fetchurl {
-    url =
-      "https://raw.githubusercontent.com/earendil-works/pi/"
-      + "v1.4.0/packages/coding-agent/install-lock/package.json";
-    hash = "sha256-l5KzSrpalDIP3lxoYA6sSlcg0NY+vFJ9RivRJWZbKe4=";
-  };
+  # installer's lock root in the monorepo — a package-lock.json
+  # that pins the agent's whole runtime closure, digest-pinned to
+  # the v1.4.0 tag; the patch step rebases the lock's root onto
+  # the agent itself (the installer's root shape is not a build
+  # root).
   piInstallLock = pkgs.fetchurl {
     url =
       "https://raw.githubusercontent.com/earendil-works/pi/"

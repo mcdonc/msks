@@ -269,7 +269,6 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     # The install lock (#616): the tarball ships no shrinkwrap, so
     # the offline build's lock is the pi.dev installer's,
     # digest-pinned to the same tag as the tarball.
-    assert "install-lock/package.json" in pins
     assert "install-lock/package-lock.json" in pins
     # A real npmDepsHash, not the placeholder the two-step prefetch
     # starts from.
@@ -290,6 +289,10 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     assert "$out/root/.pi/agent/settings.json" in build
     settings = (REPO_ROOT / "nix" / "guest-pi-settings.json").read_text()
     assert '"hideThinkingBlock": true' in settings
+    # No install telemetry beacon from egress-gated guests
+    # (#617 review): the fresh-install path would otherwise fetch
+    # pi.dev on the first interactive start.
+    assert '"enableInstallTelemetry": false' in settings
     # pi links at its published bin (dist/bundle/cli.js), and the
     # package builds the tree bin-less — each image links it
     # itself (the Debian overlay's /usr/local symlink, the NixOS

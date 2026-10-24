@@ -1,3 +1,4 @@
 {
-  "hideThinkingBlock": true
+  "hideThinkingBlock": true,
+  "enableInstallTelemetry": false
 }
