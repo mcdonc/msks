@@ -43,6 +43,13 @@ let
   # file the tmpfiles rules below plant inside the guest.
   piExtension = ./guest-pi-extension.ts;
 
+  # The default user settings pi starts under (#616): the guest
+  # keeps its transcripts free of the model's thinking blocks —
+  # the workspace's terminal is the operator's reading surface.
+  # Copy-once like the extension: a user's later edits are
+  # theirs.
+  piSettings = ./guest-pi-settings.json;
+
   # The workspace's interception CA (#427): the identity seed
   # stages it at /etc/msks at first boot, and the rebuild-time
   # evaluation inside the guest reads it (below). One probe of
@@ -548,6 +555,8 @@ in
     "d /root/.pi/agent/extensions 0755 root root -"
     "C /etc/skel/.pi/agent/extensions/llm-models.ts 0644 root root - ${piExtension}"
     "C /root/.pi/agent/extensions/llm-models.ts 0644 root root - ${piExtension}"
+    "C /etc/skel/.pi/agent/settings.json 0644 root root - ${piSettings}"
+    "C /root/.pi/agent/settings.json 0644 root root - ${piSettings}"
   ];
 
   # Every `env`-shebang in the toolchain (`env node` for pi,

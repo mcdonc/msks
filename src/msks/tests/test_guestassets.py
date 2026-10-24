@@ -252,19 +252,25 @@ def test_the_image_ships_the_pi_extension() -> None:
 
 
 def test_the_image_bakes_the_agent_toolchain() -> None:
-    """The toolchain pins and their staging (#266): the shared
+    """The toolchain pins and their staging (#266, #616): the shared
     build fetches the pinned pi package by digest, builds it
-    offline against its shrinkwrap, and stages it with pinned
+    offline against the install lock, and stages it with pinned
     herdr and Claude Code into the overlay's /usr/local beside the
-    Debian-only Node tarball, with the extension planted for root
-    and in the skeleton every seed-provisioned account copies."""
+    Debian-only Node tarball, with the extension and the default
+    settings planted for root and in the skeleton every
+    seed-provisioned account copies."""
     build = (REPO_ROOT / "nix" / "guest-debian.nix").read_text()
     pins = (REPO_ROOT / "nix" / "agent-toolchain.nix").read_text()
     # String fragments, not joined URLs: nixfmt reflows the
     # concatenation layout, and the fragments are the stable atoms.
     assert '"https://nodejs.org/dist/v22.23.3/"' in build
     assert '"node-v22.23.3-linux-x64.tar.gz"' in build
-    assert "pi-coding-agent-0.87.1.tgz" in pins
+    assert "pi-coding-agent-1.4.0.tgz" in pins
+    # The install lock (#616): the tarball ships no shrinkwrap, so
+    # the offline build's lock is the pi.dev installer's,
+    # digest-pinned to the same tag as the tarball.
+    assert "install-lock/package.json" in pins
+    assert "install-lock/package-lock.json" in pins
     # A real npmDepsHash, not the placeholder the two-step prefetch
     # starts from.
     assert "AAAAAAAAAAAAAAAAAAAAAAAA" not in pins
@@ -278,6 +284,12 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     assert "$out/usr/local/bin/claude" in build
     assert "$out/etc/skel/.pi/agent/extensions/llm-models.ts" in build
     assert "$out/root/.pi/agent/extensions/llm-models.ts" in build
+    # The default user settings (#616): pi starts with its
+    # thinking blocks hidden, for the skeleton and root alike.
+    assert "$out/etc/skel/.pi/agent/settings.json" in build
+    assert "$out/root/.pi/agent/settings.json" in build
+    settings = (REPO_ROOT / "nix" / "guest-pi-settings.json").read_text()
+    assert '"hideThinkingBlock": true' in settings
     # pi links at its published bin (dist/bundle/cli.js), and the
     # package builds the tree bin-less — each image links it
     # itself (the Debian overlay's /usr/local symlink, the NixOS
@@ -349,6 +361,11 @@ def test_the_nixos_image_ships_the_agent_toolchain() -> None:
     assert "C /etc/skel/.pi/agent/extensions/llm-models.ts" in configuration
     assert "C /root/.pi/agent/extensions/llm-models.ts" in configuration
     assert "0644 root root - ${piExtension}" in configuration
+    # The default user settings (#616) ride the same tmpfiles
+    # copy-once rules.
+    assert "C /etc/skel/.pi/agent/settings.json" in configuration
+    assert "C /root/.pi/agent/settings.json" in configuration
+    assert "0644 root root - ${piSettings}" in configuration
     # The sanity battery: the profile bins resolve (claude's chain
     # runs through the loader patch), and the planting rules plus
     # the extension itself ride the closure. Every launcher also
@@ -602,8 +619,8 @@ def test_the_shrinkwrap_patch_pins_every_gap_by_name() -> None:
     lock = {
         "packages": {
             "": {"name": "pi-coding-agent"},
-            "node_modules/@earendil-works/chord": {
-                "resolved": "https://registry.example/chord.tgz",
+            "node_modules/@earendil-works/pi-telemetry": {
+                "resolved": "https://registry.example/pi-telemetry.tgz",
             },
             "node_modules/chalk/node_modules/@earendil-works/pi-tui": {
                 "resolved": "https://registry.example/pi-tui.tgz",
@@ -618,10 +635,15 @@ def test_the_shrinkwrap_patch_pins_every_gap_by_name() -> None:
     patched = mod.patch_lock(lock, table)
     # The nested key resolved to its package name; the
     # already-pinned entry stayed untouched.
-    assert patched == {"@earendil-works/chord", "@earendil-works/pi-tui"}
+    assert patched == {
+        "@earendil-works/pi-telemetry",
+        "@earendil-works/pi-tui",
+    }
     assert (
-        lock["packages"]["node_modules/@earendil-works/chord"]["integrity"]
-        == "sha512-" + table["@earendil-works/chord"]
+        lock["packages"]["node_modules/@earendil-works/pi-telemetry"][
+            "integrity"
+        ]
+        == "sha512-" + table["@earendil-works/pi-telemetry"]
     )
     nested = lock["packages"][
         "node_modules/chalk/node_modules/@earendil-works/pi-tui"
@@ -631,6 +653,64 @@ def test_the_shrinkwrap_patch_pins_every_gap_by_name() -> None:
     assert already["integrity"] == "sha512-alreadythere"
     # Names the table still expects fail loudly.
     assert patched != set(table)
+
+
+def test_the_shrinkwrap_patch_rebases_the_install_lock_root() -> None:
+    """The install lock's root is the pi.dev installer wrapper
+    whose sole dependency is the agent (#616); the offline build
+    wants the agent itself as the root. The rebase rebuilds the
+    root entry from the agent's manifest and drops the agent's
+    registry self-entry — the package at the root is the one
+    being built, not a dependency of itself."""
+    mod, _table = load_integrity_table()
+
+    lock = {
+        "name": "@earendil-works/pi-coding-agent-install",
+        "version": "1.4.0",
+        "packages": {
+            "": {
+                "name": "@earendil-works/pi-coding-agent-install",
+                "dependencies": {"@earendil-works/pi-coding-agent": "1.4.0"},
+            },
+            "node_modules/@earendil-works/pi-coding-agent": {
+                "version": "1.4.0",
+                "resolved": "https://registry.example/pi-coding-agent.tgz",
+            },
+            "node_modules/chalk": {"resolved": "https://x/y"},
+        },
+    }
+    pkg = {
+        "name": "@earendil-works/pi-coding-agent",
+        "version": "1.4.0",
+        "license": "MIT",
+        "engines": {"node": ">=22.19.0"},
+        "dependencies": {"chalk": "5"},
+    }
+    assert mod.rebase_lock_root(lock, pkg) is True
+    root = lock["packages"][""]
+    assert root["name"] == "@earendil-works/pi-coding-agent"
+    assert root["dependencies"] == {"chalk": "5"}
+    assert root["engines"] == {"node": ">=22.19.0"}
+    assert lock["name"] == "@earendil-works/pi-coding-agent"
+    # The self-entry is gone; the sibling entries stay.
+    assert (
+        "node_modules/@earendil-works/pi-coding-agent" not in lock["packages"]
+    )
+    assert "node_modules/chalk" in lock["packages"]
+
+
+def test_the_shrinkwrap_patch_leaves_an_agent_rooted_lock_alone() -> None:
+    """A lock whose root already names the agent — a future
+    upstream that ships its own lock again — passes through the
+    rebase untouched."""
+    mod, _table = load_integrity_table()
+
+    lock = {"packages": {"": {"name": "@earendil-works/pi-coding-agent"}}}
+    pkg = {"name": "@earendil-works/pi-coding-agent"}
+    assert mod.rebase_lock_root(lock, pkg) is False
+    assert lock == {
+        "packages": {"": {"name": "@earendil-works/pi-coding-agent"}}
+    }
 
 
 def test_the_shrinkwrap_patch_strips_dev_dependencies() -> None:

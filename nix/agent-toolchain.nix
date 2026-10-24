@@ -23,12 +23,35 @@
 { pkgs }:
 
 let
-  # The registry tarball behind the pi pin itself.
+  # The registry tarball behind the pi pin itself. The published
+  # tarball ships dist/ prebuilt and no lock: the lock the offline
+  # build needs is the install lock below.
   piTarball = pkgs.fetchurl {
     url =
       "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/"
-      + "pi-coding-agent-0.87.1.tgz";
-    hash = "sha256-FCPuPGHnyWRk4cvzyNwk0wVss0EJlcNnGpjD7MUnVA8=";
+      + "pi-coding-agent-1.4.0.tgz";
+    hash = "sha256-0VXBbvb6AJYPv1iykRU26AsF8zcA4LFPvQiWft4MdCg=";
+  };
+
+  # The pi pin's lock (#616): upstream stopped shipping a
+  # shrinkwrap inside the tarball, but keeps the pi.dev
+  # installer's lock root in the monorepo — a package.json whose
+  # sole dependency is the agent plus the package-lock.json that
+  # pins its whole runtime closure. Both are digest-pinned to the
+  # v1.4.0 tag; the patch step rebases the lock's root onto the
+  # agent itself (the wrapper's shape is the installer's, not a
+  # build root).
+  piInstallLockManifest = pkgs.fetchurl {
+    url =
+      "https://raw.githubusercontent.com/earendil-works/pi/"
+      + "v1.4.0/packages/coding-agent/install-lock/package.json";
+    hash = "sha256-l5KzSrpalDIP3lxoYA6sSlcg0NY+vFJ9RivRJWZbKe4=";
+  };
+  piInstallLock = pkgs.fetchurl {
+    url =
+      "https://raw.githubusercontent.com/earendil-works/pi/"
+      + "v1.4.0/packages/coding-agent/install-lock/package-lock.json";
+    hash = "sha256-6yx2rCcPCZ8q88vGzNCMPSK/ViuRSvNpDRq7qYVGGt4=";
   };
 
   # The herdr pin (#266): the terminal workspace manager for AI
@@ -96,12 +119,13 @@ let
           $mods/claude-code/bin/claude.exe
       '';
 
-  # The pi pin's source (#266): the registry tarball with the
-  # shrinkwrap integrity gaps closed, ready for the offline npm
-  # build. nix/pi-shrinkwrap-patch.py (unit-tested in
-  # test_guestassets.py) closes the integrity gaps the published
-  # shrinkwrap leaves and strips the devDependencies the pruned
-  # lock no longer carries.
+  # The pi pin's source (#266, #616): the registry tarball plus
+  # the install lock's package-lock.json, with the lock's
+  # integrity gaps closed and its root rebased onto the agent,
+  # ready for the offline npm build. nix/pi-shrinkwrap-patch.py
+  # (unit-tested in test_guestassets.py) does the closing and the
+  # rebasing — it also strips the devDependencies the pruned lock
+  # no longer carries.
   patchedPiSource =
     pkgs.runCommand "pi-coding-agent-src"
       {
@@ -115,8 +139,9 @@ let
         mkdir -p $out
         tar -xzf ${piTarball} -C $out --strip-components=1
         chmod -R u+w $out
+        install -D -m 0644 ${piInstallLock} $out/package-lock.json
         python3 ${./pi-shrinkwrap-patch.py} \
-          $out/npm-shrinkwrap.json $out/package.json \
+          $out/package-lock.json $out/package.json \
           ${./pi-shrinkwrap-integrity.json}
       '';
 
@@ -131,9 +156,9 @@ let
   # reachable.
   piPackage = pkgs.buildNpmPackage {
     pname = "pi-coding-agent";
-    version = "0.87.1";
+    version = "1.4.0";
     src = patchedPiSource;
-    npmDepsHash = "sha256-g7xLIxQbKLO/l09bQKE+knAF5+tgO3hzn3UXgFIJZrg=";
+    npmDepsHash = "sha256-d+01Gb8dbDArQT1Q3uj+fgmuQPgU9tCZU9jbfjfu2GE=";
     # The published package ships dist/ prebuilt; there is nothing
     # to compile.
     buildPhase = ''

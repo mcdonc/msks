@@ -311,6 +311,13 @@ let
           $out/etc/skel/.pi/agent/extensions/llm-models.ts
         install -D -m 0644 ${./guest-pi-extension.ts} \
           $out/root/.pi/agent/extensions/llm-models.ts
+        # The default user settings (#616): pi hides the model's
+        # thinking blocks in the transcript. Copy-once like the
+        # extension — a user's later edits are theirs.
+        install -D -m 0644 ${./guest-pi-settings.json} \
+          $out/etc/skel/.pi/agent/settings.json
+        install -D -m 0644 ${./guest-pi-settings.json} \
+          $out/root/.pi/agent/settings.json
 
         # rsync (#110): the sync half of the TCP service plane — Debian's
         # own binary from the pinned deb (see rsyncDeb), staged into the
@@ -1281,6 +1288,8 @@ let
         test -f \
           "$root"/etc/skel/.pi/agent/extensions/llm-models.ts
         test -f "$root"/root/.pi/agent/extensions/llm-models.ts
+        test -f "$root"/etc/skel/.pi/agent/settings.json
+        test -f "$root"/root/.pi/agent/settings.json
         # The toolchain linkage guard (#267 review): the same
         # checks rsync gets, for the two dynamically linked tools —
         # every NEEDED soname resolves in the tree, the interpreter
