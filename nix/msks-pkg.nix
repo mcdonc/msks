@@ -97,5 +97,6 @@ buildPythonPackage {
   meta = {
     description = "Microvm workspace daemon (klangkd analogue on cloud-hypervisor)";
     mainProgram = "msksd";
+    license = lib.licenses.mit;
   };
 }

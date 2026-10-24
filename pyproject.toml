@@ -3,6 +3,7 @@ name = "msks"
 version = "0.2.0"
 description = "Microvm workspace daemon (klangkd analogue on cloud-hypervisor)"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.14"
 dependencies = [
   "alembic>=1.14",
