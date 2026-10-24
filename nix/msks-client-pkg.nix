@@ -75,5 +75,6 @@ buildPythonPackage {
   meta = {
     description = "msks client (CLI/TUI): workspaces on a running msksd, over its HTTP API";
     mainProgram = "msks";
+    license = lib.licenses.mit;
   };
 }
