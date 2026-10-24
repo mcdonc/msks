@@ -688,6 +688,7 @@ def test_the_shrinkwrap_patch_rebases_the_install_lock_root() -> None:
         "license": "MIT",
         "engines": {"node": ">=22.19.0"},
         "dependencies": {"chalk": "5"},
+        "overrides": {"protobufjs": "7.6.6"},
     }
     assert mod.rebase_lock_root(lock, pkg) is True
     root = lock["packages"][""]
@@ -695,11 +696,42 @@ def test_the_shrinkwrap_patch_rebases_the_install_lock_root() -> None:
     assert root["dependencies"] == {"chalk": "5"}
     assert root["engines"] == {"node": ">=22.19.0"}
     assert lock["name"] == "@earendil-works/pi-coding-agent"
+    # The manifest's overrides ride into the rebuilt root — the
+    # lock's resolutions already reflect them, and npm's own root
+    # entries carry them (#617 review).
+    assert root["overrides"] == {"protobufjs": "7.6.6"}
     # The self-entry is gone; the sibling entries stay.
     assert (
         "node_modules/@earendil-works/pi-coding-agent" not in lock["packages"]
     )
     assert "node_modules/chalk" in lock["packages"]
+
+
+def test_the_shrinkwrap_patch_guards_the_pin_pairing() -> None:
+    """A self-entry whose version disagrees with the manifest's
+    names the drifted bump at patch time (#617 review): the
+    tarball pin and the install-lock pin must move together, and
+    the mismatch must not survive into npm's own downstream
+    error."""
+    mod, _table = load_integrity_table()
+
+    lock = {
+        "packages": {
+            "": {"name": mod.INSTALL_ROOT_NAME},
+            mod.SELF_ENTRY: {"version": "1.3.9"},
+        }
+    }
+    pkg = {
+        "name": "@earendil-works/pi-coding-agent",
+        "version": "1.4.0",
+        "dependencies": {},
+    }
+    try:
+        mod.rebase_lock_root(lock, pkg)
+    except SystemExit as exc:
+        assert "1.3.9" in str(exc) and "1.4.0" in str(exc)
+    else:
+        raise AssertionError("the version drift passed silently")
 
 
 def test_the_shrinkwrap_patch_leaves_an_agent_rooted_lock_alone() -> None:
