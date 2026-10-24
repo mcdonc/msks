@@ -6,6 +6,15 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.3] - 2026-10-24
+
+- The guest images' pi coding agent moves to 1.4.0, and a default
+  `~/.pi/agent/settings.json` now ships for every user: thinking
+  blocks stay out of the transcript and pi's install telemetry
+  beacon stays off (#616). The project adopts the MIT license
+  (#612), and the docs split the egress consent chapter out of
+  guest networking.
+
 ## \[v0.2] - 2026-10-23
 
 - Guest image updates, docs changes.
