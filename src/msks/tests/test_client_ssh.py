@@ -772,12 +772,19 @@ def test_listed_lines_declines_when_no_agent_answers(
     assert agent.listed_lines(str(plain)) is None
 
 
-def run_scripted_peer(socket_path: str, behave) -> None:
+def run_scripted_peer(socket_path: str, behave, listening=None) -> None:
     """One unix-socket peer that accepts a single connection and
-    performs the scripted behavior — the broken-agent stand-in."""
+    performs the scripted behavior — the broken-agent stand-in.
+    ``listening`` sets once the server listens, so a waiter can
+    hold the client back until connect cannot lose the
+    bind-before-listen race (an early connect answers ECONNREFUSED,
+    which the rung declines through its own handler — the test's
+    path stays undriven and the coverage gate goes cold)."""
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(socket_path)
     server.listen(1)
+    if listening is not None:
+        listening.set()
     try:
         conn, _ = server.accept()
         with conn:
@@ -817,14 +824,14 @@ def test_listed_lines_declines_a_broken_answer(tmp_path: Path) -> None:
     ]
     for index, behave in enumerate(cases):
         path = str(tmp_path / f"broken-{index}.sock")
+        listening = threading.Event()
         thread = threading.Thread(
-            target=run_scripted_peer, args=(path, behave), daemon=True
+            target=run_scripted_peer,
+            args=(path, behave, listening),
+            daemon=True,
         )
         thread.start()
-        deadline = time.monotonic() + 5
-        while not os.path.exists(path):
-            assert time.monotonic() < deadline, "the peer never bound"
-            time.sleep(0.01)
+        assert listening.wait(timeout=5), "the peer never listened"
         assert agent.listed_lines(path) is None
         thread.join(timeout=5)
 
