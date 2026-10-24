@@ -590,6 +590,20 @@ async def test_a_mode_switch_lands_after_the_exit() -> None:
     assert app.link.controller.rules.mode == "allow"
 
 
+async def test_a_verdict_lands_after_the_exit() -> None:
+    """A verdict POST that outlives the app (#610): the seam
+    records, the flash takes the success beat, and the repaint's
+    guard stands down — the mode switch's own rule, driven
+    without the race. The arc was covered only by teardown
+    timing before, so a run whose scheduling differed failed
+    the 100% gate with every test green."""
+    posted, seam = verdict_seam()
+    app = build([rules_frame()], seam)
+    assert not app.is_running
+    await app.post_verdict("r1", "allow", "tilrestart")
+    assert posted == [("ws1", "r1", "allow", "tilrestart")]
+
+
 async def test_the_verdict_edges() -> None:
     """The verdict keys against an empty queue, a stale index,
     and the deny quick form: each changes only what it should."""
