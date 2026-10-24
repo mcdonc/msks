@@ -36,16 +36,19 @@ dependencies on Debian-based systems.
    manifest URL, the descriptions the builds bake, the hash-keyed
    releases.
 8. [**Guest networking**](networking.md): the per-VM tap, the
-   egress consent postures, the interceptor, and the forward that
-   carries ssh and rsync.
-9. [**Storage**](storage.md): the state disk, the per-workspace
-   volumes, and the capacity report that prices them.
-10. [**LLM Proxy**](llm.md): how to make use of msksd's built-in
+   DHCP and DNS the guest sees, the NAT path out, and the
+   forward that carries ssh and rsync.
+9. [**Egress consent**](egress-consent.md): the consent
+   postures, verdicts and durations, switching modes live, and
+   the probe endpoint that proves the chain end to end.
+10. [**Storage**](storage.md): the state disk, the per-workspace
+    volumes, and the capacity report that prices them.
+11. [**LLM Proxy**](llm.md): how to make use of msksd's built-in
     LLM proxy.
-11. [**Secrets**](secrets.md): placeholders, the swap on the
+12. [**Secrets**](secrets.md): placeholders, the swap on the
     wire, and the sentinel discipline.
-12. [**Changelog**](changes.md): what changed, release by
+13. [**Changelog**](changes.md): what changed, release by
     release.
-13. [**Development environment**](development.md): the devenv
+14. [**Development environment**](development.md): the devenv
     side of a checkout — the dev daemon, the shell's client
     presets, the worktree identity.

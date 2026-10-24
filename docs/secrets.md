@@ -92,7 +92,7 @@ naming consent: the handshake completes against the daemon's
 interception CA, the request refuses, and nothing forwards.
 A client that pins the origin's real certificate fails its
 handshake instead; it is refused closed either way. See
-[networking](networking.md#egress-consent) for the gate's
+[egress consent](egress-consent.md) for the gate's
 precedence and its per-connection boundaries. The consent modes keep gating every other port at the kernel
 queue as before. The verdict pins and resolver-learned allows
 they hold in the kernel carry across the interceptor's
@@ -186,7 +186,7 @@ startup: the daemon-wide row named **`probe`**, allowlisting
 `secretprobe.msks`, carrying the fixed credential blob
 `bXNrczptc2tz` as its secret. It exists so an operator can verify interception from inside
 a workspace with zero minting (the [probe
-endpoint](networking.md#the-probe-endpoint)). Its sentinel
+endpoint](egress-consent.md#the-probe-endpoint)). Its sentinel
 never needs to be treated as a secret: the credential it swaps
 to is public and gates nothing beyond the probe's own `ok`
 page.

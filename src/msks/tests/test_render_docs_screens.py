@@ -85,13 +85,13 @@ def screen_name(app) -> str:
     return type(app.screen).__name__
 
 
-def holds_settled(app) -> bool:
-    """The consent page's held-requests list carries its row."""
+def holds_settled(app, count: int = 1) -> bool:
+    """The consent page's held-requests list carries its rows."""
     try:
         rows = app.screen.query_one("#hold-rows")
     except Exception:
         return False
-    return len(rows.children) >= 1
+    return len(rows.children) >= count
 
 
 def audit_settled(app) -> bool:
@@ -189,6 +189,27 @@ async def test_the_consent_page(monkeypatch) -> None:
         await press_until(pilot, "e", lambda: on_consent(app))
         await wait_for(lambda: on_consent(app) and holds_settled(app))
         await export(app, "consent-page")
+
+
+async def test_the_consent_page_with_several_holds(monkeypatch) -> None:
+    """The decider under load: several held requests queued at
+    once — the egress-consent chapter's opening view."""
+    scripted_link(
+        monkeypatch,
+        [
+            rules_frame(),
+            request_frame("r9"),
+            request_frame("r10", host="api.anthropic.com"),
+            request_frame("r11", host="files.example"),
+        ],
+    )
+    app, _ = make_app(FakeData([row()]))
+    async with app.run_test(size=(80, 24)) as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 5)
+        await press_until(pilot, "e", lambda: on_consent(app))
+        await wait_for(lambda: on_consent(app) and holds_settled(app, count=3))
+        await export(app, "consent-holds")
 
 
 async def test_the_duration_picker(monkeypatch) -> None:

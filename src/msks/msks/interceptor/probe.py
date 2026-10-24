@@ -10,7 +10,7 @@ allowlisted request does, through the redirect, the splice tier,
 the leaf mint, and the sentinel→secret swap, and the service
 itself only ever sees a well-formed basic-auth credential.
 
-The verification recipe (docs/networking.md): mint a placeholder
+The verification recipe (docs/egress-consent.md): mint a placeholder
 whose allowlist carries the probe host and whose **secret is the
 base64 of the whole credential** — ``base64("msks:msks")`` — then
 from the workspace send the sentinel as the raw Basic blob::

@@ -26,12 +26,13 @@ nav = [
   { "The CLI Client" = "cli.md" },
   { "Configuration" = "config.md" },
   { "Workspace Images" = "images.md" },
-  { "Guest Networking" = "networking.md" },
   { "Storage" = "storage.md" },
+  { "Guest Networking" = "networking.md" },
+  { "Egress Consent" = "egress-consent.md" },
   { "LLM Proxy" = "llm.md" },
   { "Secrets" = "secrets.md" },
-  { "Changelog" = "changes.md" },
   { "Development environment" = "development.md" },
+  { "Changelog" = "changes.md" },
 ]
 
 # The internal design history stays in the repository, off the

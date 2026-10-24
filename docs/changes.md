@@ -74,7 +74,7 @@ tagged `vX.Y.Z`.
   `MSKSD_EGRESS_CONSENT_ROW_CAP`, `MSKSD_EGRESS_QUEUE_BASE`,
   `MSKSD_CONNTRACK_TOOL`, and `MSKSD_AUDIT_HMAC_KEY` (consent rows
   carry HMAC tags when it is set). See
-  [docs/networking.md](networking.md#egress-consent) and
+  [docs/egress-consent.md](egress-consent.md) and
   [docs/cli.md](cli.md#msks-egress).
 
 - **`msks storage` image import times (#186).** Each catalog row
