@@ -82,13 +82,23 @@ async def test_local_agent_toolchain() -> None:
         )
         # pi: the `env node` shebang plus the installed tree —
         # pi --version exits before any extension or model work,
-        # so this pins the toolchain, not the proxy posture.
+        # so this pins the toolchain, not the proxy posture. The
+        # settings plant rides along: both homes carry the file
+        # (#616).
         await run_in_console(
             microvm,
             wid,
-            'test "$(pi --version)" = "0.87.1" && echo PI-$((6*7))',
+            'test "$(pi --version)" = "1.4.0" && echo PI-$((6*7))',
             "PI-42",
         )
+        for home in ("/etc/skel", "/root"):
+            await run_in_console(
+                microvm,
+                wid,
+                f'test -f "{home}/.pi/agent/settings.json" '
+                "&& echo SETTINGS-$((6*7))",
+                "SETTINGS-42",
+            )
         await run_in_console(
             microvm,
             wid,

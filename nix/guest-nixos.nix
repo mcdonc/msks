@@ -179,6 +179,7 @@ let
         guestConfiguration = ./guest-nixos-configuration.nix;
         agentToolchainFile = ./agent-toolchain.nix;
         piExtensionFile = ./guest-pi-extension.ts;
+        piSettingsFile = ./guest-pi-settings.json;
         shrinkwrapPatchFile = ./pi-shrinkwrap-patch.py;
         shrinkwrapTableFile = ./pi-shrinkwrap-integrity.json;
         # binutils: readelf for the claude linkage guard below;
@@ -263,6 +264,8 @@ let
           "$root"/etc/nixos/nix/agent-toolchain.nix
         cp "$piExtensionFile" \
           "$root"/etc/nixos/nix/guest-pi-extension.ts
+        cp "$piSettingsFile" \
+          "$root"/etc/nixos/nix/guest-pi-settings.json
         cp "$shrinkwrapPatchFile" \
           "$root"/etc/nixos/nix/pi-shrinkwrap-patch.py
         cp "$shrinkwrapTableFile" \
@@ -342,6 +345,7 @@ let
         test -f "$root"/etc/nixos/nix/guest-nixos-configuration.nix
         test -f "$root"/etc/nixos/nix/agent-toolchain.nix
         test -f "$root"/etc/nixos/nix/guest-pi-extension.ts
+        test -f "$root"/etc/nixos/nix/guest-pi-settings.json
         test -f "$root"/etc/nixos/nix/pi-shrinkwrap-patch.py
         test -f "$root"/etc/nixos/nix/pi-shrinkwrap-integrity.json
         # The shipped chain must evaluate as a guest rebuild
@@ -392,6 +396,7 @@ let
                  needs && /File: / {f=$5} \
                  needs && /Name: / {print f, $3}')"
         grep -Rq 'llm-models.ts' "$toplevel"/etc/tmpfiles.d/
+        grep -Rq 'settings.json' "$toplevel"/etc/tmpfiles.d/
         grep -q 'guest-pi-extension' "$closureInfo"/store-paths
         # The launchers must execute (#272): a profile link proves
         # presence, not a working interpreter — the bug this closes
