@@ -260,14 +260,6 @@ Every command that takes a workspace accepts either reference:
 workspace. The name is the everyday reference; the id is the
 reference no other workspace shares.
 
-## The TUI
-
-The full-screen workspace tree — the workspace, secrets, and
-image pages, the failure panels, the consent decider — is
-[its own chapter](tui.md). The command reference below covers
-the commands the tree renders and the shells it runs:
-`msks ssh`, `msks console`, `msks image`, and the rest.
-
 ## `msks ls`
 
 Prints one line per workspace the daemon knows, aligned in five
@@ -1069,51 +1061,6 @@ with a message naming the fix: pass `--allow` entries, or pass
 `--offline` to run the switch anyway. That posture answers
 every name NXDOMAIN, an offline workspace reachable only by
 ssh.
-
-### The decider surface
-
-`msks tui`'s workspace page is the interface a human decides
-from. While the page is open, it registers this client as the
-workspace's decider (holds wait only while one is connected).
-Its consent overlay, pushed by the page's **Egress** action or
-by the first hold of a burst, shows every held request with
-its countdown and sends verdicts through the same endpoints
-the subcommands use. Keys: `a`/`d` allow or deny the focused hold for the default
-duration, `A`/`D` open the duration picker, `r` the rules
-screen (with `x` to revoke), and `m` the mode picker. The
-[workspace tree's](tui.md) overlay section owns the overlay's
-full lifecycle (the auto-open, the park, the self-close). The
-placeholder-token audit is the secrets page's daemon-wide view
-. A dropped link reconnects
-with backoff and re-registers (the snapshot re-lands); while
-disconnected the overlay's status line says so — the daemon
-fail-closes new connects, and in-flight holds run their timeout.
-An off-allowlist sighting flashes the surface that owns the
-terminal: the overlay's status line while it is up, the page's
-consent line when it is not (the alarm, carried into the
-tree).
-
-The protocol state (frame parsing, countdowns) is pure and
-unit-tested; the `watch`/`decide`/`revoke` subcommands remain the
-scripting surface (`watch` prints frames as lines).
-
-The create-time posture (`msks create --egress-mode`,
-`--allow`) sets the first mode: `--egress-mode
-allow|static|interactive` and repeatable `--allow SPEC`
-entries. A bare host matches the apex only, `.host` includes
-subdomains, `*.host` matches subdomains only, `host:port`
-scopes a port, and `10.0.0.0/8[:port]` names an address
-range. Name entries gate at the daemon's resolver (the one
-the DHCP lease hands the guest); address entries accept in the
-per-VM kernel chain. `msks egress mode` switches the posture
-after create; the daemon-wide default new workspaces take
-is `MSKSD_EGRESS_MODE` (`allow` as shipped).
-
-`msks create --secret-coverage scoped` boots the workspace exempt
-from daemon-wide placeholders — only placeholders minted
-directly at it arm it; the default (`all`) accepts daemon-wide
-coverage, and `msks secret coverage` flips the posture after
-create.
 
 ## `msks key`
 
