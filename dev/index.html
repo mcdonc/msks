@@ -492,6 +492,32 @@
   
   
     <li class="md-nav__item">
+      <a href="./storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="./networking/" class="md-nav__link">
         
   
@@ -518,14 +544,14 @@
   
   
     <li class="md-nav__item">
-      <a href="./storage/" class="md-nav__link">
+      <a href="./egress-consent/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  Storage
+  Egress Consent
 
     
   </span>
@@ -596,14 +622,14 @@
   
   
     <li class="md-nav__item">
-      <a href="./changes/" class="md-nav__link">
+      <a href="./development/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  Changelog
+  Development environment
 
     
   </span>
@@ -622,14 +648,14 @@
   
   
     <li class="md-nav__item">
-      <a href="./development/" class="md-nav__link">
+      <a href="./changes/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-  Development environment
+  Changelog
 
     
   </span>
@@ -746,10 +772,13 @@ dependencies on Debian-based systems.</p>
    manifest URL, the descriptions the builds bake, the hash-keyed
    releases.</li>
 <li><a href="networking/"><strong>Guest networking</strong></a>: the per-VM tap, the
-   egress consent postures, the interceptor, and the forward that
-   carries ssh and rsync.</li>
+   DHCP and DNS the guest sees, the NAT path out, and the
+   forward that carries ssh and rsync.</li>
+<li><a href="egress-consent/"><strong>Egress consent</strong></a>: the consent
+   postures, verdicts and durations, switching modes live, and
+   the probe endpoint that proves the chain end to end.</li>
 <li><a href="storage/"><strong>Storage</strong></a>: the state disk, the per-workspace
-   volumes, and the capacity report that prices them.</li>
+    volumes, and the capacity report that prices them.</li>
 <li><a href="llm/"><strong>LLM Proxy</strong></a>: how to make use of msksd's built-in
     LLM proxy.</li>
 <li><a href="secrets/"><strong>Secrets</strong></a>: placeholders, the swap on the
