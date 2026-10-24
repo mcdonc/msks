@@ -1,0 +1,1071 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Microvm workspaces for AI coding agents">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/msks/0.3/llm/">
+      
+      
+      
+        <link rel="prev" href="../egress-consent/">
+      
+      
+        <link rel="next" href="../secrets/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.71">
+    
+    
+      
+        <title>LLM Proxy - msks</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.e442bf79.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.b60ce83d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="msks" class="md-header__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            msks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              LLM Proxy
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="msks" class="md-nav__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    msks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The host doctor
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  First run
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../egress-consent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Consent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-two-routing-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The two routing modes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#secrets-stay-out-of-the-config-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Secrets stay out of the config file
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-listener-the-firewall-and-the-tap" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The listener, the firewall, and the tap
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-request-may-carry" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a request may carry
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sighup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        SIGHUP
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development environment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-two-routing-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The two routing modes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#secrets-stay-out-of-the-config-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Secrets stay out of the config file
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-listener-the-firewall-and-the-tap" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The listener, the firewall, and the tap
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-request-may-carry" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a request may carry
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sighup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        SIGHUP
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="the-workspace-llm-proxy">The workspace LLM proxy<a class="headerlink" href="#the-workspace-llm-proxy" title="Permanent link">&para;</a></h1>
+<p>Every workspace consumes LLMs through msksd. The daemon holds the
+provider credentials and the routing configuration; each workspace
+holds only its own proxy credential and talks to an OpenAI-shaped
+endpoint served on its own tap. Provider keys never enter a workspace, and a workspace uses
+LLMs with its egress consent untouched. This holds even for a
+workspace with no egress at all (once one is attached), or a
+<code>static</code> workspace whose allowlist names no providers: the
+daemon makes the upstream connection itself.</p>
+<h2 id="the-two-routing-modes">The two routing modes<a class="headerlink" href="#the-two-routing-modes" title="Permanent link">&para;</a></h2>
+<p>The model list is one setting, <code>llm_models</code>
+(<code>MSKSD_LLM_MODELS</code>). Its entries are spelled
+<code>provider/model:api_base:api_key</code>. The environment takes them
+comma-separated; the config file takes a YAML list. There, an
+entry may also be a <strong>LiteLLM-native dict</strong> (klangk's YAML
+shape) for the routing knobs the string grammar cannot
+spell:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">llm_models</span><span class="p">:</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gpt-4o</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">litellm_params</span><span class="p">:</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai/gpt-4o</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">api_base</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.openai.com/v1</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">file:/etc/msksd/openai.key</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">model-name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude-sonnet-4</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">    </span><span class="nt">litellm-params</span><span class="p">:</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">anthropic/claude-sonnet-4</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cmd:pass show anthropic</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">      </span><span class="nt">rpm</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span>
+</span></code></pre></div>
+<p>Dict keys accept kebab- or snake-case, <code>params</code> is the
+<code>litellm_params</code> shorthand, and <code>file:</code>/<code>cmd:</code> indirection works
+on <code>api_key</code>/<code>api_base</code> inside the block. An environment string
+overrides the file's list wholesale. The colons of the string
+grammar split with two exceptions, so the common shapes all parse:</p>
+<ul>
+<li>an entry whose key is a <code>file:</code> or <code>cmd:</code> reference keeps
+  everything from the marker — paths and commands carry colons
+  (<code>openai/gpt-4o::file:/etc/msksd/openai.key</code>);</li>
+<li>a scheme-bearing base keeps its port and any key after its path
+  (<code>openai/gpt-4o:https://api.openai.com/v1:sk-...</code>).</li>
+</ul>
+<p>A <strong>single</strong> entry whose model name is <code>*</code> is <em>passthrough
+mode</em>. The entry's base names one upstream, requests forward
+verbatim over httpx, and <code>/models</code> is discovered dynamically
+from the upstream. Every model the upstream serves is
+available with no further configuration. Any other list is <em>multi-provider mode</em>:
+the entries become a <a href="https://github.com/BerriAI/litellm"><code>litellm</code></a>
+router. A workspace addresses a model by its logical name: the part
+after the provider slash for a string entry, or the explicit
+<code>model_name</code> for a dict one. A request that names no model, or
+a name the list does not carry, uses the first configured
+model. Known providers
+(<code>openai</code>, <code>anthropic</code>, <code>cohere</code>, <code>mistral</code>, <code>groq</code>, <code>together_ai</code>,
+<code>deepseek</code>, <code>fireworks_ai</code>) fill their default base when an entry
+names none.</p>
+<p>An empty list (the default) presents no LLM surface at all:
+nothing binds on any tap, and the per-workspace input chain admits
+no proxy port.</p>
+<h2 id="secrets-stay-out-of-the-config-file">Secrets stay out of the config file<a class="headerlink" href="#secrets-stay-out-of-the-config-file" title="Permanent link">&para;</a></h2>
+<p>Every secret-bearing value resolves indirection at configure time:
+<code>file:</code> reads a path, <code>cmd:</code> runs a shell command and takes its
+stdout. It works on each entry's key and on the shared default
+<code>llm_api_key</code> (<code>MSKSD_LLM_API_KEY</code>). A broken reference refuses
+the configure — the daemon log carries the named error (the
+entry's own text, operator-visible), and requests answer a 503
+that names only the failure, never the entry — instead of sending
+an empty key upstream.</p>
+<h2 id="the-listener-the-firewall-and-the-tap">The listener, the firewall, and the tap<a class="headerlink" href="#the-listener-the-firewall-and-the-tap" title="Permanent link">&para;</a></h2>
+<p>Each egress workspace's tap carries its host-reachable services —
+DHCP (67), the resolver (53), the interceptor's listener while
+armed (#199), and — when a model list is configured — the proxy at
+<code>llm_port</code> (<code>MSKSD_LLM_PORT</code>, default <code>8770</code>). The proxy holds no
+credential (#483): the tap that a request arrived on is the whole
+identity. Four layers pin it. The listener binds the tap's own address and the tap device
+itself (<code>SO_BINDTODEVICE</code>). The kernel therefore delivers a
+packet to the socket only when it arrived on that tap. A
+packet another guest sends over its own tap dies at the socket
+even when firewall tables are missing: every per-VM apply is
+fail-tolerant, so a failed or flushed table is a state the
+daemon keeps serving through. The base firewall table carries one static guard beside the
+masquerade: loopback traffic to the tap pool on the proxy port
+drops. That answers a host process, which the kernel's
+weak-host delivery would otherwise hand to the listener
+through any device pin. The per-VM nftables input chain
+ahead of the socket admits exactly this port from exactly that
+tap, pinned to the guest's source address. A packet that reaches the host from outside, routed in over
+the uplink toward a tap address, dies at the pin too: it did
+not arrive on the tap, and the pin refuses off-tap arrivals
+whatever interface carried them. This was verified the same
+way, with no firewall tables loaded at all. The private,
+source-NAT'd pool means such a packet must be deliberately
+routed, and the pin still answers it.</p>
+<p>A daemon API bearer token presented at the proxy answers 401: the
+API surface's credential stays distinct from the proxy, which
+reads no credential. Any other value in the header passes
+unexamined.</p>
+<p>The first-boot seed configures the clients; the identity seed
+is the vehicle, and the tap is the one described in
+<a href="../networking/">Guest networking</a>. <code>/etc/profile.d/msks-llm.sh</code>
+exports <code>MSKSWS_BASE_URL</code>, built from the DHCP lease's gateway
+and the daemon's port. It also exports <code>MSKSWS_API_KEY</code>, a
+placeholder the proxy never reads: it exists for OpenAI-shaped
+clients that refuse an empty key. The names carry the msks prefix
+because the proxy is this daemon's own service; a vendor-shaped
+name would claim otherwise. A login shell inside the workspace is
+therefore already configured for every MSKSWS-aware client:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="gp">$ </span>env<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>MSKSWS
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="go">MSKSWS_BASE_URL=http://172.31.0.2:8770/v1</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="go">MSKSWS_API_KEY=msks-local-proxy</span>
+</span></code></pre></div>
+<p>Both guest images ship the agent toolchain beside it (#266, #268): each
+image bakes pinned Node and the pinned pi coding agent on
+every account's default <code>PATH</code>: the Debian image under
+<code>/usr/local</code>, the NixOS image through its system profile. Each
+also plants a pi extension (<code>llm-models.ts</code>) in <code>/etc/skel</code>
+and root's home. Every account the identity seed
+provisions copies the skeleton, so each login user ends up with
+the extension in <code>~/.pi/agent/extensions/</code>, where pi discovers
+it. At every pi startup the extension makes one fetch of
+<code>${MSKSWS_BASE_URL}/models</code>, aborted at 1.5 seconds, and registers
+the catalog under the <code>msks</code> provider, so <code>/model</code> always shows
+the daemon's live model list. A workspace whose daemon serves no model list registers
+nothing after that one attempt, and pi starts without the
+provider. The environment pair is seeded even when no proxy
+listens, so the fetch, not the shell, is what discovers the
+difference. A peer that answers headers fast and trickles its
+body can hold the read slightly past the abort. A copy a user has
+edited stays edited; nothing re-overwrites it.</p>
+<p>Two limits to know. A home that existed before the image carried
+the extension keeps its old state — the extension reaches accounts
+provisioned after the image did, and an older home can copy it
+from <code>/etc/skel/.pi/agent/extensions/</code>. The model metadata the extension registers is a placeholder:
+128k context, 8192 max output, plain text chat, zero cost.
+The proxy's OpenAI-shaped model list carries no limits, so a
+model that serves more is under-planned and one that serves
+less can over-generate. Set per-model values in
+<code>~/.pi/agent/models.json</code> when it matters.
+The toolchain pins move with an image rebuild (the shared pins in
+<code>nix/agent-toolchain.nix</code>; the Debian Node tarball pin in
+<code>nix/guest-debian.nix</code>); a workspace that already booted keeps
+what it booted with.</p>
+<p>One more create-time fact rides the seed: the port. The planted
+<code>MSKSWS_BASE_URL</code> names the port the daemon served when the
+workspace was created. Moving <code>MSKSD_LLM_PORT</code> later does not
+rebind a live listener — each workspace's listener and firewall
+admission move at its next stop/start, and until then that
+workspace's LLM surface stays on the old port (fail-closed:
+refused). A workspace created before a port change needs the
+same hand update for its planted environment (or a recreate).</p>
+<p>One upstream-side behavior worth knowing in multi-provider mode:
+providers that want images inline make the daemon fetch remote
+URLs a request's message parts name — litellm's own URL
+validation guards those fetches.</p>
+<h2 id="what-a-request-may-carry">What a request may carry<a class="headerlink" href="#what-a-request-may-carry" title="Permanent link">&para;</a></h2>
+<p>The proxy forwards the fields an OpenAI chat-completion request
+carries — <code>model</code>, <code>messages</code>, <code>stream</code>, sampling and tool
+parameters — and drops everything else before the router sees
+the body. Provider credentials and endpoints are deployment
+configuration: a request that names <code>api_base</code>, <code>api_key</code>, or any
+other routing parameter gets those fields dropped, never
+honored. A body larger than 16 MiB answers 413; a body that is
+not a JSON object answers 400.</p>
+<h2 id="sighup">SIGHUP<a class="headerlink" href="#sighup" title="Permanent link">&para;</a></h2>
+<p>The proxy reads settings live. A <code>SIGHUP</code> that changes the
+model list re-routes the very next request wherever a listener
+already serves, in either direction: models added begin
+serving, and models removed answer 503 on the open port. The
+closed-port posture of an unconfigured daemon arrives with
+that workspace's next stop/start. A workspace that booted while no model list was
+configured has no listener and no firewall admission — its next
+stop/start brings the surface up once the daemon is configured.
+(The first request after a swap pays the reconfigure — the
+lazily-imported litellm tree, a <code>cmd:</code> secret's subprocess — off
+the serving loop, so no other workspace's traffic waits on it.)</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a2388154.min.js"></script>
+      
+    
+  </body>
+</html>
