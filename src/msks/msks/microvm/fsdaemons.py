@@ -35,8 +35,10 @@ QUEUE_SIZE = 1024
 #: stay off: uid translation and ACLs cannot combine.
 XATTRMAP = ":map::user.virtiofs.:"
 
-#: The uid/gid translation count: the whole guest range squashes
-#: to the one host identity.
+#: The uid/gid translation count: the guest range [0, 2^32-2]
+#: squashes to the one host identity. The last guest uid
+#: (4294967295, the kernel's nobody) falls through unmapped —
+#: nothing legitimate in a guest writes as it.
 WHOLE_RANGE = 4294967295
 
 

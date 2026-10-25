@@ -331,32 +331,74 @@ async def kill_proc(proc) -> None:
 
 
 def resolve_fs_share(mount, share) -> str:
-    """The share's host path resolved now, or the named refusal:
-    the route's derivation already filtered the missing and the
-    drifted — this directory check is the last guard, not the
-    filter."""
+    """The share's host path resolved now, refusing by name when
+    it is missing or when the load-time pin disagrees — the
+    symlink-walk guard holds at spawn too, not only at the
+    route's derivation: a retarget between the two never attaches
+    the new target."""
     resolved = os.path.realpath(share.path)
     if not os.path.isdir(resolved):
         raise MicrovmError(
             f"share {mount.share!r} path is missing or not a "
             f"directory: {share.path}"
         )
+    if share.resolved is not None and resolved != share.resolved:
+        raise MicrovmError(
+            f"share {mount.share!r} path drifted since load: "
+            f"{share.resolved} became {resolved}; widen the "
+            "config's path or reload it"
+        )
     return resolved
 
 
-def sweep_fs_pidfile(vm_dir: Path, pidfile: Path) -> None:
+async def sweep_fs_pidfile(vm_dir: Path, pidfile: Path) -> None:
     """One untracked daemon's pidfile: a pid nothing wrote is
     swept alone; a pid whose command line names this workspace's
-    socket is TERM'd first — a recycled pid never qualifies
-    (#56's guard, the fs shape) — and the pidfile sweeps with
-    it."""
+    socket is TERM'd, waited, and KILL'd past the grace — a
+    recycled pid never qualifies (#56's guard, the fs shape), and
+    a TERM-ignoring daemon cannot wedge the workspace behind its
+    own live socket."""
     pid = read_fs_pid(pidfile)
     if pid is not None and fs_pid_serves(
         pid, fs_socket_path(vm_dir, pidfile.stem[3:])
     ):
-        with contextlib.suppress(ProcessLookupError):
-            os.kill(pid, signal.SIGTERM)
+        await stop_fs_pid(pid, pidfile)
     pidfile.unlink(missing_ok=True)
+
+
+async def stop_fs_pid(pid: int, pidfile: Path) -> None:
+    """TERM, a short death-wait, then KILL: an untracked daemon
+    has no process handle to wait on, so the death check polls
+    the pid — and the pidfile stays until then so a later stop
+    can still find a daemon that outlives the grace."""
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(pid, signal.SIGTERM)
+    if await pid_dead_by(pid, FS_TERM_GRACE_S):
+        return
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(pid, signal.SIGKILL)
+    await pid_dead_by(pid, FS_TERM_GRACE_S)
+
+
+async def pid_dead_by(pid: int, timeout_s: float) -> bool:
+    """Poll one pid until it dies or the deadline passes; True
+    when it died."""
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    while asyncio.get_running_loop().time() < deadline:
+        if pid_gone(pid):
+            return True
+        await asyncio.sleep(0.05)
+    return pid_gone(pid)
+
+
+def pid_gone(pid: int) -> bool:
+    """Whether a pid no longer answers kill(0) — dead or never
+    was."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
 
 
 def read_fs_pid(pidfile: Path) -> int | None:
@@ -419,10 +461,11 @@ class LocalCloudHypervisor(MicrovmDriver):
         self.app = app
         self._procs: dict[str, asyncio.subprocess.Process] = {}
         # The virtiofs daemons (#620, part #622): one list per
-        # workspace, the mounts its live VM attaches. Spawned in
-        # the VMM's session (they serve as long as it does, and a
-        # daemon crash leaves them serving for the restarted
-        # daemon to find by pidfile — the #56 pattern).
+        # workspace, the mounts its live VM attaches. Each daemon
+        # runs in its own session, like the VMM — it serves as
+        # long as the VM does, and a daemon crash leaves it
+        # serving for the restarted daemon to find by pidfile
+        # (the #56 pattern).
         self._fs_procs: dict[str, list[asyncio.subprocess.Process]] = {}
         # One lock per workspace (#70 review): a stop/kill racing a
         # start must not interleave — shutdown pops the VMM before it
@@ -738,7 +781,8 @@ class LocalCloudHypervisor(MicrovmDriver):
             raise MicrovmError(f"share {mount.share!r} is not in the config")
         resolved = resolve_fs_share(mount, share)
         socket = self._fs_socket_for(vm_dir, mount.share)
-        return await self._spawn_fs(
+        log_path = vm_dir / f"fs-{mount.share}.log"
+        proc = await self._spawn_fs(
             binary,
             fs_daemon_args(
                 resolved,
@@ -749,8 +793,34 @@ class LocalCloudHypervisor(MicrovmDriver):
                 readonly=(not share.writable or mount.mode != MODE_RW),
                 sandbox=sandbox,
             ),
-            vm_dir / f"fs-{mount.share}.log",
+            log_path,
         )
+        # The daemon must serve before the VMM opens the socket:
+        # a daemon that died at exec (a bad flag set, a missing
+        # library) surfaces here as a named error pointing at its
+        # log, not downstream as an opaque CH connect failure.
+        await self._wait_fs_socket(socket, proc, mount.share, log_path)
+        return proc
+
+    async def _wait_fs_socket(
+        self, socket: Path, proc, share: str, log_path: Path
+    ) -> None:
+        """Wait for the daemon's socket to appear, bounded: a
+        dead proc (or a silent one past the grace) refuses naming
+        the log tail."""
+        deadline = asyncio.get_running_loop().time() + FS_TERM_GRACE_S
+        while not socket.exists():
+            if proc.returncode is not None:
+                raise MicrovmError(
+                    f"virtiofsd for share {share!r} exited at start "
+                    f"({self._log_tail(log_path)})"
+                )
+            if asyncio.get_running_loop().time() > deadline:
+                raise MicrovmError(
+                    f"virtiofsd for share {share!r} never served "
+                    f"{socket} ({self._log_tail(log_path)})"
+                )
+            await asyncio.sleep(0.05)
 
     def _fs_socket_for(self, vm_dir: Path, share: str) -> Path:
         """The share's socket, swept of residue — a socket still
@@ -830,7 +900,7 @@ class LocalCloudHypervisor(MicrovmDriver):
         daemons this process never spawned."""
         vm_dir = self._dir(workspace_id)
         for pidfile in sorted(vm_dir.glob("fs-*.pid")):
-            sweep_fs_pidfile(vm_dir, pidfile)
+            await sweep_fs_pidfile(vm_dir, pidfile)
 
     async def _unlink_fs_pidfiles(self, vm_dir: Path) -> None:
         """Drop the tracked daemons' pidfiles beside their sockets."""

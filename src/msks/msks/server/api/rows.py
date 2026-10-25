@@ -19,7 +19,7 @@ from ...spec.mounts import (
 from ...spec.vm import VmSpec, VmStatus
 
 
-def spec_for(row: dict, mounts=None) -> VmSpec:
+def spec_for(row: dict, mounts: tuple | None = None) -> VmSpec:
     """Rebuild the seam's VmSpec from a workspace row.
 
     *mounts* overrides the row's parsed list (#620, part #622):
@@ -194,7 +194,7 @@ def drift_issues(mounts, shares) -> tuple:
     )
 
 
-def drift_issue(mount, share) -> object | None:
+def drift_issue(mount, share) -> MountIssue | None:
     """The drift refusal (#620, part #622): the share's path must
     resolve where the settings load left it. A path that did not
     exist at load (the doctor warns) attaches at its current

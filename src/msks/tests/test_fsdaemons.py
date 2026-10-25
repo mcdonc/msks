@@ -8,6 +8,7 @@ refusal, and the doctor rows.
 """
 
 import asyncio
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -271,6 +272,11 @@ async def test_start_passes_only_attachable_mounts(client, tmp_path):  # noqa: F
 # --- the daemon lifecycle ---------------------------------------------
 
 
+def socket_from_args(args: list[str]) -> Path:
+    """The --socket-path value of one fake spawn's args."""
+    return Path(args[args.index("--socket-path") + 1])
+
+
 class FakeProc:
     """A virtiofsd-shaped process double: returncode None until
     terminate, then 0 — the tracked-teardown path's shape."""
@@ -309,6 +315,7 @@ def driver_over(settings: Settings) -> LocalCloudHypervisor:
 
     async def fake_spawn_fs(binary, args, log_path):
         spawned.append((binary, args))
+        socket_from_args(args).touch()
         return FakeProc()
 
     driver._spawn_fs = fake_spawn_fs
@@ -387,6 +394,7 @@ async def test_spawn_failure_unwinds_earlier_daemons(
         if len(spawned) == 2:
             raise FileNotFoundError("virtiofsd")
         spawned.append((binary, args))
+        socket_from_args(args).touch()
         return FakeProc()
 
     driver._spawn_fs = flaky_spawn
@@ -604,6 +612,7 @@ async def test_stop_is_idempotent_and_kills_a_hang(tmp_path: Path) -> None:
             return self.returncode
 
     async def hang_spawn(binary, args, log_path):
+        socket_from_args(args).touch()
         return HangingProc()
 
     driver._spawn_fs = hang_spawn
@@ -675,6 +684,7 @@ async def test_terminate_of_an_external_death_is_tolerated(
             raise ProcessLookupError
 
     async def dying_spawn(binary, args, log_path):
+        socket_from_args(args).touch()
         return ExternalDeath()
 
     driver._spawn_fs = dying_spawn
@@ -769,6 +779,7 @@ async def test_stop_skips_an_already_exited_daemon(tmp_path: Path) -> None:
             self.returncode = 0
 
     async def exited_spawn(binary, args, log_path):
+        socket_from_args(args).touch()
         return ExitedProc()
 
     driver._spawn_fs = exited_spawn
@@ -780,3 +791,249 @@ async def test_stop_skips_an_already_exited_daemon(tmp_path: Path) -> None:
     )
     await driver._start_fs_daemons(spec, vm_dir)
     await driver._stop_fs_daemons("ws-x")
+
+
+async def test_share_name_length_is_capped_at_the_tag_limit() -> None:
+    """virtiofsd refuses a tag longer than 36 bytes at exec; the
+    name rule refuses at settings load instead — a 37-byte name
+    never reaches a dying daemon."""
+    from msks.settings import mount_shares_from
+
+    assert safe_share_name("a" * 36)
+    assert not safe_share_name("a" * 37)
+    with pytest.raises(ValueError, match="36 bytes"):
+        mount_shares_from(
+            {
+                "MSKSD_MOUNT_SHARES": json.dumps(
+                    [{"name": "a" * 37, "path": "/srv"}]
+                )
+            }
+        )
+    assert not safe_share_name("café")
+
+
+async def test_readonly_composes_from_both_sides(tmp_path: Path) -> None:
+    """--readonly arrives when the mount asked ro, when the
+    operator narrowed the share, and when both — and only then: a
+    plain rw mount on a writable share spawns writable. The
+    composition is pinned on the real arg vectors."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    narrowed = tmp_path / "narrowed"
+    narrowed.mkdir()
+    vm_dir = tmp_path / "vms" / "ws-ro"
+    vm_dir.mkdir(parents=True)
+    settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    settings.mounts = MountSettings(
+        shares=(
+            MountShare(name="plain", path=str(plain)),
+            MountShare(name="narrowed", path=str(narrowed), writable=False),
+        )
+    )
+    driver, spawned = driver_over(settings)
+    spec = VmSpec(
+        workspace_id="ws-ro",
+        kernel=Path("/k"),
+        rootfs=Path("/r"),
+        mounts=(
+            MountSpec(share="plain", guest="/mnt/p"),
+            MountSpec(share="plain", guest="/mnt/p-ro", mode="ro"),
+            MountSpec(share="narrowed", guest="/mnt/n", mode="ro"),
+            # The transient narrowing shape (valid at set, denied at
+            # the route after a reload): the driver's composition
+            # still holds the operator's narrowing.
+            MountSpec(share="narrowed", guest="/mnt/n-rw"),
+        ),
+    )
+    # Duplicate guest paths are legal here only because this pins
+    # the arg composition, not the row rules — use one spec per
+    # assertion instead.
+    for mount, expect_ro in (
+        (MountSpec(share="plain", guest="/mnt/p"), False),
+        (MountSpec(share="plain", guest="/mnt/p", mode="ro"), True),
+        (MountSpec(share="narrowed", guest="/mnt/n", mode="ro"), True),
+        (MountSpec(share="narrowed", guest="/mnt/n"), True),
+    ):
+        spawned.clear()
+        spec = VmSpec(
+            workspace_id="ws-ro",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            mounts=(mount,),
+        )
+        await driver._start_fs_daemons(spec, vm_dir)
+        await driver._stop_fs_daemons("ws-ro")
+        args = spawned[0][1]
+        assert ("--readonly" in args) is expect_ro, (mount, args)
+
+
+async def test_spawn_refuses_a_path_drifted_past_the_pin(
+    tmp_path: Path,
+) -> None:
+    """The drift guard holds at spawn too: a share retargeted
+    between the route's derivation and the daemon spawn never
+    attaches the new target — the last line refuses by name, not
+    only the filter."""
+    from msks.microvm.errors import MicrovmError
+
+    real = tmp_path / "real"
+    real.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    share = MountShare(name="moved", path=str(link), resolved=str(real))
+    vm_dir = tmp_path / "vms" / "ws-d"
+    vm_dir.mkdir(parents=True)
+    settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    settings.mounts = MountSettings(shares=(share,))
+    driver, _spawned = driver_over(settings)
+    link.unlink()
+    link.symlink_to(other)  # past the pin, before the spawn
+    spec = VmSpec(
+        workspace_id="ws-d",
+        kernel=Path("/k"),
+        rootfs=Path("/r"),
+        mounts=(MountSpec(share="moved", guest="/mnt/m"),),
+    )
+    with pytest.raises(MicrovmError, match="drifted since load"):
+        await driver._start_fs_daemons(spec, vm_dir)
+
+
+async def test_untracked_sweep_escalates_to_kill(tmp_path: Path) -> None:
+    """A TERM-immortal daemon cannot wedge the workspace behind
+    its own live socket: the sweep waits out the grace, KILLs,
+    and the pidfile stays until the pid dies."""
+    import signal as signal_mod
+
+    import msks.microvm.local as local_mod
+
+    real_grace = local_mod.FS_TERM_GRACE_S
+    local_mod.FS_TERM_GRACE_S = 0.2
+    try:
+        vm_dir = tmp_path / "vms" / "ws-imm"
+        vm_dir.mkdir(parents=True)
+        driver, _spawned = driver_over(Settings())
+        socket = fs_socket_path(vm_dir, "proj")
+        immortal = await asyncio.create_subprocess_exec(
+            "sleep",
+            "30",
+            str(socket),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        # A TERM-immortal shape: a SIGSTOP'd process queues the
+        # TERM undelivered (the death poll sees it alive), and
+        # only the KILL lands — the escalation the sweep owes.
+        os.kill(immortal.pid, signal_mod.SIGSTOP)
+        await asyncio.sleep(0.2)
+        pidfile = fs_pidfile_path(vm_dir, "proj")
+        pidfile.write_text(str(immortal.pid), encoding="utf-8")
+        driver._dir = lambda workspace_id: vm_dir  # type: ignore[method-assign]
+        await driver._kill_untracked_fs_daemons("ws-imm")
+        assert not pidfile.exists()
+        assert await local_mod.pid_dead_by(immortal.pid, 2.0)
+    finally:
+        local_mod.FS_TERM_GRACE_S = real_grace
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(immortal.pid, signal_mod.SIGCONT)
+        with contextlib.suppress(ProcessLookupError):
+            immortal.kill()
+        await immortal.wait()
+
+
+async def test_pid_dead_by_reports_a_live_pid() -> None:
+    """The death-wait's two answers: a dead pid is True at once, a
+    live one runs out the short deadline and answers False (then
+    dies by KILL in the caller)."""
+    import msks.microvm.local as local_mod
+
+    live = await asyncio.create_subprocess_exec(
+        "sleep",
+        "30",
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        assert await local_mod.pid_dead_by(live.pid, 0.1) is False
+    finally:
+        live.kill()
+        await live.wait()
+    assert await local_mod.pid_dead_by(live.pid, 1.0) is True
+
+
+async def test_a_daemon_dying_at_exec_names_its_log(tmp_path: Path) -> None:
+    """The readiness wait's first failure shape: a daemon whose
+    proc already exited refuses naming the log, not an opaque CH
+    connect error downstream."""
+    from msks.microvm.errors import MicrovmError
+
+    share_dir = tmp_path / "proj"
+    share_dir.mkdir()
+    vm_dir = tmp_path / "vms" / "ws-dead"
+    vm_dir.mkdir(parents=True)
+    settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    settings.mounts = MountSettings(
+        shares=(MountShare(name="proj", path=str(share_dir)),)
+    )
+    driver, _spawned = driver_over(settings)
+
+    class DiedAtExec(FakeProc):
+        def __init__(self) -> None:
+            super().__init__()
+            self.returncode = 1
+
+    async def dead_spawn(binary, args, log_path):
+        return DiedAtExec()
+
+    driver._spawn_fs = dead_spawn
+    spec = VmSpec(
+        workspace_id="ws-dead",
+        kernel=Path("/k"),
+        rootfs=Path("/r"),
+        mounts=(MountSpec(share="proj", guest="/mnt/proj"),),
+    )
+    with pytest.raises(MicrovmError, match="exited at start"):
+        await driver._start_fs_daemons(spec, vm_dir)
+    assert "ws-dead" not in driver._fs_procs
+
+
+async def test_a_silent_daemon_refuses_past_the_grace(tmp_path: Path) -> None:
+    """The readiness wait's second shape: a proc that lives but
+    never serves its socket refuses past the grace, naming the
+    log."""
+    import msks.microvm.local as local_mod
+    from msks.microvm.errors import MicrovmError
+
+    share_dir = tmp_path / "proj"
+    share_dir.mkdir()
+    vm_dir = tmp_path / "vms" / "ws-silent"
+    vm_dir.mkdir(parents=True)
+    settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    settings.mounts = MountSettings(
+        shares=(MountShare(name="proj", path=str(share_dir)),)
+    )
+    driver, _spawned = driver_over(settings)
+
+    async def silent_spawn(binary, args, log_path):
+        return FakeProc()  # alive, socket never appears
+
+    driver._spawn_fs = silent_spawn
+    real_grace = local_mod.FS_TERM_GRACE_S
+    local_mod.FS_TERM_GRACE_S = 0.2
+    try:
+        with pytest.raises(MicrovmError, match="never served"):
+            await driver._start_fs_daemons(
+                VmSpec(
+                    workspace_id="ws-silent",
+                    kernel=Path("/k"),
+                    rootfs=Path("/r"),
+                    mounts=(MountSpec(share="proj", guest="/mnt/proj"),),
+                ),
+                vm_dir,
+            )
+        assert "ws-silent" not in driver._fs_procs
+    finally:
+        local_mod.FS_TERM_GRACE_S = real_grace

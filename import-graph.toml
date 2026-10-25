@@ -237,5 +237,6 @@ storage = 13
 [snapshot.settings]
 # #620 part #621: the shares parser pulls the MountShare shape
 # and its key grammar from the mount leaf (two names, one
-# statement); part #622 adds safe_share_name for the tag rule.
-spec = 9
+# statement); part #622 adds safe_share_name and SHARE_NAME_MAX
+# (the virtiofs tag limit) for the tag rule.
+spec = 10

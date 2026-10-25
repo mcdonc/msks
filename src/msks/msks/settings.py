@@ -27,7 +27,12 @@ from ipaddress import IPv4Network
 from pathlib import Path
 
 from .spec.egress import EGRESS_MODES, MODE_ALLOW
-from .spec.mounts import SHARE_KEYS, MountShare, safe_share_name
+from .spec.mounts import (
+    SHARE_KEYS,
+    SHARE_NAME_MAX,
+    MountShare,
+    safe_share_name,
+)
 from .spec.tokens import validate_token_plaintext
 
 VALID_DRIVERS = ("local",)
@@ -756,8 +761,9 @@ def share_name(entry: dict) -> str:
         raise ValueError("MSKSD_MOUNT_SHARES entries need a name")
     if not safe_share_name(name):
         raise ValueError(
-            f"share name {name!r} may use letters, digits, dot, "
-            "underscore, and hyphen only"
+            f"share name {name!r} may use ASCII letters, digits, "
+            f"dot, underscore, and hyphen only, up to "
+            f"{SHARE_NAME_MAX} bytes (the virtiofs tag limit)"
         )
     return name
 

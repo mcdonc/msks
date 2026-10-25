@@ -522,6 +522,9 @@ def render_template() -> str:
 #                           # per-workspace artifacts
 # cloud_hypervisor: cloud-hypervisor  # the VMM binary the local
 #                           # driver execs
+# virtiofsd: virtiofsd       # the daemon that serves host mounts
+#                           # (#620); a daemon without shares
+#                           # never execs it
 # console_wait_timeout_s: 15.0  # seconds to wait for the console
 #                           # device at boot
 # console_stall_timeout_s: 60.0  # seconds of input-unanswered
