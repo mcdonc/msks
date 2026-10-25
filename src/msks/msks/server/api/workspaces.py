@@ -19,6 +19,7 @@ from .boot import create_name, mint_workspace_id, resolve_boot
 from .deps import require_token
 from .rows import (
     host_mismatch,
+    mount_state,
     owner_host,
     serialize_create,
     spec_for,
@@ -300,6 +301,17 @@ def router(app) -> APIRouter:
             if row is None:
                 raise HTTPException(
                     status_code=404, detail="no such workspace"
+                )
+            # The mount skips publish before the launch (#620,
+            # part #621): a start proceeds without a mount whose
+            # share left the config or whose exclusive rw is held
+            # elsewhere, and every skip is state — an event now,
+            # derived again on every later read. The healthy
+            # remainder is what #622's attach consumes.
+            _attachable, issues = await mount_state(app, row)
+            for issue in issues:
+                await app.state.hub.publish(
+                    issue.event, issue.payload(workspace_id)
                 )
             await app.state.microvm.launch(spec_for(row))
             await app.state.model.set_status(workspace_id, "running")

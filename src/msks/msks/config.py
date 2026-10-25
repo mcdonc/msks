@@ -127,6 +127,8 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_LLM_PORT",
     "MSKSD_LLM_MODELS",
     "MSKSD_LLM_API_KEY",
+    # MountSettings — the host-mount shares (#620).
+    "MSKSD_MOUNT_SHARES",
 )
 
 # The key↔variable mapping, derived by the one rule. ``state_dir``
@@ -182,10 +184,13 @@ def scalar_to_str(key: str, value: object) -> str:
 #: The file's list-valued keys (#259, #448): ``llm_models``
 #: entries may be colon-delimited strings or LiteLLM-native dicts,
 #: matching klangk's YAML shape; ``seed_images`` entries are
-#: archive path strings. Env vars stay strings (comma-separated).
+#: archive path strings; ``mount_shares`` entries are the
+#: host-mount share mappings (#620). Env vars stay strings
+#: (comma-separated; the shares key reads JSON).
 LIST_KEYS = {
     "llm_models": "MSKSD_LLM_MODELS",
     "seed_images": "MSKSD_SEED_IMAGES",
+    "mount_shares": "MSKSD_MOUNT_SHARES",
 }
 
 
