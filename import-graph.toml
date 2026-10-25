@@ -155,7 +155,10 @@ spec = 17
 # so the seed carries it (#424/#200)
 interceptor = 2
 persist = 7
-spec = 14
+# #620 part #622: the local driver reads the mount vocabulary
+# (MODE_RW for the readonly composition) beside the fs-daemon
+# module it already owns.
+spec = 16
 
 [snapshot.model]
 # #514: the blob staleness hash moved to the crypto leaf with the
@@ -226,12 +229,13 @@ secretcache = 2
 # enablement read in the entry point. #620 part #621 adds four:
 # the mount vocabulary (rows' mount_state reads parse_mounts,
 # mount_issues, and MODE_RW beside the start hook's event
-# publication).
-spec = 34
+# publication); #620 part #622 adds MountIssue for the drift
+# refusal's frames.
+spec = 35
 storage = 13
 
 [snapshot.settings]
 # #620 part #621: the shares parser pulls the MountShare shape
 # and its key grammar from the mount leaf (two names, one
-# statement).
-spec = 8
+# statement); part #622 adds safe_share_name for the tag rule.
+spec = 9

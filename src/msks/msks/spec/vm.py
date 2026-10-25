@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
+from .mounts import MountSpec
+
 
 @dataclass(frozen=True)
 class VmSpec:
@@ -72,6 +74,14 @@ class VmSpec:
     # that names none — the guest carries the key for root and its
     # own msks account either way.
     login_user: str | None = None
+    # The workspace's host mounts (#620, part #622): each names a
+    # configured share, the guest path it lands at, and its mode.
+    # The start path derives the attachable subset (shares gone
+    # from the config, denied modes, and rw conflicts skip with
+    # events — #621) and the seam attaches exactly what it is
+    # handed: one virtiofsd per mount, the tag the guest mounts
+    # by. Empty is the mountless workspace.
+    mounts: tuple[MountSpec, ...] = ()
     # The workspace's LLM proxy credential (#259): minted at create,
     # stored on the row, and seeded into the guest (the token file
     # plus the profile.d exports that point OpenAI-shaped clients

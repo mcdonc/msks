@@ -254,6 +254,15 @@ def check_guest_roots(mount: MountSpec, path: PurePosixPath) -> None:
             raise ValueError(f"guest path {mount.guest!r} sits {why}")
 
 
+def safe_share_name(name: str) -> bool:
+    """Whether a share name is filename-safe (#620, part #622):
+    letters, digits, dot, underscore, hyphen — the name becomes
+    the virtiofs tag and a socket/pidfile stem, so a slash or a
+    space in it would build paths that are ambiguous or
+    unbuildable."""
+    return bool(name) and all(ch.isalnum() or ch in "._-" for ch in name)
+
+
 def under_root(path: PurePosixPath, root: str) -> bool:
     """Whether *path* is *root* or sits under it: a component-wise
     prefix comparison from the anchor, so ``/mnt/proc`` is not

@@ -127,6 +127,9 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_LLM_PORT",
     "MSKSD_LLM_MODELS",
     "MSKSD_LLM_API_KEY",
+    # VmmSettings — the virtiofs daemon behind host mounts
+    # (#620, part #622).
+    "MSKSD_VIRTIOFSD",
     # MountSettings — the host-mount shares (#620).
     "MSKSD_MOUNT_SHARES",
 )
