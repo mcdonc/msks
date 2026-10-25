@@ -588,6 +588,7 @@ async def test_stop_is_idempotent_and_kills_a_hang(tmp_path: Path) -> None:
     that ignores SIGTERM dies by SIGKILL past the grace."""
     import msks.microvm.local as local_mod
 
+    real_grace = local_mod.FS_TERM_GRACE_S
     local_mod.FS_TERM_GRACE_S = 0.1
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
@@ -624,9 +625,12 @@ async def test_stop_is_idempotent_and_kills_a_hang(tmp_path: Path) -> None:
     )
     await driver._start_fs_daemons(spec, vm_dir)
     proc = driver._fs_procs["ws-h"][0]
-    await driver._stop_fs_daemons("ws-h")
-    assert proc.killed  # ignored the TERM, died by KILL
-    await driver._stop_fs_daemons("ws-h")  # idempotent second call
+    try:
+        await driver._stop_fs_daemons("ws-h")
+        assert proc.killed  # ignored the TERM, died by KILL
+        await driver._stop_fs_daemons("ws-h")  # idempotent second call
+    finally:
+        local_mod.FS_TERM_GRACE_S = real_grace
 
 
 def test_unsafe_share_name_refuses_at_load() -> None:
@@ -1037,3 +1041,58 @@ async def test_a_silent_daemon_refuses_past_the_grace(tmp_path: Path) -> None:
         assert "ws-silent" not in driver._fs_procs
     finally:
         local_mod.FS_TERM_GRACE_S = real_grace
+
+
+async def test_stop_fs_pid_takes_the_term_fast_path() -> None:
+    """A TERM-honoring daemon answers True on the fast path — no
+    KILL needed."""
+    import msks.microvm.local as local_mod
+
+    sleeper = await asyncio.create_subprocess_exec(
+        "sleep",
+        "30",
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        assert await local_mod.stop_fs_pid(sleeper.pid) is True
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            sleeper.kill()
+        await sleeper.wait()
+
+
+async def test_sweep_keeps_a_killproof_daemons_pidfile(tmp_path):
+    """A daemon that outlives even SIGKILL (D-state) keeps its
+    pidfile: the sweep never strands the only record of a live
+    daemon."""
+    import msks.microvm.local as local_mod
+
+    vm_dir = tmp_path / "vms" / "ws-dstate"
+    vm_dir.mkdir(parents=True)
+    socket = fs_socket_path(vm_dir, "proj")
+    live = await asyncio.create_subprocess_exec(
+        "sleep",
+        "30",
+        str(socket),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    pidfile = fs_pidfile_path(vm_dir, "proj")
+    pidfile.write_text(str(live.pid), encoding="utf-8")
+
+    async def killproof(pid):
+        return False  # survived even SIGKILL
+
+    real_stop = local_mod.stop_fs_pid
+    local_mod.stop_fs_pid = killproof
+    try:
+        await local_mod.sweep_fs_pidfile(vm_dir, pidfile)
+    finally:
+        local_mod.stop_fs_pid = real_stop
+        with contextlib.suppress(ProcessLookupError):
+            live.kill()
+        await live.wait()
+    assert pidfile.exists()

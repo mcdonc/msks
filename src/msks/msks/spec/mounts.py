@@ -268,7 +268,7 @@ def safe_share_name(name: str) -> bool:
     directory."""
     return (
         bool(name)
-        and len(name) <= SHARE_NAME_MAX
+        and len(name.encode()) <= SHARE_NAME_MAX
         and all(safe_name_char(ch) for ch in name)
     )
 
