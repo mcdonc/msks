@@ -98,7 +98,7 @@ carries both settings and the socket's tradeoffs.
 - `GET /api/v1/create-defaults` — the sizes a create lands on
   when the request names none (`root_mib`, `home_mib`).
 - `GET /api/v1/probe` — the secrets-interception probe row: the
-  seeded placeholder's id, sentinel, host and port, and the
+  seeded placeholder's id, sentinel, host and port, username, and the
   fixed credential. The [egress consent
   chapter](egress-consent.md#the-probe-endpoint) owns the
   verification flow.
@@ -124,9 +124,10 @@ curl -X POST "$MSKSC_URL/api/v1/workspaces" \
   `PATCH`/`PUT` answer 405: a workspace is immutable after
   create, and sizes and topology move through `…/resize`.
 - `POST …/start` and `…/stop` drive the VM; `…/reset` wipes the
-  root overlay to its first-boot state; `…/resize` grows or
-  shrinks the volumes and moves the cpu and memory sizes;
-  `…/ssh-key` reads the workspace's planted public identity;
+  root overlay to its first-boot state; `…/resize` grows the
+  root overlay, grows or shrinks the home volume, and moves
+  the cpu and memory sizes; `…/ssh-key` reads the workspace's
+  planted public identity;
   `…/secret-coverage` flips the daemon-wide placeholder posture.
 - `GET`/`PUT …/home` export and import the home volume as a
   byte stream — the same stream `msks home import`/`export`
