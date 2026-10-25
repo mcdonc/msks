@@ -833,7 +833,7 @@ class LocalCloudHypervisor(MicrovmDriver):
                     f"virtiofsd for share {share!r} never served "
                     f"{socket}{self._log_tail(log_path)}"
                 )
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(POLL_INTERVAL_S)
 
     def _fs_socket_for(self, vm_dir: Path, share: str) -> Path:
         """The share's socket, swept of residue — a socket still

@@ -835,23 +835,9 @@ async def test_readonly_composes_from_both_sides(tmp_path: Path) -> None:
         )
     )
     driver, spawned = driver_over(settings)
-    spec = VmSpec(
-        workspace_id="ws-ro",
-        kernel=Path("/k"),
-        rootfs=Path("/r"),
-        mounts=(
-            MountSpec(share="plain", guest="/mnt/p"),
-            MountSpec(share="plain", guest="/mnt/p-ro", mode="ro"),
-            MountSpec(share="narrowed", guest="/mnt/n", mode="ro"),
-            # The transient narrowing shape (valid at set, denied at
-            # the route after a reload): the driver's composition
-            # still holds the operator's narrowing.
-            MountSpec(share="narrowed", guest="/mnt/n-rw"),
-        ),
-    )
-    # Duplicate guest paths are legal here only because this pins
-    # the arg composition, not the row rules — use one spec per
-    # assertion instead.
+    # One spec per combination (the row rules refuse duplicate
+    # guests); the transient narrowing shape (valid at set, denied
+    # at the route after a reload) rides the fourth combination.
     for mount, expect_ro in (
         (MountSpec(share="plain", guest="/mnt/p"), False),
         (MountSpec(share="plain", guest="/mnt/p", mode="ro"), True),
@@ -1020,9 +1006,12 @@ async def test_a_silent_daemon_refuses_past_the_grace(tmp_path: Path) -> None:
         shares=(MountShare(name="proj", path=str(share_dir)),)
     )
     driver, _spawned = driver_over(settings)
+    refused: list[FakeProc] = []
 
     async def silent_spawn(binary, args, log_path):
-        return FakeProc()  # alive, socket never appears
+        proc = FakeProc()  # alive, socket never appears
+        refused.append(proc)
+        return proc
 
     driver._spawn_fs = silent_spawn
     real_grace = local_mod.FS_TERM_GRACE_S
@@ -1039,6 +1028,10 @@ async def test_a_silent_daemon_refuses_past_the_grace(tmp_path: Path) -> None:
                 vm_dir,
             )
         assert "ws-silent" not in driver._fs_procs
+        # The refused daemon dies inside the refusal (round 2's
+        # fix, pinned): no untracked survivor behind a failed
+        # start.
+        assert [proc.killed for proc in refused] == [True]
     finally:
         local_mod.FS_TERM_GRACE_S = real_grace
 
