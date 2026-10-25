@@ -717,7 +717,7 @@ def mount_share_entry(entry: object) -> MountShare:
         path=path,
         writable=writable,
         multi=multi,
-        resolved=resolve_share_path(path),
+        resolved=resolve_share_path(path, name),
     )
 
 
@@ -753,11 +753,18 @@ def mount_share_flag(entry: dict, key: str, name: str) -> bool:
     return value
 
 
-def resolve_share_path(path: str) -> str | None:
+def resolve_share_path(path: str, name: str) -> str | None:
     """The realpath taken at load (#620): None when the path does
-    not exist yet (the doctor warns per missing share); the
-    attach path re-resolves and refuses drift against this."""
-    return os.path.realpath(path) if os.path.exists(path) else None
+    not exist yet (the doctor warns per missing share); a path
+    that exists but is not a directory is a named error — a
+    share serves a tree, and the failure belongs at load with
+    every other malformed share, not deferred to the attach.
+    The attach path re-resolves and refuses drift against this."""
+    if not os.path.exists(path):
+        return None
+    if not os.path.isdir(path):
+        raise ValueError(f"share {name!r} path is not a directory: {path}")
+    return os.path.realpath(path)
 
 
 def unique_share_names(shares: tuple[MountShare, ...]) -> None:

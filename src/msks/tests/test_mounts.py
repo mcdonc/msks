@@ -219,7 +219,7 @@ def test_parse_refusals() -> None:
     [
         ("mnt/p", "must be absolute"),
         ("/mnt/../etc", "must not contain"),
-        ("/", "cannot be '/'"),
+        ("/", "filesystem root"),
         ("/proc/self", "at or under /proc"),
         ("/sys", "at or under /sys"),
         ("/dev/sda", "at or under /dev"),
@@ -458,6 +458,7 @@ async def test_start_publishes_conflict_and_proceeds(client) -> None:  # noqa: F
     )
     assert second.status_code == 200
     assert ("launch", challenger_id) in stub.calls
+    assert len(published) == 1
     assert published[0][0] == "mount.conflict"
     assert published[0][1]["detail"] == (
         f"share 'db' is exclusive and already mounted rw by "
@@ -499,3 +500,73 @@ def test_ro_only_holder_holds_nothing() -> None:
         },
     )
     assert holders == {}
+
+
+@pytest.mark.parametrize("guest", ["//", "/./", "/."])
+def test_root_equivalent_guest_paths_refuse(guest: str) -> None:
+    """Every spelling of the filesystem root refuses: the guest
+    path canonicalizes at parse, so `//` and `/./` are `/` by the
+    time the rules see them, and a mount may not own the root."""
+    with pytest.raises(ValueError, match="filesystem root"):
+        validate_mounts(mounts({"share": "s", "guest": guest}))
+
+
+def test_guest_path_canonicalizes_at_parse() -> None:
+    """The stored form is the canonical one: collapsed separators
+    and resolved `.` components, trailing slash dropped — `..`
+    survives for the row rules to refuse, never silently
+    collapsed."""
+    (mount,) = mounts({"share": "s", "guest": "/mnt//./a/"})
+    assert mount.guest == "/mnt/a"
+    with pytest.raises(ValueError, match="must not contain"):
+        validate_mounts(mounts({"share": "s", "guest": "/mnt/../etc"}))
+
+
+def test_proc_named_directory_is_allowed() -> None:
+    """The pseudo-filesystem refusal is component-wise, not a
+    string prefix: `/mnt/proc` — a directory that merely carries
+    the name — passes."""
+    validate_mounts(mounts({"share": "s", "guest": "/mnt/proc"}))
+
+
+def test_shadowing_pair_found_across_a_third_mount() -> None:
+    """The shadow check sees every earlier mount, not just the
+    adjacent one: the third mount shadows the first."""
+    with pytest.raises(ValueError, match="shadows"):
+        validate_mounts(
+            mounts(
+                {"share": "a", "guest": "/mnt/a"},
+                {"share": "b", "guest": "/mnt/b"},
+                {"share": "c", "guest": "/mnt/a/deep"},
+            )
+        )
+
+
+def test_writable_narrowing_denies_at_start() -> None:
+    """A reload that narrows a share to read-only under an rw
+    mount skips it with the denied reason — honored, never a
+    silent read-only downgrade."""
+    narrowed = MountShare(name="data", path="/srv/data", writable=False)
+    issues = mount_issues(
+        mounts({"share": "data", "guest": "/mnt/data"}),
+        share_map(narrowed),
+        {},
+    )
+    assert [issue.kind for issue in issues] == ["denied"]
+    assert issues[0].event == "mount.denied"
+    assert "read-only" in issues[0].detail
+
+
+def test_file_share_path_refuses(tmp_path: Path) -> None:
+    """A share path that exists but is not a directory is a named
+    error at load — a share serves a tree."""
+    plain = tmp_path / "plain"
+    plain.write_text("file", encoding="utf-8")
+    with pytest.raises(ValueError, match="not a directory"):
+        mount_shares_from(
+            {
+                "MSKSD_MOUNT_SHARES": json.dumps(
+                    [{"name": "f", "path": str(plain)}]
+                )
+            }
+        )

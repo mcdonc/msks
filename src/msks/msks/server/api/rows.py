@@ -101,10 +101,16 @@ HOME_FREE_STATUSES = ("created", "stopped", "absent")
 
 #: The lifecycle statuses a workspace holds its rw mounts in
 #: (#620): the VM is live in each, so its exclusive shares are
-#: spoken for. ``unknown`` is treated as not holding — a
-#: possibly-live VM the watcher could not probe holds nothing the
-#: daemon can name.
-MOUNT_HOLDING_STATUSES = ("starting", "running", "paused")
+#: spoken for — and ``unknown``, a possibly-live VM the watcher
+#: could not probe, holds too: the conservative direction for
+#: mounts is refusing a second rw attacher, mirroring the home
+#: volume guard's refusal of ``unknown`` frees.
+MOUNT_HOLDING_STATUSES = (
+    "starting",
+    "running",
+    "paused",
+    "unknown",
+)
 
 
 async def mount_state(app, row: dict) -> tuple[tuple, tuple]:
@@ -114,9 +120,11 @@ async def mount_state(app, row: dict) -> tuple[tuple, tuple]:
     The derivation reads live state every time it runs: the
     configured shares (a SIGHUP reload re-shares without a
     restart) and the other rows' live rw attachments. A mount
-    skips when its share left the config (``missing``) or when it
-    wants ``rw`` on a ``multi: false`` share another workspace
-    already holds (``conflict``) — the row itself never conflicts
+    skips when its share left the config (``skipped``), when a
+    reload narrowed its share to read-only under an rw mount
+    (``denied``), or when it wants ``rw`` on a ``multi: false``
+    share another workspace already holds (``conflict``) — the
+    row itself never conflicts
     with its own attach. Read-only mounts never conflict: any
     number sit beside one rw holder."""
     mounts = parse_mounts(row.get("mounts"))

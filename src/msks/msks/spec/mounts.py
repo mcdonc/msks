@@ -72,11 +72,12 @@ class MountSpec:
 @dataclass(frozen=True)
 class MountIssue:
     """Why one mount does not attach at start (#620): the share
-    is gone from the config (``skipped``), or the mount wants
-    ``rw`` on an exclusive share another workspace already holds
-    (``conflict``). A start proceeds without the mount either way
-    — the skip is state, published as an event and derived again
-    on every read."""
+    is gone from the config (``skipped``), a reload narrowed the
+    share to read-only under an ``rw`` mount (``denied``), or the
+    mount wants ``rw`` on an exclusive share another workspace
+    already holds (``conflict``). A start proceeds without the
+    mount either way — the skip is state, published as an event
+    and derived again on every read."""
 
     kind: str
     mount: MountSpec
@@ -130,7 +131,10 @@ def decoded_mount_entries(raw: object) -> list | None:
 def mount_entry(entry: object) -> MountSpec:
     """One decoded mount: a mapping with ``share``, ``guest``, and
     an optional ``mode`` — any other key, a missing field, or an
-    unknown mode is a named error."""
+    unknown mode is a named error. The guest path canonicalizes
+    here (``PurePosixPath`` collapses ``//`` and ``.``), so the
+    stored form is the form every later rule and the #622 attach
+    reason over."""
     if not isinstance(entry, dict):
         raise ValueError(
             f"mounts entries must be mappings, got {type(entry).__name__}"
@@ -138,9 +142,17 @@ def mount_entry(entry: object) -> MountSpec:
     check_mount_keys(entry)
     return MountSpec(
         share=mount_text_field(entry, "share"),
-        guest=mount_text_field(entry, "guest"),
+        guest=canonical_guest(mount_text_field(entry, "guest")),
         mode=mount_mode_field(entry),
     )
+
+
+def canonical_guest(guest: str) -> str:
+    """The canonical spelling of one guest path: collapsed
+    separators and resolved ``.`` components, trailing slash
+    dropped. ``..`` survives untouched — the row rules refuse it,
+    and silently collapsing it would hide the traversal."""
+    return str(PurePosixPath(guest))
 
 
 def check_mount_keys(entry: dict) -> None:
@@ -213,8 +225,11 @@ def check_guest_path(mount: MountSpec) -> None:
         raise ValueError(f"guest path {mount.guest!r} must be absolute")
     if ".." in path.parts:
         raise ValueError(f"guest path {mount.guest!r} must not contain '..'")
-    if mount.guest == "/":
-        raise ValueError("guest path cannot be '/'")
+    if mount.guest == "/" or not path.parts[1:]:
+        raise ValueError(
+            f"guest path {mount.guest!r} is the filesystem root; a "
+            "mount lands below it"
+        )
     check_guest_roots(mount, path)
 
 
@@ -289,8 +304,11 @@ def mount_issues(
 ) -> tuple[MountIssue, ...]:
     """Derive why any of a row's mounts do not attach (#620):
     ``skipped`` for a share the config no longer lists (the set
-    held it once; a reload deleted it), ``conflict`` for an
-    ``rw`` mount on a ``multi: false`` share another workspace
+    held it once; a reload deleted it), ``denied`` for an ``rw``
+    mount on a share a reload narrowed to read-only (the set
+    accepted it once; the narrowing is honored, never silently
+    downgraded), ``conflict`` for an ``rw`` mount on a
+    ``multi: false`` share another workspace
     holds read-write. ``rw_holders`` maps share name to the
     holding workspace's id — callers exclude the row itself, so
     a workspace never conflicts with its own attach. Read-only
@@ -310,9 +328,9 @@ def mount_issue(
     rw_holders: dict[str, str],
 ) -> MountIssue | None:
     """One mount's issue, or None when it attaches: the share
-    left the config, or an ``rw`` mount wants a ``multi: false``
-    share another workspace holds. Read-only mounts never
-    conflict."""
+    left the config, a reload denied its mode, or an ``rw``
+    mount wants a ``multi: false`` share another workspace
+    holds. Read-only mounts never conflict."""
     share = shares.get(mount.share)
     if share is None:
         return MountIssue(
@@ -320,14 +338,41 @@ def mount_issue(
             mount=mount,
             detail=(f"share {mount.share!r} is not in the daemon's config"),
         )
-    holder = rw_holders.get(mount.share)
-    if mount.mode == MODE_RW and not share.multi and holder:
+    return narrowed_issue(mount, share) or held_issue(mount, share, rw_holders)
+
+
+def narrowed_issue(mount: MountSpec, share: MountShare) -> MountIssue | None:
+    """The reload narrowing: an ``rw`` mount on a share the
+    config flipped to read-only is denied — honored with an
+    event and a marker, never a silent read-only downgrade."""
+    if mount.mode == MODE_RW and not share.writable:
         return MountIssue(
-            kind="conflict",
+            kind="denied",
             mount=mount,
             detail=(
-                f"share {mount.share!r} is exclusive and already "
-                f"mounted rw by workspace {holder}"
+                f"share {mount.share!r} is configured read-only; the "
+                "mount wants rw (remount it with mode 'ro')"
             ),
         )
     return None
+
+
+def held_issue(
+    mount: MountSpec, share: MountShare, rw_holders: dict[str, str]
+) -> MountIssue | None:
+    """The exclusivity refusal: an ``rw`` mount on a
+    ``multi: false`` share another workspace holds read-write.
+    Read-only mounts and multi shares never conflict."""
+    if mount.mode != MODE_RW or share.multi:
+        return None
+    holder = rw_holders.get(mount.share)
+    if holder is None:
+        return None
+    return MountIssue(
+        kind="conflict",
+        mount=mount,
+        detail=(
+            f"share {mount.share!r} is exclusive and already "
+            f"mounted rw by workspace {holder}"
+        ),
+    )

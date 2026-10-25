@@ -302,18 +302,36 @@ def router(app) -> APIRouter:
                 raise HTTPException(
                     status_code=404, detail="no such workspace"
                 )
+            # The holding mark writes before the launch (#620,
+            # part #621): the exclusivity derivation reads other
+            # rows' statuses, and a row still reading
+            # ``created``/``stopped`` through its whole launch
+            # window would admit a second rw attacher to a
+            # ``multi: false`` share. ``starting`` is in the
+            # holding set; a failed launch restores the prior
+            # status (#158 — the row stays startable), and a
+            # daemon crash leaves it for the watcher's scan to
+            # reconcile, the same observer that heals any other
+            # crashed start.
+            prior_status = row["status"]
+            await app.state.model.set_status(workspace_id, "starting")
             # The mount skips publish before the launch (#620,
             # part #621): a start proceeds without a mount whose
-            # share left the config or whose exclusive rw is held
-            # elsewhere, and every skip is state — an event now,
-            # derived again on every later read. The healthy
-            # remainder is what #622's attach consumes.
+            # share left the config, whose mode a reload denied,
+            # or whose exclusive rw is held elsewhere, and every
+            # skip is state — an event now, derived again on
+            # every later read. The healthy remainder is what
+            # #622's attach consumes.
             _attachable, issues = await mount_state(app, row)
             for issue in issues:
                 await app.state.hub.publish(
                     issue.event, issue.payload(workspace_id)
                 )
-            await app.state.microvm.launch(spec_for(row))
+            try:
+                await app.state.microvm.launch(spec_for(row))
+            except MicrovmError:
+                await app.state.model.set_status(workspace_id, prior_status)
+                raise
             await app.state.model.set_status(workspace_id, "running")
         return {"id": workspace_id, "status": "running"}
 
