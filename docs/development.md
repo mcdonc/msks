@@ -314,7 +314,8 @@ superblock — every disk the daemon creates declares
 Images are plural: msksd holds a catalog under
 `<state_dir>/images/` — every registered archive keyed by content
 hash, with the boot files unpacked once per hash (workspace launches
-never unpack anything).
+never unpack anything). The whole `/api/v1` surface is [its own
+chapter](api.md); these curls are the import and list forms:
 
 ```bash
 curl -sk -H "authorization: Bearer $MSKSC_TOKEN" \

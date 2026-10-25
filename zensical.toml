@@ -32,6 +32,7 @@ nav = [
   { "LLM Proxy" = "llm.md" },
   { "Secrets" = "secrets.md" },
   { "Development environment" = "development.md" },
+  { "The HTTP API" = "api.md" },
   { "Changelog" = "changes.md" },
 ]
 
