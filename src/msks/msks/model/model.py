@@ -363,6 +363,28 @@ class Model:
             await session.commit()
             return result.rowcount > 0
 
+    async def set_mounts(
+        self, workspace_id: str, mounts: list[dict] | None
+    ) -> bool:
+        """Record a workspace's mount list (#620, part #621);
+        False when the row is absent.
+
+        The whole list writes at once (set/replace semantics, the
+        resize pattern): the caller has validated it against the
+        row rules and the configured shares. None clears the
+        column — the mountless row. The next start reads the row;
+        a running VM is untouched."""
+        maker = sessionmaker_for(self.engine())
+        encoded = json.dumps(mounts) if mounts is not None else None
+        async with maker() as session:
+            result = await session.execute(
+                update(Workspace)
+                .where(Workspace.id == workspace_id)
+                .values(mounts=encoded)
+            )
+            await session.commit()
+            return result.rowcount > 0
+
     async def set_egress_policy(
         self, workspace_id: str, mode: str, allowlist: list[str] | None
     ) -> bool:
@@ -907,6 +929,7 @@ def workspace_dict(row: Workspace) -> dict:
         "egress_allowlist": json.loads(row.egress_allowlist)
         if row.egress_allowlist
         else [],
+        "mounts": json.loads(row.mounts) if row.mounts else [],
         "user_data": row.user_data,
         "ssh_pubkey": row.ssh_pubkey,
         "login_user": row.login_user,

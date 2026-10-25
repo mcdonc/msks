@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from ...spec.mounts import MODE_RW, mount_issues, parse_mounts
 from ...spec.vm import VmSpec, VmStatus
 
 
@@ -97,6 +98,85 @@ async def workspace_or_404(app, workspace_id: str) -> dict:
 #: ``starting``/``running``/``paused`` all keep the volume: it is a
 #: live block device in each of them.
 HOME_FREE_STATUSES = ("created", "stopped", "absent")
+
+#: The lifecycle statuses a workspace holds its rw mounts in
+#: (#620): the VM is live in each, so its exclusive shares are
+#: spoken for — and ``unknown``, a possibly-live VM the watcher
+#: could not probe, holds too: the conservative direction for
+#: mounts is refusing a second rw attacher, mirroring the home
+#: volume guard's refusal of ``unknown`` frees.
+MOUNT_HOLDING_STATUSES = (
+    "starting",
+    "running",
+    "paused",
+    "unknown",
+)
+
+
+def starting_workspaces(app) -> set[str]:
+    """The ids with a start in flight in this process — the
+    process-local half of the ``starting`` hold (#620, part
+    #621). Built at API assembly; an app without the attribute
+    gets one installed, so the caller's add/discard always lands
+    on the stored set."""
+    existing = getattr(app.state, "starting_workspaces", None)
+    if existing is None:
+        existing = set()
+        setattr(app.state, "starting_workspaces", existing)
+    return existing
+
+
+async def mount_state(app, row: dict) -> tuple[tuple, tuple]:
+    """A row's mounts split into the attachable and the skipped
+    (#620, part #621).
+
+    The derivation reads live state every time it runs: the
+    configured shares (a SIGHUP reload re-shares without a
+    restart) and the other rows' live rw attachments. A mount
+    skips when its share left the config (``skipped``), when a
+    reload narrowed its share to read-only under an rw mount
+    (``denied``), or when it wants ``rw`` on a ``multi: false``
+    share another workspace already holds (``conflict``) — the
+    row itself never conflicts
+    with its own attach. Read-only mounts never conflict: any
+    number sit beside one rw holder."""
+    mounts = parse_mounts(row.get("mounts"))
+    shares = {share.name: share for share in app.state.settings.mounts.shares}
+    issues = mount_issues(mounts, shares, await rw_holders(app, row["id"]))
+    skipped = {issue.mount for issue in issues}
+    return (
+        tuple(mount for mount in mounts if mount not in skipped),
+        issues,
+    )
+
+
+async def rw_holders(app, workspace_id: str) -> dict[str, str]:
+    """The live rw attachments by share: the holder's workspace
+    id, this row excluded — a start never conflicts with the
+    mounts the same workspace already carries."""
+    holders: dict[str, str] = {}
+    for other in await app.state.model.list_workspaces():
+        if other_row_holds(other, workspace_id):
+            record_rw_holders(holders, other)
+    return holders
+
+
+def other_row_holds(row: dict, workspace_id: str) -> bool:
+    """Whether another row's VM is live: the holding statuses are
+    the live ones, and the row being started (or read) never
+    counts against itself."""
+    return (
+        row["id"] != workspace_id
+        and row.get("status") in MOUNT_HOLDING_STATUSES
+    )
+
+
+def record_rw_holders(holders: dict[str, str], row: dict) -> None:
+    """Add one live row's rw mounts to the holder map — the first
+    holder a share sees is the one a conflict names."""
+    for mount in parse_mounts(row.get("mounts")):
+        if mount.mode == MODE_RW:
+            holders.setdefault(mount.share, row["id"])
 
 
 def home_volume_guard(app, row: dict) -> tuple[int, str] | None:

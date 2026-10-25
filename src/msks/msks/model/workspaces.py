@@ -114,6 +114,14 @@ class Workspace(Base):
     # daemon's resolver; CIDR and IP-literal specs accept in the
     # per-VM chain. NULL is an empty allowlist.
     egress_allowlist: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The workspace's host mounts (#620, part #621): a JSON array
+    # of ``{share, guest, mode}`` mappings — each names a
+    # configured share, the guest path it lands at, and ``ro`` or
+    # ``rw`` (default ``rw``). Set at create or later; applied at
+    # the next start (resize semantics). NULL is the mountless
+    # row — a pre-#620 row and a workspace created without mounts
+    # read identically.
+    mounts: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String, default="created")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(

@@ -223,9 +223,15 @@ secretcache = 2
 # spec grew by one statement: the secret routes seed and serve the
 # probe placeholder (#424); #555 adds two more — the local
 # listener's path vocabulary (server.localsocket) and its
-# enablement read in the entry point.
-spec = 30
+# enablement read in the entry point. #620 part #621 adds four:
+# the mount vocabulary (rows' mount_state reads parse_mounts,
+# mount_issues, and MODE_RW beside the start hook's event
+# publication).
+spec = 34
 storage = 13
 
 [snapshot.settings]
-spec = 5
+# #620 part #621: the shares parser pulls the MountShare shape
+# and its key grammar from the mount leaf (two names, one
+# statement).
+spec = 8

@@ -785,3 +785,41 @@ async def test_refresh_disarmed_defers_one_workspace_not_its_siblings(
             app.state.net = real_net
             app.state.interceptor = real
     assert recorder.refreshes == ["ws-a", "ws-b"]
+
+
+async def test_scan_leaves_an_in_flight_start_alone(tmp_path: Path) -> None:
+    """A start in flight owns its row (#620, part #621): the
+    launch's pre-socket window reads as stopped at the seam for
+    seconds, and a scan crossing it must not erase the starting
+    hold (or publish a spurious stopped transition) while the
+    launch lives in this process. A starting row with no marker —
+    a daemon died mid-launch — reconciles like any crash."""
+    api, app, stub = api_with_stub(tmp_path)
+    async with api.router.lifespan_context(api):
+        await app.state.model.create_workspace(
+            VmSpec(workspace_id="ws-i", kernel=Path("/k"), rootfs=Path("/r"))
+        )
+        await app.state.model.set_status("ws-i", "starting")
+        stub.statuses["ws-i"] = VmStatus.STOPPED  # pre-socket seam read
+        hub = api.state.hub
+        app.state.starting_workspaces.add("ws-i")
+        assert (
+            await scan_workspace(
+                app, hub, {"id": "ws-i", "status": "starting"}
+            )
+            is False
+        )
+        assert (await app.state.model.get_workspace("ws-i"))["status"] == (
+            "starting"
+        )
+        # The crashed-start shape: same row, no in-flight marker.
+        app.state.starting_workspaces.discard("ws-i")
+        assert (
+            await scan_workspace(
+                app, hub, {"id": "ws-i", "status": "starting"}
+            )
+            is True
+        )
+        assert (await app.state.model.get_workspace("ws-i"))["status"] == (
+            "stopped"
+        )

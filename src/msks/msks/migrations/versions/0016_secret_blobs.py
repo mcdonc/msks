@@ -24,7 +24,23 @@ branch_labels = None
 depends_on = None
 
 
+def _tables() -> set[str]:
+    """The live table names — the shape, not the stamp, says
+    whether this migration's work already landed (the tear story
+    0013–0015 carry; #620 part #621 extends it past the
+    torn-0015 replay the 0015 test walks, which now re-runs this
+    step too)."""
+    return {
+        row[0]
+        for row in op.get_bind().execute(
+            sa.text("SELECT name FROM sqlite_master WHERE type='table'")
+        )
+    }
+
+
 def upgrade() -> None:
+    if "secret_blobs" in _tables():
+        return
     op.create_table(
         "secret_blobs",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -43,5 +59,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if "secret_blobs" not in _tables():
+        return
     op.drop_index("ix_secret_blobs_placeholder_id", table_name="secret_blobs")
     op.drop_table("secret_blobs")

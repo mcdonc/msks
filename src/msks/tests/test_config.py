@@ -23,7 +23,8 @@ from msks.config import (
     render_template,
     resolve_config_path,
 )
-from msks.settings import Settings
+from msks.settings import MountSettings, Settings
+from msks.spec.mounts import MountShare
 
 
 def write_config(tmp_path, doc: str) -> str:
@@ -487,6 +488,12 @@ KEY_CASES = [
         ("openai/gpt-4o:https://api.openai.com/v1:sk-x",),
     ),
     ("llm_api_key", "sk-y", "llm.api_key", "sk-y"),
+    (
+        "mount_shares",
+        [{"name": "s", "path": "/srv/s"}],
+        "mounts",
+        MountSettings(shares=(MountShare(name="s", path="/srv/s"),)),
+    ),
     ("egress_enabled", True, "net.enabled", True),
     ("egress_subnet", "10.9.0.0/16", "net.pool", "10.9.0.0/16"),
     ("egress_uplink", "enp1s0", "net.uplink", "enp1s0"),

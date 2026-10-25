@@ -19,9 +19,11 @@ from .boot import create_name, mint_workspace_id, resolve_boot
 from .deps import require_token
 from .rows import (
     host_mismatch,
+    mount_state,
     owner_host,
     serialize_create,
     spec_for,
+    starting_workspaces,
     workspace_or_404,
 )
 from .schemas import WorkspaceCreate
@@ -301,7 +303,45 @@ def router(app) -> APIRouter:
                 raise HTTPException(
                     status_code=404, detail="no such workspace"
                 )
-            await app.state.microvm.launch(spec_for(row))
+            # The holding mark writes before the launch (#620,
+            # part #621): the exclusivity derivation reads other
+            # rows' statuses, and a row still reading
+            # ``created``/``stopped`` through its whole launch
+            # window would admit a second rw attacher to a
+            # ``multi: false`` share. ``starting`` is in the
+            # holding set; a failed launch restores the prior
+            # status (#158 — the row stays startable), and a
+            # daemon crash leaves it for the watcher's scan to
+            # reconcile, the same observer that heals any other
+            # crashed start.
+            prior_status = row["status"]
+            in_flight = starting_workspaces(app)
+            in_flight.add(workspace_id)
+            try:
+                await app.state.model.set_status(workspace_id, "starting")
+                # The mount skips publish before the launch (#620,
+                # part #621): a start proceeds without a mount whose
+                # share left the config, whose mode a reload denied,
+                # or whose exclusive rw is held elsewhere, and every
+                # skip is state — an event now, derived again on
+                # every later read. The healthy remainder is what
+                # #622's attach consumes.
+                _attachable, issues = await mount_state(app, row)
+                for issue in issues:
+                    await app.state.hub.publish(
+                        issue.event, issue.payload(workspace_id)
+                    )
+                await app.state.microvm.launch(spec_for(row))
+            except MicrovmError:
+                await app.state.model.set_status(workspace_id, prior_status)
+                raise
+            finally:
+                # The whole marked region sits inside the finally's
+                # reach: an unexpected error between the mark and
+                # the launch would otherwise leave the marker set
+                # forever — a row wedged at starting that holds rw
+                # exclusivity and never reconciles (round 3 review).
+                in_flight.discard(workspace_id)
             await app.state.model.set_status(workspace_id, "running")
         return {"id": workspace_id, "status": "running"}
 

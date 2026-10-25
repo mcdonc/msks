@@ -17,6 +17,7 @@ error names the ``MSKSD_*`` variable either way.
 """
 
 import ipaddress
+import json
 import math
 import os
 import socket
@@ -26,6 +27,7 @@ from ipaddress import IPv4Network
 from pathlib import Path
 
 from .spec.egress import EGRESS_MODES, MODE_ALLOW
+from .spec.mounts import SHARE_KEYS, MountShare
 from .spec.tokens import validate_token_plaintext
 
 VALID_DRIVERS = ("local",)
@@ -329,6 +331,35 @@ class LlmSettings:
 
 
 @dataclass
+class MountSettings:
+    """The host-mount shares (#620, part #621).
+
+    The list is the switch: a daemon with no shares refuses every
+    mount request, and existing deployments gain no new surface
+    until the operator lists one. Each share names the host tree
+    (an absolute path), bounds the modes a request may take
+    (``writable``, default true — listing a share is the trust
+    decision, and read-only is the explicit narrowing), and sets
+    whether ``rw`` attaches are exclusive (``multi``, default
+    true; ``multi: false`` makes the share read-write in one
+    workspace at a time). Entries read live, so a SIGHUP reload
+    re-shares without a restart: running VMs keep their attached
+    devices, and the next start of each workspace reads the
+    current set.
+
+    ``resolved`` is the realpath at load — the attach path
+    (#622) re-resolves and refuses drift, so a symlink planted or
+    retargeted inside a shareable tree cannot walk out of it.
+    """
+
+    shares: tuple[MountShare, ...] = ()
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] | None = None) -> MountSettings:
+        return MountSettings(shares=mount_shares_from(live_env(env)))
+
+
+@dataclass
 class Settings:
     """The live-swappable settings root msksd subsystems read."""
 
@@ -339,6 +370,7 @@ class Settings:
         default_factory=SecretStoreSettings
     )
     llm: LlmSettings = field(default_factory=LlmSettings)
+    mounts: MountSettings = field(default_factory=MountSettings)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -348,6 +380,7 @@ class Settings:
             net=NetSettings.from_env(env),
             secret_store=SecretStoreSettings.from_env(env),
             llm=LlmSettings.from_env(env),
+            mounts=MountSettings.from_env(env),
         )
         check_tap_port_collision(settings)
         return settings
@@ -624,6 +657,127 @@ def parse_tap_port(env: Mapping[str, str], name: str, default: int) -> int:
     if not 1 <= value <= 65535:
         raise ValueError(f"{name} must be a TCP port, got {value}")
     return value
+
+
+def mount_shares_from(env: Mapping[str, str]) -> tuple[MountShare, ...]:
+    """The configured shares (#620): the config file's list of
+    mappings under one flat key, or the environment's JSON array
+    string — the same walk either way, so an invalid share fails
+    identically wherever it came from and the error names
+    ``MSKSD_MOUNT_SHARES``. Empty or unset is the feature off."""
+    raw = env.get("MSKSD_MOUNT_SHARES", "")
+    if raw in ("", None):
+        return ()
+    shares = tuple(
+        mount_share_entry(entry) for entry in mount_share_entries(raw)
+    )
+    unique_share_names(shares)
+    return shares
+
+
+def mount_share_entries(raw: object) -> list:
+    """The raw entries behind ``MSKSD_MOUNT_SHARES``: the file
+    layer's already-parsed list, or the environment's JSON array
+    string; anything else is a named error."""
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str):
+        try:
+            decoded = json.loads(raw)
+        except ValueError:
+            raise ValueError(
+                "MSKSD_MOUNT_SHARES must be a JSON array of share mappings"
+            ) from None
+        if isinstance(decoded, list):
+            return decoded
+    raise ValueError(
+        "MSKSD_MOUNT_SHARES must be a JSON array of share mappings"
+    )
+
+
+def mount_share_entry(entry: object) -> MountShare:
+    """One share: a mapping with ``name`` and an absolute
+    ``path``, optional boolean ``writable`` (default true) and
+    ``multi`` (default true). Any other key, a duplicate name, or
+    a relative path is a named error at load — the same
+    fail-at-startup rule every config key carries. The path is
+    realpath'd when it exists; a missing one keeps ``resolved``
+    None and the doctor warns (#622)."""
+    if not isinstance(entry, dict):
+        raise ValueError(
+            "MSKSD_MOUNT_SHARES entries must be mappings, got "
+            f"{type(entry).__name__}"
+        )
+    check_share_keys(entry)
+    name, path = share_name_and_path(entry)
+    writable = mount_share_flag(entry, "writable", name)
+    multi = mount_share_flag(entry, "multi", name)
+    return MountShare(
+        name=name,
+        path=path,
+        writable=writable,
+        multi=multi,
+        resolved=resolve_share_path(path, name),
+    )
+
+
+def check_share_keys(entry: dict) -> None:
+    """The share entry's key grammar: ``name``, ``path``,
+    ``writable``, ``multi`` — any other key is a named error at
+    load."""
+    unknown = set(entry) - SHARE_KEYS
+    if unknown:
+        raise ValueError(
+            f"MSKSD_MOUNT_SHARES entry has unknown keys: {sorted(unknown)}"
+        )
+
+
+def share_name_and_path(entry: dict) -> tuple[str, str]:
+    """The entry's ``name`` and absolute ``path``, each validated
+    in place with a named error."""
+    name = entry.get("name")
+    path = entry.get("path")
+    if not isinstance(name, str) or not name:
+        raise ValueError("MSKSD_MOUNT_SHARES entries need a name")
+    if not isinstance(path, str) or not path.startswith("/"):
+        raise ValueError(f"share {name!r} needs an absolute path")
+    return name, path
+
+
+def mount_share_flag(entry: dict, key: str, name: str) -> bool:
+    """One share's boolean (``writable``/``multi``): absent is the
+    true default; a non-boolean value is a named error."""
+    value = entry.get(key, True)
+    if not isinstance(value, bool):
+        raise ValueError(f"share {name!r}: {key} must be true or false")
+    return value
+
+
+def resolve_share_path(path: str, name: str) -> str | None:
+    """The realpath taken at load (#620): None when the path does
+    not exist yet (the doctor warns per missing share); a path
+    that exists but is not a directory is a named error — a
+    share serves a tree, and the failure belongs at load with
+    every other malformed share, not deferred to the attach.
+    The attach path re-resolves and refuses drift against this."""
+    if not os.path.exists(path):
+        return None
+    if not os.path.isdir(path):
+        raise ValueError(f"share {name!r} path is not a directory: {path}")
+    return os.path.realpath(path)
+
+
+def unique_share_names(shares: tuple[MountShare, ...]) -> None:
+    """A name appears once: the config-key grammar already
+    refuses duplicate keys, and this guards the env-array form's
+    duplicate names the same way."""
+    seen: set[str] = set()
+    for share in shares:
+        if share.name in seen:
+            raise ValueError(
+                f"MSKSD_MOUNT_SHARES names share {share.name!r} twice"
+            )
+        seen.add(share.name)
 
 
 def egress_mode(env: Mapping[str, str], name: str, default: str) -> str:

@@ -52,6 +52,15 @@ async def scan_workspace(app, hub: EventHub, row: dict) -> bool:
     state until the first start, not a transition: neither written nor
     published. A row that started and then stopped is at ``running`` when
     the seam says ``stopped``, so that transition still fires.
+
+    A start in flight owns its row (#620, part #621): the launch writes
+    ``starting`` before it begins — the rw-exclusivity derivation reads
+    other rows' statuses, and the launch's pre-socket phase reads as
+    ``stopped`` at the seam for seconds — so a scan crossing that window
+    would erase the hold (and publish a spurious stopped transition). The
+    in-flight set is process-local: a daemon that died mid-launch leaves
+    the row ``starting`` with no in-flight marker, and the next daemon's
+    scan reconciles it like any other crashed start.
     """
     try:
         info = await app.state.microvm.info(row["id"])
@@ -61,9 +70,37 @@ async def scan_workspace(app, hub: EventHub, row: dict) -> bool:
     status = SEAM_TO_MODEL_STATUS[info.status]
     if status == row["status"]:
         return False
-    if row["status"] == "created" and status in ("absent", "stopped"):
+    if steady_state(row["status"], status):
+        return False
+    if start_in_flight(app, row["id"], row["status"], status):
         return False
     return await publish_transition(app, hub, row["id"], status)
+
+
+def steady_state(row_status: str, seam_status: str) -> bool:
+    """A row whose seam status is no transition at all (#491): a
+    never-started workspace's prepare leaves the vm directory the
+    seam reads as stopped — the pair stays unwritten."""
+    return row_status == "created" and seam_status in (
+        "absent",
+        "stopped",
+    )
+
+
+def start_in_flight(
+    app, workspace_id: str, row_status: str, seam_status: str
+) -> bool:
+    """A start in flight owns its row (#620, part #621): the
+    launch's pre-socket window reads as stopped/absent at the
+    seam, and erasing the hold would admit a second rw attacher
+    to a multi: false share mid-launch. The marker is
+    process-local — a daemon that died mid-launch leaves the row
+    starting with no marker, and the scan reconciles it."""
+    return (
+        row_status == "starting"
+        and workspace_id in getattr(app.state, "starting_workspaces", set())
+        and seam_status in ("absent", "stopped")
+    )
 
 
 async def publish_transition(
