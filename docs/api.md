@@ -1,8 +1,7 @@
 # The HTTP API
 
 Everything the client does, the daemon does through one
-versioned HTTP surface: `/api/v1`, served by the same listener
-that serves the docs site's examples — HTTPS with a bearer token
+versioned HTTP surface: `/api/v1` — HTTPS with a bearer token
 over TCP, or a unix socket with peer-credential authentication
 for same-host clients. The CLI and TUI chapters describe the
 commands that wrap these endpoints; this chapter is the surface
@@ -11,7 +10,8 @@ directly.
 
 The machine-readable schema ships with the daemon: `GET
 /openapi.json` answers an OpenAPI 3.1 document covering every
-REST route below, behind the same authentication as the API. The
+REST route below, served unauthenticated alongside the
+interactive `/docs` — the schema names routes, never data. The
 prose here owns the behavior; the schema owns the shapes.
 
 ## Authentication
@@ -24,25 +24,32 @@ settings (`MSKSD_HOST`/`MSKSD_PORT`, default
 `Authorization` header, and TLS is verified against the CA the
 daemon mints at first
 serve (`msks-ca.pem` in the state dir) — the same CA that signs
-the daemon's serving certificate. Tokens are minted by a token
-holder through the API itself (below); the first one comes from
-the bootstrap token file the first run writes beside the CA
-(the [First run](first-run.md) chapter covers the file's
-placement).
+the daemon's serving certificate. The first token is seeded by
+the `bootstrap_token` setting at first boot (the [Configuration
+chapter](config.md) carries the setting and its environment
+variable); after that, a token holder mints tokens through the
+API itself (below). The dev daemon seeds its own first token
+from a file the dev script writes — a dev-workflow artifact,
+not a deployment's path.
 
 **The unix socket** binds at `MSKSD_SOCKET` (default
 `$XDG_RUNTIME_DIR/msks/msksd.sock`) and authenticates by peer
-credentials: the connecting process's uid names its authority,
-so no token and no TLS ride the socket. It is the same-host
-path — a local script or the client's default candidate path —
-and the TCP listener is the remote path. Neither weakens the
-other: the socket file is mode 0660, and TCP without a token
-answers 401.
+credentials: the daemon's own uid passes, and so does any
+member of the socket file's group — the file is mode 0660, so
+`chgrp` it to a shared group to admit that group's members
+without a token or TLS. A daemon without a runtime dir (a
+container, a hand-written unit) serves TCP alone until the
+setting names a path. The socket is the same-host path — a
+local script or the client's default candidate path — and the
+TCP listener is the remote path. Neither weakens the other:
+TCP without a token answers 401.
 
-An expired or revoked token answers 401 with a body naming the
-cause; the console, forward, and events websockets take the
-same bearer token as their first query parameter or header, and
-close with a named close code when it fails.
+A missing, expired, or revoked token answers 401; the console,
+forward, and events websockets take the same bearer token in
+the handshake's `Authorization` header — never a URL
+parameter, so the credential cannot land in a proxy's access
+log — and close **4401** when it fails (4404 names an unknown
+workspace on the console and forward).
 
 ## Enabling the TCP interface
 
@@ -60,7 +67,8 @@ another machine is three settings and one file:
    `--cacert` for curl. The daemon's certificate is signed by
    this CA alone; the system roots know nothing about it.
 3. **Ship a token.** Mint one through the API itself (`POST
-/api/v1/tokens`) and hand it to the client —
+/api/v1/tokens`) — the first one comes from the
+   `bootstrap_token` setting above — and hand it to the client:
    `MSKSC_TOKEN` for the msks client, or the `Authorization:
 Bearer` header for anything else.
 
@@ -76,22 +84,24 @@ curl --cacert "$MSKSC_CAFILE" \
 {"status": "ok", "version": "0.3.0", ...}
 ```
 
-A deployment that wants no TCP surface at all binds loopback
-and works through the socket — the [Configuration
-chapter](config.md#the-api-listener) carries both settings and
-the socket's tradeoffs.
+A deployment that wants the listener reachable only from the
+same host keeps the loopback bind and uses the socket beside
+it — the [Configuration chapter](config.md#the-api-listener)
+carries both settings and the socket's tradeoffs.
 
 ## Health and defaults
 
-- `GET /api/v1/health` — the daemon's version and the default
-  image, unauthenticated by design: the one route a load
+- `GET /api/v1/health` — the daemon's version and the image it
+  itself booted from (the `msksd.image=` command-line fact, for
+  drift checking), unauthenticated by design: the route a load
   balancer can probe without a token.
 - `GET /api/v1/create-defaults` — the sizes a create lands on
   when the request names none (`root_mib`, `home_mib`).
 - `GET /api/v1/probe` — the secrets-interception probe row: the
-  seeded placeholder's id, sentinel, and the recipe. The
-  [egress consent chapter](egress-consent.md#the-probe-endpoint)
-  owns the verification flow.
+  seeded placeholder's id, sentinel, host and port, and the
+  fixed credential. The [egress consent
+  chapter](egress-consent.md#the-probe-endpoint) owns the
+  verification flow.
 
 ## Workspaces
 
@@ -102,6 +112,7 @@ The row's lifecycle is four verbs and a queue of actions:
 # network posture; image resolves against the catalog
 curl -X POST "$MSKSC_URL/api/v1/workspaces" \
   -H "Authorization: Bearer $MSKSC_TOKEN" \
+  -H 'content-type: application/json' \
   -d '{"name": "ws1", "egress": true}'
 ```
 
@@ -109,29 +120,31 @@ curl -X POST "$MSKSC_URL/api/v1/workspaces" \
   status, and recorded facts. `GET …/workspaces/{id}` is one
   row; the id also accepts the name.
 - `POST` creates (the [create defaults](#health-and-defaults)
-  fill unnamed sizes); `PATCH`/`PUT` mutate the mutable facts;
-  `DELETE` removes the row and its volumes.
+  fill unnamed sizes); `DELETE` removes the row and its volumes.
+  `PATCH`/`PUT` answer 405: a workspace is immutable after
+  create, and sizes and topology move through `…/resize`.
 - `POST …/start` and `…/stop` drive the VM; `…/reset` wipes the
-  root overlay to its first-boot state; `…/resize` grows the
-  root volume; `…/ssh-key` reads the workspace's planted public
-  identity; `…/secret-coverage` flips the daemon-wide
-  placeholder posture.
+  root overlay to its first-boot state; `…/resize` grows or
+  shrinks the volumes and moves the cpu and memory sizes;
+  `…/ssh-key` reads the workspace's planted public identity;
+  `…/secret-coverage` flips the daemon-wide placeholder posture.
 - `GET`/`PUT …/home` export and import the home volume as a
   byte stream — the same stream `msks home import`/`export`
   ride.
 
 The behaviors each verb drives are the CLI chapter's subjects:
-[create](cli.md#msks-create) and its fields, and
-[resize](cli.md#msks-resize); the mutate, reset, and
-home-stream surfaces are API-direct — the client reaches the
-home stream through [msks home](cli.md#msks-home).
+[create](cli.md#msks-create) and its fields,
+[resize](cli.md#msks-resize), and the home stream through
+[msks home](cli.md#msks-home); the reset surface is
+API-direct.
 
 ## Images
 
 The catalog the workspaces boot from:
 
-- `GET /api/v1/images` — every row: ref, hash, the default
-  designation, kernel facts, description, import time.
+- `GET /api/v1/images` — every row: name, version, hash, the
+  default designation, kernel facts, description, import
+  time.
 - `POST /api/v1/images` — import: a URL (the published
   channel's rows are URLs) or a local path the daemon reads.
   The compressed form (`tar.zst`) is accepted directly and
@@ -162,6 +175,7 @@ The placeholder store, per the [secrets chapter](secrets.md):
 # the swap binds, the value itself
 curl -X POST "$MSKSC_URL/api/v1/secrets" \
   -H "Authorization: Bearer $MSKSC_TOKEN" \
+  -H 'content-type: application/json' \
   -d '{"name": "github_api", "dests": ["api.github.com"],
        "value": "ghp_..."}'
 ```
@@ -186,6 +200,7 @@ answers 401.
 ```bash
 curl -X POST "$MSKSC_URL/api/v1/tokens" \
   -H "Authorization: Bearer $MSKSC_TOKEN" \
+  -H 'content-type: application/json' \
   -d '{"name": "ci"}'
 ```
 

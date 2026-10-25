@@ -47,11 +47,11 @@ dependencies on Debian-based systems.
     LLM proxy.
 12. [**Secrets**](secrets.md): placeholders, the swap on the
     wire, and the sentinel discipline.
-13. [**The HTTP API**](api.md): the `/api/v1` surface itself —
-    the endpoints the commands wrap, the authentication model,
-    and the TCP listener a remote client reaches.
-14. [**Changelog**](changes.md): what changed, release by
-    release.
-15. [**Development environment**](development.md): the devenv
+13. [**Development environment**](development.md): the devenv
     side of a checkout — the dev daemon, the shell's client
     presets, the worktree identity.
+14. [**The HTTP API**](api.md): the `/api/v1` surface itself —
+    the endpoints the commands wrap, the authentication model,
+    and the TCP listener a remote client reaches.
+15. [**Changelog**](changes.md): what changed, release by
+    release.
