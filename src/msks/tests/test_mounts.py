@@ -15,7 +15,7 @@ import pytest
 from msks.app import build_app
 from msks.config import LayeredEnv, file_env_overrides
 from msks.microvm import VmSpec
-from msks.server.api.rows import record_rw_holders
+from msks.server.api.rows import record_rw_holders, starting_workspaces
 from msks.settings import (
     MountSettings,
     ServerSettings,
@@ -641,3 +641,14 @@ async def test_start_publishes_denied_and_proceeds(client) -> None:  # noqa: F81
             },
         )
     ]
+
+
+async def test_starting_workspaces_installs_when_absent(client) -> None:  # noqa: F811
+    """The in-flight accessor installs its set when the app lacks
+    one, so the route's add/discard always lands on stored state —
+    a fresh default per call would silently drop the hold."""
+    _http, app, _stub = client
+    delattr(app.state, "starting_workspaces")
+    installed = starting_workspaces(app)
+    installed.add("ws-x")
+    assert "ws-x" in starting_workspaces(app)

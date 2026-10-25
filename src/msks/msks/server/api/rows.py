@@ -116,9 +116,14 @@ MOUNT_HOLDING_STATUSES = (
 def starting_workspaces(app) -> set[str]:
     """The ids with a start in flight in this process — the
     process-local half of the ``starting`` hold (#620, part
-    #621). Built at API assembly; absent under test stubs, an
-    empty set reads the same."""
-    return getattr(app.state, "starting_workspaces", set())
+    #621). Built at API assembly; an app without the attribute
+    gets one installed, so the caller's add/discard always lands
+    on the stored set."""
+    existing = getattr(app.state, "starting_workspaces", None)
+    if existing is None:
+        existing = set()
+        setattr(app.state, "starting_workspaces", existing)
+    return existing
 
 
 async def mount_state(app, row: dict) -> tuple[tuple, tuple]:

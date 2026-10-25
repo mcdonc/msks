@@ -317,25 +317,30 @@ def router(app) -> APIRouter:
             prior_status = row["status"]
             in_flight = starting_workspaces(app)
             in_flight.add(workspace_id)
-            await app.state.model.set_status(workspace_id, "starting")
-            # The mount skips publish before the launch (#620,
-            # part #621): a start proceeds without a mount whose
-            # share left the config, whose mode a reload denied,
-            # or whose exclusive rw is held elsewhere, and every
-            # skip is state — an event now, derived again on
-            # every later read. The healthy remainder is what
-            # #622's attach consumes.
-            _attachable, issues = await mount_state(app, row)
-            for issue in issues:
-                await app.state.hub.publish(
-                    issue.event, issue.payload(workspace_id)
-                )
             try:
+                await app.state.model.set_status(workspace_id, "starting")
+                # The mount skips publish before the launch (#620,
+                # part #621): a start proceeds without a mount whose
+                # share left the config, whose mode a reload denied,
+                # or whose exclusive rw is held elsewhere, and every
+                # skip is state — an event now, derived again on
+                # every later read. The healthy remainder is what
+                # #622's attach consumes.
+                _attachable, issues = await mount_state(app, row)
+                for issue in issues:
+                    await app.state.hub.publish(
+                        issue.event, issue.payload(workspace_id)
+                    )
                 await app.state.microvm.launch(spec_for(row))
             except MicrovmError:
                 await app.state.model.set_status(workspace_id, prior_status)
                 raise
             finally:
+                # The whole marked region sits inside the finally's
+                # reach: an unexpected error between the mark and
+                # the launch would otherwise leave the marker set
+                # forever — a row wedged at starting that holds rw
+                # exclusivity and never reconciles (round 3 review).
                 in_flight.discard(workspace_id)
             await app.state.model.set_status(workspace_id, "running")
         return {"id": workspace_id, "status": "running"}
