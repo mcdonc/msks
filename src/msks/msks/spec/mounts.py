@@ -150,9 +150,15 @@ def mount_entry(entry: object) -> MountSpec:
 def canonical_guest(guest: str) -> str:
     """The canonical spelling of one guest path: collapsed
     separators and resolved ``.`` components, trailing slash
-    dropped. ``..`` survives untouched — the row rules refuse it,
-    and silently collapsing it would hide the traversal."""
-    return str(PurePosixPath(guest))
+    dropped, the anchor pinned to one slash (pathlib preserves
+    exactly two leading slashes per POSIX — a distinct anchor
+    from ``/`` that would dodge the disjoint rules). ``..``
+    survives untouched — the row rules refuse it, and silently
+    collapsing it would hide the traversal."""
+    path = PurePosixPath(guest)
+    if path.parts[:1] == ("//",):
+        return "/" + "/".join(path.parts[1:])
+    return str(path)
 
 
 def check_mount_keys(entry: dict) -> None:
@@ -350,8 +356,9 @@ def narrowed_issue(mount: MountSpec, share: MountShare) -> MountIssue | None:
             kind="denied",
             mount=mount,
             detail=(
-                f"share {mount.share!r} is configured read-only; the "
-                "mount wants rw (remount it with mode 'ro')"
+                f"share {mount.share!r} is configured read-only; "
+                "widen it in the daemon's config, or recreate the "
+                "workspace with mode 'ro'"
             ),
         )
     return None

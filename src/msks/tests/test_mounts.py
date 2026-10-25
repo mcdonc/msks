@@ -570,3 +570,74 @@ def test_file_share_path_refuses(tmp_path: Path) -> None:
                 )
             }
         )
+
+
+def test_double_slash_anchor_canonicalizes() -> None:
+    """Pathlib preserves exactly two leading slashes per POSIX —
+    a distinct anchor that would dodge the disjoint rules. The
+    canonical form pins the anchor to one slash, so `//tmp` and
+    `/tmp` collide as one guest path."""
+    (mount,) = mounts({"share": "s", "guest": "//tmp"})
+    assert mount.guest == "/tmp"
+    with pytest.raises(ValueError, match="is mounted twice"):
+        validate_mounts(
+            mounts(
+                {"share": "a", "guest": "/tmp"},
+                {"share": "b", "guest": "//tmp"},
+            )
+        )
+    with pytest.raises(ValueError, match="shadows"):
+        validate_mounts(
+            mounts(
+                {"share": "a", "guest": "/mnt"},
+                {"share": "b", "guest": "//mnt/a/deep"},
+            )
+        )
+
+
+async def test_start_publishes_denied_and_proceeds(client) -> None:  # noqa: F811
+    """The reload narrowing at start (#620): an rw mount on a
+    share the config flipped to read-only skips with mount.denied
+    naming both remediations — and the start still runs."""
+    http, app, stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-narrowed", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+    await app.state.model.set_mounts(
+        wid, [{"share": "data", "guest": "/mnt/data", "mode": "rw"}]
+    )
+    app.state.settings.mounts = MountSettings(
+        shares=(MountShare(name="data", path="/srv/data", writable=False),)
+    )
+    published: list[tuple[str, dict]] = []
+    real_publish = app.state.hub.publish
+
+    async def spy_publish(event: str, data: dict) -> None:
+        published.append((event, data))
+        await real_publish(event, data)
+
+    app.state.hub.publish = spy_publish
+    started = await http.post(
+        f"/api/v1/workspaces/{wid}/start", headers=auth()
+    )
+    assert started.status_code == 200
+    assert ("launch", wid) in stub.calls
+    assert published == [
+        (
+            "mount.denied",
+            {
+                "id": wid,
+                "share": "data",
+                "guest": "/mnt/data",
+                "mode": "rw",
+                "detail": (
+                    "share 'data' is configured read-only; widen it in "
+                    "the daemon's config, or recreate the workspace "
+                    "with mode 'ro'"
+                ),
+            },
+        )
+    ]

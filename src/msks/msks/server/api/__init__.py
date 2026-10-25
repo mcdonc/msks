@@ -98,6 +98,13 @@ def build_api(app) -> FastAPI:
     """
     hub = app.state.hub
     app.state.create_locks: dict[str, asyncio.Lock] = {}
+    # The starts in flight (#620, part #621): a launch writes
+    # ``starting`` before it begins so the rw-exclusivity
+    # derivation holds through the pre-socket window, and the
+    # watcher consults this set to leave the mark alone while the
+    # launch lives in this process (a crashed daemon leaves no
+    # marker, and the next scan reconciles the row).
+    app.state.starting_workspaces: set[str] = set()
     # Catalog mutations serialize daemon-wide (#258, #340): the
     # floor check under concurrent URL imports would each clamp to
     # the same headroom and stream real bytes in parallel — the

@@ -23,6 +23,7 @@ from .rows import (
     owner_host,
     serialize_create,
     spec_for,
+    starting_workspaces,
     workspace_or_404,
 )
 from .schemas import WorkspaceCreate
@@ -314,6 +315,8 @@ def router(app) -> APIRouter:
             # reconcile, the same observer that heals any other
             # crashed start.
             prior_status = row["status"]
+            in_flight = starting_workspaces(app)
+            in_flight.add(workspace_id)
             await app.state.model.set_status(workspace_id, "starting")
             # The mount skips publish before the launch (#620,
             # part #621): a start proceeds without a mount whose
@@ -332,6 +335,8 @@ def router(app) -> APIRouter:
             except MicrovmError:
                 await app.state.model.set_status(workspace_id, prior_status)
                 raise
+            finally:
+                in_flight.discard(workspace_id)
             await app.state.model.set_status(workspace_id, "running")
         return {"id": workspace_id, "status": "running"}
 
