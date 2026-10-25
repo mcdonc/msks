@@ -19,7 +19,7 @@
         <link rel="prev" href="../secrets/">
       
       
-        <link rel="next" href="../changes/">
+        <link rel="next" href="../api/">
       
       
         
@@ -843,6 +843,32 @@
   
   
     <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../changes/" class="md-nav__link">
         
   
@@ -1376,7 +1402,8 @@ superblock — every disk the daemon creates declares
 <p>Images are plural: msksd holds a catalog under
 <code>&lt;state_dir&gt;/images/</code> — every registered archive keyed by content
 hash, with the boot files unpacked once per hash (workspace launches
-never unpack anything).</p>
+never unpack anything). The whole <code>/api/v1</code> surface is <a href="../api/">its own
+chapter</a>; these curls are the import and list forms:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>curl<span class="w"> </span>-sk<span class="w"> </span>-H<span class="w"> </span><span class="s2">"authorization: Bearer </span><span class="nv">$MSKSC_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 </span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
 </span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"source": "/nix/store/...-msks-guest/workspace-debian-13.6.tar"}'</span><span class="w"> </span><span class="se">\</span>
