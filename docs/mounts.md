@@ -100,10 +100,11 @@ as the workspace's own user: the login user the workspace names,
 or the image's built-in `msks` account when it names none — so
 the share's tree reads as the logged-in user's files, and a
 file the guest creates stays writable by the account that
-created it. Two edges fall outside that rule: a login user the
+created it. An edge sits outside that rule: a login user the
 operator's `user_data` premade at another uid presents as the
-uid this rule names, and the host's own permission bits still
-govern every write — a file that presents as the workspace
+first uid the seed provisions (1001 on a pristine image), not
+the premade account's own — and the host's own permission bits
+still govern every write: a file that presents as the workspace
 user's still refuses what its host-side mode refuses. The
 guest mounts
 through systemd units the workspace's seed writes — one per
