@@ -61,9 +61,7 @@ def test_seed_script_plants_both_users_and_the_trust_store() -> None:
     script = seed_script(PUBLIC)
     assert script.startswith("#!/bin/sh\n")
     assert f"key='{PUBLIC}'" in script
-    # Two for the authorized_keys idempotence, the third the
-    # mounts prune loop's ownership test (#620, part #623).
-    assert script.count("grep -qxF") == 3
+    assert script.count("grep -qxF") == 2
     assert "/root/.ssh/authorized_keys" in script
     assert "/home/msks/.ssh/authorized_keys" in script
     assert "chown msks:msks" in script
@@ -119,9 +117,8 @@ def test_seed_script_provisions_a_named_login_user() -> None:
     assert script.count('>> "/home/$luser/.ssh/authorized_keys"') == 1
     assert 'chown -R "$luser:" "/home/$luser"' in script
     assert 'chmod 0600 "/home/$luser/.ssh/authorized_keys"' in script
-    # The root and msks lines ride along unchanged; the mounts
-    # prune's grep (#623) makes four.
-    assert script.count("grep -qxF") == 4
+    # The root and msks lines ride along unchanged.
+    assert script.count("grep -qxF") == 3
 
 
 def test_seed_script_skips_a_system_account_name() -> None:
@@ -154,6 +151,10 @@ def sandboxed(script: str, sandbox) -> str:
         .replace("/root", f"{sandbox}/root")
         .replace("/etc/passwd", f"{sandbox}/passwd")
         .replace("/etc/msks", f"{sandbox}/msks")
+        # #623: the mounts block's unit writes and prune glob run
+        # against /etc/systemd/system — pointed into the sandbox
+        # before any test passes real mounts to run_seed.
+        .replace("/etc/systemd/system", f"{sandbox}/system")
         .replace("/etc/skel", f"{sandbox}/skel")
         .replace("/etc/ssl/certs", f"{sandbox}/ssl-certs")
         .replace("/etc/profile.d", f"{sandbox}/profile.d")
@@ -762,155 +763,16 @@ def test_compose_user_data_carries_the_ca() -> None:
     assert compose_user_data("payload", None) == "payload"
 
 
-def mounts_for_guest_seed_tests():
-    """Two mounts the seed-block tests render: one rw at a plain
-    path, one ro under a deeper tree."""
-    from msks.spec.mounts import MountSpec
-
-    return (
-        MountSpec(share="proj", guest="/mnt/proj"),
-        MountSpec(share="docs", guest="/srv/tree/docs", mode="ro"),
-    )
-
-
-def test_mounts_seed_block_writes_units_and_prunes() -> None:
-    """The seed's mounts half (#620, part #623): a manifest of the
-    wanted unit names, one heredoc'd unit per mount with the
-    ownership marker, the prune loop keyed on that marker, and the
-    enable pass — all inside the systemctl guard."""
-    from msks.identity import mounts_seed_block
-
-    block = mounts_seed_block(mounts_for_guest_seed_tests())
-    assert block.startswith("if command -v systemctl >/dev/null 2>&1; then")
-    assert block.rstrip().endswith("fi")
-    # The manifest names exactly the wanted units.
-    assert "mnt-proj.mount\n" in block
-    assert "srv-tree-docs.mount\n" in block
-    # One heredoc'd unit per mount, target named by the escaped path.
-    assert "cat > '/etc/systemd/system/mnt-proj.mount' <<'MSEOF'" in block
-    assert "cat > '/etc/systemd/system/srv-tree-docs.mount' <<'MSEOF'" in block
-    # The units carry the ownership marker the prune loop greps and
-    # the virtiofs facts.
-    assert "What=proj" in block
-    assert "Where=/mnt/proj" in block
-    assert "Type=virtiofs" in block
-    assert "Options=ro" in block  # the ro mount
-    # rw is the mount default: no Options line for it. The ro one
-    # is the only Options line in the block.
-    assert block.count("Options=") == 1
-    # The prune loop: marker grep, manifest membership, disable,
-    # remove; then reload and enable.
-    assert "grep -q '^# msks mount unit'" in block
-    assert "systemctl disable --now" in block
-    assert "systemctl daemon-reload" in block
-    assert "systemctl enable --now" in block
-    # The ordering anchor names each mount's parent chain.
-    assert "RequiresMountsFor=/mnt" in block
-    assert "RequiresMountsFor=/srv/tree" in block
-
-
-def test_mounts_seed_block_quotes_hard_paths() -> None:
-    """A guest path with a space single-quotes into install -d, and
-    one with a quote uses the close-reopen spelling — both mount."""
-    from msks.identity import mounts_seed_block
-    from msks.spec.mounts import MountSpec
-
-    spaced = mounts_seed_block((MountSpec(share="a", guest="/mnt/my dir"),))
-    assert "install -d -m 0755 '/mnt/my dir'" in spaced
-    quoted = mounts_seed_block((MountSpec(share="a", guest="/mnt/o'brien"),))
-    # The exact spelling: the path opens, closes around a quoted
-    # quote, and reopens.
-    assert "'/mnt/o'\\''brien'" in quoted
-
-
-def test_mounts_seed_block_empty_is_the_prune_only_block() -> None:
-    """The empty mount set still carries the block: the manifest is
-    empty and the prune loop is what removes the last mount's
-    units after an all-mounts-removed renewal."""
-    from msks.identity import mounts_seed_block
-
-    block = mounts_seed_block(())
-    assert "<<'MSEOF'\nMSEOF" in block  # an empty manifest
-    assert "systemctl disable --now" in block
-    assert "enable --now" in block
-
-
-def test_systemd_escape_matches_the_tool() -> None:
-    """The escape is pinned against live systemd-escape output: a
-    divergence would make systemd refuse the unit (its file name
-    must equal the escaped Where= path). Vectors cover the
-    separator, a space, a literal hyphen (which escapes, keeping
-    the mapping injective), dots, underscores, and non-ASCII bytes
-    (escaped per UTF-8 byte)."""
-    import subprocess
-
-    from msks.identity import systemd_escape_path
-
-    vectors = [
-        "/mnt/proj",
-        "/mnt/my share/x",
-        "/mnt/a.b-c_d",
-        "/mnt/.hidden/dir",
-        "/srv/ü",
-        "/a:b/c+d~e",
-    ]
-    for path in vectors:
-        tool = subprocess.run(
-            ["systemd-escape", "-p", path],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-        assert systemd_escape_path(path) == tool, path
-
-
-def test_mount_unit_grammar() -> None:
-    """The unit text: the marker first (the prune grep anchors on
-    it), the tag and path on What/Where, virtiofs on Type, Options
-    only for ro, and the parent-chain anchor."""
-    from msks.identity import mount_parent, mount_unit, mount_unit_name
-    from msks.spec.mounts import MountSpec
-
-    rw = MountSpec(share="proj", guest="/mnt/proj")
-    ro = MountSpec(share="docs", guest="/srv/tree/docs", mode="ro")
-    assert mount_unit_name(rw) == "mnt-proj.mount"
-    assert mount_unit(rw).startswith("# msks mount unit")
-    assert "Options=" not in mount_unit(rw)
-    assert "Options=ro\n" in mount_unit(ro)
-    assert "WantedBy=multi-user.target" in mount_unit(ro)
-    # Parent chain: deep paths anchor one level up, a top-level
-    # path anchors at the root.
-    assert mount_parent("/mnt/proj") == "/mnt"
-    assert mount_parent("/proj") == "/"
-
-
-def test_mounts_fingerprint_keys_on_the_whole_set() -> None:
-    """The fingerprint changes with share, guest, or mode, ignores
-    order, and differs from the empty set."""
-    from msks.identity import mounts_fingerprint
-    from msks.spec.mounts import MountSpec
-
-    a = MountSpec(share="a", guest="/mnt/a")
-    same_a = MountSpec(share="a", guest="/mnt/a")
-    b = MountSpec(share="a", guest="/mnt/a", mode="ro")
-    c = MountSpec(share="a", guest="/mnt/c")
-    assert mounts_fingerprint((a,)) == mounts_fingerprint((same_a,))
-    assert mounts_fingerprint((a,)) != mounts_fingerprint((b,))
-    assert mounts_fingerprint((a,)) != mounts_fingerprint((c,))
-    assert mounts_fingerprint((a, c)) == mounts_fingerprint((c, a))
-    assert mounts_fingerprint(()) != mounts_fingerprint((a,))
-
-
-def test_compose_user_data_carries_the_mounts() -> None:
-    """Mounts alone make the seed script (the verbatim-payload
-    contract needs no key, no CA, no port, AND no mounts), and the
-    script carries the block; with a payload the multipart carries
-    the script half with the block inside it."""
-    doc = compose_user_data(None, None, mounts=mounts_for_guest_seed_tests())
+def test_compose_user_data_carries_the_mounts_block() -> None:
+    """A mounts block makes the seed script (the verbatim-payload
+    contract needs no key, no CA, no port, AND no block), and the
+    script carries the block verbatim; with a payload the
+    multipart carries the script half with the block inside it."""
+    block = "#!/bin/sh\nthe-block\n"
+    doc = compose_user_data(None, None, mounts_block=block)
     assert doc.startswith("#!/bin/sh")
-    assert "mnt-proj.mount" in doc
-    with_payload = compose_user_data(
-        "payload", PUBLIC, mounts=mounts_for_guest_seed_tests()
-    )
+    assert "the-block" in doc
+    with_payload = compose_user_data("payload", PUBLIC, mounts_block=block)
     assert with_payload.startswith("Content-Type: multipart/mixed")
-    assert "mnt-proj.mount" in with_payload
+    assert "the-block" in with_payload
+    assert compose_user_data("payload", None) == "payload"

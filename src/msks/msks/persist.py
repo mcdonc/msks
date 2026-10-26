@@ -63,8 +63,9 @@ import shutil
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from .identity import compose_user_data, mounts_fingerprint
+from .identity import compose_user_data
 from .spec.failures import MicrovmError
+from .spec.mounts import mounts_fingerprint, mounts_seed_block
 from .spec.vm import VmSpec
 
 MIB = 1024 * 1024
@@ -107,7 +108,7 @@ SEED_CA_MARK = "seed-ca.sha"
 
 #: The sidecar beside a seed recording which mount set the seed
 #: baked (#620, part #623): the value is the set's fingerprint
-#: (``spec.mounts.mounts_fingerprint``), so a start compares the
+#: (``mounts_fingerprint``), so a start compares the
 #: row's current set against what the guest will boot with and
 #: renews on a mismatch — the same evidence-shape the CA renewal
 #: reads. The empty string is a real value: a seed baked for no
@@ -125,6 +126,22 @@ def seed_mounts_mark(vm_dir: Path) -> Path:
     """The seed's mounts marker's path, inside the workspace's
     state directory."""
     return vm_dir / SEED_MOUNTS_MARK
+
+
+def mounts_block_for(spec: VmSpec, vm_dir: Path) -> str:
+    """The mounts half to bake into a seed being built now: the
+    rendered set when the workspace mounts anything, the
+    prune-only block when the previous seed carried units this
+    one must remove (the all-mounts-removed renewal), and nothing
+    for a workspace that never mounted — a payload-only seed
+    keeps the #41 verbatim contract, its user-data the operator's
+    document alone."""
+    if spec.mounts:
+        return mounts_seed_block(spec.mounts)
+    marker = seed_mounts_mark(vm_dir)
+    if marker.is_file() and marker.read_text() != mounts_fingerprint(()):
+        return mounts_seed_block(())
+    return ""
 
 
 def ca_fingerprint(ca_pem: str) -> str:
@@ -289,7 +306,7 @@ def renewal_suffix(ca_pem: str | None, mounts_fp: str) -> str:
 
 
 async def renew_seed(
-    spec: VmSpec, settings, llm_port: int, ca_pem: str, seed: Path
+    spec: VmSpec, settings, llm_port: int, ca_pem: str | None, seed: Path
 ) -> None:
     """Rebuild a seed whose staged CA drifted, so the guest
     re-provisions onto the daemon's certificate (#485).
@@ -478,7 +495,7 @@ async def create_seed(
                 spec.login_user,
                 llm_port,
                 ca_pem,
-                spec.mounts,
+                mounts_block_for(spec, target.parent),
             ),
             encoding="utf-8",
         )
