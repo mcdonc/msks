@@ -5999,3 +5999,108 @@ async def test_the_mounts_editor_close_hands_back_the_row(monkeypatch) -> None:
         await press_until(pilot, "escape", lambda: on_page(app))
         assert "gone:/mnt/gone:rw (skipped)" in mounts_text(app)
         assert "proj" not in mounts_text(app)
+
+
+async def test_the_mounts_editor_names_its_keys(monkeypatch) -> None:
+    """The editor's footer (#631): the page carries one, so the
+    bindings that edit the list — add, remove, close — render on
+    the screen instead of staying invisible."""
+    from msks.client.tui.mounts import MountsScreen
+    from textual.widgets import Footer
+
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([mounted_row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        await pilot.press("down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
+        )
+        footer = app.screen.query_one(Footer)
+        # The footer's keys come from the screen's bindings: the
+        # three visible ones name the editor's actions.
+        shown = {
+            binding.key for binding in app.screen.BINDINGS if binding.show
+        }
+        assert shown == {"a", "r", "escape"}
+        assert footer in app.screen.children
+
+
+async def test_the_mounts_editor_deletes_through_the_real_api(
+    tmp_path, monkeypatch
+) -> None:
+    """The editor against the daemon's own surface (#631): the
+    real TuiData over the real API app — the remove posts the
+    whole list through the actual mounts route and the daemon
+    holds the emptied row once the editor closes."""
+    from msks.app import build_app
+    from msks.client.tui.data import TuiData
+    from msks.client.tui.mounts import MountsScreen
+    from msks.server.api import build_api
+    from msks.settings import (
+        MountSettings,
+        MountShare,
+        NetSettings,
+        ServerSettings,
+        Settings,
+        VmmSettings,
+    )
+    from test_api import TOKEN, StubMicrovm
+
+    share = tmp_path / "projects"
+    share.mkdir()
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "vms"),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "api.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=10.0,
+        ),
+    )
+    settings.mounts = MountSettings(
+        shares=(MountShare(name="projects", path=str(share)),)
+    )
+    api_app = build_app(settings)
+    api_app.state.microvm = StubMicrovm()
+    api = build_api(api_app)
+    transport = httpx.ASGITransport(app=api)
+    async with api.router.lifespan_context(api):
+        async with httpx.AsyncClient(
+            transport=transport, base_url="https://test"
+        ) as http:
+            created = await http.post(
+                "/api/v1/workspaces",
+                json={
+                    "id": "ws-631",
+                    "kernel": "/k",
+                    "rootfs": "/r",
+                    "mounts": [{"share": "projects", "guest": "/mnt/p"}],
+                },
+                headers={"Authorization": f"Bearer {TOKEN}"},
+            )
+            assert created.status_code == 201
+        monkeypatch.setenv("MSKSC_URL", "https://test")
+        monkeypatch.setenv("MSKSC_TOKEN", TOKEN)
+        scripted_link(monkeypatch, [rules_frame()])
+        tui, _ = make_app(TuiData(transport=transport))
+        async with tui.run_test() as pilot:
+            await open_page(pilot, tui)
+            await wait_for(lambda: action_children(tui) == 6)
+            await pilot.press("down", "down", "down")
+            await press_until(
+                pilot, "enter", lambda: isinstance(tui.screen, MountsScreen)
+            )
+            await pilot.press("r")
+            await wait_for(
+                lambda: (
+                    "saved — applies at the next start"
+                    in str(tui.screen.query_one("#mount-note", Static).content)
+                )
+            )
+            await press_until(pilot, "escape", lambda: on_page(tui))
+            assert "projects" not in mounts_text(tui)
+        fresh = await TuiData(transport=transport).workspaces()
+        assert fresh[0]["mounts"] == []

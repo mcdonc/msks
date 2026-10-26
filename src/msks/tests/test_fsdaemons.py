@@ -22,6 +22,7 @@ from msks.microvm.fsdaemons import (
     fs_device_entries,
     fs_pidfile_path,
     fs_socket_path,
+    guest_user_ids,
     sandbox_mode,
 )
 from msks.microvm.local import (
@@ -49,11 +50,59 @@ def test_sandbox_follows_privilege() -> None:
     assert sandbox_mode(1000) == "none"
 
 
+def test_guest_user_ids_follow_the_login() -> None:
+    """The guest identity a share presents as (#631): the image's
+    own account for the logins that ride it — none, root, msks —
+    and the seed-provisioned login user's uid otherwise."""
+    assert guest_user_ids(None) == (1000, 1000)
+    assert guest_user_ids("") == (1000, 1000)
+    assert guest_user_ids("root") == (1000, 1000)
+    assert guest_user_ids("msks") == (1000, 1000)
+    assert guest_user_ids("chrism") == (1001, 1001)
+
+
+async def test_the_spawn_presents_as_the_login_user(
+    tmp_path: Path,
+) -> None:
+    """The spawn path derives the squash-host target from the
+    spec's login user (#631): a workspace that names one mounts
+    its shares as that user's guest identity, a loginless one as
+    the image's own account — pinned on the real arg vectors."""
+    shared = tmp_path / "share"
+    shared.mkdir()
+    vm_dir = tmp_path / "vms" / "ws-owner"
+    vm_dir.mkdir(parents=True)
+    settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    settings.mounts = MountSettings(
+        shares=(MountShare(name="share", path=str(shared)),)
+    )
+    driver, spawned = driver_over(settings)
+    for login_user, expect in ((None, 1000), ("chrism", 1001)):
+        spawned.clear()
+        spec = VmSpec(
+            workspace_id="ws-owner",
+            kernel=Path("/k"),
+            rootfs=Path("/r"),
+            login_user=login_user,
+            mounts=(MountSpec(share="share", guest="/mnt/s"),),
+        )
+        await driver._start_fs_daemons(spec, vm_dir)
+        await driver._stop_fs_daemons("ws-owner")
+        args = spawned[0][1]
+        joined = " ".join(args)
+        assert f"squash-host:0:{expect}:{WHOLE_RANGE}" in joined, (
+            login_user,
+            args,
+        )
+
+
 def test_fs_daemon_args_carry_the_contracts(tmp_path: Path) -> None:
     """One daemon's argument vector: cache never (the coherence
     contract), whole-range uid/gid squash to the daemon's own
-    identity, the xattr prefix map, the sandbox — and --readonly
-    exactly when the attach is read-only."""
+    identity in both directions — writes from the guest land as
+    the daemon's user, reads present as the workspace user's
+    guest identity (#631) — the xattr prefix map, the sandbox,
+    and --readonly exactly when the attach is read-only."""
     socket = tmp_path / "fs-share.sock"
     args = fs_daemon_args(
         "/srv/share",
@@ -61,6 +110,8 @@ def test_fs_daemon_args_carry_the_contracts(tmp_path: Path) -> None:
         socket,
         uid=1000,
         gid=100,
+        guest_uid=1001,
+        guest_gid=1002,
         readonly=False,
         sandbox="none",
     )
@@ -72,6 +123,12 @@ def test_fs_daemon_args_carry_the_contracts(tmp_path: Path) -> None:
     assert "--cache never" in joined
     assert f"squash-guest:0:1000:{WHOLE_RANGE}" in joined
     assert f"squash-guest:0:100:{WHOLE_RANGE}" in joined
+    # The host-to-guest half (#631): every host uid/gid presents
+    # as the workspace user's guest identity.
+    assert f"squash-host:0:1001:{WHOLE_RANGE}" in joined
+    assert f"squash-host:0:1002:{WHOLE_RANGE}" in joined
+    assert joined.count("--translate-uid") == 2
+    assert joined.count("--translate-gid") == 2
     assert XATTRMAP in args
     assert "--readonly" not in args
     ro = fs_daemon_args(
@@ -80,6 +137,8 @@ def test_fs_daemon_args_carry_the_contracts(tmp_path: Path) -> None:
         socket,
         uid=0,
         gid=0,
+        guest_uid=1000,
+        guest_gid=1000,
         readonly=True,
         sandbox="namespace",
     )

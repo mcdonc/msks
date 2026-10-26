@@ -20,7 +20,7 @@ from functools import partial
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
-from textual.widgets import Input, Label, ListItem, ListView, Static
+from textual.widgets import Footer, Input, Label, ListItem, ListView, Static
 
 from ..workspaces import mount_spec
 from .rows import clip, workspace_label
@@ -158,6 +158,7 @@ class MountsScreen(ModalScreen[dict | None]):
         yield Label(f"{workspace_label(self.row)} — mounts (next start)")
         yield ListView(id="mount-rows")
         yield Static("", id="mount-note")
+        yield Footer()
 
     def on_mount(self) -> None:
         self.rebuild()
