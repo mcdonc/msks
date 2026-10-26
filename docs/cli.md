@@ -262,32 +262,42 @@ reference no other workspace shares.
 
 ## `msks ls`
 
-Prints one line per workspace the daemon knows, aligned in five
-columns: name, id, status, image hash (first 12 hex chars), and
-owning host. The columns are measured against the values present
-: a long name or image reference widens its column for every
-row, so each row's columns start at the same offsets, header
+Prints one line per workspace the daemon knows, aligned in seven
+columns: name, id, status, egress mode, created date, image
+(catalog reference, or the digest when the catalog cannot resolve
+one), and owning host. The columns are measured against the values
+present: a long name or image reference widens its column for
+every row, so each row's columns start at the same offsets, header
 row included.
 
 ```text
 $ msks ls
-name          id          status   image         host
-my-workspace  1a2b3c4d5e  running  9f2c41ab77de  hv-1
-scratch       77eedd0199  created  -             hv-1
+name          id          status              egress      created     image         host
+my-workspace  1a2b3c4d5e  running             interactive 2026-05-14  debian:13.6   hv-1
+scratch       77eedd0199  created             allow       2026-06-01  -             hv-1
+refs-reader   9c1d2e3f4a  running, 1 mount sk allow       2026-06-18  9f2c41ab77de  hv-1
 ```
 
 The status column speaks the daemon's lifecycle vocabulary:
 `created` (row exists, never booted), `starting`, `running`,
-`paused`, `stopped`, `unknown`, `absent`. A `-` in the name column
-is a workspace without a label — created nameless through the API,
-or before the id/name split — addressed by its id alone. A `-` in
-the image column means the workspace boots explicit kernel/rootfs
-paths instead of a catalog image.
+`paused`, `stopped`, `unknown`, `absent`. A workspace whose mounts
+skip or conflict carries the count beside its status — `running,
+1 mount skipped` above — the standing marker for a share the
+daemon's config no longer carries, an `rw` mount a reload
+narrowed its share under, or a read-write attach another
+workspace holds exclusively; the marker stands until the config
+and the row agree again, and the [mounts
+chapter](mounts.md#the-skip-behavior) names each skip's reason. A
+`-` in the name column is a workspace without a label — created
+nameless through the API, or before the id/name split — addressed
+by its id alone. A `-` in the image column means the workspace
+boots explicit kernel/rootfs paths instead of a catalog image.
 
 `--json` replaces the table with one JSON document, the API's
 workspace rows verbatim (id, name, kernel, initrd, rootfs, cmdline,
 cpus, mem_mib, image_hash, image_ref, host, root_mib, home_mib,
-status, created_at):
+status, created_at, mounts, mount_issues — the derived per-mount
+state behind the status marker):
 
 ```bash
 msks ls --json | jq -r '.[] | select(.status == "running") | .name'
@@ -377,12 +387,30 @@ below generate theirs):
 | `--user-data` | `user_data`             | First-boot provisioning payload file; `-` reads stdin                              |
 | `--pubkey`    | `ssh_pubkey` (verbatim) | Use a public key you already own as this one workspace's identity; `-` reads stdin |
 | `--user`      | `user`                  | The workspace's login user; default: your username                                 |
+| `--mount`     | `mounts`                | A host share mounted into the guest: `SHARE:GUEST_PATH:MODE`, repeatable           |
 
 Only the flags you pass are sent — unset flags let the daemon apply
 its own defaults. An `--image` reference resolves against the
 daemon's image catalog (`docs/images.md`); explicit `--kernel` and
 `--rootfs` bypass it. Size ranges are enforced server-side; a value
 outside them comes back as a validation error (below).
+
+`--mount` names a share the daemon's config carries, the absolute
+guest path it lands at, and a mode — `ro` or `rw`, defaulting to
+`rw` when the mode is omitted:
+
+```bash
+msks create ws1 --mount projects:/mnt/projects --mount refs:/srv/refs:ro
+```
+
+The share must be one the operator listed (`mount_shares`,
+[configuration](config.md#host-share-mounts)); `rw` on a share
+narrowed to read-only refuses with the mismatch named. The mounts
+apply at the workspace's next start — a `--start` create attaches
+them on its first boot. The [mounts chapter](mounts.md) holds the
+behavior: what a share is, the mode bounds, and the coherence
+between guests sharing one tree. `msks mount` and `msks umount`
+change the set later.
 
 `--user NAME` records the workspace's login user, and the
 name rides the row. The guest's first boot seeds the account:
@@ -569,6 +597,44 @@ client asks without pre-filtering on local state. The same
 holds for a workspace that was never booted; the row records
 `stopped` without a launch ever happening. The data survives the stop — the root overlay and the
 `/home` volume come back on the next `msks start`.
+
+## `msks mount`
+
+Adds one host share to a workspace's mounts (`POST
+/api/v1/workspaces/{id-or-name}/mounts`) — the spec is the
+create's own `--mount` grammar:
+
+```text
+$ msks mount ws1 refs:/srv/refs:ro
+ws1 mounts projects:/mnt/projects:rw, refs:/srv/refs:ro (next start)
+```
+
+The outcome line names the resulting set and the next-start
+note: setting mounts never touches a running VM, and the next
+`msks start` attaches exactly this set — the seed that boot
+carries bakes the current mounts, so a restart after a change
+lands the new set and prunes the dropped one. The daemon
+validates the whole list against the configured shares and the
+row rules (a share appears once per workspace, guest paths are
+absolute and mutually disjoint); a refusal names itself on one
+line. A mount the daemon's derived state skips — a share the
+config no longer carries, or a read-write attach held elsewhere —
+names itself after the set with its reason.
+
+## `msks umount`
+
+Removes a workspace's mounts of one share — every guest path the
+share occupies:
+
+```text
+$ msks umount ws1 refs
+ws1 mounts projects:/mnt/projects:rw (next start)
+```
+
+A share the workspace does not mount is one local line. The next
+start attaches the remainder, and a workspace whose last mount
+leaves this way mounts nothing at its next boot. The [mounts
+chapter](mounts.md#what-a-mount-is) states the lifecycle.
 
 ## `msks rm`
 
