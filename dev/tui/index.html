@@ -898,6 +898,13 @@ that jumps the focus to the first row whose name starts with what you
 type. Enter opens the workspace's page.</p>
 <p>The list re-reads the daemon every five seconds, so a workspace another surface
 moved (the CLI, another operator) appears without a keypress.</p>
+<p>A workspace whose mounts skip or conflict carries a marker in the
+status column — <code>✗1 stopped</code> — the count of mounts the daemon's
+derived state holds unresolved; the marker stands until the
+config and the row agree again, and the <a href="../mounts/#the-skip-behavior">mounts
+chapter</a> names every kind of skip
+and its reason. The workspace's page names each unresolved mount
+by its kind.</p>
 <p>When you create a workspace, it looks like this:</p>
 <p><img alt="The create form over the list" src="../screens/create-form.svg" /></p>
 <p>The <strong>secrets page</strong> lists every placeholder row the daemon
@@ -948,8 +955,29 @@ created date.</p>
 named with its expiry. Two or more grants read as a count with the nearest
 expiry (<code>5 grants · next expires 4h</code>); grant detail is listed on the
 workspace's egress consent screen.</p>
-<p>The page's actions center in three groups. A shell; egress consent and an edit
-dialog for the sizes and topology; and start and stop.</p>
+<p>A mounts line follows when the workspace mounts host shares: one
+entry per mount — <code>projects:/mnt/projects:rw</code> — with the derived
+state beside any the daemon holds unresolved
+(<code>refs:/srv/refs:ro (skipped)</code>), and the next-start note naming
+the semantics. The line repaints with the page's per-second read,
+so a change made anywhere follows onto the page.</p>
+<p>The page's actions center in three groups. A shell; egress
+consent, an edit dialog for the sizes and topology, and the
+mounts editor; and start and stop.</p>
+<p>The <strong>mounts editor</strong> holds the workspace's mounts one row each —
+the CLI's own <code>SHARE:GUEST_PATH:MODE</code> grammar, the mode always
+shown. <code>a</code> adds a row (a single-line input), Enter edits the
+focused row seeded with its spec, <code>r</code> removes it, and Escape
+closes the editor with the last saved set. Every change posts the
+whole list through the daemon's mounts route — the reply repaints
+each row with its derived state (<code>healthy</code>, or the skip's kind
+and reason), and a refusal names itself on the editor's note line
+with the list it refused rolled back. The daemon owns the rules:
+a share the config does not carry, and <code>rw</code> on a read-only
+share, refuse with the remedy named. The <a href="../mounts/">mounts
+chapter</a> and the <a href="../config/#host-share-mounts">configuration
+rows</a> hold the behavior; the CLI's
+<a href="../cli/#msks-mount"><code>msks mount</code></a> rides the same route.</p>
 <p><img alt="The image page: the catalog group, then the published channel" src="../screens/image-page.svg" /></p>
 <p><code>i</code>: the image page. Its catalog group comes first, the rows carrying the
 default marker and each import's date; then the published channel's rows with
