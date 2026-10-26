@@ -341,32 +341,60 @@ async def test_a_create_captures_the_host_timezone(
 
 
 def test_host_timezone_reads_the_clock(tmp_path) -> None:
-    """The capture (#633): the /etc/localtime symlink's target
-    under a zoneinfo root is the zone (either root), a copied
-    localtime falls back to /etc/timezone's first line, and UTC
-    spellings or anything that is not a zone name read as None —
-    the nothing-that-rides value."""
-    from msks.server.api.boot import host_timezone, zone_name
+    """The capture (#633): the /etc/localtime symlink's resolved
+    target under a zoneinfo root is the zone (either root, the
+    relative form timedated writes included), a symlink that
+    reads as nothing falls back to /etc/timezone's first line —
+    except a UTC link, which is authoritative — and UTC spellings
+    or anything that is not a zone name read as None, the
+    nothing-that-rides value."""
+    from msks.server.api.boot import (
+        host_timezone,
+        linked_zone,
+        zone_name,
+    )
 
     assert zone_name("Europe/Berlin") == "Europe/Berlin"
     assert zone_name("Etc/GMT+5") == "Etc/GMT+5"
     assert zone_name("UTC") is None
+    assert zone_name("GMT") is None
+    assert zone_name("Etc/GMT") is None
     assert zone_name("../etc/passwd") is None
     assert zone_name("'; rm -rf /") is None
     assert zone_name("") is None
     assert zone_name("trailing/") is None
 
-    # The symlink read, either zoneinfo root.
+    # The symlink read, either zoneinfo root, relative link
+    # included (the localtime(5) form timedated writes).
     linked = tmp_path / "localtime"
     linked.symlink_to("/usr/share/zoneinfo/America/New_York")
     zone_file = tmp_path / "timezone"
     assert host_timezone(str(linked), str(zone_file)) == "America/New_York"
+    zi = tmp_path / "zi"
+    (zi / "Europe").mkdir(parents=True)
+    (zi / "Europe" / "Berlin").touch()
+    rel = tmp_path / "relative"
+    rel.symlink_to("zi/Europe/Berlin")
+    assert linked_zone(str(rel), roots=(f"{zi}/",)) == "Europe/Berlin"
+    # The second root: a link under it reads the same as one under
+    # the first (the loop walks the roots in order).
+    zi2 = tmp_path / "zi2"
+    (zi2 / "Asia").mkdir(parents=True)
+    (zi2 / "Asia" / "Tokyo").touch()
     alt = tmp_path / "alt"
-    alt.symlink_to("/etc/zoneinfo/Asia/Tokyo")
-    assert host_timezone(str(alt), str(zone_file)) == "Asia/Tokyo"
+    alt.symlink_to(f"{zi2}/Asia/Tokyo")
+    assert linked_zone(str(alt), roots=(f"{zi}/", f"{zi2}/")) == "Asia/Tokyo"
 
-    # A target outside both roots, and one under a root that names
-    # no valid zone: the read falls through to the file fallback.
+    # A UTC link is authoritative: the file fallback never
+    # overrides the clock the link names.
+    utc_link = tmp_path / "utc-link"
+    utc_link.symlink_to("/usr/share/zoneinfo/Etc/UTC")
+    zone_file.write_text("Europe/Berlin\n")
+    assert host_timezone(str(utc_link), str(zone_file)) is None
+
+    # A target outside both roots, one under a root that names no
+    # valid zone, and a symlink loop: the read falls through to
+    # the file fallback.
     zone_file.write_text("America/Detroit\n")
     odd = tmp_path / "odd"
     odd.symlink_to("/var/db/zoneinfo/Europe/Berlin")
@@ -374,6 +402,9 @@ def test_host_timezone_reads_the_clock(tmp_path) -> None:
     bad = tmp_path / "bad"
     bad.symlink_to("/usr/share/zoneinfo/../etc/passwd")
     assert host_timezone(str(bad), str(zone_file)) == "America/Detroit"
+    loop = tmp_path / "loop"
+    loop.symlink_to("loop")
+    assert host_timezone(str(loop), str(zone_file)) == "America/Detroit"
 
     # A copied (non-symlink) localtime: the /etc/timezone fallback.
     copied = tmp_path / "copied"

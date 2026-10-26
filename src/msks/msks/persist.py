@@ -212,8 +212,9 @@ async def ensure_seed(
     ca_pem: str | None = None,
 ) -> None:
     """Build the #41 seed when the workspace carries a payload — its
-    own, the supplied ssh key's (#111, #486), or its host-share
-    mounts (#620, part #623) — and the file is
+    own, the supplied ssh key's (#111, #486), its host-share
+    mounts (#620, part #623), or its captured timezone (#633) —
+    and the file is
     absent; a
     fresh build joins the rollback list. The proxy-environment leg
     (#259, #483) rides the same condition: a workspace whose tap

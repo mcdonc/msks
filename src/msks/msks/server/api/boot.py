@@ -136,36 +136,58 @@ ZONEINFO_ROOTS = ("/usr/share/zoneinfo/", "/etc/zoneinfo/")
 #: hostile or mangled host file never reaches the guest's shell.
 ZONE_NAME_RE = re.compile(r"[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*\Z")
 
-#: The spellings that read as UTC: nothing rides for them, so a
-#: UTC host's bare workspaces keep the two-disk, no-seed boot.
-UTC_NAMES = frozenset({"UTC", "Etc/UTC", "Universal", "Zulu"})
+#: The spellings that read as UTC (tzdata's UTC-equivalent
+#: family): nothing rides for them, so a UTC host's bare
+#: workspaces keep the two-disk, no-seed boot.
+UTC_NAMES = frozenset(
+    {
+        "UTC",
+        "UCT",
+        "Etc/UTC",
+        "Etc/UCT",
+        "Universal",
+        "Zulu",
+        "GMT",
+        "GMT0",
+        "Greenwich",
+        "Etc/GMT",
+        "Etc/GMT+0",
+        "Etc/GMT-0",
+        "Etc/GMT0",
+    }
+)
 
 
 def host_timezone(
     localtime: str = "/etc/localtime", zone_file: str = "/etc/timezone"
 ) -> str | None:
     """The host's timezone as a zone name, None for UTC or an
-    unreadable clock (#633): the /etc/localtime symlink's target
-    under a zoneinfo root first, the /etc/timezone file's first
-    line (Debian's companion) as the fallback — a copied rather
-    than linked localtime, or neither file, is UTC by refusal,
-    never a guess."""
-    return linked_zone(localtime) or file_zone(zone_file)
+    unreadable clock (#633): the /etc/localtime symlink — absolute
+    or relative, resolved against the filesystem (localtime(5)
+    names both forms, and systemd's timedated writes the relative
+    one) — under a zoneinfo root first and authoritatively; the
+    /etc/timezone file's first line (Debian's companion) only
+    when the link itself reads as nothing (a copied zone file, a
+    dangling loop, no link at all) — never a guess between the
+    two."""
+    candidate = linked_zone(localtime)
+    if candidate is not None:
+        return zone_name(candidate)
+    return file_zone(zone_file)
 
 
-def linked_zone(localtime: str) -> str | None:
-    """The zone the /etc/localtime symlink names: its target under
-    a zoneinfo root, None when the file is not a link (a copied
-    zone) or names nothing valid."""
-    try:
-        target = os.readlink(localtime)
-    except OSError:
-        return None
-    for root in ZONEINFO_ROOTS:
-        if target.startswith(root):
-            zone = zone_name(target[len(root) :])
-            if zone is not None:
-                return zone
+def linked_zone(localtime: str, roots: tuple = ZONEINFO_ROOTS) -> str | None:
+    """The zone path the /etc/localtime symlink names, its tail
+    under a zoneinfo root: the link resolved against the
+    filesystem, so the relative form timedated writes reads the
+    same as the absolute one. None when the resolution lands under
+    no zoneinfo root — a copied zone file names itself, which is
+    no name at all (non-strict resolution never raises: a loop or
+    a dangling link resolves as far as it can)."""
+    resolved = os.path.realpath(localtime)
+    for root in roots:
+        if resolved.startswith(root):
+            return resolved[len(root) :]
     return None
 
 
@@ -181,12 +203,12 @@ def file_zone(zone_file: str) -> str | None:
 
 def zone_name(candidate: str) -> str | None:
     """One candidate as a zone name: valid grammar and not a UTC
-    spelling — else None, the nothing-that-rides value."""
+    spelling — else None, the nothing-that-rides value. The
+    grammar bans every dot, quote, and whitespace rune, so a
+    traversal or a shell metacharacter never passes."""
     if not candidate or candidate in UTC_NAMES:
         return None
-    if ".." in candidate or not ZONE_NAME_RE.fullmatch(candidate):
-        return None
-    return candidate
+    return candidate if ZONE_NAME_RE.fullmatch(candidate) else None
 
 
 def bound_image_hash(body: WorkspaceCreate, record) -> str | None:

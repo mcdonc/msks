@@ -194,23 +194,39 @@ def riding_blocks(
     return blocks
 
 
+#: The zone-name grammar the block interpolates: the second wall
+#: against a row edited by hand (boot's capture validates the
+#: only writer; identity is a leaf the client ships too, so the
+#: grammar lives here again rather than behind a server import).
+#: Segments of letters, digits, underscore, dash, and plus,
+#: joined by single slashes — no dot, quote, backslash,
+#: whitespace, or shell metacharacter can pass.
+ZONE_RE = re.compile(r"[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*\Z")
+
+
 def timezone_block(timezone: str) -> str:
     """The #633 block: the host's timezone, captured at create, set
-    in the guest on first boot. The zone name's grammar was
-    validated at capture (boot.zone_name), so it interpolates
-    safely into single quotes and the zoneinfo path. Both steps
-    are best-effort under ``set -eu`` — a guest whose /etc is not
-    writable keeps booting and keeps the image's default clock:
-    timedatectl applies the zone live when systemd's timedated is
-    up (it also writes the link itself), and the plain symlink
-    pins the persistent state either way, on guests with or
-    without timedated."""
+    in the guest on first boot. The zone name's grammar is
+    validated here as well as at capture (boot.zone_name owns the
+    writer; ZONE_RE is the second wall against a row edited by
+    hand), so it interpolates safely into single quotes and the
+    zoneinfo path. Every step is best-effort under ``set -eu`` —
+    a guest whose /etc is not writable keeps booting and keeps
+    the image's default clock: timedatectl applies the zone live
+    when systemd's timedated is up (and refreshes Debian's
+    /etc/timezone companion), and the plain symlink plus the
+    companion write pin the persistent state either way, on
+    guests with or without timedated."""
+    if ZONE_RE.fullmatch(timezone) is None:
+        raise ValueError(f"not a timezone zone name: {timezone!r}")
     return (
         f"if command -v timedatectl >/dev/null 2>&1; then\n"
         f"  timedatectl set-timezone '{timezone}' 2>/dev/null "
         "|| true\n"
         "fi\n"
         f"ln -nsf /usr/share/zoneinfo/{timezone} /etc/localtime "
+        "2>/dev/null || true\n"
+        f"printf '%s\\n' '{timezone}' > /etc/timezone "
         "2>/dev/null || true\n"
     )
 

@@ -789,6 +789,15 @@ def test_the_timezone_block_sets_the_clock() -> None:
     assert "command -v timedatectl" in block
     assert "timedatectl set-timezone 'Europe/Berlin'" in block
     assert "ln -nsf /usr/share/zoneinfo/Europe/Berlin /etc/localtime" in block
+    # Debian's companion file rides beside the link (timedated
+    # refreshes it when present; the write covers the rest).
+    assert r"printf '%s\n' 'Europe/Berlin' > /etc/timezone" in block
+    # The second wall: a row edited by hand never reaches the
+    # guest's shell.
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="not a timezone zone name"):
+        timezone_block("'; rm -rf /")
 
 
 def test_the_timezone_rides_beside_the_payload() -> None:
