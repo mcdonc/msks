@@ -873,3 +873,256 @@ def mounts_for_edge(guest: str):
     from msks.spec.mounts import MountSpec
 
     return MountSpec(share="s", guest=guest)
+
+
+def share_dir(tmp_path: Path) -> tuple[Path, MountSettings]:
+    """A configured-share world: two shares on disk — a writable
+    ``proj`` and a read-only ``refs`` — the pair a two-mount
+    workspace names (a share appears once per workspace)."""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    refs = tmp_path / "refs"
+    refs.mkdir()
+    return proj, MountSettings(
+        shares=(
+            MountShare(name="proj", path=str(proj)),
+            MountShare(name="refs", path=str(refs), writable=False),
+        )
+    )
+
+
+async def test_create_with_mounts_stores_them(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The create's mounts (#620, part #624): validated against
+    the config's shares and the row rules, stored on the row, and
+    served with the derived state — a create naming a share the
+    config carries lands both mounts."""
+    http, app, _stub = client
+    _root, settings = share_dir(tmp_path)
+    app.state.settings.mounts = settings
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-m",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "mounts": [
+                {"share": "proj", "guest": "/mnt/proj"},
+                {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+            ],
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201, created.text
+    row = created.json()
+    assert row["mounts"] == [
+        {"share": "proj", "guest": "/mnt/proj", "mode": "rw"},
+        {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+    ]
+    assert row["mount_issues"] == []
+
+
+@pytest.mark.parametrize(
+    ("mounts_body", "why"),
+    [
+        ([{"share": "nope", "guest": "/mnt/x"}], "no share named 'nope'"),
+        ([{"share": "proj", "guest": "/mnt/x", "mode": "rw"}], "read-only"),
+        ([{"share": "proj", "guest": "relative"}], "must be absolute"),
+        (
+            [
+                {"share": "proj", "guest": "/mnt/a"},
+                {"share": "proj", "guest": "/mnt/b"},
+            ],
+            "mounted twice",
+        ),
+    ],
+)
+async def test_create_refuses_mounts_the_config_or_rules_deny(
+    client,  # noqa: F811
+    tmp_path: Path,
+    mounts_body: list,
+    why: str,
+) -> None:
+    """The create's mount refusals (#620, part #624): a share the
+    config does not carry, rw on a share narrowed to read-only,
+    and the row rules — each a named 400 with nothing written."""
+    http, app, _stub = client
+    root = tmp_path / "proj"
+    root.mkdir()
+    app.state.settings.mounts = MountSettings(
+        shares=(MountShare(name="proj", path=str(root), writable=False),)
+    )
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-m",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "mounts": mounts_body,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 400
+    assert why in created.json()["detail"]
+
+
+async def test_mounts_are_refused_while_the_config_lists_no_shares(
+    client,  # noqa: F811
+) -> None:
+    """Empty config is the feature off (#620): every mount request
+    — create or set — refuses with the config's remedy named."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-m",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "mounts": [{"share": "proj", "guest": "/mnt/proj"}],
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 400
+    assert "lists no shares" in created.json()["detail"]
+
+
+async def test_the_mounts_route_sets_replaces_and_clears(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The mounts route (#620, part #624): the full replacement
+    list lands on the row with its derived state, an empty list
+    clears, and a running workspace's set succeeds — next-start
+    semantics, like resize: the VM keeps its attached devices."""
+    http, app, stub = client
+    _root, settings = share_dir(tmp_path)
+    app.state.settings.mounts = settings
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-m", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+
+    set_one = await http.post(
+        f"/api/v1/workspaces/{wid}/mounts",
+        json={"mounts": [{"share": "proj", "guest": "/mnt/proj"}]},
+        headers=auth(),
+    )
+    assert set_one.status_code == 200
+    assert set_one.json()["mounts"] == [
+        {"share": "proj", "guest": "/mnt/proj", "mode": "rw"}
+    ]
+
+    # A running workspace sets fine: nothing launches, the reply's
+    # row is the whole contract.
+    started = await http.post(
+        f"/api/v1/workspaces/{wid}/start", headers=auth()
+    )
+    assert started.status_code == 200
+    set_two = await http.post(
+        f"/api/v1/workspaces/{wid}/mounts",
+        json={
+            "mounts": [
+                {"share": "proj", "guest": "/mnt/proj", "mode": "ro"},
+                {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+            ]
+        },
+        headers=auth(),
+    )
+    assert set_two.status_code == 200
+    assert len(set_two.json()["mounts"]) == 2
+    assert ("launch", wid) in stub.calls
+
+    cleared = await http.post(
+        f"/api/v1/workspaces/{wid}/mounts",
+        json={"mounts": []},
+        headers=auth(),
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["mounts"] == []
+    assert cleared.json()["mount_issues"] == []
+
+
+async def test_rows_carry_the_derived_mount_state(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The listing and the row read carry the derived per-mount
+    state (#620, part #624): a share gone from the config names
+    its skip on both surfaces — the markers the CLI's ls and the
+    TUI render."""
+    http, app, _stub = client
+    _root, settings = share_dir(tmp_path)
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    # The share exists at set time — the set-time gate passes —
+    # and leaves the config before the read: the skip is derived
+    # state, the reload's story.
+    app.state.settings.mounts = MountSettings(
+        shares=(
+            *settings.shares,
+            MountShare(name="gone", path=str(gone)),
+        )
+    )
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-m",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "mounts": [
+                {"share": "proj", "guest": "/mnt/proj"},
+                {"share": "gone", "guest": "/mnt/gone"},
+            ],
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201, created.text
+    wid = created.json()["id"]
+    app.state.settings.mounts = settings
+
+    row = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
+    issues = row.json()["mount_issues"]
+    assert issues == [
+        {
+            "kind": "skipped",
+            "share": "gone",
+            "guest": "/mnt/gone",
+            "mode": "rw",
+            "detail": "share 'gone' is not in the daemon's config",
+        }
+    ]
+
+    listed = await http.get("/api/v1/workspaces", headers=auth())
+    mine = next(r for r in listed.json() if r["id"] == wid)
+    assert mine["mount_issues"] == issues
+
+
+async def test_the_mounts_route_names_its_refusals(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The set route's 400s (#620, part #624): a share the config
+    does not carry refuses with the config's remedy named, and
+    the row keeps the mounts it had."""
+    http, app, _stub = client
+    _root, settings = share_dir(tmp_path)
+    app.state.settings.mounts = settings
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-m", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+    refused = await http.post(
+        f"/api/v1/workspaces/{wid}/mounts",
+        json={"mounts": [{"share": "nope", "guest": "/mnt/x"}]},
+        headers=auth(),
+    )
+    assert refused.status_code == 400
+    assert "no share named 'nope'" in refused.json()["detail"]
+    kept = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
+    assert kept.json()["mounts"] == []

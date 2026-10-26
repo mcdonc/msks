@@ -231,11 +231,23 @@ def row_cells(row: dict) -> tuple[str, ...]:
     created cell reads as a relative label (#350)."""
     return (
         clip(workspace_label(row), NAME_W),
-        clip(status_text(row["status"]), STATUS_W),
+        clip(status_with_issues(row), STATUS_W),
         clip(row.get("egress_mode") or "-", EGRESS_W),
         clip(row.get("image_ref") or row.get("image_hash") or "-", IMAGE_W),
         clip(created_label(row.get("created_at")), CREATED_W),
     )
+
+
+def status_with_issues(row: dict) -> str:
+    """The status cell with the mounts' standing marker (#620,
+    part #624): a row whose mounts skip or conflict carries their
+    count beside its status — the workspace's page names each
+    one. A healthy row prints its status alone."""
+    status = status_text(row["status"])
+    issues = row.get("mount_issues") or []
+    if not issues:
+        return status
+    return f"{status} ✗{len(issues)}"
 
 
 def row_content(

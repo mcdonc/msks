@@ -111,6 +111,21 @@ class TuiData:
             json_body=body,
         )
 
+    async def set_mounts(self, workspace_id: str, mounts: list) -> dict:
+        """POST the mounts list whole (#620, part #624) — the same
+        exchange ``msks mount`` makes. The daemon validates against
+        the configured shares and answers with the refreshed row,
+        whose derived state the editor paints."""
+        return await api_call(
+            "POST",
+            env_url(),
+            env_token(),
+            f"/api/v1/workspaces/{workspace_id}/mounts",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+            json_body={"mounts": mounts},
+        )
+
     async def start(self, workspace_id: str) -> dict:
         """POST the boot — the same call ``msks start`` makes."""
         return await api_call(

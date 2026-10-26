@@ -161,7 +161,7 @@ async def test_the_workspace_page(monkeypatch) -> None:
     app, _ = make_app(FakeData([row(status="running")]))
     async with app.run_test(size=(80, 24)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await pilot.pause()
         await export(app, "workspace-page")
 
@@ -172,7 +172,7 @@ async def test_the_edit_dialog(monkeypatch) -> None:
     app, _ = make_app(FakeData([row()]))
     async with app.run_test(size=(80, 24)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await open_edit(pilot, app)
         await pilot.pause()
         await export(app, "edit-dialog")
@@ -185,7 +185,7 @@ async def test_the_consent_page(monkeypatch) -> None:
     app, _ = make_app(FakeData([row()]))
     async with app.run_test(size=(80, 24)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await press_until(pilot, "e", lambda: on_consent(app))
         await wait_for(lambda: on_consent(app) and holds_settled(app))
         await export(app, "consent-page")
@@ -206,7 +206,7 @@ async def test_the_consent_page_with_several_holds(monkeypatch) -> None:
     app, _ = make_app(FakeData([row()]))
     async with app.run_test(size=(80, 24)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await press_until(pilot, "e", lambda: on_consent(app))
         await wait_for(lambda: on_consent(app) and holds_settled(app, count=3))
         await export(app, "consent-holds")
@@ -219,7 +219,7 @@ async def test_the_duration_picker(monkeypatch) -> None:
     app, _ = make_app(FakeData([row()]))
     async with app.run_test(size=(80, 24)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await press_until(pilot, "e", lambda: on_consent(app))
         await wait_for(lambda: on_consent(app) and holds_settled(app))
         await pilot.press("A")
@@ -235,7 +235,7 @@ async def test_the_mode_picker(monkeypatch) -> None:
     app, _ = make_app(FakeData([row()]))
     async with app.run_test(size=(80, 24)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await press_until(pilot, "e", lambda: on_consent(app))
         await pilot.press("m")
         await wait_for(lambda: screen_name(app) == "ModeScreen")

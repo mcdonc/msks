@@ -59,7 +59,34 @@ def workspace_cells(row: dict) -> list[str]:
     name = row.get("name") or "-"
     egress_mode = row.get("egress_mode") or "-"
     created = created_date(row.get("created_at"))
-    return [name, row["id"], row["status"], egress_mode, created, image, host]
+    return [
+        name,
+        row["id"],
+        status_with_mounts(row),
+        egress_mode,
+        created,
+        image,
+        host,
+    ]
+
+
+def status_with_mounts(row: dict) -> str:
+    """The status cell with the mounts' standing marker (#620,
+    part #624): a row whose mounts skip or conflict carries the
+    count beside its status — ``running, 1 mount skipped`` — the
+    marker an unresolved share leaves until the config and the
+    row agree again. The healthy row prints its status alone."""
+    status = row["status"]
+    issues = row.get("mount_issues") or []
+    if not issues:
+        return status
+    kinds = sorted({issue["kind"] for issue in issues})
+    label = (
+        "mounts " + "/".join(kinds)
+        if len(issues) > 1
+        else (f"mount {issues[0]['kind']}")
+    )
+    return f"{status}, {len(issues)} {label}"
 
 
 def render_ls(rows: list[dict], as_json: bool) -> str:
@@ -337,6 +364,135 @@ def cmd_resize(
     return 0
 
 
+def mount_spec(spec: str, flag: str) -> dict:
+    """One ``SHARE:GUEST_PATH[:MODE]`` as the wire's mount entry
+    (#620, part #624): the share, the absolute guest path, and the
+    mode when named (``rw`` is the daemon's default). The local
+    refusals are the shape ones — the daemon owns the rules and
+    names them in its 400."""
+    fields = spec.split(":")
+    if len(fields) not in (2, 3):
+        raise SystemExit(
+            f"msks: {flag} takes SHARE:GUEST_PATH[:MODE], got {spec!r}"
+        )
+    share, guest = fields[0], fields[1]
+    if not guest.startswith("/"):
+        raise SystemExit(f"msks: {flag} guest path {guest!r} must be absolute")
+    entry = {"share": share, "guest": guest}
+    if len(fields) == 3:
+        if fields[2] not in ("ro", "rw"):
+            raise SystemExit(
+                f"msks: {flag} mode must be ro or rw, got {fields[2]!r}"
+            )
+        entry["mode"] = fields[2]
+    return entry
+
+
+def cmd_mount(
+    workspace_id: str,
+    spec: str,
+    transport=None,
+) -> int:
+    """``msks mount``: add one share to the workspace's mounts
+    (#620, part #624) — the set replaces whole through the route,
+    so the command reads the row, adds the entry, and posts the
+    list. Next-start semantics: a running VM keeps its devices;
+    the next start attaches the new set."""
+    return asyncio.run(mounts_exchange(workspace_id, "add", spec, transport))
+
+
+def cmd_umount(
+    workspace_id: str,
+    share: str,
+    transport=None,
+) -> int:
+    """``msks umount``: remove the workspace's mounts of one share
+    (#620, part #624). The next start attaches the remainder."""
+    return asyncio.run(
+        mounts_exchange(workspace_id, "remove", share, transport)
+    )
+
+
+async def mounts_exchange(
+    workspace_id: str, action: str, spec: str, transport
+) -> int:
+    """The mount/umount exchange: read the row, apply the one
+    edit, post the whole list — the daemon validates and answers
+    with the refreshed row, whose derived state prints."""
+    row = await call(
+        "GET", f"/api/v1/workspaces/{workspace_id}", transport=transport
+    )
+    mounts = mounts_after(row, action, spec, workspace_id)
+    fresh = await call(
+        "POST",
+        f"/api/v1/workspaces/{workspace_id}/mounts",
+        json_body={"mounts": mounts},
+        transport=transport,
+    )
+    print(mounts_line(fresh))
+    return 0
+
+
+def mounts_after(row: dict, action: str, spec: str, workspace_id: str) -> list:
+    """The next list: the row's mounts with the one edit applied —
+    the add joins, the remove drops the share's mounts (a share
+    the row does not mount is one local line)."""
+    mounts = list(row.get("mounts") or [])
+    if action == "add":
+        return [*mounts, mount_spec(spec, "mount")]
+    return without_share(mounts, spec, workspace_id)
+
+
+def without_share(mounts: list, share: str, workspace_id: str) -> list:
+    """The list minus the share's mounts — a share the row does
+    not mount is one local line."""
+    kept = [m for m in mounts if m.get("share") != share]
+    if len(kept) == len(mounts):
+        raise SystemExit(
+            f"msks: workspace {workspace_id} mounts no share {share!r}"
+        )
+    return kept
+
+
+def mount_row_label(row: dict) -> str:
+    """The row's everyday reference: its name, or its id when the
+    row carries none (the labelless workspace)."""
+    name = row.get("name")
+    return name if name else row["id"]
+
+
+def mounts_line(row: dict) -> str:
+    """The mount/umount outcome line: the workspace, its mounts,
+    and any skips the daemon derived — the next start attaches
+    exactly this set, skips named."""
+    mounts = row.get("mounts") or []
+    if not mounts:
+        return f"{mount_row_label(row)} mounts nothing"
+    rendered = ", ".join(spec_text(m) for m in mounts)
+    return (
+        f"{mount_row_label(row)} mounts {rendered}"
+        f"{issue_notes(row)} (next start)"
+    )
+
+
+def issue_notes(row: dict) -> str:
+    """The derived skips and conflicts as the outcome line's
+    em-dash half; empty on the healthy row."""
+    issues = row.get("mount_issues") or []
+    if not issues:
+        return ""
+    notes = "; ".join(
+        f"{i['share']} {i['kind']} ({i['detail']})" for i in issues
+    )
+    return f" — {notes}"
+
+
+def spec_text(mount: dict) -> str:
+    """One mount's ``SHARE:GUEST:MODE`` spelling — the mode always
+    shown, the wire's default named."""
+    return f"{mount['share']}:{mount['guest']}:{mount.get('mode') or 'rw'}"
+
+
 def run_resize(
     workspace_id: str,
     home_mib: int | None,
@@ -397,7 +553,17 @@ def create_body(args: CreateFlags) -> dict:
     if args.user_data is not None:
         body["user_data"] = read_user_data(args.user_data)
     body["user"] = create_user(args)
+    body.update(mount_fields(args))
     return body
+
+
+def mount_fields(args: CreateFlags) -> dict:
+    """The create's --mount specs as the body's mounts list (#620,
+    part #624): shape refusals are one local line; the daemon owns
+    the share and rule checks."""
+    if not args.mount:
+        return {}
+    return {"mounts": [mount_spec(spec, "--mount") for spec in args.mount]}
 
 
 def create_user(args: CreateFlags) -> str:
@@ -446,6 +612,7 @@ class CreateFlags:
     user_data: str | None = None
     user: str | None = None
     pubkey: str | None = None
+    mount: list[str] | None = None
     start: bool = False
 
 

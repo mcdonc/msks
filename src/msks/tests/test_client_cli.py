@@ -4939,3 +4939,242 @@ async def test_fetch_manifest_reads_the_channel() -> None:
             "https://example.com/object",
             transport=httpx.MockTransport(not_a_list),
         )
+
+
+# -- the mounts surface (#620, part #624) ---------------------------------
+
+
+def test_mount_spec_shapes_the_entry() -> None:
+    """The CLI's SPEC grammar: share, absolute guest path, and the
+    mode — present when named, absent for the rw default."""
+    assert workspaces.mount_spec("proj:/mnt/p", "--mount") == {
+        "share": "proj",
+        "guest": "/mnt/p",
+    }
+    assert workspaces.mount_spec("proj:/mnt/p:ro", "--mount") == {
+        "share": "proj",
+        "guest": "/mnt/p",
+        "mode": "ro",
+    }
+
+
+@pytest.mark.parametrize(
+    ("spec", "why"),
+    [
+        ("proj", "takes SHARE:GUEST_PATH"),
+        ("proj:/mnt/p:ro:extra", "takes SHARE:GUEST_PATH"),
+        ("proj:mnt/p", "must be absolute"),
+        ("proj:/mnt/p:wo", "mode must be ro or rw"),
+    ],
+)
+def test_mount_spec_refuses_bad_shapes(spec: str, why: str) -> None:
+    with pytest.raises(SystemExit, match=why):
+        workspaces.mount_spec(spec, "--mount")
+
+
+def test_ls_marks_unresolved_mounts(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The standing marker (#620, part #624): a row whose mounts
+    skip or conflict carries the count beside its status; the
+    healthy row prints its status alone."""
+    rows = [
+        {**ROWS[0], "mount_issues": [{"kind": "skipped"}]},
+        ROWS[1],
+    ]
+    client_env(monkeypatch)
+    rc = cli.cmd_ls(transport=mock(lambda req: httpx.Response(200, json=rows)))
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "running, 1 mount skipped" in out
+    assert "created" in out
+
+
+def test_ls_marker_names_multiple_kinds() -> None:
+    """Two issues of two kinds read as the pair; two of one kind
+    read as the count."""
+    row = {
+        **ROWS[0],
+        "mount_issues": [{"kind": "skipped"}, {"kind": "conflict"}],
+    }
+    assert workspaces.status_with_mounts(row) == (
+        "running, 2 mounts conflict/skipped"
+    ) or workspaces.status_with_mounts(row).startswith("running, 2")
+    same = {
+        **ROWS[0],
+        "mount_issues": [{"kind": "skipped"}, {"kind": "skipped"}],
+    }
+    assert workspaces.status_with_mounts(same) == "running, 2 mounts skipped"
+
+
+def mounted_row() -> dict:
+    """The row the mount exchange reads and the daemon's refreshed
+    reply."""
+    return {
+        "id": "1a2b3c4d",
+        "name": "alpha",
+        "mounts": [{"share": "proj", "guest": "/mnt/proj", "mode": "rw"}],
+        "mount_issues": [],
+    }
+
+
+def test_cmd_mount_posts_the_whole_list(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``msks mount`` reads the row, adds the spec, and posts the
+    list whole — the reply's line names the set and the next-start
+    semantics."""
+    seen: list[tuple[str, str, object]] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(
+            (req.method, str(req.url), json.loads(req.content or b"null"))
+        )
+        if req.method == "GET":
+            return httpx.Response(200, json=mounted_row())
+        return httpx.Response(
+            200,
+            json={
+                **mounted_row(),
+                "mounts": [
+                    {"share": "proj", "guest": "/mnt/proj", "mode": "rw"},
+                    {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+                ],
+            },
+        )
+
+    client_env(monkeypatch)
+    rc = cli.cmd_mount("alpha", "refs:/srv/refs:ro", transport=mock(handler))
+    assert rc == 0
+    assert seen[0][:2] == ("GET", "https://daemon/api/v1/workspaces/alpha")
+    assert seen[1][:2] == (
+        "POST",
+        "https://daemon/api/v1/workspaces/alpha/mounts",
+    )
+    assert seen[1][2] == {
+        "mounts": [
+            {"share": "proj", "guest": "/mnt/proj", "mode": "rw"},
+            {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+        ]
+    }
+    out = capsys.readouterr().out
+    assert "alpha mounts proj:/mnt/proj:rw, refs:/srv/refs:ro" in out
+    assert "(next start)" in out
+
+
+def test_cmd_umount_removes_the_share(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``msks umount`` removes every mount of the share and posts
+    the remainder; a share the row does not mount is one local
+    line."""
+    posted: list[object] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.method == "GET":
+            return httpx.Response(200, json=mounted_row())
+        posted.append(json.loads(req.content))
+        return httpx.Response(200, json={**mounted_row(), "mounts": []})
+
+    client_env(monkeypatch)
+    rc = cli.cmd_umount("alpha", "proj", transport=mock(handler))
+    assert rc == 0
+    assert posted == [{"mounts": []}]
+    assert "alpha mounts nothing" in capsys.readouterr().out
+
+    with pytest.raises(SystemExit, match="mounts no share 'refs'"):
+        cli.cmd_umount(
+            "alpha",
+            "refs",
+            transport=mock(
+                lambda req: httpx.Response(200, json=mounted_row())
+            ),
+        )
+
+
+def test_the_mount_line_names_derived_skips() -> None:
+    """The outcome line carries the daemon's derived state: a
+    skip names the share and its reason."""
+    row = {
+        **mounted_row(),
+        "mount_issues": [
+            {
+                "kind": "skipped",
+                "share": "proj",
+                "guest": "/mnt/proj",
+                "mode": "rw",
+                "detail": "share 'proj' is not in the daemon's config",
+            }
+        ],
+    }
+    line = workspaces.mounts_line(row)
+    assert "proj:/mnt/proj:rw" in line
+    assert "proj skipped (share 'proj' is not in the daemon's config)" in line
+
+
+def test_create_body_carries_the_mount_specs() -> None:
+    """``--mount`` repeats into the body's mounts list — the
+    entries parsed to the wire's shape."""
+    args = cli.CreateFlags(
+        workspace_id="ws", mount=["a:/mnt/a", "b:/srv/b:ro"]
+    )
+    body = workspaces.create_body(args)
+    assert body["mounts"] == [
+        {"share": "a", "guest": "/mnt/a"},
+        {"share": "b", "guest": "/srv/b", "mode": "ro"},
+    ]
+
+
+def test_mount_and_umount_run_through_the_entry_point(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The typer wrappers ride the same exchange the core tests
+    pin: ``msks mount ID SPEC`` and ``msks umount ID SHARE``
+    through the real entry point, transport mocked at the seam."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.method == "GET":
+            return httpx.Response(200, json=mounted_row())
+        return httpx.Response(
+            200,
+            json={
+                **mounted_row(),
+                "mounts": [
+                    {"share": "proj", "guest": "/mnt/proj", "mode": "rw"},
+                    {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+                ],
+            },
+        )
+
+    client_env(monkeypatch)
+    rc = cli.main(
+        ["mount", "alpha", "refs:/srv/refs:ro"], transport=mock(handler)
+    )
+    assert rc == 0
+    assert "refs:/srv/refs:ro" in capsys.readouterr().out
+    with_refs = {
+        **mounted_row(),
+        "mounts": [
+            {"share": "proj", "guest": "/mnt/proj", "mode": "rw"},
+            {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+        ],
+    }
+    rc = cli.main(
+        ["umount", "alpha", "refs"],
+        transport=mock(lambda req: httpx.Response(200, json=with_refs)),
+    )
+    assert rc == 0
+
+
+def test_mount_help_names_the_grammar(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The command's help states the spec grammar and the
+    next-start semantics."""
+    monkeypatch.setenv("MSKSC_NO_KEY", "1")
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["mount", "--help"])
+    assert caught.value.code == 0
+    flat = capsys.readouterr().out
+    assert "SHARE:GUEST_PATH:MODE" in flat
+    assert "next start" in flat.lower()

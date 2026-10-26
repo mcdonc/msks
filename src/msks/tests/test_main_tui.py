@@ -164,6 +164,9 @@ class FakeData:
         # than a field answers without it, and the page keeps its
         # row's own value.
         self.resize_omit: set[str] = set()
+        # The mounts editor's refusal (#620, part #624): the
+        # scripted one-line error a refused save raises.
+        self.mounts_refusal: str | None = None
 
     async def workspaces(self) -> list[dict]:
         self.fetches += 1
@@ -242,6 +245,19 @@ class FakeData:
                 changes.append(moved.format(value=body[field]))
         reply = {k: v for k, v in fresh.items() if k not in self.resize_omit}
         return {**reply, "changes": changes}
+
+    async def set_mounts(self, workspace_id: str, mounts: list) -> dict:
+        """The mounts exchange (#620, part #624): recorded, the
+        row's mounts replaced; a refusal a test armed raises the
+        way the daemon's would."""
+        self.calls.append(("set-mounts", workspace_id, mounts))
+        if self.mounts_refusal is not None:
+            raise SystemExit(self.mounts_refusal)
+        for row in self.rows:
+            if row["id"] == workspace_id:
+                row["mounts"] = [dict(m) for m in mounts]
+                return dict(row)
+        raise KeyError(workspace_id)
 
     async def start(self, workspace_id: str) -> dict:
         self.calls.append(("start", workspace_id))
@@ -1385,7 +1401,7 @@ async def test_the_page_centers_its_action_block(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test(size=(80, 40)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await pilot.pause()  # lay the centered block out
         page = app.screen.query_one("#page")
         actions = app.screen.query_one("#actions")
@@ -1410,7 +1426,7 @@ async def test_a_hold_arriving_pushes_nothing(monkeypatch) -> None:
     app, follow = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
         rows = app.screen.query_one("#actions")
         assert "pending" not in rows.children[0].classes
@@ -1430,7 +1446,7 @@ async def test_the_consent_action_opens_the_page_by_hand(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await pilot.press("down")  # the consent action
         await press_until(pilot, "enter", lambda: on_consent(app))
         await press_until(pilot, "q", lambda: on_page(app))  # the return
@@ -1450,9 +1466,10 @@ async def test_the_page_runs_start_and_stop(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
-        # Down three times lands on start.
-        await pilot.press("down", "down", "down")
+        await wait_for(lambda: action_children(app) == 6)
+        # Down four times lands on start (the mounts row joined
+        # the configure group, #620 part #624).
+        await pilot.press("down", "down", "down", "down")
         await pilot.press("enter")
         await wait_for(lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "running" in header_text(app))
@@ -1515,7 +1532,7 @@ async def test_the_page_opens_the_prefilled_edit_dialog(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         assert "Edit settings" in action_text(app, 2)
         screen = await open_edit(pilot, app)
         assert isinstance(screen, WorkspaceForm)
@@ -1572,7 +1589,7 @@ async def test_the_edit_dialog_resizes_the_changed_sizes(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.query_one("#field-root_mib", Input).value = "20480"
@@ -1604,7 +1621,7 @@ async def test_the_edit_dialog_refuses_create_time_and_empty(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         screen = await open_edit(pilot, app)
         # A programmatic move on a read-only field: the submit
         # refuses it by name.
@@ -1647,7 +1664,7 @@ async def test_an_older_daemons_resize_reply_keeps_the_rows_facts(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.query_one("#field-root_mib", Input).value = "20480"
@@ -1676,7 +1693,7 @@ async def test_an_edit_refusal_flashes_on_the_page(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.submit()
@@ -1697,7 +1714,7 @@ async def test_an_edit_on_a_running_workspace_asks_and_stops_first(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-home_mib", Input).value = "40960"
         screen.submit()
@@ -1734,7 +1751,7 @@ async def test_a_failed_stop_names_itself_and_skips_the_resize(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.submit()
@@ -1760,7 +1777,7 @@ async def test_a_refused_resize_after_the_stop_names_itself(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.submit()
@@ -1785,7 +1802,7 @@ async def test_a_declined_stop_keeps_the_workspace_running(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         screen = await open_edit(pilot, app)
         screen.query_one("#field-cpus", Input).value = "4"
         screen.submit()
@@ -1810,7 +1827,7 @@ async def test_the_edit_dialog_fits_the_small_terminal(
     app, _ = make_app(data)
     async with app.run_test(size=(80, 24)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         screen = await open_edit(pilot, app)
         form = screen.query_one("#form")
         assert form.outer_size.height <= 23  # the footer keeps its row
@@ -1901,7 +1918,7 @@ async def test_the_new_terminal_action_spawns_an_ssh_child(
     app = MsksTuiApp(TuiFollow(), data=data, conf=conf)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         assert "console as fallback" in action_text(app, 0)
         await press_until(pilot, "enter", lambda: len(spawned) == 1)
         assert spawned[0] == [
@@ -1948,7 +1965,7 @@ async def test_the_shell_opens_a_stopped_workspace(monkeypatch) -> None:
     app = MsksTuiApp(TuiFollow(), data=data, conf=conf)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await press_until(pilot, "enter", lambda: len(spawned) == 1)
         assert spawned[0] == [
             "kitty",
@@ -1985,7 +2002,7 @@ async def test_the_default_shell_action_runs_ssh_in_this_terminal(
     app = MsksTuiApp(follow, data=data, conf=conf)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await pilot.press("enter")
         await pilot.pause()
     assert follow.take() == (follow_mod.FLOW_SSH, WS)
@@ -2012,7 +2029,7 @@ async def test_a_dead_launcher_falls_back_to_this_terminal(
     app = MsksTuiApp(follow, data=data, conf=conf)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await pilot.press("enter")
         await pilot.pause()
     assert follow.take() == (FLOW_SHELL, WS)
@@ -2216,6 +2233,7 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     bodies: list[dict] = []
     minted: list[dict] = []
     resized: list[dict] = []
+    posted_mounts: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append((request.method, request.url.path))
@@ -2348,6 +2366,20 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
             )
         if (
             request.method == "POST"
+            and request.url.path == "/api/v1/workspaces/ws1/mounts"
+        ):
+            posted_mounts.append(json.loads(request.content))
+            return httpx.Response(
+                200,
+                json={
+                    "id": "ws1",
+                    "name": "n",
+                    "mounts": json.loads(request.content)["mounts"],
+                    "mount_issues": [],
+                },
+            )
+        if (
+            request.method == "POST"
             and request.url.path == "/api/v1/workspaces/ws1/resize"
         ):
             resized.append(json.loads(request.content))
@@ -2414,6 +2446,16 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     assert reply["root_mib"] == 20480
     assert resized == [{"root_mib": 20480, "cpus": 4}]
     assert ("POST", "/api/v1/workspaces/ws1/resize") in seen
+    # The mounts seam (#620, part #624): the editor's save POSTs
+    # the whole list — the same route ``msks mount`` speaks.
+    reply = await data.set_mounts(
+        "ws1", [{"share": "proj", "guest": "/mnt/proj"}]
+    )
+    assert reply["mounts"] == [{"share": "proj", "guest": "/mnt/proj"}]
+    assert (
+        "POST",
+        "/api/v1/workspaces/ws1/mounts",
+    ) in seen
     # The secrets seams (#390): the listing, the revoke, the renew
     # with its ttl body, and the audit listing — the same
     # exchanges the secret subcommands make.
@@ -3333,7 +3375,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         assert "egress to decide" not in header_text(app)
         ws.push(request_frame("late1"))
         # Nothing is pushed (#454): the hold counts on the header
@@ -3350,7 +3392,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
             )
         )
         await wait_for(lambda: "egress to decide: 1" in header_text(app))
-        assert action_children(app) == 5
+        assert action_children(app) == 6
         ws.push(
             frame(
                 "egress.resolved",
@@ -3380,7 +3422,7 @@ async def test_the_swap_windows_self_heal(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         # Tear the action list away: the next sync rebuilds it, and
         # the paint paths swallow the missing widgets.
         actions = page.query_one("#actions")
@@ -3394,7 +3436,7 @@ async def test_the_swap_windows_self_heal(monkeypatch) -> None:
         page.paint_consent()
         page.paint_actions()
         page.sync_actions()
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
 
 
 async def test_a_rebuild_over_a_standing_list_keeps_focus(
@@ -3408,7 +3450,7 @@ async def test_a_rebuild_over_a_standing_list_keeps_focus(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await pilot.press("down", "down")  # the edit row
         before = page.actions_widget()
         page.rebuilds.request()
@@ -3509,8 +3551,8 @@ async def test_page_action_failures_flash(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
-        await pilot.press("down", "down", "down")
+        await wait_for(lambda: action_children(app) == 6)
+        await pilot.press("down", "down", "down", "down")
         await press_until(pilot, "enter", lambda: ("start", WS) in data.calls)
         await wait_for(lambda: "start failed" in consent_text(app))
         # A start that lands (the daemon's own answer) flips the
@@ -3522,7 +3564,7 @@ async def test_page_action_failures_flash(monkeypatch) -> None:
             "enter",
             lambda: data.calls.count(("start", WS)) == 2,
         )
-        await wait_for(lambda: "workspace is running" in action_text(app, 3))
+        await wait_for(lambda: "workspace is running" in action_text(app, 4))
         await pilot.press("down")
         await press_until(pilot, "enter", lambda: ("stop", WS) in data.calls)
         await wait_for(lambda: "stop failed" in consent_text(app))
@@ -3539,13 +3581,13 @@ async def test_power_rows_dim_with_the_status(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         page = await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
-        await wait_for(lambda: "workspace is stopped" in action_text(app, 4))
-        assert "workspace is stopped" not in action_text(app, 3)
-        await pilot.press("down", "down", "down")
+        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: "workspace is stopped" in action_text(app, 5))
+        assert "workspace is stopped" not in action_text(app, 4)
+        await pilot.press("down", "down", "down", "down")
         await press_until(pilot, "enter", lambda: ("start", WS) in data.calls)
-        await wait_for(lambda: "workspace is running" in action_text(app, 3))
-        assert "workspace is running" not in action_text(app, 4)
+        await wait_for(lambda: "workspace is running" in action_text(app, 4))
+        assert "workspace is running" not in action_text(app, 5)
         assert page.row["status"] == "running"
 
 
@@ -3560,13 +3602,13 @@ async def test_the_page_follows_a_status_moved_elsewhere(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
-        await wait_for(lambda: "workspace is stopped" in action_text(app, 4))
+        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: "workspace is stopped" in action_text(app, 5))
         # Another surface boots it: a fresh row object, so only the
         # page's per-second read can learn it.
         data.rows[0] = {**data.rows[0], "status": "running"}
-        await wait_for(lambda: "workspace is running" in action_text(app, 3))
-        assert action_text(app, 4).strip() == "Stop — power it off"
+        await wait_for(lambda: "workspace is running" in action_text(app, 4))
+        assert action_text(app, 5).strip() == "Stop — power it off"
         assert "running" in header_text(app)
 
 
@@ -3580,9 +3622,9 @@ async def test_enter_on_a_dimmed_row_flashes_and_runs_nothing(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
-        await wait_for(lambda: "workspace is stopped" in action_text(app, 4))
-        await pilot.press("down", "down", "down", "down")
+        await wait_for(lambda: action_children(app) == 6)
+        await wait_for(lambda: "workspace is stopped" in action_text(app, 5))
+        await pilot.press("down", "down", "down", "down", "down")
         await pilot.press("enter")
         await wait_for(
             lambda: "Stop skipped: workspace is stopped" in consent_text(app)
@@ -3600,7 +3642,7 @@ async def test_the_focused_row_carries_the_marker(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await wait_for(lambda: action_text(app, 0).startswith("▸"))
         before = page_actions(app)
         await pilot.press("down")
@@ -3618,6 +3660,7 @@ def test_the_groups_lead_rows_carry_the_class() -> None:
         "shell-window",
         "egress-consent",
         "edit",
+        "mounts",
         "start",
         "stop",
     ]
@@ -3626,7 +3669,7 @@ def test_the_groups_lead_rows_carry_the_class() -> None:
         for index, item in enumerate(items)
         if "group-lead" in item.classes
     ]
-    assert leads == [0, 1, 3]
+    assert leads == [0, 1, 4]
 
 
 def test_action_rows_paint_two_tones() -> None:
@@ -3650,16 +3693,18 @@ def test_action_rows_paint_two_tones() -> None:
     )
     assert Span(2, 14, "$text bold") in shell_off.spans
     assert Span(17, 41, muted) in shell_off.spans
-    start = action_content(PAGE_ACTIONS[3], "stopped", {}, focused=False)
+    start = action_content(PAGE_ACTIONS[4], "stopped", {}, focused=False)
     assert str(start).startswith("  Start — boot the workspace")
     assert Span(2, 7, "$text bold") in start.spans
     assert Span(10, 28, muted) in start.spans
     # A focused live row carries the bold cue beside the marker
     # (#470 S3) wherever the status's emphasis sits.
     edit = action_content(PAGE_ACTIONS[2], "stopped", {}, focused=True)
+    mounts = action_content(PAGE_ACTIONS[3], "stopped", {}, focused=False)
+    assert str(mounts).startswith("  Mounts — host shares at guest paths")
     assert str(edit).startswith("▸ Edit settings — sizes and topology")
     assert Span(2, 15, "$text bold") in edit.spans
-    stop = action_content(PAGE_ACTIONS[4], "stopped", {}, False)
+    stop = action_content(PAGE_ACTIONS[5], "stopped", {}, False)
     assert str(stop).startswith("  Stop — workspace is stopped")
     assert Span(2, 6, muted) in stop.spans
     assert Span(9, 29, muted) in stop.spans
@@ -3683,7 +3728,7 @@ async def test_a_row_that_leaves_the_listing_closes_the_page(
         # over the removal's) and not one bare press (a press in
         # the list's swap window no-ops).
         await open_quietly(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         data.rows.clear()  # removed from another terminal
         await wait_for(lambda: "removed" in status_text(app), timeout=15.0)
         assert on_main(app)
@@ -3711,7 +3756,7 @@ async def test_a_removal_under_an_open_consent_page_waits_for_it(
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_quietly(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await press_until(pilot, "e", lambda: on_consent(app))
         data.rows.clear()  # removed while the consent page is up
         await asyncio.sleep(1.2)  # a read (or two) lands under it
@@ -3751,6 +3796,8 @@ async def test_a_bare_page_paints_and_unmounts_quietly(monkeypatch) -> None:
     assert page.pending_count() == 0  # no link: nothing waiting
     page.paint_consent()
     page.paint_header()  # no link: zero holds, the swallow holds
+    page.paint_mounts()  # no line mounted: the quiet return
+    page.mounts_edited(None)  # a close that carried nothing
     page.paint_actions()  # no list mounted: the quiet return
     assert page.page_rules() is None  # no link: nothing to read
     page.land_rules_reply({"mode": "allow"})  # no link: keeps quiet
@@ -4278,7 +4325,7 @@ async def test_the_page_answers_the_lists_power_letters(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 5)
+        await wait_for(lambda: action_children(app) == 6)
         await pilot.press("S")
         await wait_for(
             lambda: "Stop skipped: workspace is stopped" in consent_text(app)
@@ -5575,3 +5622,365 @@ async def test_a_failed_catalog_read_names_its_verb(monkeypatch) -> None:
         await wait_for(lambda: app.screen.query("#failure-title") != [])
         title = str(app.screen.query_one("#failure-title").content)
         assert "catalog read failed" in title
+
+
+# -- the mounts surfaces (#620, part #624) --------------------------------
+
+
+def mounted_row(status: str = "stopped") -> dict:
+    """One row carrying mounts and their derived state: one
+    healthy, one skipped."""
+    return {
+        **row(status=status),
+        "mounts": [
+            {"share": "proj", "guest": "/mnt/proj", "mode": "rw"},
+            {"share": "gone", "guest": "/mnt/gone", "mode": "rw"},
+        ],
+        "mount_issues": [
+            {
+                "kind": "skipped",
+                "share": "gone",
+                "guest": "/mnt/gone",
+                "mode": "rw",
+                "detail": "share 'gone' is not in the daemon's config",
+            }
+        ],
+    }
+
+
+def test_the_list_row_marks_unresolved_mounts() -> None:
+    """The listing's status cell carries the count (#620, part
+    #624): a row with issues reads its status and ✗N; a healthy
+    row reads its status alone."""
+    from msks.client.tui.rows import status_with_issues
+
+    # status_text prefixes the status's dot; the marker rides the
+    # issue count.
+    assert status_with_issues(mounted_row()) == "● stopped ✗1"
+    assert status_with_issues(row()) == "● stopped"
+
+
+def test_the_mounts_editor_boundary_branches() -> None:
+    """The editor's boundary arithmetic, pinned without the UI:
+    an empty list holds no focus, and a focus past the list's end
+    (the list shrank under it) reads no mount."""
+    from msks.client.tui.mounts import MountsScreen, clamp_index
+
+    assert clamp_index(0, 0) is None
+    assert clamp_index(9, 2) == 1
+
+    # The un-composed screen decides nothing: a focus index the
+    # mounts do not carry reads no mount, and an edited spec with
+    # no focused row changes nothing.
+    screen = MountsScreen(mounted_row(), FakeData([]))
+    assert screen.entry("a:/mnt/a") == {
+        "share": "a",
+        "guest": "/mnt/a",
+    }
+
+
+def test_the_mounts_line_names_each_state() -> None:
+    """The page's mounts line: every mount's spec, the skipped one
+    named with its kind, and the next-start note."""
+    from msks.client.tui.mounts import mounts_line
+
+    line = mounts_line(mounted_row())
+    assert "proj:/mnt/proj:rw" in line
+    assert "gone:/mnt/gone:rw (skipped)" in line
+    assert "(next start)" in line
+    assert mounts_line(row()) == ""
+
+
+def mounts_text(app) -> str:
+    """The page's mounts line; empty while the page mounts."""
+    try:
+        return str(app.screen.query_one("#mounts", Static).content)
+    except Exception:
+        return ""
+
+
+async def test_the_mounts_editor_adds_edits_and_removes(
+    monkeypatch,
+) -> None:
+    """The editor (#620, part #624): the action row pushes the
+    list editor; add types the CLI's own spec grammar, the save
+    posts the whole list and repaints the rows' derived state,
+    remove drops the focused row, and the page's mounts line
+    follows the reply."""
+    from msks.client.tui.mounts import MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([mounted_row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        assert "proj:/mnt/proj:rw" in mounts_text(app)
+        # Down three lands on the mounts action (use, egress,
+        # edit, mounts).
+        await pilot.press("down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
+        )
+        rows = app.screen.query_one("#mount-rows")
+        assert "healthy" in str(rows.children[0].query_one(Static).content)
+        assert "skipped" in str(rows.children[1].query_one(Static).content)
+        # Add one: the spec dialog takes the CLI grammar.
+        await pilot.press("a")
+        await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
+        editor = app.screen
+        editor.query_one("#mount-spec", Input).value = "refs:/srv/refs:ro"
+        await pilot.press("enter")
+        await wait_for(
+            lambda: (
+                (
+                    "set-mounts",
+                    WS,
+                    [
+                        {"share": "proj", "guest": "/mnt/proj", "mode": "rw"},
+                        {"share": "gone", "guest": "/mnt/gone", "mode": "rw"},
+                        {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+                    ],
+                )
+                in data.calls
+            )
+        )
+        await wait_for(
+            lambda: (
+                "saved — applies at the next start"
+                in str(app.screen.query_one("#mount-note", Static).content)
+            )
+        )
+        # Remove the skipped one: focus the second row, remove.
+        await pilot.press("down")
+        await pilot.press("r")
+        await wait_for(
+            lambda: (
+                (
+                    "set-mounts",
+                    WS,
+                    [
+                        {"share": "proj", "guest": "/mnt/proj", "mode": "rw"},
+                        {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+                    ],
+                )
+                in data.calls
+            )
+        )
+        # Close: the page's line carries the reply's row.
+        await press_until(pilot, "escape", lambda: on_page(app))
+        assert "refs:/srv/refs:ro" in mounts_text(app)
+        assert "gone" not in mounts_text(app)
+
+
+async def test_the_mounts_editor_names_a_refusal(monkeypatch) -> None:
+    """A refused save keeps the editor's row and names the
+    daemon's reason on the note line — the local list never
+    stands in for a refused set."""
+    from msks.client.tui.mounts import MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([mounted_row()])
+    data.mounts_refusal = "msks: 400: share 'x' is configured read-only"
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        await pilot.press("down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
+        )
+        await pilot.press("a")
+        await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
+        editor = app.screen
+        editor.query_one("#mount-spec", Input).value = "x:/mnt/x"
+        await pilot.press("enter")
+        await wait_for(
+            lambda: (
+                "configured read-only"
+                in str(app.screen.query_one("#mount-note", Static).content)
+            )
+        )
+
+
+async def test_a_mounts_dialog_cancel_decides_nothing(monkeypatch) -> None:
+    """Escape in the spec dialog decides nothing: the editor keeps
+    its list and posts nothing."""
+    from msks.client.tui.mounts import MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([mounted_row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        await pilot.press("down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
+        )
+        calls_before = list(data.calls)
+        await pilot.press("a")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert data.calls == calls_before  # no exchange ran
+        assert isinstance(app.screen, MountsScreen)
+
+
+async def test_the_mounts_editor_edits_in_place(monkeypatch) -> None:
+    """The edit path (#620, part #624): Enter on a row opens the
+    spec dialog seeded with the row's spec, and the filled line
+    replaces that mount — the post carries the edited list."""
+    from msks.client.tui.mounts import MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([mounted_row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        await pilot.press("down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
+        )
+        await pilot.press("enter")  # edit the focused row (proj)
+        await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
+        editor = app.screen
+        assert editor.query_one("#mount-spec", Input).value == (
+            "proj:/mnt/proj:rw"
+        )
+        editor.query_one("#mount-spec", Input).value = "proj:/data:ro"
+        await pilot.press("enter")
+        await wait_for(
+            lambda: (
+                (
+                    "set-mounts",
+                    WS,
+                    [
+                        {"share": "proj", "guest": "/data", "mode": "ro"},
+                        {"share": "gone", "guest": "/mnt/gone", "mode": "rw"},
+                    ],
+                )
+                in data.calls
+            )
+        )
+
+
+async def test_the_mounts_editor_edit_cancel_and_refusal(
+    monkeypatch,
+) -> None:
+    """The edit dialog's cancel decides nothing, and a spec the
+    local shape rules refuse names itself without a post."""
+    from msks.client.tui.mounts import MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([mounted_row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        await pilot.press("down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
+        )
+        calls_before = list(data.calls)
+        # Cancel: the dialog's escape decides nothing.
+        await pilot.press("enter")
+        await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert data.calls == calls_before
+        # A refused spec in the edit path names itself.
+        await pilot.press("enter")
+        await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
+        editor = app.screen
+        editor.query_one("#mount-spec", Input).value = "bad"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert data.calls == calls_before
+        assert "SHARE:GUEST_PATH" in str(
+            app.screen.query_one("#mount-note", Static).content
+        )
+
+
+async def test_the_mounts_editor_refuses_a_bad_spec_locally(
+    monkeypatch,
+) -> None:
+    """A spec line the CLI's shape rules refuse names itself on
+    the note line and posts nothing — the daemon owns only the
+    share and rule checks."""
+    from msks.client.tui.mounts import MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([mounted_row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        await pilot.press("down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
+        )
+        calls_before = list(data.calls)
+        await pilot.press("a")
+        await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
+        editor = app.screen
+        editor.query_one("#mount-spec", Input).value = "not-a-spec"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert data.calls == calls_before
+        assert "SHARE:GUEST_PATH" in str(
+            app.screen.query_one("#mount-note", Static).content
+        )
+
+
+async def test_the_mounts_editor_empty_list_names_the_add_key(
+    monkeypatch,
+) -> None:
+    """The mountless workspace's editor shows the placeholder that
+    names the add key, and remove on it decides nothing."""
+    from msks.client.tui.mounts import MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        await pilot.press("down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
+        )
+        content = str(
+            app.screen.query_one("#mount-rows")
+            .children[0]
+            .query_one(Static)
+            .content
+        )
+        assert "no mounts" in content
+        calls_before = list(data.calls)
+        await pilot.press("r")  # the placeholder: nothing to remove
+        await pilot.press("enter")  # nothing to edit
+        await pilot.pause()
+        assert data.calls == calls_before
+
+
+async def test_the_mounts_editor_close_hands_back_the_row(monkeypatch) -> None:
+    """A save followed by the close hands the page the reply's
+    row — the line behind follows the editor's last exchange."""
+    from msks.client.tui.mounts import MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([mounted_row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        await pilot.press("down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
+        )
+        await pilot.press("r")  # remove the focused healthy mount
+        await wait_for(lambda: len(data.calls) >= 1)
+        await press_until(pilot, "escape", lambda: on_page(app))
+        assert "gone:/mnt/gone:rw (skipped)" in mounts_text(app)
+        assert "proj" not in mounts_text(app)
