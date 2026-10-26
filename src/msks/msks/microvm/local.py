@@ -45,6 +45,7 @@ from .fsdaemons import (
     fs_device_entries,
     fs_pidfile_path,
     fs_socket_path,
+    guest_user_ids,
     sandbox_mode,
 )
 
@@ -766,6 +767,7 @@ class LocalCloudHypervisor(MicrovmDriver):
         binary = settings.vmm.virtiofsd
         shares = {s.name: s for s in settings.mounts.shares}
         uid, gid = os.getuid(), os.getgid()
+        guest_uid, guest_gid = guest_user_ids(spec.login_user)
         sandbox = sandbox_mode(uid)
         procs: list[asyncio.subprocess.Process] = []
         sockets: dict[str, Path] = {}
@@ -773,7 +775,15 @@ class LocalCloudHypervisor(MicrovmDriver):
             for mount in spec.mounts:
                 share = shares.get(mount.share)
                 proc = await self._spawn_one_fs(
-                    binary, mount, share, vm_dir, uid, gid, sandbox
+                    binary,
+                    mount,
+                    share,
+                    vm_dir,
+                    uid,
+                    gid,
+                    guest_uid,
+                    guest_gid,
+                    sandbox,
                 )
                 procs.append(proc)
                 fs_pidfile_path(vm_dir, mount.share).write_text(str(proc.pid))
@@ -792,6 +802,8 @@ class LocalCloudHypervisor(MicrovmDriver):
         vm_dir: Path,
         uid: int,
         gid: int,
+        guest_uid: int,
+        guest_gid: int,
         sandbox: str,
     ):
         """One mount's daemon: the share re-resolved against the
@@ -812,6 +824,8 @@ class LocalCloudHypervisor(MicrovmDriver):
                 socket,
                 uid=uid,
                 gid=gid,
+                guest_uid=guest_uid,
+                guest_gid=guest_gid,
                 readonly=(not share.writable or mount.mode != MODE_RW),
                 sandbox=sandbox,
             ),

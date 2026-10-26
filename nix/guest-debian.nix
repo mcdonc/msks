@@ -973,7 +973,11 @@ let
         # system users are the whole account list the guest boots
         # with — the workspace's login user (#248), when it names
         # another account, is useradd-ed by the identity seed on
-        # first boot.
+        # first boot. That makes this the only regular account:
+        # load-bearing for host shares (#631) — the daemon's
+        # fsdaemons.LOGIN_USER_UID expects the first seed-provisioned
+        # login user to take uid 1001, so keep this the sole
+        # regular account the image ships.
         grep -q '^msks:' "$root"/etc/passwd || printf '%s\n' \
           'msks:x:1000:1000:msks workspace user:/home/msks:/bin/bash' \
           >> "$root"/etc/passwd

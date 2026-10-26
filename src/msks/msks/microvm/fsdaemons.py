@@ -14,11 +14,16 @@ creates) works because the host kernel serializes it. What does
 not coordinate between guests: ``flock``/``fcntl`` (per-daemon)
 and ``mmap`` coherence.
 
-The identity contract: every guest uid squashes to the daemon's
-own uid through ``--translate-uid/--translate-gid`` — a guest
-root's write and a guest user's write land as the same host
-owner, and host-side ownership stays advisory, as with a
-typical bind mount.
+The identity contract, both directions: every guest uid/gid
+squashes to the daemon's own through ``--translate-uid/--translate-gid``
+— a guest root's write and a guest user's write land as the same
+host owner, and host-side ownership stays advisory, as with a
+typical bind mount — and every host uid/gid squashes back to the
+workspace user's guest identity, so every file in the share reads
+as the logged-in user's own inside the guest (#631): the raw host
+uids would otherwise name whatever guest account happens to hold
+the number (the daemon's own uid reads as the image's built-in
+``msks`` account, not the workspace's login user).
 """
 
 from pathlib import Path
@@ -40,6 +45,36 @@ XATTRMAP = ":map::user.virtiofs.:"
 #: (4294967295, the kernel's nobody) falls through unmapped —
 #: nothing legitimate in a guest writes as it.
 WHOLE_RANGE = 4294967295
+
+#: The guest uid/gid both images pin to their own workspace
+#: account (#63): ``msks``, uid/gid 1000 (guest-debian declares
+#: it; guest-nixos-configuration declares it).
+IMAGE_USER_UID = 1000
+
+#: The guest uid/gid a seed-provisioned login user takes (#248,
+#: #631): ``useradd -m`` on the pristine image picks the first
+#: free uid at or above 1000, and the image's own account holds
+#: 1000 — so 1001 it is. An account the operator's user_data
+#: premade at another uid keeps that uid (the seed tolerates it),
+#: and the share then presents as the uid this rule names; the
+#: operator who premakes accounts owns that edge.
+LOGIN_USER_UID = 1001
+
+#: The logins that ride the image's own accounts: no named user,
+#: root, or the msks account itself — the workspace user whose
+#: identity a share presents as is the image's.
+IMAGE_LOGINS = frozenset({None, "", "root", "msks"})
+
+
+def guest_user_ids(login_user: str | None) -> tuple[int, int]:
+    """The guest uid/gid a share's files present as inside the
+    guest (#631): the seed-provisioned login user's when the
+    workspace names one, the image's own ``msks`` account
+    otherwise — never a raw host uid, which would name whatever
+    guest account happens to hold the number."""
+    if login_user in IMAGE_LOGINS:
+        return IMAGE_USER_UID, IMAGE_USER_UID
+    return LOGIN_USER_UID, LOGIN_USER_UID
 
 
 def fs_socket_path(vm_dir: Path, share: str) -> Path:
@@ -74,6 +109,8 @@ def fs_daemon_args(
     *,
     uid: int,
     gid: int,
+    guest_uid: int,
+    guest_gid: int,
     readonly: bool,
     sandbox: str,
 ) -> list[str]:
@@ -94,13 +131,23 @@ def fs_daemon_args(
         # simultaneous rw attaches sharing one page cache.
         "--cache",
         "never",
-        # The identity contract: every guest uid/gid squashes to
-        # the daemon's own — writes land as one host owner, and no
-        # guest uid can reach a host identity it did not bring.
+        # The identity contract, guest to host: every guest
+        # uid/gid squashes to the daemon's own — writes land as one
+        # host owner, and no guest uid can reach a host identity
+        # it did not bring.
         "--translate-uid",
         f"squash-guest:0:{uid}:{WHOLE_RANGE}",
         "--translate-gid",
         f"squash-guest:0:{gid}:{WHOLE_RANGE}",
+        # The identity contract, host to guest (#631): every host
+        # uid/gid squashes to the workspace user's guest identity,
+        # so the share's files read as the logged-in user's own in
+        # the guest — a raw host uid would name whatever guest
+        # account happens to hold the number.
+        "--translate-uid",
+        f"squash-host:0:{guest_uid}:{WHOLE_RANGE}",
+        "--translate-gid",
+        f"squash-host:0:{guest_gid}:{WHOLE_RANGE}",
         # Guest xattrs stay under one host prefix; posix ACLs stay
         # off (translation and ACLs cannot combine).
         "--xattrmap",
