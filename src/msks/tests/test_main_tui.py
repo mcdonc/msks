@@ -6002,9 +6002,10 @@ async def test_the_mounts_editor_close_hands_back_the_row(monkeypatch) -> None:
 
 
 async def test_the_mounts_editor_names_its_keys(monkeypatch) -> None:
-    """The editor's footer (#631): the page carries one, so the
-    bindings that edit the list — add, remove, close — render on
-    the screen instead of staying invisible."""
+    """The editor's footer (#631): the page carries one, and its
+    binding set — add, remove, close — stays visible, so the
+    keys that edit the list are discoverable instead of
+    hidden."""
     from msks.client.tui.mounts import MountsScreen
     from textual.widgets import Footer
 

@@ -457,7 +457,11 @@ in
   # password (the console helper and ssh keys are the road in),
   # home on the persistent /home volume (#14) — the seed creates
   # it on first boot (#171: every seed carries the home block, a
-  # keyless one included).
+  # keyless one included). This is the image's only regular
+  # account: load-bearing for host shares (#631) — the daemon's
+  # fsdaemons.LOGIN_USER_UID expects the first seed-provisioned
+  # login user to take uid 1001, so keep this the sole regular
+  # account the image ships.
   users.users.msks = {
     uid = 1000;
     isNormalUser = true;

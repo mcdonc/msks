@@ -767,9 +767,7 @@ class LocalCloudHypervisor(MicrovmDriver):
         binary = settings.vmm.virtiofsd
         shares = {s.name: s for s in settings.mounts.shares}
         uid, gid = os.getuid(), os.getgid()
-        guest_uid, guest_gid = guest_user_ids(
-            getattr(spec, "login_user", None)
-        )
+        guest_uid, guest_gid = guest_user_ids(spec.login_user)
         sandbox = sandbox_mode(uid)
         procs: list[asyncio.subprocess.Process] = []
         sockets: dict[str, Path] = {}
