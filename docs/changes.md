@@ -6,6 +6,17 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Added
+
+- **Host share mounts (#620).** A workspace can mount host
+  directory trees into its guest: the daemon's config names the
+  shares (`mount_shares`, reloadable on SIGHUP), a workspace
+  mounts them by share, guest path, and mode (`msks create
+--mount`, `msks mount`/`umount`, or the TUI's mounts editor),
+  and changes apply at the workspace's next start. Files present
+  in the guest as the workspace's own user. See
+  [docs/mounts.md](mounts.md).
+
 ## \[v0.3] - 2026-10-24
 
 - The guest images' pi coding agent moves to 1.4.0, and a default
