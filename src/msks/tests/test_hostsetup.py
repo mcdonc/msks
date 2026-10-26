@@ -1740,7 +1740,7 @@ def test_uninstall_removes_every_piece(
         "apt-get remove --purge util-linux libcap2-bin iproute2 "
         "nftables conntrack kmod procps e2fsprogs qemu-utils "
         "genisoimage openssh-client rsync tmux ca-certificates "
-        "libnetfilter-queue1 libnfnetlink0" in out
+        "virtiofsd libnetfilter-queue1 libnfnetlink0" in out
     )
 
 

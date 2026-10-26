@@ -260,6 +260,17 @@ PACKAGE_HINTS: dict[str, dict[str, str]] = {
         "apk": "tmux",
         "brew": "tmux",
     },
+    # The host-mount daemon (#620, part #622): the name is its
+    # own package on the families that carry it; the doctor row
+    # is warning-grade — a daemon without shares never execs it.
+    "virtiofsd": {
+        "dnf": "virtiofsd",
+        "yum": "virtiofsd",
+        "apt": "virtiofsd",
+        "pacman": "virtiofsd",
+        "zypper": "virtiofsd",
+        "apk": "virtiofsd",
+    },
     "libnetfilter_queue": {
         "dnf": "libnetfilter_queue",
         "yum": "libnetfilter_queue",

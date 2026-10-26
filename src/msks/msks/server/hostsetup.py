@@ -179,6 +179,11 @@ TOOL_PACKAGES = {
     # CA bundle, and urllib refuses the TLS handshake without
     # one. The package's probeable command names it.
     "update-ca-certificates": "ca-certificates",
+    # The host-mount daemon (#620): Debian's archive carries
+    # virtiofsd (trixie ships 1.13 with the binary on PATH),
+    # unlike the VMM — apt lands it like every other
+    # doctor-read package.
+    "virtiofsd": "virtiofsd",
 }
 
 # soname → package for the consent stack's NFQUEUE libraries
