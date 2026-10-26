@@ -226,11 +226,27 @@ def test_parse_refusals() -> None:
         ("/run/sock", "at or under /run"),
         ("/home", "home volume"),
         ("/home/dev/projects", "home volume"),
+        # #620 part #623: the path lands verbatim in a systemd
+        # unit file — control characters would break or inject
+        # the unit, non-ASCII would escape bytes the operator
+        # never typed.
+        ("/mnt/new\nline", "printable ASCII"),
+        ("/mnt/tab\there", "printable ASCII"),
+        ("/mnt/ctrl\x01x", "printable ASCII"),
+        ("/mnt/café", "printable ASCII"),
     ],
 )
 def test_guest_path_refusals(guest: str, why: str) -> None:
     with pytest.raises(ValueError, match=why):
         validate_mounts(mounts({"share": "s", "guest": guest}))
+
+
+def test_guest_path_takes_spaces() -> None:
+    """A space prints (#623): the path keeps it, and the unit name
+    escapes it — the mount point is the one the operator typed."""
+    validate_mounts(mounts({"share": "s", "guest": "/mnt/my share"}))
+    parsed = parse_mounts('[{"share": "s", "guest": "/mnt/my share"}]')
+    assert parsed[0].guest == "/mnt/my share"
 
 
 def test_row_disjointness_refusals() -> None:

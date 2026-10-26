@@ -236,7 +236,19 @@ def check_guest_path(mount: MountSpec) -> None:
             f"guest path {mount.guest!r} is the filesystem root; a "
             "mount lands below it"
         )
+    check_guest_charset(mount)
     check_guest_roots(mount, path)
+
+
+def check_guest_charset(mount: MountSpec) -> None:
+    """A guest path is printable ASCII (#620, part #623): the path
+    lands verbatim inside a systemd unit file the seed writes, so
+    a control character (a newline above all) would break the unit
+    or inject directives, and the unit name escapes bytes — a
+    printable path keeps the mount point the operator typed the
+    one the guest gets. Spaces print; they escape in the name."""
+    if not all(" " <= ch <= "~" for ch in mount.guest):
+        raise ValueError(f"guest path {mount.guest!r} must be printable ASCII")
 
 
 def check_guest_roots(mount: MountSpec, path: PurePosixPath) -> None:

@@ -116,6 +116,7 @@ def test_vm_config_carries_fs_devices(tmp_path: Path) -> None:
     spec = VmSpec(workspace_id="ws", kernel=Path("/k"), rootfs=Path("/r"))
     bare = vm_config(spec, [])
     assert "fs" not in bare
+    assert "shared" not in bare["memory"]
     fs = [
         {
             "tag": "share",
@@ -124,7 +125,13 @@ def test_vm_config_carries_fs_devices(tmp_path: Path) -> None:
             "queue_size": QUEUE_SIZE,
         }
     ]
-    assert vm_config(spec, [], fs=fs)["fs"] == fs
+    with_fs = vm_config(spec, [], fs=fs)
+    assert with_fs["fs"] == fs
+    # vhost-user maps guest RAM shared with the daemons; the live
+    # boot pins the field (``shared`` — the v52 name, and an
+    # unknown key like shared_memory is silently ignored and the
+    # boot still refuses).
+    assert with_fs["memory"]["shared"] is True
 
 
 def test_share_names_must_be_filename_safe() -> None:
@@ -1065,9 +1072,16 @@ async def test_sweep_keeps_a_killproof_daemons_pidfile(tmp_path):
     vm_dir = tmp_path / "vms" / "ws-dstate"
     vm_dir.mkdir(parents=True)
     socket = fs_socket_path(vm_dir, "proj")
+    # python, not sleep: sleep rejects a non-numeric second
+    # argument and dies at exec (the sweep would then see no
+    # serving pid and unlink — the flake this pins away), while a
+    # python -c sleeper ignores the extra argv element and keeps
+    # the socket path in its command line, exactly the shape
+    # fs_pid_serves reads.
     live = await asyncio.create_subprocess_exec(
-        "sleep",
-        "30",
+        "python",
+        "-c",
+        "import time; time.sleep(30)",
         str(socket),
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.DEVNULL,

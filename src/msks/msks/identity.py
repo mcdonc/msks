@@ -17,8 +17,22 @@ which keys it will authenticate.
 
 import base64
 import binascii
+import hashlib
 import re
 import secrets
+from typing import Protocol
+
+
+class MountRow(Protocol):
+    """The structural shape the seed's mounts half renders: the
+    spec's MountSpec rows satisfy it. A Protocol, not an import —
+    the seed script's builder stays a runtime leaf, and the mount
+    grammar stays the spec's own."""
+
+    share: str
+    guest: str
+    mode: str
+
 
 #: The label charset of an algorithm name: OpenSSH's key types are
 #: lowercase token shapes (`ssh-rsa`, `ecdsa-sha2-nistp256`,
@@ -85,6 +99,7 @@ def seed_script(
     login_user: str | None = None,
     llm_port: int = 0,
     ca_pem: str | None = None,
+    mounts: tuple[MountRow, ...] = (),
 ) -> str:
     """The seeding payload's script half: authorized_keys for root
     and the msks workspace user (#63), written idempotently — and
@@ -131,9 +146,15 @@ def seed_script(
     manual steps. The PEM's charset (base64, dashes, newlines)
     carries no quote or metacharacter, so the single-quoted
     assignment is safe.
+
+    The workspace's host-share mounts ride the same script
+    (#620, part #623): the block writes, prunes, and enables the
+    systemd mount units the current mount set names. It rides
+    every seed the daemon builds, the mountless ones included —
+    the prune half is what removes the last mount's units.
     """
     if public_key is None:
-        return keyless_seed_script(llm_port, ca_pem)
+        return keyless_seed_script(llm_port, ca_pem, mounts)
     script = (
         "#!/bin/sh\n"
         "# msks (#111): the workspace identity — authorized_keys\n"
@@ -162,6 +183,7 @@ def seed_script(
         script += llm_seed_block(llm_port)
     if ca_pem is not None:
         script += ca_seed_block(ca_pem)
+    script += mounts_seed_block(mounts)
     return script
 
 
@@ -192,17 +214,24 @@ def home_seed_block() -> str:
     )
 
 
-def keyless_seed_script(llm_port: int, ca_pem: str | None) -> str:
+def keyless_seed_script(
+    llm_port: int,
+    ca_pem: str | None,
+    mounts: tuple[MountRow, ...] = (),
+) -> str:
     """The identity-less seed: the workspace home (#171), the
     proxy-environment block when a listener will serve this
     workspace's tap (a port of zero names a daemon with no model
-    list), and the interceptor CA block when one rides (#424)."""
+    list), the interceptor CA block when one rides (#424), and
+    the mounts block every built seed carries (#620, part
+    #623)."""
     script = "#!/bin/sh\n# msks (#424): the workspace's seed.\nset -eu\n"
     script += home_seed_block()
     if llm_port:
         script += llm_seed_block(llm_port)
     if ca_pem is not None:
         script += ca_seed_block(ca_pem)
+    script += mounts_seed_block(mounts)
     return script
 
 
@@ -440,28 +469,51 @@ def compose_user_data(
     login_user: str | None = None,
     llm_port: int = 0,
     ca_pem: str | None = None,
+    mounts: tuple[MountRow, ...] = (),
 ) -> str:
     """The seed's user-data document: what cidata actually carries.
 
-    With no minted key and no proxy environment the operator's
-    payload travels verbatim (the #41 contract, unchanged); with a
-    key, a proxy port, or a CA and no payload the seed is the
-    seeding script alone; with a script and a payload, a MIME
-    multipart carries the two as sibling parts. The content type
-    of the operator part is sniffed from its first line — the two
-    forms the #41 contract documents are a ``#!`` script and a
-    ``#cloud-config`` document.
+    With no minted key, no proxy environment, and no mounts the
+    operator's payload travels verbatim (the #41 contract,
+    unchanged); with a key, a proxy port, a CA, or mounts and no
+    payload the seed is the seeding script alone; with a script
+    and a payload, a MIME multipart carries the two as sibling
+    parts. The content type of the operator part is sniffed from
+    its first line — the two forms the #41 contract documents are
+    a ``#!`` script and a ``#cloud-config`` document.
     """
-    if public_key is None and ca_pem is None and not llm_port:
+    if nothing_else_rides(public_key, llm_port, ca_pem, mounts):
         return operator_payload
     script = seed_script(
         public_key,
         login_user,
         llm_port,
         ca_pem,
+        mounts,
     )
     if operator_payload is None:
         return script
+    return multipart_document(operator_payload, script)
+
+
+def nothing_else_rides(
+    public_key: str | None,
+    llm_port: int,
+    ca_pem: str | None,
+    mounts: tuple[MountRow, ...],
+) -> bool:
+    """Whether nothing but the operator's payload rides the seed —
+    the #41 verbatim contract's condition: no key, no CA, no
+    proxy port, no mounts. The payload itself may be None (no
+    seed at all); the caller returns it either way."""
+    return (
+        public_key is None and ca_pem is None and not llm_port and not mounts
+    )
+
+
+def multipart_document(operator_payload: str, script: str) -> str:
+    """The two-part user-data document: the seed script beside the
+    operator's payload, split on a boundary neither contains."""
     boundary = unique_boundary(operator_payload, script)
     parts = [
         f'Content-Type: multipart/mixed; boundary="{boundary}"',
@@ -514,3 +566,148 @@ def trailing_newline(payload: str) -> str:
     """A body that ends without a newline gets one: the closing
     boundary must start on its own line."""
     return payload if payload.endswith("\n") else f"{payload}\n"
+
+
+#: The characters systemd leaves unescaped in a path-shaped unit
+#: name (#620, part #623): ASCII letters and digits, dot,
+#: underscore, and colon. The hyphen is NOT among them — it is
+#: what a separator escapes to, so a literal one escapes too, and
+#: the mapping stays injective: two paths never collide on one
+#: unit name. Everything else lands as ``\\xHH`` per UTF-8 byte
+#: (pinned against live systemd-escape output).
+UNIT_NAME_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:"
+)
+
+
+def systemd_escape_path(guest: str) -> str:
+    """The systemd-escape -p spelling of one guest path: the shape
+    a mount unit's file name takes (``systemd-escape -p
+    --suffix=mount``). Pinned byte-for-byte against the tool's own
+    output; a divergence would make systemd refuse the unit whose
+    name no longer matches its Where= path."""
+    out = []
+    for byte in guest.lstrip("/").encode():
+        ch = chr(byte)
+        if ch == "/":
+            out.append("-")
+        elif ch in UNIT_NAME_CHARS:
+            out.append(ch)
+        else:
+            out.append(f"\\x{byte:02x}")
+    return "".join(out)
+
+
+def mount_unit_name(mount: MountRow) -> str:
+    """The mount unit's file name: the escaped guest path with the
+    mount suffix."""
+    return f"{systemd_escape_path(mount.guest)}.mount"
+
+
+def mount_parent(guest: str) -> str:
+    """The guest path's parent, the ordering anchor: a mount unit
+    RequiresMountsFor its parent chain, so a path under any mounted
+    tree mounts after it."""
+    parent = guest.rsplit("/", 1)[0]
+    return parent or "/"
+
+
+def mount_unit(mount: MountRow) -> str:
+    """One share's systemd mount unit (#620, part #623): the
+    virtiofs tag on What, the guest path on Where, read-only
+    exactly when the mount's mode says so (the host daemon holds
+    the same line on the device itself — part #622 — so the two
+    refuse writes together). The marker comment is the prune loop's
+    ownership test: msks owns the units it wrote, and only
+    those."""
+    options = "" if mount.mode == "rw" else "Options=ro\n"
+    return (
+        "# msks mount unit (#620): the seed writes and prunes this\n"
+        "# file; change the workspace's mounts, not the unit.\n"
+        "[Unit]\n"
+        f"Description=msks share {mount.share} at {mount.guest}\n"
+        f"RequiresMountsFor={mount_parent(mount.guest)}\n"
+        "[Mount]\n"
+        f"What={mount.share}\n"
+        f"Where={mount.guest}\n"
+        "Type=virtiofs\n"
+        f"{options}"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+
+
+def mounts_fingerprint(mounts: tuple[MountRow, ...]) -> str:
+    """The identity of one mount set: a sha256 over the
+    share/guest/mode lines. The seed's marker beside it carries the
+    fingerprint of the set it baked, so a start whose set differs
+    renews the seed (part #623) — and an unchanged set never
+    rebuilds."""
+    if not mounts:
+        # The empty set's fingerprint is the empty string: the
+        # marker's contract — a mountless seed's marker says ""
+        # and an all-mounts-removed renewal writes exactly that.
+        return ""
+    lines = sorted(
+        f"{mount.share}:{mount.guest}:{mount.mode}" for mount in mounts
+    )
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
+
+def sh_quote(text: str) -> str:
+    """One string as a single-quoted POSIX sh word: the printable
+    charset leaves quotes and backslashes as the only
+    metacharacters to respect, and single quoting neutralizes both
+    except the quote itself, which closes and reopens around a
+    backslashed one (``a'\\''b``)."""
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+def mounts_seed_block(mounts: tuple[MountRow, ...]) -> str:
+    """The seed script's mounts half (#620, part #623): write one
+    systemd mount unit per share under the name the guest path
+    escapes to, make the mount points, prune the msks-written
+    units the set no longer names (a share gone from the config
+    leaves with it — disable, stop, remove), then reload and
+    enable. Idempotent: a re-provision rewrites the same units and
+    enables what is already enabled. Every step is best-effort —
+    a guest without systemd keeps booting and says so on stderr
+    (the mount units need it; nothing else here does). The empty
+    set is a real payload: the prune-only block is what removes
+    the last mount's units."""
+    manifest = "".join(f"{mount_unit_name(mount)}\n" for mount in mounts)
+    writes = "".join(
+        # Best-effort mount-point make: systemd creates the point
+        # itself when the unit starts, so a failure here (a
+        # read-only parent the operator's own payload made) says so
+        # and leaves the unit to carry the mount — and never aborts
+        # the seed script's other halves (set -eu runs this).
+        f"install -d -m 0755 {sh_quote(mount.guest)} 2>/dev/null "
+        "|| echo 'msks: could not make a mount point' >&2\n"
+        f"cat > '/etc/systemd/system/{mount_unit_name(mount)}' "
+        f"<<'MSEOF'\n{mount_unit(mount)}MSEOF\n"
+        for mount in mounts
+    )
+    return (
+        "if command -v systemctl >/dev/null 2>&1; then\n"
+        "install -d -m 0755 /etc/msks\n"
+        "cat > /etc/msks/mount.units <<'MSEOF'\n"
+        f"{manifest}MSEOF\n"
+        f"{writes}"
+        "for u in /etc/systemd/system/*.mount; do\n"
+        '  [ -e "$u" ] || continue\n'
+        "  grep -q '^# msks mount unit' \"$u\" 2>/dev/null || continue\n"
+        '  grep -qxF "${u##*/}" /etc/msks/mount.units && continue\n'
+        '  systemctl disable --now "${u##*/}" 2>/dev/null || true\n'
+        '  rm -f "$u"\n'
+        "done\n"
+        "systemctl daemon-reload 2>/dev/null || true\n"
+        "while read -r unit; do\n"
+        '  [ -n "$unit" ] || continue\n'
+        '  systemctl enable --now "$unit" 2>/dev/null || true\n'
+        "done < /etc/msks/mount.units\n"
+        "else\n"
+        "echo 'msks: host-share mounts need systemd; this guest "
+        "mounts none of them' >&2\n"
+        "fi\n"
+    )

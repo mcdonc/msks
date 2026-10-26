@@ -173,7 +173,10 @@ spec = 16
 spec = 26
 
 [snapshot.persist]
-identity = 2
+# #620 part #623: the seed's mounts marker reads the set's
+# fingerprint (mounts_fingerprint joins the compose statement's
+# names — one name, one module edge).
+identity = 3
 spec = 4
 
 [snapshot.secretstore]
