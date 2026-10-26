@@ -164,7 +164,9 @@ spec = 16
 # #514: the blob staleness hash moved to the crypto leaf with the
 # blob-writing path (model imports the one name).
 agecrypto = 2
-spec = 16
+# #620 part #624: the create stores its mounts through the
+# spec's dump (the module edge and the one name).
+spec = 18
 
 [snapshot.net]
 # spec grew by one import: the resolver answers the probe name (#424);
@@ -234,7 +236,9 @@ secretcache = 2
 # mount_issues, and MODE_RW beside the start hook's event
 # publication); #620 part #622 adds MountIssue for the drift
 # refusal's frames.
-spec = 35
+# #620 part #624: the set-time gate reads the row rules'
+# validate_mounts (one name on the rows' mount statement).
+spec = 36
 storage = 13
 
 [snapshot.settings]

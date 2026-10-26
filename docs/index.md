@@ -43,15 +43,18 @@ dependencies on Debian-based systems.
    the probe endpoint that proves the chain end to end.
 10. [**Storage**](storage.md): the state disk, the per-workspace
     volumes, and the capacity report that prices them.
-11. [**LLM Proxy**](llm.md): how to make use of msksd's built-in
+11. [**Host share mounts**](mounts.md): the named shares a
+    workspace mounts into its guest — the operator's shares, the
+    requester's mounts, and the skip a missing share leaves.
+12. [**LLM Proxy**](llm.md): how to make use of msksd's built-in
     LLM proxy.
-12. [**Secrets**](secrets.md): placeholders, the swap on the
+13. [**Secrets**](secrets.md): placeholders, the swap on the
     wire, and the sentinel discipline.
-13. [**Development environment**](development.md): the devenv
+14. [**Development environment**](development.md): the devenv
     side of a checkout — the dev daemon, the shell's client
     presets, the worktree identity.
-14. [**The HTTP API**](api.md): the `/api/v1` surface itself —
+15. [**The HTTP API**](api.md): the `/api/v1` surface itself —
     the endpoints the commands wrap, the authentication model,
     and the TCP listener a remote client reaches.
-15. [**Changelog**](changes.md): what changed, release by
+16. [**Changelog**](changes.md): what changed, release by
     release.

@@ -93,10 +93,12 @@ from .workspaces import (  # noqa: F401
     cmd_create,
     cmd_key,
     cmd_ls,
+    cmd_mount,
     cmd_resize,
     cmd_rm,
     cmd_start,
     cmd_stop,
+    cmd_umount,
     create_body,
     create_identity,
     created_date,
@@ -394,6 +396,15 @@ def create(
         "(#336) — msks generates no key, and an unconfigured client "
         "refuses the create (#486)",
     ),
+    mount: list[str] | None = typer.Option(
+        None,
+        "--mount",
+        metavar="SPEC",
+        help="a host share mounted into the guest (#620), repeatable: "
+        "SHARE:GUEST_PATH:MODE — a share the daemon's config lists, "
+        "the absolute path it lands at, and ro or rw (rw when the "
+        "mode is omitted). Applies at the next start",
+    ),
     start: bool = typer.Option(
         False, "--start", help="boot the workspace immediately"
     ),
@@ -420,6 +431,7 @@ def create(
             user_data=user_data,
             user=user,
             pubkey=pubkey,
+            mount=mount,
             start=start,
         ),
         ctx.obj,
@@ -477,6 +489,49 @@ def resize(
     """Change a stopped workspace's disk sizes and topology (#184,
     #277)."""
     return run_resize(workspace_id, home_mib, root_mib, cpus, mem_mib, ctx.obj)
+
+
+@app.command("mount")
+@one_line_interrupts
+def mount(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace to mount into (name or id)"
+    ),
+    spec: str = typer.Argument(
+        ...,
+        help="SHARE:GUEST_PATH:MODE — a share the daemon's config "
+        "lists, the absolute path it lands at in the guest, and "
+        "ro or rw (rw when omitted)",
+    ),
+) -> int:
+    """Mount a host share into a workspace (#620).
+
+    The share must be one the daemon's config lists; the mode is
+    bounded by the share (rw on a read-only share is refused).
+    Next-start semantics: a running workspace keeps the devices it
+    attached, and the next start attaches the new set.
+    """
+    return cmd_mount(workspace_id, spec, ctx.obj)
+
+
+@app.command("umount")
+@one_line_interrupts
+def umount(
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(
+        ..., help="the workspace to unmount from (name or id)"
+    ),
+    share: str = typer.Argument(
+        ..., help="the share whose mounts leave the workspace"
+    ),
+) -> int:
+    """Remove a workspace's mounts of one share (#620).
+
+    The next start attaches the remainder; a running workspace
+    keeps its attached devices until then.
+    """
+    return cmd_umount(workspace_id, share, ctx.obj)
 
 
 @app.command("rm")

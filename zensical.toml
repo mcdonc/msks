@@ -27,6 +27,7 @@ nav = [
   { "Configuration" = "config.md" },
   { "Workspace Images" = "images.md" },
   { "Storage" = "storage.md" },
+  { "Host Share Mounts" = "mounts.md" },
   { "Guest Networking" = "networking.md" },
   { "Egress Consent" = "egress-consent.md" },
   { "LLM Proxy" = "llm.md" },

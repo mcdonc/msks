@@ -186,6 +186,18 @@ the file itself carries them all at one level.
 | `probe_port`                    | `MSKSD_PROBE_PORT`                    | int    | `8644`          | The TCP port every workspace's probe service listener binds on its own tap address. The guest still dials 443 (the redirect catches it); the interceptor repoints its upstream dial to this port, so a host service on 443 cannot break the probe. |
 | `audit_hmac_key`                | `MSKSD_AUDIT_HMAC_KEY`                | string | _(unset)_       | When set, every consent row is written with an HMAC-SHA256 tag over its data columns (tamper-evident audit); unset stores no tags.                                                                                                                 |
 
+### Host share mounts
+
+The named host trees a workspace may mount into its guest ([mounts
+chapter](mounts.md) for the behavior). Each entry carries `name`
+and `path`, and two bounds: `writable` (default `true`) and
+`multi` (default `true`).
+
+| Key            | Environment variable | Type   | Default     | What it does                                                                                                                                                                                                                                                                             |
+| -------------- | -------------------- | ------ | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mount_shares` | `MSKSD_MOUNT_SHARES` | list   | _(unset)_   | The shares: entries of `name`, `path`, `writable` (default `true` — a listed share serves read-write), and `multi` (default `true` — a share attaches read-write to any number of workspaces; `false` makes read-write attaches exclusive). The environment form is a JSON array string. |
+| `virtiofsd`    | `MSKSD_VIRTIOFSD`    | string | `virtiofsd` | Path to the virtiofsd binary each attached share spawns (Debian's `virtiofsd` package; an older suite's build under `/usr/libexec` is named here).                                                                                                                                       |
+
 ### The placeholder secret store
 
 Where the real secrets behind placeholder tokens live ([secrets
@@ -238,6 +250,15 @@ the LLM proxy's loopback guard shape (`llm_models` gaining or
 losing entries, `llm_port`, `egress_subnet`) re-applies the
 table at the next workspace start, masquerade included, from
 the live `egress_uplink`.
+
+`mount_shares` reads live after a reload: each workspace's next
+start derives its attachments from the shares the reload left —
+a share the reload removed reads as a skip at start (the
+[mounts chapter](mounts.md) names the skip behavior), and a
+share the reload narrowed to read-only refuses the workspace's
+`rw` mount the same way. Running VMs keep the devices they
+attached. `virtiofsd` reads live too: the next start spawns the
+binary the reload names.
 
 A config that fails to load or validate is refused: the daemon
 reports the error on stderr and keeps the previous settings. A

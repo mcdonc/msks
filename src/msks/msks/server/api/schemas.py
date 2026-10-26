@@ -254,3 +254,37 @@ class WorkspaceCreate(BaseModel):
     # (#500); the CLI fills its invoking user's name before the
     # request ever leaves.
     user: str | None = Field(default=None, pattern=LOGIN_NAME_RE.pattern)
+    # The workspace's host mounts (#620, part #624): each names a
+    # configured share, the guest path it lands at, and a mode —
+    # ``ro`` or ``rw``, defaulting to ``rw``. Set at create and
+    # changeable later through the mounts route; a start attaches
+    # the current set (next-start semantics, like resize). The
+    # daemon validates against the configured shares: a config
+    # that lists none refuses every mount, a share the config
+    # narrows to read-only refuses ``rw``, and the row rules
+    # (canonical paths, mutual disjointness, a share once) apply
+    # in full.
+    mounts: list[MountIn] | None = Field(default=None, max_length=64)
+
+
+class MountIn(BaseModel):
+    """One mount on the wire (#620): the configured share's name,
+    the absolute guest path, and the mode — ``rw`` when omitted.
+    Unknown keys refuse (a typo'd ``modee`` must not silently
+    drop the mode it misspelled, landing the trust-bearing
+    default)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    share: str = Field(min_length=1, max_length=256)
+    guest: str = Field(min_length=1, max_length=4096)
+    mode: str | None = Field(default=None, pattern="^(ro|rw)$")
+
+
+class MountsSet(BaseModel):
+    """The mounts route's body (#620, part #624): the full
+    replacement list — an empty list clears the workspace's
+    mounts. Setting them never touches a running VM; the next
+    start attaches this set."""
+
+    mounts: list[MountIn] = Field(max_length=64)

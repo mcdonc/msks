@@ -15,6 +15,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..agecrypto import secret_key_hash
+from ..spec.mounts import dump_mounts
 from ..spec.tokens import validate_token_plaintext
 from ..spec.vm import VmSpec
 from .db import Base, engine_for, sessionmaker_for, tighten_db_mode, utcnow
@@ -868,6 +869,10 @@ def workspace_fields(
         "user_data": spec.user_data,
         "ssh_pubkey": spec.ssh_pubkey,
         "login_user": spec.login_user,
+        # The workspace's mounts (#620, part #624): the create-time
+        # set rides the spec; dump_mounts keeps the no-mounts row
+        # NULL (a pre-#620 row and a mountless row read the same).
+        "mounts": dump_mounts(spec.mounts),
         "status": "created",
     }
 

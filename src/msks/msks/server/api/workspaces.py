@@ -18,15 +18,19 @@ from ...storage import create_refusal
 from .boot import create_name, mint_workspace_id, resolve_boot
 from .deps import require_token
 from .rows import (
+    checked_mounts,
     host_mismatch,
+    issue_payloads,
+    list_mount_issues,
     mount_state,
     owner_host,
+    row_mount_issues,
     serialize_create,
     spec_for,
     starting_workspaces,
     workspace_or_404,
 )
-from .schemas import WorkspaceCreate
+from .schemas import MountsSet, WorkspaceCreate
 from .volumes import move_lock
 
 
@@ -122,6 +126,20 @@ def router(app) -> APIRouter:
                 ),
             )
         boot["secret_coverage"] = coverage
+        # The workspace's mounts (#620, part #624): validated here
+        # against the config's shares and the row rules — a create
+        # with a mount the daemon refuses answers a named 400 with
+        # nothing written, like every other create-time fact.
+        if body.mounts:
+            try:
+                boot["mounts"] = [
+                    mount.as_dict()
+                    for mount in checked_mounts(
+                        app, [mount.model_dump() for mount in body.mounts]
+                    )
+                ]
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
         # The operator's key is the identity (#486): the client sends
         # its public half with the create — from the operator's
         # configured key file (identity_file / MSKSC_IDENTITY_FILE)
@@ -179,6 +197,10 @@ def router(app) -> APIRouter:
             raise HTTPException(
                 status_code=409, detail="workspace exists"
             ) from None
+        # The create's reply carries the derived mount state like
+        # every row the daemon serves (#620, part #624) — the set
+        # just validated it healthy against the config it read.
+        row["mount_issues"] = issue_payloads(await row_mount_issues(app, row))
         return Response(
             status_code=201,
             content=json.dumps(row),
@@ -201,8 +223,13 @@ def router(app) -> APIRouter:
         serves every row."""
         rows = await app.state.model.list_workspaces()
         images = list_catalog_images(app.state.settings.vmm.state_dir)
+        # The derived mount state rides every row (#620, part
+        # #624): one holders walk serves the listing, and the
+        # skip/conflict markers the CLI and TUI render read it.
+        issues_by_id = await list_mount_issues(app, rows)
         for row in rows:
             row["image_ref"] = image_ref(images, row.get("image_hash"))
+            row["mount_issues"] = issue_payloads(issues_by_id[row["id"]])
         return rows
 
     @api.get(
@@ -210,7 +237,9 @@ def router(app) -> APIRouter:
         dependencies=[Depends(require_token)],
     )
     async def get_workspace(workspace_id: str) -> dict:
-        return await workspace_or_404(app, workspace_id)
+        row = await workspace_or_404(app, workspace_id)
+        row["mount_issues"] = issue_payloads(await row_mount_issues(app, row))
+        return row
 
     @api.get(
         "/api/v1/workspaces/{workspace_id}/ssh-key",
@@ -273,6 +302,44 @@ def router(app) -> APIRouter:
                 "the workspace and recreate it to change anything else"
             ),
         )
+
+    @api.post(
+        "/api/v1/workspaces/{workspace_id}/mounts",
+        dependencies=[Depends(require_token)],
+    )
+    async def set_mounts(workspace_id: str, body: MountsSet) -> dict:
+        """Set the workspace's mounts (#620, part #624): the full
+        replacement list — an empty list clears them. Next-start
+        semantics, like resize: a running VM keeps the devices it
+        attached; the next start attaches this set (and the seed
+        it bakes carries these units, #623).
+
+        The daemon validates the list against the config's shares
+        (a config that lists none refuses every mount; ``rw`` on a
+        read-only share is refused with the mismatch named) and the
+        row rules (canonical absolute paths, mutual disjointness,
+        a share once). The reply is the refreshed row with its
+        derived mount state."""
+        row = await workspace_or_404(app, workspace_id)
+        try:
+            mounts = checked_mounts(
+                app, [mount.model_dump() for mount in body.mounts]
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        await app.state.model.set_mounts(
+            row["id"], [mount.as_dict() for mount in mounts]
+        )
+        fresh = await app.state.model.get_workspace(row["id"])
+        if fresh is None:
+            # A delete landed between the set and this read; the
+            # set wrote a row nobody owns. The honest answer for
+            # a workspace that is no longer there.
+            raise HTTPException(status_code=404, detail="no such workspace")
+        fresh["mount_issues"] = issue_payloads(
+            await row_mount_issues(app, fresh)
+        )
+        return fresh
 
     @api.post(
         "/api/v1/workspaces/{workspace_id}/start",

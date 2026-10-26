@@ -15,6 +15,7 @@ from ...spec.mounts import (
     MountIssue,
     mount_issues,
     parse_mounts,
+    validate_mounts,
 )
 from ...spec.vm import VmSpec, VmStatus
 
@@ -296,3 +297,127 @@ async def rechecked_row(app, workspace_id: str) -> dict:
             ),
         )
     return row
+
+
+def checked_mounts(app, raw_mounts: list) -> tuple:
+    """The mounts a set request lands on (#620, part #624): the
+    parsed, row-validated list, refused with a named ValueError
+    when the shape or the rules fail — and when the daemon's
+    config bounds it: a config that lists no shares refuses every
+    mount (the feature stays off until the operator lists one), a
+    mount naming a share the config does not carry is a named
+    typo refusal, and ``rw`` on a share narrowed to read-only is
+    refused with the mismatch named — never silently downgraded.
+
+    The gate reads the config as loaded (a SIGHUP reload re-shares
+    without a restart); a share the operator removes later reads
+    as a skip at start, not a set-time fact — the set speaks
+    against the config it can see."""
+    try:
+        # The wire's absent fields arrive as None (the schema's
+        # optional mode); the parser takes absent-or-valued keys.
+        mounts = parse_mounts(
+            [
+                {
+                    key: value
+                    for key, value in entry.items()
+                    if value is not None
+                }
+                for entry in raw_mounts
+            ],
+        )
+        validate_mounts(mounts)
+    except ValueError as exc:
+        raise exc from None
+    check_mounts_config(app, mounts)
+    return mounts
+
+
+def check_mounts_config(app, mounts: tuple) -> None:
+    """The config half of the gate: the daemon lists shares, every
+    mount names one, and the share's writability bounds the mode —
+    each refusal names its remedy. An empty list passes without
+    shares configured: clearing a workspace's mounts is always
+    legal, including after the operator removed the last
+    share."""
+    if not mounts:
+        return
+    shares = {share.name: share for share in app.state.settings.mounts.shares}
+    if not shares:
+        raise ValueError(
+            "the daemon's config lists no shares; add mount_shares "
+            "before setting mounts"
+        )
+    for mount in mounts:
+        check_share_bound(shares, mount)
+
+
+def check_share_bound(shares: dict, mount) -> None:
+    """One mount against the config: the share exists and its
+    writability bounds the mode — each refusal names its
+    remedy."""
+    share = shares.get(mount.share)
+    if share is None:
+        raise ValueError(
+            f"no share named {mount.share!r} in the config; the "
+            f"configured shares are {sorted(shares)}"
+        )
+    if mount.mode == MODE_RW and not share.writable:
+        raise ValueError(
+            f"share {mount.share!r} is configured read-only; "
+            f"use mode ro or widen the share"
+        )
+
+
+def issue_payloads(issues: tuple[MountIssue, ...]) -> list[dict]:
+    """The derived per-mount state the surfaces read (#620, part
+    #624): one frame per skipped or conflicting mount — ``kind``
+    (skipped / denied / conflict / drift), the mount, and the
+    named reason. An empty list is the healthy row."""
+    return [
+        {
+            "kind": issue.kind,
+            "share": issue.mount.share,
+            "guest": issue.mount.guest,
+            "mode": issue.mount.mode,
+            "detail": issue.detail,
+        }
+        for issue in issues
+    ]
+
+
+async def row_mount_issues(app, row: dict) -> tuple:
+    """One row's derived mount issues — the split's skipped half
+    (#620, part #621) as the surfaces read it."""
+    _attachable, issues = await mount_state(app, row)
+    return issues
+
+
+async def list_mount_issues(app, rows: list[dict]) -> dict[str, tuple]:
+    """Every row's derived mount issues, keyed by id (#620, part
+    #624): one holders walk serves the whole listing — the
+    per-row derivation would re-list the table once per row."""
+    holders: dict[str, str] = {}
+    for other in rows:
+        if other.get("status") in MOUNT_HOLDING_STATUSES:
+            record_rw_holders(holders, other)
+    shares = {share.name: share for share in app.state.settings.mounts.shares}
+    return {
+        row["id"]: listed_mount_issues(row, shares, holders) for row in rows
+    }
+
+
+def listed_mount_issues(
+    row: dict, shares: dict, holders: dict[str, str]
+) -> tuple:
+    """One listed row's derived issues: the whole table's holder
+    map minus its own holds — a row never conflicts with its own
+    attachments."""
+    mounts = parse_mounts(row.get("mounts"))
+    row_holders = {
+        share: holder
+        for share, holder in holders.items()
+        if holder != row["id"]
+    }
+    issues = mount_issues(mounts, shares, row_holders)
+    return (*issues, *drift_issues(mounts, shares))

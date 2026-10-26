@@ -51,6 +51,7 @@ from .consent_ui import (
 from .follow import FLOW_SHELL
 from .forms import EDIT_FREE_STATUSES, EditScreen, edit_stop_question
 from .link import CONNECTED, REJECTED, UNUSABLE_TOKEN, DeciderLink
+from .mounts import MountsScreen, mounts_line
 from .rows import header_meta, header_name, muted_style, workspace_label
 
 #: The workspace page's shell action (#341) — a page action, not a
@@ -268,6 +269,12 @@ PAGE_ACTIONS = (
         True,
     ),
     PageAction("edit", "Edit settings", "sizes and topology", False),
+    PageAction(
+        "mounts",
+        "Mounts",
+        "host shares at guest paths",
+        False,
+    ),
     PageAction("start", "Start", "boot the workspace", True),
     PageAction("stop", "Stop", "power it off", False),
 )
@@ -341,6 +348,9 @@ class WorkspaceScreen(Screen):
             id="header-meta",
         )
         yield Static(consent_line(link, self.row), id="consent")
+        # The mounts line (#620, part #624): the row's mounts with
+        # their derived state, repainted with the header each tick.
+        yield Static(mounts_line(self.row), id="mounts", markup=False)
         # The action list mounts on the first rebuild (compose
         # yields the container alone).
         yield Vertical(id="page")
@@ -388,6 +398,7 @@ class WorkspaceScreen(Screen):
             if self.is_mounted:
                 self.refresh_row()
             self.paint_consent()
+            self.paint_mounts()
             self.paint_header()
             self.sync_actions()
         except NoMatches:
@@ -505,6 +516,16 @@ class WorkspaceScreen(Screen):
             )
         except NoMatches:
             pass  # teardown unmounted a header line under the worker
+
+    def paint_mounts(self) -> None:
+        """Repaint the mounts line (#620, part #624): the row's
+        mounts with the derived state — the per-second row refresh
+        keeps it current, and the editor's reply lands it
+        immediately."""
+        try:
+            self.query_one("#mounts", Static).update(mounts_line(self.row))
+        except NoMatches:
+            pass  # teardown unmounted the line under the timer
 
     def paint_consent(self) -> None:
         if self.link is not None:
@@ -697,6 +718,7 @@ class WorkspaceScreen(Screen):
         handler = {
             ACTION_SHELL_WINDOW: self.open_shell_window,
             "edit": self.edit_workspace,
+            "mounts": self.open_mounts,
             "start": self.start_workspace,
             "stop": self.stop_workspace,
         }[kind]
@@ -785,6 +807,23 @@ class WorkspaceScreen(Screen):
             self.flash(
                 flash_safe(f"{workspace_label(self.row)} {reply['status']}")
             )
+
+    async def open_mounts(self) -> None:
+        """Push the mounts list editor (#620, part #624) over the
+        page — the editor owns its rows and posts the whole list;
+        the reply's row lands here, so the page's mounts line and
+        the header follow the save without waiting for the tick."""
+        self.app.push_screen(
+            MountsScreen(self.row, self.app.data), self.mounts_edited
+        )
+
+    def mounts_edited(self, row: dict | None) -> None:
+        """The editor's close: the row it returns (every save
+        refreshes it) repaints the page's mounts line."""
+        if row is None:
+            return
+        self.row = row
+        self.paint_mounts()
 
     # -- the edit dialog (#331) ---------------------------------------
 
