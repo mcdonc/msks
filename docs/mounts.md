@@ -56,7 +56,10 @@ and a share appears once per workspace. Mounts follow next-start
 semantics, like resize: setting them never touches a running VM,
 and the next start attaches the current set — the seed that boot
 carries bakes exactly these mounts, so a restart after a change
-lands the new set and prunes the dropped one.
+lands the new set and prunes the dropped one. Two mounts set at
+once from two terminals race last-write-wins — the surface sets
+the whole list; a workspace served by one operator at a time
+never sees the race.
 
 ## The skip behavior
 
@@ -65,7 +68,8 @@ state, not a log line. A share gone from the config, an `rw`
 mount a reload narrowed its share under, an `rw` attach whose
 exclusive share another workspace holds, or a share path that
 moved since the daemon loaded its config — each publishes an
-event (`mount.skipped`, `mount.denied`, `mount.conflict`) naming
+event (`mount.skipped`, `mount.denied`, `mount.conflict`,
+`mount.drift`) naming
 the mount and the reason, and the row carries the standing
 marker (`msks ls` prints `running, 1 mount skipped`) until the
 config and the row agree again. The workspace's other mounts

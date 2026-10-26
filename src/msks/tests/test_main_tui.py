@@ -5656,7 +5656,7 @@ def test_the_list_row_marks_unresolved_mounts() -> None:
 
     # status_text prefixes the status's dot; the marker rides the
     # issue count.
-    assert status_with_issues(mounted_row()) == "● stopped ✗1"
+    assert status_with_issues(mounted_row()) == "✗1 stopped"
     assert status_with_issues(row()) == "● stopped"
 
 
@@ -5801,6 +5801,21 @@ async def test_the_mounts_editor_names_a_refusal(monkeypatch) -> None:
                 in str(app.screen.query_one("#mount-note", Static).content)
             )
         )
+        # The refusal rolls the working list back: the refused
+        # mount rides no later save — remove posts the original
+        # set — and the page's line never shows it.
+        await wait_for(
+            lambda: len(app.screen.query_one("#mount-rows").children) == 2
+        )
+        await pilot.press("r")
+        calls = [c for c in data.calls if c[0] == "set-mounts"]
+        # The later save carries the original set minus the row
+        # remove dropped — the refused mount rides nothing.
+        posted = calls[-1][2]
+        assert len(posted) == 1
+        assert posted[0]["share"] in ("proj", "gone")
+        await press_until(pilot, "escape", lambda: on_page(app))
+        assert "x:" not in mounts_text(app)
 
 
 async def test_a_mounts_dialog_cancel_decides_nothing(monkeypatch) -> None:

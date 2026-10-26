@@ -257,7 +257,8 @@ a share the reload removed reads as a skip at start (the
 [mounts chapter](mounts.md) names the skip behavior), and a
 share the reload narrowed to read-only refuses the workspace's
 `rw` mount the same way. Running VMs keep the devices they
-attached; `virtiofsd` latches its startup value.
+attached. `virtiofsd` reads live too: the next start spawns the
+binary the reload names.
 
 A config that fails to load or validate is refused: the daemon
 reports the error on stderr and keeps the previous settings. A

@@ -1126,3 +1126,80 @@ async def test_the_mounts_route_names_its_refusals(
     assert "no share named 'nope'" in refused.json()["detail"]
     kept = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
     assert kept.json()["mounts"] == []
+
+
+async def test_clearing_mounts_needs_no_shares_configured(
+    client,  # noqa: F811
+) -> None:
+    """Clearing is always legal (#620, part #624): the operator
+    who removed the last share can still empty a workspace's
+    mounts — the empty list passes the gate the config's emptiness
+    would otherwise refuse."""
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-m", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+    cleared = await http.post(
+        f"/api/v1/workspaces/{wid}/mounts",
+        json={"mounts": []},
+        headers=auth(),
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["mounts"] == []
+
+
+async def test_a_typod_mount_key_refuses_instead_of_dropping(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The wire's unknown keys refuse (#620, part #624): a typo'd
+    ``modee`` is a named 422, never a silently dropped mode that
+    lands the trust-bearing ``rw`` default."""
+    http, app, _stub = client
+    _root, settings = share_dir(tmp_path)
+    app.state.settings.mounts = settings
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-m",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "mounts": [{"share": "proj", "guest": "/mnt/p", "modee": "ro"}],
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 422
+
+
+async def test_a_delete_racing_the_mounts_set_answers_404(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The set route's read-back guard (#624 review): a delete
+    landing between the set and the refreshed read answers 404 —
+    the row is gone, not a 500 on the missing row."""
+    http, app, _stub = client
+    _root, settings = share_dir(tmp_path)
+    app.state.settings.mounts = settings
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-m", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+    real_set = app.state.model.set_mounts
+
+    async def set_then_delete(workspace_id, mounts):
+        await real_set(workspace_id, mounts)
+        await app.state.model.delete_workspace(workspace_id)
+
+    app.state.model.set_mounts = set_then_delete
+    gone = await http.post(
+        f"/api/v1/workspaces/{wid}/mounts",
+        json={"mounts": [{"share": "proj", "guest": "/mnt/proj"}]},
+        headers=auth(),
+    )
+    assert gone.status_code == 404

@@ -336,7 +336,12 @@ def checked_mounts(app, raw_mounts: list) -> tuple:
 def check_mounts_config(app, mounts: tuple) -> None:
     """The config half of the gate: the daemon lists shares, every
     mount names one, and the share's writability bounds the mode —
-    each refusal names its remedy."""
+    each refusal names its remedy. An empty list passes without
+    shares configured: clearing a workspace's mounts is always
+    legal, including after the operator removed the last
+    share."""
+    if not mounts:
+        return
     shares = {share.name: share for share in app.state.settings.mounts.shares}
     if not shares:
         raise ValueError(

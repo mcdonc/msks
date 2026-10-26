@@ -331,6 +331,11 @@ def router(app) -> APIRouter:
             row["id"], [mount.as_dict() for mount in mounts]
         )
         fresh = await app.state.model.get_workspace(row["id"])
+        if fresh is None:
+            # A delete landed between the set and this read; the
+            # set wrote a row nobody owns. The honest answer for
+            # a workspace that is no longer there.
+            raise HTTPException(status_code=404, detail="no such workspace")
         fresh["mount_issues"] = issue_payloads(
             await row_mount_issues(app, fresh)
         )

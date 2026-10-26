@@ -15,6 +15,8 @@ mount names its reason, and the reason stands until the config and
 the row agree again.
 """
 
+from functools import partial
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
@@ -74,6 +76,15 @@ def mounts_line(row: dict) -> str:
     issues = row.get("mount_issues") or []
     parts = [mount_state_text(mount, issues) for mount in mounts]
     return "mounts  " + "  ·  ".join(parts) + "  (next start)"
+
+
+def replaced_mount(mounts: list, mount: dict | None, entry: dict) -> list:
+    """The edited list: the focused mount's slot takes the new
+    entry. A focus the list no longer carries (a swap window the
+    pilot cannot arrange) leaves the list unchanged."""
+    if mount is None:  # pragma: no cover
+        return mounts
+    return [entry if candidate is mount else candidate for candidate in mounts]
 
 
 def clamp_index(focused: int, count: int) -> int | None:
@@ -202,20 +213,28 @@ class MountsScreen(ModalScreen[dict | None]):
             return None  # pragma: no cover
         return mounts[rows.index]
 
-    async def post(self) -> None:
+    async def post(self, before: list | None = None) -> None:
         """Post the working list whole and land the daemon's
-        reply: the refreshed row repaints the rows' derived state;
-        a refusal names itself on the note line and the row keeps
-        the list it had (the daemon is the authority — the local
-        list never stands in for a refused set)."""
+        reply: the refreshed row repaints the rows' derived state.
+        A refusal names itself on the note line and rolls the
+        working list back to *before* — the snapshot the edit
+        handed in, taken ahead of its own mutation — the daemon is
+        the authority, and a refused edit must not ride a later
+        save or the page's line."""
+        undo = self.mounts() if before is None else before
         try:
             fresh = await self.data.set_mounts(self.row["id"], self.mounts())
         except (Exception, SystemExit) as exc:
-            self.note(f"refused: {exc}")
+            reason = f"refused: {exc}"
+            self.row["mounts"] = undo
+            self.call_after_refresh(self.rebuild)
+            self.call_after_refresh(lambda: self.note(reason))
             return
         self.row = fresh
-        self.rebuild()
-        self.note("saved — applies at the next start")
+        self.call_after_refresh(self.rebuild)
+        self.call_after_refresh(
+            lambda: self.note("saved — applies at the next start")
+        )
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Enter on a row edits it — the list owns the key (the
@@ -240,11 +259,10 @@ class MountsScreen(ModalScreen[dict | None]):
         entry = self.entry(spec)
         if entry is None:
             return
-        mounts = self.mounts()
-        mounts.append(entry)
-        self.row["mounts"] = mounts
+        before = self.mounts()
+        self.row["mounts"] = [*before, entry]
         self.rebuild()
-        self.run_worker(self.post, exclusive=True)
+        self.run_worker(partial(self.post, before), exclusive=True)
 
     def action_edit(self) -> None:
         """Edit the focused row's spec in place."""
@@ -268,15 +286,10 @@ class MountsScreen(ModalScreen[dict | None]):
         if entry is None:
             return
         mount = self.focused_mount()
-        if mount is None:
-            # The focused row left between the dialog's open and
-            # its answer — a swap window the pilot cannot arrange.
-            return  # pragma: no cover
-        mounts = self.mounts()
-        mounts[mounts.index(mount)] = entry
-        self.row["mounts"] = mounts
+        before = self.mounts()
+        self.row["mounts"] = replaced_mount(before, mount, entry)
         self.rebuild()
-        self.run_worker(self.post, exclusive=True)
+        self.run_worker(partial(self.post, before), exclusive=True)
 
     def action_remove(self) -> None:
         """Remove the focused row's mount — the remaining list
@@ -284,11 +297,12 @@ class MountsScreen(ModalScreen[dict | None]):
         mount = self.focused_mount()
         if mount is None:
             return
-        mounts = self.mounts()
-        mounts.remove(mount)
-        self.row["mounts"] = mounts
+        before = self.mounts()
+        self.row["mounts"] = [
+            candidate for candidate in before if candidate is not mount
+        ]
         self.rebuild()
-        self.run_worker(self.post, exclusive=True)
+        self.run_worker(partial(self.post, before), exclusive=True)
 
     def entry(self, spec: str) -> dict | None:
         """One spec line as the wire's mount entry — the CLI's own

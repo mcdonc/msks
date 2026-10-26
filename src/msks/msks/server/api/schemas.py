@@ -269,7 +269,12 @@ class WorkspaceCreate(BaseModel):
 
 class MountIn(BaseModel):
     """One mount on the wire (#620): the configured share's name,
-    the absolute guest path, and the mode — ``rw`` when omitted."""
+    the absolute guest path, and the mode — ``rw`` when omitted.
+    Unknown keys refuse (a typo'd ``modee`` must not silently
+    drop the mode it misspelled, landing the trust-bearing
+    default)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     share: str = Field(min_length=1, max_length=256)
     guest: str = Field(min_length=1, max_length=4096)
