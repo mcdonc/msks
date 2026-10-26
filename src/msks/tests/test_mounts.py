@@ -367,7 +367,10 @@ async def test_set_mounts_roundtrip(tmp_path: Path) -> None:
     assert row["mounts"] == []
 
 
-async def test_start_publishes_skips_and_proceeds(client) -> None:  # noqa: F811
+async def test_start_publishes_skips_and_proceeds(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
     """The resilient start (#620): a mount whose share left the
     config (or whose exclusive rw is held elsewhere) skips — the
     start still launches, and each skip publishes its event with
@@ -387,8 +390,10 @@ async def test_start_publishes_skips_and_proceeds(client) -> None:  # noqa: F811
             {"share": "fine", "guest": "/mnt/fine", "mode": "ro"},
         ],
     )
+    fine = tmp_path / "fine"
+    fine.mkdir()
     app.state.settings.mounts = MountSettings(
-        shares=(MountShare(name="fine", path="/srv/fine"),)
+        shares=(MountShare(name="fine", path=str(fine)),)
     )
     published: list[tuple[str, dict]] = []
     real_publish = app.state.hub.publish
@@ -418,7 +423,10 @@ async def test_start_publishes_skips_and_proceeds(client) -> None:  # noqa: F811
     ]
 
 
-async def test_start_publishes_conflict_and_proceeds(client) -> None:  # noqa: F811
+async def test_start_publishes_conflict_and_proceeds(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
     """The exclusive-share conflict (#620): another workspace's
     live VM holds the share rw, so this start skips its rw mount
     with a mount.conflict naming the holder — and still runs."""
@@ -435,7 +443,9 @@ async def test_start_publishes_conflict_and_proceeds(client) -> None:  # noqa: F
     )
     holder_id = holder.json()["id"]
     challenger_id = challenger.json()["id"]
-    exclusive = MountShare(name="db", path="/srv/db", multi=False)
+    db = tmp_path / "db"
+    db.mkdir()
+    exclusive = MountShare(name="db", path=str(db), multi=False)
     app.state.settings.mounts = MountSettings(shares=(exclusive,))
     for wid in (holder_id, challenger_id):
         await app.state.model.set_mounts(
@@ -595,7 +605,10 @@ def test_double_slash_anchor_canonicalizes() -> None:
         )
 
 
-async def test_start_publishes_denied_and_proceeds(client) -> None:  # noqa: F811
+async def test_start_publishes_denied_and_proceeds(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
     """The reload narrowing at start (#620): an rw mount on a
     share the config flipped to read-only skips with mount.denied
     naming both remediations — and the start still runs."""
@@ -609,8 +622,10 @@ async def test_start_publishes_denied_and_proceeds(client) -> None:  # noqa: F81
     await app.state.model.set_mounts(
         wid, [{"share": "data", "guest": "/mnt/data", "mode": "rw"}]
     )
+    data = tmp_path / "data"
+    data.mkdir()
     app.state.settings.mounts = MountSettings(
-        shares=(MountShare(name="data", path="/srv/data", writable=False),)
+        shares=(MountShare(name="data", path=str(data), writable=False),)
     )
     published: list[tuple[str, dict]] = []
     real_publish = app.state.hub.publish

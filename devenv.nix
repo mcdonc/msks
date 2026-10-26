@@ -109,6 +109,7 @@ in
   packages = with pkgs; [
     bash # explicit bash for shell scripts (CI /bin/sh may be dash)
     cloud-hypervisor # VMM driven by the local backend (#1); ships ch-remote
+    virtiofsd # the vhost-user-fs daemon behind host mounts (#620)
     curl # unix-socket REST poking during CH debugging
     e2fsprogs # resize2fs/e2fsck: grow and check workspace volumes
     cdrtools # genisoimage: the #41 cidata seed disks (iso9660)

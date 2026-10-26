@@ -127,6 +127,9 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_LLM_PORT",
     "MSKSD_LLM_MODELS",
     "MSKSD_LLM_API_KEY",
+    # VmmSettings — the virtiofs daemon behind host mounts
+    # (#620, part #622).
+    "MSKSD_VIRTIOFSD",
     # MountSettings — the host-mount shares (#620).
     "MSKSD_MOUNT_SHARES",
 )
@@ -519,6 +522,9 @@ def render_template() -> str:
 #                           # per-workspace artifacts
 # cloud_hypervisor: cloud-hypervisor  # the VMM binary the local
 #                           # driver execs
+# virtiofsd: virtiofsd       # the daemon that serves host mounts
+#                           # (#620); a daemon without shares
+#                           # never execs it
 # console_wait_timeout_s: 15.0  # seconds to wait for the console
 #                           # device at boot
 # console_stall_timeout_s: 60.0  # seconds of input-unanswered

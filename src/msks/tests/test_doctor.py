@@ -977,7 +977,7 @@ def test_doctor_main_exit_codes_and_output(
     assert doctor_main(None) == 0
     out = capsys.readouterr().out
     assert "msksd doctor" in out
-    assert "All 16 checks passed." in out
+    assert "All 17 checks passed." in out
 
 
 def test_doctor_main_appends_config_notice(

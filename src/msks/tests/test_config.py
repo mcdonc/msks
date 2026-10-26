@@ -489,6 +489,12 @@ KEY_CASES = [
     ),
     ("llm_api_key", "sk-y", "llm.api_key", "sk-y"),
     (
+        "virtiofsd",
+        "/usr/local/bin/virtiofsd",
+        "vmm.virtiofsd",
+        "/usr/local/bin/virtiofsd",
+    ),
+    (
         "mount_shares",
         [{"name": "s", "path": "/srv/s"}],
         "mounts",

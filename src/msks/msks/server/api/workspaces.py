@@ -322,16 +322,18 @@ def router(app) -> APIRouter:
                 # The mount skips publish before the launch (#620,
                 # part #621): a start proceeds without a mount whose
                 # share left the config, whose mode a reload denied,
-                # or whose exclusive rw is held elsewhere, and every
-                # skip is state — an event now, derived again on
-                # every later read. The healthy remainder is what
-                # #622's attach consumes.
-                _attachable, issues = await mount_state(app, row)
+                # whose exclusive rw is held elsewhere, or whose
+                # path drifted since load — every skip is state, an
+                # event now, derived again on every later read. The
+                # seam (#622) attaches exactly the remainder.
+                attachable, issues = await mount_state(app, row)
                 for issue in issues:
                     await app.state.hub.publish(
                         issue.event, issue.payload(workspace_id)
                     )
-                await app.state.microvm.launch(spec_for(row))
+                await app.state.microvm.launch(
+                    spec_for(row, mounts=attachable)
+                )
             except MicrovmError:
                 await app.state.model.set_status(workspace_id, prior_status)
                 raise

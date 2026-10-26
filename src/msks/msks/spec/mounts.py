@@ -254,6 +254,31 @@ def check_guest_roots(mount: MountSpec, path: PurePosixPath) -> None:
             raise ValueError(f"guest path {mount.guest!r} sits {why}")
 
 
+#: The share-name length ceiling: the name becomes the virtiofs
+#: tag, and virtiofsd refuses a tag longer than 36 bytes — the
+#: refusal belongs at settings load, not as an exec-time death.
+SHARE_NAME_MAX = 36
+
+
+def safe_share_name(name: str) -> bool:
+    """Whether a share name is tag- and filename-safe (#620, part
+    #622): ASCII letters, digits, dot, underscore, hyphen, at most
+    36 bytes — the name becomes the virtiofs tag (the daemon's own
+    length limit) and a socket/pidfile stem inside the vm
+    directory."""
+    return (
+        bool(name)
+        and len(name.encode()) <= SHARE_NAME_MAX
+        and all(safe_name_char(ch) for ch in name)
+    )
+
+
+def safe_name_char(ch: str) -> bool:
+    """One character of a share name: an ASCII letter or digit,
+    or the dot, underscore, and hyphen the tag grammar takes."""
+    return (ch.isascii() and ch.isalnum()) or ch in "._-"
+
+
 def under_root(path: PurePosixPath, root: str) -> bool:
     """Whether *path* is *root* or sits under it: a component-wise
     prefix comparison from the anchor, so ``/mnt/proc`` is not

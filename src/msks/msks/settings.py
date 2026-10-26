@@ -27,7 +27,12 @@ from ipaddress import IPv4Network
 from pathlib import Path
 
 from .spec.egress import EGRESS_MODES, MODE_ALLOW
-from .spec.mounts import SHARE_KEYS, MountShare
+from .spec.mounts import (
+    SHARE_KEYS,
+    SHARE_NAME_MAX,
+    MountShare,
+    safe_share_name,
+)
 from .spec.tokens import validate_token_plaintext
 
 VALID_DRIVERS = ("local",)
@@ -90,6 +95,9 @@ class VmmSettings:
 
     driver: str = "local"
     cloud_hypervisor: str = "cloud-hypervisor"
+    # The virtiofs daemon behind host mounts (#620, part #622):
+    # the platform's own binary, exec'd once per attached share.
+    virtiofsd: str = "virtiofsd"
     state_dir: Path = field(
         default_factory=lambda: Path("~/.local/state/msksd").expanduser()
     )
@@ -453,6 +461,7 @@ def vmm_settings_from_env(
         cloud_hypervisor=_env(
             env, "MSKSD_CLOUD_HYPERVISOR", cls.cloud_hypervisor
         ),
+        virtiofsd=_env(env, "MSKSD_VIRTIOFSD", cls.virtiofsd),
         state_dir=Path(
             _env(env, "MSKSD_STATE_DIR", str(cls().state_dir))
         ).expanduser(),
@@ -735,13 +744,28 @@ def check_share_keys(entry: dict) -> None:
 def share_name_and_path(entry: dict) -> tuple[str, str]:
     """The entry's ``name`` and absolute ``path``, each validated
     in place with a named error."""
-    name = entry.get("name")
+    name = share_name(entry)
     path = entry.get("path")
-    if not isinstance(name, str) or not name:
-        raise ValueError("MSKSD_MOUNT_SHARES entries need a name")
     if not isinstance(path, str) or not path.startswith("/"):
         raise ValueError(f"share {name!r} needs an absolute path")
     return name, path
+
+
+def share_name(entry: dict) -> str:
+    """The entry's name: a non-empty string that is also
+    filename-safe (#620, part #622) — it becomes the virtiofs tag
+    and a socket and pidfile stem inside the workspace's vm
+    directory."""
+    name = entry.get("name")
+    if not isinstance(name, str) or not name:
+        raise ValueError("MSKSD_MOUNT_SHARES entries need a name")
+    if not safe_share_name(name):
+        raise ValueError(
+            f"share name {name!r} may use ASCII letters, digits, "
+            f"dot, underscore, and hyphen only, up to "
+            f"{SHARE_NAME_MAX} bytes (the virtiofs tag limit)"
+        )
+    return name
 
 
 def mount_share_flag(entry: dict, key: str, name: str) -> bool:
