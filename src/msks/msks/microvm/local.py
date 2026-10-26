@@ -242,7 +242,7 @@ def vm_config(
         payload["initramfs"] = str(spec.initrd)
     vm: dict = {
         "cpus": {"boot_vcpus": spec.cpus, "max_vcpus": spec.cpus},
-        "memory": {"size": spec.mem_mib * 1024 * 1024},
+        "memory": vm_memory(spec, fs),
         "payload": payload,
         "disks": disks,
         "serial": (
@@ -257,6 +257,21 @@ def vm_config(
     if fs:
         vm["fs"] = fs
     return vm
+
+
+def vm_memory(spec: VmSpec, fs: list[dict] | None) -> dict:
+    """The v52 memory block: the size, and shared mapping when a
+    vhost-user device rides the VM (the fs devices map guest RAM
+    shared with the virtiofs daemons; CH refuses the boot without
+    it — "Using vhost-user requires using shared memory or huge
+    pages" — and the v52 field is ``shared``: an unknown key like
+    shared_memory is silently ignored, so the spelling is pinned
+    live against vm.info). Set only when a device needs it:
+    shared memory changes the memory backend's accounting shape."""
+    memory: dict = {"size": spec.mem_mib * 1024 * 1024}
+    if fs:
+        memory["shared"] = True
+    return memory
 
 
 def vm_net(attachment) -> dict | None:

@@ -12,8 +12,9 @@ from the VM's:
   ``<state_dir>/volumes/<id>.ext4``, attached as a second virtio-blk
   disk the guest mounts at /home (labeled ``msks-home``).
 - the **seed disk** (#41) — present when the workspace carries a
-  ``user_data`` payload, a supplied ssh key (#111, #486), or an
-  LLM proxy credential (#259): a small iso9660
+  ``user_data`` payload, a supplied ssh key (#111, #486), an
+  LLM proxy credential (#259), or host-share mounts (#620, part
+  #623): a small iso9660
   image under ``<state_dir>/vms/<id>/seed.img`` labeled ``cidata``,
   attached read-only as a third virtio-blk disk. Its ``user-data``
   document is the operator payload composed with the identity's
@@ -22,7 +23,13 @@ from the VM's:
   plus a NoCloud ``meta-data`` (instance-id): exactly what
   cloud-init's datasource reads. It can embed tokens, so it is
   installed mode 0600 (the row that records the payload makes the
-  same promise: the daemon creates its database file 0600).
+  same promise: the daemon creates its database file 0600). The
+  mounts half renews per start: the marker beside the seed names
+  the mount set it baked, and a start whose set differs rebuilds
+  the seed (an instance-id suffix keyed to the change makes
+  cloud-init re-run the script, whose prune half removes the
+  dropped mounts' units) — the seed is create-once only for a
+  workspace whose mount set never changes.
 
 The first two are created at workspace create; all three survive
 ``stop``/``start`` and are removed with the workspace (the seed
@@ -58,6 +65,7 @@ from pathlib import Path
 
 from .identity import compose_user_data
 from .spec.failures import MicrovmError
+from .spec.mounts import mounts_fingerprint, mounts_seed_block
 from .spec.vm import VmSpec
 
 MIB = 1024 * 1024
@@ -98,11 +106,42 @@ def home_volume_path(state_dir: Path, workspace_id: str) -> Path:
 #: staged cert must change.
 SEED_CA_MARK = "seed-ca.sha"
 
+#: The sidecar beside a seed recording which mount set the seed
+#: baked (#620, part #623): the value is the set's fingerprint
+#: (``mounts_fingerprint``), so a start compares the
+#: row's current set against what the guest will boot with and
+#: renews on a mismatch — the same evidence-shape the CA renewal
+#: reads. The empty string is a real value: a seed baked for no
+#: mounts renews the day the first mount arrives.
+SEED_MOUNTS_MARK = "seed-mounts.sha"
+
 
 def seed_ca_mark(vm_dir: Path) -> Path:
     """The seed's CA marker's path, inside the workspace's state
     directory."""
     return vm_dir / SEED_CA_MARK
+
+
+def seed_mounts_mark(vm_dir: Path) -> Path:
+    """The seed's mounts marker's path, inside the workspace's
+    state directory."""
+    return vm_dir / SEED_MOUNTS_MARK
+
+
+def mounts_block_for(spec: VmSpec, vm_dir: Path) -> str:
+    """The mounts half to bake into a seed being built now: the
+    rendered set when the workspace mounts anything, the
+    prune-only block when the previous seed carried units this
+    one must remove (the all-mounts-removed renewal), and nothing
+    for a workspace that never mounted — a payload-only seed
+    keeps the #41 verbatim contract, its user-data the operator's
+    document alone."""
+    if spec.mounts:
+        return mounts_seed_block(spec.mounts)
+    marker = seed_mounts_mark(vm_dir)
+    if marker.is_file() and marker.read_text() != mounts_fingerprint(()):
+        return mounts_seed_block(())
+    return ""
 
 
 def ca_fingerprint(ca_pem: str) -> str:
@@ -173,19 +212,28 @@ async def ensure_seed(
     ca_pem: str | None = None,
 ) -> None:
     """Build the #41 seed when the workspace carries a payload — its
-    own or the supplied ssh key's (#111, #486) — and the file is
+    own, the supplied ssh key's (#111, #486), or its host-share
+    mounts (#620, part #623) — and the file is
     absent; a
     fresh build joins the rollback list. The proxy-environment leg
     (#259, #483) rides the same condition: a workspace whose tap
     will serve an LLM listener gets its MSKSWS_* exports even with
     no key and no payload of its own.
+
+    An existing seed renews when its CA drifted (#485) or its
+    baked mount set differs from the row's current one (#623) —
+    each start runs this, so the guest boots with exactly the
+    mounts this start attached.
     """
-    if not seed_payload_present(spec, llm_port):
-        return
     seed = seed_path(settings.state_dir, spec.workspace_id)
     if seed.is_file():
-        if seed_needs_renewal(seed.parent, ca_pem):
+        mounts_fp = mounts_fingerprint(spec.mounts)
+        if seed_needs_renewal(seed.parent, ca_pem) or seed_mounts_stale(
+            seed.parent, mounts_fp
+        ):
             await renew_seed(spec, settings, llm_port, ca_pem, seed)
+        return
+    if not seed_payload_present(spec, llm_port):
         return
     await create_seed(spec, settings, llm_port, ca_pem)
     installed.append(seed)
@@ -193,13 +241,31 @@ async def ensure_seed(
 
 def seed_payload_present(spec: VmSpec, llm_port: int) -> bool:
     """Whether anything rides the seed for this spec: the
-    operator's own payload, the supplied ssh key (#111, #486), or
-    the proxy environment a tap will serve (#259, #483)."""
+    operator's own payload, the supplied ssh key (#111, #486), the
+    proxy environment a tap will serve (#259, #483), or the
+    host-share mounts whose units the script writes (#620, part
+    #623)."""
     return (
         spec.user_data is not None
         or spec.ssh_pubkey is not None
         or llm_port != 0
+        or bool(spec.mounts)
     )
+
+
+def seed_mounts_stale(vm_dir: Path, fingerprint: str) -> bool:
+    """Whether the seed beside the marker baked another mount set
+    (#620, part #623). A present marker speaks plainly: a mismatch
+    renews (the empty fingerprint mismatching a non-empty marker
+    is the all-mounts-removed renewal, whose prune-only script
+    removes the last units). An absent marker is the pre-#623
+    shape: stale exactly when there are mounts to bake — a
+    mountless seed from before the marker existed never renews
+    for the marker's own sake."""
+    marker = seed_mounts_mark(vm_dir)
+    if marker.is_file():
+        return marker.read_text() != fingerprint
+    return fingerprint != ""
 
 
 def seed_needs_renewal(vm_dir: Path, ca_pem: str | None) -> bool:
@@ -225,8 +291,22 @@ def seed_ca_is_current(vm_dir: Path, ca_pem: str) -> bool:
     return marker.is_file() and marker.read_text() == ca_fingerprint(ca_pem)
 
 
+def renewal_suffix(ca_pem: str | None, mounts_fp: str) -> str:
+    """The instance-id suffix a renewal pins (#485, #623): keyed
+    to everything that can drift — the CA and the mount set — so
+    any change lands a new instance-id and cloud-init re-runs the
+    seed script (idempotent by design; the operator's payload
+    re-executes with the re-provision, the standing #485
+    trade)."""
+    digest = hashlib.sha256()
+    digest.update((ca_pem or "").encode())
+    digest.update(b"\x00")
+    digest.update(mounts_fp.encode())
+    return digest.hexdigest()[:12]
+
+
 async def renew_seed(
-    spec: VmSpec, settings, llm_port: int, ca_pem: str, seed: Path
+    spec: VmSpec, settings, llm_port: int, ca_pem: str | None, seed: Path
 ) -> None:
     """Rebuild a seed whose staged CA drifted, so the guest
     re-provisions onto the daemon's certificate (#485).
@@ -415,6 +495,7 @@ async def create_seed(
                 spec.login_user,
                 llm_port,
                 ca_pem,
+                mounts_block_for(spec, target.parent),
             ),
             encoding="utf-8",
         )
@@ -425,10 +506,11 @@ async def create_seed(
                 # A renewal re-provisions the guest (cloud-init keys
                 # off instance-id), so the suffix rides ONLY the
                 # renewal path: a fresh seed keeps the plain id, a
-                # renewed one pins the certificate it carries.
+                # renewed one pins the CA and mount set it carries
+                # (#485, #623).
                 instance_suffix=(
-                    ca_fingerprint(ca_pem)[:12]
-                    if renewing and ca_pem
+                    renewal_suffix(ca_pem, mounts_fingerprint(spec.mounts))
+                    if renewing
                     else None
                 ),
             ),
@@ -455,6 +537,12 @@ async def create_seed(
         install(image, target)
         if marker_built:
             install_marker(marker, ca_fingerprint(ca_pem))
+        # The mounts marker rides every install (#623): the empty
+        # set included, so the first mount on a mountless workspace
+        # reads as the drift it is.
+        install_marker(
+            seed_mounts_mark(target.parent), mounts_fingerprint(spec.mounts)
+        )
     finally:
         shutil.rmtree(stage, ignore_errors=True)
 

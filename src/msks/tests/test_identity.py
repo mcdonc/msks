@@ -151,6 +151,10 @@ def sandboxed(script: str, sandbox) -> str:
         .replace("/root", f"{sandbox}/root")
         .replace("/etc/passwd", f"{sandbox}/passwd")
         .replace("/etc/msks", f"{sandbox}/msks")
+        # #623: the mounts block's per-boot installer copies into
+        # systemd's runtime unit dir — pointed into the sandbox
+        # before any test passes real mounts to run_seed.
+        .replace("/run/systemd/system", f"{sandbox}/run-system")
         .replace("/etc/skel", f"{sandbox}/skel")
         .replace("/etc/ssl/certs", f"{sandbox}/ssl-certs")
         .replace("/etc/profile.d", f"{sandbox}/profile.d")
@@ -213,6 +217,13 @@ def run_seed(
     )
     stubs.joinpath("update-ca-certificates").write_text(
         f'#!/bin/sh\necho "update-ca-certificates $*" >> "{log}"\nexit 0\n'
+    )
+    # #620 part #623: the mounts block speaks to systemd through
+    # systemctl — stubbed, it logs like the guest tools and never
+    # reaches the runner's own manager (an unstubbed systemctl
+    # rides the host's D-Bus and trips the desktop's polkit).
+    stubs.joinpath("systemctl").write_text(
+        f'#!/bin/sh\necho "systemctl $*" >> "{log}"\nexit 0\n'
     )
     for stub in stubs.iterdir():
         stub.chmod(0o755)
@@ -662,6 +673,10 @@ def test_the_ca_block_executes_on_a_nixos_shaped_sandbox(
             "for arg; do case $arg in -*) ;; *) dir=$arg ;; esac; done\n"
             'exec mkdir -p "$dir"\n',
         ),
+        # #620 part #623: the mounts block's systemctl, stubbed
+        # with the rest (this sandbox rebuilds the whole PATH — an
+        # unstubbed systemctl would reach the runner's manager).
+        ("systemctl", f'echo "systemctl $*" >> "{log}"\nexit 0\n'),
     ):
         stubs.joinpath(name).write_text("#!/bin/sh\n" + body)
         stubs.joinpath(name).chmod(0o755)
@@ -745,4 +760,19 @@ def test_compose_user_data_carries_the_ca() -> None:
     keyless = compose_user_data(None, None, llm_port=8770, ca_pem=CA_PEM)
     assert "ca_cert=" in keyless
     # Without key, token, or CA the operator payload travels alone.
+    assert compose_user_data("payload", None) == "payload"
+
+
+def test_compose_user_data_carries_the_mounts_block() -> None:
+    """A mounts block makes the seed script (the verbatim-payload
+    contract needs no key, no CA, no port, AND no block), and the
+    script carries the block verbatim; with a payload the
+    multipart carries the script half with the block inside it."""
+    block = "#!/bin/sh\nthe-block\n"
+    doc = compose_user_data(None, None, mounts_block=block)
+    assert doc.startswith("#!/bin/sh")
+    assert "the-block" in doc
+    with_payload = compose_user_data("payload", PUBLIC, mounts_block=block)
+    assert with_payload.startswith("Content-Type: multipart/mixed")
+    assert "the-block" in with_payload
     assert compose_user_data("payload", None) == "payload"

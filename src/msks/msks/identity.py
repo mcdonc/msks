@@ -85,6 +85,7 @@ def seed_script(
     login_user: str | None = None,
     llm_port: int = 0,
     ca_pem: str | None = None,
+    mounts_block: str = "",
 ) -> str:
     """The seeding payload's script half: authorized_keys for root
     and the msks workspace user (#63), written idempotently — and
@@ -131,9 +132,15 @@ def seed_script(
     manual steps. The PEM's charset (base64, dashes, newlines)
     carries no quote or metacharacter, so the single-quoted
     assignment is safe.
+
+    The workspace's host-share mounts ride the same script
+    (#620, part #623): the block writes, prunes, and enables the
+    systemd mount units the current mount set names. It rides
+    every seed the daemon builds, the mountless ones included —
+    the prune half is what removes the last mount's units.
     """
     if public_key is None:
-        return keyless_seed_script(llm_port, ca_pem)
+        return keyless_seed_script(llm_port, ca_pem, mounts_block)
     script = (
         "#!/bin/sh\n"
         "# msks (#111): the workspace identity — authorized_keys\n"
@@ -162,6 +169,7 @@ def seed_script(
         script += llm_seed_block(llm_port)
     if ca_pem is not None:
         script += ca_seed_block(ca_pem)
+    script += mounts_block
     return script
 
 
@@ -192,17 +200,24 @@ def home_seed_block() -> str:
     )
 
 
-def keyless_seed_script(llm_port: int, ca_pem: str | None) -> str:
+def keyless_seed_script(
+    llm_port: int,
+    ca_pem: str | None,
+    mounts_block: str = "",
+) -> str:
     """The identity-less seed: the workspace home (#171), the
     proxy-environment block when a listener will serve this
     workspace's tap (a port of zero names a daemon with no model
-    list), and the interceptor CA block when one rides (#424)."""
+    list), the interceptor CA block when one rides (#424), and
+    the mounts block every built seed carries (#620, part
+    #623)."""
     script = "#!/bin/sh\n# msks (#424): the workspace's seed.\nset -eu\n"
     script += home_seed_block()
     if llm_port:
         script += llm_seed_block(llm_port)
     if ca_pem is not None:
         script += ca_seed_block(ca_pem)
+    script += mounts_block
     return script
 
 
@@ -440,28 +455,54 @@ def compose_user_data(
     login_user: str | None = None,
     llm_port: int = 0,
     ca_pem: str | None = None,
+    mounts_block: str = "",
 ) -> str:
     """The seed's user-data document: what cidata actually carries.
 
-    With no minted key and no proxy environment the operator's
-    payload travels verbatim (the #41 contract, unchanged); with a
-    key, a proxy port, or a CA and no payload the seed is the
-    seeding script alone; with a script and a payload, a MIME
-    multipart carries the two as sibling parts. The content type
-    of the operator part is sniffed from its first line — the two
-    forms the #41 contract documents are a ``#!`` script and a
-    ``#cloud-config`` document.
+    With no minted key, no proxy environment, and no mounts the
+    operator's payload travels verbatim (the #41 contract,
+    unchanged); with a key, a proxy port, a CA, or mounts and no
+    payload the seed is the seeding script alone; with a script
+    and a payload, a MIME multipart carries the two as sibling
+    parts. The content type of the operator part is sniffed from
+    its first line — the two forms the #41 contract documents are
+    a ``#!`` script and a ``#cloud-config`` document.
     """
-    if public_key is None and ca_pem is None and not llm_port:
+    if nothing_else_rides(public_key, llm_port, ca_pem, mounts_block):
         return operator_payload
     script = seed_script(
         public_key,
         login_user,
         llm_port,
         ca_pem,
+        mounts_block,
     )
     if operator_payload is None:
         return script
+    return multipart_document(operator_payload, script)
+
+
+def nothing_else_rides(
+    public_key: str | None,
+    llm_port: int,
+    ca_pem: str | None,
+    mounts_block: str,
+) -> bool:
+    """Whether nothing but the operator's payload rides the seed —
+    the #41 verbatim contract's condition: no key, no CA, no
+    proxy port, no mounts. The payload itself may be None (no
+    seed at all); the caller returns it either way."""
+    return (
+        public_key is None
+        and ca_pem is None
+        and not llm_port
+        and not mounts_block
+    )
+
+
+def multipart_document(operator_payload: str, script: str) -> str:
+    """The two-part user-data document: the seed script beside the
+    operator's payload, split on a boundary neither contains."""
     boundary = unique_boundary(operator_payload, script)
     parts = [
         f'Content-Type: multipart/mixed; boundary="{boundary}"',

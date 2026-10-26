@@ -226,11 +226,27 @@ def test_parse_refusals() -> None:
         ("/run/sock", "at or under /run"),
         ("/home", "home volume"),
         ("/home/dev/projects", "home volume"),
+        # #620 part #623: the path lands verbatim in a systemd
+        # unit file — control characters would break or inject
+        # the unit, non-ASCII would escape bytes the operator
+        # never typed.
+        ("/mnt/new\nline", "printable ASCII"),
+        ("/mnt/tab\there", "printable ASCII"),
+        ("/mnt/ctrl\x01x", "printable ASCII"),
+        ("/mnt/café", "printable ASCII"),
     ],
 )
 def test_guest_path_refusals(guest: str, why: str) -> None:
     with pytest.raises(ValueError, match=why):
         validate_mounts(mounts({"share": "s", "guest": guest}))
+
+
+def test_guest_path_takes_spaces() -> None:
+    """A space prints (#623): the path keeps it, and the unit name
+    escapes it — the mount point is the one the operator typed."""
+    validate_mounts(mounts({"share": "s", "guest": "/mnt/my share"}))
+    parsed = parse_mounts('[{"share": "s", "guest": "/mnt/my share"}]')
+    assert parsed[0].guest == "/mnt/my share"
 
 
 def test_row_disjointness_refusals() -> None:
@@ -667,3 +683,193 @@ async def test_starting_workspaces_installs_when_absent(client) -> None:  # noqa
     installed = starting_workspaces(app)
     installed.add("ws-x")
     assert "ws-x" in starting_workspaces(app)
+
+
+def mounts_for_guest_seed_tests():
+    """Two mounts the seed-block tests render: one rw at a plain
+    path, one ro under a deeper tree."""
+    from msks.spec.mounts import MountSpec
+
+    return (
+        MountSpec(share="proj", guest="/mnt/proj"),
+        MountSpec(share="docs", guest="/srv/tree/docs", mode="ro"),
+    )
+
+
+def test_mounts_seed_block_writes_units_and_prunes() -> None:
+    """The seed's mounts half (#620, part #623): a manifest of the
+    wanted unit names, one heredoc'd unit per mount parked under
+    /etc/msks/mount-units, the prune loop stopping and removing
+    the parked units the set no longer names, and the per-boot
+    installer that carries the units into /run/systemd/system —
+    volatile, so the installer is what survives a reboot. All
+    inside the systemctl guard."""
+    from msks.spec.mounts import mounts_seed_block
+
+    block = mounts_seed_block(mounts_for_guest_seed_tests())
+    assert block.startswith("if command -v systemctl >/dev/null 2>&1; then")
+    assert block.rstrip().endswith("fi")
+    # The manifest names exactly the wanted units.
+    assert "mnt-proj.mount\n" in block
+    assert "srv-tree-docs.mount\n" in block
+    # One heredoc'd unit per mount, parked by the escaped path —
+    # /etc/msks/mount-units, the unit home the two guest images
+    # share (/etc/systemd/system is a store symlink on NixOS).
+    assert "cat > '/etc/msks/mount-units/mnt-proj.mount' <<'MSEOF'" in block
+    assert (
+        "cat > '/etc/msks/mount-units/srv-tree-docs.mount' <<'MSEOF'" in block
+    )
+    # The units carry the ownership marker the prune loop greps and
+    # the virtiofs facts.
+    assert "What=proj" in block
+    assert "Where=/mnt/proj" in block
+    assert "Type=virtiofs" in block
+    assert "Options=ro" in block  # the ro mount
+    # rw is the mount default: no Options line for it. The ro one
+    # is the only Options line in the block.
+    assert block.count("Options=") == 1
+    # The prune loop: manifest membership, stop, remove — the
+    # parked file and its runtime copy together.
+    assert 'grep -qxF "${u##*/}" /etc/msks/mount.units' in block
+    assert 'systemctl stop "${u##*/}"' in block
+    assert '"/run/systemd/system/${u##*/}"' in block
+    # The per-boot installer: written, made executable, run now —
+    # and its body copies each parked unit into the runtime dir
+    # and starts it.
+    installer = "/var/lib/cloud/scripts/per-boot/50-msks-mounts"
+    assert f"cat > '{installer}' <<'MSEOF'" in block
+    assert f"chmod 0755 '{installer}'" in block
+    assert f"sh '{installer}'" in block
+    assert 'cp "$u" /run/systemd/system/' in block
+    assert 'systemctl start "${u##*/}"' in block
+    assert "systemctl daemon-reload" in block
+    # The ordering anchor names each mount's parent chain.
+    assert "RequiresMountsFor=/mnt" in block
+    assert "RequiresMountsFor=/srv/tree" in block
+
+
+def test_mounts_seed_block_quotes_hard_paths() -> None:
+    """A guest path with a space single-quotes into install -d, and
+    one with a quote uses the close-reopen spelling — both mount."""
+    from msks.spec.mounts import MountSpec, mounts_seed_block
+
+    spaced = mounts_seed_block((MountSpec(share="a", guest="/mnt/my dir"),))
+    assert "install -d -m 0755 '/mnt/my dir'" in spaced
+    quoted = mounts_seed_block((MountSpec(share="a", guest="/mnt/o'brien"),))
+    # The exact spelling: the path opens, closes around a quoted
+    # quote, and reopens.
+    assert "'/mnt/o'\\''brien'" in quoted
+
+
+def test_mounts_seed_block_empty_is_the_prune_only_block() -> None:
+    """The empty mount set still carries the block: the manifest is
+    empty and the prune loop is what removes the last mount's
+    units after an all-mounts-removed renewal."""
+    from msks.spec.mounts import mounts_seed_block
+
+    block = mounts_seed_block(())
+    assert "<<'MSEOF'\nMSEOF" in block  # an empty manifest
+    assert 'systemctl stop "${u##*/}"' in block  # the prune half
+    assert "sh '/var/lib/cloud/scripts/per-boot/50-msks-mounts'" in block
+
+
+def test_systemd_escape_matches_the_tool() -> None:
+    """The escape is pinned against live systemd-escape output: a
+    divergence would make systemd refuse the unit (its file name
+    must equal the escaped Where= path). Vectors cover the
+    separator, a space, a literal hyphen (which escapes, keeping
+    the mapping injective), dots, underscores, and non-ASCII bytes
+    (escaped per UTF-8 byte)."""
+    import shutil
+    import subprocess
+
+    import pytest
+    from msks.spec.mounts import systemd_escape_path
+
+    if shutil.which("systemd-escape") is None:
+        pytest.skip("systemd-escape is not on this host")
+    vectors = [
+        "/mnt/proj",
+        "/mnt/my share/x",
+        "/mnt/a.b-c_d",
+        "/mnt/.hidden/dir",
+        # the leading-dot rule: a dot that would lead the escaped
+        # string escapes too (systemd.unit(5)), so the name never
+        # starts with a bare dot — /.config is \x2econfig.mount.
+        "/.config",
+        "/.a",
+        "/srv/ü",
+        "/a:b/c+d~e",
+    ]
+    for path in vectors:
+        tool = subprocess.run(
+            ["systemd-escape", "-p", path],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        assert systemd_escape_path(path) == tool, path
+
+
+def test_mount_unit_grammar() -> None:
+    """The unit text: the marker first (the prune grep anchors on
+    it), the tag and path on What/Where, virtiofs on Type, Options
+    only for ro, and the parent-chain anchor."""
+    from msks.spec.mounts import (
+        MountSpec,
+        mount_parent,
+        mount_unit,
+        mount_unit_name,
+    )
+
+    rw = MountSpec(share="proj", guest="/mnt/proj")
+    ro = MountSpec(share="docs", guest="/srv/tree/docs", mode="ro")
+    assert mount_unit_name(rw) == "mnt-proj.mount"
+    assert mount_unit(rw).startswith("# msks mount unit")
+    assert "Options=" not in mount_unit(rw)
+    assert "Options=ro\n" in mount_unit(ro)
+    assert "WantedBy=multi-user.target" in mount_unit(ro)
+    # Parent chain: deep paths anchor one level up, a top-level
+    # path anchors at the root.
+    assert mount_parent("/mnt/proj") == "/mnt"
+    assert mount_parent("/proj") == "/"
+
+
+def test_mounts_fingerprint_keys_on_the_whole_set() -> None:
+    """The fingerprint changes with share, guest, or mode, ignores
+    order, and differs from the empty set."""
+    from msks.spec.mounts import MountSpec, mounts_fingerprint
+
+    a = MountSpec(share="a", guest="/mnt/a")
+    same_a = MountSpec(share="a", guest="/mnt/a")
+    b = MountSpec(share="a", guest="/mnt/a", mode="ro")
+    c = MountSpec(share="a", guest="/mnt/c")
+    assert mounts_fingerprint((a,)) == mounts_fingerprint((same_a,))
+    assert mounts_fingerprint((a,)) != mounts_fingerprint((b,))
+    assert mounts_fingerprint((a,)) != mounts_fingerprint((c,))
+    assert mounts_fingerprint((a, c)) == mounts_fingerprint((c, a))
+    assert mounts_fingerprint(()) != mounts_fingerprint((a,))
+
+
+def test_guest_path_unit_length_refuses_at_the_boundary() -> None:
+    """The escaped unit name fits systemd's loader (UNIT_NAME_MAX,
+    suffix included): a path whose name is exactly at the ceiling
+    passes, one byte more refuses naming the limit — the failure
+    it prevents is a unit the loader silently rejects."""
+    from msks.spec.mounts import mount_unit_name
+
+    at_edge = "/" + "a" * (255 - len(".mount"))
+    assert len(mount_unit_name(mounts_for_edge(at_edge)).encode()) == 255
+    validate_mounts(mounts({"share": "s", "guest": at_edge}))
+    # Escape inflation counts: a shorter path with spaces crosses
+    # the same ceiling.
+    spaced = "/" + "a " * 64
+    assert len(spaced) < len(at_edge)
+    with pytest.raises(ValueError, match="longer than 255"):
+        validate_mounts(mounts({"share": "s", "guest": spaced}))
+
+
+def mounts_for_edge(guest: str):
+    from msks.spec.mounts import MountSpec
+
+    return MountSpec(share="s", guest=guest)

@@ -174,7 +174,10 @@ spec = 26
 
 [snapshot.persist]
 identity = 2
-spec = 4
+# #620 part #623: the seed's mounts half renders through the
+# mount leaf (mounts_fingerprint for the marker, mounts_seed_block
+# for the block — the module edge and one per name).
+spec = 7
 
 [snapshot.secretstore]
 # #513: the age identity mint moved to the crypto leaf; #514

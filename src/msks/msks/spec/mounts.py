@@ -9,6 +9,7 @@ filesystem or daemon imports, so the settings parser, the
 routes, and the attach path all speak one vocabulary.
 """
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -236,7 +237,20 @@ def check_guest_path(mount: MountSpec) -> None:
             f"guest path {mount.guest!r} is the filesystem root; a "
             "mount lands below it"
         )
+    check_guest_charset(mount)
+    check_guest_unit_length(mount)
     check_guest_roots(mount, path)
+
+
+def check_guest_charset(mount: MountSpec) -> None:
+    """A guest path is printable ASCII (#620, part #623): the path
+    lands verbatim inside a systemd unit file the seed writes, so
+    a control character (a newline above all) would break the unit
+    or inject directives, and the unit name escapes bytes — a
+    printable path keeps the mount point the operator typed the
+    one the guest gets. Spaces print; they escape in the name."""
+    if not all(" " <= ch <= "~" for ch in mount.guest):
+        raise ValueError(f"guest path {mount.guest!r} must be printable ASCII")
 
 
 def check_guest_roots(mount: MountSpec, path: PurePosixPath) -> None:
@@ -407,4 +421,215 @@ def held_issue(
             f"share {mount.share!r} is exclusive and already "
             f"mounted rw by workspace {holder}"
         ),
+    )
+
+
+#: The characters systemd leaves unescaped in a path-shaped unit
+#: name (#620, part #623): ASCII letters and digits, dot,
+#: underscore, and colon. The hyphen is NOT among them — it is
+#: what a separator escapes to, so a literal one escapes too, and
+#: the mapping stays injective: two paths never collide on one
+#: unit name. Everything else lands as ``\\xHH`` per UTF-8 byte
+#: (pinned against live systemd-escape output).
+UNIT_NAME_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:"
+)
+
+
+def systemd_escape_path(guest: str) -> str:
+    """The systemd-escape -p spelling of one guest path: the shape
+    a mount unit's file name takes (``systemd-escape -p
+    --suffix=mount``). Pinned byte-for-byte against the tool's own
+    output; a divergence would make systemd refuse the unit whose
+    name no longer matches its Where= path. The dot escapes when
+    it would lead the escaped string (systemd.unit(5)'s escaping
+    rule: ``/.config`` is ``\\x2econfig``, a mid-name dot stays
+    plain)."""
+    out: list[str] = []
+    for byte in guest.lstrip("/").encode():
+        out.append(escape_byte(byte, leading=not out))
+    return "".join(out)
+
+
+def escape_byte(byte: int, leading: bool) -> str:
+    """One path byte's escaped spelling: the separator becomes the
+    dash, an allowed character stays itself, everything else is
+    ``\\xHH`` — and a dot that would lead the escaped string
+    escapes too, so the name never starts with a bare dot."""
+    ch = chr(byte)
+    if ch == "/":
+        return "-"
+    if ch == "." and leading:
+        return "\\x2e"
+    if ch in UNIT_NAME_CHARS:
+        return ch
+    return f"\\x{byte:02x}"
+
+
+#: systemd's unit-name ceiling (UNIT_NAME_MAX): the whole name,
+#: suffix included, in bytes. The loader refuses longer names, and
+# systemd-escape does not — a longer path would mount silently
+# never (the unit fails to load), so the rule lives at parse.
+UNIT_NAME_MAX = 255
+
+
+def mount_unit_name(mount: MountSpec) -> str:
+    """The mount unit's file name: the escaped guest path with the
+    mount suffix."""
+    return f"{systemd_escape_path(mount.guest)}.mount"
+
+
+def check_guest_unit_length(mount: MountSpec) -> None:
+    """The escaped unit name fits systemd's loader: a longer name
+    refuses at set, naming the limit — the failure it prevents is
+    silent (the seed writes a unit the loader rejects, and the
+    mount never appears)."""
+    if len(mount_unit_name(mount).encode()) > UNIT_NAME_MAX:
+        raise ValueError(
+            f"guest path {mount.guest!r} escapes to a unit name "
+            f"longer than {UNIT_NAME_MAX} bytes"
+        )
+
+
+def mount_parent(guest: str) -> str:
+    """The guest path's parent, the ordering anchor: a mount unit
+    RequiresMountsFor its parent chain, so a path under any mounted
+    tree mounts after it."""
+    parent = guest.rsplit("/", 1)[0]
+    return parent or "/"
+
+
+def mount_unit(mount: MountSpec) -> str:
+    """One share's systemd mount unit (#620, part #623): the
+    virtiofs tag on What, the guest path on Where, read-only
+    exactly when the mount's mode says so (the host daemon holds
+    the same line on the device itself — part #622 — so the two
+    refuse writes together). The marker comment is the prune loop's
+    ownership test: msks owns the units it wrote, and only
+    those."""
+    options = "" if mount.mode == "rw" else "Options=ro\n"
+    return (
+        "# msks mount unit (#620): the seed writes and prunes this\n"
+        "# file; change the workspace's mounts, not the unit.\n"
+        "[Unit]\n"
+        f"Description=msks share {mount.share} at {mount.guest}\n"
+        f"RequiresMountsFor={mount_parent(mount.guest)}\n"
+        "[Mount]\n"
+        f"What={mount.share}\n"
+        f"Where={mount.guest}\n"
+        "Type=virtiofs\n"
+        f"{options}"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+
+
+def mounts_fingerprint(mounts: tuple[MountSpec, ...]) -> str:
+    """The identity of one mount set: a sha256 over the
+    share/guest/mode lines. The seed's marker beside it carries the
+    fingerprint of the set it baked, so a start whose set differs
+    renews the seed (part #623) — and an unchanged set never
+    rebuilds."""
+    if not mounts:
+        # The empty set's fingerprint is the empty string: the
+        # marker's contract — a mountless seed's marker says ""
+        # and an all-mounts-removed renewal writes exactly that.
+        return ""
+    lines = sorted(
+        f"{mount.share}:{mount.guest}:{mount.mode}" for mount in mounts
+    )
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
+
+def sh_quote(text: str) -> str:
+    """One string as a single-quoted POSIX sh word: the printable
+    charset leaves quotes and backslashes as the only
+    metacharacters to respect, and single quoting neutralizes both
+    except the quote itself, which closes and reopens around a
+    backslashed one (``a'\\''b``)."""
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+#: Where the seed parks the per-boot installer: cloud-init runs
+#: scripts under this directory on every boot (#620, part #623) —
+#: the runtime unit dir is volatile, so something must reinstall
+#: the units each boot.
+PER_BOOT_DIR = "/var/lib/cloud/scripts/per-boot"
+PER_BOOT_INSTALLER = f"{PER_BOOT_DIR}/50-msks-mounts"
+
+
+def per_boot_installer() -> str:
+    """The script cloud-init runs on every boot: copy the parked
+    unit files into systemd's runtime unit dir and start them.
+    That dir is the one writable unit home every systemd guest
+    owns — /etc/systemd/system is a store symlink on the NixOS
+    image and the distro's own on Debian — and it is volatile, so
+    the installer is what makes the mounts survive a reboot."""
+    return (
+        "#!/bin/sh\n"
+        "# msks (#620): reinstall the seed's mount units each boot.\n"
+        "set -eu\n"
+        "command -v systemctl >/dev/null 2>&1 || exit 0\n"
+        "install -d -m 0755 /run/systemd/system\n"
+        "for u in /etc/msks/mount-units/*.mount; do\n"
+        '  [ -e "$u" ] || continue\n'
+        '  cp "$u" /run/systemd/system/\n'
+        "done\n"
+        "systemctl daemon-reload 2>/dev/null || true\n"
+        "for u in /etc/msks/mount-units/*.mount; do\n"
+        '  [ -e "$u" ] || continue\n'
+        '  systemctl start "${u##*/}" 2>/dev/null || true\n'
+        "done\n"
+    )
+
+
+def mounts_seed_block(mounts: tuple[MountSpec, ...]) -> str:
+    """The seed script's mounts half (#620, part #623): park one
+    systemd mount unit per share under /etc/msks/mount-units (the
+    name the guest path escapes to), make the mount points, prune
+    the parked units the set no longer names (a share gone from
+    the config stops, unmounts, and leaves with it), then write
+    and run the per-boot installer that carries the units into
+    systemd's runtime dir — volatile, so the installer is what
+    makes the mounts survive a reboot, and the only unit home the
+    two guest images share (/etc/systemd/system is a store symlink
+    on NixOS). Idempotent: a re-provision rewrites the same units
+    and starts what is started. Every step is best-effort — a
+    guest without systemd keeps booting and says so on stderr.
+    The empty set is a real payload: the prune-only block is what
+    removes the last mount's units."""
+    manifest = "".join(f"{mount_unit_name(mount)}\n" for mount in mounts)
+    writes = "".join(
+        # Best-effort mount-point make: systemd creates the point
+        # itself when the unit starts, so a failure here (a
+        # read-only parent the operator's own payload made) says so
+        # and leaves the unit to carry the mount — and never aborts
+        # the seed script's other halves (set -eu runs this).
+        f"install -d -m 0755 {sh_quote(mount.guest)} 2>/dev/null "
+        "|| echo 'msks: could not make a mount point' >&2\n"
+        f"cat > '/etc/msks/mount-units/{mount_unit_name(mount)}' "
+        f"<<'MSEOF'\n{mount_unit(mount)}MSEOF\n"
+        for mount in mounts
+    )
+    return (
+        "if command -v systemctl >/dev/null 2>&1; then\n"
+        "install -d -m 0755 /etc/msks /etc/msks/mount-units "
+        f"{PER_BOOT_DIR}\n"
+        "cat > /etc/msks/mount.units <<'MSEOF'\n"
+        f"{manifest}MSEOF\n"
+        f"{writes}"
+        "for u in /etc/msks/mount-units/*.mount; do\n"
+        '  [ -e "$u" ] || continue\n'
+        '  grep -qxF "${u##*/}" /etc/msks/mount.units && continue\n'
+        '  systemctl stop "${u##*/}" 2>/dev/null || true\n'
+        '  rm -f "$u" "/run/systemd/system/${u##*/}"\n'
+        "done\n"
+        f"cat > '{PER_BOOT_INSTALLER}' <<'MSEOF'\n"
+        f"{per_boot_installer()}MSEOF\n"
+        f"chmod 0755 '{PER_BOOT_INSTALLER}'\n"
+        f"sh '{PER_BOOT_INSTALLER}'\n"
+        "else\n"
+        "echo 'msks: host-share mounts need systemd; this guest "
+        "mounts none of them' >&2\n"
+        "fi\n"
     )

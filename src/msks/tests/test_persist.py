@@ -121,6 +121,7 @@ def spec(
     user_data=None,
     ssh_pubkey=None,
     name=None,
+    mounts: tuple = (),
 ) -> VmSpec:
     return VmSpec(
         workspace_id=WID,
@@ -129,6 +130,7 @@ def spec(
         rootfs=base,
         root_mib=root_mib,
         home_mib=home_mib,
+        mounts=mounts,
         user_data=user_data,
         ssh_pubkey=ssh_pubkey,
     )
@@ -736,7 +738,10 @@ async def test_a_seed_is_renewed_when_its_ca_marker_drifts(tools) -> None:
     # The renewal bumped instance-id: the recorded meta-data carries
     # the fingerprint suffix, so cloud-init re-provisions the
     # already-booted guest.
-    assert f"instance-id: {WID}-{persist.ca_fingerprint(CA_B)[:12]}" in log
+    suffix = persist.renewal_suffix(
+        CA_B, persist.mounts_fingerprint(spec_a.mounts)
+    )
+    assert f"instance-id: {WID}-{suffix}" in log
 
 
 def test_the_legacy_ca_names_match_the_canonical_constants() -> None:
@@ -776,3 +781,118 @@ async def test_ensure_builds_seed_for_a_port_only_workspace(
     seed = persist.seed_path(settings.state_dir, WID)
     assert seed.is_file()
     assert "--- user-data ---\n#!/bin/sh" in record.read_text()
+
+
+def two_mounts():
+    """A mount set for the renewal tests: one share at two guest
+    paths, one read-only."""
+    from msks.spec.mounts import MountSpec
+
+    return (
+        MountSpec(share="proj", guest="/mnt/proj"),
+        MountSpec(share="docs", guest="/srv/docs", mode="ro"),
+    )
+
+
+async def test_mounts_alone_build_a_seed(tools) -> None:
+    """A workspace with nothing but mounts gets a seed (#620,
+    part #623): the block carries the units, and the marker beside
+    the seed names the set it baked — the empty-string value
+    included, so a later first mount reads as the drift it is."""
+    settings, record, base = tools
+    await persist.ensure_artifacts(spec(base, mounts=two_mounts()), settings)
+    seed = persist.seed_path(settings.state_dir, WID)
+    assert seed.is_file()
+    log = record.read_text()
+    assert "mnt-proj.mount" in log
+    assert "srv-docs.mount" in log
+    marker = persist.seed_mounts_mark(seed.parent)
+    assert marker.read_text() == persist.mounts_fingerprint(two_mounts())
+    # A fresh build keeps the plain instance-id: cloud-init runs
+    # once per workspace, not once per start.
+    assert f"instance-id: {WID}\n" in log
+
+
+async def test_a_seed_renews_when_its_mount_set_drifts(tools) -> None:
+    """The per-start regeneration (#623): a start whose attachable
+    mount set differs from the set the seed baked renews the seed
+    — new units in, an instance-id suffix keyed to the change so
+    cloud-init re-runs the script (whose prune half removes the
+    dropped mounts' units), and the marker names the new set. An
+    unchanged set leaves the seed untouched."""
+    from msks.spec.mounts import MountSpec
+
+    settings, record, base = tools
+    mounts = two_mounts()
+    grown = mounts + (MountSpec(share="extra", guest="/mnt/extra"),)
+    row = spec(base, ssh_pubkey="key-one", mounts=mounts)
+    await persist.create_seed(row, settings, 8770, None)
+    seed = persist.seed_path(settings.state_dir, WID)
+    first = seed.stat().st_mtime_ns
+
+    # The same set: no rebuild.
+    await persist.ensure_artifacts(row, settings, 8770, None)
+    assert seed.stat().st_mtime_ns == first
+
+    # A grown set: renewed, with the new unit and the suffix.
+    row_grown = spec(base, ssh_pubkey="key-one", mounts=grown)
+    await persist.ensure_artifacts(row_grown, settings, 8770, None)
+    assert seed.stat().st_mtime_ns != first
+    log = record.read_text()
+    assert "mnt-extra.mount" in log
+    assert (
+        f"instance-id: {WID}-"
+        f"{persist.renewal_suffix(None, persist.mounts_fingerprint(grown))}"
+        in log
+    )
+    assert persist.seed_mounts_mark(seed.parent).read_text() == (
+        persist.mounts_fingerprint(grown)
+    )
+
+
+async def test_an_emptied_mount_set_renews_with_the_prune(tools) -> None:
+    """The all-mounts-removed renewal (#623): the empty set is a
+    drift against the baked marker, and the rebuilt seed carries
+    the prune-only block — the manifest is empty and the units'
+    removal rides the script, not the seed's absence."""
+    settings, record, base = tools
+    row = spec(base, ssh_pubkey="key-one", mounts=two_mounts())
+    await persist.create_seed(row, settings, 8770, None)
+    seed = persist.seed_path(settings.state_dir, WID)
+
+    emptied = spec(base, ssh_pubkey="key-one")
+    await persist.ensure_artifacts(emptied, settings, 8770, None)
+    assert persist.seed_mounts_mark(seed.parent).read_text() == (
+        persist.mounts_fingerprint(())
+    )
+    log = record.read_text()
+    # The prune-only block: an empty manifest beside the prune
+    # loop, and a new suffix so cloud-init re-runs it.
+    assert "<<'MSEOF'\nMSEOF" in log
+    assert 'systemctl stop "${u##*/}"' in log
+    assert "sh '/var/lib/cloud/scripts/per-boot/50-msks-mounts'" in log
+
+
+async def test_a_pre_mounts_seed_is_left_alone_until_mounts_arrive(
+    tools,
+) -> None:
+    """Upgrade shape (#623): a seed built before the marker existed
+    (every pre-part-3 workspace) never renews for the marker's own
+    sake — a mountless workspace keeps its create-once seed. The
+    first mount is the drift that bakes the marker."""
+    settings, record, base = tools
+    row = spec(base, ssh_pubkey="key-one")
+    await persist.create_seed(row, settings, 8770, None)
+    seed = persist.seed_path(settings.state_dir, WID)
+    persist.seed_mounts_mark(seed.parent).unlink()  # the pre-#623 shape
+    first = seed.stat().st_mtime_ns
+
+    await persist.ensure_artifacts(row, settings, 8770, None)
+    assert seed.stat().st_mtime_ns == first
+
+    row_mounted = spec(base, ssh_pubkey="key-one", mounts=two_mounts())
+    await persist.ensure_artifacts(row_mounted, settings, 8770, None)
+    assert seed.stat().st_mtime_ns != first
+    assert persist.seed_mounts_mark(seed.parent).read_text() == (
+        persist.mounts_fingerprint(two_mounts())
+    )
