@@ -151,10 +151,10 @@ def sandboxed(script: str, sandbox) -> str:
         .replace("/root", f"{sandbox}/root")
         .replace("/etc/passwd", f"{sandbox}/passwd")
         .replace("/etc/msks", f"{sandbox}/msks")
-        # #623: the mounts block's unit writes and prune glob run
-        # against /etc/systemd/system — pointed into the sandbox
+        # #623: the mounts block's per-boot installer copies into
+        # systemd's runtime unit dir — pointed into the sandbox
         # before any test passes real mounts to run_seed.
-        .replace("/etc/systemd/system", f"{sandbox}/system")
+        .replace("/run/systemd/system", f"{sandbox}/run-system")
         .replace("/etc/skel", f"{sandbox}/skel")
         .replace("/etc/ssl/certs", f"{sandbox}/ssl-certs")
         .replace("/etc/profile.d", f"{sandbox}/profile.d")

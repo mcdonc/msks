@@ -869,7 +869,8 @@ async def test_an_emptied_mount_set_renews_with_the_prune(tools) -> None:
     # The prune-only block: an empty manifest beside the prune
     # loop, and a new suffix so cloud-init re-runs it.
     assert "<<'MSEOF'\nMSEOF" in log
-    assert "systemctl disable --now" in log
+    assert 'systemctl stop "${u##*/}"' in log
+    assert "sh '/var/lib/cloud/scripts/per-boot/50-msks-mounts'" in log
 
 
 async def test_a_pre_mounts_seed_is_left_alone_until_mounts_arrive(

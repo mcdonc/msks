@@ -550,18 +550,54 @@ def sh_quote(text: str) -> str:
     return "'" + text.replace("'", "'\\''") + "'"
 
 
+#: Where the seed parks the per-boot installer: cloud-init runs
+#: scripts under this directory on every boot (#620, part #623) —
+#: the runtime unit dir is volatile, so something must reinstall
+#: the units each boot.
+PER_BOOT_DIR = "/var/lib/cloud/scripts/per-boot"
+PER_BOOT_INSTALLER = f"{PER_BOOT_DIR}/50-msks-mounts"
+
+
+def per_boot_installer() -> str:
+    """The script cloud-init runs on every boot: copy the parked
+    unit files into systemd's runtime unit dir and start them.
+    That dir is the one writable unit home every systemd guest
+    owns — /etc/systemd/system is a store symlink on the NixOS
+    image and the distro's own on Debian — and it is volatile, so
+    the installer is what makes the mounts survive a reboot."""
+    return (
+        "#!/bin/sh\n"
+        "# msks (#620): reinstall the seed's mount units each boot.\n"
+        "set -eu\n"
+        "command -v systemctl >/dev/null 2>&1 || exit 0\n"
+        "install -d -m 0755 /run/systemd/system\n"
+        "for u in /etc/msks/mount-units/*.mount; do\n"
+        '  [ -e "$u" ] || continue\n'
+        '  cp "$u" /run/systemd/system/\n'
+        "done\n"
+        "systemctl daemon-reload 2>/dev/null || true\n"
+        "for u in /etc/msks/mount-units/*.mount; do\n"
+        '  [ -e "$u" ] || continue\n'
+        '  systemctl start "${u##*/}" 2>/dev/null || true\n'
+        "done\n"
+    )
+
+
 def mounts_seed_block(mounts: tuple[MountSpec, ...]) -> str:
-    """The seed script's mounts half (#620, part #623): write one
-    systemd mount unit per share under the name the guest path
-    escapes to, make the mount points, prune the msks-written
-    units the set no longer names (a share gone from the config
-    leaves with it — disable, stop, remove), then reload and
-    enable. Idempotent: a re-provision rewrites the same units and
-    enables what is already enabled. Every step is best-effort —
-    a guest without systemd keeps booting and says so on stderr
-    (the mount units need it; nothing else here does). The empty
-    set is a real payload: the prune-only block is what removes
-    the last mount's units."""
+    """The seed script's mounts half (#620, part #623): park one
+    systemd mount unit per share under /etc/msks/mount-units (the
+    name the guest path escapes to), make the mount points, prune
+    the parked units the set no longer names (a share gone from
+    the config stops, unmounts, and leaves with it), then write
+    and run the per-boot installer that carries the units into
+    systemd's runtime dir — volatile, so the installer is what
+    makes the mounts survive a reboot, and the only unit home the
+    two guest images share (/etc/systemd/system is a store symlink
+    on NixOS). Idempotent: a re-provision rewrites the same units
+    and starts what is started. Every step is best-effort — a
+    guest without systemd keeps booting and says so on stderr.
+    The empty set is a real payload: the prune-only block is what
+    removes the last mount's units."""
     manifest = "".join(f"{mount_unit_name(mount)}\n" for mount in mounts)
     writes = "".join(
         # Best-effort mount-point make: systemd creates the point
@@ -571,28 +607,27 @@ def mounts_seed_block(mounts: tuple[MountSpec, ...]) -> str:
         # the seed script's other halves (set -eu runs this).
         f"install -d -m 0755 {sh_quote(mount.guest)} 2>/dev/null "
         "|| echo 'msks: could not make a mount point' >&2\n"
-        f"cat > '/etc/systemd/system/{mount_unit_name(mount)}' "
+        f"cat > '/etc/msks/mount-units/{mount_unit_name(mount)}' "
         f"<<'MSEOF'\n{mount_unit(mount)}MSEOF\n"
         for mount in mounts
     )
     return (
         "if command -v systemctl >/dev/null 2>&1; then\n"
-        "install -d -m 0755 /etc/msks\n"
+        "install -d -m 0755 /etc/msks /etc/msks/mount-units "
+        f"{PER_BOOT_DIR}\n"
         "cat > /etc/msks/mount.units <<'MSEOF'\n"
         f"{manifest}MSEOF\n"
         f"{writes}"
-        "for u in /etc/systemd/system/*.mount; do\n"
+        "for u in /etc/msks/mount-units/*.mount; do\n"
         '  [ -e "$u" ] || continue\n'
-        "  grep -q '^# msks mount unit' \"$u\" 2>/dev/null || continue\n"
         '  grep -qxF "${u##*/}" /etc/msks/mount.units && continue\n'
-        '  systemctl disable --now "${u##*/}" 2>/dev/null || true\n'
-        '  rm -f "$u"\n'
+        '  systemctl stop "${u##*/}" 2>/dev/null || true\n'
+        '  rm -f "$u" "/run/systemd/system/${u##*/}"\n'
         "done\n"
-        "systemctl daemon-reload 2>/dev/null || true\n"
-        "while read -r unit; do\n"
-        '  [ -n "$unit" ] || continue\n'
-        '  systemctl enable --now "$unit" 2>/dev/null || true\n'
-        "done < /etc/msks/mount.units\n"
+        f"cat > '{PER_BOOT_INSTALLER}' <<'MSEOF'\n"
+        f"{per_boot_installer()}MSEOF\n"
+        f"chmod 0755 '{PER_BOOT_INSTALLER}'\n"
+        f"sh '{PER_BOOT_INSTALLER}'\n"
         "else\n"
         "echo 'msks: host-share mounts need systemd; this guest "
         "mounts none of them' >&2\n"

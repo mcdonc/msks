@@ -698,9 +698,12 @@ def mounts_for_guest_seed_tests():
 
 def test_mounts_seed_block_writes_units_and_prunes() -> None:
     """The seed's mounts half (#620, part #623): a manifest of the
-    wanted unit names, one heredoc'd unit per mount with the
-    ownership marker, the prune loop keyed on that marker, and the
-    enable pass — all inside the systemctl guard."""
+    wanted unit names, one heredoc'd unit per mount parked under
+    /etc/msks/mount-units, the prune loop stopping and removing
+    the parked units the set no longer names, and the per-boot
+    installer that carries the units into /run/systemd/system —
+    volatile, so the installer is what survives a reboot. All
+    inside the systemctl guard."""
     from msks.spec.mounts import mounts_seed_block
 
     block = mounts_seed_block(mounts_for_guest_seed_tests())
@@ -709,9 +712,13 @@ def test_mounts_seed_block_writes_units_and_prunes() -> None:
     # The manifest names exactly the wanted units.
     assert "mnt-proj.mount\n" in block
     assert "srv-tree-docs.mount\n" in block
-    # One heredoc'd unit per mount, target named by the escaped path.
-    assert "cat > '/etc/systemd/system/mnt-proj.mount' <<'MSEOF'" in block
-    assert "cat > '/etc/systemd/system/srv-tree-docs.mount' <<'MSEOF'" in block
+    # One heredoc'd unit per mount, parked by the escaped path —
+    # /etc/msks/mount-units, the unit home the two guest images
+    # share (/etc/systemd/system is a store symlink on NixOS).
+    assert "cat > '/etc/msks/mount-units/mnt-proj.mount' <<'MSEOF'" in block
+    assert (
+        "cat > '/etc/msks/mount-units/srv-tree-docs.mount' <<'MSEOF'" in block
+    )
     # The units carry the ownership marker the prune loop greps and
     # the virtiofs facts.
     assert "What=proj" in block
@@ -721,12 +728,21 @@ def test_mounts_seed_block_writes_units_and_prunes() -> None:
     # rw is the mount default: no Options line for it. The ro one
     # is the only Options line in the block.
     assert block.count("Options=") == 1
-    # The prune loop: marker grep, manifest membership, disable,
-    # remove; then reload and enable.
-    assert "grep -q '^# msks mount unit'" in block
-    assert "systemctl disable --now" in block
+    # The prune loop: manifest membership, stop, remove — the
+    # parked file and its runtime copy together.
+    assert 'grep -qxF "${u##*/}" /etc/msks/mount.units' in block
+    assert 'systemctl stop "${u##*/}"' in block
+    assert '"/run/systemd/system/${u##*/}"' in block
+    # The per-boot installer: written, made executable, run now —
+    # and its body copies each parked unit into the runtime dir
+    # and starts it.
+    installer = "/var/lib/cloud/scripts/per-boot/50-msks-mounts"
+    assert f"cat > '{installer}' <<'MSEOF'" in block
+    assert f"chmod 0755 '{installer}'" in block
+    assert f"sh '{installer}'" in block
+    assert 'cp "$u" /run/systemd/system/' in block
+    assert 'systemctl start "${u##*/}"' in block
     assert "systemctl daemon-reload" in block
-    assert "systemctl enable --now" in block
     # The ordering anchor names each mount's parent chain.
     assert "RequiresMountsFor=/mnt" in block
     assert "RequiresMountsFor=/srv/tree" in block
@@ -753,8 +769,8 @@ def test_mounts_seed_block_empty_is_the_prune_only_block() -> None:
 
     block = mounts_seed_block(())
     assert "<<'MSEOF'\nMSEOF" in block  # an empty manifest
-    assert "systemctl disable --now" in block
-    assert "enable --now" in block
+    assert 'systemctl stop "${u##*/}"' in block  # the prune half
+    assert "sh '/var/lib/cloud/scripts/per-boot/50-msks-mounts'" in block
 
 
 def test_systemd_escape_matches_the_tool() -> None:
