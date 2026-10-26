@@ -23,6 +23,14 @@ type. Enter opens the workspace's page.
 The list re-reads the daemon every five seconds, so a workspace another surface
 moved (the CLI, another operator) appears without a keypress.
 
+A workspace whose mounts skip or conflict carries a marker in the
+status column — `✗1 stopped` — the count of mounts the daemon's
+derived state holds unresolved; the marker stands until the
+config and the row agree again, and the [mounts
+chapter](mounts.md#the-skip-behavior) names every kind of skip
+and its reason. The workspace's page names each unresolved mount
+by its kind.
+
 When you create a workspace, it looks like this:
 
 ![The create form over the list](screens/create-form.svg)
@@ -86,8 +94,31 @@ named with its expiry. Two or more grants read as a count with the nearest
 expiry (`5 grants · next expires 4h`); grant detail is listed on the
 workspace's egress consent screen.
 
-The page's actions center in three groups. A shell; egress consent and an edit
-dialog for the sizes and topology; and start and stop.
+A mounts line follows when the workspace mounts host shares: one
+entry per mount — `projects:/mnt/projects:rw` — with the derived
+state beside any the daemon holds unresolved
+(`refs:/srv/refs:ro (skipped)`), and the next-start note naming
+the semantics. The line repaints with the page's per-second read,
+so a change made anywhere follows onto the page.
+
+The page's actions center in three groups. A shell; egress
+consent, an edit dialog for the sizes and topology, and the
+mounts editor; and start and stop.
+
+The **mounts editor** holds the workspace's mounts one row each —
+the CLI's own `SHARE:GUEST_PATH:MODE` grammar, the mode always
+shown. `a` adds a row (a single-line input), Enter edits the
+focused row seeded with its spec, `r` removes it, and Escape
+closes the editor with the last saved set. Every change posts the
+whole list through the daemon's mounts route — the reply repaints
+each row with its derived state (`healthy`, or the skip's kind
+and reason), and a refusal names itself on the editor's note line
+with the list it refused rolled back. The daemon owns the rules:
+a share the config does not carry, and `rw` on a read-only
+share, refuse with the remedy named. The [mounts
+chapter](mounts.md) and the [configuration
+rows](config.md#host-share-mounts) hold the behavior; the CLI's
+[`msks mount`](cli.md#msks-mount) rides the same route.
 
 ![The image page: the catalog group, then the published channel](screens/image-page.svg)
 
