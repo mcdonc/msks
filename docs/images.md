@@ -679,8 +679,19 @@ The rules worth knowing:
   `user_data` and applies cloud-config documents alike; declare the
   image's `capabilities.provisioner: cloud-init` so operators and
   tooling can see what consumes the seed.
-- **No `user_data`, no seed.** A workspace created without a payload
-  boots with two disks and no added cost: cloud-init finds no seed,
+- **The host's timezone rides the seed (#633).** A create on a
+  host with a timezone other than UTC captures it, and the seed's
+  script sets the guest's clock to it on first boot — `date` and
+  logs inside the guest read the operator's wall clock with no
+  operator action. The capture is create-time and immutable like
+  the rest of the seed: a host timezone change later leaves
+  existing workspaces on the zone their seed baked, and only new
+  creates see the new zone. A host on UTC (or whose clock file
+  reads as nothing recognizable) seeds no timezone — the guest
+  keeps the image's own default.
+- **A seedless boot needs a quiet create.** A workspace created
+  without a payload, a key, mounts, or a timezone to carry boots
+  with two disks and no added cost: cloud-init finds no seed,
   applies nothing, and the interactive budget is unchanged (~3.0s
   start→shell).
 - **Failure posture is cloud-init's.** The console getty

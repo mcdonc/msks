@@ -122,6 +122,7 @@ def spec(
     ssh_pubkey=None,
     name=None,
     mounts: tuple = (),
+    timezone: str | None = None,
 ) -> VmSpec:
     return VmSpec(
         workspace_id=WID,
@@ -133,6 +134,7 @@ def spec(
         mounts=mounts,
         user_data=user_data,
         ssh_pubkey=ssh_pubkey,
+        timezone=timezone,
     )
 
 
@@ -896,3 +898,19 @@ async def test_a_pre_mounts_seed_is_left_alone_until_mounts_arrive(
     assert persist.seed_mounts_mark(seed.parent).read_text() == (
         persist.mounts_fingerprint(two_mounts())
     )
+
+
+async def test_the_timezone_alone_builds_a_seed(tools) -> None:
+    """The host's timezone captured at create (#633): a zone name
+    alone gives the workspace a seed whose script sets the guest's
+    clock — and a bare workspace on a UTC host (timezone None)
+    keeps the seedless boot, as the no-user_data test pins."""
+    settings, record, base = tools
+    await persist.ensure_artifacts(
+        spec(base, timezone="Europe/Berlin"), settings
+    )
+    seed = persist.seed_path(settings.state_dir, WID)
+    assert seed.is_file()
+    log = record.read_text()
+    assert "timedatectl set-timezone 'Europe/Berlin'" in log
+    assert "ln -nsf /usr/share/zoneinfo/Europe/Berlin /etc/localtime" in log

@@ -48,6 +48,7 @@ def spec_for(row: dict, mounts: tuple | None = None) -> VmSpec:
         user_data=row.get("user_data"),
         ssh_pubkey=row.get("ssh_pubkey"),
         login_user=row.get("login_user"),
+        timezone=row.get("timezone"),
         mounts=row_mounts(row, mounts),
     )
 

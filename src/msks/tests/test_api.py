@@ -311,6 +311,128 @@ async def test_create_accepts_the_new_name_field(client) -> None:
     assert "disagree" in disagreeing.json()["detail"]
 
 
+async def test_a_create_captures_the_host_timezone(
+    client, monkeypatch
+) -> None:
+    """The host's timezone rides the create (#633): a non-UTC
+    host's zone lands on the row and on the spec the seam
+    prepared, and a UTC (or unreadable) host lands None — the row
+    a pre-#633 daemon would have written."""
+    from msks.server.api import boot as boot_mod
+
+    http, _app, stub = client
+    monkeypatch.setattr(boot_mod, "host_timezone", lambda: "Europe/Berlin")
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"name": "ws-tz", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    assert created.json()["timezone"] == "Europe/Berlin"
+    assert stub.seen_specs[created.json()["id"]].timezone == "Europe/Berlin"
+    monkeypatch.setattr(boot_mod, "host_timezone", lambda: None)
+    utc = await http.post(
+        "/api/v1/workspaces",
+        json={"name": "ws-utc", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert utc.status_code == 201
+    assert utc.json()["timezone"] is None
+
+
+def test_host_timezone_reads_the_clock(tmp_path) -> None:
+    """The capture (#633): the /etc/localtime symlink's resolved
+    target under a zoneinfo root is the zone (either root, the
+    relative form timedated writes included), a symlink that
+    reads as nothing falls back to /etc/timezone's first line —
+    except a UTC link, which is authoritative — and UTC spellings
+    or anything that is not a zone name read as None, the
+    nothing-that-rides value."""
+    from msks.server.api.boot import (
+        host_timezone,
+        linked_zone,
+        zone_name,
+    )
+
+    assert zone_name("Europe/Berlin") == "Europe/Berlin"
+    assert zone_name("Etc/GMT+5") == "Etc/GMT+5"
+    assert zone_name("UTC") is None
+    assert zone_name("GMT") is None
+    assert zone_name("Etc/GMT") is None
+    assert zone_name("../etc/passwd") is None
+    assert zone_name("'; rm -rf /") is None
+    assert zone_name("") is None
+    assert zone_name("trailing/") is None
+
+    # The symlink read, either zoneinfo root, relative link
+    # included (the localtime(5) form timedated writes).
+    linked = tmp_path / "localtime"
+    linked.symlink_to("/usr/share/zoneinfo/America/New_York")
+    zone_file = tmp_path / "timezone"
+    assert host_timezone(str(linked), str(zone_file)) == "America/New_York"
+    zi = tmp_path / "zi"
+    (zi / "Europe").mkdir(parents=True)
+    (zi / "Europe" / "Berlin").touch()
+    rel = tmp_path / "relative"
+    rel.symlink_to("zi/Europe/Berlin")
+    assert linked_zone(str(rel), roots=(f"{zi}/",)) == "Europe/Berlin"
+    # A symlinked root — NixOS chains /etc/zoneinfo through
+    # /etc/static into the store — reads the same as a real one.
+    real = tmp_path / "real-zi"
+    (real / "Asia").mkdir(parents=True)
+    (real / "Asia" / "Tokyo").touch()
+    static = tmp_path / "static-zi"
+    static.symlink_to(real)
+    chained = tmp_path / "chained-zi"
+    chained.symlink_to(static)
+    deep = tmp_path / "deep"
+    deep.symlink_to(f"{chained}/Asia/Tokyo")
+    assert linked_zone(str(deep), roots=(f"{chained}/",)) == "Asia/Tokyo"
+    # The second root: a link under it reads the same as one under
+    # the first (the loop walks the roots in order).
+    zi2 = tmp_path / "zi2"
+    (zi2 / "Asia").mkdir(parents=True)
+    (zi2 / "Asia" / "Tokyo").touch()
+    alt = tmp_path / "alt"
+    alt.symlink_to(f"{zi2}/Asia/Tokyo")
+    assert linked_zone(str(alt), roots=(f"{zi}/", f"{zi2}/")) == "Asia/Tokyo"
+
+    # A UTC link is authoritative: the file fallback never
+    # overrides the clock the link names.
+    utc_link = tmp_path / "utc-link"
+    utc_link.symlink_to("/usr/share/zoneinfo/Etc/UTC")
+    zone_file.write_text("Europe/Berlin\n")
+    assert host_timezone(str(utc_link), str(zone_file)) is None
+
+    # A target outside both roots, one under a root that names no
+    # valid zone, and a symlink loop: the read falls through to
+    # the file fallback.
+    zone_file.write_text("America/Detroit\n")
+    odd = tmp_path / "odd"
+    odd.symlink_to("/var/db/zoneinfo/Europe/Berlin")
+    assert host_timezone(str(odd), str(zone_file)) == "America/Detroit"
+    bad = tmp_path / "bad"
+    bad.symlink_to("/usr/share/zoneinfo/../etc/passwd")
+    assert host_timezone(str(bad), str(zone_file)) == "America/Detroit"
+    loop = tmp_path / "loop"
+    loop.symlink_to("loop")
+    assert host_timezone(str(loop), str(zone_file)) == "America/Detroit"
+
+    # A copied (non-symlink) localtime: the /etc/timezone fallback.
+    copied = tmp_path / "copied"
+    copied.write_text("TZif data")
+    zone_file.write_text("Europe/Berlin\n")
+    assert host_timezone(str(copied), str(zone_file)) == "Europe/Berlin"
+
+    # Garbage in the fallback, and neither file at all.
+    zone_file.write_text("../../etc/passwd\n")
+    assert host_timezone(str(copied), str(zone_file)) is None
+    assert (
+        host_timezone(str(tmp_path / "gone-lt"), str(tmp_path / "gone-tz"))
+        is None
+    )
+
+
 async def test_create_without_a_name_mints_an_id_only_workspace(
     client,
 ) -> None:

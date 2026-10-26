@@ -1,7 +1,10 @@
 """Create-time boot resolution: the image catalog record, the
-create's label and instance id, and the kernel/initrd/rootfs/
-cmdline fields a create fills from it (#14, #246)."""
+create's label and instance id, the kernel/initrd/rootfs/
+cmdline fields a create fills from it (#14, #246), and the host's
+timezone captured with them (#633)."""
 
+import os
+import re
 import secrets
 from pathlib import Path
 
@@ -90,9 +93,10 @@ def resolve_boot(app, body: WorkspaceCreate, workspace_id: str) -> dict:
     default; nothing resolves at all is a client error. The result
     also carries the #14 facts: the catalog hash the overlay will
     bind to (None for explicit boot artifacts) and the artifact
-    sizes. ``workspace_id`` is the daemon-minted instance id
-    (#246) — the artifact paths derive from it, never from the
-    operator's label.
+    sizes — and the #633 fact: the host's timezone, captured here
+    so the row and its seed pin what the create saw. ``workspace_id``
+    is the daemon-minted instance id (#246) — the artifact paths
+    derive from it, never from the operator's label.
     """
     record = image_record(app, body)
     kernel, rootfs = boot_pair(body, record)
@@ -112,8 +116,107 @@ def resolve_boot(app, body: WorkspaceCreate, workspace_id: str) -> dict:
         "egress": body.egress,
         "user_data": validated_user_data(body),
         "login_user": body.user,
+        # The host's timezone, captured at create (#633): the seed
+        # bakes it and the row pins it — a later host change never
+        # drifts a workspace already minted.
+        "timezone": host_timezone(),
         **artifact_sizes(app, body),
     }
+
+
+#: The zoneinfo roots a host's /etc/localtime symlink names: glibc's
+#: classic tree first, the fallback the musl and usr-merged layouts
+#: carry.
+ZONEINFO_ROOTS = ("/usr/share/zoneinfo/", "/etc/zoneinfo/")
+
+#: The IANA zone-name grammar the block interpolates: path-less
+#: segments of letters, digits, underscore, dash, and plus (the
+#: ``Etc/GMT+5`` family), joined by single slashes. Anything else
+#: — a traversal, a quote, whitespace — reads as no timezone, so a
+#: hostile or mangled host file never reaches the guest's shell.
+ZONE_NAME_RE = re.compile(r"[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*\Z")
+
+#: The spellings that read as UTC (tzdata's UTC-equivalent
+#: family, the Etc/ compat links included): nothing rides for
+#: them, so a UTC host's bare workspaces keep the two-disk,
+#: no-seed boot.
+UTC_NAMES = frozenset(
+    {
+        "UTC",
+        "UCT",
+        "Etc/UTC",
+        "Etc/UCT",
+        "Universal",
+        "Zulu",
+        "Etc/Universal",
+        "Etc/Zulu",
+        "GMT",
+        "GMT0",
+        "Greenwich",
+        "Etc/GMT",
+        "Etc/GMT+0",
+        "Etc/GMT-0",
+        "Etc/GMT0",
+    }
+)
+
+
+def host_timezone(
+    localtime: str = "/etc/localtime", zone_file: str = "/etc/timezone"
+) -> str | None:
+    """The host's timezone as a zone name, None for UTC or an
+    unreadable clock (#633): the /etc/localtime symlink — absolute
+    or relative, resolved against the filesystem (localtime(5)
+    names both forms, and systemd's timedated writes the relative
+    one) — under a zoneinfo root first and authoritatively; the
+    /etc/timezone file's first line (Debian's companion) only
+    when the link itself reads as nothing (a copied zone file, a
+    dangling loop, no link at all) — never a guess between the
+    two."""
+    candidate = linked_zone(localtime)
+    if candidate is not None:
+        return zone_name(candidate)
+    return file_zone(zone_file)
+
+
+def linked_zone(
+    localtime: str, roots: tuple[str, ...] = ZONEINFO_ROOTS
+) -> str | None:
+    """The zone path the /etc/localtime symlink names, its tail
+    under a zoneinfo root: both sides resolved against the
+    filesystem, so the relative form timedated writes and a
+    symlinked root (NixOS chains /etc/zoneinfo through
+    /etc/static into the store) read the same as a plain absolute
+    link under a real directory. None when the resolution lands
+    under no zoneinfo root — a copied zone file names itself,
+    which is no name at all (non-strict resolution never raises:
+    a loop or a dangling link resolves as far as it can)."""
+    resolved = os.path.realpath(localtime)
+    for root in roots:
+        base = os.path.realpath(root.rstrip("/"))
+        if resolved.startswith(base + os.sep):
+            return resolved[len(base) + 1 :]
+    return None
+
+
+def file_zone(zone_file: str) -> str | None:
+    """The zone /etc/timezone names: the file's first line, None
+    when the file is absent or unreadable."""
+    try:
+        first = Path(zone_file).read_text(encoding="utf-8").splitlines()[0]
+    except OSError, UnicodeDecodeError, IndexError:
+        return None
+    return zone_name(first.strip())
+
+
+def zone_name(candidate: str) -> str | None:
+    """One candidate as a zone name: valid grammar and not a UTC
+    spelling — else None, the nothing-that-rides value. The
+    grammar bans every dot, quote, and whitespace rune, so a
+    traversal or a shell metacharacter never passes."""
+    if not candidate or candidate in UTC_NAMES:
+        return None
+    return candidate if ZONE_NAME_RE.fullmatch(candidate) else None
 
 
 def bound_image_hash(body: WorkspaceCreate, record) -> str | None:

@@ -869,6 +869,10 @@ def workspace_fields(
         "user_data": spec.user_data,
         "ssh_pubkey": spec.ssh_pubkey,
         "login_user": spec.login_user,
+        # The host's timezone captured at create (#633): NULL is
+        # UTC-or-unreadable — a UTC host and a pre-#633 row read
+        # the same.
+        "timezone": spec.timezone,
         # The workspace's mounts (#620, part #624): the create-time
         # set rides the spec; dump_mounts keeps the no-mounts row
         # NULL (a pre-#620 row and a mountless row read the same).
@@ -938,6 +942,7 @@ def workspace_dict(row: Workspace) -> dict:
         "user_data": row.user_data,
         "ssh_pubkey": row.ssh_pubkey,
         "login_user": row.login_user,
+        "timezone": row.timezone,
         "status": row.status,
         "created_at": row.created_at.isoformat(),
     }
