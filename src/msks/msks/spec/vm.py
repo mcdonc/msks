@@ -74,6 +74,13 @@ class VmSpec:
     # that names none — the guest carries the key for root and its
     # own msks account either way.
     login_user: str | None = None
+    # The host's timezone captured at create (#633), the zone
+    # name the guest's clock follows (the seed's first-boot block
+    # sets it). None is a UTC-or-unreadable host: nothing rides,
+    # and the guest keeps the image's own default. Immutable like
+    # the rest of the create-time facts — a host timezone change
+    # later does not drift a row already minted.
+    timezone: str | None = None
     # The workspace's host mounts (#620, part #622): each names a
     # configured share, the guest path it lands at, and its mode.
     # The start path derives the attachable subset (shares gone

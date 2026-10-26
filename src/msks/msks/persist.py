@@ -242,14 +242,16 @@ async def ensure_seed(
 def seed_payload_present(spec: VmSpec, llm_port: int) -> bool:
     """Whether anything rides the seed for this spec: the
     operator's own payload, the supplied ssh key (#111, #486), the
-    proxy environment a tap will serve (#259, #483), or the
+    proxy environment a tap will serve (#259, #483), the
     host-share mounts whose units the script writes (#620, part
-    #623)."""
+    #623), or the host's timezone captured at create (#633) — a
+    non-UTC host gives every workspace a seed."""
     return (
         spec.user_data is not None
         or spec.ssh_pubkey is not None
         or llm_port != 0
         or bool(spec.mounts)
+        or spec.timezone is not None
     )
 
 
@@ -496,6 +498,7 @@ async def create_seed(
                 llm_port,
                 ca_pem,
                 mounts_block_for(spec, target.parent),
+                spec.timezone,
             ),
             encoding="utf-8",
         )

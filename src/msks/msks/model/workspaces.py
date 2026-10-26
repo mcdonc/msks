@@ -122,6 +122,13 @@ class Workspace(Base):
     # row — a pre-#620 row and a workspace created without mounts
     # read identically.
     mounts: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The host's timezone captured at create (#633): the zone
+    # name the seed's first-boot block sets the guest's clock to.
+    # NULL is a UTC-or-unreadable host — nothing rides and the
+    # guest keeps the image's default. Create-time and immutable
+    # like user_data: a host timezone change later does not drift
+    # a row already minted.
+    timezone: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="created")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(

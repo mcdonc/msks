@@ -86,6 +86,7 @@ def seed_script(
     llm_port: int = 0,
     ca_pem: str | None = None,
     mounts_block: str = "",
+    timezone: str | None = None,
 ) -> str:
     """The seeding payload's script half: authorized_keys for root
     and the msks workspace user (#63), written idempotently — and
@@ -140,7 +141,7 @@ def seed_script(
     the prune half is what removes the last mount's units.
     """
     if public_key is None:
-        return keyless_seed_script(llm_port, ca_pem, mounts_block)
+        return keyless_seed_script(llm_port, ca_pem, mounts_block, timezone)
     script = (
         "#!/bin/sh\n"
         "# msks (#111): the workspace identity — authorized_keys\n"
@@ -163,14 +164,55 @@ def seed_script(
         "chown msks:msks /home/msks/.ssh/authorized_keys\n"
         "chmod 0600 /home/msks/.ssh/authorized_keys\n"
     )
+    return script + riding_blocks(
+        login_user, llm_port, ca_pem, mounts_block, timezone
+    )
+
+
+def riding_blocks(
+    login_user: str | None,
+    llm_port: int,
+    ca_pem: str | None,
+    mounts_block: str,
+    timezone: str | None,
+) -> str:
+    """The blocks that ride after the identity's own lines: the
+    login user's provisioning (#248), the proxy environment
+    (#259), the interceptor CA (#424), the mounts (#620, part
+    #623), and the captured timezone (#633) — each present
+    exactly when its create-time fact is."""
+    blocks = ""
     if login_user not in (None, "root", "msks"):
-        script += named_user_block(login_user)
+        blocks += named_user_block(login_user)
     if llm_port:
-        script += llm_seed_block(llm_port)
+        blocks += llm_seed_block(llm_port)
     if ca_pem is not None:
-        script += ca_seed_block(ca_pem)
-    script += mounts_block
-    return script
+        blocks += ca_seed_block(ca_pem)
+    blocks += mounts_block
+    if timezone is not None:
+        blocks += timezone_block(timezone)
+    return blocks
+
+
+def timezone_block(timezone: str) -> str:
+    """The #633 block: the host's timezone, captured at create, set
+    in the guest on first boot. The zone name's grammar was
+    validated at capture (boot.zone_name), so it interpolates
+    safely into single quotes and the zoneinfo path. Both steps
+    are best-effort under ``set -eu`` — a guest whose /etc is not
+    writable keeps booting and keeps the image's default clock:
+    timedatectl applies the zone live when systemd's timedated is
+    up (it also writes the link itself), and the plain symlink
+    pins the persistent state either way, on guests with or
+    without timedated."""
+    return (
+        f"if command -v timedatectl >/dev/null 2>&1; then\n"
+        f"  timedatectl set-timezone '{timezone}' 2>/dev/null "
+        "|| true\n"
+        "fi\n"
+        f"ln -nsf /usr/share/zoneinfo/{timezone} /etc/localtime "
+        "2>/dev/null || true\n"
+    )
 
 
 def home_seed_block() -> str:
@@ -204,13 +246,14 @@ def keyless_seed_script(
     llm_port: int,
     ca_pem: str | None,
     mounts_block: str = "",
+    timezone: str | None = None,
 ) -> str:
     """The identity-less seed: the workspace home (#171), the
     proxy-environment block when a listener will serve this
     workspace's tap (a port of zero names a daemon with no model
-    list), the interceptor CA block when one rides (#424), and
-    the mounts block every built seed carries (#620, part
-    #623)."""
+    list), the interceptor CA block when one rides (#424), the
+    mounts block every built seed carries (#620, part #623), and
+    the timezone block when the create captured one (#633)."""
     script = "#!/bin/sh\n# msks (#424): the workspace's seed.\nset -eu\n"
     script += home_seed_block()
     if llm_port:
@@ -218,6 +261,8 @@ def keyless_seed_script(
     if ca_pem is not None:
         script += ca_seed_block(ca_pem)
     script += mounts_block
+    if timezone is not None:
+        script += timezone_block(timezone)
     return script
 
 
@@ -456,19 +501,23 @@ def compose_user_data(
     llm_port: int = 0,
     ca_pem: str | None = None,
     mounts_block: str = "",
+    timezone: str | None = None,
 ) -> str:
     """The seed's user-data document: what cidata actually carries.
 
-    With no minted key, no proxy environment, and no mounts the
-    operator's payload travels verbatim (the #41 contract,
-    unchanged); with a key, a proxy port, a CA, or mounts and no
-    payload the seed is the seeding script alone; with a script
-    and a payload, a MIME multipart carries the two as sibling
-    parts. The content type of the operator part is sniffed from
-    its first line — the two forms the #41 contract documents are
-    a ``#!`` script and a ``#cloud-config`` document.
+    With no minted key, no proxy environment, no mounts, and no
+    captured timezone the operator's payload travels verbatim (the
+    #41 contract, unchanged); with a key, a proxy port, a CA,
+    mounts, or a timezone and no payload the seed is the seeding
+    script alone; with a script and a payload, a MIME multipart
+    carries the two as sibling parts. The content type of the
+    operator part is sniffed from its first line — the two forms
+    the #41 contract documents are a ``#!`` script and a
+    ``#cloud-config`` document.
     """
-    if nothing_else_rides(public_key, llm_port, ca_pem, mounts_block):
+    if nothing_else_rides(
+        public_key, llm_port, ca_pem, mounts_block, timezone
+    ):
         return operator_payload
     script = seed_script(
         public_key,
@@ -476,6 +525,7 @@ def compose_user_data(
         llm_port,
         ca_pem,
         mounts_block,
+        timezone,
     )
     if operator_payload is None:
         return script
@@ -487,14 +537,17 @@ def nothing_else_rides(
     llm_port: int,
     ca_pem: str | None,
     mounts_block: str,
+    timezone: str | None = None,
 ) -> bool:
     """Whether nothing but the operator's payload rides the seed —
     the #41 verbatim contract's condition: no key, no CA, no
-    proxy port, no mounts. The payload itself may be None (no
-    seed at all); the caller returns it either way."""
+    proxy port, no mounts, no captured timezone (#633). The
+    payload itself may be None (no seed at all); the caller
+    returns it either way."""
     return (
         public_key is None
         and ca_pem is None
+        and timezone is None
         and not llm_port
         and not mounts_block
     )

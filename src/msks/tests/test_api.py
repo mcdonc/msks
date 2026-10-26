@@ -311,6 +311,75 @@ async def test_create_accepts_the_new_name_field(client) -> None:
     assert "disagree" in disagreeing.json()["detail"]
 
 
+async def test_a_create_captures_the_host_timezone(
+    client, monkeypatch
+) -> None:
+    """The host's timezone rides the create (#633): a non-UTC
+    host's zone lands on the row and on the spec the seam
+    prepared, and a UTC (or unreadable) host lands None — the row
+    a pre-#633 daemon would have written."""
+    from msks.server.api import boot as boot_mod
+
+    http, _app, stub = client
+    monkeypatch.setattr(boot_mod, "host_timezone", lambda: "Europe/Berlin")
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"name": "ws-tz", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    assert created.json()["timezone"] == "Europe/Berlin"
+    assert stub.seen_specs[created.json()["id"]].timezone == "Europe/Berlin"
+    monkeypatch.setattr(boot_mod, "host_timezone", lambda: None)
+    utc = await http.post(
+        "/api/v1/workspaces",
+        json={"name": "ws-utc", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert utc.status_code == 201
+    assert utc.json()["timezone"] is None
+
+
+def test_host_timezone_reads_the_clock(tmp_path) -> None:
+    """The capture (#633): the /etc/localtime symlink's target
+    under a zoneinfo root is the zone (either root), a copied
+    localtime falls back to /etc/timezone's first line, and UTC
+    spellings or anything that is not a zone name read as None —
+    the nothing-that-rides value."""
+    from msks.server.api.boot import host_timezone, zone_name
+
+    assert zone_name("Europe/Berlin") == "Europe/Berlin"
+    assert zone_name("Etc/GMT+5") == "Etc/GMT+5"
+    assert zone_name("UTC") is None
+    assert zone_name("../etc/passwd") is None
+    assert zone_name("'; rm -rf /") is None
+    assert zone_name("") is None
+    assert zone_name("trailing/") is None
+
+    # The symlink read, either zoneinfo root.
+    linked = tmp_path / "localtime"
+    linked.symlink_to("/usr/share/zoneinfo/America/New_York")
+    zone_file = tmp_path / "timezone"
+    assert host_timezone(str(linked), str(zone_file)) == "America/New_York"
+    alt = tmp_path / "alt"
+    alt.symlink_to("/etc/zoneinfo/Asia/Tokyo")
+    assert host_timezone(str(alt), str(zone_file)) == "Asia/Tokyo"
+
+    # A copied (non-symlink) localtime: the /etc/timezone fallback.
+    copied = tmp_path / "copied"
+    copied.write_text("TZif data")
+    zone_file.write_text("Europe/Berlin\n")
+    assert host_timezone(str(copied), str(zone_file)) == "Europe/Berlin"
+
+    # Garbage in the fallback, and neither file at all.
+    zone_file.write_text("../../etc/passwd\n")
+    assert host_timezone(str(copied), str(zone_file)) is None
+    assert (
+        host_timezone(str(tmp_path / "gone-lt"), str(tmp_path / "gone-tz"))
+        is None
+    )
+
+
 async def test_create_without_a_name_mints_an_id_only_workspace(
     client,
 ) -> None:

@@ -776,3 +776,42 @@ def test_compose_user_data_carries_the_mounts_block() -> None:
     assert with_payload.startswith("Content-Type: multipart/mixed")
     assert "the-block" in with_payload
     assert compose_user_data("payload", None) == "payload"
+
+
+def test_the_timezone_block_sets_the_clock() -> None:
+    """The #633 block: timedatectl applies the zone live when
+    systemd's timedated is up, and the plain symlink pins the
+    persistent state either way — both tolerated, never able to
+    abort the seed."""
+    from msks.identity import timezone_block
+
+    block = timezone_block("Europe/Berlin")
+    assert "command -v timedatectl" in block
+    assert "timedatectl set-timezone 'Europe/Berlin'" in block
+    assert "ln -nsf /usr/share/zoneinfo/Europe/Berlin /etc/localtime" in block
+
+
+def test_the_timezone_rides_beside_the_payload() -> None:
+    """A captured timezone is one of the things that ride (#633):
+    the verbatim contract holds only without one, a timezone alone
+    is the script, and with a payload the two merge — the block
+    present in every form, the keyed script and the keyless one
+    alike."""
+    zone = "Europe/Berlin"
+    payload = "#!/bin/sh\necho operator\n"
+    # No timezone: the #41 verbatim contract holds.
+    assert compose_user_data(payload, None) == payload
+    # A timezone and no key: the keyless script carries it.
+    keyless = compose_user_data(None, None, timezone=zone)
+    assert keyless == keyless_seed_script(0, None, "", zone)
+    assert "timedatectl set-timezone 'Europe/Berlin'" in keyless
+    # A timezone with a payload: multipart, block inside.
+    composed = compose_user_data(payload, None, timezone=zone)
+    assert composed.startswith(
+        f'Content-Type: multipart/mixed; boundary="{MIME_BOUNDARY}"'
+    )
+    assert "timedatectl set-timezone 'Europe/Berlin'" in composed
+    # A keyed script carries it too.
+    assert "timedatectl set-timezone 'Europe/Berlin'" in seed_script(
+        PUBLIC, timezone=zone
+    )
