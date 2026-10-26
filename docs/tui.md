@@ -25,11 +25,11 @@ moved (the CLI, another operator) appears without a keypress.
 
 A workspace whose mounts skip or conflict carries a marker in the
 status column — `✗1 stopped` — the count of mounts the daemon's
-derived state holds unresolved (a share the config no longer
-carries, an `rw` mount a reload narrowed its share under, or a
-read-write attach held elsewhere). The workspace's page names each
-one; the [mounts chapter](mounts.md#the-skip-behavior) states the
-behavior.
+derived state holds unresolved; the marker stands until the
+config and the row agree again, and the [mounts
+chapter](mounts.md#the-skip-behavior) names every kind of skip
+and its reason. The workspace's page names each unresolved mount
+by its kind.
 
 When you create a workspace, it looks like this:
 
@@ -97,7 +97,7 @@ workspace's egress consent screen.
 A mounts line follows when the workspace mounts host shares: one
 entry per mount — `projects:/mnt/projects:rw` — with the derived
 state beside any the daemon holds unresolved
-(`refs:/mnt/refs:ro (skipped)`), and the next-start note naming
+(`refs:/srv/refs:ro (skipped)`), and the next-start note naming
 the semantics. The line repaints with the page's per-second read,
 so a change made anywhere follows onto the page.
 

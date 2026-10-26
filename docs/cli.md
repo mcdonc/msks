@@ -272,31 +272,33 @@ row included.
 
 ```text
 $ msks ls
-name          id          status              egress      created     image         host
-my-workspace  1a2b3c4d5e  running             interactive 2026-05-14  debian:13.6   hv-1
-scratch       77eedd0199  created             allow       2026-06-01  -             hv-1
-refs-reader   9c1d2e3f4a  running, 1 mount sk allow       2026-06-18  9f2c41ab77de  hv-1
+name          id          status                    egress       created     image             host
+my-workspace  1a2b3c4d5e  running                   interactive  2026-05-14  debian:13.6       hv-1
+scratch       77eedd0199  created                   allow        2026-06-01  -                 hv-1
+refs-reader   9c1d2e3f4a  running, 1 mount skipped  allow        2026-06-18  9f2c41a…de1234ab  hv-1
 ```
 
 The status column speaks the daemon's lifecycle vocabulary:
 `created` (row exists, never booted), `starting`, `running`,
 `paused`, `stopped`, `unknown`, `absent`. A workspace whose mounts
 skip or conflict carries the count beside its status — `running,
-1 mount skipped` above — the standing marker for a share the
-daemon's config no longer carries, an `rw` mount a reload
-narrowed its share under, or a read-write attach another
-workspace holds exclusively; the marker stands until the config
-and the row agree again, and the [mounts
-chapter](mounts.md#the-skip-behavior) names each skip's reason. A
+1 mount skipped` above — a standing marker that lasts until the
+config and the row agree again; the [mounts
+chapter](mounts.md#the-skip-behavior) names every kind of skip
+and its reason. A digest the catalog cannot resolve to a
+reference reads as its middle-clipped form (the `image` column's
+own budget). A
 `-` in the name column is a workspace without a label — created
 nameless through the API, or before the id/name split — addressed
 by its id alone. A `-` in the image column means the workspace
 boots explicit kernel/rootfs paths instead of a catalog image.
 
 `--json` replaces the table with one JSON document, the API's
-workspace rows verbatim (id, name, kernel, initrd, rootfs, cmdline,
-cpus, mem_mib, image_hash, image_ref, host, root_mib, home_mib,
-status, created_at, mounts, mount_issues — the derived per-mount
+workspace rows verbatim — id, name, kernel, initrd, rootfs,
+cmdline, cpus, mem_mib, image_hash, image_ref, host, root_mib,
+home_mib, egress, egress_slice, egress_mode, secret_coverage,
+egress_allowlist, mounts, user_data, ssh_pubkey, login_user,
+status, created_at, and mount_issues (the derived per-mount
 state behind the status marker):
 
 ```bash
@@ -611,15 +613,17 @@ ws1 mounts projects:/mnt/projects:rw, refs:/srv/refs:ro (next start)
 
 The outcome line names the resulting set and the next-start
 note: setting mounts never touches a running VM, and the next
-`msks start` attaches exactly this set — the seed that boot
-carries bakes the current mounts, so a restart after a change
-lands the new set and prunes the dropped one. The daemon
+`msks start` attaches exactly this set ([what a mount
+is](mounts.md#what-a-mount-is) states the lifecycle — the seed
+each boot carries bakes the current set, so a restart after a
+change lands it and prunes the dropped mounts). The daemon
 validates the whole list against the configured shares and the
 row rules (a share appears once per workspace, guest paths are
 absolute and mutually disjoint); a refusal names itself on one
-line. A mount the daemon's derived state skips — a share the
-config no longer carries, or a read-write attach held elsewhere —
-names itself after the set with its reason.
+line. A mount the daemon's derived state holds unresolved names
+itself after the set — the [mounts
+chapter](mounts.md#the-skip-behavior) holds every kind and its
+reason.
 
 ## `msks umount`
 
