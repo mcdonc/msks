@@ -560,6 +560,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#host-share-mounts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Host share mounts
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-placeholder-secret-store" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -635,6 +646,32 @@
     
   
   Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Host Share Mounts
 
     
   </span>
@@ -979,6 +1016,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Per-workspace egress networking
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#host-share-mounts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Host share mounts
       </span>
     </span>
   </a>
@@ -1555,6 +1603,38 @@ the file itself carries them all at one level.</p>
 </tr>
 </tbody>
 </table>
+<h3 id="host-share-mounts">Host share mounts<a class="headerlink" href="#host-share-mounts" title="Permanent link">&para;</a></h3>
+<p>The named host trees a workspace may mount into its guest (<a href="../mounts/">mounts
+chapter</a> for the behavior). Each entry carries <code>name</code>
+and <code>path</code>, and two bounds: <code>writable</code> (default <code>true</code>) and
+<code>multi</code> (default <code>true</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Environment variable</th>
+<th>Type</th>
+<th>Default</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mount_shares</code></td>
+<td><code>MSKSD_MOUNT_SHARES</code></td>
+<td>list</td>
+<td><em>(unset)</em></td>
+<td>The shares: entries of <code>name</code>, <code>path</code>, <code>writable</code> (default <code>true</code> — a listed share serves read-write), and <code>multi</code> (default <code>true</code> — a share attaches read-write to any number of workspaces; <code>false</code> makes read-write attaches exclusive). The environment form is a JSON array string.</td>
+</tr>
+<tr>
+<td><code>virtiofsd</code></td>
+<td><code>MSKSD_VIRTIOFSD</code></td>
+<td>string</td>
+<td><code>virtiofsd</code></td>
+<td>Path to the virtiofsd binary each attached share spawns (Debian's <code>virtiofsd</code> package; an older suite's build under <code>/usr/libexec</code> is named here).</td>
+</tr>
+</tbody>
+</table>
 <h3 id="the-placeholder-secret-store">The placeholder secret store<a class="headerlink" href="#the-placeholder-secret-store" title="Permanent link">&para;</a></h3>
 <p>Where the real secrets behind placeholder tokens live (<a href="../secrets/">secrets
 chapter</a> for the flow). The store is one
@@ -1637,6 +1717,14 @@ the LLM proxy's loopback guard shape (<code>llm_models</code> gaining or
 losing entries, <code>llm_port</code>, <code>egress_subnet</code>) re-applies the
 table at the next workspace start, masquerade included, from
 the live <code>egress_uplink</code>.</p>
+<p><code>mount_shares</code> reads live after a reload: each workspace's next
+start derives its attachments from the shares the reload left —
+a share the reload removed reads as a skip at start (the
+<a href="../mounts/">mounts chapter</a> names the skip behavior), and a
+share the reload narrowed to read-only refuses the workspace's
+<code>rw</code> mount the same way. Running VMs keep the devices they
+attached. <code>virtiofsd</code> reads live too: the next start spawns the
+binary the reload names.</p>
 <p>A config that fails to load or validate is refused: the daemon
 reports the error on stderr and keeps the previous settings. A
 default-path file deleted since startup is likewise refused rather
