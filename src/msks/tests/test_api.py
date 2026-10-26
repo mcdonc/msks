@@ -376,6 +376,18 @@ def test_host_timezone_reads_the_clock(tmp_path) -> None:
     rel = tmp_path / "relative"
     rel.symlink_to("zi/Europe/Berlin")
     assert linked_zone(str(rel), roots=(f"{zi}/",)) == "Europe/Berlin"
+    # A symlinked root — NixOS chains /etc/zoneinfo through
+    # /etc/static into the store — reads the same as a real one.
+    real = tmp_path / "real-zi"
+    (real / "Asia").mkdir(parents=True)
+    (real / "Asia" / "Tokyo").touch()
+    static = tmp_path / "static-zi"
+    static.symlink_to(real)
+    chained = tmp_path / "chained-zi"
+    chained.symlink_to(static)
+    deep = tmp_path / "deep"
+    deep.symlink_to(f"{chained}/Asia/Tokyo")
+    assert linked_zone(str(deep), roots=(f"{chained}/",)) == "Asia/Tokyo"
     # The second root: a link under it reads the same as one under
     # the first (the loop walks the roots in order).
     zi2 = tmp_path / "zi2"

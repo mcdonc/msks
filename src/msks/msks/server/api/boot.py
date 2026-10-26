@@ -137,8 +137,9 @@ ZONEINFO_ROOTS = ("/usr/share/zoneinfo/", "/etc/zoneinfo/")
 ZONE_NAME_RE = re.compile(r"[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)*\Z")
 
 #: The spellings that read as UTC (tzdata's UTC-equivalent
-#: family): nothing rides for them, so a UTC host's bare
-#: workspaces keep the two-disk, no-seed boot.
+#: family, the Etc/ compat links included): nothing rides for
+#: them, so a UTC host's bare workspaces keep the two-disk,
+#: no-seed boot.
 UTC_NAMES = frozenset(
     {
         "UTC",
@@ -147,6 +148,8 @@ UTC_NAMES = frozenset(
         "Etc/UCT",
         "Universal",
         "Zulu",
+        "Etc/Universal",
+        "Etc/Zulu",
         "GMT",
         "GMT0",
         "Greenwich",
@@ -176,18 +179,23 @@ def host_timezone(
     return file_zone(zone_file)
 
 
-def linked_zone(localtime: str, roots: tuple = ZONEINFO_ROOTS) -> str | None:
+def linked_zone(
+    localtime: str, roots: tuple[str, ...] = ZONEINFO_ROOTS
+) -> str | None:
     """The zone path the /etc/localtime symlink names, its tail
-    under a zoneinfo root: the link resolved against the
-    filesystem, so the relative form timedated writes reads the
-    same as the absolute one. None when the resolution lands under
-    no zoneinfo root — a copied zone file names itself, which is
-    no name at all (non-strict resolution never raises: a loop or
-    a dangling link resolves as far as it can)."""
+    under a zoneinfo root: both sides resolved against the
+    filesystem, so the relative form timedated writes and a
+    symlinked root (NixOS chains /etc/zoneinfo through
+    /etc/static into the store) read the same as a plain absolute
+    link under a real directory. None when the resolution lands
+    under no zoneinfo root — a copied zone file names itself,
+    which is no name at all (non-strict resolution never raises:
+    a loop or a dangling link resolves as far as it can)."""
     resolved = os.path.realpath(localtime)
     for root in roots:
-        if resolved.startswith(root):
-            return resolved[len(root) :]
+        base = os.path.realpath(root.rstrip("/"))
+        if resolved.startswith(base + os.sep):
+            return resolved[len(base) + 1 :]
     return None
 
 

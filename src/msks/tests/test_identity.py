@@ -798,6 +798,12 @@ def test_the_timezone_block_sets_the_clock() -> None:
 
     with _pytest.raises(ValueError, match="not a timezone zone name"):
         timezone_block("'; rm -rf /")
+    # The two walls stay one grammar: boot's capture and the
+    # block's re-validation must not drift apart.
+    from msks.identity import ZONE_RE
+    from msks.server.api.boot import ZONE_NAME_RE
+
+    assert ZONE_RE.pattern == ZONE_NAME_RE.pattern
 
 
 def test_the_timezone_rides_beside_the_payload() -> None:
