@@ -959,9 +959,22 @@ way — the exclusive holder is the only writer.</p>
 <h2 id="the-plumbing">The plumbing<a class="headerlink" href="#the-plumbing" title="Permanent link">&para;</a></h2>
 <p>Each attached share is one virtiofsd process (the platform's own
 <code>virtiofsd</code> package, named by <code>MSKSD_VIRTIOFSD</code> when it lives
-off the path), spawned before the VM and stopped with it; every
-guest uid maps to the daemon's user, so guest-side file ownership
-is advisory, as with a typical bind mount. The guest mounts
+off the path), spawned before the VM and stopped with it.
+File ownership translates in both directions. Writes from the
+guest land on the host as the daemon's own user, whatever guest
+account made them — host-side ownership stays advisory, as with
+a typical bind mount. Files read back inside the guest present
+as the workspace's own user: the login user the workspace names,
+or the image's built-in <code>msks</code> account when it names none — so
+the share's tree reads as the logged-in user's files, and a
+file the guest creates stays writable by the account that
+created it. An edge sits outside that rule: a login user the
+operator's <code>user_data</code> premade at another uid presents as the
+first uid the seed provisions (1001 on a pristine image), not
+the premade account's own — and the host's own permission bits
+still govern every write: a file that presents as the workspace
+user's still refuses what its host-side mode refuses. The
+guest mounts
 through systemd units the workspace's seed writes — one per
 mount, named for the guest path, re-baked at each start — so a
 reboot remounts without cloud-init running again.</p>
