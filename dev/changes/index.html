@@ -1005,6 +1005,13 @@ tagged <code>vX.Y.Z</code>.</p>
   and changes apply at the workspace's next start. Files present
   in the guest as the workspace's own user. See
   <a href="../mounts/">docs/mounts.md</a>.</li>
+<li><strong>Guest timezone from the host (#633).</strong> A create captures the
+  host machine's timezone and the guest's clock follows it — the
+  seed's first-boot script sets it, with no operator action. The
+  capture is create-time and immutable: a host timezone change
+  later affects only new creates, and a host on UTC leaves the
+  guest on the image's own default. See
+  <a href="../images/">docs/images.md</a> (first-boot provisioning).</li>
 </ul>
 <h2 id="v03-2026-10-24">[v0.3] - 2026-10-24<a class="headerlink" href="#v03-2026-10-24" title="Permanent link">&para;</a></h2>
 <ul>
