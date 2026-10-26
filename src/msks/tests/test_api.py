@@ -365,6 +365,16 @@ def test_host_timezone_reads_the_clock(tmp_path) -> None:
     alt.symlink_to("/etc/zoneinfo/Asia/Tokyo")
     assert host_timezone(str(alt), str(zone_file)) == "Asia/Tokyo"
 
+    # A target outside both roots, and one under a root that names
+    # no valid zone: the read falls through to the file fallback.
+    zone_file.write_text("America/Detroit\n")
+    odd = tmp_path / "odd"
+    odd.symlink_to("/var/db/zoneinfo/Europe/Berlin")
+    assert host_timezone(str(odd), str(zone_file)) == "America/Detroit"
+    bad = tmp_path / "bad"
+    bad.symlink_to("/usr/share/zoneinfo/../etc/passwd")
+    assert host_timezone(str(bad), str(zone_file)) == "America/Detroit"
+
     # A copied (non-symlink) localtime: the /etc/timezone fallback.
     copied = tmp_path / "copied"
     copied.write_text("TZif data")
