@@ -274,6 +274,29 @@ def os_release_id() -> str:
     return ""
 
 
+def os_release_version_id() -> str:
+    """The os-release VERSION_ID (``24.04`` on Ubuntu noble), or
+    "" under the same absences os_release_id answers "" for."""
+    try:
+        lines = Path(OS_RELEASE).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        if line.startswith("VERSION_ID="):
+            return line[len("VERSION_ID=") :].strip().strip('"')
+    return ""
+
+
+def version_tuple(text: str) -> tuple[int, ...] | None:
+    """Dot-separated integers as a comparable tuple, or None when
+    the text carries anything else (rolling releases ship no
+    VERSION_ID; a nonnumeric one compares as unknown)."""
+    try:
+        return tuple(int(part) for part in text.split("."))
+    except ValueError:
+        return None
+
+
 def write_file(path: str, text: str) -> None:
     """Install one root-owned config file (mode 0644). The parent
     is created when absent — a minimal Debian (a slim image, a
@@ -360,7 +383,10 @@ def kernel_package(machine: str, release: str) -> str:
     arch names, not uname's machine names (x86_64 installs
     linux-image-amd64, aarch64 linux-image-arm64). The release
     the caller names is the sibling profiles' input; Debian's
-    packaging ignores it."""
+    packaging ignores it. Ubuntu and Mint name the flavor
+    linux-image-generic on every arch."""
+    if os_release_id() in {"ubuntu", "linuxmint"}:
+        return "linux-image-generic"
     arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(machine, machine)
     return f"linux-image-{arch}"
 
@@ -381,6 +407,11 @@ class HostProfile:
     #: ID and the spins that carry their own (Fedora Asahi's is
     #: fedora-asahi-remix).
     os_ids: tuple[str, ...]
+    #: os-release ID → minimum VERSION_ID the gate accepts. An ID
+    #: absent from the map carries no floor; a floored ID whose
+    #: VERSION_ID is missing or below the floor is refused with
+    #: the floor named.
+    version_floors: dict[str, str]
     description: str
     tool_packages: dict[str, str]
     soname_packages: dict[str, str]
@@ -411,9 +442,13 @@ DEBIAN_PROFILE = HostProfile(
     tool=TOOL,
     label="Debian",
     # The derivatives carry their own IDs — Ubuntu's ID_LIKE is
-    # debian, Linux Mint's is ubuntu — and the same apt package
-    # set installs on both (#639).
+    # debian, Linux Mint's is ubuntu debian — and their archives
+    # carry the full package set from these floors (#639):
+    # Ubuntu gains the virtiofsd package at noble, Mint 22 is
+    # noble-based. Mint's LMDE releases number from 6 and sit
+    # under the floor; the gate refuses them.
     os_ids=("debian", "ubuntu", "linuxmint"),
+    version_floors={"ubuntu": "24.04", "linuxmint": "22"},
     description=(
         "Prepare a Debian deployment host for msksd "
         "(#546): the capability wrapper, the routing kernel "
@@ -551,10 +586,27 @@ def invoked_as() -> str:
     return str(Path(sys.argv[0]).resolve())
 
 
+def refuse_below_floor(profile: HostProfile, release: str) -> None:
+    """The archive floor (#639): a floored ID under its minimum
+    VERSION_ID is refused with the floor named — the release's
+    archive lacks packages the setup installs."""
+    floor = profile.version_floors.get(release)
+    if floor is None:
+        return
+    version = version_tuple(os_release_version_id())
+    if version is None or version < version_tuple(floor):
+        raise HostSetupError(
+            f"this tool targets {release} {floor} or newer hosts — "
+            f"older releases lack packages the setup installs "
+            f"(os-release says "
+            f"'{os_release_version_id() or 'unknown'}')"
+        )
+
+
 def check_root_and_platform(
     profile: HostProfile = DEBIAN_PROFILE,
 ) -> None:
-    """The two refusals that precede every side effect."""
+    """The refusals that precede every side effect."""
     if not am_root():
         raise HostSetupError(f"run me as root (sudo {invoked_as()})")
     release = os_release_id()
@@ -563,6 +615,7 @@ def check_root_and_platform(
             f"this tool targets {profile.label} hosts "
             f"(os-release says '{release or 'unknown'}')"
         )
+    refuse_below_floor(profile, release)
 
 
 def missing_packages(

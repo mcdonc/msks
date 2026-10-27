@@ -919,6 +919,10 @@ def test_path_note_hints_the_distros_own_tool(
     assert "(msks-setup-fedora-host adds" in doctor_mod.path_note_result().hint
     distro("debian")
     assert "(msks-setup-debian-host adds" in doctor_mod.path_note_result().hint
+    distro("ubuntu")
+    assert "(msks-setup-debian-host adds" in doctor_mod.path_note_result().hint
+    distro("linuxmint")
+    assert "(msks-setup-debian-host adds" in doctor_mod.path_note_result().hint
     distro("arch")
     assert doctor_mod.path_note_result().hint == (
         "log out and back in, or export PATH=$PATH:/usr/sbin:/sbin"
