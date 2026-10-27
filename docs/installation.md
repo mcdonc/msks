@@ -157,6 +157,44 @@ uplink, and the service line.
 You will need to log out and back in for `msksd doctor` to return clean after
 using the host installer.
 
+## Setup on a Fedora host
+
+`msks-setup-fedora-host` is the same setup's Fedora entry: one
+`HostProfile` — the package map, the probe names, the dnf
+verbs, the `usermod`/`gpasswd` group commands — over the same
+phases the Debian tool runs (the wrapper, the routing kernel
+settings, the packages, the kvm grant, the systemd user
+service, the `--uninstall` mirror, the VMM download).
+
+```console
+sudo "$(command -v msks-setup-fedora-host)"
+```
+
+The run installs through dnf the packages a stock Fedora
+answers without: `conntrack-tools`, `qemu-img`, `tmux`,
+`virtiofsd`, and the consent stack's `libnetfilter_queue` when
+the linker cache lacks the soname. A stock install already
+carries the rest of the probed set — `setpriv`, `setcap`, `ip`,
+`nft`, `modprobe`, `sysctl`, the e2fsprogs trio, `mkisofs`,
+`ssh`, and `rsync` — so those probes read present and the run
+moves on. The CA probe names Fedora's own command,
+`update-ca-trust` (the ca-certificates package), where the
+Debian map probes `update-ca-certificates`.
+
+The kvm membership runs through `usermod -aG kvm`, and the
+uninstall summary's removal line is dnf's. A module the
+running kernel's tree lacks names the stock kernel package —
+`kernel`, or `kernel-16k` on the Asahi host class (a release
+string carrying `asahi`).
+
+The same pieces land at the same paths for the same reasons
+the Debian section above documents: the wrapper at
+`/usr/local/bin/msks-caps` with the two capabilities, the
+sysctl and modules files under `/etc`, the user unit under
+`~/.config/systemd/user/`, and the cloud-hypervisor static
+release for the host's architecture. `--uninstall` reverses
+the run the same way.
+
 ## The same host by hand (if you'd rather not trust `msks-setup-debian-host`)
 
 `msks-setup-debian-host` is a program the wheel ships, and
