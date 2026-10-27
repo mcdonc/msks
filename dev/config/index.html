@@ -1631,7 +1631,7 @@ and <code>path</code>, and two bounds: <code>writable</code> (default <code>true
 <td><code>MSKSD_VIRTIOFSD</code></td>
 <td>string</td>
 <td><code>virtiofsd</code></td>
-<td>Path to the virtiofsd binary each attached share spawns (Debian's <code>virtiofsd</code> package; an older suite's build under <code>/usr/libexec</code> is named here).</td>
+<td>Path to the virtiofsd binary each attached share spawns. A value with a slash is used exactly as named; a bare name resolves on PATH first, then the locations the distro packages install the binary at (<code>/usr/libexec/virtiofsd</code>, <code>/usr/lib/qemu/virtiofsd</code> — Debian's and Ubuntu's <code>virtiofsd</code> packages install it off PATH). The resolution runs at settings load and again on SIGHUP: a binary installed after the daemon started is one reload away.</td>
 </tr>
 </tbody>
 </table>
