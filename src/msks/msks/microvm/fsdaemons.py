@@ -50,6 +50,21 @@ VIRTIOFSD_FLOOR = (1, 13, 0)
 
 _VERSION_RE = re.compile(r"virtiofsd\s+v?(\d+(?:\.\d+)+)")
 
+
+def virtiofsd_meets_floor(version: tuple[int, ...] | None) -> bool:
+    """Whether a parsed version clears the floor. ``None`` (a
+    binary that reported no version) meets nothing: it predates
+    every feature the mounts pass. Short reports pad with zeros
+    before the comparison, so a two-part ``1.13`` reads as
+    ``1.13.0`` and clears the floor it spells."""
+    if version is None:
+        return False
+    width = max(len(version), len(VIRTIOFSD_FLOOR))
+    padded = version + (0,) * (width - len(version))
+    floor = VIRTIOFSD_FLOOR + (0,) * (width - len(VIRTIOFSD_FLOOR))
+    return padded >= floor
+
+
 #: Guest xattrs remap under one host prefix (the virtiofsd
 #: documented mapping), so a guest cannot write host security
 #: labels or root-owned namespaces through the share. Posix ACLs
@@ -196,13 +211,23 @@ def virtiofsd_floor_message(version: tuple[int, ...] | None) -> str:
     found = (
         ".".join(str(part) for part in version)
         if version is not None
-        else "an unreported version"
+        else "a binary that reported no version"
     )
     return (
         f"virtiofsd {found} is older than the {floor} host mounts "
         f"require (uid/gid translation and --readonly landed "
         f"upstream in {floor}); build a newer virtiofsd and point "
         f"MSKSD_VIRTIOFSD at it"
+    )
+
+
+def virtiofsd_missing_message(binary: str) -> str:
+    """The named error for a virtiofsd the daemon cannot exec
+    (missing or not executable) — shared by the version probe
+    and the spawn seam so the two refuse identically."""
+    return (
+        f"virtiofsd binary not found: {binary} (the mounts "
+        "feature needs it; msksd doctor names the package)"
     )
 
 

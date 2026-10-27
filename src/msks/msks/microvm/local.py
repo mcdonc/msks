@@ -41,7 +41,6 @@ from .chapi import API_ROOT, CloudHypervisorApi
 from .driver import MicrovmDriver
 from .errors import MicrovmError, MicrovmTimeoutError
 from .fsdaemons import (
-    VIRTIOFSD_FLOOR,
     fs_daemon_args,
     fs_device_entries,
     fs_pidfile_path,
@@ -49,6 +48,8 @@ from .fsdaemons import (
     guest_user_ids,
     sandbox_mode,
     virtiofsd_floor_message,
+    virtiofsd_meets_floor,
+    virtiofsd_missing_message,
     virtiofsd_version,
 )
 
@@ -335,6 +336,12 @@ def disk_entries(state_dir: Path, workspace_id: str) -> list[dict]:
 #: spawned daemon gets to serve its socket, and the post-KILL
 #: death-poll window.
 FS_TERM_GRACE_S = 5.0
+
+#: The version probe's ceiling (#655): the doctor's own probe
+#: answers inside 10s, and a mount start must not hang on an
+#: MSKSD_VIRTIOFSD wrapper that wedges — the probe dies with the
+#: error naming it instead.
+VERSION_PROBE_TIMEOUT_S = 10.0
 
 
 async def kill_procs(procs: list) -> None:
@@ -807,33 +814,45 @@ class LocalCloudHypervisor(MicrovmDriver):
         pidfile lands — one short-lived exec per mount-carrying
         start."""
         version = await self._virtiofsd_version(binary)
-        if version is None or version < VIRTIOFSD_FLOOR:
+        if not virtiofsd_meets_floor(version):
             raise MicrovmError(virtiofsd_floor_message(version))
 
     async def _virtiofsd_version(self, binary: str) -> tuple[int, ...] | None:
         """The resolved daemon's reported version (#655): exec
-        ``<binary> --version`` and parse it. A missing binary
-        refuses with the same named error the spawn seam raises
-        (the probe runs first); a nonzero exit or output without a
-        version reads as ``None`` — the callers' below-floor
-        refusal, because a virtiofsd that cannot report a version
-        predates every flag the mounts pass."""
+        ``<binary> --version`` and parse it, bounded by the
+        doctor probe's own ceiling — an MSKSD_VIRTIOFSD wrapper
+        that hangs must not hang a workspace start with it. A
+        binary the daemon cannot exec refuses with the shared
+        named error (the probe runs before the spawn seam's own
+        copy); a nonzero exit refuses naming the exit and the
+        stderr tail — a broken new build is not the floor's
+        "older than" story."""
         try:
             proc = await asyncio.create_subprocess_exec(
                 binary,
                 "--version",
                 stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
             )
-        except FileNotFoundError:
+        except OSError:
+            raise MicrovmError(virtiofsd_missing_message(binary)) from None
+        try:
+            out, err = await asyncio.wait_for(
+                proc.communicate(), VERSION_PROBE_TIMEOUT_S
+            )
+        except TimeoutError:
+            await kill_proc(proc)
             raise MicrovmError(
-                f"virtiofsd binary not found: {binary} (the mounts "
-                "feature needs it; msksd doctor names the package)"
+                f"virtiofsd {binary} --version did not answer within "
+                f"{VERSION_PROBE_TIMEOUT_S:.0f}s"
             ) from None
-        out, _ = await proc.communicate()
         if proc.returncode != 0:
-            return None
+            tail = err.decode(errors="replace").strip()[:200]
+            raise MicrovmError(
+                f"virtiofsd {binary} --version exited "
+                f"{proc.returncode}{f': {tail}' if tail else ''}"
+            )
         return virtiofsd_version(out.decode(errors="replace"))
 
     async def _spawn_one_fs(
@@ -936,11 +955,8 @@ class LocalCloudHypervisor(MicrovmDriver):
                 stderr=asyncio.subprocess.STDOUT,
                 start_new_session=True,
             )
-        except FileNotFoundError as exc:
-            raise MicrovmError(
-                f"virtiofsd binary not found: {binary} (the mounts "
-                "feature needs it; msksd doctor names the package)"
-            ) from exc
+        except OSError as exc:
+            raise MicrovmError(virtiofsd_missing_message(binary)) from exc
         finally:
             log_file.close()
 

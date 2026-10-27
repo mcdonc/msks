@@ -579,6 +579,11 @@ def test_doctor_reports_virtiofsd_and_share_paths(tmp_path: Path) -> None:
     present = tmp_path / "present"
     present.mkdir()
     settings = Settings()
+    # A floor-clearing double, not the host's own binary: a Mint
+    # 22 box (1.10.0) would otherwise fail the suite.
+    settings.vmm.virtiofsd = fake_virtiofsd(
+        tmp_path / "virtiofsd", "virtiofsd 1.13.0"
+    )
     settings.mounts = MountSettings(
         shares=(
             MountShare(name="gone", path=str(missing)),
@@ -587,7 +592,7 @@ def test_doctor_reports_virtiofsd_and_share_paths(tmp_path: Path) -> None:
     )
     report = run_doctor(settings)
     rows = {result.name: result for result in report.results}
-    assert rows["virtiofsd"].ok is True
+    assert rows[settings.vmm.virtiofsd].ok is True
     # A miss stays warning-grade: with the binary gone, the row
     # fails the run never — it only breaks the mounts feature.
     gone_settings = Settings()
@@ -643,7 +648,22 @@ def test_doctor_names_a_below_floor_virtiofsd(tmp_path: Path) -> None:
     row = rows[silent.vmm.virtiofsd]
     assert row.ok is False
     assert row.is_warning is True
-    assert "unreported version" in row.message
+    assert "reported no version" in row.message
+
+
+def test_the_floor_is_inclusive_and_pads_short_reports() -> None:
+    """The floor comparison (#655): exactly-the-floor clears, a
+    two-part report pads with zeros before it compares, and None
+    (nothing reported) meets nothing."""
+    from msks.microvm.fsdaemons import virtiofsd_meets_floor
+
+    assert virtiofsd_meets_floor((1, 13, 0)) is True
+    assert virtiofsd_meets_floor((1, 13)) is True
+    assert virtiofsd_meets_floor((1, 13, 3)) is True
+    assert virtiofsd_meets_floor((2, 0)) is True
+    assert virtiofsd_meets_floor((1, 12, 9)) is False
+    assert virtiofsd_meets_floor((1, 10, 0)) is False
+    assert virtiofsd_meets_floor(None) is False
 
 
 def test_virtiofsd_version_parses_the_reported_number() -> None:
@@ -663,7 +683,7 @@ def test_the_floor_message_names_floor_and_override() -> None:
     assert "1.10.0" in message
     assert "1.13.0" in message
     assert "MSKSD_VIRTIOFSD" in message
-    assert "unreported" in virtiofsd_floor_message(None)
+    assert "reported no version" in virtiofsd_floor_message(None)
 
 
 async def test_the_start_refuses_a_below_floor_virtiofsd(
@@ -727,11 +747,29 @@ async def test_the_real_probe_reads_the_binary(tmp_path: Path) -> None:
     assert await driver._virtiofsd_version(old) == (1, 10, 0)
 
     broken = tmp_path / "virtiofsd-broken"
-    broken.write_text("#!/bin/sh\nexit 3\n")
+    broken.write_text("#!/bin/sh\necho boom >&2\nexit 3\n")
     broken.chmod(0o755)
-    assert await driver._virtiofsd_version(str(broken)) is None
-    with pytest.raises(MicrovmError, match="1.13.0"):
+    with pytest.raises(MicrovmError, match=r"exited 3: boom"):
         await driver._require_virtiofsd_floor(str(broken))
+
+    unexecutable = tmp_path / "virtiofsd-noexec"
+    unexecutable.write_text("#!/bin/sh\ntrue\n")
+    unexecutable.chmod(0o644)
+    with pytest.raises(MicrovmError, match="virtiofsd binary not found"):
+        await driver._require_virtiofsd_floor(str(unexecutable))
+
+    import msks.microvm.local as local_mod
+
+    real_timeout = local_mod.VERSION_PROBE_TIMEOUT_S
+    local_mod.VERSION_PROBE_TIMEOUT_S = 0.2
+    hang = tmp_path / "virtiofsd-hang"
+    hang.write_text("#!/bin/sh\nsleep 5\n")
+    hang.chmod(0o755)
+    try:
+        with pytest.raises(MicrovmError, match="did not answer"):
+            await driver._require_virtiofsd_floor(str(hang))
+    finally:
+        local_mod.VERSION_PROBE_TIMEOUT_S = real_timeout
 
 
 def test_doctor_names_a_probe_failing_virtiofsd(tmp_path: Path) -> None:

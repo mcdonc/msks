@@ -52,8 +52,8 @@ from pathlib import Path
 
 from ..config import load_settings
 from ..microvm.fsdaemons import (
-    VIRTIOFSD_FLOOR,
     virtiofsd_floor_message,
+    virtiofsd_meets_floor,
     virtiofsd_version,
 )
 from ..settings import Settings
@@ -565,7 +565,7 @@ def virtiofsd_version_result(
 ) -> CheckResult:
     """The version half of the virtiofsd row: the floor verdict
     for a binary whose ``--version`` answered."""
-    if version is None or version < VIRTIOFSD_FLOOR:
+    if not virtiofsd_meets_floor(version):
         return CheckResult(
             name=binary,
             ok=False,
