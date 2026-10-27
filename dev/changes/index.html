@@ -997,6 +997,14 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>Apple Silicon host warning in doctor (#649).</strong> <code>msksd doctor</code>
+  names the Asahi-class kernel limitation where it exists — cpu0's
+  MIDR names Apple — as a warning row: this kernel's KVM does not
+  yet deliver guest interrupts, so workspaces start and their
+  kernels boot, then stall before ssh answers; everything short
+  of a guest boot works. The installation chapter documents the
+  same host class, and the row stays off x86_64 and non-Apple
+  arm64 hosts.</li>
 <li><strong>Per-arch channel images and arch-checked imports (#638).</strong>
   The release channel publishes one row per flavor and arch:
   <code>images.json</code> carries an <code>arch</code> field beside the kernel and

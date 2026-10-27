@@ -379,6 +379,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#apple-silicon-hosts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Apple Silicon hosts
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-alternative-paths" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -894,6 +905,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#apple-silicon-hosts" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Apple Silicon hosts
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-alternative-paths" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1190,6 +1212,20 @@ sanctioned VMM install — Debian's archive does not carry it.</p>
 <h2 id="the-host-doctor">The host doctor<a class="headerlink" href="#the-host-doctor" title="Permanent link">&para;</a></h2>
 <p>The <a href="../doctor/">The host doctor</a> chapter documents the <code>msksd doctor</code> command
 that can diagnose installation issues.</p>
+<h2 id="apple-silicon-hosts">Apple Silicon hosts<a class="headerlink" href="#apple-silicon-hosts" title="Permanent link">&para;</a></h2>
+<p>An Apple Silicon host (the Asahi Linux class — Fedora Asahi
+Remix on an M-series machine) runs the daemon, builds and
+imports guest images, and manages the workspace lifecycle, and
+its kernel's KVM does not yet deliver guest interrupts
+(<a href="https://github.com/mcdonc/msks/issues/649">#649</a>): a workspace
+starts and its kernel boots deep into first boot, then stalls
+before ssh answers. Everything short of a guest boot works, so
+such a host serves today as a build and authoring machine — the
+<code>msks</code> client can point <code>MSKSC_URL</code> at a daemon on any host
+whose KVM is complete, and drives workspaces there. <code>msksd
+doctor</code> names the condition on these hosts with a warning row;
+retest after each kernel update with <code>msks start</code> and the
+console — the limitation is the kernel's to lift.</p>
 <h2 id="the-alternative-paths">The alternative paths<a class="headerlink" href="#the-alternative-paths" title="Permanent link">&para;</a></h2>
 <p><strong>A development host</strong> (this repository's checkout) runs the
 daemon through Nix and devenv; the <a href="../development/">Development
