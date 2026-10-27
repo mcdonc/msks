@@ -120,7 +120,9 @@ let
   # The per-arch entries of the runtime-module closure that
   # survived the kernel's built-ins: Fedora's x86_64 kernel builds
   # crc32c and the ACPI button/evdev pair in (Debian carried them
-  # as modules), so the arch extras are the nested-KVM pair alone;
+  # as modules; the shared list below carries button/evdev/crc16
+  # anyway, where a builtin resolves to nothing and a module
+  # ships), so the arch extras are the nested-KVM pair alone;
   # arm64 adds its kvm module.
   archModules =
     {
@@ -147,10 +149,19 @@ let
     }
     .${arch};
 
-  # Fedora's shared-library directory (no multiarch triplet —
-  # /usr/lib64 on both 64-bit arches): the staged-rpm soname
-  # guards resolve against it.
-  libDir = "usr/lib64";
+  # Fedora's shared-library directories (no multiarch triplet):
+  # /usr/lib64 carries the 64-bit libraries on both arches, and
+  # aarch64's dynamic loader additionally lives in /usr/lib
+  # (glibc's aarch64 install root — Fedora's aarch64 fd even NEEDS
+  # the loader soname itself, which is how the split surfaced).
+  # The staged-rpm soname guards resolve against the list; the
+  # 64-bit staging path (jemalloc) stays usr/lib64 everywhere.
+  libDirs =
+    {
+      x86_64 = "usr/lib64";
+      aarch64 = "usr/lib64 usr/lib";
+    }
+    .${arch};
 
   # The official Fedora 44 Generic cloud image (#651): Fedora with
   # systemd, cloud-init, NetworkManager, rsync, sudo, and sshd —
@@ -759,6 +770,19 @@ let
     set -eu
     tree=root-tree
 
+    # Resolve a soname inside the tree (the guard helper below):
+    # the first library directory that carries it, empty when
+    # none does.
+    resolve_lib() {
+      found=
+      for d in ${libDirs}; do
+        if [ -e "$1"/"$d"/"$2" ]; then
+          found="$1"/"$d"/"$2"
+          break
+        fi
+      done
+    }
+
     # btrfs -> tree: a bare restore walks the filesystem and lands
     # every subvolume as a plain directory (root/, boot/, home/,
     # var/); -m restores owner/group/mode — the special bits
@@ -885,8 +909,11 @@ let
     # and the egress stack (tun for per-inner-workspace taps plus
     # the nftables/NAT and consent modules the daemon's rulesets
     # need). Everything else the Debian closure listed is BUILT IN
-    # to Fedora's kernel (ext4, virtio_blk, crc32c, the ACPI
-    # button/evdev pair). The closure is resolved mechanically
+    # to Fedora's kernel (ext4, virtio_blk, crc32c); the ACPI
+    # button/evdev pair and crc16 ride the list anyway — a builtin
+    # resolves to nothing and ships nothing, and the day a compose
+    # flips one to a module the closure carries it instead of
+    # failing the boot. The closure is resolved mechanically
     # with modprobe --show-depends over the image's own depmod
     # metadata and pinned at build time by comparing the full
     # tree's closure against the shipped tree's (the assert
@@ -897,6 +924,9 @@ let
       virtiofs
       isofs
       binfmt_misc
+      button
+      evdev
+      crc16
       ${archModules}
       tun
       nf_tables
@@ -1019,7 +1049,8 @@ let
       name=$(basename "$bin")
       for so in $(readelf -d "$bin" \
         | awk '/NEEDED/{gsub(/[\[\]]/,"",$NF); print $NF}'); do
-        test -e "$tree"/${libDir}/"$so" \
+        resolve_lib "$tree" "$so"
+        [ -n "$found" ] \
           || { echo "$name needs $so, absent from the tree" >&2; \
                exit 1; }
       done
@@ -1041,7 +1072,11 @@ let
             need && /  Name: /{print f, $3}')
       while read -r so ver; do
         [ -n "$so" ] || continue
-        lib="$tree"/${libDir}/"$so"
+        resolve_lib "$tree" "$so"
+        lib=$found
+        [ -n "$lib" ] \
+          || { echo "$name needs $so, absent from the tree" >&2; \
+               exit 1; }
         # Capture then grep — no pipe: `grep -q` exits at its
         # first match, and under pipefail a readelf still writing
         # its large output takes the SIGPIPE and the pipeline
@@ -1059,8 +1094,8 @@ let
     (cd jemalloc-rpm && rpm2cpio ${jemallocRpm} | cpio -idm --quiet)
     cp -a fd-rpm/usr/bin/fd "$tree"/usr/bin/fd
     cp -a rg-rpm/usr/bin/rg "$tree"/usr/bin/rg
-    cp -a jemalloc-rpm/${libDir}/libjemalloc.so.2 \
-      "$tree"/${libDir}/libjemalloc.so.2
+    cp -a jemalloc-rpm/usr/lib64/libjemalloc.so.2 \
+      "$tree"/usr/lib64/libjemalloc.so.2
     test -x "$tree"/usr/bin/fd
     test -x "$tree"/usr/bin/rg
     rpm_elf_guard "$tree"/usr/bin/fd
@@ -1122,7 +1157,8 @@ let
       "$tree"/usr/local/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/${toolchain.claudePlatformName}/claude; do
       for so in $(readelf -d "$bin" \
         | awk '/NEEDED/{gsub(/[\[\]]/,"",$NF); print $NF}'); do
-        test -e "$tree"/${libDir}/"$so" \
+        resolve_lib "$tree" "$so"
+        [ -n "$found" ] \
           || { echo "$bin needs $so, absent from the tree" >&2; \
                exit 1; }
       done
@@ -1141,7 +1177,11 @@ let
             need && /  Name: /{print f, $3}')
       while read -r so ver; do
         [ -n "$so" ] || continue
-        lib="$tree"/${libDir}/"$so"
+        resolve_lib "$tree" "$so"
+        lib=$found
+        [ -n "$lib" ] \
+          || { echo "$bin needs $so, absent from the tree" >&2; \
+               exit 1; }
         # Capture then grep — no pipe (the SIGPIPE-under-pipefail
         # race the deb guard hit; same class, same fix).
         readelf --version-info "$lib" > verinfo.tmp || {
@@ -1175,7 +1215,10 @@ let
     [ "$(head -n 1 "$npmcli")" = '#!/usr/bin/env node' ] \
       || { echo "npm-cli.js lost its env-node shebang" >&2; exit 1; }
     ldso="$tree"${elfLoader}
-    libpath="$tree"/${libDir}
+    libpath=""
+    for d in ${libDirs}; do
+      libpath="$libpath:$tree"/"$d"
+    done
     run_tool() { "$ldso" --library-path "$libpath" "$@"; }
     run_tool "$tree"/usr/local/bin/node --version \
       | grep -q '^v[0-9][0-9.]*$'
