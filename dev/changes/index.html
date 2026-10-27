@@ -997,6 +997,15 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>Fedora 44 guest image (#651).</strong> A third catalog image family
+  builds beside Debian and NixOS: <code>msks-build-guest fedora</code> (and
+  the <code>-x86_64</code>/<code>-aarch64</code> flavors) produces the <code>fedora:44</code>
+  archive from Fedora's pinned Generic cloud image, with the same
+  agent toolchain, console, mounts, and egress contract the
+  Debian image ships. The guest boots with SELinux disabled — the
+  image build reconstructs the filesystem without SELinux labels,
+  and the workspace's isolation boundary is the VM itself. See
+  <a href="../images/">docs/images.md</a>.</li>
 <li><strong>Apple Silicon host warning in doctor (#649).</strong> <code>msksd doctor</code>
   names the Asahi-class kernel limitation where it exists — cpu0's
   MIDR names Apple — as a warning row: this kernel's KVM does not

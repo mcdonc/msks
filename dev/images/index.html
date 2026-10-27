@@ -1315,10 +1315,10 @@ console</code> bridges the client to the guest's serial device through the
 follow the building host's <code>uname -m</code>, so <code>msks-build-guest</code> on an
 aarch64 dev host IS the arm64 build; the <code>-x86_64</code> and <code>-aarch64</code>
 suffixes pin an arch explicitly (<code>msks-build-guest nixos-aarch64</code>),
-and the Debian flavor is fetch-and-pack, so its pinned attrs build
-on any host (the NixOS closure wants its native evaluator — the
-arm64 busybox guard in the initrd build refuses a cross-eval with
-the cause named).</p>
+and the Debian and Fedora flavors are fetch-and-pack, so their
+pinned attrs build on any host (the NixOS closure wants its native
+evaluator — the arm64 busybox guard in the initrd build refuses a
+cross-eval with the cause named).</p>
 <p>The arm64 guests run 16K-page kernels — Debian's own <code>arm64-16k</code>
 flavour, and a kernel patch on the NixOS side — because a flat
 guest's page size is guest-internal (the image boots on any arm64
@@ -1385,7 +1385,12 @@ pinned by pool URL and checksum like the kernel and rsync
 debs) with the same linkage guard rsync gets. fd-find's binary
 lands under <code>/usr/lib/cargo/bin</code> with <code>/usr/bin/fdfind</code> a
 symlink, exactly the layout <code>apt install fd-find</code> leaves, and
-pi accepts the <code>fdfind</code> name. The NixOS image
+pi accepts the <code>fdfind</code> name. The Fedora image stages the
+distro's own <code>fd-find</code> and <code>ripgrep</code> rpm (<code>fdFindRpm</code> and
+<code>ripgrepRpm</code> in <code>nix/guest-fedora.nix</code>, pinned from the
+compose's Everything repo, with fd's <code>libjemalloc</code> dependency
+pinned beside them) under the same guard; Fedora names the
+binary <code>fd</code>, the name pi probes first. The NixOS image
 ships nixpkgs' own <code>fd</code> and <code>ripgrep</code> on the profile PATH the
 toolchain rides. With both present, a first <code>pi</code> start needs no
 downloads.</p>
@@ -1505,6 +1510,61 @@ rewritten cli.js's shebang to a build-time Nix store node no
 guest carries. <code>test -x</code> on a symlink says nothing about the
 interpreter behind it. The launcher executions turn
 that class of breakage into a build failure.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>msks-build-guest<span class="w"> </span>fedora
+</span></code></pre></div>
+<p>builds the third catalog image (<code>workspace-fedora-44.tar</code>, #651)
+from Fedora's date-pinned, sha256-verified <strong>Generic</strong> cloud
+qcow2 — the same fetch-and-pack shape as the Debian build, with
+Fedora's own divergences adapted at each step:</p>
+<ul>
+<li><strong>btrfs, not ext4.</strong> The cloud image's root filesystem is a
+  btrfs subvolume set (<code>root</code>, <code>boot</code>, <code>home</code>, <code>var</code>); the build
+  extracts it with <code>btrfs restore</code> — unprivileged, no mount —
+  flattens the set into the plain tree a direct-boot guest
+  wants, and packs a fresh ext4 from it (the same <code>mke2fs -d</code>
+  under fakeroot). The extraction runs inside one fakeroot
+  session, and <code>btrfs restore -m</code> restores the distro's own
+  owner/group/mode — the setuid bits included — into the
+  session's faked view; the session writes that view out as a
+  manifest and the pack stage re-applies it, because a faked
+  view cannot outlive its session and untarring it under a new
+  one would land setuid binaries genuinely unreadable
+  (<code>mke2fs -d</code> reads file contents through the real modes).</li>
+<li><strong>The kernel rides inside the image.</strong> Fedora publishes no
+  separate kernel artifact: <code>/usr/lib/modules/&lt;kver&gt;/vmlinuz</code> is
+  the kernel, its config, and the module tree in one pin. The
+  minimal initramfs carries zero modules — Fedora's kernel
+  builds ext4, virtio_blk, and crc32c in — so busybox mounts the
+  root and switch_roots into systemd.</li>
+<li><strong>SELinux stays off.</strong> The build reconstructs the filesystem
+  without SELinux xattrs (<code>btrfs restore</code> drops them, and the
+  unprivileged pack cannot write them), so every file would
+  boot unlabeled and enforcing policy freezes PID 1 before the
+  first getty; the boot cmdline carries <code>selinux=0</code>. The
+  workspace's isolation boundary is the VM itself — the Debian
+  and NixOS images carry no MAC either.</li>
+<li><strong>NetworkManager owns the NIC.</strong> Fedora's image runs
+  NetworkManager, whose default policy takes a DHCP address on
+  any ethernet it finds, so an egress workspace's NIC configures
+  itself with no msks-side unit (the Debian overlay's
+  networkd enablement is the divergence there) and cloud-init's
+  network rendering stays off the same way.</li>
+<li><strong>The console prompt is pinned to the shared shape.</strong> Fedora's
+  default bash prompt is <code>[root@host ~]#</code>; the build appends the
+  <code>PS1</code> that presents the same <code>root@host:~#</code> every family's
+  console surface answers with.</li>
+<li><strong>Boot diet.</strong> chronyd and the zram generator's config drop
+  (the generator would stall each boot ~45s on a zram device no
+  workspace VM presents), and the module closure ships the
+  virtiofs module Fedora builds separately from the Debian
+  pair.</li>
+</ul>
+<p>The output lands under <code>.devenv/state/guest-fedora/</code>
+(<code>GUEST_FEDORA_DIR</code> relocates it); <code>nix/guest-fedora.nix</code>
+documents every step. The image stages the same agent toolchain
+as the Debian one (the official Node tarball and the shared pins
+under <code>/usr/local</code>) and the same fd/rg staging described above,
+from the distro's own rpm.</p>
 <h3 id="building-your-own">Building your own<a class="headerlink" href="#building-your-own" title="Permanent link">&para;</a></h3>
 <p>Any rootfs that satisfies the contract above can become a workspace
 image. The outline, using a distro's own cloud image as the source:</p>
@@ -1555,11 +1615,11 @@ image. The outline, using a distro's own cloud image as the source:</p>
    and declare <code>"capabilities": {"provisioner": "cloud-init"}</code>.</li>
 <li>Lay out <code>boot/</code> and <code>disk/</code> as the layer tree and wrap it:</li>
 </ol>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>tar<span class="w"> </span>--sort<span class="o">=</span>name<span class="w"> </span>--mtime<span class="o">=</span><span class="s1">'@1'</span><span class="w"> </span>--owner<span class="o">=</span><span class="m">0</span><span class="w"> </span>--group<span class="o">=</span><span class="m">0</span><span class="w"> </span>--numeric-owner<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span>-C<span class="w"> </span>layer-root<span class="w"> </span>-cf<span class="w"> </span>workspace-mine-1.0.layer.tar<span class="w"> </span>.
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="c1"># then wrap layer.tar in a container-image tar, or simply:</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>podman<span class="w"> </span>import<span class="w"> </span>workspace-mine-1.0.layer.tar<span class="w"> </span>workspace-mine:1.0
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>podman<span class="w"> </span>save<span class="w"> </span>-o<span class="w"> </span>workspace-mine-1.0.tar<span class="w"> </span>workspace-mine:1.0
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>tar<span class="w"> </span>--sort<span class="o">=</span>name<span class="w"> </span>--mtime<span class="o">=</span><span class="s1">'@1'</span><span class="w"> </span>--owner<span class="o">=</span><span class="m">0</span><span class="w"> </span>--group<span class="o">=</span><span class="m">0</span><span class="w"> </span>--numeric-owner<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">    </span>-C<span class="w"> </span>layer-root<span class="w"> </span>-cf<span class="w"> </span>workspace-mine-1.0.layer.tar<span class="w"> </span>.
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="c1"># then wrap layer.tar in a container-image tar, or simply:</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>podman<span class="w"> </span>import<span class="w"> </span>workspace-mine-1.0.layer.tar<span class="w"> </span>workspace-mine:1.0
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>podman<span class="w"> </span>save<span class="w"> </span>-o<span class="w"> </span>workspace-mine-1.0.tar<span class="w"> </span>workspace-mine:1.0
 </span></code></pre></div>
 <p><code>podman import</code>/<code>save</code> produce a valid outer layout; msksd accepts
 both compressed and uncompressed layers (uncompressed layers keep
@@ -1572,14 +1632,14 @@ before publishing. It boots the archive exactly the way a
 workspace boots (same driver, overlay, home volume, seed disk,
 and console path, against a throwaway state dir under <code>/tmp</code>)
 and reports each contract point by name:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>$ msks image check workspace-mine-1.0.tar
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>PASS archive        imported mine:1.0 (1d6a5e782fc0)
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>PASS boot           guest answered the console in 3.4s (kernel 6.12.107+deb13-amd64)
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>PASS console        root autologin getty on the console port
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>PASS user-data      seed payload ran on first boot
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>PASS acpi-shutdown  clean shutdown within 120s
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>PASS root-rw        root is writable and the write survived a stop/start (overlay)
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>PASS home-label     /home mounted by label msks-home and its write survived a stop/start (volume)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>$ msks image check workspace-mine-1.0.tar
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>PASS archive        imported mine:1.0 (1d6a5e782fc0)
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>PASS boot           guest answered the console in 3.4s (kernel 6.12.107+deb13-amd64)
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>PASS console        root autologin getty on the console port
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>PASS user-data      seed payload ran on first boot
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>PASS acpi-shutdown  clean shutdown within 120s
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>PASS root-rw        root is writable and the write survived a stop/start (overlay)
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>PASS home-label     /home mounted by label msks-home and its write survived a stop/start (volume)
 </span></code></pre></div>
 <p>Any host with <code>/dev/kvm</code> runs it — nothing else from msks is
 needed (no daemon, no state). The points map one-to-one onto "What a guest must provide"
@@ -1613,16 +1673,16 @@ drive this surface from the CLI — <code>msks image import &lt;path&gt;</code>,
 image ls</code>, <code>msks image rm &lt;ref&gt;</code>, <code>msks image info &lt;ref&gt;</code>, and <code>msks
 image default &lt;ref&gt;</code> (see
 <code>docs/cli.md</code>); the raw HTTP form:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://192.168.77.2:8660/api/v1/images<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"content-type: application/json"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"source": "/path/on/the/daemon/workspace-mine-1.0.tar"}'</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>https://192.168.77.2:8660/api/v1/images<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"content-type: application/json"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"source": "/path/on/the/daemon/workspace-mine-1.0.tar"}'</span>
 </span></code></pre></div>
 <p>The <code>source</code> is a path on the <strong>daemon's</strong> filesystem (the daemon
 reads them from its state dir), or — — an <code>https://</code> URL the
 daemon downloads itself:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>msks<span class="w"> </span>image<span class="w"> </span>import<span class="w"> </span>https://images.example.com/workspace-mine-1.0.tar
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>.../api/v1/images<span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"source": "https://images.example.com/workspace-mine-1.0.tar"}'</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>msks<span class="w"> </span>image<span class="w"> </span>import<span class="w"> </span>https://images.example.com/workspace-mine-1.0.tar
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>.../api/v1/images<span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"source": "https://images.example.com/workspace-mine-1.0.tar"}'</span>
 </span></code></pre></div>
 <p>A URL download lands in the catalog's staging area under a
 size ceiling and a deadline (<code>MSKSD_IMAGE_IMPORT_MAX_MIB</code>,
@@ -1651,9 +1711,9 @@ they were; the manifest's pair stays recorded as the row's
 <strong>origin</strong> beside the registered pair, so a usable image's
 provenance reads from the catalog alone.</p>
 <p>A cataloged row renames in place under the same rules:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>msks<span class="w"> </span>image<span class="w"> </span>rename<span class="w"> </span>debian:13<span class="w"> </span>--name<span class="w"> </span>mine<span class="w"> </span>--version<span class="w"> </span><span class="m">1</span>.0
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>PATCH<span class="w"> </span>.../api/v1/images/&lt;hash&gt;<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"name": "mine", "version": "1.0"}'</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>msks<span class="w"> </span>image<span class="w"> </span>rename<span class="w"> </span>debian:13<span class="w"> </span>--name<span class="w"> </span>mine<span class="w"> </span>--version<span class="w"> </span><span class="m">1</span>.0
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>PATCH<span class="w"> </span>.../api/v1/images/&lt;hash&gt;<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"name": "mine", "version": "1.0"}'</span>
 </span></code></pre></div>
 <p>Either key alone keeps the other at its registered value. A rename validates the new pair the same way an import
 override does: non-empty, and free of <code>:</code> and <code>@</code> (the
@@ -1676,14 +1736,14 @@ override renames the row the same way a rename does.</p>
   images arrive; <code>POST /api/v1/images/default</code> re-designates at any
   time:</li>
 </ul>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># designate by any reference form create's image field takes</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>.../api/v1/images/default<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"ref": "debian:13.6"}'</span>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="c1"># clear the designation; the answer reports the fallback</span>
-</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="c1"># (the sole catalog entry, or none)</span>
-</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>.../api/v1/images/default<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># designate by any reference form create's image field takes</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>.../api/v1/images/default<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"ref": "debian:13.6"}'</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="c1"># clear the designation; the answer reports the fallback</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="c1"># (the sole catalog entry, or none)</span>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>.../api/v1/images/default<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span>
 </span></code></pre></div>
 <ul>
 <li>The designation is the catalog's <code>default</code> pointer file.
@@ -1708,8 +1768,8 @@ override renames the row the same way a rename does.</p>
   (<code>origin_name</code>/<code>origin_version</code>, equal to <code>name</code>/<code>version</code>
   for an unrenamed row):</li>
 </ul>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">  </span>https://127.0.0.1:8660/api/v1/images
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="w">  </span>https://127.0.0.1:8660/api/v1/images
 </span></code></pre></div>
 <ul>
 <li>
@@ -1727,23 +1787,23 @@ override renames the row the same way a rename does.</p>
 </ul>
 <h2 id="using-an-image">Using an image<a class="headerlink" href="#using-an-image" title="Permanent link">&para;</a></h2>
 <p>Workspace create selects an image by reference:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># name:version — exact</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>.../api/v1/workspaces<span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"id": "ws1", "image": "debian:13.6"}'</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="c1"># bare name — resolves to the newest registered version; the</span>
-</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="c1"># most recently imported row wins when two builds carry the same</span>
-</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="c1"># leading numbers (e.g. a NixOS version's trailing store hash</span>
-</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="c1"># differs between builds)</span>
-</span><span id="__span-11-8"><a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="o">{</span><span class="s2">"id"</span>:<span class="w"> </span><span class="s2">"ws1"</span>,<span class="w"> </span><span class="s2">"image"</span>:<span class="w"> </span><span class="s2">"debian"</span><span class="o">}</span>
-</span><span id="__span-11-9"><a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a>
-</span><span id="__span-11-10"><a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="c1"># name@hash — pins identity AND content</span>
-</span><span id="__span-11-11"><a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="o">{</span><span class="s2">"id"</span>:<span class="w"> </span><span class="s2">"ws1"</span>,<span class="w"> </span><span class="s2">"image"</span>:<span class="w"> </span><span class="s2">"debian@&lt;sha256&gt;"</span><span class="o">}</span>
-</span><span id="__span-11-12"><a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>
-</span><span id="__span-11-13"><a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="c1"># bare hash — content-addressed</span>
-</span><span id="__span-11-14"><a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a><span class="o">{</span><span class="s2">"id"</span>:<span class="w"> </span><span class="s2">"ws1"</span>,<span class="w"> </span><span class="s2">"image"</span>:<span class="w"> </span><span class="s2">"&lt;sha256&gt;"</span><span class="o">}</span>
-</span><span id="__span-11-15"><a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>
-</span><span id="__span-11-16"><a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a><span class="c1"># no image at all — the designated default</span>
-</span><span id="__span-11-17"><a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a><span class="o">{</span><span class="s2">"id"</span>:<span class="w"> </span><span class="s2">"ws1"</span><span class="o">}</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># name:version — exact</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>.../api/v1/workspaces<span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"id": "ws1", "image": "debian:13.6"}'</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="c1"># bare name — resolves to the newest registered version; the</span>
+</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="c1"># most recently imported row wins when two builds carry the same</span>
+</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="c1"># leading numbers (e.g. a NixOS version's trailing store hash</span>
+</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="c1"># differs between builds)</span>
+</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="o">{</span><span class="s2">"id"</span>:<span class="w"> </span><span class="s2">"ws1"</span>,<span class="w"> </span><span class="s2">"image"</span>:<span class="w"> </span><span class="s2">"debian"</span><span class="o">}</span>
+</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>
+</span><span id="__span-12-10"><a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="c1"># name@hash — pins identity AND content</span>
+</span><span id="__span-12-11"><a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="o">{</span><span class="s2">"id"</span>:<span class="w"> </span><span class="s2">"ws1"</span>,<span class="w"> </span><span class="s2">"image"</span>:<span class="w"> </span><span class="s2">"debian@&lt;sha256&gt;"</span><span class="o">}</span>
+</span><span id="__span-12-12"><a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a>
+</span><span id="__span-12-13"><a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="c1"># bare hash — content-addressed</span>
+</span><span id="__span-12-14"><a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a><span class="o">{</span><span class="s2">"id"</span>:<span class="w"> </span><span class="s2">"ws1"</span>,<span class="w"> </span><span class="s2">"image"</span>:<span class="w"> </span><span class="s2">"&lt;sha256&gt;"</span><span class="o">}</span>
+</span><span id="__span-12-15"><a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a>
+</span><span id="__span-12-16"><a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a><span class="c1"># no image at all — the designated default</span>
+</span><span id="__span-12-17"><a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a><span class="o">{</span><span class="s2">"id"</span>:<span class="w"> </span><span class="s2">"ws1"</span><span class="o">}</span>
 </span></code></pre></div>
 <p>Versions order numerically (<code>13.10</code> sorts after <code>13.9</code>). A malformed
 reference (<code>debian@not-a-hash</code>) is a named 400 rather than a
@@ -1753,15 +1813,15 @@ the image is the convenient path, not a mandate.</p>
 <p>A workspace created with <code>user_data</code> gets a customization payload
 that runs on its first boot — EC2-style, delivered on the workspace's
 own seed disk:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># a script (any image with a provisioner; the leading #! is what</span>
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="c1"># makes it one)</span>
-</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>msks<span class="w"> </span>create<span class="w"> </span>ws<span class="w"> </span>--user-data<span class="w"> </span>provision.sh<span class="w"> </span>--start
-</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
-</span><span id="__span-12-5"><a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="c1"># cloud-config (needs a cloud-init image)</span>
-</span><span id="__span-12-6"><a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>.../api/v1/workspaces<span class="w"> </span>-d<span class="w"> </span><span class="s1">'{</span>
-</span><span id="__span-12-7"><a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="s1">  "id": "ws", "image": "mycloud:1.0",</span>
-</span><span id="__span-12-8"><a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="s1">  "user_data": "#cloud-config\nusers:\n- name: alice\n..."</span>
-</span><span id="__span-12-9"><a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="s1">}'</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># a script (any image with a provisioner; the leading #! is what</span>
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="c1"># makes it one)</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>msks<span class="w"> </span>create<span class="w"> </span>ws<span class="w"> </span>--user-data<span class="w"> </span>provision.sh<span class="w"> </span>--start
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="c1"># cloud-config (needs a cloud-init image)</span>
+</span><span id="__span-13-6"><a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>.../api/v1/workspaces<span class="w"> </span>-d<span class="w"> </span><span class="s1">'{</span>
+</span><span id="__span-13-7"><a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="s1">  "id": "ws", "image": "mycloud:1.0",</span>
+</span><span id="__span-13-8"><a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="s1">  "user_data": "#cloud-config\nusers:\n- name: alice\n..."</span>
+</span><span id="__span-13-9"><a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="s1">}'</span>
 </span></code></pre></div>
 <p>The rules worth knowing:</p>
 <ul>
@@ -1831,9 +1891,9 @@ published image is one command. Pick the row whose <code>arch</code> field
 matches the host's <code>uname -m</code>; the import then accepts it
 without ceremony (and refuses a row for another architecture
 with the same named error any other foreign-arch import gets):</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># the URL from the manifest row</span>
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>msks<span class="w"> </span>image<span class="w"> </span>import<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span>https://github.com/mcdonc/msks/releases/download/images/&lt;hash&gt;/debian.tar.zst
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># the URL from the manifest row</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>msks<span class="w"> </span>image<span class="w"> </span>import<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span>https://github.com/mcdonc/msks/releases/download/images/&lt;hash&gt;/debian.tar.zst
 </span></code></pre></div>
 <p>The description the listing and <code>image info</code> print is baked into
 the image itself: the build writes one line into the layer's
