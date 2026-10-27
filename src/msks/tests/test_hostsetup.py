@@ -373,6 +373,10 @@ def test_off_path_virtiofsd_answers_the_probe(
     debian_host.files.add(str(location))
     assert hostsetup.tool_present("virtiofsd") is True
     assert hostsetup.missing_packages() == []
+    # The executable bit gates the probe too: a non-executable
+    # regular file at the location names the package again.
+    location.chmod(0o644)
+    assert hostsetup.missing_packages() == ["virtiofsd"]
 
 
 def test_absent_everywhere_virtiofsd_names_the_package(
