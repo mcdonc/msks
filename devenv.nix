@@ -178,6 +178,7 @@ in
     server = msksServer;
     client = msksClient;
     guest-image-debian = guestImages.image-archive-debian;
+    guest-image-fedora = guestImages.image-archive-fedora;
     guest-image-nixos = guestImages.image-archive-nixos;
   };
 
@@ -279,7 +280,7 @@ in
   # evaluated — the guest toolchain cannot drift from the dev shell,
   # and the build needs nothing from the host but nix.
   scripts.msks-build-guest = {
-    description = "Build the microvm guest assets (kernel, initrd, ext4 rootfs) into the guest state dir (.devenv/state/guest; GUEST_DIR relocates it; `msks-build-guest nixos` builds the NixOS guest into .devenv/state/guest-nixos; the arch-suffixed flavors #637 pin the guest's arch — the bare names follow the building host)";
+    description = "Build the microvm guest assets (kernel, initrd, ext4 rootfs) into the guest state dir (.devenv/state/guest; GUEST_DIR relocates it; `msks-build-guest fedora` builds the Fedora 44 guest into .devenv/state/guest-fedora (#651); `msks-build-guest nixos` builds the NixOS guest into .devenv/state/guest-nixos; the arch-suffixed flavors #637 pin the guest's arch — the bare names follow the building host)";
     exec = ''exec bash "$DEVENV_ROOT/scripts/build-guest.sh" "$@"'';
   };
 

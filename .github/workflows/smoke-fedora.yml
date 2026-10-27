@@ -1,0 +1,139 @@
+# The Fedora real-VM smoke suite (#651): the same real-boot lane
+# the Debian suite (#64) runs, against the Fedora 44 guest
+# assets, unprivileged — /dev/kvm but no root, no host network.
+# The Debian, egress/root, and NixOS suites each carry their own
+# workflow now, so a failure names its lane and the lanes run in
+# parallel.
+#
+# The suite never counts toward the coverage gate (the
+# faked-transport unit suites own the 100%); serial (-n stays off)
+# so the real boots do not fight over the runner's 2 vCPUs. TMPDIR
+# is pinned for the AF_UNIX path-depth reason as ci.yml. Verbose (-
+# v): every test's name and verdict streams as it runs, so a
+# hanging boot is visible mid-job, not only in the final summary.
+#
+# Path-filtered to its real inputs: this workflow's own file, the
+# toolchain pins, the Fedora guest build and the shared pieces,
+# everything under the server package the boots exercise, and the
+# suite itself.
+name: Smoke (Fedora)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/smoke-fedora.yml
+      - devenv.nix
+      - devenv.yaml
+      - devenv.lock
+      - nix/guest.nix
+      - nix/agent-toolchain.nix
+      - nix/pi-shrinkwrap-patch.py
+      - nix/pi-shrinkwrap-integrity.json
+      - nix/guest-fedora.nix
+      - nix/image-archive.nix
+      - nix/guest-pi-extension.ts
+      - scripts/build-guest.sh
+      - src/msks/msks/**
+      - src/msks/tests/conftest.py
+      - src/msks/tests/test_smoke/__init__.py
+      - src/msks/tests/test_smoke/*.py
+      - src/msks/tests/test_smoke/core/**
+  pull_request:
+    paths:
+      - .github/workflows/smoke-fedora.yml
+      - devenv.nix
+      - devenv.yaml
+      - devenv.lock
+      - nix/guest.nix
+      - nix/agent-toolchain.nix
+      - nix/pi-shrinkwrap-patch.py
+      - nix/pi-shrinkwrap-integrity.json
+      - nix/guest-fedora.nix
+      - nix/image-archive.nix
+      - nix/guest-pi-extension.ts
+      - scripts/build-guest.sh
+      - src/msks/msks/**
+      - src/msks/tests/conftest.py
+      - src/msks/tests/test_smoke/__init__.py
+      - src/msks/tests/test_smoke/*.py
+      - src/msks/tests/test_smoke/core/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-fedora-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke-fedora:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: devenv
+
+      # Pinned release, not the moving default registry: the devenv
+      # that evaluates the 2.x tasks syntax and parses -O is the one
+      # moving part otherwise — an upstream break would red CI with no
+      # repo change.
+      - name: Install devenv.sh
+        run: nix profile add github:cachix/devenv/v2.3.1
+
+      # The documented KVM permission rule (github.blog 2024-04-02):
+      # /dev/kvm exists on the hosted runner image but is restricted;
+      # this makes it 0666 for the runner user. kvm_available() then
+      # passes and the conftest points the smoke tests at the built
+      # guest assets under .devenv/state/guest-fedora.
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Build guest assets
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          msks-build-guest fedora
+
+      # Nested-KVM guests run slower than a dev host's KVM guest
+      # (#64): the env ceilings below give the persistence test's four
+      # boot cycles room; the closing grep is the guard pattern — the
+      # smoke tests skip — not fail — when a prerequisite is missing,
+      # and a run that quietly skipped everything would report green
+      # while proving nothing.
+      - name: Smoke tests
+        env:
+          TMPDIR: /tmp
+          TEST_GUEST_UP_TIMEOUT_S: "180"
+          TEST_CONSOLE_TIMEOUT_S: "120"
+          TEST_SHUTDOWN_TIMEOUT_S: "180"
+        run: |
+          set -eo pipefail
+          GUEST_DIR="$PWD/.devenv/state/guest-fedora" \
+          devenv --quiet -O dotenv.enable:bool false shell -- \
+            python -m pytest src/msks/tests/test_smoke/core \
+            -v -rs -p no:cacheprovider --no-cov 2>&1 \
+            | tee /tmp/smoke-fedora.log
+          ! grep -q 'test_boot_lifecycle.*SKIPPED' /tmp/smoke-fedora.log \
+            || { echo 'the local boots skipped — assets or /dev/kvm regressed'; exit 1; }
+
+      # The failing boot's own evidence, kept by the tests' failure
+      # path — the runner recycles, so /tmp/msks-smoke-failed/ is the
+      # only place the guest's side of the story survives.
+      - name: Collect smoke state on failure
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-fedora-evidence
+          path: /tmp/msks-smoke-failed/
+          if-no-files-found: ignore
+          retention-days: 7

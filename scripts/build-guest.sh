@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Build the microvm guest assets with nix and land them in the
 # guest state dir (#5) — .devenv/state/guest by default; GUEST_DIR
-# relocates it. `build-guest.sh nixos` (#250) builds the NixOS guest
+# relocates it. `build-guest.sh fedora` (#651) builds the Fedora 44
+# guest instead — .devenv/state/guest-fedora, relocated by
+# GUEST_FEDORA_DIR. `build-guest.sh nixos` (#250) builds the NixOS guest
 # instead — .devenv/state/guest-nixos, relocated by GUEST_NIXOS_DIR
 # — with the same output surface. The arch-suffixed flavors (#637)
-# pin the guest's architecture: `debian-aarch64` and
-# `nixos-aarch64` build the arm64 guests into their own dirs
+# pin the guest's architecture: `debian-aarch64`, `fedora-aarch64`,
+# and `nixos-aarch64` build the arm64 guests into their own dirs
 # (GUEST_AARCH64_DIR / GUEST_NIXOS_AARCH64_DIR relocate); the bare
 # flavor names follow the building host's uname, so an aarch64
 # dev host's `debian` IS the arm64 guest.
@@ -34,6 +36,18 @@ debian-aarch64)
   attr=guest-aarch64
   guest_dir="${GUEST_AARCH64_DIR:-$root/.devenv/state/guest-aarch64}"
   ;;
+fedora)
+  attr=guest-fedora
+  guest_dir="${GUEST_FEDORA_DIR:-$root/.devenv/state/guest-fedora}"
+  ;;
+fedora-x86_64)
+  attr=guest-fedora-x86_64
+  guest_dir="${GUEST_FEDORA_X86_64_DIR:-$root/.devenv/state/guest-fedora-x86_64}"
+  ;;
+fedora-aarch64)
+  attr=guest-fedora-aarch64
+  guest_dir="${GUEST_FEDORA_AARCH64_DIR:-$root/.devenv/state/guest-fedora-aarch64}"
+  ;;
 nixos)
   attr=guest-nixos
   guest_dir="${GUEST_NIXOS_DIR:-$root/.devenv/state/guest-nixos}"
@@ -47,7 +61,7 @@ nixos-aarch64)
   guest_dir="${GUEST_NIXOS_AARCH64_DIR:-$root/.devenv/state/guest-nixos-aarch64}"
   ;;
 *)
-  echo "usage: $0 [debian|debian-x86_64|debian-aarch64|nixos|nixos-x86_64|nixos-aarch64]" >&2
+  echo "usage: $0 [debian|debian-x86_64|debian-aarch64|fedora|fedora-x86_64|fedora-aarch64|nixos|nixos-x86_64|nixos-aarch64]" >&2
   exit 2
   ;;
 esac

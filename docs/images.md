@@ -193,10 +193,10 @@ The guests build for x86_64 and aarch64. The bare flavor names
 follow the building host's `uname -m`, so `msks-build-guest` on an
 aarch64 dev host IS the arm64 build; the `-x86_64` and `-aarch64`
 suffixes pin an arch explicitly (`msks-build-guest nixos-aarch64`),
-and the Debian flavor is fetch-and-pack, so its pinned attrs build
-on any host (the NixOS closure wants its native evaluator — the
-arm64 busybox guard in the initrd build refuses a cross-eval with
-the cause named).
+and the Debian and Fedora flavors are fetch-and-pack, so their
+pinned attrs build on any host (the NixOS closure wants its native
+evaluator — the arm64 busybox guard in the initrd build refuses a
+cross-eval with the cause named).
 
 The arm64 guests run 16K-page kernels — Debian's own `arm64-16k`
 flavour, and a kernel patch on the NixOS side — because a flat
@@ -271,7 +271,12 @@ pinned by pool URL and checksum like the kernel and rsync
 debs) with the same linkage guard rsync gets. fd-find's binary
 lands under `/usr/lib/cargo/bin` with `/usr/bin/fdfind` a
 symlink, exactly the layout `apt install fd-find` leaves, and
-pi accepts the `fdfind` name. The NixOS image
+pi accepts the `fdfind` name. The Fedora image stages the
+distro's own `fd-find` and `ripgrep` rpm (`fdFindRpm` and
+`ripgrepRpm` in `nix/guest-fedora.nix`, pinned from the
+compose's Everything repo, with fd's `libjemalloc` dependency
+pinned beside them) under the same guard; Fedora names the
+binary `fd`, the name pi probes first. The NixOS image
 ships nixpkgs' own `fd` and `ripgrep` on the profile PATH the
 toolchain rides. With both present, a first `pi` start needs no
 downloads.
@@ -396,6 +401,64 @@ rewritten cli.js's shebang to a build-time Nix store node no
 guest carries. `test -x` on a symlink says nothing about the
 interpreter behind it. The launcher executions turn
 that class of breakage into a build failure.
+
+```bash
+msks-build-guest fedora
+```
+
+builds the third catalog image (`workspace-fedora-44.tar`, #651)
+from Fedora's date-pinned, sha256-verified **Generic** cloud
+qcow2 — the same fetch-and-pack shape as the Debian build, with
+Fedora's own divergences adapted at each step:
+
+- **btrfs, not ext4.** The cloud image's root filesystem is a
+  btrfs subvolume set (`root`, `boot`, `home`, `var`); the build
+  extracts it with `btrfs restore` — unprivileged, no mount —
+  flattens the set into the plain tree a direct-boot guest
+  wants, and packs a fresh ext4 from it (the same `mke2fs -d`
+  under fakeroot). The extraction runs inside one fakeroot
+  session, and `btrfs restore -m` restores the distro's own
+  owner/group/mode — the setuid bits included — into the
+  session's faked view; the session writes that view out as a
+  manifest and the pack stage re-applies it, because a faked
+  view cannot outlive its session and untarring it under a new
+  one would land setuid binaries genuinely unreadable
+  (`mke2fs -d` reads file contents through the real modes).
+- **The kernel rides inside the image.** Fedora publishes no
+  separate kernel artifact: `/usr/lib/modules/<kver>/vmlinuz` is
+  the kernel, its config, and the module tree in one pin. The
+  minimal initramfs carries zero modules — Fedora's kernel
+  builds ext4, virtio_blk, and crc32c in — so busybox mounts the
+  root and switch_roots into systemd.
+- **SELinux stays off.** The build reconstructs the filesystem
+  without SELinux xattrs (`btrfs restore` drops them, and the
+  unprivileged pack cannot write them), so every file would
+  boot unlabeled and enforcing policy freezes PID 1 before the
+  first getty; the boot cmdline carries `selinux=0`. The
+  workspace's isolation boundary is the VM itself — the Debian
+  and NixOS images carry no MAC either.
+- **NetworkManager owns the NIC.** Fedora's image runs
+  NetworkManager, whose default policy takes a DHCP address on
+  any ethernet it finds, so an egress workspace's NIC configures
+  itself with no msks-side unit (the Debian overlay's
+  networkd enablement is the divergence there) and cloud-init's
+  network rendering stays off the same way.
+- **The console prompt is pinned to the shared shape.** Fedora's
+  default bash prompt is `[root@host ~]#`; the build appends the
+  `PS1` that presents the same `root@host:~#` every family's
+  console surface answers with.
+- **Boot diet.** chronyd and the zram generator's config drop
+  (the generator would stall each boot ~45s on a zram device no
+  workspace VM presents), and the module closure ships the
+  virtiofs module Fedora builds separately from the Debian
+  pair.
+
+The output lands under `.devenv/state/guest-fedora/`
+(`GUEST_FEDORA_DIR` relocates it); `nix/guest-fedora.nix`
+documents every step. The image stages the same agent toolchain
+as the Debian one (the official Node tarball and the shared pins
+under `/usr/local`) and the same fd/rg staging described above,
+from the distro's own rpm.
 
 ### Building your own
 
