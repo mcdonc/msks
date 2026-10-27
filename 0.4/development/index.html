@@ -1,0 +1,1717 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Microvm workspaces for AI coding agents">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/msks/0.4/development/">
+      
+      
+      
+        <link rel="prev" href="../secrets/">
+      
+      
+        <link rel="next" href="../api/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.71">
+    
+    
+      
+        <title>Development environment - msks</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.e442bf79.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.b60ce83d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="msks" class="md-header__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            msks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Development environment
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="msks" class="md-nav__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    msks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The host doctor
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  First run
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Host Share Mounts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../egress-consent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Consent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development environment
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development environment
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-dev-daemon" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The dev daemon
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-daemons-config-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The daemon's config file
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-client-presets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The client presets
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-dev-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The dev identity
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#doctor-on-the-dev-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Doctor on the dev host
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#development" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Development
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Development">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#build-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Build outputs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wheel-installs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Wheel installs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vm-guest-assets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        VM guest assets
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-the-daemon-msksd" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Running the daemon (msksd)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-dev-daemon-the-default-processes-up-231" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The dev daemon (the default <code>processes up</code>, #231)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-image-catalog-40" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The image catalog (#40)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-client-cli-msks-ls-msks-create-msks-start-msks-stop-msks-rm-59-66" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The client CLI (<code>msks ls</code>, <code>msks create</code>, <code>msks start</code>, <code>msks stop</code>, <code>msks rm</code>) (#59, #66)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#workspace-egress-networking-52" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Workspace egress networking (#52)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-docs-site-591" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The docs site (#591)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-workspace-llm-proxy-259" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The workspace LLM proxy (#259)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#developing-msks-inside-a-workspace-77" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Developing msks inside a workspace (#77)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-workspace-console-msks-console-21" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The workspace console (<code>msks console</code>) (#21)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-dev-daemon" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The dev daemon
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-daemons-config-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The daemon's config file
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-client-presets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The client presets
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-dev-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The dev identity
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#doctor-on-the-dev-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Doctor on the dev host
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#development" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Development
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Development">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#build-outputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Build outputs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wheel-installs" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Wheel installs
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vm-guest-assets" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        VM guest assets
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#running-the-daemon-msksd" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Running the daemon (msksd)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-dev-daemon-the-default-processes-up-231" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The dev daemon (the default <code>processes up</code>, #231)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-image-catalog-40" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The image catalog (#40)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-client-cli-msks-ls-msks-create-msks-start-msks-stop-msks-rm-59-66" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The client CLI (<code>msks ls</code>, <code>msks create</code>, <code>msks start</code>, <code>msks stop</code>, <code>msks rm</code>) (#59, #66)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#workspace-egress-networking-52" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Workspace egress networking (#52)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-docs-site-591" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The docs site (#591)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-workspace-llm-proxy-259" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The workspace LLM proxy (#259)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#developing-msks-inside-a-workspace-77" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Developing msks inside a workspace (#77)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-workspace-console-msks-console-21" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The workspace console (<code>msks console</code>) (#21)
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="development-environment">Development environment<a class="headerlink" href="#development-environment" title="Permanent link">&para;</a></h1>
+<p>This chapter collects the devenv side of msks: everything a
+checkout of this repository presets, seeds, and runs for
+development. The published chapters describe the deployed
+product; this one describes the developer's tree — the shell,
+the dev daemon, the client presets, and the dev identity.</p>
+<h2 id="the-dev-daemon">The dev daemon<a class="headerlink" href="#the-dev-daemon" title="Permanent link">&para;</a></h2>
+<p>A development host (this repository's checkout) runs the daemon
+through devenv. <code>msks-dev</code> seeds a per-worktree state dir with
+its own port, token, and socket, and execs <code>msksd</code> through
+<code>/run/wrappers/bin/msks-caps</code>, the wrapper the host's NixOS
+configuration installs; on a host NixOS does not manage the
+script finds the setup tool's <code>/usr/local/bin/msks-caps</code> by
+itself (<code>DEV_CAPS</code> names another path outright). The tool is
+<code>msks-setup-debian-host</code> on a Debian host and
+<code>msks-setup-fedora-host</code> on a Fedora host.</p>
+<p>The same daemon is the default <code>devenv processes up</code> process:
+the manager runs <code>scripts/dev-daemon.sh</code> in the foreground, and
+Ctrl-C stops it through the daemon's own graceful path.</p>
+<h2 id="the-daemons-config-file">The daemon's config file<a class="headerlink" href="#the-daemons-config-file" title="Permanent link">&para;</a></h2>
+<p>The dev daemon runs bare: <code>scripts/dev-daemon.sh</code> points
+<code>MSKSD_CONFIG_DIR</code> at the devenv root. The daemon's durable
+settings therefore live in <code>&lt;repo&gt;/msksd.yaml</code>, generated as
+the commented template on first daemon start and untracked, so
+local edits stay personal. The environment the dev script
+exports (API port, state dir, egress wiring) wins over file
+values under the precedence the <a href="../config/">Configuration</a>
+chapter documents.</p>
+<h2 id="the-client-presets">The client presets<a class="headerlink" href="#the-client-presets" title="Permanent link">&para;</a></h2>
+<p>The devenv shell presets the client's connection to the
+worktree's own dev daemon. Once the dev daemon has served once,
+a fresh devenv shell needs no exports: the token and CA come
+from the dev-daemon state dir, <code>.devenv/state/msksd/</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>msks<span class="w"> </span>ls<span class="w">        </span><span class="c1"># presets: https://127.0.0.1:8660, the worktree's</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">               </span><span class="c1"># token, and .devenv/state/msksd/msks-ca.pem</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">               </span><span class="c1"># (verified TLS)</span>
+</span></code></pre></div>
+<p>The same shell presets <code>MSKSC_CACHE_DIR</code> at the worktree's own
+<code>.devenv/state/msksc/cache/</code>, so each checkout's client state
+stays its own and one tree's cache entry is never read by
+another. A non-empty value exported before entering the shell
+survives the preset; an empty one counts as unset.</p>
+<p>Targeting a hand-run bare-host daemon instead (no managed
+process; <code>msks-dev-ready</code> then <code>msksd</code> from a shell) takes the
+explicit pair from its state, with its own CA:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">MSKSC_URL</span><span class="o">=</span>https://127.0.0.1:8660
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">MSKSC_TOKEN</span><span class="o">=</span><span class="k">$(</span>cat<span class="w"> </span>.devenv/state/msksd/bootstrap-token<span class="k">)</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">MSKSC_CAFILE</span><span class="o">=</span>.devenv/state/msksd/msks-ca.pem
+</span></code></pre></div>
+<h2 id="the-dev-identity">The dev identity<a class="headerlink" href="#the-dev-identity" title="Permanent link">&para;</a></h2>
+<p>A checkout's devenv shell presets <code>MSKSC_IDENTITY_FILE</code> at the
+worktree's own dev identity (<code>.devenv/state/msksc/identity</code>),
+minted passphrase-less the first time the shell opens, so the
+smokes and <code>msks-dev</code> have a key without touching yours. The
+preset fills an unset variable: a non-empty
+<code>MSKSC_IDENTITY_FILE</code> you exported before entering the shell
+survives, and so does the file's <code>identity_file</code> (the
+environment preset lands only when you named nothing). Pointing the
+dev identity at your own key (a symlink over the minted file)
+works, with the identity chapter's rules: the passphrase prompt
+appears when the daemon's rows are locked under it and no agent
+holds it. See <a href="../first-run/#the-identity-file">The identity file</a>.</p>
+<h2 id="doctor-on-the-dev-host">Doctor on the dev host<a class="headerlink" href="#doctor-on-the-dev-host" title="Permanent link">&para;</a></h2>
+<p>The dev daemon runs bare: <code>scripts/dev-daemon.sh</code> points
+<code>MSKSD_CONFIG_DIR</code> at the devenv root. A hand-run <code>msksd doctor</code>
+in the shell therefore resolves the same <code>&lt;repo&gt;/msksd.yaml</code>
+the daemon serves with. The environment the dev script exports
+(API port, state dir, egress wiring) wins over file values
+under the precedence the <a href="../config/">Configuration</a> chapter
+documents.</p>
+<h2 id="development">Development<a class="headerlink" href="#development" title="Permanent link">&para;</a></h2>
+<p>Install <a href="https://nix.dev/manual/nix/latest/install/">nix</a> and
+<a href="https://devenv.sh/getting-started/">devenv</a> on any Linux host — a
+NixOS host is not required. Enter the environment (Python 3.14, uv
+venv, cloud-hypervisor + ch-remote, qemu, the pytest toolchain,
+xenon):</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>devenv<span class="w"> </span>shell
+</span></code></pre></div>
+<p>All scripted/CI invocations disable dotenv loading:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>devenv<span class="w"> </span>--quiet<span class="w"> </span>-O<span class="w"> </span>dotenv.enable:bool<span class="w"> </span><span class="nb">false</span><span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>&lt;command&gt;
+</span></code></pre></div>
+<p>Run the test suite the way CI runs it (<code>-n auto</code> is never optional —
+see AGENTS.md for the coverage story):</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>devenv<span class="w"> </span>--quiet<span class="w"> </span>-O<span class="w"> </span>dotenv.enable:bool<span class="w"> </span><span class="nb">false</span><span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>unit-tests
+</span></code></pre></div>
+<p>Scoped iteration picks only tests whose coverage touches changed lines:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>devenv<span class="w"> </span>--quiet<span class="w"> </span>-O<span class="w"> </span>dotenv.enable:bool<span class="w"> </span><span class="nb">false</span><span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>testmon
+</span></code></pre></div>
+<p>Complexity gate (also runs as a pre-commit hook):</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>devenv<span class="w"> </span>--quiet<span class="w"> </span>-O<span class="w"> </span>dotenv.enable:bool<span class="w"> </span><span class="nb">false</span><span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>msks-xenon
+</span></code></pre></div>
+<p>The Python-side pre-commit gates' full offender list in one pass —
+all ruff and deferred-import findings, every xenon offender, and the
+jscpd report at once, plus, when sources under <code>src/msks/</code> changed,
+every missing coverage line and branch arc for the changed files
+after one gated suite run:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>devenv<span class="w"> </span>--quiet<span class="w"> </span>-O<span class="w"> </span>dotenv.enable:bool<span class="w"> </span><span class="nb">false</span><span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>msks-preflight
+</span></code></pre></div>
+<h3 id="build-outputs">Build outputs<a class="headerlink" href="#build-outputs" title="Permanent link">&para;</a></h3>
+<p>The release artifacts each build on their own store path,
+without evaluating or building the others (#537):</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>devenv<span class="w"> </span>build<span class="w"> </span>outputs.server<span class="w">        </span><span class="c1"># msksd with the full daemon closure</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>devenv<span class="w"> </span>build<span class="w"> </span>outputs.client<span class="w">        </span><span class="c1"># the msks CLI/TUI with the client closure alone</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>devenv<span class="w"> </span>build<span class="w"> </span>outputs.guest-image-debian<span class="w">  </span><span class="c1"># the Debian workspace image archive</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>devenv<span class="w"> </span>build<span class="w"> </span>outputs.guest-image-nixos<span class="w">  </span><span class="c1"># the NixOS workspace image archive</span>
+</span></code></pre></div>
+<p>The daemon and client outputs are two dependency closures over the
+one wheel (<code>nix/msks-pkg.nix</code>, <code>nix/msks-client-pkg.nix</code>): the
+server output runs <code>msksd</code>; the client output runs <code>msks</code> and
+<code>msks-term-popup</code>. The same outputs build from the flake with plain
+nix — no devenv in the environment — against the same pinned
+nixpkgs (flake.lock and devenv.lock pin the same revision, so each
+flake attribute is the same store path its <code>devenv build</code> twin
+builds):</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>nix<span class="w"> </span>build<span class="w"> </span>.#server<span class="w"> </span>.#client<span class="w"> </span>.#guest-image-debian<span class="w"> </span>.#guest-image-nixos
+</span></code></pre></div>
+<h3 id="wheel-installs">Wheel installs<a class="headerlink" href="#wheel-installs" title="Permanent link">&para;</a></h3>
+<p>The msks wheel is pure Python on every platform — nothing
+compiles at install time. Egress consent is the one runtime
+library need: the daemon's vendored NFQUEUE binding (#542) loads
+<code>libnetfilter_queue.so.1</code> by soname, so a daemon host with
+interactive egress carries the runtime package —
+<code>libnetfilter-queue1</code> on apt, <code>libnetfilter_queue</code> on dnf and
+pacman, <code>libnetfilter_queue1</code> on zypper, <code>libnetfilter_queue</code> on
+apk. A host without it boots workspaces without egress and
+refuses an egress boot by name. <code>msksd doctor</code> names the package
+for the detected package manager when the load fails.</p>
+<h3 id="vm-guest-assets">VM guest assets<a class="headerlink" href="#vm-guest-assets" title="Permanent link">&para;</a></h3>
+<p>The workspace guest is <strong>Debian 13 (trixie)</strong>, straight from Debian's
+official genericcloud cloud image (#30, #41): systemd as PID 1, apt,
+cloud-init, and Debian's own kernel, initrd, and modules — booted
+directly (no BIOS/UEFI) by cloud-hypervisor. The image is pinned by
+its dated cloud.debian.org URL and sha512, and the build turns it
+into the msks boot contract — <code>vmlinux</code> (Debian's bzImage,
+<code>CONFIG_PVH=y</code>), <code>initrd</code>, a pristine ext4 base rootfs, and
+<code>guest-manifest.json</code> — with a small overlay of msks systemd units
+(vsock console, serial autologin, the <code>/home</code> mount, the cloud-init
+dropins that pin NoCloud and keep cloud-init off the guest's
+networking). Extraction is fully unprivileged:
+qemu-img convert, partition slice, <code>debugfs rdump</code>, <code>mke2fs -d</code>.
+Measured boot on bare-metal KVM: the vsock shell prompt at ~2.8s,
+the serial login prompt at ~7.5-8.6s (#37 tracks the &lt;5s interactive
+goal).
+Root writes persist through the per-workspace overlay (#14), and
+<code>/home</code> is the workspace's own ext4 volume; <code>apt</code> reaches the
+upstream through the workspace's egress NIC — served by the
+daemon's consent stack whenever the daemon holds CAP_NET_ADMIN
+(#52). The repack runs under
+fakeroot so the image is root-owned with sane password-file modes,
+and the setuid binaries the workspace user's sudo needs ride the
+same fakeroot session as uid-0 inodes (#169).
+Stopping a workspace presses the ACPI power button
+(<code>vm.power-button</code>): the guest's systemd-logind runs the clean
+poweroff that flushes its persistent disks (#14).</p>
+<p>Every step of the build runs inside the repo on any Linux host with
+nix:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>devenv<span class="w"> </span>--quiet<span class="w"> </span>-O<span class="w"> </span>dotenv.enable:bool<span class="w"> </span><span class="nb">false</span><span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>msks-build-guest
+</span></code></pre></div>
+<p>The artifacts (plus a <code>guest-manifest.json</code> describing them and the
+boot cmdline) land in <code>.devenv/state/guest/</code> (relocatable with
+<code>GUEST_DIR</code>). Boot one interactive VM from them —</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>msks-demo-vm
+</span></code></pre></div>
+<p>— which attaches the guest's serial console to your terminal
+(<code>poweroff -f</code> inside the guest or Ctrl-C stops it) and leaves
+<code>ch-remote</code> reachable on the printed API socket path.</p>
+<p>Boot tests self-provision: when <code>.devenv/state/guest/</code> holds built
+artifacts and
+<code>/dev/kvm</code> is usable, the smoke tests find them without any exported
+variables (<code>TEST_VMLINUX</code> / <code>TEST_INITRD</code> /
+<code>TEST_ROOTFS</code> / <code>TEST_CMDLINE</code>
+keep precedence when you do export them). When the
+artifacts were never built, or <code>/dev/kvm</code> is missing or not accessible
+to your user (add yourself to the <code>kvm</code> group,
+<code>users.users.&lt;name&gt;.extraGroups = [ "kvm" ];</code> on NixOS, then
+re-login), the smoke tests skip themselves.</p>
+<h3 id="running-the-daemon-msksd">Running the daemon (msksd)<a class="headerlink" href="#running-the-daemon-msksd" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>devenv<span class="w"> </span>--quiet<span class="w"> </span>-O<span class="w"> </span>dotenv.enable:bool<span class="w"> </span><span class="nb">false</span><span class="w"> </span>shell<span class="w"> </span>--
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="nv">MSKSD_STATE_DIR</span><span class="o">=</span>/tmp/msksd<span class="w"> </span><span class="nv">MSKSD_BOOTSTRAP_TOKEN</span><span class="o">=</span>dev-secret<span class="w"> </span><span class="nv">MSKSD_PORT</span><span class="o">=</span><span class="m">8660</span><span class="w"> </span>msksd
+</span></code></pre></div>
+<ul>
+<li><strong>Trust</strong>: with no <code>MSKSD_TLS_CERT</code>/<code>MSKSD_TLS_KEY</code>, msksd generates a
+  self-signed CA + certificate into the state dir on first run and logs the
+  CA fingerprint — pin it on first connect (trust-on-first-use, like SSH).
+  The CA key lives beside the database under the state dir.</li>
+<li><strong>First credential</strong>: <code>MSKSD_BOOTSTRAP_TOKEN</code> seeds one bearer token,
+  inserted once when absent; it is visible in the process environment to
+  the same user (acceptable for a single-user local daemon — unset it after
+  minting real tokens). <code>--no-tls</code> serves plain HTTP for development.</li>
+<li><strong>Events</strong>: <code>wss://host/api/v1/events</code> streams workspace status
+  transitions. The websocket handshake authenticates with the same
+  <code>Authorization: Bearer</code> header the REST surface uses (#216), so
+  the token never lands in a URL. Uvicorn's access log prints
+  request lines (method, path, query) and not headers, so turning
+  it on (<code>MSKSD_ACCESS_LOG=true</code>) does not persist credentials. A
+  bad token closes the websocket with code 4401.</li>
+<li><strong>Rotating the bootstrap token</strong>: setting <code>MSKSD_BOOTSTRAP_TOKEN</code> to a
+  new value <em>adds</em> a token; the previous bootstrap credential stays valid
+  until revoked via the API.</li>
+<li><strong>Config file</strong>: settings also live in a YAML file — <code>msksd --config
+/path/to/msksd.yaml</code> reads exactly that file, <code>--config=none</code> reads env
+  vars only, and a bare <code>msksd</code> resolves <code>$MSKSD_CONFIG_DIR/msksd.yaml</code>
+  (default <code>~/.config/msksd/msksd.yaml</code>), generating a commented template
+  on first run. Env vars override the file; see <code>docs/config.md</code> for the
+  key-by-key reference.</li>
+<li><strong>Schema</strong>: the SQLite database is created and upgraded by Alembic at
+  startup (inside the package: <code>msks/migrations</code>).</li>
+</ul>
+<h3 id="the-dev-daemon-the-default-processes-up-231">The dev daemon (the default <code>processes up</code>, #231)<a class="headerlink" href="#the-dev-daemon-the-default-processes-up-231" title="Permanent link">&para;</a></h3>
+<p>msksd runs FIRST-LEVEL on the dev host — cloud-hypervisor on the
+real <code>/dev/kvm</code>, per-VM taps, the egress consent stack in the host
+kernel — through the <code>msks-caps</code> capability wrapper the host's
+NixOS config installs. <code>devenv processes up</code> runs it attached in
+the foreground (Ctrl-C stops it, workspaces get their stop cycle);
+<code>msks-dev</code> runs the same script by hand in a terminal. Each
+worktree state dir (<code>.devenv/state/msksd</code>, <code>MSKSD_STATE_DIR</code>
+relocates) seeds its own bootstrap token, API port, and
+port-derived egress subnet, so concurrent worktrees run one daemon
+each; a state-dir lock refuses a second daemon on the same catalog.
+The client presets below land in every devenv shell. (An older
+hand-run flow without KVM — <code>msks-dev-ready</code> — still exists for
+API/client-only work:)</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>devenv<span class="w"> </span>--quiet<span class="w"> </span>-O<span class="w"> </span>dotenv.enable:bool<span class="w"> </span><span class="nb">false</span><span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>msks-dev-ready
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">MSKSD_STATE_DIR</span><span class="o">=</span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/.devenv/state/msksd"</span><span class="w"> </span><span class="nv">MSKSD_BOOTSTRAP_TOKEN</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>cat<span class="w"> </span>.devenv/state/msksd/bootstrap-token<span class="k">)</span><span class="s2">"</span>
+</span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>msksd<span class="w"> </span><span class="p">&amp;</span><span class="w">                                    </span><span class="c1"># serves https://127.0.0.1:8660</span>
+</span><span id="__span-13-4"><a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="nv">MSKSC_URL</span><span class="o">=</span>https://127.0.0.1:8660<span class="w"> </span><span class="nv">MSKSC_CAFILE</span><span class="o">=</span><span class="nv">$PWD</span>/.devenv/state/msksd/msks-ca.pem<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-13-5"><a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="w">  </span><span class="nv">MSKSC_TOKEN</span><span class="o">=</span><span class="s2">"</span><span class="k">$(</span>cat<span class="w"> </span>.devenv/state/msksd/bootstrap-token<span class="k">)</span><span class="s2">"</span><span class="w"> </span>msks<span class="w"> </span>ls
+</span></code></pre></div>
+<p>The state lives in <code>.devenv/state/msksd/</code> (TLS CA, bootstrap token,
+sqlite catalog, workspace volumes). The dir honors <code>MSKSD_STATE_DIR</code>
+— export it before <code>msks-dev-ready</code> to relocate it, as an absolute
+path: the script anchors a relative value below the repo root while
+the daemon resolves one against its own CWD, so only an absolute
+value moves both to the same place.
+Gitignored but NOT disposable-clean — <code>git clean -xfd</code> deletes all
+of it, along with the dev daemon's personal <code>msksd.yaml</code> at the
+repo root (#262). Egress (and <code>msks ssh</code>, whose forwards ride the egress NIC)
+needs <code>CAP_NET_ADMIN</code> (#101): the dev host's wrapper grants it, so
+egress workspaces run first-level; on a host without the grant a
+workspace created without <code>--no-egress</code> refuses to start — the 503
+names <code>MSKSD_EGRESS_ENABLED</code>, and the fix is <code>--no-egress</code> or the
+host config in <code>nix/module.nix</code>. Daemon edits restart with Ctrl-C
+and re-run (<code>--reload</code> restarts on tree change, #144).</p>
+<p>Known quirk worth knowing: cloud-hypervisor v52 rejects writes to
+sector 0 on disks without an explicit <code>image_type</code> (a QCOW2
+misdetection guard), which breaks any guest writing an ext4
+superblock — every disk the daemon creates declares
+<code>image_type: Raw</code>.</p>
+<h3 id="the-image-catalog-40">The image catalog (#40)<a class="headerlink" href="#the-image-catalog-40" title="Permanent link">&para;</a></h3>
+<p>Images are plural: msksd holds a catalog under
+<code>&lt;state_dir&gt;/images/</code> — every registered archive keyed by content
+hash, with the boot files unpacked once per hash (workspace launches
+never unpack anything). The whole <code>/api/v1</code> surface is <a href="../api/">its own
+chapter</a>; these curls are the import and list forms:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>curl<span class="w"> </span>-sk<span class="w"> </span>-H<span class="w"> </span><span class="s2">"authorization: Bearer </span><span class="nv">$MSKSC_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"source": "/nix/store/...-msks-guest/workspace-debian-13.6.tar"}'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">  </span>https://127.0.0.1:8660/api/v1/images<span class="w">        </span><span class="c1"># import</span>
+</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>curl<span class="w"> </span>-sk<span class="w"> </span>-H<span class="w"> </span><span class="s2">"authorization: Bearer </span><span class="nv">$MSKSC_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">  </span>https://127.0.0.1:8660/api/v1/images<span class="w">        </span><span class="c1"># list (name/version/hash/default)</span>
+</span></code></pre></div>
+<p>A workspace create selects an image by reference — <code>"image":
+"debian:13.6"</code> (or a bare <code>name</code> for its newest version, or a hash);
+with no image and no explicit artifacts the designated <strong>default</strong>
+resolves. The first import becomes the default; <code>MSKSD_DEFAULT_IMAGE</code>
+points the daemon at an archive to import on first boot, and the dev
+daemon seeds it from its state dir's <code>default-image</code> symlink
+(<code>msks-build-guest-archive</code> converges it) — a bare
+<code>POST /workspaces</code> works on a fresh daemon with nothing else
+imported. Explicit <code>kernel</code>/<code>rootfs</code> fields still win over
+the catalog (the shape the tests and dev flows use).</p>
+<h3 id="the-client-cli-msks-ls-msks-create-msks-start-msks-stop-msks-rm-59-66">The client CLI (<code>msks ls</code>, <code>msks create</code>, <code>msks start</code>, <code>msks stop</code>, <code>msks rm</code>) (#59, #66)<a class="headerlink" href="#the-client-cli-msks-ls-msks-create-msks-start-msks-stop-msks-rm-59-66" title="Permanent link">&para;</a></h3>
+<p>The client also covers the non-interactive half of the operator flow:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>devenv<span class="w"> </span>--quiet<span class="w"> </span>-O<span class="w"> </span>dotenv.enable:bool<span class="w"> </span><span class="nb">false</span><span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>msks<span class="w"> </span>ls
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>devenv<span class="w"> </span>--quiet<span class="w"> </span>-O<span class="w"> </span>dotenv.enable:bool<span class="w"> </span><span class="nb">false</span><span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>msks<span class="w"> </span>create<span class="w"> </span>my-workspace<span class="w"> </span>--start
+</span></code></pre></div>
+<p><code>msks ls</code> prints one line per workspace (name, id, status, image
+hash, host); <code>--json</code> prints one JSON document for scripting. A
+workspace carries two identity fields (#246): the name you choose at
+create — the label every command addresses it by — and the id the
+daemon mints, immutable and never reused, keying the artifact paths
+and the client caches; either reference reaches the same workspace.
+<code>msks create</code>
+POSTs the same body the API accepts — <code>--image</code> picks a catalog
+reference, <code>--cpus</code>/<code>--mem-mib</code>/<code>--root-mib</code>/<code>--home-mib</code> size the VM,
+<code>--user-data</code> attaches a first-boot provisioning script (#41, a
+cidata seed disk the guest's provisioner runs once), and explicit
+<code>--kernel</code>/<code>--rootfs</code> (with optional <code>--initrd</code>,
+<code>--cmdline</code>) bypass the catalog. <code>--start</code> boots the workspace right
+after creating it, so <code>msks create ws --start</code> then <code>msks console ws</code>
+is the two-step path from nothing to a shell; <code>msks start &lt;ws&gt;</code> boots
+an existing workspace later, <code>msks stop &lt;ws&gt;</code> powers one off (a
+graceful, deadline-bounded shutdown; the data survives), <code>msks rm
+&lt;ws&gt;…</code> deletes one or more workspaces together with their persistent
+root overlay and <code>/home</code> volume, <code>msks console &lt;ws&gt;</code> boots one itself
+when the daemon reports it as not running (a notice prints on
+stderr while the boot runs), and <code>msks home export/import &lt;ws&gt;</code>
+moves the whole <code>/home</code> volume through the daemon for backup,
+migration, and seeding (#80). All commands use the same
+<code>MSKSC_URL</code>/<code>MSKSC_TOKEN</code>/<code>MSKSC_CAFILE</code> environment as <code>msks console</code>;
+failures (unreachable daemon, timed-out request, bad token, API or
+validation errors) print one readable line instead of a traceback.
+See <code>docs/cli.md</code> for the full command and environment reference.</p>
+<h3 id="workspace-egress-networking-52">Workspace egress networking (#52)<a class="headerlink" href="#workspace-egress-networking-52" title="Permanent link">&para;</a></h3>
+<p>Workspaces are networked from creation — <code>msks create ws</code>, or a bare
+<code>"id"</code> on the API, boots with egress; <code>msks create ws --no-egress</code>
+(or <code>"egress": false</code>) boots NIC-less — and the whole path lives in
+the daemon's own net stack:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>workspace VM ──virtio-net──► per-VM tap ──► per-VM nftables chain
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>                                                │  guest → uplink: accept
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>                                                ▼
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>                                     NAT (masquerade) → host uplink
+</span></code></pre></div>
+<p>The daemon is the guest's only DHCP server and resolver: each
+egress workspace gets a dedicated /30 from <code>MSKSD_EGRESS_SUBNET</code>, a
+DHCP offer naming the tap as gateway and resolver, a small DNS
+forwarder on that resolver, and NAT out the host's uplink
+(<code>MSKSD_EGRESS_UPLINK</code>). Everything derives deterministically from
+the workspace id, so stop/start cycles rebuild the same network;
+stop and delete tear the tap, chain, and services down again. The
+guest side is just the image's DHCP client (systemd-networkd +
+resolved in the overlay); a workspace without egress presents no
+NIC, on every backend.</p>
+<p>Egress arms while <code>MSKSD_EGRESS_ENABLED=true</code> and the daemon holds
+<code>CAP_NET_ADMIN</code> — the dev host's wrapper grants the capability, and
+<code>nix/module.nix</code> does the same for a deployment host. A daemon that
+cannot arm the plumbing still serves everything else, and an egress
+workspace refuses to boot with the cause named (boot those with
+<code>--no-egress</code>). Per-flow consent (allow/deny holds on each new
+connection) is #69.
+See <code>docs/networking.md</code> for the full reference.</p>
+<h3 id="the-docs-site-591">The docs site (#591)<a class="headerlink" href="#the-docs-site-591" title="Permanent link">&para;</a></h3>
+<p>The documentation builds into a static site (the same build the
+<code>Deploy Docs</code> workflow publishes to GitHub Pages on every push to
+<code>main</code> and every release tag). Preview it locally — the preview
+serves whatever the checkout holds (the current branch's docs,
+so edits review against the tree that will ship), and while it
+runs, every edit to the chapters or the site config re-renders
+the open tab in realtime:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>devenv<span class="w"> </span>shell
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>msks-docs<span class="w">              </span><span class="c1"># serves http://127.0.0.1:8923/ live</span>
+</span></code></pre></div>
+<p><code>DOCS_SERVE_PORT</code> relocates the port. The chapters live under
+<code>docs/</code>; the TUI chapter's screen renderings regenerate with
+<code>RENDER_DOCS_SCREENS=1 pytest -q
+src/msks/tests/test_render_docs_screens.py</code>.</p>
+<h3 id="the-workspace-llm-proxy-259">The workspace LLM proxy (#259)<a class="headerlink" href="#the-workspace-llm-proxy-259" title="Permanent link">&para;</a></h3>
+<p>Each workspace's tap carries its own proxy service when the daemon
+is configured for it: an OpenAI-shaped proxy (<code>/v1/models</code>,
+<code>/v1/chat/completions</code>, streaming included) served by msksd at
+<code>MSKSD_LLM_PORT</code>, admitted by that workspace's input chain from
+that tap only, and authenticated by a per-workspace credential the
+first-boot seed plants (<code>/etc/msks/llm.token</code> plus the
+<code>MSKSWS_BASE_URL</code>/<code>MSKSWS_API_KEY</code> exports). Provider credentials
+live host-side — <code>MSKSD_LLM_MODELS</code> entries with <code>file:</code>/<code>cmd:</code>
+secret indirection, a single <code>*</code> entry for single-upstream
+passthrough, any other list through the litellm router. See
+<code>docs/llm.md</code>.</p>
+<h3 id="developing-msks-inside-a-workspace-77">Developing msks inside a workspace (#77)<a class="headerlink" href="#developing-msks-inside-a-workspace-77" title="Permanent link">&para;</a></h3>
+<p>The dev-workspace bootstrap seed turns a pristine Debian workspace
+into an msks development environment over the workspace's own
+egress NIC. One create with the seed and egress is the whole of
+the setup — the image catalog serves the pristine Debian base
+unchanged:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>msks<span class="w"> </span>create<span class="w"> </span>dev<span class="w"> </span>--egress<span class="w"> </span>--user-data<span class="w"> </span>scripts/dev-workspace.sh<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">  </span>--mem-mib<span class="w"> </span><span class="m">8192</span><span class="w"> </span>--root-mib<span class="w"> </span><span class="m">20480</span><span class="w">   </span><span class="c1"># the in-guest suite's budget</span>
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>msks<span class="w"> </span>start<span class="w"> </span>dev<span class="w">   </span><span class="c1"># first boot provisions; later boots resume</span>
+</span></code></pre></div>
+<p>Cloud-init runs the seed once per overlay lifetime: it installs
+uv (which fetches its own Python 3.14), clones the repo, and runs
+<code>uv sync</code> — all into the persistent root overlay, so stop/start
+cycles keep it and a factory reset re-provisions from the same
+seed. Every step checks before doing, so re-running the script is
+a no-op. Progress is guest-observable in
+<code>/root/.msks-bootstrap/state</code> (the running step name, then <code>done</code>),
+so <code>msks console</code> into a booting workspace shows where setup stands.
+The suite runs inside the guest the way the <code>unit-tests</code> task runs
+it — the task's exec line, from the venv uv built:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>msks<span class="w"> </span>console<span class="w"> </span>dev
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>-m<span class="w"> </span>pytest<span class="w"> </span>src/msks/tests<span class="w"> </span>-v<span class="w"> </span>-n<span class="w"> </span>auto
+</span></code></pre></div>
+<p>devenv and nix remain an optional developer comfort inside the
+guest, off the seed's critical path: building them there exercises
+upstream toolchains for tens of minutes and gigabytes and tests
+nothing msks owns.</p>
+<p>The seed's downloads (PyPI, uv's Python builds, the git remote)
+all ride the egress NIC the daemon serves. The end-to-end proof is
+the opt-in root smoke <code>test_local_dev_workspace_bootstrap</code>
+(<code>TEST_EGRESS=1</code>). A baked dev image — the same substrate the
+guest build uses — remains an optional cold-start accelerator on
+top of the seed, not a prerequisite.</p>
+<p>The workspace's whole <code>/home</code> also moves through the daemon (#80):
+<code>msks home export dev</code> streams the volume to the client's machine
+(backup, or migration to another daemon), and <code>msks home import</code>
+restores or seeds one from an exported image —</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>msks<span class="w"> </span>stop<span class="w"> </span>dev
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>dev<span class="w"> </span>-<span class="w"> </span><span class="p">|</span><span class="w"> </span>gzip<span class="w"> </span>&gt;<span class="w"> </span>dev-home.ext4.gz<span class="w">   </span><span class="c1"># whole-home backup</span>
+</span></code></pre></div>
+<p>— while day-to-day code in and out rides the workspace's own egress
+(git remotes, substitutes) and the forward seam (<code>msks ssh</code>, and
+<code>msks rsync dev -- -av ./src/ :src/</code> for file copies, with no
+setup beyond the client environment).
+Outbound, the push carries its own credentials: logging in through
+the forward with <code>-A</code> delivers the operator's ssh agent into the
+workspace, so a <code>git push</code> from inside authenticates to any remote
+over the egress NIC with nothing stored in the image or the seed
+(the loop and its proof, <code>test_local_egress_git_out</code>, are in
+<code>docs/networking.md</code>).
+See <code>docs/storage.md</code> for the byte-stream endpoints and their
+contract.</p>
+<h3 id="the-workspace-console-msks-console-21">The workspace console (<code>msks console</code>) (#21)<a class="headerlink" href="#the-workspace-console-msks-console-21" title="Permanent link">&para;</a></h3>
+<p>An interactive shell in a running workspace, from any host that can
+reach the daemon:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>devenv<span class="w"> </span>--quiet<span class="w"> </span>-O<span class="w"> </span>dotenv.enable:bool<span class="w"> </span><span class="nb">false</span><span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>msks<span class="w"> </span>console<span class="w"> </span>my-workspace
+</span></code></pre></div>
+<p>A devenv shell presets <code>MSKSC_URL</code>/<code>MSKSC_TOKEN</code>/<code>MSKSC_CAFILE</code>
+from the worktree's dev-daemon state; an outside shell exports the
+same trio by hand (the URL from the daemon's log line, the token
+and CA from <code>.devenv/state/msksd/</code>).</p>
+<p>The client speaks the daemon's console websocket
+(<code>/api/v1/workspaces/{id}/console</code>): TLS plus bearer token — the same
+authentication as the REST surface, with the token on the query
+string (like <code>/api/v1/events</code>). Ctrl-] detaches (Ctrl-C and Ctrl-D
+reach the guest); pressing Ctrl-] twice quickly sends one literal
+Ctrl-] to the guest instead (see <code>docs/cli.md</code>). The session ends
+cleanly when either side closes.
+Detaching leaves the workspace running; the shell process inside the
+guest exits when the stream closes.</p>
+<p>Transport (#21), in the preferred vsock-first shape:</p>
+<ul>
+<li>The workspace VM boots with a virtio-vsock device whose host side
+  is a unix socket cloud-hypervisor <strong>listens</strong> on
+  (<code>&lt;state&gt;/vms/&lt;id&gt;/vsock.sock</code>). The daemon's proxy connects, sends
+  <code>CONNECT 1023\n</code>, reads the <code>OK &lt;port&gt;\n</code> reply, then pumps raw
+  bytes both ways — no framing, backpressure is websocket/TCP flow
+  control.</li>
+<li>The guest loads <code>vmw_vsock_virtio_transport</code> (systemd-modules-load)
+  and runs <code>msks-console.service</code>: the msks console helper
+  (<code>/usr/bin/msks-console-helper</code>, a static binary the image builds
+  from <code>src/console-helper</code>), restarted by systemd if it dies. The
+  helper owns the vsock listener, accepts host-originated connections
+  only, and each connection negotiates the identity prelude (#63):
+  the daemon sends the requested user, the client terminal's size
+  and TERM, and the helper answers <code>MSKS OK &lt;user&gt;</code> (or a named
+  refusal) before exec'ing that user's login shell on a fresh pty.
+  The pty is a plain canonical terminal — ISIG, ONLCR, ECHO, and
+  ICANON all on: Ctrl-C generates SIGINT in the guest, output
+  arrives CRLF-terminated, and the line discipline echoes and edits
+  input for programs that read stdin directly. The shell's TERM
+  comes from the client's terminal, so readline engages and provides
+  line editing and history while it is active (#61); a TERM=dumb
+  client gets readline off. The session's user is <strong>root</strong> by
+  default; <code>msks console --user &lt;name&gt;</code> requests the image's workspace
+  user (users the image does not serve are refused by name).</li>
+<li>The guest pty is created at the client terminal's size (#61's
+  0x0 fixed): the console request carries the geometry at connect,
+  and the pty keeps that size for the session's life. The console
+  stream is a raw byte pipe by design (#108's terminal-layer
+  decision), so a window resized mid-session does not reach it:
+  reconnect for a new size, or use an ssh session through the
+  forward, where ssh's window-change channel resizes the pty live
+  (#108–#112). If console resize ever returns to the queue, it
+  starts with a control-channel decision — a dedicated vsock
+  control port, or another design that keeps the stream raw (#78).</li>
+<li><code>MSKSC_CAFILE</code> pins the daemon certificate for verification when
+  you have it (the dev daemon writes <code>msks-ca.pem</code> into its state
+  dir on first serve). Without it the client proceeds with
+  certificate verification off and says so on stderr — the CA
+  fingerprint the daemon logs at startup is the cross-check.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a2388154.min.js"></script>
+      
+    
+  </body>
+</html>
