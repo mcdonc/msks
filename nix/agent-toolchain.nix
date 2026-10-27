@@ -20,7 +20,15 @@
 # Everything here stays pure derivations: pi's dependency closure
 # is prefetched against its shrinkwrap (npmDepsHash) and installed
 # offline, and no build step runs Node or npm scripts.
-{ pkgs }:
+{
+  lib,
+  pkgs,
+  # The guest's architecture, uname machine names (#637): herdr
+  # and Claude Code ship one native binary per architecture, and
+  # the pins select the guest's own. The default follows the
+  # evaluating host, matching guest-debian.nix's rule.
+  arch ? builtins.head (lib.splitString "-" pkgs.stdenv.hostPlatform.system),
+}:
 
 let
   # The registry tarball behind the pi pin itself. The published
@@ -49,13 +57,26 @@ let
 
   # The herdr pin (#266): the terminal workspace manager for AI
   # coding agents (herdr.dev), as the pinned release's static
-  # x86-64 build — a digest-pinned upstream artifact, needing
-  # nothing from the image beyond the file itself.
+  # build for the guest's architecture — a digest-pinned upstream
+  # artifact, needing nothing from the image beyond the file
+  # itself.
+  herdrPins = {
+    x86_64 = {
+      asset = "herdr-linux-x86_64";
+      hash = "sha256-KgL+0WvrZR7wBuHUPwSPZSyk3FitBTzS1ERQVj1cVLc=";
+    };
+    aarch64 = {
+      asset = "herdr-linux-aarch64";
+      hash = "sha256-9Mz03nRfLLmjmpg+m6NwPa1Q7CpY3qgwJs6rchu9jZ4=";
+    };
+  };
+  herdrPin =
+    herdrPins.${arch} or (throw "herdr carries no pin for guest arch '${arch}'");
   agentHerdrBinary = pkgs.fetchurl {
     url =
       "https://github.com/ogulcancelik/herdr/releases/download/"
-      + "v0.9.1/herdr-linux-x86_64";
-    hash = "sha256-KgL+0WvrZR7wBuHUPwSPZSyk3FitBTzS1ERQVj1cVLc=";
+      + "v0.9.1/${herdrPin.asset}";
+    hash = herdrPin.hash;
   };
 
   # herdr's license, pinned to the same tag the binary came from:
@@ -68,11 +89,25 @@ let
   };
 
   # The Claude Code pin (#266): the npm wrapper package plus the
-  # linux-x64 native-binary package, both digest-pinned. The
-  # wrapper's own postinstall links the platform binary over its
-  # bin stub; the staged package below does that wiring at build
-  # time instead — a symlink standing in for the link — so the
-  # image build runs no Node and no npm scripts.
+  # native-binary package for the guest's architecture, both
+  # digest-pinned. The wrapper's own postinstall links the
+  # platform binary over its bin stub; the staged package below
+  # does that wiring at build time instead — a symlink standing in
+  # for the link — so the image build runs no Node and no npm
+  # scripts.
+  claudePins = {
+    x86_64 = {
+      package = "claude-code-linux-x64";
+      hash = "sha256-sNo8XYzhnBCEmFvKLkmqTG54rQYGwrSsfeYH2aMd10o=";
+    };
+    aarch64 = {
+      package = "claude-code-linux-arm64";
+      hash = "sha256-+Y9om+Ie9zQozNusulYaFMVrv1SgaQWjWvbdWYF8v3o=";
+    };
+  };
+  claudePin =
+    claudePins.${arch}
+      or (throw "Claude Code carries no pin for guest arch '${arch}'");
   agentClaudeWrapper = pkgs.fetchurl {
     url =
       "https://registry.npmjs.org/@anthropic-ai/claude-code/-/"
@@ -81,9 +116,9 @@ let
   };
   agentClaudeBinary = pkgs.fetchurl {
     url =
-      "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/"
-      + "claude-code-linux-x64-2.1.281.tgz";
-    hash = "sha256-sNo8XYzhnBCEmFvKLkmqTG54rQYGwrSsfeYH2aMd10o=";
+      "https://registry.npmjs.org/@anthropic-ai/${claudePin.package}/-/"
+      + "${claudePin.package}-2.1.281.tgz";
+    hash = claudePin.hash;
   };
 
   # Claude Code in npm's global layout (#266): the wrapper at
@@ -100,15 +135,15 @@ let
         mods=$out/lib/node_modules/@anthropic-ai
         mkdir -p $mods/claude-code/bin
         mkdir -p \
-          $mods/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64
+          $mods/claude-code/node_modules/@anthropic-ai/${claudePin.package}
         tar -xzf ${agentClaudeWrapper} \
           -C $mods/claude-code --strip-components=1
         rm -f $mods/claude-code/bin/claude.exe
         tar -xzf ${agentClaudeBinary} \
-          -C $mods/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64 \
+          -C $mods/claude-code/node_modules/@anthropic-ai/${claudePin.package} \
           --strip-components=1
         ln -s \
-          ../node_modules/@anthropic-ai/claude-code-linux-x64/claude \
+          ../node_modules/@anthropic-ai/${claudePin.package}/claude \
           $mods/claude-code/bin/claude.exe
       '';
 
@@ -223,7 +258,7 @@ let
         cp -a ${claudePackage}/. $out/
         chmod -R u+w $out
         patchelf --set-interpreter "$loader" \
-          $out/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude
+          $out/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/${claudePin.package}/claude
         mkdir -p $out/bin
         ln -s \
           ../lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe \
@@ -238,4 +273,7 @@ in
     herdrPackage
     piPackage
     ;
+  # The platform package's name (#637): staging-side guards walk
+  # the nested native binary by this path segment.
+  claudePlatformName = claudePin.package;
 }

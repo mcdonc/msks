@@ -86,11 +86,15 @@ def test_the_cli_writes_the_section(tmp_path: Path, capsys) -> None:
 
 
 def build_guest_dir(
-    root: Path, name: str = "debian", version: str = "13.6"
+    root: Path,
+    name: str = "debian",
+    version: str = "13.6",
+    arch: str | None = None,
 ) -> Path:
     """A guest dir shaped like msks-build-guest's output: the
     archive-name marker and a containerDisk archive whose layer
-    carries a description-bearing image.json."""
+    carries a description-bearing image.json (an arch-bearing one
+    when *arch* names the guest's)."""
     guest = root / "guest"
     guest.mkdir()
     archive_name = f"workspace-{name}-{version}.tar"
@@ -105,6 +109,8 @@ def build_guest_dir(
             "kernel_version": "6.12.107",
             "description": f"{name.title()} {version}, kernel 6.12.107",
         }
+        if arch is not None:
+            image["arch"] = arch
         blob = json.dumps(image).encode()
         info = tarfile.TarInfo("./disk/image.json")
         info.size = len(blob)
@@ -129,8 +135,17 @@ def test_image_meta_reads_the_archive(tmp_path: Path) -> None:
         "ref": "debian:13.6",
         "description": "Debian 13.6, kernel 6.12.107",
         "kernel_version": "6.12.107",
+        "arch": "",
         "archive": "workspace-debian-13.6.tar",
     }
+
+
+def test_image_meta_reads_the_declared_arch(tmp_path: Path) -> None:
+    """The arch the manifest declares rides the channel row (#637):
+    an aarch64 build's row names its arch, an older image without
+    the field answers the empty string."""
+    meta = image_meta.meta(build_guest_dir(tmp_path, arch="aarch64"))
+    assert meta["arch"] == "aarch64"
 
 
 def test_image_meta_answers_the_cli_shape(tmp_path, capsys) -> None:

@@ -3,7 +3,12 @@
 # guest state dir (#5) — .devenv/state/guest by default; GUEST_DIR
 # relocates it. `build-guest.sh nixos` (#250) builds the NixOS guest
 # instead — .devenv/state/guest-nixos, relocated by GUEST_NIXOS_DIR
-# — with the same output surface.
+# — with the same output surface. The arch-suffixed flavors (#637)
+# pin the guest's architecture: `debian-aarch64` and
+# `nixos-aarch64` build the arm64 guests into their own dirs
+# (GUEST_AARCH64_DIR / GUEST_NIXOS_AARCH64_DIR relocate); the bare
+# flavor names follow the building host's uname, so an aarch64
+# dev host's `debian` IS the arm64 guest.
 #
 # Runs against the nixpkgs revision pinned by devenv.lock: the
 # msks-build-guest script passes the pinned source via
@@ -21,12 +26,28 @@ debian)
   attr=guest
   guest_dir="${GUEST_DIR:-$root/.devenv/state/guest}"
   ;;
+debian-x86_64)
+  attr=guest-x86_64
+  guest_dir="${GUEST_X86_64_DIR:-$root/.devenv/state/guest-x86_64}"
+  ;;
+debian-aarch64)
+  attr=guest-aarch64
+  guest_dir="${GUEST_AARCH64_DIR:-$root/.devenv/state/guest-aarch64}"
+  ;;
 nixos)
   attr=guest-nixos
   guest_dir="${GUEST_NIXOS_DIR:-$root/.devenv/state/guest-nixos}"
   ;;
+nixos-x86_64)
+  attr=guest-nixos-x86_64
+  guest_dir="${GUEST_NIXOS_X86_64_DIR:-$root/.devenv/state/guest-nixos-x86_64}"
+  ;;
+nixos-aarch64)
+  attr=guest-nixos-aarch64
+  guest_dir="${GUEST_NIXOS_AARCH64_DIR:-$root/.devenv/state/guest-nixos-aarch64}"
+  ;;
 *)
-  echo "usage: $0 [debian|nixos]" >&2
+  echo "usage: $0 [debian|debian-x86_64|debian-aarch64|nixos|nixos-x86_64|nixos-aarch64]" >&2
   exit 2
   ;;
 esac

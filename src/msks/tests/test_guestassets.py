@@ -264,7 +264,11 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     # String fragments, not joined URLs: nixfmt reflows the
     # concatenation layout, and the fragments are the stable atoms.
     assert '"https://nodejs.org/dist/v22.23.3/"' in build
-    assert '"node-v22.23.3-linux-x64.tar.gz"' in build
+    # The per-arch tarball names (#637): the URL interpolates the
+    # arch's tar suffix, and both arches carry a pinned hash.
+    assert '"node-v22.23.3-linux-${facts.nodeTar}.tar.gz"' in build
+    assert 'nodeTar = "x64"' in build
+    assert 'nodeTar = "arm64"' in build
     assert "pi-coding-agent-1.4.0.tgz" in pins
     # The install lock (#616): the tarball ships no shrinkwrap, so
     # the offline build's lock is the pi.dev installer's,
@@ -273,13 +277,17 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     # A real npmDepsHash, not the placeholder the two-step prefetch
     # starts from.
     assert "AAAAAAAAAAAAAAAAAAAAAAAA" not in pins
-    assert '"v0.9.1/herdr-linux-x86_64"' in pins
+    assert 'asset = "herdr-linux-x86_64"' in pins
+    assert 'asset = "herdr-linux-aarch64"' in pins
+    assert '"v0.9.1/${herdrPin.asset}"' in pins
     # herdr's Apache-2.0 notice travels with the binary, pinned to
     # the same tag.
     assert '"v0.9.1/LICENSE"' in pins
     assert "$out/usr/local/share/doc/herdr/LICENSE" in build
     assert '"claude-code-2.1.281.tgz"' in pins
-    assert '"claude-code-linux-x64-2.1.281.tgz"' in pins
+    assert 'package = "claude-code-linux-x64"' in pins
+    assert 'package = "claude-code-linux-arm64"' in pins
+    assert '"${claudePin.package}-2.1.281.tgz"' in pins
     assert "$out/usr/local/bin/claude" in build
     assert "$out/etc/skel/.pi/agent/extensions/llm-models.ts" in build
     assert "$out/root/.pi/agent/extensions/llm-models.ts" in build
@@ -308,8 +316,10 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     # pool URL and checksum like the kernel and rsync debs, staged
     # with the same linkage guard, in the layout apt leaves (fd's
     # real ELF under usr/lib/cargo/bin, fdfind a symlink).
-    assert "fd-find_10.2.0-1+b5_amd64.deb" in build
-    assert "ripgrep_14.1.1-1+b4_amd64.deb" in build
+    assert '"fd-find_10.2.0-1+b5_${facts.debianArch}.deb"' in build
+    assert '"ripgrep_14.1.1-1+b4_${facts.debianArch}.deb"' in build
+    assert 'debianArch = "amd64"' in build
+    assert 'debianArch = "arm64"' in build
     assert '"$root"/usr/lib/cargo/bin/fd' in build
     assert 'ln -s ../lib/cargo/bin/fd "$root"/usr/bin/fdfind' in build
     assert "install -D -m 0755 rg-deb/usr/bin/rg" in build
@@ -502,9 +512,13 @@ def test_the_nixos_image_is_rebuild_ready() -> None:
     # build, not the fold unit on a workspace's first boot.
     assert "nix-instantiate --eval-only" in build
     assert "-A config.system.build.toplevel.outPath" in build
-    # The console getty (#481): the image enables a serial getty on
-    # ttyS0 — the build fails if the unit stops being wanted.
-    assert "serial-getty@ttyS0" in build
+    # The console getty (#481, #637): the image enables a serial
+    # getty on the arch's console device — the build fails if the
+    # unit stops being wanted — with the device chosen per arch
+    # (ttyS0 on x86_64, ttyAMA0 on aarch64's PL011).
+    assert "serial-getty@${facts.console}" in build
+    assert 'console = "ttyS0"' in build
+    assert 'console = "ttyAMA0"' in build
 
 
 def test_the_nixos_image_folds_the_interceptor_ca() -> None:
