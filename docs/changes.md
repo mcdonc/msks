@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.4] - 2026-10-27
+
 ### Added
 
 - **Fedora 44 guest image (#651).** A third catalog image family

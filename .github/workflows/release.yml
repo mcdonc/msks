@@ -208,9 +208,13 @@ jobs:
         run: |
           set -eu
           printf '{}' > rows.json
-          for flavor in debian nixos; do
+          for flavor in debian fedora nixos; do
             dir=.devenv/state/guest
             attr="guest-$ARCH"
+            if [ "$flavor" = fedora ]; then
+              dir=.devenv/state/guest-fedora
+              attr="guest-fedora-$ARCH"
+            fi
             if [ "$flavor" = nixos ]; then
               dir=.devenv/state/guest-nixos
               attr="guest-nixos-$ARCH"
