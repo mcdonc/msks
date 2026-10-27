@@ -286,15 +286,6 @@ flag — rewrite before merging.
 
 ## Changelog (`docs/changes.md`)
 
-**Entries are omitted indefinitely.** Leave `docs/changes.md`
-untouched in every PR: write no entries under `## \[Unreleased]`
-and no per-PR entries anywhere in the file. The reasons (parallel
-branches appending to one section, entries describing trees about
-to be reworked) held for the #229 freeze and stay true for the
-indefinite future; hand-authored notes and the release cut below
-keep working without agent entries. The rules below govern the
-file's format and the release cut, not PR-time entry writing.
-
 `docs/changes.md` is the single source of truth for human-authored release notes,
 formatted as [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 headings escape the opening bracket (`## \[Unreleased]`, `## \[v1.2.3] - date`)
