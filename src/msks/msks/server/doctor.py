@@ -438,6 +438,8 @@ def setup_tool_name() -> str | None:
     return {
         "debian": "msks-setup-debian-host",
         "fedora": "msks-setup-fedora-host",
+        # the Asahi spin carries its own ID (ID_LIKE names fedora)
+        "fedora-asahi-remix": "msks-setup-fedora-host",
     }.get(os_release_id())
 
 

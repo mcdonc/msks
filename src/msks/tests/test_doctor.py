@@ -907,6 +907,8 @@ def test_path_note_hints_the_distros_own_tool(
 
     distro("fedora")
     assert "(msks-setup-fedora-host adds" in doctor_mod.path_note_result().hint
+    distro("fedora-asahi-remix")
+    assert "(msks-setup-fedora-host adds" in doctor_mod.path_note_result().hint
     distro("debian")
     assert "(msks-setup-debian-host adds" in doctor_mod.path_note_result().hint
     distro("arch")

@@ -105,6 +105,20 @@ def test_non_fedora_host_refuses_by_name(
     assert fedora_host.commands == []
 
 
+def test_the_asahi_remix_id_passes_the_gate(
+    fedora_host: FedoraHost, capsys: pytest.CaptureFixture
+) -> None:
+    """The Asahi spin carries its own os-release ID
+    (fedora-asahi-remix, ID_LIKE=fedora): the gate accepts it
+    and the run lands every piece (#635)."""
+    Path(hostsetup.OS_RELEASE).write_text(
+        'ID="fedora-asahi-remix"\nID_LIKE=fedora\n'
+    )
+    assert main() == 0
+    assert fedora_host.ran("dnf") == []
+    assert "msks-setup-fedora-host: done —" in capsys.readouterr().out
+
+
 def test_happy_path_lands_every_piece(
     fedora_host: FedoraHost, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:

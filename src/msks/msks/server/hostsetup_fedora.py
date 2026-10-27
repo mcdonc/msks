@@ -86,7 +86,7 @@ def fedora_kernel_package(machine: str, release: str) -> str:
 FEDORA_PROFILE = HostProfile(
     tool=TOOL,
     label="Fedora",
-    os_id="fedora",
+    os_ids=("fedora", "fedora-asahi-remix"),
     description=(
         "Prepare a Fedora deployment host for msksd "
         "(#635): the capability wrapper, the routing kernel "

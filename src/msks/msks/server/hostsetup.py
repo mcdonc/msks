@@ -377,7 +377,10 @@ class HostProfile:
 
     tool: str
     label: str
-    os_id: str
+    #: every os-release ID the platform gate accepts — the base
+    #: ID and the spins that carry their own (Fedora Asahi's is
+    #: fedora-asahi-remix).
+    os_ids: tuple[str, ...]
     description: str
     tool_packages: dict[str, str]
     soname_packages: dict[str, str]
@@ -407,7 +410,7 @@ class HostProfile:
 DEBIAN_PROFILE = HostProfile(
     tool=TOOL,
     label="Debian",
-    os_id="debian",
+    os_ids=("debian",),
     description=(
         "Prepare a Debian deployment host for msksd "
         "(#546): the capability wrapper, the routing kernel "
@@ -552,7 +555,7 @@ def check_root_and_platform(
     if not am_root():
         raise HostSetupError(f"run me as root (sudo {invoked_as()})")
     release = os_release_id()
-    if release != profile.os_id:
+    if release not in profile.os_ids:
         raise HostSetupError(
             f"this tool targets {profile.label} hosts "
             f"(os-release says '{release or 'unknown'}')"
