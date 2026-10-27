@@ -21,11 +21,10 @@
 #                     generated as the commented template on first
 #                     start, gitignored — edit it freely)
 #   DEV_HOST          bind address (default 127.0.0.1)
-#   DEV_UPLINK        egress NAT uplink (default eno4 — this dev
-#                     host's default route; unlike the NixOS module,
-#                     which refuses an uplink default because a wrong
-#                     name installs cleanly and NAT matches nothing,
-#                     the dev script targets this one host)
+#   DEV_UPLINK        egress NAT uplink (default the host's
+#                     default-route interface — the original dev
+#                     host's eno4, detected rather than named, so
+#                     a dev tree on any host picks its own)
 #   DEV_EGRESS        egress enabled: true|false (default true)
 #   DEV_EGRESS_SUBNET overrides the port-derived subnet
 set -euo pipefail
@@ -37,7 +36,21 @@ case "$state" in
 *) state="$root/$state" ;;
 esac
 
-caps="${DEV_CAPS:-/run/wrappers/bin/msks-caps}"
+# The capability wrapper: DEV_CAPS names one outright; otherwise
+# the NixOS host's security.wrappers install, then the location
+# every setup tool lands (msks-setup-debian-host and
+# msks-setup-fedora-host: /usr/local/bin/msks-caps) — a dev tree
+# on a host NixOS does not manage finds the second without
+# ceremony.
+caps="${DEV_CAPS:-}"
+if [ -z "$caps" ]; then
+  for candidate in /run/wrappers/bin/msks-caps /usr/local/bin/msks-caps; do
+    if [ -x "$candidate" ]; then
+      caps="$candidate"
+      break
+    fi
+  done
+fi
 mkdir -p "$state"
 
 # One daemon per state dir: the lock (held through the daemon's
@@ -98,7 +111,7 @@ seed_token
 p="$(cat "$state/port")"
 
 if [ ! -x "$caps" ]; then
-  echo "msks-dev: capability wrapper $caps not executable — the host's NixOS config installs it (DEV_CAPS relocates)" >&2
+  echo "msks-dev: no executable capability wrapper (looked in /run/wrappers/bin/msks-caps, /usr/local/bin/msks-caps) — DEV_CAPS names one" >&2
   exit 1
 fi
 msksd_bin="$root/.devenv/state/venv/bin/msksd"
@@ -142,7 +155,15 @@ export MSKSD_PORT="$p"
 # unconfigured client looks only at the default candidates.
 export MSKSD_SOCKET="${DEV_SOCKET:-$state/msksd.sock}"
 export MSKSD_EGRESS_ENABLED="$egress"
-export MSKSD_EGRESS_UPLINK="${DEV_UPLINK:-eno4}"
+# The egress uplink: the host's default-route interface (the
+# original fixed default, eno4, is that host's own default route
+# — detection picks it there too), eno4 itself the fallback when
+# no route answers.
+default_uplink() {
+  ip route show default 2>/dev/null | sed -n 's/^.* dev \([^ ]*\) .*/\1/p' | head -1 || true
+}
+uplink="${DEV_UPLINK:-$(default_uplink)}"
+export MSKSD_EGRESS_UPLINK="${uplink:-eno4}"
 # The egress subnet derives from the port: concurrent instances
 # (distinct ports) allocate disjoint /30 pools, all inside the
 # private 10.0.0.0/8 block (172.16/12 ends at 172.31 — a 172-derived
