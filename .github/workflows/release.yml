@@ -13,9 +13,10 @@
 #              extracts it at the tag) prepended to GitHub's
 #              auto-generated notes, with the wheel and its
 #              checksum attached.
-# 3. images  — the hash-keyed channel, one job walking the flavors
-#              in order (both legs share one images.json merge, so
-#              the merge cannot race itself). Per flavor the nix
+# 3. images  — the hash-keyed channel, two legs (one per arch:
+#              x86_64 on ubuntu-latest, aarch64 on
+#              ubuntu-24.04-arm — GitHub's arm64 runners) walking
+#              that arch's flavors in order. Per flavor the nix
 #              evaluation of the archive derivation — building
 #              nothing — is compared against the last manifest; a
 #              changed flavor builds once, compresses with
@@ -23,12 +24,16 @@
 #              nixos one ~578 MiB — both under GitHub's 2 GiB asset
 #              ceiling, which the plain nixos tar exceeds), and
 #              uploads to an immutable release tagged
-#              images/<hash> whose title names the flavor and body
-#              links what changed. images.json — ref, hash,
-#              description, kernel, size, url, build, built_from
-#              for every flavor — attaches to the version release,
-#              so `msks image import <url>` pulls straight from
-#              the channel with no manual download.
+#              images/<hash> whose title names the flavor and arch
+#              and body links what changed.
+# 4. images-merge — the single manifest writer: reads both legs'
+#              row artifacts (disjoint by construction — each leg
+#              writes only its arch's flavors, so the merge cannot
+#              race itself) and attaches images.json — ref, hash,
+#              arch, description, kernel, size, url, build,
+#              built_from for every flavor — to the version
+#              release, so `msks image import <url>` pulls straight
+#              from the channel with no manual download.
 name: Release
 
 on:
@@ -122,8 +127,15 @@ jobs:
             dist/*
 
   images:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    runs-on: ${{ matrix.arch == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    # The aarch64 leg's first NixOS build compiles the guest kernel
+    # natively (the closure builds for the runner's own arch); the
+    # x86_64 leg's unchanged derivations come from cache.
+    timeout-minutes: 240
     needs: release
     permissions:
       contents: write
@@ -132,6 +144,7 @@ jobs:
       TAG: ${{ github.ref_name }}
       SHA: ${{ github.sha }}
       REPO: ${{ github.repository }}
+      ARCH: ${{ matrix.arch }}
     steps:
       # Full history: the previous-version lookup reads the tag
       # list, and a depth-1 checkout carries only this tag.
@@ -176,22 +189,32 @@ jobs:
             printf '[]' > published.json
           fi
           # The published manifest is a LIST of rows (the client's
-          # contract); the gate reads it keyed by flavor, the ref's
-          # name half.
-          jq 'map({key: (.ref | split(":")[0]), value: .}) | from_entries' \
+          # contract); the gate reads it keyed by flavor and arch —
+          # the ref's name half plus the row's arch. A row that
+          # predates the arch field (#638) was built on x86_64
+          # runners, so a missing arch keys as x86_64 and carries
+          # forward into that leg.
+          jq 'map({key: ((.ref | split(":")[0]) + "/" + (.arch // "x86_64")),
+                   value: .}) | from_entries' \
             published.json > prev.json
 
       # One flavor at a time: each changed flavor publishes its
       # immutable channel slot, and every flavor (changed or not)
-      # leaves a row in rows.json for the final merge.
+      # leaves a row in rows.json for the final merge. The attrs are
+      # the arch-pinned ones (#637): each leg evaluates and builds
+      # its own arch's derivations — the NixOS closure compiles
+      # natively on the matching runner, never through emulation.
       - name: Publish changed images, collect manifest rows
         run: |
           set -eu
           printf '{}' > rows.json
           for flavor in debian nixos; do
-            attr=guest
             dir=.devenv/state/guest
-            if [ "$flavor" = nixos ]; then attr=guest-nixos; dir=.devenv/state/guest-nixos; fi
+            attr="guest-$ARCH"
+            if [ "$flavor" = nixos ]; then
+              dir=.devenv/state/guest-nixos
+              attr="guest-nixos-$ARCH"
+            fi
             # The single quotes are the point: the devenv shell's
             # environment expands GUEST_NIXPKGS inside the inner
             # bash, where it lives.
@@ -199,14 +222,15 @@ jobs:
             build=$(devenv --quiet -O dotenv.enable:bool false shell -- \
               bash -c 'nix eval --raw -I nixpkgs="$GUEST_NIXPKGS" \
                 -f nix/guest.nix "$1.imageArchive.outPath"' \
-                bash "$attr" \
+              bash "$attr" \
               | xargs basename)
-            prev_build=$(jq -r --arg f "$flavor" '.[$f].build // empty' prev.json)
-            prev_row=$(jq -c --arg f "$flavor" '.[$f] // empty' prev.json)
+            key="$flavor/$ARCH"
+            prev_build=$(jq -r --arg k "$key" '.[$k].build // empty' prev.json)
+            prev_row=$(jq -c --arg k "$key" '.[$k] // empty' prev.json)
             if [ "$build" = "$prev_build" ] && [ -n "$prev_row" ]; then
               echo "$flavor: derivation unchanged ($build) — row carries forward"
-              jq --arg f "$flavor" --argjson row "$prev_row" \
-                '.[$f] = $row' rows.json > rows.json.new
+              jq --arg k "$key" --argjson row "$prev_row" \
+                '.[$k] = $row' rows.json > rows.json.new
               mv rows.json.new rows.json
               continue
             fi
@@ -221,8 +245,8 @@ jobs:
             if gh release view "$tag" >/dev/null 2>&1; then
               echo "$flavor: channel slot $tag already published"
             else
-              prev_from=$(jq -r --arg f "$flavor" \
-                '.[$f].built_from // empty' prev.json)
+              prev_from=$(jq -r --arg k "$key" \
+                '.[$k].built_from // empty' prev.json)
               # Prerelease: GitHub's releases/latest skips
               # prereleases, so the hash-keyed channel slots can
               # never displace the version release the default
@@ -230,7 +254,7 @@ jobs:
               gh release create "$tag" \
                 --prerelease \
                 --target "$SHA" \
-                --title "$flavor image ($short)" \
+                --title "$flavor $ARCH image ($short)" \
                 --notes "Built from $SHA. What changed: https://github.com/$REPO/compare/${prev_from:-$SHA}...$SHA" \
                 "$flavor.tar.zst#$flavor.tar.zst" \
                 || gh release upload "$tag" \
@@ -239,7 +263,8 @@ jobs:
             meta=$(devenv --quiet -O dotenv.enable:bool false shell -- \
               python scripts/image_meta.py "$dir")
             jq \
-              --arg f "$flavor" \
+              --arg k "$key" \
+              --arg arch "$ARCH" \
               --arg hash "$hash" \
               --arg url "https://github.com/$REPO/releases/download/$tag/$flavor.tar.zst" \
               --arg build "$build" \
@@ -247,15 +272,51 @@ jobs:
               --arg built_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               --argjson size "$(stat -c%s "$flavor.tar.zst")" \
               --argjson meta "$meta" \
-              '.[$f] = {ref: $meta.ref, description: $meta.description,
-                        kernel: $meta.kernel_version, hash: $hash,
+              '.[$k] = {ref: $meta.ref, description: $meta.description,
+                        kernel: $meta.kernel_version, arch: $arch,
+                        hash: $hash,
                         size: $size, url: $url, build: $build,
                         built_from: $sha, built_at: $built_at}' \
               rows.json > rows.json.new
             mv rows.json.new rows.json
           done
 
+      - name: Stage this leg's rows for the merge
+        uses: actions/upload-artifact@v4
+        with:
+          name: rows-${{ matrix.arch }}
+          path: rows.json
+          retention-days: 1
+
+  # The single manifest writer: the legs publish disjoint row sets
+  # (each arch's flavors under flavor/arch keys), and this job is
+  # the only one that touches the version release's images.json —
+  # the no-race property the single job held, moved up one level.
+  images-merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: images
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Download both legs' rows
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rows-*
+          merge-multiple: true
+          path: rows/
+
+      # Each leg's artifact carries its rows keyed by flavor/arch;
+      # jq -s add unions the objects, [.[]] flattens to the list
+      # the client imports. The floor of two rows is the shape
+      # check: one row per flavor per arch.
       - name: Attach images.json to the version release
         run: |
-          jq '[.[]]' rows.json > images.json
+          set -eu
+          jq -s 'add | [.[]]' rows/rows-*.json > images.json
+          test "$(jq length images.json)" -ge 2 \
+            || { echo "merged manifest is unexpectedly small"; exit 1; }
           gh release upload "$TAG" images.json --clobber

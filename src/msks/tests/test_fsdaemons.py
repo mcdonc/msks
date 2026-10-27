@@ -11,7 +11,6 @@ import asyncio
 import contextlib
 import json
 import os
-import sys
 import time
 from pathlib import Path
 
@@ -42,53 +41,6 @@ from msks.settings import (
 from msks.spec.mounts import MountSpec, safe_share_name
 from msks.spec.vm import VmSpec
 from test_api import auth, client  # noqa: F401 (fixture)
-
-
-async def socket_sleeper(
-    socket: Path, ack: Path
-) -> asyncio.subprocess.Process:
-    """A process that stays alive with the socket in its argv —
-    the virtiofsd stand-in for the pidfile-guard tests. GNU sleep
-    refuses a non-numeric operand, so ``sleep 30 <socket>`` dies
-    at once and races every later /proc read (#645); the test
-    interpreter sleeps instead, carrying the socket as trailing
-    argv. It touches ``ack`` when it reaches the sleep, and the
-    helper waits for that word: a freshly exec'd pid's /proc
-    view settles late — for a window after the spawn returns the
-    cmdline reads empty — so the spawn's return is not yet proof
-    the argv is readable."""
-    ack.write_text("", encoding="utf-8")
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-c",
-        "import sys, time; open(sys.argv[1], 'a').write('up'); time.sleep(30)",
-        str(ack),
-        str(socket),
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    try:
-        deadline = time.monotonic() + 10.0
-        while ack.read_text(encoding="utf-8") == "":
-            if proc.returncode is not None:
-                raise AssertionError(
-                    "the socket sleeper died at startup"
-                    f" (exit {proc.returncode})"
-                )
-            if time.monotonic() > deadline:
-                raise AssertionError(
-                    "the socket sleeper never reached its sleep"
-                )
-            await asyncio.sleep(0.01)
-    except BaseException:
-        with contextlib.suppress(ProcessLookupError):
-            proc.kill()
-        await proc.wait()
-        raise
-    finally:
-        ack.unlink(missing_ok=True)
-    return proc
 
 
 def test_sandbox_follows_privilege() -> None:
@@ -272,14 +224,21 @@ def test_read_fs_pid_tolerates_garbage(tmp_path: Path) -> None:
     assert read_fs_pid(tmp_path / "fs-gone.pid") is None
 
 
-async def test_fs_pid_serves_matches_the_socket(tmp_path: Path) -> None:
+async def test_fs_pid_serves_matches_the_socket() -> None:
     """The recycled-pid guard (#56's rule, the fs shape): only a
     process whose command line names this workspace's socket dies
     by pidfile — a real process whose argv carries the socket
     qualifies, the same pid queried for another socket does not."""
 
     socket = Path("/unique/fs-probe.sock")
-    proc = await socket_sleeper(socket, tmp_path / "sleeper-up")
+    proc = await asyncio.create_subprocess_exec(
+        "sleep",
+        "30",
+        str(socket),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
     try:
         assert fs_pid_serves(proc.pid, socket) is True
         assert fs_pid_serves(proc.pid, Path("/other/fs.sock")) is False
@@ -535,12 +494,21 @@ async def test_restarted_daemon_kills_by_pidfile(tmp_path: Path) -> None:
     driver, _spawned = driver_over(settings)
     socket = fs_socket_path(vm_dir, "proj")
     pidfile = fs_pidfile_path(vm_dir, "proj")
-    serving = await socket_sleeper(socket, vm_dir / "sleeper-up")
+    serving = await asyncio.create_subprocess_exec(
+        "sleep",
+        "30",
+        str(socket),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
     pidfile.write_text(str(serving.pid), encoding="utf-8")
     driver._dir = lambda workspace_id: vm_dir  # type: ignore[method-assign]
     await driver._kill_untracked_fs_daemons("ws3")
     assert not pidfile.exists()
     # SIGTERM delivery is asynchronous: poll the death briefly.
+    import time
+
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         try:
@@ -814,12 +782,21 @@ async def test_untracked_sweep_tolerates_garbage_pidfiles(
     garbage = fs_pidfile_path(vm_dir, "junk")
     garbage.write_text("not-a-pid", encoding="utf-8")
     pidfile = fs_pidfile_path(vm_dir, "proj")
-    serving = await socket_sleeper(socket, vm_dir / "sleeper-up")
+    serving = await asyncio.create_subprocess_exec(
+        "sleep",
+        "30",
+        str(socket),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
     pidfile.write_text(str(serving.pid), encoding="utf-8")
     driver._dir = lambda workspace_id: vm_dir  # type: ignore[method-assign]
     await driver._kill_untracked_fs_daemons("ws-u")
     assert not garbage.exists() and not pidfile.exists()
     await driver._kill_untracked_fs_daemons("ws-u")  # empty: no-op
+    import time
+
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         try:
@@ -995,7 +972,14 @@ async def test_untracked_sweep_escalates_to_kill(tmp_path: Path) -> None:
         vm_dir.mkdir(parents=True)
         driver, _spawned = driver_over(Settings())
         socket = fs_socket_path(vm_dir, "proj")
-        immortal = await socket_sleeper(socket, vm_dir / "sleeper-up")
+        immortal = await asyncio.create_subprocess_exec(
+            "sleep",
+            "30",
+            str(socket),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
         # A TERM-immortal shape: a SIGSTOP'd process queues the
         # TERM undelivered (the death poll sees it alive), and
         # only the KILL lands — the escalation the sweep owes.
@@ -1148,7 +1132,31 @@ async def test_sweep_keeps_a_killproof_daemons_pidfile(tmp_path):
     vm_dir = tmp_path / "vms" / "ws-dstate"
     vm_dir.mkdir(parents=True)
     socket = fs_socket_path(vm_dir, "proj")
-    live = await socket_sleeper(socket, vm_dir / "sleeper-up")
+    # python, not sleep: sleep rejects a non-numeric second
+    # argument and dies at exec (the sweep would then see no
+    # serving pid and unlink — the flake this pins away), while a
+    # python -c sleeper ignores the extra argv element and keeps
+    # the socket path in its command line, exactly the shape
+    # fs_pid_serves reads.
+    live = await asyncio.create_subprocess_exec(
+        "python",
+        "-c",
+        "import time; time.sleep(30)",
+        str(socket),
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    # Readiness, not luck: between fork and exec the child's
+    # /proc cmdline still shows pytest's own argv, and a sweep in
+    # that window finds no socket and unlinks the pidfile — a
+    # loaded host opens it wide. The real daemon writes its
+    # pidfile from post-exec code, so the wait is the test's
+    # fidelity fix, not a product change.
+    deadline = time.monotonic() + 5.0
+    while not fs_pid_serves(live.pid, socket):
+        assert time.monotonic() < deadline, "sleeper never exec'd"
+        await asyncio.sleep(0.01)
     pidfile = fs_pidfile_path(vm_dir, "proj")
     pidfile.write_text(str(live.pid), encoding="utf-8")
 

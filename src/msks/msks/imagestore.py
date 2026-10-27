@@ -106,6 +106,12 @@ class ImageRecord:
     #: none (a foreign import) — every surface prints a dash for
     #: it, never the empty string.
     description: str = ""
+    #: The machine name the build declares (#638): a uname
+    #: ``machine`` value (``x86_64``, ``aarch64``). Empty for an
+    #: image whose manifest declares nothing — the import checks
+    #: a present value against this host and refuses the mismatch,
+    #: and an empty one imports exactly as before.
+    arch: str = ""
 
     @property
     def ref(self) -> str:
@@ -339,6 +345,7 @@ def validate_manifest(layer: tarfile.TarFile) -> dict:
     # import with nothing installed, not leave an invisible cache
     # behind the 400.
     provisioner_of(raw)
+    check_arch(raw)
     return raw
 
 
@@ -377,6 +384,27 @@ def provisioner_of(manifest: dict) -> str | None:
             f"expected one of {PROVISIONERS}"
         )
     return provisioner
+
+
+def check_arch(manifest: dict) -> None:
+    """The declared architecture against this host's (#638).
+
+    A present ``arch`` naming another machine is a named import
+    refusal — a foreign-arch kernel hangs wordlessly at boot, so
+    the mismatch is named here, where the bytes are still just a
+    download. An image without the field declares nothing and
+    checks nothing: it imports exactly as before.
+    """
+    arch = manifest.get("arch")
+    if not arch:
+        return
+    host = os.uname().machine
+    if arch != host:
+        raise ImageError(
+            f"image.json arch {arch!r} does not match this host "
+            f"({host!r}): the image declares another architecture, "
+            "and its kernel would hang wordlessly at boot here"
+        )
 
 
 def extract(layer: tarfile.TarFile, member_name: str):
@@ -661,6 +689,7 @@ def record_from(
         rootfs=cache / "rootfs.ext4",
         provisioner=provisioner_of(manifest),
         description=str(manifest.get("description", "")),
+        arch=str(manifest.get("arch", "")),
         imported=imported,
     )
 
