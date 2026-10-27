@@ -418,6 +418,18 @@ def nixos_guest_dir() -> Path:
     return path if path.is_absolute() else base / path
 
 
+def fedora_guest_dir() -> Path:
+    """The Fedora guest state dir (#651), mirroring the Debian
+    one's resolution: GUEST_FEDORA_DIR relocates it (absolute
+    as-is, relative below the repo root)."""
+    override = os.environ.get("GUEST_FEDORA_DIR")
+    base = Path(os.environ.get("DEVENV_ROOT", "."))
+    if override is None:
+        return base / ".devenv/state/guest-fedora"
+    path = Path(override)
+    return path if path.is_absolute() else base / path
+
+
 @pytest.mark.timeout(300)
 def test_import_of_the_real_built_nixos_image(tmp_path: Path) -> None:
     """The `msks-build-guest nixos` containerDisk (#250), when
@@ -433,6 +445,28 @@ def test_import_of_the_real_built_nixos_image(tmp_path: Path) -> None:
         pytest.skip("nixos guest assets not built")
     record = import_archive(archives[-1], tmp_path)
     assert record.name == "nixos"
+    assert record.kernel.stat().st_size > 1_000_000
+    assert record.rootfs.stat().st_size > 1_000_000_000
+    assert record.provisioner == "cloud-init"
+    with tarfile.open(archives[-1]) as tf:
+        tag = json.load(tf.extractfile("manifest.json"))[0]["RepoTags"][0]
+    assert "'" not in tag and "''" not in tag, tag
+
+
+@pytest.mark.timeout(300)
+def test_import_of_the_real_built_fedora_image(tmp_path: Path) -> None:
+    """The `msks-build-guest fedora` containerDisk (#651), when
+    present, imports through the same schema and declares the same
+    cloud-init provisioner the Debian and NixOS twins do. The
+    ceiling lifts for the same reason as the Debian twin's: the
+    archive's toolchain bake outweighs the suite's 30 s copy
+    budget on CI runners' disks."""
+
+    archives = sorted(fedora_guest_dir().glob("workspace-fedora-*.tar"))
+    if not archives:
+        pytest.skip("fedora guest assets not built")
+    record = import_archive(archives[-1], tmp_path)
+    assert record.name == "fedora"
     assert record.kernel.stat().st_size > 1_000_000
     assert record.rootfs.stat().st_size > 1_000_000_000
     assert record.provisioner == "cloud-init"

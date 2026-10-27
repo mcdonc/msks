@@ -25,6 +25,11 @@ let
   guest = pkgs.callPackage ./guest-debian.nix { };
   guest-x86_64 = pkgs.callPackage ./guest-debian.nix { arch = "x86_64"; };
   guest-aarch64 = pkgs.callPackage ./guest-debian.nix { arch = "aarch64"; };
+  guest-fedora = pkgs.callPackage ./guest-fedora.nix { };
+  guest-fedora-x86_64 = pkgs.callPackage ./guest-fedora.nix { arch = "x86_64"; };
+  guest-fedora-aarch64 = pkgs.callPackage ./guest-fedora.nix {
+    arch = "aarch64";
+  };
   guest-nixos = pkgs.callPackage ./guest-nixos.nix { };
   guest-nixos-x86_64 = pkgs.callPackage ./guest-nixos.nix {
     system = "x86_64-linux";
@@ -38,6 +43,15 @@ in
 
   # The pinned-arch Debian guests (#637).
   inherit guest-x86_64 guest-aarch64;
+
+  # The Fedora 44 workspace guest (#651): same output surface and
+  # archive contract as the Debian `guest`, built from Fedora's
+  # Generic cloud image (btrfs extraction legs; see
+  # guest-fedora.nix).
+  inherit guest-fedora;
+
+  # The pinned-arch Fedora guests (#651, #637).
+  inherit guest-fedora-x86_64 guest-fedora-aarch64;
 
   # The NixOS workspace guest (#250): same output surface and
   # archive contract as the Debian `guest`, built from a NixOS
@@ -55,6 +69,11 @@ in
   image-archive-debian = guest.imageArchive;
   image-archive-debian-x86_64 = guest-x86_64.imageArchive;
   image-archive-debian-aarch64 = guest-aarch64.imageArchive;
+
+  # The Fedora image archive on its own (#651).
+  image-archive-fedora = guest-fedora.imageArchive;
+  image-archive-fedora-x86_64 = guest-fedora-x86_64.imageArchive;
+  image-archive-fedora-aarch64 = guest-fedora-aarch64.imageArchive;
 
   # The NixOS image archive on its own (#250).
   image-archive-nixos = guest-nixos.imageArchive;

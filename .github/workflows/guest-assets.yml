@@ -31,6 +31,7 @@ on:
       - nix/pi-shrinkwrap-patch.py
       - nix/pi-shrinkwrap-integrity.json
       - nix/guest-debian.nix
+      - nix/guest-fedora.nix
       - nix/guest-nixos.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
@@ -46,6 +47,7 @@ on:
       - nix/pi-shrinkwrap-patch.py
       - nix/pi-shrinkwrap-integrity.json
       - nix/guest-debian.nix
+      - nix/guest-fedora.nix
       - nix/guest-nixos.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
@@ -95,6 +97,15 @@ jobs:
         run: >-
           devenv --quiet -O dotenv.enable:bool false shell --
           msks-build-guest nixos
+
+      # The Fedora 44 guest (#651): the third catalog image, the
+      # btrfs-extraction fetch-and-pack build. Same anti-rot
+      # criterion as the two above: a cold runner builds it end to
+      # end.
+      - name: Build the Fedora guest assets
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          msks-build-guest fedora
 
       # The real-artifact pinning test: the ''-escape RepoTag bug
       # shipped precisely because this test skipped everywhere CI
