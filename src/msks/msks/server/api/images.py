@@ -155,6 +155,9 @@ def router(app, catalog_lock) -> APIRouter:
                 "kernel_version": image.kernel_version,
                 "kernel_format": image.kernel_format,
                 "provisioner": image.provisioner,
+                # The declared machine name (#638): the import checks
+                # a present value against this host's uname machine.
+                "arch": image.arch,
                 # The build-baked human identity (#564): one line,
                 # empty for an image whose manifest carried none.
                 "description": image.description,

@@ -38,9 +38,11 @@ workspace-<name>-<version>.tar
 | Field            | Meaning                                                                   |
 | ---------------- | ------------------------------------------------------------------------- |
 | `schema`         | `2`                                                                       |
-| `arch`           | The guest's architecture, uname machine names — `x86_64` or `aarch64`;    |
-|                  | the shipped builders always emit it, and an image without it imports      |
-|                  | as before (nothing declared, nothing checked)                             |
+| `arch`           | The guest's architecture, uname machine names — `x86_64` or `aarch64`.    |
+|                  | The shipped builders always emit it. Import compares it to the            |
+|                  | host's own machine and refuses a mismatch naming both sides — a           |
+|                  | foreign-arch kernel would hang wordlessly at boot. An image without       |
+|                  | the field declares nothing and imports as before                          |
 | `name`           | Catalog name, e.g. `debian`                                               |
 | `version`        | Catalog version, e.g. `13.6`; numeric segments sort correctly             |
 | `cmdline`        | Kernel command line for workspace boots                                   |
@@ -747,9 +749,13 @@ the build entirely, and a channel slot that already exists is
 never rewritten.
 
 The version release carries `images.json`, the manifest that
-names every published image — `ref`, `description`, `kernel`,
-`size`, `hash`, `url`, and the source facts (`build`,
-`built_from`) — so fetching a published image is one command:
+names every published image — one row per flavor **and arch** —
+`ref`, `description`, `kernel`, `arch`, `size`, `hash`, `url`,
+and the source facts (`build`, `built_from`) — so fetching a
+published image is one command. Pick the row whose `arch` field
+matches the host's `uname -m`; the import then accepts it
+without ceremony (and refuses a row for another architecture
+with the same named error any other foreign-arch import gets):
 
 ```bash
 # the URL from the manifest row

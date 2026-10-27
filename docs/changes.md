@@ -8,6 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Per-arch channel images and arch-checked imports (#638).**
+  The release channel publishes one row per flavor and arch:
+  `images.json` carries an `arch` field beside the kernel and
+  size, built by per-arch legs and merged into one manifest.
+  `msks image import` compares the image's declared `arch`
+  against the host's own machine and refuses a mismatch naming
+  both sides — a foreign-arch kernel would hang wordlessly at
+  boot. An image without the field imports as before, and
+  `msks image check` and `image info` print the declared arch.
 - **arm64 guest images (#637).** The guest pipeline builds for
   x86_64 and aarch64: `msks-build-guest` follows the building
   host (the `-x86_64`/`-aarch64` flavors pin it), the arm64

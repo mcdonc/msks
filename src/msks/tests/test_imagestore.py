@@ -13,6 +13,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import certifi
 import guestassets
@@ -49,10 +50,12 @@ def build_containerdisk(
     schema: int | None = None,
     members: dict | None = None,
     description: str | None = None,
+    arch: str | None = None,
 ) -> None:
     """Write a minimal-but-valid container-image tar
     in containerDisk layout. *description* bakes the human
-    identity (#564) into the layer's image.json."""
+    identity (#564) into the layer's image.json; *arch* bakes the
+    declared machine name (#638)."""
     layer = BytesIO()
     with tarfile.open(fileobj=layer, mode="w") as tar:
         payload = members or {
@@ -69,6 +72,8 @@ def build_containerdisk(
             }
             if description is not None:
                 manifest["description"] = description
+            if arch is not None:
+                manifest["arch"] = arch
             payload = dict(payload)
             payload["disk/image.json"] = json.dumps(manifest).encode()
         for member, content in payload.items():
@@ -1401,6 +1406,61 @@ def test_unknown_provisioner_is_a_named_import_error(tmp_path: Path) -> None:
     # The refusal lands before anything installs: no cache, no
     # retained archive, only the (swept) private copy's absence.
     assert list((tmp_path / "images").iterdir()) == []
+
+
+def fake_host(monkeypatch, machine: str) -> None:
+    """Pin the host the import checks against (#638): uname's
+    machine name, as a struct with the one field the check reads."""
+    monkeypatch.setattr(
+        imagestore.os, "uname", lambda: SimpleNamespace(machine=machine)
+    )
+
+
+def test_foreign_arch_image_is_a_named_import_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A declared arch naming another machine is refused with both
+    sides named (#638) — a foreign-arch kernel hangs wordlessly at
+    boot, so the mismatch is named where the bytes are still just a
+    download, and nothing installs behind the refusal."""
+    fake_host(monkeypatch, "x86_64")
+    archive = tmp_path / "a.tar"
+    build_containerdisk(archive, arch="aarch64")
+    with pytest.raises(ImageError) as excinfo:
+        import_archive(archive, tmp_path)
+    text = str(excinfo.value)
+    assert "arch 'aarch64'" in text
+    assert "'x86_64'" in text
+    assert list((tmp_path / "images").iterdir()) == []
+
+
+def test_matching_arch_imports_and_the_record_carries_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The declared machine name passes the import on its own host
+    and rides the record (#638): the catalog row is the surface the
+    listing and the channel manifest read."""
+    fake_host(monkeypatch, "aarch64")
+    archive = tmp_path / "a.tar"
+    build_containerdisk(archive, arch="aarch64")
+    record = import_archive(archive, tmp_path)
+    assert record.arch == "aarch64"
+    listed = list_images(tmp_path)
+    assert listed[0].arch == "aarch64"
+
+
+def test_an_image_without_arch_imports_as_before(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No declared arch, nothing checked (#638): the field is
+    optional, and an image that ships without it imports exactly
+    as it did before the check existed, with an empty value on the
+    record."""
+    fake_host(monkeypatch, "x86_64")
+    archive = tmp_path / "a.tar"
+    build_containerdisk(archive)
+    record = import_archive(archive, tmp_path)
+    assert record.arch == ""
 
 
 def test_non_object_capabilities_is_a_named_import_error(

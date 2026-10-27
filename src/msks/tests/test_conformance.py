@@ -4,6 +4,7 @@ shape — against a fake console/microvm, no KVM."""
 import argparse
 import asyncio
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -210,6 +211,7 @@ def fast_retries(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 def manifest(
     *,
     provisioner: bool = True,
+    arch: bool = False,
 ) -> dict:
     """A schema-2 manifest with the knobs the checker reads."""
     document = {
@@ -220,6 +222,10 @@ def manifest(
     }
     if provisioner:
         document["capabilities"] = {"provisioner": "cloud-init"}
+    if arch:
+        # The checker runs on the host it imports against, so the
+        # declared machine is the host's own (#638).
+        document["arch"] = os.uname().machine
     return document
 
 
@@ -255,6 +261,37 @@ async def run_check(
         app_factory=make_app(microvm, FakeNet() if egress else None),
     )
     return rows, microvm
+
+
+async def test_the_archive_row_names_the_declared_arch(
+    tmp_path: Path,
+) -> None:
+    """The archive row prints the declared machine name beside the
+    hash (#638) — the image author sees what import will enforce
+    before publishing. The import inside the pass already refused a
+    mismatch, so the declared value always names this host."""
+    console = FakeConsole()
+    microvm = CheckMicrovm(console)
+    rows = await check_image(
+        archive_with(tmp_path, manifest(arch=True), tag="declared"),
+        egress=False,
+        boot_timeout_s=0.5,
+        shutdown_timeout_s=0.5,
+        app_factory=make_app(microvm, None),
+    )
+    archive_row = next(row for row in rows if row.name == ARCHIVE)
+    assert f"arch {os.uname().machine}" in archive_row.detail
+    # An image that declares nothing prints no arch fragment —
+    # the row reads exactly as it did before the field existed.
+    rows = await check_image(
+        archive_with(tmp_path, manifest(arch=False), tag="undeclared"),
+        egress=False,
+        boot_timeout_s=0.5,
+        shutdown_timeout_s=0.5,
+        app_factory=make_app(microvm, None),
+    )
+    archive_row = next(row for row in rows if row.name == ARCHIVE)
+    assert "arch " not in archive_row.detail
 
 
 def test_render_and_first_failure() -> None:

@@ -250,6 +250,12 @@ async def describe_image(url, token, ref, transport) -> dict:
     return row
 
 
+def declared_arch(row: dict) -> str:
+    """The declared machine name (#638): the import checks it
+    against this host, so a value here names this host's own."""
+    return row.get("arch") or "- (none declared)"
+
+
 def info_pairs(row: dict) -> list[list[str]]:
     """The record's label/value pairs: boot facts the listing
     carries."""
@@ -261,6 +267,7 @@ def info_pairs(row: dict) -> list[list[str]]:
         ("origin", origin_ref_of(row)),
         ("hash", row["hash"]),
         ("kernel", kernel),
+        ("arch", declared_arch(row)),
         ("description", description_of(row)),
         ("cmdline", row["cmdline"]),
         ("seed", f"provisioner {provisioner}"),

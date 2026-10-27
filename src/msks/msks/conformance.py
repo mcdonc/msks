@@ -277,6 +277,15 @@ def console_detail(record: ImageRecord) -> str:
     return "root autologin getty on the console port"
 
 
+def arch_detail(record: ImageRecord) -> str:
+    """The declared arch beside the hash (#638): the author sees
+    what import will enforce before publishing. The import above
+    already refused a mismatch, so a declared value here names
+    this host's own machine; an image that declares nothing adds
+    no fragment and the row reads as it always has."""
+    return f", arch {record.arch}" if record.arch else ""
+
+
 def default_uplink() -> str:
     """The default route's device — the uplink the --egress pass
     NATs behind when the operator named none."""
@@ -760,7 +769,8 @@ async def check_image(
         results = [
             passed(
                 ARCHIVE,
-                f"imported {record.ref} ({record.hash[:12]}), "
+                f"imported {record.ref} "
+                f"({record.hash[:12]}{arch_detail(record)}), "
                 f"{console_detail(record)}",
             )
         ]
