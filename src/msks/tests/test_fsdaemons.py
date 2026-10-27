@@ -53,10 +53,10 @@ async def socket_sleeper(
     at once and races every later /proc read (#645); the test
     interpreter sleeps instead, carrying the socket as trailing
     argv. It touches ``ack`` when it reaches the sleep, and the
-    helper waits for that word: a freshly exec'd pid's /proc view
-    settles late (the venv interpreter execs twice, and the
-    cmdline reads empty between the two), so the spawn's return
-    is not yet proof the argv is readable."""
+    helper waits for that word: a freshly exec'd pid's /proc
+    view settles late — for a window after the spawn returns the
+    cmdline reads empty — so the spawn's return is not yet proof
+    the argv is readable."""
     ack.write_text("", encoding="utf-8")
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
@@ -68,14 +68,26 @@ async def socket_sleeper(
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
-    deadline = time.monotonic() + 10.0
-    while ack.read_text(encoding="utf-8") == "":
-        if proc.returncode is not None:
-            raise AssertionError("the socket sleeper died at startup")
-        if time.monotonic() > deadline:
-            raise AssertionError("the socket sleeper never reached its sleep")
-        await asyncio.sleep(0.01)
-    ack.unlink(missing_ok=True)
+    try:
+        deadline = time.monotonic() + 10.0
+        while ack.read_text(encoding="utf-8") == "":
+            if proc.returncode is not None:
+                raise AssertionError(
+                    "the socket sleeper died at startup"
+                    f" (exit {proc.returncode})"
+                )
+            if time.monotonic() > deadline:
+                raise AssertionError(
+                    "the socket sleeper never reached its sleep"
+                )
+            await asyncio.sleep(0.01)
+    except BaseException:
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        await proc.wait()
+        raise
+    finally:
+        ack.unlink(missing_ok=True)
     return proc
 
 
@@ -529,8 +541,6 @@ async def test_restarted_daemon_kills_by_pidfile(tmp_path: Path) -> None:
     await driver._kill_untracked_fs_daemons("ws3")
     assert not pidfile.exists()
     # SIGTERM delivery is asynchronous: poll the death briefly.
-    import time
-
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         try:
@@ -810,8 +820,6 @@ async def test_untracked_sweep_tolerates_garbage_pidfiles(
     await driver._kill_untracked_fs_daemons("ws-u")
     assert not garbage.exists() and not pidfile.exists()
     await driver._kill_untracked_fs_daemons("ws-u")  # empty: no-op
-    import time
-
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         try:
