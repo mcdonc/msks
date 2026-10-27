@@ -40,6 +40,9 @@ docs/networking.md.
 import asyncio
 import json
 import logging
+import os
+import tempfile
+from pathlib import Path
 
 from ..spec.egress import EgressPolicy, IpSpec
 from ..spec.failures import MicrovmError
@@ -561,7 +564,6 @@ async def apply_base(settings) -> None:
     the guard names no port."""
     await nft_run(
         settings,
-        ["-f", "-"],
         input_text=base_ruleset(
             settings.net.uplink, base_guard_shape(settings)
         ).encode(),
@@ -803,7 +805,6 @@ async def install_vm(
         prior = f"delete table inet {table_name(workspace_id)}\n"
     await nft_run(
         settings,
-        ["-f", "-"],
         input_text=(prior + ruleset + elements).encode(),
         what=f"nft ruleset apply for {workspace_id}",
     )
@@ -820,22 +821,30 @@ async def delete_vm_table(settings, workspace_id: str) -> None:
     )
 
 
-async def nft_run(
-    settings,
-    args: list[str],
-    what: str,
-    *,
-    input_text: bytes | None = None,
-    absent_ok: bool = False,
-) -> None:
-    """Run one ``nft`` invocation; a failure becomes a named error.
+def ruleset_file(settings, text: bytes) -> Path:
+    """One ruleset's private file under the state directory (#641):
+    mode 0600 from the moment it exists (``mkstemp`` creates it
+    so) and a unique name, so two applies the daemon runs
+    concurrently never share a file. The caller removes it when
+    its invocation ends."""
+    settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    handle, name = tempfile.mkstemp(
+        prefix="nft-ruleset-", suffix=".nft", dir=settings.vmm.state_dir
+    )
+    with os.fdopen(handle, "wb") as file:
+        file.write(text)
+    return Path(name)
 
-    ``input_text`` rides stdin (``-f -``); None leaves it unused.
-    """
+
+async def run_invocation(
+    settings, argv: list[str], what: str, absent_ok: bool
+) -> None:
+    """One exec'd ``nft`` invocation; a failure becomes a named
+    error, and an absent table answers success when ``absent_ok``."""
     try:
         proc = await asyncio.create_subprocess_exec(
             settings.net.nft_tool,
-            *args,
+            *argv,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -844,10 +853,42 @@ async def nft_run(
         raise MicrovmError(
             f"{what}: tool not found: {settings.net.nft_tool}"
         ) from exc
-    output, err = await proc.communicate(input_text)
+    output, err = await proc.communicate(None)
     if proc.returncode == 0:
         return
     if absent_ok and ABSENT_TABLE in output + err:
         return
     detail = (output + err).decode(errors="replace").strip()[:400]
     raise MicrovmError(f"{what} failed ({proc.returncode}): {detail}")
+
+
+async def nft_run(
+    settings,
+    args: list[str] | None = None,
+    *,
+    what: str,
+    input_text: bytes | None = None,
+    absent_ok: bool = False,
+) -> None:
+    """Run one ``nft`` invocation; a failure becomes a named error.
+
+    ``input_text`` rides a private file under the state directory
+    and the invocation names it by path (``nft -f <file>``): a
+    regular file passes every nft release's input check, while a
+    ruleset on stdin asks the host's nft to accept whatever file
+    type fd 0 carries — nftables 1.0.9 refuses a socket with
+    ``Not a regular file: "/dev/stdin"``, and a system without a
+    ``/dev/stdin`` symlink cannot serve the placeholder at all
+    (#641). The file is removed when the invocation ends, whatever
+    its outcome. ``None`` leaves the invocation argv-driven alone.
+    """
+    argv = list(args or [])
+    path: Path | None = None
+    if input_text is not None:
+        path = ruleset_file(settings, input_text)
+        argv += ["-f", str(path)]
+    try:
+        await run_invocation(settings, argv, what, absent_ok)
+    finally:
+        if path is not None:
+            path.unlink(missing_ok=True)
