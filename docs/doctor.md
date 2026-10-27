@@ -36,6 +36,16 @@ tool's `~/.profile` block) or the `PATH=` export. A daemon
 started by hand inherits the session's PATH, so the row's fix
 reaches that shape too.
 
+One check grades by platform, not by a tool: on an Apple
+Silicon host (cpu0's MIDR names Apple's implementer — the
+Asahi Linux class), the report carries a warning row naming the
+kernel's guest-interrupt limitation
+([#649](https://github.com/mcdonc/msks/issues/649)) — workspaces
+start and their kernels boot, then stall before ssh answers,
+while everything short of a guest boot works. The row fires
+only where the condition exists; x86_64 hosts and non-Apple
+arm64 servers get no row.
+
 ## Reading the report
 
 Every row prints with a marker:

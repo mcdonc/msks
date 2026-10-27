@@ -8,6 +8,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Apple Silicon host warning in doctor (#649).** `msksd doctor`
+  names the Asahi-class kernel limitation where it exists — cpu0's
+  MIDR names Apple — as a warning row: this kernel's KVM does not
+  yet deliver guest interrupts, so workspaces start and their
+  kernels boot, then stall before ssh answers; everything short
+  of a guest boot works. The installation chapter documents the
+  same host class, and the row stays off x86_64 and non-Apple
+  arm64 hosts.
 - **Per-arch channel images and arch-checked imports (#638).**
   The release channel publishes one row per flavor and arch:
   `images.json` carries an `arch` field beside the kernel and
