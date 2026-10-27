@@ -520,6 +520,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#architectures" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Architectures
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-shipped-builder" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -952,6 +963,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#architectures" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Architectures
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-shipped-builder" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1112,6 +1134,18 @@ workspace boot files:</p>
 <td><code>2</code></td>
 </tr>
 <tr>
+<td><code>arch</code></td>
+<td>The guest's architecture, uname machine names — <code>x86_64</code> or <code>aarch64</code>;</td>
+</tr>
+<tr>
+<td></td>
+<td>the shipped builders always emit it, and an image without it imports</td>
+</tr>
+<tr>
+<td></td>
+<td>as before (nothing declared, nothing checked)</td>
+</tr>
+<tr>
 <td><code>name</code></td>
 <td>Catalog name, e.g. <code>debian</code></td>
 </tr>
@@ -1129,7 +1163,7 @@ workspace boot files:</p>
 </tr>
 <tr>
 <td><code>kernel_format</code></td>
-<td><code>bzImage</code> (informational)</td>
+<td><code>bzImage</code> on x86_64, <code>Image</code> on aarch64 (informational)</td>
 </tr>
 <tr>
 <td><code>capabilities</code></td>
@@ -1167,13 +1201,16 @@ section describes.</p>
 boots. A guest image must:</p>
 <ul>
 <li><strong>Boot a kernel with direct-kernel boot support.</strong> cloud-hypervisor
-  loads the bzImage and initrd itself and passes <code>cmdline</code>; the guest
-  never runs its own bootloader. Stock Debian/Ubuntu kernels work.</li>
+  loads the kernel and initrd itself and passes <code>cmdline</code>; the guest
+  never runs its own bootloader. Stock Debian/Ubuntu kernels work
+  (a bzImage on x86_64, an Image on aarch64).</li>
 <li><strong>Serve a root getty on the serial console.</strong> <code>msks
-console</code> bridges the client to the guest's ttyS0 through the
+console</code> bridges the client to the guest's serial device through the
   VMM's serial socket, so the guest needs an autologin root
   getty on its serial console. The shipped images run
-  <code>serial-getty@ttyS0</code> with an autologin drop-in. The kernel console (<code>console=ttyS0</code>) shares
+  <code>serial-getty@</code> on the arch's console device — <code>ttyS0</code> on
+  x86_64, <code>ttyAMA0</code> on aarch64 — with an autologin drop-in. The
+  kernel console (the same device, named on the cmdline) shares
   the port: kernel messages interleave with the session, which is
   exactly what a failsafe console wants. Authentication is the daemon's TLS + token listener, and the
   stream is raw bytes with no in-band protocol. The session
@@ -1265,6 +1302,25 @@ console</code> bridges the client to the guest's ttyS0 through the
   <code>generic</code> and <code>genericcloud</code>, Ubuntu, Fedora, ...) imports as-is
   and declares <code>"capabilities": {"provisioner": "cloud-init"}</code>.</p>
 <h2 id="building-an-image">Building an image<a class="headerlink" href="#building-an-image" title="Permanent link">&para;</a></h2>
+<h3 id="architectures">Architectures<a class="headerlink" href="#architectures" title="Permanent link">&para;</a></h3>
+<p>The guests build for x86_64 and aarch64. The bare flavor names
+follow the building host's <code>uname -m</code>, so <code>msks-build-guest</code> on an
+aarch64 dev host IS the arm64 build; the <code>-x86_64</code> and <code>-aarch64</code>
+suffixes pin an arch explicitly (<code>msks-build-guest nixos-aarch64</code>),
+and the Debian flavor is fetch-and-pack, so its pinned attrs build
+on any host (the NixOS closure wants its native evaluator — the
+arm64 busybox guard in the initrd build refuses a cross-eval with
+the cause named).</p>
+<p>The arm64 guests run 16K-page kernels — Debian's own <code>arm64-16k</code>
+flavour, and a kernel patch on the NixOS side — because a flat
+guest's page size is guest-internal (the image boots on any arm64
+host) while nested KVM inside the guest initializes only where the
+guest's page size matches a 16K host's (#635's Stage-2 scoping):
+one image covers both. The console differs by arch — the cmdline
+names <code>ttyS0</code> on x86_64 and <code>ttyAMA0</code> on aarch64, where
+cloud-hypervisor presents a PL011 UART — and the manifest records
+the arch, the kernel format, and the cmdline together, so the
+archive stays self-describing.</p>
 <h3 id="the-shipped-builder">The shipped builder<a class="headerlink" href="#the-shipped-builder" title="Permanent link">&para;</a></h3>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>msks-build-guest
 </span></code></pre></div>

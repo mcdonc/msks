@@ -997,6 +997,14 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>arm64 guest images (#637).</strong> The guest pipeline builds for
+  x86_64 and aarch64: <code>msks-build-guest</code> follows the building
+  host (the <code>-x86_64</code>/<code>-aarch64</code> flavors pin it), the arm64
+  guests run 16K-page kernels (Debian's own <code>arm64-16k</code> flavour;
+  a kernel patch on the NixOS side) so nested KVM initializes on
+  16K hosts like the Asahi class, and <code>image.json</code> declares its
+  <code>arch</code> — images without the field import as before. See
+  <a href="../images/">docs/images.md</a>.</li>
 <li><strong><code>msks-setup-fedora-host</code> (#635).</strong> The Fedora deployment-host
   setup — <code>msks-setup-debian-host</code>'s phases over dnf: the capability
   wrapper, the routing kernel settings, the dependency packages,
