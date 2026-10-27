@@ -57,13 +57,14 @@ def image_json(archive: Path) -> dict:
 
 def meta(guest_dir: Path) -> dict:
     """The channel row's facts for one built flavor: ref,
-    description, kernel, and the archive's file name."""
+    description, kernel, arch, and the archive's file name."""
     archive = archive_in(guest_dir)
     manifest = image_json(archive)
     return {
         "ref": f"{manifest['name']}:{manifest['version']}",
         "description": manifest.get("description", ""),
         "kernel_version": manifest.get("kernel_version", ""),
+        "arch": manifest.get("arch", ""),
         "archive": archive.name,
     }
 

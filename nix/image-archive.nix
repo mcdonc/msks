@@ -23,11 +23,15 @@
   # catalog identity (<name>:<version>) — they only pick the
   # RepoTag and the archive's file name; the manifest inside the
   # boot tree carries the authoritative image.json.
+  # architecture: the container config's own vocabulary (amd64/
+  # arm64 — Go/Debian names, not uname's), so podman and skopeo
+  # see a correctly labeled image (#637).
   mkImageArchive =
     {
       bootTree,
       imageName,
       imageVersion,
+      architecture ? "amd64",
     }:
     pkgs.runCommand "msks-image-archive"
       {
@@ -35,6 +39,7 @@
           bootTree
           imageName
           imageVersion
+          architecture
           ;
         nativeBuildInputs = [ pkgs.gnutar ];
         imageId =
@@ -52,12 +57,14 @@
         mv work/layer.tar "work/$imageId/layer.tar"
         printf '1.0' > "work/$imageId/VERSION"
         # A minimally valid image config: podman requires the rootfs
-        # diff_ids (the uncompressed layer's digest).
+        # diff_ids (the uncompressed layer's digest), and the
+        # architecture label names the guest inside (amd64/arm64).
         layer_digest=$(sha256sum "work/$imageId/layer.tar" | cut -d' ' -f1)
+        printf '{"architecture":"%s","os":"linux","config":{},' \
+          "$architecture" > "work/$imageId/json"
         printf '%s' \
-          '{"architecture":"amd64","os":"linux","config":{},' \
           '"rootfs":{"type":"layers","diff_ids":["sha256:'"$layer_digest"'"]}}' \
-          > "work/$imageId/json"
+          >> "work/$imageId/json"
         # Unquoted heredocs: the env-provided name/version/imageId
         # expand in the shell.
         cat > work/manifest.json <<EOF

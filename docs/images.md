@@ -38,11 +38,14 @@ workspace-<name>-<version>.tar
 | Field            | Meaning                                                                   |
 | ---------------- | ------------------------------------------------------------------------- |
 | `schema`         | `2`                                                                       |
+| `arch`           | The guest's architecture, uname machine names — `x86_64` or `aarch64`;    |
+|                  | the shipped builders always emit it, and an image without it imports      |
+|                  | as before (nothing declared, nothing checked)                             |
 | `name`           | Catalog name, e.g. `debian`                                               |
 | `version`        | Catalog version, e.g. `13.6`; numeric segments sort correctly             |
 | `cmdline`        | Kernel command line for workspace boots                                   |
 | `kernel_version` | e.g. `6.12.107+deb13-amd64` (informational)                               |
-| `kernel_format`  | `bzImage` (informational)                                                 |
+| `kernel_format`  | `bzImage` on x86_64, `Image` on aarch64 (informational)                   |
 | `capabilities`   | Optional capability object; `provisioner` names the seed consumer (below) |
 
 The manifest is self-describing: importing the archive needs nothing
@@ -79,13 +82,16 @@ The rootfs and kernel together decide whether a workspace actually
 boots. A guest image must:
 
 - **Boot a kernel with direct-kernel boot support.** cloud-hypervisor
-  loads the bzImage and initrd itself and passes `cmdline`; the guest
-  never runs its own bootloader. Stock Debian/Ubuntu kernels work.
+  loads the kernel and initrd itself and passes `cmdline`; the guest
+  never runs its own bootloader. Stock Debian/Ubuntu kernels work
+  (a bzImage on x86_64, an Image on aarch64).
 - **Serve a root getty on the serial console.** `msks
-console` bridges the client to the guest's ttyS0 through the
+console` bridges the client to the guest's serial device through the
   VMM's serial socket, so the guest needs an autologin root
   getty on its serial console. The shipped images run
-  `serial-getty@ttyS0` with an autologin drop-in. The kernel console (`console=ttyS0`) shares
+  `serial-getty@` on the arch's console device — `ttyS0` on
+  x86_64, `ttyAMA0` on aarch64 — with an autologin drop-in. The
+  kernel console (the same device, named on the cmdline) shares
   the port: kernel messages interleave with the session, which is
   exactly what a failsafe console wants. Authentication is the daemon's TLS + token listener, and the
   stream is raw bytes with no in-band protocol. The session
@@ -178,6 +184,28 @@ console` bridges the client to the guest's ttyS0 through the
   and declares `"capabilities": {"provisioner": "cloud-init"}`.
 
 ## Building an image
+
+### Architectures
+
+The guests build for x86_64 and aarch64. The bare flavor names
+follow the building host's `uname -m`, so `msks-build-guest` on an
+aarch64 dev host IS the arm64 build; the `-x86_64` and `-aarch64`
+suffixes pin an arch explicitly (`msks-build-guest nixos-aarch64`),
+and the Debian flavor is fetch-and-pack, so its pinned attrs build
+on any host (the NixOS closure wants its native evaluator — the
+arm64 busybox guard in the initrd build refuses a cross-eval with
+the cause named).
+
+The arm64 guests run 16K-page kernels — Debian's own `arm64-16k`
+flavour, and a kernel patch on the NixOS side — because a flat
+guest's page size is guest-internal (the image boots on any arm64
+host) while nested KVM inside the guest initializes only where the
+guest's page size matches a 16K host's (#635's Stage-2 scoping):
+one image covers both. The console differs by arch — the cmdline
+names `ttyS0` on x86_64 and `ttyAMA0` on aarch64, where
+cloud-hypervisor presents a PL011 UART — and the manifest records
+the arch, the kernel format, and the cmdline together, so the
+archive stays self-describing.
 
 ### The shipped builder
 

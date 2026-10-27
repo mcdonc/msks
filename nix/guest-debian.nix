@@ -54,9 +54,101 @@
 {
   lib,
   pkgs,
+  # The guest's architecture, uname machine names; the default
+  # follows the evaluating host so a bare build always produces
+  # an image bootable there (the minimal initramfs's busybox is a
+  # native build — a cross-eval would ship a foreign-arch shell
+  # into the initrd). The explicit attrs in guest.nix pin either
+  # arch for the channel legs.
+  arch ? builtins.head (lib.splitString "-" pkgs.stdenv.hostPlatform.system),
 }:
 
 let
+  # The per-arch surface (#637): Debian's own artifact names, the
+  # dated pins and their hashes, and the boot facts that differ —
+  # the console device (cloud-hypervisor's aarch64 machine presents
+  # a PL011 UART, which Linux names ttyAMA0; x86_64's 8250 is
+  # ttyS0) and the kernel format (arm64's deb carries an Image,
+  # not a bzImage). The aarch64 kernel is Debian's own 16K
+  # flavour: the image boots flat on any arm64 host (a flat
+  # guest's page size is stage-1, guest-internal) and its nested
+  # KVM initializes on 16K hosts (the Asahi class — a 4K guest
+  # kernel's own KVM init refuses at Stage-2 under a 16K host,
+  # #635's scoping). The amd64 pins are the ones this build has
+  # always carried, byte for byte.
+  archFacts = {
+    x86_64 = {
+      debianArch = "amd64";
+      imageHash = "sha512:8ea9faae810043a0b35b0149f05014f26705c2339ffb11ead308f33e844a87cc3ef46ec81d5262b38817b6a88af404874d48a5857ebe072ef6a31dfb6e371f50";
+      kernelDeb = "linux-image-6.12.107+deb13-amd64-unsigned_6.12.107-1_amd64.deb";
+      kernelHash = "sha256-fRPNgqHTd+QIJsMT9du9su3xtIxxOjdeTP5eIHdJy04=";
+      rsyncHash = "sha256-iqEi9rqNL/ESxyu5gU7glu5RbwITs2uYu+ecg8kvsiY=";
+      fdHash = "sha256-FVTGiS23vhDUxr2/GfetQXKCahttAeXMU3uB1rAttNE=";
+      rgHash = "sha256-fgwyUQwmTDEzX+O5rjerdtzSL30WJ6CghRilvyixesI=";
+      console = "ttyS0";
+      kernelFormat = "bzImage";
+      nodeTar = "x64";
+      nodeHash = "sha256-EISqNhlrukw6Xmmh7jiKbk/3KdrQlEX7zUNLKP48JK8=";
+    };
+    aarch64 = {
+      debianArch = "arm64";
+      imageHash = "sha512-Mhrc8httKUHgnpbzM68MjzWwhlkEg0pOuBSc/SKGuQLUhoSU3fyGMFKjJniGUzeWqj4h2ySiQ8D8VqScdTRxvg==";
+      kernelDeb = "linux-image-6.12.107+deb13-arm64-16k-unsigned_6.12.107-1_arm64.deb";
+      kernelHash = "sha256-qYM8BDJIU9FFuAKQUEL2OzzuNB7V/qmWGJ7AW3vNhn0=";
+      rsyncHash = "sha256-Z+t85goFbiO4bArAIPwA2mJkf9v740RTaTYB+Nsavyk=";
+      fdHash = "sha256-8pYF6zpjMDr5Qf0tjp9ArQwNLD9GCJUiw5EyaA5tGbg=";
+      rgHash = "sha256-m080e6IyCyLLohfMSweFNllsxqFAnfAB/FYK0/o5Zgk=";
+      console = "ttyAMA0";
+      kernelFormat = "Image";
+      nodeTar = "arm64";
+      nodeHash = "sha256-XO0tSNHXGYc5t/hoBN4Bca77aCO2hLEjQdMyGvw8sLI=";
+    };
+  };
+  facts =
+    archFacts.${arch} or (throw "guest arch '${arch}' carries no Debian pin set");
+
+  # The per-arch entries of the runtime-module closure (#637): the
+  # crc32c ext4's metadata_csum asks the crypto API for (x86's
+  # hardware module, autoloaded via its x86cpu modalias; arm64's
+  # generic implementation — the CRC32 instructions are the
+  # platform's own) and the nested-KVM modules (the x86 pair; the
+  # arm64 kvm module, which the 16K flavour carries — #635's
+  # scoping is why the kernel is 16K at all).
+  archModules =
+    {
+      x86_64 = "crc32c-intel kvm-intel kvm-amd";
+      aarch64 = "crc32c-generic kvm";
+    }
+    .${arch};
+
+  # The nested-KVM unit's modprobe line (#637): the x86 pair with
+  # its fallbacks; the arm64 module alone.
+  kvmModprobe =
+    {
+      x86_64 = "modprobe kvm-intel || modprobe kvm-amd || true";
+      aarch64 = "modprobe kvm || true";
+    }
+    .${arch};
+
+  # Debian's multiarch triplet (#637): where the tree's shared
+  # libraries live — the staged-deb soname guards resolve against
+  # it.
+  multiarch =
+    {
+      x86_64 = "x86_64-linux-gnu";
+      aarch64 = "aarch64-linux-gnu";
+    }
+    .${arch};
+
+  # The dynamic loader's path inside the tree (#637): Debian's
+  # x86_64 keeps it under /lib64, arm64 under /lib.
+  elfLoader =
+    {
+      x86_64 = "/lib64/ld-linux-x86-64.so.2";
+      aarch64 = "/lib/ld-linux-aarch64.so.1";
+    }
+    .${arch};
+
   # The official Debian 13 genericcloud image (#41): systemd plus
   # cloud-init and its python3 runtime — the workspace's cidata seed
   # is NoCloud's own format, so first-boot provisioning needs no
@@ -64,9 +156,9 @@ let
   # the build used before; the boot diet below keeps the console fast.
   debianImage = pkgs.fetchurl {
     urls = [
-      "https://cloud.debian.org/images/cloud/trixie/20260831-2587/debian-13-genericcloud-amd64-20260831-2587.qcow2"
+      "https://cloud.debian.org/images/cloud/trixie/20260831-2587/debian-13-genericcloud-${facts.debianArch}-20260831-2587.qcow2"
     ];
-    hash = "sha512:8ea9faae810043a0b35b0149f05014f26705c2339ffb11ead308f33e844a87cc3ef46ec81d5262b38817b6a88af404874d48a5857ebe072ef6a31dfb6e371f50";
+    hash = facts.imageHash;
   };
 
   # First-boot provisioning (#41): the image's declared seed-disk
@@ -82,7 +174,7 @@ let
   # Root boots read-write (#14): the per-workspace qcow2 overlay
   # absorbs writes over this pristine base — copy-on-write protects
   # it, an ro mount would block apt and provisioning state.
-  kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 rw";
+  kernelCmdline = "console=${facts.console} root=/dev/vda rootfstype=ext4 rw";
 
   # Debian's GENERIC kernel flavor (#96) — one deb fetch and one
   # version pin serve the workspace guest and its nested-KVM
@@ -95,10 +187,8 @@ let
   # URL and sha256; the deb carries vmlinuz, its config, and the
   # matching /usr/lib/modules tree.
   genericKernelDeb = pkgs.fetchurl {
-    url =
-      "https://deb.debian.org/debian/pool/main/l/linux/"
-      + "linux-image-6.12.107+deb13-amd64-unsigned_6.12.107-1_amd64.deb";
-    hash = "sha256-fRPNgqHTd+QIJsMT9du9su3xtIxxOjdeTP5eIHdJy04=";
+    url = "https://deb.debian.org/debian/pool/main/l/linux/" + facts.kernelDeb;
+    hash = facts.kernelHash;
   };
 
   genericKernel =
@@ -121,8 +211,8 @@ let
   rsyncDeb = pkgs.fetchurl {
     url =
       "https://deb.debian.org/debian/pool/main/r/rsync/"
-      + "rsync_3.4.1+ds1-5+deb13u4_amd64.deb";
-    hash = "sha256-iqEi9rqNL/ESxyu5gU7glu5RbwITs2uYu+ecg8kvsiY=";
+      + "rsync_3.4.1+ds1-5+deb13u4_${facts.debianArch}.deb";
+    hash = facts.rsyncHash;
   };
 
   # Debian's own fd-find and ripgrep (#272): pi resolves its fd
@@ -139,15 +229,15 @@ let
   fdFindDeb = pkgs.fetchurl {
     url =
       "https://deb.debian.org/debian/pool/main/r/rust-fd-find/"
-      + "fd-find_10.2.0-1+b5_amd64.deb";
-    hash = "sha256-FVTGiS23vhDUxr2/GfetQXKCahttAeXMU3uB1rAttNE=";
+      + "fd-find_10.2.0-1+b5_${facts.debianArch}.deb";
+    hash = facts.fdHash;
   };
 
   ripgrepDeb = pkgs.fetchurl {
     url =
       "https://deb.debian.org/debian/pool/main/r/rust-ripgrep/"
-      + "ripgrep_14.1.1-1+b4_amd64.deb";
-    hash = "sha256-fgwyUQwmTDEzX+O5rjerdtzSL30WJ6CghRilvyixesI=";
+      + "ripgrep_14.1.1-1+b4_${facts.debianArch}.deb";
+    hash = facts.rgHash;
   };
 
   # The minimal initramfs (#37's shape, #96's module set): busybox,
@@ -165,6 +255,7 @@ let
         busybox = pkgs.pkgsStatic.busybox;
         nativeBuildInputs = [
           pkgs.cpio
+          pkgs.file
           pkgs.gzip
           pkgs.xz
         ];
@@ -173,6 +264,18 @@ let
         set -eu
         mkdir -p "$out"/tree/bin "$out"/tree/modules \
           "$out"/tree/proc "$out"/tree/dev "$out"/tree/newroot
+        # A cross-eval would ship a foreign-arch busybox into the
+        # initrd (pkgsStatic builds for the evaluating host): the
+        # guard turns the silent mismatch into a named refusal at
+        # build time (#637).
+        case "${arch}" in
+          x86_64) file_machine="x86-64" ;;
+          *) file_machine="${arch}" ;;
+        esac
+        file -b "$busybox"/bin/busybox | grep -qw "$file_machine" || {
+          echo "busybox is not ${arch}: cross-evaluating the ${arch} guest needs an evaluator of that arch" >&2
+          exit 1
+        }
         cp "$busybox"/bin/busybox "$out"/tree/bin/busybox
         moddir="$genericKernel/usr/lib/modules"
         moddir=$(echo "$moddir"/*)
@@ -227,8 +330,10 @@ let
   # the rule, and here it does not. (The NixOS image's Node comes
   # from nixpkgs — there the platform's packaging exists.)
   agentNodeTarball = pkgs.fetchurl {
-    url = "https://nodejs.org/dist/v22.23.3/" + "node-v22.23.3-linux-x64.tar.gz";
-    hash = "sha256-EISqNhlrukw6Xmmh7jiKbk/3KdrQlEX7zUNLKP48JK8=";
+    url =
+      "https://nodejs.org/dist/v22.23.3/"
+      + "node-v22.23.3-linux-${facts.nodeTar}.tar.gz";
+    hash = facts.nodeHash;
   };
 
   # The rest of the agent toolchain (#266, #268): the shared pins
@@ -236,7 +341,7 @@ let
   # Code — in nix/agent-toolchain.nix, staged below the Debian
   # way. One file owns every pin; the NixOS image stages the same
   # derivations through its system profile.
-  toolchain = pkgs.callPackage ./agent-toolchain.nix { };
+  toolchain = pkgs.callPackage ./agent-toolchain.nix { inherit arch; };
 
   # The msks additions, staged as an overlay tree: the
   # serial-console autologin on ttyS0 (#481), the net module
@@ -260,7 +365,7 @@ let
           $out/etc/cloud/cloud.cfg.d \
           $out/etc/sudoers.d \
           $out/etc/ssh/sshd_config.d \
-          $out/etc/systemd/system/serial-getty@ttyS0.service.d \
+          $out/etc/systemd/system/serial-getty@${facts.console}.service.d \
           $out/etc/systemd/system/ssh.service.d \
           $out/etc/systemd/system/multi-user.target.wants \
           $out/etc/systemd/system/sockets.target.wants \
@@ -523,7 +628,7 @@ let
           ''' \
           '[Service]' \
           'Type=oneshot' \
-          'ExecStart=/bin/sh -c "modprobe kvm-intel || modprobe kvm-amd || true"' \
+          'ExecStart=/bin/sh -c "${kvmModprobe}"' \
           'RemainAfterExit=yes' \
           ''' \
           '[Install]' \
@@ -611,7 +716,7 @@ let
           'Environment=TERM=xterm' \
           'ExecStart=' \
           'ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM' \
-          > $out/etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf
+          > $out/etc/systemd/system/serial-getty@${facts.console}.service.d/autologin.conf
 
       '';
 
@@ -623,9 +728,16 @@ let
     import sys
 
     table = json.load(sys.stdin)["partitiontable"]
+    # Debian's cloud images type the root partition by CPU: the
+    # x86-64 and ARM64 root GUIDs (GPT's own per-arch "Linux root"
+    # types) — either names this image's root.
+    root_types = {
+        "4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709",  # Linux root (x86-64)
+        "B921B045-1DF0-41C3-AF44-4C6F280D3FAE",  # Linux root (ARM64)
+    }
     root = None
     for part in table["partitions"]:
-        if part["type"] == "4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709":
+        if part["type"].upper() in root_types:
             root = part
             break
     assert root is not None, "no Linux root partition found"
@@ -1057,9 +1169,7 @@ let
           button
           evdev
           isofs
-          crc32c-intel
-          kvm-intel
-          kvm-amd
+          ${archModules}
           tun
           nf_tables
           nft_chain_nat
@@ -1215,7 +1325,7 @@ let
           name=$(basename "$bin")
           for so in $(readelf -d "$bin" \
             | awk '/NEEDED/{gsub(/[\[\]]/,"",$NF); print $NF}'); do
-            test -e "$root"/usr/lib/x86_64-linux-gnu/"$so" \
+            test -e "$root"/usr/lib/${multiarch}/"$so" \
               || { echo "$name needs $so, absent from the tree" >&2; \
                    exit 1; }
           done
@@ -1237,9 +1347,17 @@ let
                 need && /  Name: /{print f, $3}')
           while read -r so ver; do
             [ -n "$so" ] || continue
-            lib="$root"/usr/lib/x86_64-linux-gnu/"$so"
-            readelf --version-info "$lib" | grep -q "Name: $ver" \
-              || { echo "$name needs $ver from $so; the tree's " \
+            lib="$root"/usr/lib/${multiarch}/"$so"
+            # Capture then grep — no pipe: `grep -q` exits at its
+            # first match, and under pipefail a readelf still
+            # writing its large output takes the SIGPIPE and the
+            # pipeline reports failure DESPITE the match (the
+            # #637 arm64 build hit the race; the match position in
+            # the output moved with the arch).
+            readelf --version-info "$lib" > verinfo.tmp || {
+              echo "readelf failed on $lib" >&2; exit 1; }
+            grep -q "Name: $ver" < verinfo.tmp || {
+              echo "$name needs $ver from $so; the tree's " \
                    "copy is older" >&2; exit 1; }
           done <<<"$reqs"
         }
@@ -1288,7 +1406,7 @@ let
         test -x "$root"/usr/local/bin/pi
         test -x "$root"/usr/local/bin/herdr
         test -x "$root"/usr/local/bin/claude
-        test -x "$root"/usr/local/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude
+        test -x "$root"/usr/local/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/${toolchain.claudePlatformName}/claude
         test -f \
           "$root"/etc/skel/.pi/agent/extensions/llm-models.ts
         test -f "$root"/root/.pi/agent/extensions/llm-models.ts
@@ -1303,11 +1421,11 @@ let
         # here, not at the workspace's first launch. herdr is
         # asserted static: it needs nothing from the tree.
         for bin in "$root"/usr/local/bin/node \
-          "$root"/usr/local/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude; do
+          "$root"/usr/local/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/${toolchain.claudePlatformName}/claude; do
           for so in $(readelf -d "$bin" \
             | awk '/NEEDED/{gsub(/[\[\]]/,"",$NF); print $NF}'); do
-            test -e "$root"/usr/lib/x86_64-linux-gnu/"$so" \
-              || test -e "$root"/lib/x86_64-linux-gnu/"$so" \
+            test -e "$root"/usr/lib/${multiarch}/"$so" \
+              || test -e "$root"/lib/${multiarch}/"$so" \
               || { echo "$bin needs $so, absent from the tree" >&2; \
                    exit 1; }
           done
@@ -1326,9 +1444,13 @@ let
                 need && /  Name: /{print f, $3}')
           while read -r so ver; do
             [ -n "$so" ] || continue
-            lib="$root"/usr/lib/x86_64-linux-gnu/"$so"
-            [ -e "$lib" ] || lib="$root"/lib/x86_64-linux-gnu/"$so"
-            readelf --version-info "$lib" | grep -q "Name: $ver" \
+            lib="$root"/usr/lib/${multiarch}/"$so"
+            [ -e "$lib" ] || lib="$root"/lib/${multiarch}/"$so"
+            # Capture then grep — no pipe (the SIGPIPE-under-pipefail
+            # race the deb guard hit; same class, same fix).
+            readelf --version-info "$lib" > verinfo.tmp || {
+              echo "readelf failed on $lib" >&2; exit 1; }
+            grep -q "Name: $ver" < verinfo.tmp \
               || { echo "$bin needs $ver from $so; the tree's copy is older" \
                    >&2; exit 1; }
           done <<<"$reqs"
@@ -1360,8 +1482,8 @@ let
         npmcli="$root"/usr/local/lib/node_modules/npm/bin/npm-cli.js
         [ "$(head -n 1 "$npmcli")" = '#!/usr/bin/env node' ] \
           || { echo "npm-cli.js lost its env-node shebang" >&2; exit 1; }
-        ldso="$root"/lib64/ld-linux-x86-64.so.2
-        libpath="$root"/usr/lib/x86_64-linux-gnu
+        ldso="$root"${elfLoader}
+        libpath="$root"/usr/lib/${multiarch}
         run_tool() { "$ldso" --library-path "$libpath" "$@"; }
         run_tool "$root"/usr/local/bin/node --version \
           | grep -q '^v[0-9][0-9.]*$'
@@ -1527,11 +1649,12 @@ let
         cat > "$out"/disk/image.json <<EOF
         {
           "schema": 2,
+          "arch": "${arch}",
           "name": "${imageName}",
           "version": "${imageVersion}",
           "cmdline": "${kernelCmdline}",
           "kernel_version": "$kernel_version",
-          "kernel_format": "bzImage",
+          "kernel_format": "${facts.kernelFormat}",
           "description": "Debian ${imageVersion} cloud image, kernel $kernel_version, cloud-init, the egress module set and consent stack",
           "capabilities": {"provisioner": "${imageProvisioner}"}
         }
@@ -1548,6 +1671,7 @@ let
       imageName
       imageVersion
       ;
+    architecture = facts.debianArch;
   };
 
 in
@@ -1591,8 +1715,9 @@ pkgs.runCommand "msks-guest"
     cat > "$out"/guest-manifest.json <<EOF
     {
       "schema": 1,
+      "arch": "${arch}",
       "kernel_version": "$version",
-      "kernel_format": "bzImage",
+      "kernel_format": "${facts.kernelFormat}",
       "cmdline": "${kernelCmdline}",
       "vmlinux": "vmlinux",
       "initrd": "initrd",

@@ -105,3 +105,39 @@ jobs:
           python -m pytest src/msks/tests/test_imagestore.py
           -q -p no:cacheprovider --no-cov
           -k real_built
+
+  # The arm64 leg (#637): the same Debian-flavor build and import
+  # pinning on GitHub's arm64 runner. The bare flavor name follows
+  # the building host, so `msks-build-guest` here IS the aarch64
+  # build — the same anti-rot criterion the x86_64 job holds, for
+  # the other arch. The NixOS arm64 closure stays out of CI for
+  # now: its cold build would own the job's whole budget, and the
+  # arm64 dev host that motivated #637 builds it natively.
+  build-guest-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: devenv
+
+      - name: Install devenv.sh
+        run: nix profile add github:cachix/devenv/v2.3.1
+
+      - name: Build the arm64 guest assets
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          msks-build-guest
+
+      - name: Import the built image (pinning test)
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          python -m pytest src/msks/tests/test_imagestore.py
+          -q -p no:cacheprovider --no-cov
+          -k real_built

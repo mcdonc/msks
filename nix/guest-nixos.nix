@@ -53,9 +53,34 @@
 {
   lib,
   pkgs,
+  # The guest's system triple; the default follows the evaluating
+  # host so a bare build produces an image bootable there, and the
+  # pinned attrs in guest.nix serve the channel legs (#637, #638).
+  system ? pkgs.stdenv.hostPlatform.system,
 }:
 
 let
+  # The per-arch facts (#637): the uname machine name the manifest
+  # records, the container config's own arch vocabulary, and the
+  # console device — cloud-hypervisor's aarch64 machine presents a
+  # PL011 UART (Linux ttyAMA0); x86_64's 8250 is ttyS0. The kernel
+  # file's name comes from nixpkgs' own per-platform pick below
+  # (bzImage on x86_64, Image on aarch64).
+  archFacts = {
+    x86_64-linux = {
+      arch = "x86_64";
+      containerArch = "amd64";
+      console = "ttyS0";
+    };
+    aarch64-linux = {
+      arch = "aarch64";
+      containerArch = "arm64";
+      console = "ttyAMA0";
+    };
+  };
+  facts =
+    archFacts.${system}
+      or (throw "guest system '${system}' carries no NixOS fact set");
   # First-boot provisioning (#41): the seed-disk consumer is
   # NixOS's own cloud-init (nixpkgs builds it) — the declared
   # provisioner stays cloud-init, and the create-time contract
@@ -89,7 +114,7 @@ let
 
   nixos =
     (import (pkgs.path + "/nixos/lib/eval-config.nix") {
-      system = "x86_64-linux";
+      inherit system;
       # The module (the same file the guest's rebuild imports)
       # plus the image-build marker (#427), which ships nowhere.
       # eval-config directly, not nixos/default.nix — the wrapper
@@ -102,6 +127,29 @@ let
       modules = [
         ./guest-nixos-configuration.nix
         { _module.args.imageBuild = true; }
+      ]
+      ++ lib.optionals (system == "aarch64-linux") [
+        # 16K pages on the aarch64 guest (#637): a flat guest's
+        # page size is stage-1, guest-internal — the image boots
+        # on any arm64 host — and nested KVM inside it
+        # initializes on 16K hosts (the Asahi class); a 4K guest
+        # kernel's own KVM init refuses at Stage-2 under a 16K
+        # host (#635's scoping).
+        (
+          { lib, ... }:
+          {
+            boot.kernelPatches = [
+              {
+                name = "msks-16k-pages";
+                patch = null;
+                structuredExtraConfig = with lib.kernel; {
+                  ARM64_16K_PAGES = yes;
+                  ARM64_4K_PAGES = no;
+                };
+              }
+            ];
+          }
+        )
       ];
     }).config;
 
@@ -151,7 +199,7 @@ let
   # stop/start. The store path itself resolves INSIDE the guest's
   # rootfs: the archive is self-contained on any host that
   # imports it.
-  kernelCmdline = "console=ttyS0 root=/dev/vda rootfstype=ext4 rw init=/nix/var/nix/profiles/system/init";
+  kernelCmdline = "console=${facts.console} root=/dev/vda rootfstype=ext4 rw init=/nix/var/nix/profiles/system/init";
 
   # The system closure plus the channel source, resolved by nix:
   # store-paths lists every path stage-2 activation, the units,
@@ -281,7 +329,7 @@ let
         # symlink to assert); the build pins its drop-in (#481) and
         # the hostname unit that orders ahead of it.
         test -x "$toplevel"/init
-        test -e "$toplevel"/etc/systemd/system/serial-getty@ttyS0.service.d/10-msks-console.conf
+        test -e "$toplevel"/etc/systemd/system/serial-getty@${facts.console}.service.d/10-msks-console.conf
         test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/msks-seed-hostname.service
         test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/cloud-init.service
         test -e "$toplevel"/etc/systemd/system/multi-user.target.wants/sshd.service
@@ -387,7 +435,12 @@ let
           fi
           [ -n "$lib" ] && [ -e "$lib" ] \
             || { echo "claude needs $so, absent from the tree" >&2; exit 1; }
-          readelf --version-info "$lib" | grep -q "Name: $ver" \
+          # Capture then grep — no pipe (the SIGPIPE-under-pipefail
+          # race #637's arm64 build hit in the Debian guard; same
+          # class, same fix).
+          readelf --version-info "$lib" > verinfo.tmp || {
+            echo "readelf failed on $lib" >&2; exit 1; }
+          grep -q "Name: $ver" < verinfo.tmp \
             || { echo "claude needs $ver from $so; the tree's copy is older" \
                  >&2; exit 1; }
         done <<<"$(readelf --version-info "$claudeElf" \
@@ -508,15 +561,18 @@ let
         # Self-describing (#40): the archive alone builds a boot
         # spec. The capabilities carry the whole NixOS-vs-Debian
         # difference the daemon acts on — the same declared
-        # cloud-init provisioner, the same bzImage direct boot.
+        # cloud-init provisioner, the same direct kernel boot
+        # (bzImage on x86_64, Image on aarch64 — nixpkgs' own
+        # per-platform pick, kernelFile above).
         cat > "$out"/disk/image.json <<EOF
         {
           "schema": 2,
+          "arch": "${facts.arch}",
           "name": "${imageName}",
           "version": "${imageVersion}",
           "cmdline": "${kernelCmdline}",
           "kernel_version": "${kernelVersion}",
-          "kernel_format": "bzImage",
+          "kernel_format": "${kernelFile}",
           "description": "NixOS ${imageVersion}, kernel ${kernelVersion}, cloud-init, the egress module set and consent stack",
           "capabilities": {"provisioner": "${imageProvisioner}"}
         }
@@ -529,6 +585,7 @@ let
       imageName
       imageVersion
       ;
+    architecture = facts.containerArch;
   };
 
 in
@@ -567,8 +624,9 @@ pkgs.runCommand "msks-guest-nixos"
     cat > "$out"/guest-manifest.json <<EOF
     {
       "schema": 1,
+      "arch": "${facts.arch}",
       "kernel_version": "${kernelVersion}",
-      "kernel_format": "bzImage",
+      "kernel_format": "${kernelFile}",
       "cmdline": "${kernelCmdline}",
       "vmlinux": "vmlinux",
       "initrd": "initrd",
