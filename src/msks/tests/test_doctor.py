@@ -357,6 +357,10 @@ def tmux_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_check_tmux_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: None)
+    # a host whose admin dirs really carry the tool must not
+    # rescue the miss (merged-usr Fedora shows /usr/bin under
+    # /usr/sbin); the daemon-shaped extension stays out
+    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
     result = check_tmux("apt")
     assert result.ok is False and result.is_warning is False
     assert result.hint == "sudo apt install tmux"
@@ -874,6 +878,10 @@ def test_a_missing_vmm_report_prints_the_install_sequence(
         return None if name == "cloud-hypervisor" else f"/usr/bin/{name}"
 
     monkeypatch.setattr(doctor_mod.shutil, "which", without_vmm)
+    # a host whose admin dirs really carry the VMM must not
+    # rescue the miss (the landed /usr/local/bin copy shows under
+    # a symlinked /usr/local/sbin); the extension stays out
+    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
     monkeypatch.setattr(doctor_mod, "run", probes_ok)
     monkeypatch.setattr(doctor_mod, "detect_package_manager", lambda: "apt")
     report = run_doctor(Settings())
