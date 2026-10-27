@@ -103,6 +103,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..settings import resolve_virtiofsd
+
 TOOL = "msks-setup-debian-host"
 
 # The service phase's names (#560): the user unit's location
@@ -188,10 +190,11 @@ TOOL_PACKAGES = {
     # CA bundle, and urllib refuses the TLS handshake without
     # one. The package's probeable command names it.
     "update-ca-certificates": "ca-certificates",
-    # The host-mount daemon (#620): Debian's archive carries
-    # virtiofsd (trixie ships 1.13 with the binary on PATH),
-    # unlike the VMM — apt lands it like every other
-    # doctor-read package.
+    # The host-mount daemon (#620): the virtiofsd package
+    # installs its binary off PATH (#643) — the probe and the
+    # daemon's own default both resolve the archive locations
+    # themselves — so apt lands it like every other doctor-read
+    # package and a present binary still answers the probe.
     "virtiofsd": "virtiofsd",
 }
 
@@ -618,13 +621,25 @@ def check_root_and_platform(
     refuse_below_floor(profile, release)
 
 
+def tool_present(tool: str) -> bool:
+    """Whether one needed tool answers on this host: PATH names
+    it, or — the virtiofsd package's shape alone (#643) — one of
+    the archive locations it installs the binary at off PATH
+    carries it."""
+    if which(tool) is not None:
+        return True
+    if tool != "virtiofsd":
+        return False
+    return resolve_virtiofsd(tool, which, file_exists) != tool
+
+
 def missing_packages(
     profile: HostProfile = DEBIAN_PROFILE,
 ) -> list[str]:
     """The packages whose tools are absent, in check order."""
     missing = []
     for tool, package in profile.tool_packages.items():
-        if which(tool) is None:
+        if not tool_present(tool):
             missing.append(package)
     return missing
 

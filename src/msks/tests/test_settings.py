@@ -1,7 +1,14 @@
 """Settings loading: defaults, env overrides, validation."""
 
 import pytest
-from msks.settings import Settings
+from msks.settings import (
+    VIRTIOFSD_LOCATIONS,
+    Settings,
+    VmmSettings,
+    resolve_virtiofsd,
+)
+
+from msks import settings as settings_module
 
 
 def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -439,3 +446,69 @@ def test_dict_entry_shapes_fail_named_at_load() -> None:
     for entry in bad_entries:
         with pytest.raises(ValueError, match="MSKSD_LLM_MODELS"):
             Settings.from_env({"MSKSD_LLM_MODELS": [entry]})
+
+
+def test_resolve_virtiofsd_passes_named_paths_through() -> None:
+    """A value with a slash is the operator's own path (#643): it
+    is used exactly as named, whatever PATH and the archive
+    locations carry."""
+    assert (
+        resolve_virtiofsd(
+            "/opt/virtiofsd", lambda n: "/usr/bin/x", lambda p: True
+        )
+        == "/opt/virtiofsd"
+    )
+
+
+def test_resolve_virtiofsd_prefers_path_then_locations() -> None:
+    """A bare name resolves on PATH first, then the archive
+    locations the package installs the binary at, in order
+    (#643)."""
+    assert (
+        resolve_virtiofsd(
+            "virtiofsd", lambda n: "/usr/bin/virtiofsd", lambda p: True
+        )
+        == "/usr/bin/virtiofsd"
+    )
+    assert (
+        resolve_virtiofsd(
+            "virtiofsd", lambda n: None, lambda p: p == VIRTIOFSD_LOCATIONS[0]
+        )
+        == VIRTIOFSD_LOCATIONS[0]
+    )
+    assert (
+        resolve_virtiofsd(
+            "virtiofsd", lambda n: None, lambda p: p == VIRTIOFSD_LOCATIONS[1]
+        )
+        == VIRTIOFSD_LOCATIONS[1]
+    )
+
+
+def test_resolve_virtiofsd_keeps_an_unfound_bare_name() -> None:
+    """A bare name nothing carries comes back unchanged: the
+    later exec error names what was configured (#643)."""
+    assert (
+        resolve_virtiofsd("virtiofsd", lambda n: None, lambda p: False)
+        == "virtiofsd"
+    )
+
+
+def test_vmm_from_env_routes_virtiofsd_through_the_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every settings load path crosses from_env (#46), so the
+    resolver there is the one resolution point: the configured
+    value is what it receives, its answer is what lands (#643)."""
+    seen: list[str] = []
+
+    def record(name: str) -> str:
+        seen.append(name)
+        return "/resolved/virtiofsd"
+
+    monkeypatch.setattr(settings_module, "resolve_virtiofsd", record)
+    built = VmmSettings.from_env({"MSKSD_VIRTIOFSD": "virtiofsd"})
+    assert seen == ["virtiofsd"]
+    assert built.virtiofsd == "/resolved/virtiofsd"
+    explicit = VmmSettings.from_env({"MSKSD_VIRTIOFSD": "/opt/mine"})
+    assert explicit.virtiofsd == "/resolved/virtiofsd"
+    assert seen == ["virtiofsd", "/opt/mine"]

@@ -226,8 +226,11 @@ persist = 12
 # probe re-arm's skip-unchanged check added recipient_hashes.
 secretstore = 7
 # #464: doctor's Settings import (env-plus-defaults fallback when
-# a config will not load).
-settings = 4
+# a config will not load). #643: the host-setup probe resolves
+# virtiofsd through the shared resolver — the package installs
+# the binary off PATH (the statement's two edges: module and
+# name).
+settings = 6
 # #514: the mint's named refusal and the lock indicators read
 # the cache leaf's error vocabulary (module + name).
 secretcache = 2

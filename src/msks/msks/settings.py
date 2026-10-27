@@ -20,8 +20,9 @@ import ipaddress
 import json
 import math
 import os
+import shutil
 import socket
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from ipaddress import IPv4Network
 from pathlib import Path
@@ -87,6 +88,35 @@ def move_wait_seconds(env) -> float:
             f"got {seconds}"
         )
     return seconds
+
+
+#: The distro archive locations the virtiofsd package installs its
+#: binary at, off PATH (#643): Debian's and Ubuntu's packages put
+#: it under /usr/libexec (older Debian suites under /usr/lib/qemu),
+#: and neither release links it into PATH.
+VIRTIOFSD_LOCATIONS = ("/usr/libexec/virtiofsd", "/usr/lib/qemu/virtiofsd")
+
+
+def resolve_virtiofsd(
+    name: str,
+    which_fn: Callable[[str], str | None] = shutil.which,
+    exists_fn: Callable[[str], bool] = lambda path: Path(path).is_file(),
+) -> str:
+    """The virtiofsd binary to exec (#643): a name with a slash is
+    used exactly as named (the operator pointed at a path); a bare
+    name resolves on PATH first, then the archive locations the
+    package installs it at. A bare name nothing carries is
+    returned as given, so the later exec error names what was
+    configured instead of a silent swap."""
+    if "/" in name:
+        return name
+    found = which_fn(name)
+    if found is not None:
+        return found
+    for location in VIRTIOFSD_LOCATIONS:
+        if exists_fn(location):
+            return location
+    return name
 
 
 @dataclass
@@ -461,7 +491,9 @@ def vmm_settings_from_env(
         cloud_hypervisor=_env(
             env, "MSKSD_CLOUD_HYPERVISOR", cls.cloud_hypervisor
         ),
-        virtiofsd=_env(env, "MSKSD_VIRTIOFSD", cls.virtiofsd),
+        virtiofsd=resolve_virtiofsd(
+            _env(env, "MSKSD_VIRTIOFSD", cls.virtiofsd)
+        ),
         state_dir=Path(
             _env(env, "MSKSD_STATE_DIR", str(cls().state_dir))
         ).expanduser(),
