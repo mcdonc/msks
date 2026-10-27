@@ -131,8 +131,9 @@ verifies: the NixOS module in `nix/module.nix` sets
 grants the daemon the two capabilities — a `nixos-rebuild switch`
 is the whole host setup. The dev host's wrapper carries the same
 grant for `msks-dev` (its uplink default names this dev host's
-interface). A Debian deployment host runs
-`msks-setup-debian-host` — [the Installation
+interface). Debian and Fedora deployment hosts run their setup
+tool — `msks-setup-debian-host` or `msks-setup-fedora-host` —
+and [the Installation
 chapter](installation.md) walks the tool end to end. For egress
 it matters that the tool installs the same capability wrapper,
 lands the sysctl and the module set this section names, and

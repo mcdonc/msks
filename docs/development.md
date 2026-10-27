@@ -12,9 +12,11 @@ A development host (this repository's checkout) runs the daemon
 through devenv. `msks-dev` seeds a per-worktree state dir with
 its own port, token, and socket, and execs `msksd` through
 `/run/wrappers/bin/msks-caps`, the wrapper the host's NixOS
-configuration installs. When the dev tree runs on a host NixOS
-does not manage, `DEV_CAPS` points at the Debian setup's
-`/usr/local/bin/msks-caps`.
+configuration installs; on a host NixOS does not manage the
+script finds the setup tool's `/usr/local/bin/msks-caps` by
+itself (`DEV_CAPS` names another path outright). The tool is
+`msks-setup-debian-host` on a Debian host and
+`msks-setup-fedora-host` on a Fedora host.
 
 The same daemon is the default `devenv processes up` process:
 the manager runs `scripts/dev-daemon.sh` in the foreground, and

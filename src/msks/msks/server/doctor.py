@@ -52,7 +52,13 @@ from pathlib import Path
 
 from ..config import load_settings
 from ..settings import Settings
-from .hostsetup import PATH_EXTRA_DIRS, executing_user, group_present, in_group
+from .hostsetup import (
+    PATH_EXTRA_DIRS,
+    executing_user,
+    group_present,
+    in_group,
+    os_release_id,
+)
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -424,27 +430,41 @@ def session_lacks_admin_dirs() -> bool:
     return "/usr/sbin" not in session.split(os.pathsep)
 
 
+def setup_tool_name() -> str | None:
+    """The host-setup tool this host's os-release names — the two
+    console entries the wheel ships, one per targeted distro. A
+    distro neither entry targets answers None, and the relogin
+    hint keeps the export alone."""
+    return {
+        "debian": "msks-setup-debian-host",
+        "fedora": "msks-setup-fedora-host",
+        # the Asahi spin carries its own ID (ID_LIKE names fedora)
+        "fedora-asahi-remix": "msks-setup-fedora-host",
+    }.get(os_release_id())
+
+
 def path_note_result() -> CheckResult:
     """The relogin encouragement (#601): a warning row, never an
     error. The message names both deployment shapes honestly — a
     daemon under the systemd user unit finds the directories on
     its own PATH, while a hand-started or dev daemon inherits
     this session's PATH and needs the same fix."""
+    tool = setup_tool_name()
+    relogin = "log out and back in"
+    if tool:
+        relogin += f" ({tool} adds the directories to ~/.profile)"
     return CheckResult(
         name="PATH",
         ok=False,
         is_warning=True,
         message=(
-            "this session's PATH lacks /usr/sbin, where Debian "
-            "puts nft, conntrack, and the e2fsprogs trio; a "
+            "this session's PATH lacks /usr/sbin, where the "
+            "deployment host's packaging may keep nft, conntrack, "
+            "and the e2fsprogs trio; a "
             "daemon started from it inherits the gap, while the "
             "systemd user unit's own PATH carries the directories"
         ),
-        hint=(
-            "log out and back in (msks-setup-debian-host adds the "
-            "directories to ~/.profile), or export "
-            "PATH=$PATH:/usr/sbin:/sbin"
-        ),
+        hint=f"{relogin}, or export PATH=$PATH:/usr/sbin:/sbin",
     )
 
 

@@ -18,6 +18,9 @@ fan_in_ceiling = 12
 entry_points = [
   "msks.server.main",
   "msks.server.hostsetup",
+  # #635: the Fedora sibling entry — its module carries only the
+  # HostProfile; the shared phases live in hostsetup beside it.
+  "msks.server.hostsetup_fedora",
   "msks.client.cli",
   "msks.client.term_popup",
   "msks.client.tui.decide_app",

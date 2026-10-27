@@ -7,6 +7,7 @@ import subprocess
 from types import SimpleNamespace
 
 import msks.server.doctor as doctor_mod
+import msks.server.hostsetup as hostsetup_mod
 import msks.server.main as main_mod
 import pytest
 from msks.server.doctor import (
@@ -207,6 +208,9 @@ def test_check_binary_missing_names_use_and_hint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: None)
+    # a host whose /usr/sbin really carries the tool must not
+    # rescue the miss (the daemon-shaped extension stays out)
+    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
     result = check_binary(
         "mkisofs", ["mkisofs", "--version"], "apt", use="seed disks (#41)"
     )
@@ -220,6 +224,9 @@ def test_check_binary_missing_warns_when_graded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: None)
+    # a host whose /usr/sbin really carries the tool must not
+    # rescue the miss (the daemon-shaped extension stays out)
+    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
     result = check_binary(
         "ssh", ["ssh", "-V"], "apt", is_warning=True, use="debug"
     )
@@ -266,6 +273,9 @@ def test_check_binary_probe_ok(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_check_ssh_missing_warns(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: None)
+    # a host whose /usr/sbin really carries the tool must not
+    # rescue the miss (the daemon-shaped extension stays out)
+    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
     result = check_ssh(None)
     assert result.ok is False and result.is_warning is True
     assert "msks forward" in result.message
@@ -347,6 +357,10 @@ def tmux_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_check_tmux_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: None)
+    # a host whose admin dirs really carry the tool must not
+    # rescue the miss (merged-usr Fedora shows /usr/bin under
+    # /usr/sbin); the daemon-shaped extension stays out
+    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
     result = check_tmux("apt")
     assert result.ok is False and result.is_warning is False
     assert result.hint == "sudo apt install tmux"
@@ -864,6 +878,10 @@ def test_a_missing_vmm_report_prints_the_install_sequence(
         return None if name == "cloud-hypervisor" else f"/usr/bin/{name}"
 
     monkeypatch.setattr(doctor_mod.shutil, "which", without_vmm)
+    # a host whose admin dirs really carry the VMM must not
+    # rescue the miss (the landed /usr/local/bin copy shows under
+    # a symlinked /usr/local/sbin); the extension stays out
+    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
     monkeypatch.setattr(doctor_mod, "run", probes_ok)
     monkeypatch.setattr(doctor_mod, "detect_package_manager", lambda: "apt")
     report = run_doctor(Settings())
@@ -883,12 +901,39 @@ def test_a_missing_vmm_report_prints_the_install_sequence(
     assert text.count("curl -LO ") == 4  # two assets, row and block
 
 
+def test_path_note_hints_the_distros_own_tool(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The relogin hint names the setup tool os-release identifies
+    (#635): the Debian and Fedora entries by name, and a distro
+    neither targets keeps the export alone."""
+    release = tmp_path / "os-release"
+
+    def distro(identifier: str) -> None:
+        release.write_text(f"ID={identifier}\n")
+        monkeypatch.setattr(hostsetup_mod, "OS_RELEASE", str(release))
+
+    distro("fedora")
+    assert "(msks-setup-fedora-host adds" in doctor_mod.path_note_result().hint
+    distro("fedora-asahi-remix")
+    assert "(msks-setup-fedora-host adds" in doctor_mod.path_note_result().hint
+    distro("debian")
+    assert "(msks-setup-debian-host adds" in doctor_mod.path_note_result().hint
+    distro("arch")
+    assert doctor_mod.path_note_result().hint == (
+        "log out and back in, or export PATH=$PATH:/usr/sbin:/sbin"
+    )
+
+
 def test_run_doctor_warning_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         doctor_mod.shutil,
         "which",
         lambda name: None if name in {"ssh", "rsync"} else f"/usr/bin/{name}",
     )
+    # a host whose /usr/sbin really carries the pair must not
+    # rescue the miss (the daemon-shaped extension stays out)
+    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
     monkeypatch.setattr(doctor_mod, "run", probes_ok)
     kvm_seam(monkeypatch)  # the kvm row's answer is host state
     report = run_doctor(Settings())

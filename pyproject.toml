@@ -79,6 +79,7 @@ msks = "msks.client.cli:main"
 msksd = "msks.server.main:main"
 msks-term-popup = "msks.client.term_popup:main"
 msks-setup-debian-host = "msks.server.hostsetup:main"
+msks-setup-fedora-host = "msks.server.hostsetup_fedora:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/msks/msks"]
