@@ -8,6 +8,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **arm64 guest images (#637).** The guest pipeline builds for
+  x86_64 and aarch64: `msks-build-guest` follows the building
+  host (the `-x86_64`/`-aarch64` flavors pin it), the arm64
+  guests run 16K-page kernels (Debian's own `arm64-16k` flavour;
+  a kernel patch on the NixOS side) so nested KVM initializes on
+  16K hosts like the Asahi class, and `image.json` declares its
+  `arch` — images without the field import as before. See
+  [docs/images.md](images.md).
 - **`msks-setup-fedora-host` (#635).** The Fedora deployment-host
   setup — `msks-setup-debian-host`'s phases over dnf: the capability
   wrapper, the routing kernel settings, the dependency packages,
