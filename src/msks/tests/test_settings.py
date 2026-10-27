@@ -1,5 +1,7 @@
 """Settings loading: defaults, env overrides, validation."""
 
+from pathlib import Path
+
 import pytest
 from msks.settings import (
     VIRTIOFSD_LOCATIONS,
@@ -491,6 +493,25 @@ def test_resolve_virtiofsd_keeps_an_unfound_bare_name() -> None:
         resolve_virtiofsd("virtiofsd", lambda n: None, lambda p: False)
         == "virtiofsd"
     )
+
+
+def test_resolve_virtiofsd_location_requires_the_executable_bit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The locations arm matches the PATH arm's X_OK semantics
+    (#643 review): a non-executable regular file at an install
+    location does not resolve — the bare name comes back, so the
+    exec error names what was configured instead of spawning a
+    guaranteed PermissionError."""
+    location = tmp_path / "virtiofsd"
+    location.write_text("#!/bin/sh\n")
+    location.chmod(0o644)
+    monkeypatch.setattr(
+        settings_module, "VIRTIOFSD_LOCATIONS", (str(location),)
+    )
+    assert resolve_virtiofsd("virtiofsd", lambda n: None) == "virtiofsd"
+    location.chmod(0o755)
+    assert resolve_virtiofsd("virtiofsd", lambda n: None) == str(location)
 
 
 def test_vmm_from_env_routes_virtiofsd_through_the_resolver(

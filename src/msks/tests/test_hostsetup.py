@@ -22,7 +22,6 @@ from msks.server.hostsetup import (
     WRAPPER,
     main,
 )
-from msks.settings import VIRTIOFSD_LOCATIONS as SETTINGS_VIRTIOFSD_LOCATIONS
 
 CAPS = "cap_net_admin,cap_net_bind_service"
 
@@ -354,18 +353,24 @@ def test_happy_path_lands_every_piece(
 
 
 def test_off_path_virtiofsd_answers_the_probe(
-    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """The virtiofsd package installs its binary off PATH (#643):
-    a location-carried binary answers the probe, so a present
-    install is not re-installed."""
+    a location-carried executable binary answers the probe, so a
+    present install is not re-installed."""
     real_which = hostsetup.which
 
     def lacking(tool):
         return None if tool == "virtiofsd" else real_which(tool)
 
     monkeypatch.setattr(hostsetup, "which", lacking)
-    debian_host.files.add(SETTINGS_VIRTIOFSD_LOCATIONS[0])
+    location = tmp_path / "virtiofsd"
+    location.write_text("#!/bin/sh\n")
+    location.chmod(0o755)
+    monkeypatch.setattr("msks.settings.VIRTIOFSD_LOCATIONS", (str(location),))
+    debian_host.files.add(str(location))
     assert hostsetup.tool_present("virtiofsd") is True
     assert hostsetup.missing_packages() == []
 

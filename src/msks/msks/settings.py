@@ -100,7 +100,9 @@ VIRTIOFSD_LOCATIONS = ("/usr/libexec/virtiofsd", "/usr/lib/qemu/virtiofsd")
 def resolve_virtiofsd(
     name: str,
     which_fn: Callable[[str], str | None] = shutil.which,
-    exists_fn: Callable[[str], bool] = lambda path: Path(path).is_file(),
+    exists_fn: Callable[[str], bool] = lambda path: (
+        Path(path).is_file() and os.access(path, os.X_OK)
+    ),
 ) -> str:
     """The virtiofsd binary to exec (#643): a name with a slash is
     used exactly as named (the operator pointed at a path); a bare

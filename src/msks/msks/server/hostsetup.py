@@ -630,7 +630,11 @@ def tool_present(tool: str) -> bool:
         return True
     if tool != "virtiofsd":
         return False
-    return resolve_virtiofsd(tool, which, file_exists) != tool
+
+    def executable(path: str) -> bool:
+        return file_exists(path) and os.access(path, os.X_OK)
+
+    return resolve_virtiofsd(tool, which, executable) != tool
 
 
 def missing_packages(
