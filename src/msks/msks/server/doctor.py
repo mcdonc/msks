@@ -861,6 +861,53 @@ def kvm_access_result(manager: str | None) -> CheckResult:
     )
 
 
+#: The MIDR's implementer field names Apple's CPU business
+#: (0x61) — the marker for an Apple Silicon host, where the
+#: kernel's KVM is the Asahi tree's and the #649 limitation
+#: applies.
+APPLE_IMPLEMENTER = 0x61
+#: Where a Linux arm64 kernel publishes cpu0's MIDR — the
+#: register file sysfs presents per CPU.
+MIDR_EL1 = Path("/sys/devices/system/cpu/cpu0/regs/identification/midr_el1")
+
+
+def apple_silicon_kvm_result() -> CheckResult | None:
+    """The Asahi-class warning (#649): on Apple Silicon, this
+    kernel's KVM does not yet deliver guest interrupts — a
+    workspace starts and its kernel boots deep into first boot,
+    then a vCPU's timer dies and the guest stalls before ssh can
+    answer. Everything short of a guest boot (builds, imports,
+    the console, workspace lifecycle) works, so the row warns
+    and names the behavior instead of failing the report.
+
+    None on every other host: the row fires only where the
+    condition exists — the MIDR implementer names Apple — and
+    stays off x86_64 hosts and non-Apple arm64 servers alike;
+    a host that publishes no MIDR (an exotic arm64 platform)
+    gets no row either, the marker being the whole claim.
+    """
+    if sys.platform != "linux" or os.uname().machine != "aarch64":
+        return None
+    try:
+        midr = int(MIDR_EL1.read_text(), 16)
+    except OSError, ValueError:
+        return None
+    if (midr >> 24) & 0xFF != APPLE_IMPLEMENTER:
+        return None
+    return CheckResult(
+        name="apple-kvm",
+        ok=False,
+        is_warning=True,
+        message=(
+            "Apple Silicon host: this kernel's KVM does not yet "
+            "deliver guest interrupts, so workspaces start and "
+            "their kernels boot, then stall before ssh answers "
+            "(#649); everything that runs short of a guest boot "
+            "works"
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # The check set
 # ---------------------------------------------------------------------------
@@ -901,6 +948,9 @@ def run_doctor(settings: Settings) -> DoctorReport:
         # /dev/kvm is a Linux node, and every group-add command
         # the row can hint at prescribes one on another platform.
         report.add(kvm_access_result(manager))
+        apple_kvm = apple_silicon_kvm_result()
+        if apple_kvm is not None:
+            report.add(apple_kvm)
     report.add(
         check_binary(
             vmm.mkfs_ext4,

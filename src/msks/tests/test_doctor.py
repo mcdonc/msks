@@ -15,6 +15,7 @@ from msks.server.doctor import (
     DoctorReport,
     append_failure_block,
     append_result,
+    apple_silicon_kvm_result,
     check_binary,
     check_library,
     check_ssh,
@@ -702,6 +703,69 @@ def kvm_seam(
     monkeypatch.setattr(doctor_mod.os, "getgid", lambda: 1000)
 
 
+def apple_seam(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    midr: str | None,
+    machine: str = "aarch64",
+) -> None:
+    """The Apple-kvm row's seam: the platform, the machine, and
+    cpu0's MIDR as sysfs presents it (0x-prefixed hex, or no file
+    at all on a host that publishes none)."""
+    monkeypatch.setattr(doctor_mod.sys, "platform", "linux")
+    monkeypatch.setattr(
+        doctor_mod.os, "uname", lambda: SimpleNamespace(machine=machine)
+    )
+    midr_path = tmp_path / "midr_el1"
+    if midr is not None:
+        midr_path.write_text(midr)
+    monkeypatch.setattr(doctor_mod, "MIDR_EL1", midr_path)
+
+
+def test_the_apple_kvm_row_warns_on_apple_silicon(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """An Apple implementer in cpu0's MIDR earns the #649 warning:
+    the row names the stall (kernels boot, ssh never answers) and
+    grades as a warning, so the report still passes — everything
+    short of a guest boot works on such a host."""
+    # cpu0's actual MIDR on the M3 the #649 evidence came from.
+    apple_seam(monkeypatch, tmp_path, "0x00000000612f0430")
+    result = apple_silicon_kvm_result()
+    assert result is not None and not result.ok
+    assert result.is_warning
+    assert result.name == "apple-kvm"
+    assert "#649" in result.message
+    assert "ssh" in result.message
+
+
+def test_the_apple_kvm_row_stays_off_other_arm64_hosts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """An ARM-implementer MIDR (a Neoverse server) earns no row:
+    the warning is about Apple Silicon's kernel, not arm64."""
+    apple_seam(monkeypatch, tmp_path, "0x00000000411fd480")
+    assert apple_silicon_kvm_result() is None
+
+
+def test_the_apple_kvm_row_stays_off_without_the_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """A host that publishes no MIDR earns no row — the marker is
+    the whole claim, and an exotic arm64 platform gets silence
+    rather than a guess."""
+    apple_seam(monkeypatch, tmp_path, None)
+    assert apple_silicon_kvm_result() is None
+
+
+def test_the_apple_kvm_row_stays_off_x86_hosts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """x86_64 machines earn no row before the MIDR is ever read."""
+    apple_seam(monkeypatch, tmp_path, "0x00000000612f0430", machine="x86_64")
+    assert apple_silicon_kvm_result() is None
+
+
 def test_the_kvm_row_passes_for_a_member(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -929,6 +993,24 @@ def test_path_note_hints_the_distros_own_tool(
     )
 
 
+def test_run_doctor_carries_the_apple_kvm_row_where_it_applies(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The wiring (#649): when cpu0's MIDR names Apple, the full
+    run carries the apple-kvm warning and the report still
+    passes. The seam pins the platform, the machine, and the
+    MIDR, so the row fires identically on x86_64 CI and on an
+    Apple dev machine — where the unseamed row would otherwise
+    cover this line only by host accident."""
+    all_found(monkeypatch)
+    kvm_seam(monkeypatch)
+    apple_seam(monkeypatch, tmp_path, "0x00000000612f0430")
+    report = run_doctor(Settings())
+    names = {result.name for result in report.warnings}
+    assert "apple-kvm" in names
+    assert report.passed is True  # the warning does not fail the run
+
+
 def test_run_doctor_warning_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         doctor_mod.shutil,
@@ -940,6 +1022,12 @@ def test_run_doctor_warning_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
     monkeypatch.setattr(doctor_mod, "run", probes_ok)
     kvm_seam(monkeypatch)  # the kvm row's answer is host state
+    # The apple-kvm row reads cpu0's MIDR — real host state on an
+    # Apple dev machine; the full-run tests pin it off so the
+    # report is the same on every host.
+    monkeypatch.setattr(
+        doctor_mod, "MIDR_EL1", pathlib.Path("/nonexistent-midr")
+    )
     report = run_doctor(Settings())
     warn_names = {r.name for r in report.warnings}
     assert warn_names == {"ssh", "rsync"}
@@ -1020,6 +1108,11 @@ def test_doctor_main_exit_codes_and_output(
 ) -> None:
     all_found(monkeypatch)
     kvm_seam(monkeypatch)  # the kvm row's answer is host state
+    # Ditto the apple-kvm row's MIDR: pinned off so the check
+    # count (17) holds on Apple dev machines.
+    monkeypatch.setattr(
+        doctor_mod, "MIDR_EL1", pathlib.Path("/nonexistent-midr")
+    )
     monkeypatch.setattr(
         doctor_mod, "load_settings", lambda config, generate: Settings()
     )

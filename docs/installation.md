@@ -339,6 +339,22 @@ sudo install -m755 ch-remote-static /usr/local/bin/ch-remote-static
 The [The host doctor](doctor.md) chapter documents the `msksd doctor` command
 that can diagnose installation issues.
 
+## Apple Silicon hosts
+
+An Apple Silicon host (the Asahi Linux class — Fedora Asahi
+Remix on an M-series machine) runs the daemon, builds and
+imports guest images, and manages the workspace lifecycle, and
+its kernel's KVM does not yet deliver guest interrupts
+([#649](https://github.com/mcdonc/msks/issues/649)): a workspace
+starts and its kernel boots deep into first boot, then stalls
+before ssh answers. Everything short of a guest boot works, so
+such a host serves today as a build and authoring machine — the
+`msks` client can point `MSKSC_URL` at a daemon on any host
+whose KVM is complete, and drives workspaces there. `msksd
+doctor` names the condition on these hosts with a warning row;
+retest after each kernel update with `msks start` and the
+console — the limitation is the kernel's to lift.
+
 ## The alternative paths
 
 **A development host** (this repository's checkout) runs the
