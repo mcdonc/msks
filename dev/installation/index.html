@@ -959,7 +959,10 @@ Debian host setup this chapter describes (<code>msks-setup-debian-host</code>).<
 itself, Ubuntu 24.04 or newer, and Linux Mint 22 or newer (the platform gate
 accepts the <code>debian</code>, <code>ubuntu</code>, and <code>linuxmint</code> os-release IDs with those
 release floors: older Ubuntu and Mint archives lack <code>virtiofsd</code>, which the
-setup installs). It's
+setup installs). One version caveat: host mounts need virtiofsd 1.13.0 or
+newer, and Linux Mint 22's archive ships 1.10.0 — <code>msksd doctor</code> names the
+gap, and the workaround is a self-built virtiofsd pointed at with
+<code>MSKSD_VIRTIOFSD</code> (see <a href="../mounts/">mounts</a>). It's
 currently bridge-out for any other type of Linux host, save for NixOS, which
 remains undocumented now, apologies.</p>
 <h2 id="setup-using-msks-setup-debian-host-console-script">Setup using <code>msks-setup-debian-host</code> console script<a class="headerlink" href="#setup-using-msks-setup-debian-host-console-script" title="Permanent link">&para;</a></h2>

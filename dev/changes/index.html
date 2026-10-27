@@ -709,6 +709,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="[Unreleased]">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Changed
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -796,7 +813,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#changed" class="md-nav__link">
+  <a href="#changed_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Changed
@@ -879,6 +896,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="[Unreleased]">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Changed
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -966,7 +1000,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#changed" class="md-nav__link">
+  <a href="#changed_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Changed
@@ -1017,6 +1051,19 @@
 <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>; versions are
 tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>virtiofsd 1.13.0 floor for host mounts (#655).</strong> Host mounts
+  need virtiofsd 1.13.0 or newer: the uid/gid translation and
+  read-only enforcement the shares run on landed upstream there,
+  and older builds refuse the daemon's arguments at start.
+  <code>msksd doctor</code> now reads the version (a below-floor binary
+  warns naming the gap and the <code>MSKSD_VIRTIOFSD</code> override —
+  Linux Mint 22 ships 1.10.0), and a mount start on a too-old
+  binary fails with the same named requirement instead of an
+  "exited at start" log tail. See
+  <a href="../mounts/">docs/mounts.md</a>.</li>
+</ul>
 <h2 id="v04-2026-10-27">[v0.4] - 2026-10-27<a class="headerlink" href="#v04-2026-10-27" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1393,7 +1440,7 @@ no</code>, <code>PermitRootLogin prohibit-password</code>) pinned by a config dr
   gitignored. The devenv shell also prunes its own stale one-shot
   wrappers (<code>.devenv/shell-*.sh</code> older than an hour) automatically.</li>
 </ul>
-<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<h3 id="changed_1">Changed<a class="headerlink" href="#changed_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>The NixOS deployment host (#229).</strong> msks ships as a flake
   whose NixOS module runs msksd and cloud-hypervisor directly on a
