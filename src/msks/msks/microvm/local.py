@@ -41,12 +41,15 @@ from .chapi import API_ROOT, CloudHypervisorApi
 from .driver import MicrovmDriver
 from .errors import MicrovmError, MicrovmTimeoutError
 from .fsdaemons import (
+    VIRTIOFSD_FLOOR,
     fs_daemon_args,
     fs_device_entries,
     fs_pidfile_path,
     fs_socket_path,
     guest_user_ids,
     sandbox_mode,
+    virtiofsd_floor_message,
+    virtiofsd_version,
 )
 
 
@@ -765,6 +768,7 @@ class LocalCloudHypervisor(MicrovmDriver):
             return []
         settings = self._settings()
         binary = settings.vmm.virtiofsd
+        await self._require_virtiofsd_floor(binary)
         shares = {s.name: s for s in settings.mounts.shares}
         uid, gid = os.getuid(), os.getgid()
         guest_uid, guest_gid = guest_user_ids(spec.login_user)
@@ -793,6 +797,44 @@ class LocalCloudHypervisor(MicrovmDriver):
             raise
         self._fs_procs[spec.workspace_id] = procs
         return fs_device_entries(sockets)
+
+    async def _require_virtiofsd_floor(self, binary: str) -> None:
+        """The version floor at mount start (#655): a below-floor
+        virtiofsd rejects the spawn's flag set at argument
+        parsing, so the start would unwind from "exited at start"
+        with a log tail the operator must decode. The probe names
+        the floor and the override instead, before any socket or
+        pidfile lands — one short-lived exec per mount-carrying
+        start."""
+        version = await self._virtiofsd_version(binary)
+        if version is None or version < VIRTIOFSD_FLOOR:
+            raise MicrovmError(virtiofsd_floor_message(version))
+
+    async def _virtiofsd_version(self, binary: str) -> tuple[int, ...] | None:
+        """The resolved daemon's reported version (#655): exec
+        ``<binary> --version`` and parse it. A missing binary
+        refuses with the same named error the spawn seam raises
+        (the probe runs first); a nonzero exit or output without a
+        version reads as ``None`` — the callers' below-floor
+        refusal, because a virtiofsd that cannot report a version
+        predates every flag the mounts pass."""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                binary,
+                "--version",
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            raise MicrovmError(
+                f"virtiofsd binary not found: {binary} (the mounts "
+                "feature needs it; msksd doctor names the package)"
+            ) from None
+        out, _ = await proc.communicate()
+        if proc.returncode != 0:
+            return None
+        return virtiofsd_version(out.decode(errors="replace"))
 
     async def _spawn_one_fs(
         self,

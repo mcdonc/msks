@@ -214,7 +214,10 @@ imagestore = 26
 # #481: the console endpoint's teardown uses the VMM-safe
 # half-close helper (upstream CH #8998), on the seam's module
 # beside its existing errors import.
-microvm = 12
+# #655: doctor reads the virtiofsd floor vocabulary (module +
+# three names) from the mounts' own module — the floor, the
+# parse, and the shared refusal message.
+microvm = 16
 # #514 retirement: the routes dropped the manifest's
 # placeholder_refs read and the seed's ref probe.
 model = 5

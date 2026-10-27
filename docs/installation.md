@@ -16,7 +16,10 @@ There is an automated setup for the remainder on Debian-derived hosts — Debian
 itself, Ubuntu 24.04 or newer, and Linux Mint 22 or newer (the platform gate
 accepts the `debian`, `ubuntu`, and `linuxmint` os-release IDs with those
 release floors: older Ubuntu and Mint archives lack `virtiofsd`, which the
-setup installs). It's
+setup installs). One version caveat: host mounts need virtiofsd 1.13.0 or
+newer, and Linux Mint 22's archive ships 1.10.0 — `msksd doctor` names the
+gap, and the workaround is a self-built virtiofsd pointed at with
+`MSKSD_VIRTIOFSD` (see [mounts](mounts.md)). It's
 currently bridge-out for any other type of Linux host, save for NixOS, which
 remains undocumented now, apologies.
 

@@ -26,6 +26,7 @@ the number (the daemon's own uid reads as the image's built-in
 ``msks`` account, not the workspace's login user).
 """
 
+import re
 from pathlib import Path
 
 #: One queue of 1024 descriptors per daemon: a microvm's mount
@@ -33,6 +34,21 @@ from pathlib import Path
 #: the vhost-user-fs examples' sizing.
 NUM_QUEUES = 1
 QUEUE_SIZE = 1024
+
+#: The virtiofsd version floor for host mounts (#655): the
+#: argument vectors this module builds ride on
+#: ``--translate-uid``/``--translate-gid`` with ``squash-guest:``
+#: and ``squash-host:`` mappings (the identity contracts above)
+#: and on ``--readonly``, and all three landed upstream in 1.13.0
+#: — older builds reject them at argument parsing and exit at
+#: start (Linux Mint 22's noble-based archive ships 1.10.0). No
+#: pre-1.13 feature set carries the identity contracts or
+#: host-side enforcement of ``ro`` mounts, so a below-floor
+#: binary cannot serve a share at all: there is no compatible
+#: degradation, only the floor.
+VIRTIOFSD_FLOOR = (1, 13, 0)
+
+_VERSION_RE = re.compile(r"virtiofsd\s+v?(\d+(?:\.\d+)+)")
 
 #: Guest xattrs remap under one host prefix (the virtiofsd
 #: documented mapping), so a guest cannot write host security
@@ -156,6 +172,38 @@ def fs_daemon_args(
     if readonly:
         args.append("--readonly")
     return args
+
+
+def virtiofsd_version(output: str) -> tuple[int, ...] | None:
+    """The version from ``virtiofsd --version`` output — the first
+    dotted number after the binary's name (the flag prints since
+    upstream 1.7.2, so every build that can report one does).
+    ``None`` when the output names no version: a binary that
+    cannot report one predates every feature the argument vectors
+    need, and the callers refuse it as below the floor rather
+    than guess at what it is."""
+    match = _VERSION_RE.search(output)
+    if match is None:
+        return None
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+def virtiofsd_floor_message(version: tuple[int, ...] | None) -> str:
+    """The below-floor refusal every check shares (#655): the
+    floor, the version the binary reported, and the override that
+    points the daemon at a newer self-built one."""
+    floor = ".".join(str(part) for part in VIRTIOFSD_FLOOR)
+    found = (
+        ".".join(str(part) for part in version)
+        if version is not None
+        else "an unreported version"
+    )
+    return (
+        f"virtiofsd {found} is older than the {floor} host mounts "
+        f"require (uid/gid translation and --readonly landed "
+        f"upstream in {floor}); build a newer virtiofsd and point "
+        f"MSKSD_VIRTIOFSD at it"
+    )
 
 
 def fs_device_entries(sockets: dict[str, Path]) -> list[dict]:

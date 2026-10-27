@@ -51,6 +51,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import load_settings
+from ..microvm.fsdaemons import (
+    VIRTIOFSD_FLOOR,
+    virtiofsd_floor_message,
+    virtiofsd_version,
+)
 from ..settings import Settings
 from .hostsetup import (
     PATH_EXTRA_DIRS,
@@ -525,6 +530,52 @@ def check_binary(
             hint=install_hint(name, manager),
         )
     return CheckResult(name=name, ok=True, message=f"{name} ok ({path})")
+
+
+def check_virtiofsd(binary: str, manager: str | None) -> CheckResult:
+    """The host-mount daemon's check (#655): presence, then the
+    version floor. The mounts' argument vectors carry
+    ``--translate-uid``/``--translate-gid`` squash mappings and
+    ``--readonly``, which landed upstream in virtiofsd 1.13.0 —
+    older builds parse none of them and exit at start (Linux
+    Mint 22's archive ships 1.10.0), so a below-floor binary
+    warns with the gap named instead of passing a check whose
+    mounts then fail one start at a time. Warning grade like the
+    presence check it replaces: a daemon without shares never
+    execs virtiofsd."""
+    use = "serves host mounts into each workspace (#620)"
+    path = probe_which(binary)
+    if not path:
+        return binary_missing(binary, manager, is_warning=True, use=use)
+    rc, out, err = run([path, "--version"])
+    if rc != 0:
+        detail = (err or f"exit {rc}").strip()[:200]
+        return CheckResult(
+            name=binary,
+            ok=False,
+            is_warning=True,
+            message=f"{binary} found at {path} but probe failed: {detail}",
+            hint=install_hint(binary, manager),
+        )
+    return virtiofsd_version_result(binary, path, virtiofsd_version(out))
+
+
+def virtiofsd_version_result(
+    binary: str, path: str, version: tuple[int, ...] | None
+) -> CheckResult:
+    """The version half of the virtiofsd row: the floor verdict
+    for a binary whose ``--version`` answered."""
+    if version is None or version < VIRTIOFSD_FLOOR:
+        return CheckResult(
+            name=binary,
+            ok=False,
+            is_warning=True,
+            message=virtiofsd_floor_message(version),
+        )
+    found = ".".join(str(part) for part in version)
+    return CheckResult(
+        name=binary, ok=True, message=f"virtiofsd {found} ok ({path})"
+    )
 
 
 def ssh_result(manager: str | None, message: str) -> CheckResult:
@@ -1042,15 +1093,9 @@ def run_doctor(settings: Settings) -> DoctorReport:
     # so a miss warns (it only breaks the mounts feature) — and
     # every configured share whose path is missing gets its own
     # warning row, so the operator sees which share will skip.
-    report.add(
-        check_binary(
-            vmm.virtiofsd,
-            [vmm.virtiofsd, "--version"],
-            manager,
-            is_warning=True,
-            use="serves host mounts into each workspace (#620)",
-        )
-    )
+    # The check reads the VERSION, not only presence: the mounts'
+    # flag set needs >= 1.13.0 (#655).
+    report.add(check_virtiofsd(vmm.virtiofsd, manager))
     for share in settings.mounts.shares:
         report.add(share_path_result(share))
     add_path_note(report)

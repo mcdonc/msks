@@ -890,9 +890,12 @@ def test_run_doctor_off_linux_skips_the_kvm_row(
 
 
 def probes_ok(cmd: list[str], timeout: float = 10.0) -> tuple[int, str, str]:
-    """A green probe answer: every binary answers, tmux reports 3.4."""
+    """A green probe answer: every binary answers, tmux reports
+    3.4, virtiofsd reports a floor-clearing version."""
     if cmd[0].endswith("tmux"):
         return (0, "tmux 3.4", "")
+    if cmd[0].endswith("virtiofsd"):
+        return (0, "virtiofsd 1.13.3", "")
     return (0, "lib x", "OpenSSH_x")
 
 
