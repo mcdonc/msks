@@ -1135,15 +1135,23 @@ workspace boot files:</p>
 </tr>
 <tr>
 <td><code>arch</code></td>
-<td>The guest's architecture, uname machine names — <code>x86_64</code> or <code>aarch64</code>;</td>
+<td>The guest's architecture, uname machine names — <code>x86_64</code> or <code>aarch64</code>.</td>
 </tr>
 <tr>
 <td></td>
-<td>the shipped builders always emit it, and an image without it imports</td>
+<td>The shipped builders always emit it. Import compares it to the</td>
 </tr>
 <tr>
 <td></td>
-<td>as before (nothing declared, nothing checked)</td>
+<td>host's own machine and refuses a mismatch naming both sides — a</td>
+</tr>
+<tr>
+<td></td>
+<td>foreign-arch kernel would hang wordlessly at boot. An image without</td>
+</tr>
+<tr>
+<td></td>
+<td>the field declares nothing and imports as before</td>
 </tr>
 <tr>
 <td><code>name</code></td>
@@ -1816,9 +1824,13 @@ derivation's evaluation against the previous manifest and skips
 the build entirely, and a channel slot that already exists is
 never rewritten.</p>
 <p>The version release carries <code>images.json</code>, the manifest that
-names every published image — <code>ref</code>, <code>description</code>, <code>kernel</code>,
-<code>size</code>, <code>hash</code>, <code>url</code>, and the source facts (<code>build</code>,
-<code>built_from</code>) — so fetching a published image is one command:</p>
+names every published image — one row per flavor <strong>and arch</strong> —
+<code>ref</code>, <code>description</code>, <code>kernel</code>, <code>arch</code>, <code>size</code>, <code>hash</code>, <code>url</code>,
+and the source facts (<code>build</code>, <code>built_from</code>) — so fetching a
+published image is one command. Pick the row whose <code>arch</code> field
+matches the host's <code>uname -m</code>; the import then accepts it
+without ceremony (and refuses a row for another architecture
+with the same named error any other foreign-arch import gets):</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1"># the URL from the manifest row</span>
 </span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>msks<span class="w"> </span>image<span class="w"> </span>import<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-13-3"><a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="w">  </span>https://github.com/mcdonc/msks/releases/download/images/&lt;hash&gt;/debian.tar.zst

@@ -997,6 +997,15 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>Per-arch channel images and arch-checked imports (#638).</strong>
+  The release channel publishes one row per flavor and arch:
+  <code>images.json</code> carries an <code>arch</code> field beside the kernel and
+  size, built by per-arch legs and merged into one manifest.
+  <code>msks image import</code> compares the image's declared <code>arch</code>
+  against the host's own machine and refuses a mismatch naming
+  both sides — a foreign-arch kernel would hang wordlessly at
+  boot. An image without the field imports as before, and
+  <code>msks image check</code> and <code>image info</code> print the declared arch.</li>
 <li><strong>arm64 guest images (#637).</strong> The guest pipeline builds for
   x86_64 and aarch64: <code>msks-build-guest</code> follows the building
   host (the <code>-x86_64</code>/<code>-aarch64</code> flavors pin it), the arm64
