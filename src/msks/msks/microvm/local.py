@@ -845,7 +845,8 @@ class LocalCloudHypervisor(MicrovmDriver):
             await kill_proc(proc)
             raise MicrovmError(
                 f"virtiofsd {binary} --version did not answer within "
-                f"{VERSION_PROBE_TIMEOUT_S:.0f}s"
+                f"{VERSION_PROBE_TIMEOUT_S:.0f}s (check the "
+                "MSKSD_VIRTIOFSD wrapper; msksd doctor names the row)"
             ) from None
         if proc.returncode != 0:
             tail = err.decode(errors="replace").strip()[:200]

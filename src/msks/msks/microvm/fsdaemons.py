@@ -226,8 +226,9 @@ def virtiofsd_missing_message(binary: str) -> str:
     (missing or not executable) — shared by the version probe
     and the spawn seam so the two refuse identically."""
     return (
-        f"virtiofsd binary not found: {binary} (the mounts "
-        "feature needs it; msksd doctor names the package)"
+        f"virtiofsd binary not found or not executable: {binary} "
+        "(the mounts feature needs it; msksd doctor names the "
+        "package)"
     )
 
 

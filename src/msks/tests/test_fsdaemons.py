@@ -728,7 +728,9 @@ async def test_the_start_refuses_a_below_floor_virtiofsd(
     driver._virtiofsd_version = types.MethodType(
         LocalCloudHypervisor._virtiofsd_version, driver
     )
-    with pytest.raises(MicrovmError, match="virtiofsd binary not found"):
+    with pytest.raises(
+        MicrovmError, match="virtiofsd binary not found or not executable"
+    ):
         await driver._start_fs_daemons(spec, vm_dir)
 
 
@@ -755,7 +757,9 @@ async def test_the_real_probe_reads_the_binary(tmp_path: Path) -> None:
     unexecutable = tmp_path / "virtiofsd-noexec"
     unexecutable.write_text("#!/bin/sh\ntrue\n")
     unexecutable.chmod(0o644)
-    with pytest.raises(MicrovmError, match="virtiofsd binary not found"):
+    with pytest.raises(
+        MicrovmError, match="virtiofsd binary not found or not executable"
+    ):
         await driver._require_virtiofsd_floor(str(unexecutable))
 
     import msks.microvm.local as local_mod
@@ -766,7 +770,9 @@ async def test_the_real_probe_reads_the_binary(tmp_path: Path) -> None:
     hang.write_text("#!/bin/sh\nsleep 5\n")
     hang.chmod(0o755)
     try:
-        with pytest.raises(MicrovmError, match="did not answer"):
+        with pytest.raises(
+            MicrovmError, match=r"did not answer within.+MSKSD_VIRTIOFSD"
+        ):
             await driver._require_virtiofsd_floor(str(hang))
     finally:
         local_mod.VERSION_PROBE_TIMEOUT_S = real_timeout
@@ -960,7 +966,9 @@ async def test_real_spawn_wraps_a_missing_binary(tmp_path: Path) -> None:
     bare.state = type("State", (), {})()
     bare.state.settings = Settings()
     driver = LocalCloudHypervisor(bare)
-    with pytest.raises(MicrovmError, match="virtiofsd binary not found"):
+    with pytest.raises(
+        MicrovmError, match="virtiofsd binary not found or not executable"
+    ):
         await driver._spawn_fs("virtiofsd-absent", [], tmp_path / "log")
 
 
