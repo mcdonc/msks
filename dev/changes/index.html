@@ -997,6 +997,19 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong><code>msks-setup-fedora-host</code> (#635).</strong> The Fedora deployment-host
+  setup — <code>msks-setup-debian-host</code>'s phases over dnf: the capability
+  wrapper, the routing kernel settings, the dependency packages,
+  the kvm grant, the systemd user service, and <code>--uninstall</code>'s
+  mirror. <code>sudo "$(command -v msks-setup-fedora-host)"</code> prepares
+  a stock Fedora host, the Asahi remix included, end to end. See
+  <a href="../installation/">docs/installation.md</a>.</li>
+<li><strong>The dev daemon finds its wrapper and uplink (#635).</strong>
+  <code>msks-dev</code> resolves the setup tool's
+  <code>/usr/local/bin/msks-caps</code> and the host's default-route
+  interface by itself, so a bare <code>devenv processes up</code> starts on
+  a host NixOS does not manage — <code>DEV_CAPS</code> and <code>DEV_UPLINK</code>
+  remain the overrides.</li>
 <li><strong>Host share mounts (#620).</strong> A workspace can mount host
   directory trees into its guest: the daemon's config names the
   shares (<code>mount_shares</code>, reloadable on SIGHUP), a workspace

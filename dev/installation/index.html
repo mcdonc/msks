@@ -346,6 +346,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#setup-on-a-fedora-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Setup on a Fedora host
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-same-host-by-hand-if-youd-rather-not-trust-msks-setup-debian-host" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -850,6 +861,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#setup-on-a-fedora-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Setup on a Fedora host
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-same-host-by-hand-if-youd-rather-not-trust-msks-setup-debian-host" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1028,6 +1050,37 @@ file and the consent verdict, the tools' paths, <code>/dev/kvm</code>, the detec
 uplink, and the service line.</p>
 <p>You will need to log out and back in for <code>msksd doctor</code> to return clean after
 using the host installer.</p>
+<h2 id="setup-on-a-fedora-host">Setup on a Fedora host<a class="headerlink" href="#setup-on-a-fedora-host" title="Permanent link">&para;</a></h2>
+<p><code>msks-setup-fedora-host</code> is the same setup's Fedora entry: one
+<code>HostProfile</code> — the package map, the probe names, the dnf
+verbs, the <code>usermod</code>/<code>gpasswd</code> group commands — over the same
+phases the Debian tool runs (the wrapper, the routing kernel
+settings, the packages, the kvm grant, the systemd user
+service, the <code>--uninstall</code> mirror, the VMM download).</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">sudo "$(command -v msks-setup-fedora-host)"</span>
+</span></code></pre></div>
+<p>The run installs through dnf the packages a stock Fedora
+answers without: <code>conntrack-tools</code>, <code>qemu-img</code>, <code>tmux</code>,
+<code>virtiofsd</code>, and the consent stack's <code>libnetfilter_queue</code> when
+the linker cache lacks the soname. A stock install already
+carries the rest of the probed set — <code>setpriv</code>, <code>setcap</code>, <code>ip</code>,
+<code>nft</code>, <code>modprobe</code>, <code>sysctl</code>, the e2fsprogs trio, <code>mkisofs</code>,
+<code>ssh</code>, and <code>rsync</code> — so those probes read present and the run
+moves on. The CA probe names Fedora's own command,
+<code>update-ca-trust</code> (the ca-certificates package), where the
+Debian map probes <code>update-ca-certificates</code>.</p>
+<p>The kvm membership runs through <code>usermod -aG kvm</code>, and the
+uninstall summary's removal line is dnf's. A module the
+running kernel's tree lacks names the stock kernel package —
+<code>kernel</code>, or <code>kernel-16k</code> on the Asahi host class (a release
+string carrying <code>asahi</code>).</p>
+<p>The same pieces land at the same paths for the same reasons
+the Debian section above documents: the wrapper at
+<code>/usr/local/bin/msks-caps</code> with the two capabilities, the
+sysctl and modules files under <code>/etc</code>, the user unit under
+<code>~/.config/systemd/user/</code>, and the cloud-hypervisor static
+release for the host's architecture. <code>--uninstall</code> reverses
+the run the same way.</p>
 <h2 id="the-same-host-by-hand-if-youd-rather-not-trust-msks-setup-debian-host">The same host by hand (if you'd rather not trust <code>msks-setup-debian-host</code>)<a class="headerlink" href="#the-same-host-by-hand-if-youd-rather-not-trust-msks-setup-debian-host" title="Permanent link">&para;</a></h2>
 <p><code>msks-setup-debian-host</code> is a program the wheel ships, and
 running it means running shipped code as root. An operator who
@@ -1036,22 +1089,22 @@ interactive root shell.</p>
 <p>To do so, install the package set — the same set
 <code>msks-setup-debian-host</code> lands, so a host finished by hand
 comes up clean under the doctor too:</p>
-<div class="language-console highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">sudo -i apt install iproute2 \</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">                    nftables \</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">                    conntrack \</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="go">                    procps \</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="go">                    util-linux \</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="go">                    libcap2-bin \</span>
-</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="go">                    kmod \</span>
-</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="go">                    e2fsprogs \</span>
-</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="go">                    qemu-utils \</span>
-</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="go">                    genisoimage \</span>
-</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="go">                    libnetfilter-queue1 \</span>
-</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="go">                    libnfnetlink0 \</span>
-</span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="go">                    openssh-client \</span>
-</span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="go">                    rsync \</span>
-</span><span id="__span-2-15"><a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="go">                    tmux \</span>
-</span><span id="__span-2-16"><a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="go">                    ca-certificates</span>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">sudo -i apt install iproute2 \</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">                    nftables \</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">                    conntrack \</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="go">                    procps \</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="go">                    util-linux \</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="go">                    libcap2-bin \</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="go">                    kmod \</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="go">                    e2fsprogs \</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="go">                    qemu-utils \</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="go">                    genisoimage \</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="go">                    libnetfilter-queue1 \</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="go">                    libnfnetlink0 \</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="go">                    openssh-client \</span>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="go">                    rsync \</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="go">                    tmux \</span>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="go">                    ca-certificates</span>
 </span></code></pre></div>
 <p><code>ca-certificates</code> is the set's one self-serving package: the CA
 bundle the next step's <code>curl</code> to github.com needs for its TLS
@@ -1060,29 +1113,29 @@ verification.</p>
 with the two capabilities set and read back (a filesystem
 without capability xattrs takes the <code>setcap</code> and loses it, so
 the readback is the proof):</p>
-<div class="language-console highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">install -o root -g root -m 0755 "$(command -v setpriv)" /usr/local/bin/msks-caps</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">setcap cap_net_admin,cap_net_bind_service+ep /usr/local/bin/msks-caps</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">getcap /usr/local/bin/msks-caps</span>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">install -o root -g root -m 0755 "$(command -v setpriv)" /usr/local/bin/msks-caps</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">setcap cap_net_admin,cap_net_bind_service+ep /usr/local/bin/msks-caps</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">getcap /usr/local/bin/msks-caps</span>
 </span></code></pre></div>
 <p>The functional proof — the daemon's exact exec line, with the
 ambient set inspected in the process it starts (the <code>CapAmb</code>
 line must carry a nonzero mask):</p>
-<div class="language-console highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">/usr/local/bin/msks-caps --inh-caps=+net_admin,+net_bind_service \</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">  --ambient-caps=+net_admin,+net_bind_service \</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">  -- sh -c "sed -n 's/^CapAmb:[[:space:]]*//p' /proc/self/status"</span>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">/usr/local/bin/msks-caps --inh-caps=+net_admin,+net_bind_service \</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">  --ambient-caps=+net_admin,+net_bind_service \</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">  -- sh -c "sed -n 's/^CapAmb:[[:space:]]*//p' /proc/self/status"</span>
 </span></code></pre></div>
 <p>Routing, at boot and now:</p>
-<div class="language-console highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">printf '%s\n' \</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">  '# route packets between per-VM taps and the host uplink' \</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">  'net.ipv4.ip_forward = 1' &gt; /etc/sysctl.d/msks-egress.conf</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="go">sysctl -p /etc/sysctl.d/msks-egress.conf</span>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">printf '%s\n' \</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">  '# route packets between per-VM taps and the host uplink' \</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="go">  'net.ipv4.ip_forward = 1' &gt; /etc/sysctl.d/msks-egress.conf</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="go">sysctl -p /etc/sysctl.d/msks-egress.conf</span>
 </span></code></pre></div>
 <p>The kernel module set, at boot and now:</p>
-<div class="language-console highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">printf '%s\n' tun nf_tables nft_chain_nat nft_masq nft_ct nft_reject \</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">  nf_reject_ipv4 nf_nat nf_conntrack nfnetlink_queue \</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="go">  &gt; /etc/modules-load.d/msks.conf</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="go">modprobe tun nf_tables nft_chain_nat nft_masq nft_ct nft_reject \</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="go">  nf_reject_ipv4 nf_nat nf_conntrack nfnetlink_queue</span>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">printf '%s\n' tun nf_tables nft_chain_nat nft_masq nft_ct nft_reject \</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="go">  nf_reject_ipv4 nf_nat nf_conntrack nfnetlink_queue \</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="go">  &gt; /etc/modules-load.d/msks.conf</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="go">modprobe tun nf_tables nft_chain_nat nft_masq nft_ct nft_reject \</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="go">  nf_reject_ipv4 nf_nat nf_conntrack nfnetlink_queue</span>
 </span></code></pre></div>
 <p>Interactive egress consent needs <code>nft_reject</code>,
 <code>nf_reject_ipv4</code>, and <code>nfnetlink_queue</code> loaded — check with
@@ -1090,7 +1143,7 @@ line must carry a nonzero mask):</p>
 landed quietly.</p>
 <p><code>/dev/kvm</code> for the daemon's user, picked up at that account's
 next login:</p>
-<div class="language-console highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">usermod -aG kvm &lt;the-user-the-daemon-runs-as&gt;</span>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">usermod -aG kvm &lt;the-user-the-daemon-runs-as&gt;</span>
 </span></code></pre></div>
 <p>The systemd user service is the daemon user's own piece — leave
 the root shell and run it as that user. Write
@@ -1098,24 +1151,24 @@ the root shell and run it as that user. Write
 (adjust the <code>msksd</code> path to where the install put it, and the
 uplink to this host's default-route interface — <code>ip route show
 default</code> names it):</p>
-<div class="language-ini highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">[Unit]</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="na">Description</span><span class="o">=</span><span class="s">msks daemon (workspaces as cloud-hypervisor microvms)</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="k">[Service]</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/msks-caps --inh-caps=+net_admin,+net_bind_service --ambient-caps=+net_admin,+net_bind_service -- /path/to/msksd</span>
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="na">Environment</span><span class="o">=</span><span class="s">MSKSD_EGRESS_ENABLED=true</span>
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="na">Environment</span><span class="o">=</span><span class="s">MSKSD_EGRESS_UPLINK=&lt;uplink&gt;</span>
-</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="na">RuntimeDirectory</span><span class="o">=</span><span class="s">msks</span>
-</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="na">Restart</span><span class="o">=</span><span class="s">always</span>
-</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="na">RestartSec</span><span class="o">=</span><span class="s">1</span>
-</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="na">TimeoutStopSec</span><span class="o">=</span><span class="s">180s</span>
-</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>
-</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="k">[Install]</span>
-</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="na">WantedBy</span><span class="o">=</span><span class="s">default.target</span>
+<div class="language-ini highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">[Unit]</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="na">Description</span><span class="o">=</span><span class="s">msks daemon (workspaces as cloud-hypervisor microvms)</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="k">[Service]</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="na">ExecStart</span><span class="o">=</span><span class="s">/usr/local/bin/msks-caps --inh-caps=+net_admin,+net_bind_service --ambient-caps=+net_admin,+net_bind_service -- /path/to/msksd</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="na">Environment</span><span class="o">=</span><span class="s">MSKSD_EGRESS_ENABLED=true</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="na">Environment</span><span class="o">=</span><span class="s">MSKSD_EGRESS_UPLINK=&lt;uplink&gt;</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="na">RuntimeDirectory</span><span class="o">=</span><span class="s">msks</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="na">Restart</span><span class="o">=</span><span class="s">always</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="na">RestartSec</span><span class="o">=</span><span class="s">1</span>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="na">TimeoutStopSec</span><span class="o">=</span><span class="s">180s</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="k">[Install]</span>
+</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="na">WantedBy</span><span class="o">=</span><span class="s">default.target</span>
 </span></code></pre></div>
 <p>Then enable it, as that user:</p>
-<div class="language-console highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="go">systemctl --user enable --now msksd.service</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="go">loginctl enable-linger &lt;the-user-the-daemon-runs-as&gt;</span>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">systemctl --user enable --now msksd.service</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="go">loginctl enable-linger &lt;the-user-the-daemon-runs-as&gt;</span>
 </span></code></pre></div>
 <p><code>loginctl enable-linger</code> is the one root command among these —
 it keeps the user manager, and the daemon, running across
@@ -1123,12 +1176,12 @@ logouts and boots.</p>
 <p>The daemon's workspace machinery execs <code>cloud-hypervisor</code> (the VMM).</p>
 <p>Cloud Hypervisor's static release binary is the
 sanctioned VMM install — Debian's archive does not carry it.</p>
-<div class="language-console highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="go">curl -L -o cloud-hypervisor-static \</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="go">  https://github.com/cloud-hypervisor/cloud-hypervisor/releases/latest/download/cloud-hypervisor-static</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="go">curl -L -o ch-remote-static \</span>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="go">  https://github.com/cloud-hypervisor/cloud-hypervisor/releases/latest/download/ch-remote-static</span>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="go">sudo install -m755 cloud-hypervisor-static /usr/local/bin/cloud-hypervisor</span>
-</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="go">sudo install -m755 ch-remote-static /usr/local/bin/ch-remote-static</span>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="go">curl -L -o cloud-hypervisor-static \</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="go">  https://github.com/cloud-hypervisor/cloud-hypervisor/releases/latest/download/cloud-hypervisor-static</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="go">curl -L -o ch-remote-static \</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="go">  https://github.com/cloud-hypervisor/cloud-hypervisor/releases/latest/download/ch-remote-static</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="go">sudo install -m755 cloud-hypervisor-static /usr/local/bin/cloud-hypervisor</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="go">sudo install -m755 ch-remote-static /usr/local/bin/ch-remote-static</span>
 </span></code></pre></div>
 <h2 id="the-host-doctor">The host doctor<a class="headerlink" href="#the-host-doctor" title="Permanent link">&para;</a></h2>
 <p>The <a href="../doctor/">The host doctor</a> chapter documents the <code>msksd doctor</code> command
