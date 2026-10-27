@@ -87,6 +87,7 @@ FEDORA_PROFILE = HostProfile(
     tool=TOOL,
     label="Fedora",
     os_ids=("fedora", "fedora-asahi-remix"),
+    version_floors={},
     description=(
         "Prepare a Fedora deployment host for msksd "
         "(#635): the capability wrapper, the routing kernel "

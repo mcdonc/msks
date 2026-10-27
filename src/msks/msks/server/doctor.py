@@ -437,6 +437,10 @@ def setup_tool_name() -> str | None:
     hint keeps the export alone."""
     return {
         "debian": "msks-setup-debian-host",
+        # the derivatives carry their own IDs over the Debian
+        # package set (#639)
+        "ubuntu": "msks-setup-debian-host",
+        "linuxmint": "msks-setup-debian-host",
         "fedora": "msks-setup-fedora-host",
         # the Asahi spin carries its own ID (ID_LIKE names fedora)
         "fedora-asahi-remix": "msks-setup-fedora-host",

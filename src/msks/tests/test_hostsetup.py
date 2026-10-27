@@ -229,6 +229,82 @@ def test_non_debian_host_refuses_by_name(
     assert debian_host.commands == []
 
 
+@pytest.mark.parametrize(
+    ("release_id", "release_like", "version_id"),
+    [
+        ("ubuntu", "debian", "24.04"),
+        ("ubuntu", "debian", "25.10"),
+        ("linuxmint", "ubuntu debian", "22"),
+    ],
+)
+def test_the_derivative_ids_pass_the_gate(
+    debian_host: Host,
+    capsys: pytest.CaptureFixture,
+    release_id: str,
+    release_like: str,
+    version_id: str,
+) -> None:
+    """Ubuntu and Linux Mint carry their own os-release IDs
+    (ubuntu, ID_LIKE=debian; linuxmint, ID_LIKE=ubuntu debian):
+    the gate accepts them at or above the archive floor and the
+    run lands every piece (#639)."""
+    Path(hostsetup.OS_RELEASE).write_text(
+        f'ID="{release_id}"\nID_LIKE="{release_like}"\n'
+        f'VERSION_ID="{version_id}"\n'
+    )
+    assert main() == 0
+    # Every tool answered present: apt never ran.
+    assert debian_host.ran("apt-get") == []
+    assert "consent:    interactive egress consent available" in (
+        capsys.readouterr().out
+    )
+
+
+@pytest.mark.parametrize(
+    ("release_id", "release_text"),
+    [
+        # jammy predates Ubuntu's virtiofsd package (noble is the
+        # floor); Mint 21 is jammy-based.
+        ("ubuntu", 'ID="ubuntu"\nVERSION_ID="22.04"\n'),
+        ("linuxmint", 'ID="linuxmint"\nVERSION_ID="21.3"\n'),
+        # a floored ID without a VERSION_ID compares as unknown
+        ("ubuntu", 'ID="ubuntu"\n'),
+    ],
+)
+def test_below_floor_derivative_refuses_by_name(
+    debian_host: Host,
+    capsys: pytest.CaptureFixture,
+    release_id: str,
+    release_text: str,
+) -> None:
+    """A derivative under its archive floor is refused with the
+    floor named: the release's archive lacks packages the setup
+    installs (#639)."""
+    Path(hostsetup.OS_RELEASE).write_text(release_text)
+    assert main() == 1
+    floor = "24.04" if release_id == "ubuntu" else "22"
+    assert f"targets {release_id} {floor} or newer" in (
+        capsys.readouterr().err
+    )
+    assert debian_host.commands == []
+
+
+def test_kernel_hint_names_the_ubuntu_flavour(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Ubuntu and Mint name the generic flavor
+    linux-image-generic on every arch; Debian keeps the arch
+    names (#639)."""
+    release = tmp_path / "os-release"
+    release.write_text('ID="ubuntu"\nVERSION_ID="24.04"\n')
+    monkeypatch.setattr(hostsetup, "OS_RELEASE", str(release))
+    assert hostsetup.kernel_package("x86_64", "6.8.0") == (
+        "linux-image-generic"
+    )
+    release.write_text('ID="debian"\n')
+    assert hostsetup.kernel_package("x86_64", "6.12") == "linux-image-amd64"
+
+
 def test_happy_path_lands_every_piece(
     debian_host: Host, capsys: pytest.CaptureFixture
 ) -> None:
@@ -779,6 +855,14 @@ def test_os_release_missing_file_reads_empty(
 ) -> None:
     monkeypatch.setattr(hostsetup, "OS_RELEASE", "/nonexistent")
     assert hostsetup.os_release_id() == ""
+    assert hostsetup.os_release_version_id() == ""
+
+
+def test_version_tuple_compares_and_refuses_nonnumeric() -> None:
+    assert hostsetup.version_tuple("24.04") == (24, 4)
+    assert hostsetup.version_tuple("22") == (22,)
+    assert hostsetup.version_tuple("") is None
+    assert hostsetup.version_tuple("bookworm") is None
 
 
 def test_os_release_without_id_reads_empty(
