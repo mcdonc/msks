@@ -352,6 +352,48 @@ def test_happy_path_lands_every_piece(
     )
 
 
+def test_off_path_virtiofsd_answers_the_probe(
+    debian_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The virtiofsd package installs its binary off PATH (#643):
+    a location-carried executable binary answers the probe, so a
+    present install is not re-installed."""
+    real_which = hostsetup.which
+
+    def lacking(tool):
+        return None if tool == "virtiofsd" else real_which(tool)
+
+    monkeypatch.setattr(hostsetup, "which", lacking)
+    location = tmp_path / "virtiofsd"
+    location.write_text("#!/bin/sh\n")
+    location.chmod(0o755)
+    monkeypatch.setattr("msks.settings.VIRTIOFSD_LOCATIONS", (str(location),))
+    debian_host.files.add(str(location))
+    assert hostsetup.tool_present("virtiofsd") is True
+    assert hostsetup.missing_packages() == []
+    # The executable bit gates the probe too: a non-executable
+    # regular file at the location names the package again.
+    location.chmod(0o644)
+    assert hostsetup.missing_packages() == ["virtiofsd"]
+
+
+def test_absent_everywhere_virtiofsd_names_the_package(
+    debian_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PATH and both archive locations miss the binary (#643):
+    the package is named for install like any other absent
+    tool."""
+    real_which = hostsetup.which
+
+    def lacking(tool):
+        return None if tool == "virtiofsd" else real_which(tool)
+
+    monkeypatch.setattr(hostsetup, "which", lacking)
+    assert hostsetup.missing_packages() == ["virtiofsd"]
+
+
 def test_missing_tools_install_via_apt(
     debian_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:

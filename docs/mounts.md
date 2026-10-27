@@ -90,8 +90,12 @@ way — the exclusive holder is the only writer.
 ## The plumbing
 
 Each attached share is one virtiofsd process (the platform's own
-`virtiofsd` package, named by `MSKSD_VIRTIOFSD` when it lives
-off the path), spawned before the VM and stopped with it.
+`virtiofsd` package; the default binary name resolves on PATH
+first and then the package's install locations off PATH, so the
+daemon finds it without configuration — `MSKSD_VIRTIOFSD` names
+a different binary), spawned before the VM and stopped with it.
+The resolution runs at settings load and again on SIGHUP: a
+binary installed after the daemon started is one reload away.
 File ownership translates in both directions. Writes from the
 guest land on the host as the daemon's own user, whatever guest
 account made them — host-side ownership stays advisory, as with
