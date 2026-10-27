@@ -286,10 +286,16 @@ jobs:
           done
 
       - name: Stage this leg's rows for the merge
-        uses: actions/upload-artifact@v4
+        # The file must carry the arch INSIDE the artifact
+        # (merge-multiple on the merge side flattens every
+        # artifact into one directory — two artifacts whose inner
+        # file is both rows.json collide, and the v0.4 merge glob
+        # found nothing). Each leg's copy is one local rename.
+        run: cp rows.json "rows-${ARCH}.json"
+      - uses: actions/upload-artifact@v4
         with:
           name: rows-${{ matrix.arch }}
-          path: rows.json
+          path: rows-${{ matrix.arch }}.json
           retention-days: 1
 
   # The single manifest writer: the legs publish disjoint row sets
