@@ -410,7 +410,10 @@ class HostProfile:
 DEBIAN_PROFILE = HostProfile(
     tool=TOOL,
     label="Debian",
-    os_ids=("debian",),
+    # The derivatives carry their own IDs — Ubuntu's ID_LIKE is
+    # debian, Linux Mint's is ubuntu — and the same apt package
+    # set installs on both (#639).
+    os_ids=("debian", "ubuntu", "linuxmint"),
     description=(
         "Prepare a Debian deployment host for msksd "
         "(#546): the capability wrapper, the routing kernel "

@@ -229,6 +229,30 @@ def test_non_debian_host_refuses_by_name(
     assert debian_host.commands == []
 
 
+@pytest.mark.parametrize(
+    ("release_id", "release_like"),
+    [("ubuntu", "debian"), ("linuxmint", "ubuntu")],
+)
+def test_the_derivative_ids_pass_the_gate(
+    debian_host: Host,
+    capsys: pytest.CaptureFixture,
+    release_id: str,
+    release_like: str,
+) -> None:
+    """Ubuntu and Linux Mint carry their own os-release IDs
+    (ubuntu, ID_LIKE=debian; linuxmint, ID_LIKE=ubuntu): the gate
+    accepts them and the run lands every piece (#639)."""
+    Path(hostsetup.OS_RELEASE).write_text(
+        f'ID="{release_id}"\nID_LIKE="{release_like}"\n'
+    )
+    assert main() == 0
+    # Every tool answered present: apt never ran.
+    assert debian_host.ran("apt-get") == []
+    assert "consent:    interactive egress consent available" in (
+        capsys.readouterr().out
+    )
+
+
 def test_happy_path_lands_every_piece(
     debian_host: Host, capsys: pytest.CaptureFixture
 ) -> None:

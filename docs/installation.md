@@ -12,7 +12,9 @@ The wheel needs Python 3.14 or newer.
    uv tool install --python 3.14 msks
 ```
 
-There is an automated setup for the remainder on Debian-derived hosts. It's
+There is an automated setup for the remainder on Debian-derived hosts — Debian
+itself, Ubuntu, and Linux Mint (the platform gate accepts the `debian`,
+`ubuntu`, and `linuxmint` os-release IDs). It's
 currently bridge-out for any other type of Linux host, save for NixOS, which
 remains undocumented now, apologies.
 
