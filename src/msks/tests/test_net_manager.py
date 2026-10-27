@@ -18,6 +18,7 @@ from msks.settings import (
     NetSettings,
     ServerSettings,
     Settings,
+    VmmSettings,
 )
 from netstubs import NFT_FAIL_AT, NFT_STDERR, log_lines, stub_ip, stub_nft
 
@@ -87,6 +88,7 @@ async def net_app(tmp_path: Path, monkeypatch):
             dns_upstream="10.9.9.9",
         ),
         server=ServerSettings(db_path=tmp_path / "net.db"),
+        vmm=VmmSettings(state_dir=tmp_path / "state"),
     )
     app = build_app(settings)
     monkeypatch.setattr(
@@ -195,7 +197,9 @@ async def test_attach_arms_the_whole_path(net_app) -> None:
         f"addr add {attachment.tap_ip}/30 dev {attachment.tap}"
         in log_lines(ip_log)
     )
-    assert "-f -" in log_lines(nft_log)  # base + per-vm rulesets
+    assert any(
+        line.startswith("-f ") for line in log_lines(nft_log)
+    )  # base + per-vm rulesets
     services = manager._services["ws-a"]
     assert services.dhcp.started and services.dns.started
     # The DHCP service gets the tap device; the forwarder the tap IP.
@@ -577,6 +581,7 @@ async def gated_app(tmp_path: Path, monkeypatch):
             dns_upstream="10.9.9.9",
         ),
         server=ServerSettings(db_path=tmp_path / "gated.db"),
+        vmm=VmmSettings(state_dir=tmp_path / "state"),
     )
     app = build_app(settings)
     monkeypatch.setattr(
@@ -1135,12 +1140,12 @@ async def test_a_reload_added_models_reapplies_the_base_guard(
     # The re-apply rode the nft stub: two base-ruleset loads (start,
     # then the drift-healing attach), and the guard text in the
     # second names the live port.
-    loads = [line for line in log_lines(nft_log) if line == "-f -"]
+    loads = [line for line in log_lines(nft_log) if line.startswith("-f ")]
     assert len(loads) >= 2
     # The drift-healing apply carried the guard's text: the ruleset
-    # stdin the stub records beside the log names the live port in
-    # its second -f - block (start's apply, then the drift heal;
-    # the per-VM installs that follow are per-workspace tables).
+    # the stub records beside the log names the live port in its
+    # second apply block (start's apply, then the drift heal; the
+    # per-VM installs that follow are per-workspace tables).
     stdin_blocks = (nft_log.parent / (nft_log.name + ".stdin")).read_text()
     applies = stdin_blocks.split("--- -f -")[1:3]
     assert len(applies) == 2
@@ -1149,9 +1154,9 @@ async def test_a_reload_added_models_reapplies_the_base_guard(
     # A second attach under the same shape adds no further base load.
     before = len(loads)
     await manager.attach("ws-b", want=True)
-    loads2 = [line for line in log_lines(nft_log) if line == "-f -"]
-    # per-VM installs also use -f -, so count only the delta the
-    # guard can explain: one per attach at most beyond the first.
+    loads2 = [line for line in log_lines(nft_log) if line.startswith("-f ")]
+    # per-VM installs also apply by file, so count only the delta
+    # the guard can explain: one per attach at most beyond the first.
     assert len(loads2) - before <= 1
 
 
@@ -1328,6 +1333,7 @@ async def llm_seamed_net_app(tmp_path: Path, monkeypatch, listeners: dict):
         ),
         server=ServerSettings(db_path=tmp_path / "net.db"),
         llm=LlmSettings(models=("*:http://up.stream/v1:sk-x",)),
+        vmm=VmmSettings(state_dir=tmp_path / "state"),
     )
     app = build_app(settings)
     monkeypatch.setattr(

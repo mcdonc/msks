@@ -1,20 +1,24 @@
 """The nftables rulesets and their application (#52)."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 from msks.microvm.errors import MicrovmError
 from msks.net import nft
 from msks.net.alloc import table_name
-from msks.settings import NetSettings, Settings
+from msks.settings import NetSettings, Settings, VmmSettings
 from netstubs import NFT_FAIL_AT, NFT_STDERR, log_lines, stub_nft
 
 
 @pytest.fixture
 def tools(tmp_path: Path):
     log = tmp_path / "nft.log"
-    settings = Settings(net=NetSettings(nft_tool=str(stub_nft(tmp_path, log))))
+    settings = Settings(
+        net=NetSettings(nft_tool=str(stub_nft(tmp_path, log))),
+        vmm=VmmSettings(state_dir=tmp_path / "state"),
+    )
     return settings, log
 
 
@@ -76,7 +80,7 @@ async def test_apply_base_ships_the_guard_only_with_models(
     seen: list[bytes] = []
 
     async def capture(
-        settings, argv, *, what, input_text=None, absent_ok=False
+        settings, argv=None, *, what, input_text=None, absent_ok=False
     ):
         if input_text is not None:
             seen.append(input_text)
@@ -103,11 +107,11 @@ async def test_apply_base_and_install_vm(tools, monkeypatch) -> None:
     await nft.install_vm(
         settings, "ws-a", "msks-tap", "172.31.0.1", "172.31.0.2"
     )
-    assert log_lines(log) == [
-        "-f -",
-        f"list table inet {table_name('ws-a')}",
-        "-f -",
-    ]
+    lines = log_lines(log)
+    assert len(lines) == 3
+    assert lines[0].startswith("-f ")  # the base apply names a file
+    assert lines[1] == f"list table inet {table_name('ws-a')}"
+    assert lines[2].startswith("-f ")  # so does the workspace apply
     # A fresh install applies the ruleset alone.
     stdin = Path(str(log) + ".stdin").read_text()
     assert f"table inet {table_name('ws-a')} {{" in stdin
@@ -122,10 +126,10 @@ async def test_install_vm_swaps_atomically(tools) -> None:
     await nft.install_vm(
         settings, "ws-a", "msks-tap", "172.31.0.1", "172.31.0.2"
     )
-    assert log_lines(log) == [
-        f"list table inet {table_name('ws-a')}",
-        "-f -",
-    ]
+    lines = log_lines(log)
+    assert len(lines) == 2
+    assert lines[0] == f"list table inet {table_name('ws-a')}"
+    assert lines[1].startswith("-f ")
     stdin = Path(str(log) + ".stdin").read_text()
     applies = [
         block
@@ -160,9 +164,63 @@ async def test_nft_run_surfaces_real_failures(tools, monkeypatch) -> None:
 
 
 async def test_nft_run_names_a_missing_tool(tmp_path: Path) -> None:
-    settings = Settings(net=NetSettings(nft_tool=str(tmp_path / "not-there")))
+    settings = Settings(
+        net=NetSettings(nft_tool=str(tmp_path / "not-there")),
+        vmm=VmmSettings(state_dir=tmp_path / "state"),
+    )
     with pytest.raises(MicrovmError, match="tool not found"):
         await nft.apply_base(settings)
+    # The ruleset file died with the refused run (#641).
+    assert list((tmp_path / "state").glob("nft-ruleset-*")) == []
+
+
+async def test_nft_run_applies_through_a_private_file(tools) -> None:
+    """#641: a ruleset apply names a file by path — created under
+    the state directory with mode 0600, removed when the run ends —
+    and the ruleset text reaches nft through that file, never
+    stdin, whose fd type the host's nft may refuse."""
+    settings, log = tools
+    await nft.apply_base(settings)
+    (apply_line,) = [line for line in log_lines(log) if line.startswith("-f ")]
+    path = Path(apply_line[len("-f ") :])
+    assert path.is_relative_to(settings.vmm.state_dir)
+    assert not path.exists()  # removed once the invocation ended
+    modes = log.with_name(log.name + ".mode").read_text().splitlines()
+    assert modes == ["600"]
+    applied = log.with_name(log.name + ".stdin").read_text()
+    assert f"table inet {nft.BASE_TABLE}" in applied
+
+
+async def test_nft_run_removes_the_ruleset_file_on_failure(
+    tools, monkeypatch
+) -> None:
+    """#641: the file's removal does not wait on success — a
+    failed apply leaves the state directory clean."""
+    settings, log = tools
+    monkeypatch.setenv(NFT_FAIL_AT, "-f -")
+    monkeypatch.setenv(NFT_STDERR, "syntax error")
+    with pytest.raises(MicrovmError, match="nft base ruleset apply failed"):
+        await nft.apply_base(settings)
+    assert list(settings.vmm.state_dir.glob("nft-ruleset-*")) == []
+
+
+async def test_ruleset_file_dies_with_its_own_write_failure(
+    tools, monkeypatch
+) -> None:
+    """#641 (review): a write that cannot land leaves no file
+    behind — the failure names itself as a MicrovmError, and the
+    state directory stays clean, so a disk-full retry loop cannot
+    accumulate debris."""
+    settings, _log = tools
+
+    def refusing(fd, mode):
+        os.close(fd)  # the descriptor mkstemp made dies with the refusal
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "fdopen", refusing)
+    with pytest.raises(MicrovmError, match="ruleset file write failed"):
+        await nft.apply_base(settings)
+    assert list(settings.vmm.state_dir.glob("nft-ruleset-*")) == []
 
 
 async def test_install_vm_pins_the_workspace_ruleset(tools) -> None:

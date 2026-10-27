@@ -24,13 +24,26 @@ exit 0
 """
 
 NFT_STUB = """#!/bin/sh
-# Args and the ruleset text both land in the log (stdin appended
-# after a marker line), so tests can pin which ruleset reached nft.
+# Args land in the log (one line, arguments space-joined); the
+# ruleset text lands in {log}.stdin — catted from the file a
+# ``-f <path>`` apply names, or from stdin when the invocation
+# reads it — behind a marker line that names the apply's
+# canonical shape, so tests split blocks without pinning the
+# throwaway path. Each apply file's permission bits land in
+# {log}.mode, one line per apply.
 printf '%s\n' "$*" >> {log}
-printf '%s\n' "--- $*" >> {log}.stdin
-cat >> {log}.stdin
+if [ "$1" = "-f" ] && [ "$2" != "-" ] && [ -f "$2" ]; then
+  printf '%s\n' "--- -f -" >> {log}.stdin
+  cat "$2" >> {log}.stdin
+  stat -c '%a' "$2" >> {log}.mode
+else
+  printf '%s\n' "--- $*" >> {log}.stdin
+  cat >> {log}.stdin
+fi
 fail_at="${{NFT_FAIL_AT:-}}"
-if [ -n "$fail_at" ] && [ "$1 $2" = "$fail_at" ]; then
+word2="$2"
+[ "$1" = "-f" ] && word2="-"
+if [ -n "$fail_at" ] && [ "$1 $word2" = "$fail_at" ]; then
   printf '%s' "${{NFT_STDERR:-boom}}" >&2
   exit 1
 fi

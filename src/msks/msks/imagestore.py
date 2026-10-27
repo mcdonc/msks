@@ -705,12 +705,24 @@ def load_record(cache: Path) -> ImageRecord | None:
     return record
 
 
-def sweep_crash_leftovers(state_dir: Path) -> None:
-    """Drop staging/temp files an interrupted import left behind.
+def sweep_ruleset_files(state_dir: Path) -> None:
+    """Drop egress ruleset files a killed daemon left behind
+    (#641): every apply removes its own file when its invocation
+    ends, so any that survive to startup belong to a run that
+    died mid-flight."""
+    for entry in state_dir.glob("nft-ruleset-*"):
+        entry.unlink(missing_ok=True)
 
-    Runs at daemon startup, before any import can be in flight, so
-    no live staging is ever removed.
+
+def sweep_crash_leftovers(state_dir: Path) -> None:
+    """Drop temporary files an interrupted run left behind.
+
+    Runs at daemon startup, before any import or egress apply can
+    be in flight, so no live staging is ever removed: import
+    debris in the images tree, and ruleset applies in the state
+    directory's root a killed daemon never removed (#641).
     """
+    sweep_ruleset_files(state_dir)
     root = images_dir(state_dir)
     if not root.is_dir():
         return
