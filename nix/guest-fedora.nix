@@ -625,6 +625,16 @@ let
     # here, not a workspace's sudo.
     PINS = {"/usr/bin/sudo": 0o4111, "/usr/bin/mount": 0o4755}
 
+    # The ownership drift net (#179's class): the manifest is the
+    # session's own view, not an independent walk of the source
+    # image, so a restore regression that flattened every owner to
+    # root would re-ship silently without a non-root pin. Fedora 44
+    # ships no setgid files at all (verified against its rpm db);
+    # the unbound state dir is the shipped non-root:non-root path
+    # (the chrony and sssd dirs the rpm db names are tmpfiles-
+    # created at boot, not in the image).
+    OWNER_PINS = {"/var/lib/unbound": 0o755}
+
     def main():
         argv = sys.argv[1:]
         usage = (
@@ -710,9 +720,25 @@ let
                     f"expected {want:04o}"
                 )
             st = os.lstat(tree + path)
-            if not (st.st_mode & 0o4000) or st.st_uid != 0:
+            if (
+                not (st.st_mode & 0o4000)
+                or st.st_uid != 0
+                or st.st_gid != 0
+            ):
                 raise SystemExit(
                     f"metadata pin did not land on the tree: {path}"
+                )
+        for path, want in OWNER_PINS.items():
+            st = os.lstat(tree + path)
+            if (
+                (st.st_mode & 0o7777) != want
+                or st.st_uid == 0
+                or st.st_gid == 0
+            ):
+                raise SystemExit(
+                    f"ownership pin did not land on the tree: {path} "
+                    f"(want {want:04o} non-root:non-root, tree has "
+                    f"{st.st_mode & 0o7777:04o} {st.st_uid}:{st.st_gid})"
                 )
         print(
             f"restored {restored} inodes "
@@ -757,6 +783,26 @@ let
     mkdir -p "$tree"/var "$tree"/boot
     cp -a all/var/. "$tree"/var/
     cp all/boot/config-* "$tree"/boot/
+
+    # The zero-module initramfs rides on Fedora building its whole
+    # root-mount path in (#651; the #36 drift class): a compose
+    # bump that flips any of these to a module would hang every
+    # boot at the busybox shell — the initrd loads nothing. The
+    # console device's UART differs by arch (8250 on x86_64,
+    # PL011 on aarch64); everything else is shared. crc32c is
+    # CRYPTO_CRC32C (ext4's metadata_csum asks the crypto API for
+    # it), which also backstops archModules dropping Debian's
+    # crc32c-* entries.
+    case "${arch}" in
+      x86_64) console_uart=SERIAL_8250 ;;
+      *) console_uart=SERIAL_AMBA_PL011 ;;
+    esac
+    for symbol in EXT4_FS JBD2 CRYPTO_CRC32C VIRTIO VIRTIO_PCI \
+      VIRTIO_BLK "$console_uart"; do
+      grep -q "^CONFIG_''${symbol}=y$" "$tree"/boot/config-* \
+        || { echo "CONFIG_''${symbol} is not built in; the " \
+             "zero-module initramfs needs it" >&2; exit 1; }
+    done
 
     # The msks overlay. cp -a PRESERVES ownership deliberately: the
     # store paths are root-owned for real, and the fakeroot session

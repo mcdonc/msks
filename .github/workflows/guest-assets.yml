@@ -146,6 +146,16 @@ jobs:
           devenv --quiet -O dotenv.enable:bool false shell --
           msks-build-guest
 
+      # The Fedora 44 arm64 pins (#651): the aarch64 compose and
+      # rpm hashes are otherwise never fetched by any CI leg — a
+      # hash typo would surface only at the first human arm64
+      # build. The bare flavor name follows the building host, so
+      # this step IS the aarch64 Fedora build.
+      - name: Build the arm64 Fedora guest assets
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          msks-build-guest fedora
+
       - name: Import the built image (pinning test)
         run: >-
           devenv --quiet -O dotenv.enable:bool false shell --

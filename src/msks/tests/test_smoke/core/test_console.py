@@ -76,6 +76,8 @@ async def test_local_console_identity_drop() -> None:
             '&& test "$(stat -c %U:%G /home/msks)" = msks:msks '
             "&& test ! -e /home/debian "
             "&& ! grep -q '^debian:' /etc/passwd "
+            "&& test ! -e /home/fedora "
+            "&& ! grep -q '^fedora:' /etc/passwd "
             "&& echo S-$((6*7))",
             "S-42",
             hostname=wid,
