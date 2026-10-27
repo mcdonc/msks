@@ -6,6 +6,19 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Changed
+
+- **virtiofsd 1.13.0 floor for host mounts (#655).** Host mounts
+  need virtiofsd 1.13.0 or newer: the uid/gid translation and
+  read-only enforcement the shares run on landed upstream there,
+  and older builds refuse the daemon's arguments at start.
+  `msksd doctor` now reads the version (a below-floor binary
+  warns naming the gap and the `MSKSD_VIRTIOFSD` override —
+  Linux Mint 22 ships 1.10.0), and a mount start on a too-old
+  binary fails with the same named requirement instead of an
+  "exited at start" log tail. See
+  [docs/mounts.md](mounts.md).
+
 ## \[v0.4] - 2026-10-27
 
 ### Added

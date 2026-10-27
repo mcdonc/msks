@@ -13,11 +13,13 @@ import json
 import os
 import sys
 import time
+import types
 from pathlib import Path
 
 import pytest
 from msks.microvm.fsdaemons import (
     QUEUE_SIZE,
+    VIRTIOFSD_FLOOR,
     WHOLE_RANGE,
     XATTRMAP,
     fs_daemon_args,
@@ -26,6 +28,8 @@ from msks.microvm.fsdaemons import (
     fs_socket_path,
     guest_user_ids,
     sandbox_mode,
+    virtiofsd_floor_message,
+    virtiofsd_version,
 )
 from msks.microvm.local import (
     LocalCloudHypervisor,
@@ -408,9 +412,14 @@ class FakeProc:
         return self.returncode or 0
 
 
-def driver_over(settings: Settings) -> LocalCloudHypervisor:
-    """A driver over a throwaway app with a settings override and
-    a spawn seam that records instead of exec'ing."""
+def driver_over(
+    settings: Settings, version: tuple[int, ...] | None = (1, 13, 3)
+) -> LocalCloudHypervisor:
+    """A driver over a throwaway app with a settings override
+    and a spawn seam that records instead of exec'ing; the
+    version seam reports at the floor by default (#655), so the
+    lifecycle tests run hermetically — the real probe execs the
+    host's virtiofsd."""
 
     class App:
         pass
@@ -427,6 +436,11 @@ def driver_over(settings: Settings) -> LocalCloudHypervisor:
         return FakeProc()
 
     driver._spawn_fs = fake_spawn_fs
+
+    async def fake_version(binary):
+        return version
+
+    driver._virtiofsd_version = fake_version
     return driver, spawned
 
 
@@ -565,6 +579,11 @@ def test_doctor_reports_virtiofsd_and_share_paths(tmp_path: Path) -> None:
     present = tmp_path / "present"
     present.mkdir()
     settings = Settings()
+    # A floor-clearing double, not the host's own binary: a Mint
+    # 22 box (1.10.0) would otherwise fail the suite.
+    settings.vmm.virtiofsd = fake_virtiofsd(
+        tmp_path / "virtiofsd", "virtiofsd 1.13.0"
+    )
     settings.mounts = MountSettings(
         shares=(
             MountShare(name="gone", path=str(missing)),
@@ -573,7 +592,7 @@ def test_doctor_reports_virtiofsd_and_share_paths(tmp_path: Path) -> None:
     )
     report = run_doctor(settings)
     rows = {result.name: result for result in report.results}
-    assert rows["virtiofsd"].ok is True
+    assert rows[settings.vmm.virtiofsd].ok is True
     # A miss stays warning-grade: with the binary gone, the row
     # fails the run never — it only breaks the mounts feature.
     gone_settings = Settings()
@@ -588,6 +607,193 @@ def test_doctor_reports_virtiofsd_and_share_paths(tmp_path: Path) -> None:
     assert str(missing) in share_gone.message
     assert rows["share here"].ok is True
     assert str(present) in rows["share here"].message
+
+
+def fake_virtiofsd(path: Path, output: str) -> str:
+    """An executable virtiofsd double whose ``--version`` prints
+    ``output`` — the doctor row's probe target, hermetic against
+    whatever the host carries."""
+    path.write_text(f"#!/bin/sh\nprintf '%s\n' {output!r}\n")
+    path.chmod(0o755)
+    return str(path)
+
+
+def test_doctor_names_a_below_floor_virtiofsd(tmp_path: Path) -> None:
+    """The version gap the presence check hid (#655): a virtiofsd
+    below 1.13.0 parses none of the mounts' flags, so its row
+    warns naming the floor, the reported version, and the
+    MSKSD_VIRTIOFSD override — and output without a version
+    reads as the same refusal, because a binary that cannot
+    report one predates every flag."""
+    from msks.server.doctor import run_doctor
+
+    floor = ".".join(str(part) for part in VIRTIOFSD_FLOOR)
+    settings = Settings()
+    settings.vmm.virtiofsd = fake_virtiofsd(
+        tmp_path / "virtiofsd-old", "virtiofsd 1.10.0"
+    )
+    rows = {result.name: result for result in run_doctor(settings).results}
+    row = rows[settings.vmm.virtiofsd]
+    assert row.ok is False
+    assert row.is_warning is True
+    assert "1.10.0" in row.message
+    assert floor in row.message
+    assert "MSKSD_VIRTIOFSD" in row.message
+
+    silent = Settings()
+    silent.vmm.virtiofsd = fake_virtiofsd(
+        tmp_path / "virtiofsd-mute", "some other banner"
+    )
+    rows = {result.name: result for result in run_doctor(silent).results}
+    row = rows[silent.vmm.virtiofsd]
+    assert row.ok is False
+    assert row.is_warning is True
+    assert "reported no version" in row.message
+
+
+def test_the_floor_is_inclusive_and_pads_short_reports() -> None:
+    """The floor comparison (#655): exactly-the-floor clears, a
+    two-part report pads with zeros before it compares, and None
+    (nothing reported) meets nothing."""
+    from msks.microvm.fsdaemons import virtiofsd_meets_floor
+
+    assert virtiofsd_meets_floor((1, 13, 0)) is True
+    assert virtiofsd_meets_floor((1, 13)) is True
+    assert virtiofsd_meets_floor((1, 13, 3)) is True
+    assert virtiofsd_meets_floor((2, 0)) is True
+    assert virtiofsd_meets_floor((1, 12, 9)) is False
+    assert virtiofsd_meets_floor((1, 10, 0)) is False
+    assert virtiofsd_meets_floor(None) is False
+
+
+def test_virtiofsd_version_parses_the_reported_number() -> None:
+    """The floor's parse (#655): the dotted number after the
+    binary's name, ``None`` for anything else."""
+    assert virtiofsd_version("virtiofsd 1.13.3\n") == (1, 13, 3)
+    assert virtiofsd_version("virtiofsd 1.10.0") == (1, 10, 0)
+    assert virtiofsd_version("virtiofsd 2.0") == (2, 0)
+    assert virtiofsd_version("not a version") is None
+    assert virtiofsd_version("") is None
+
+
+def test_the_floor_message_names_floor_and_override() -> None:
+    """The shared refusal text: the reported version, the floor,
+    and the override that points at a newer build."""
+    message = virtiofsd_floor_message((1, 10, 0))
+    assert "1.10.0" in message
+    assert "1.13.0" in message
+    assert "MSKSD_VIRTIOFSD" in message
+    assert "reported no version" in virtiofsd_floor_message(None)
+
+
+async def test_the_start_refuses_a_below_floor_virtiofsd(
+    tmp_path: Path,
+) -> None:
+    """The start path's floor probe (#655): a below-floor (or
+    version-silent) virtiofsd refuses before any socket or
+    pidfile lands, naming the floor and the override instead of
+    dying at argument parsing behind an "exited at start" log
+    tail; a missing binary keeps the spawn seam's named error."""
+    from msks.microvm.errors import MicrovmError
+
+    shared = tmp_path / "share"
+    shared.mkdir()
+    vm_dir = tmp_path / "vms" / "ws-old"
+    vm_dir.mkdir(parents=True)
+    settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    settings.mounts = MountSettings(
+        shares=(MountShare(name="share", path=str(shared)),)
+    )
+    spec = VmSpec(
+        workspace_id="ws-old",
+        kernel=Path("/k"),
+        rootfs=Path("/r"),
+        mounts=(MountSpec(share="share", guest="/mnt/s"),),
+    )
+    for version in ((1, 10, 0), None):
+        driver, _spawned = driver_over(settings, version=version)
+        with pytest.raises(MicrovmError, match="1.13.0"):
+            await driver._start_fs_daemons(spec, vm_dir)
+        assert not list(vm_dir.glob("fs-*.sock")), version
+        assert not list(vm_dir.glob("fs-*.pid")), version
+
+    absent = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    absent.vmm.virtiofsd = str(tmp_path / "virtiofsd-absent")
+    absent.mounts = MountSettings(
+        shares=(MountShare(name="share", path=str(shared)),)
+    )
+    driver, _spawned = driver_over(absent)
+    # The real probe: the missing binary keeps the spawn seam's
+    # named error instead of the floor's.
+    driver._virtiofsd_version = types.MethodType(
+        LocalCloudHypervisor._virtiofsd_version, driver
+    )
+    with pytest.raises(
+        MicrovmError, match="virtiofsd binary not found or not executable"
+    ):
+        await driver._start_fs_daemons(spec, vm_dir)
+
+
+async def test_the_real_probe_reads_the_binary(tmp_path: Path) -> None:
+    """The real probe against script doubles (#655): a binary
+    reporting an old version parses to its tuple, and one whose
+    ``--version`` exits nonzero reads as the below-floor refusal
+    (an unreported version)."""
+    from msks.microvm.errors import MicrovmError
+
+    driver, _spawned = driver_over(Settings(), version=None)
+    driver._virtiofsd_version = types.MethodType(
+        LocalCloudHypervisor._virtiofsd_version, driver
+    )
+    old = fake_virtiofsd(tmp_path / "virtiofsd-old", "virtiofsd 1.10.0")
+    assert await driver._virtiofsd_version(old) == (1, 10, 0)
+
+    broken = tmp_path / "virtiofsd-broken"
+    broken.write_text("#!/bin/sh\necho boom >&2\nexit 3\n")
+    broken.chmod(0o755)
+    with pytest.raises(MicrovmError, match=r"exited 3: boom"):
+        await driver._require_virtiofsd_floor(str(broken))
+
+    unexecutable = tmp_path / "virtiofsd-noexec"
+    unexecutable.write_text("#!/bin/sh\ntrue\n")
+    unexecutable.chmod(0o644)
+    with pytest.raises(
+        MicrovmError, match="virtiofsd binary not found or not executable"
+    ):
+        await driver._require_virtiofsd_floor(str(unexecutable))
+
+    import msks.microvm.local as local_mod
+
+    real_timeout = local_mod.VERSION_PROBE_TIMEOUT_S
+    local_mod.VERSION_PROBE_TIMEOUT_S = 0.2
+    hang = tmp_path / "virtiofsd-hang"
+    hang.write_text("#!/bin/sh\nsleep 5\n")
+    hang.chmod(0o755)
+    try:
+        with pytest.raises(
+            MicrovmError, match=r"did not answer within.+MSKSD_VIRTIOFSD"
+        ):
+            await driver._require_virtiofsd_floor(str(hang))
+    finally:
+        local_mod.VERSION_PROBE_TIMEOUT_S = real_timeout
+
+
+def test_doctor_names_a_probe_failing_virtiofsd(tmp_path: Path) -> None:
+    """A virtiofsd whose ``--version`` exits nonzero keeps the
+    probe-failed row shape the presence check had — the found
+    path and the exit detail, with the package install hint."""
+    from msks.server.doctor import run_doctor
+
+    settings = Settings()
+    settings.vmm.virtiofsd = str(tmp_path / "virtiofsd-x")
+    (tmp_path / "virtiofsd-x").write_text("#!/bin/sh\necho boom >&2\nexit 3\n")
+    (tmp_path / "virtiofsd-x").chmod(0o755)
+    rows = {result.name: result for result in run_doctor(settings).results}
+    row = rows[settings.vmm.virtiofsd]
+    assert row.ok is False
+    assert row.is_warning is True
+    assert "probe failed" in row.message
+    assert "boom" in row.message
 
 
 async def test_missing_share_path_skips_at_start(client, tmp_path):  # noqa: F811
@@ -760,7 +966,9 @@ async def test_real_spawn_wraps_a_missing_binary(tmp_path: Path) -> None:
     bare.state = type("State", (), {})()
     bare.state.settings = Settings()
     driver = LocalCloudHypervisor(bare)
-    with pytest.raises(MicrovmError, match="virtiofsd binary not found"):
+    with pytest.raises(
+        MicrovmError, match="virtiofsd binary not found or not executable"
+    ):
         await driver._spawn_fs("virtiofsd-absent", [], tmp_path / "log")
 
 
