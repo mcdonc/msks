@@ -119,6 +119,12 @@ every backend, and the one that needs zero enforcement machinery.
 | `MSKSD_EGRESS_DNS_TIMEOUT_S`       | `3.0`           | How long the forwarder waits on the upstream                                            |
 | `MSKSD_IP_TOOL` / `MSKSD_NFT_TOOL` | `ip` / `nft`    | The plumbing tools' paths                                                               |
 
+A ruleset apply hands `nft` a file under the daemon's state
+directory and names it by path, so the tool configured above
+runs with the daemon's own read access to that directory — a
+wrapper that execs the real `nft` as another user, or in another
+mount namespace, must carry that access along.
+
 Egress needs the daemon to hold `CAP_NET_ADMIN` and
 `CAP_NET_BIND_SERVICE` (the dev host's wrapper and the NixOS
 module grant exactly those two) and a kernel that routes. The

@@ -1,6 +1,7 @@
 """The nftables rulesets and their application (#52)."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -199,6 +200,25 @@ async def test_nft_run_removes_the_ruleset_file_on_failure(
     monkeypatch.setenv(NFT_FAIL_AT, "-f -")
     monkeypatch.setenv(NFT_STDERR, "syntax error")
     with pytest.raises(MicrovmError, match="nft base ruleset apply failed"):
+        await nft.apply_base(settings)
+    assert list(settings.vmm.state_dir.glob("nft-ruleset-*")) == []
+
+
+async def test_ruleset_file_dies_with_its_own_write_failure(
+    tools, monkeypatch
+) -> None:
+    """#641 (review): a write that cannot land leaves no file
+    behind — the failure names itself as a MicrovmError, and the
+    state directory stays clean, so a disk-full retry loop cannot
+    accumulate debris."""
+    settings, _log = tools
+
+    def refusing(fd, mode):
+        os.close(fd)  # the descriptor mkstemp made dies with the refusal
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "fdopen", refusing)
+    with pytest.raises(MicrovmError, match="ruleset file write failed"):
         await nft.apply_base(settings)
     assert list(settings.vmm.state_dir.glob("nft-ruleset-*")) == []
 

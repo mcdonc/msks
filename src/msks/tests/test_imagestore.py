@@ -1298,6 +1298,20 @@ def test_sweep_crash_leftovers(tmp_path: Path) -> None:
     assert list(root.iterdir()) == [keep]
 
 
+def test_sweep_drops_ruleset_files_a_killed_daemon_left(
+    tmp_path: Path,
+) -> None:
+    """#641: every ruleset apply removes its own file, so the ones
+    that survive to startup are a killed run's debris — the sweep
+    drops them from the state directory's root, and an absent
+    directory answers nothing."""
+    (tmp_path / "nft-ruleset-abcd.nft").write_text("table inet x {}")
+    (tmp_path / "nft-ruleset-efgh.nft").write_text("table inet y {}")
+    sweep_crash_leftovers(tmp_path)
+    assert list(tmp_path.iterdir()) == []
+    sweep_crash_leftovers(tmp_path / "absent")  # no error, no debris
+
+
 def test_foreign_archive_has_no_fabricated_kernel_format(
     tmp_path: Path,
 ) -> None:

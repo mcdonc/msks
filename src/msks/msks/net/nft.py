@@ -826,13 +826,20 @@ def ruleset_file(settings, text: bytes) -> Path:
     mode 0600 from the moment it exists (``mkstemp`` creates it
     so) and a unique name, so two applies the daemon runs
     concurrently never share a file. The caller removes it when
-    its invocation ends."""
+    its invocation ends; a write that cannot land removes it here
+    and names itself."""
     settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
     handle, name = tempfile.mkstemp(
         prefix="nft-ruleset-", suffix=".nft", dir=settings.vmm.state_dir
     )
-    with os.fdopen(handle, "wb") as file:
-        file.write(text)
+    try:
+        with os.fdopen(handle, "wb") as file:
+            file.write(text)
+    except OSError as exc:
+        Path(name).unlink(missing_ok=True)
+        raise MicrovmError(
+            f"nft ruleset file write failed: {name}: {exc}"
+        ) from exc
     return Path(name)
 
 
@@ -845,7 +852,7 @@ async def run_invocation(
         proc = await asyncio.create_subprocess_exec(
             settings.net.nft_tool,
             *argv,
-            stdin=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
