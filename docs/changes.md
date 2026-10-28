@@ -25,10 +25,11 @@ tagged `vX.Y.Z`.
   EACCES (#657).** Creating a file without owner-write bits and
   writing through the same open file descriptor (git's
   loose-object path) failed on every virtiofs share. The share's
-  xattr remapping now passes `security.capability` through
-  unmapped, which leaves file-capability clearing to the host
-  kernel; a guest still cannot set security labels through a
-  share. Applies at each workspace start.
+  xattr remapping now denies `security.capability` at the map
+  and leaves the name unmapped, keeping file-capability clearing
+  with the host kernel — and, whatever the daemon's privilege, a
+  guest can neither set nor read the attribute through a share.
+  Applies at each workspace start.
 
 ## \[v0.4] - 2026-10-27
 
