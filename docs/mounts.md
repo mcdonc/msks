@@ -134,4 +134,8 @@ clearing path re-checks the file's mode even through a file
 descriptor opened writable at creation, so a program that
 creates a file without write bits and keeps writing through the
 open descriptor (git's loose-object files) would get EACCES on
-every write (#657).
+every write (#657). File capabilities cannot ride on share files
+at all: a name an earlier version's map stored as
+`user.virtiofs.security.capability` still lists in the guest as
+`security.capability`, reads as absent, and clears only from the
+host side.
