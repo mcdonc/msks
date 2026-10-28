@@ -1,0 +1,1493 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Microvm workspaces for AI coding agents">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/msks/0.5/networking/">
+      
+      
+      
+        <link rel="prev" href="../mounts/">
+      
+      
+        <link rel="next" href="../egress-consent/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.71">
+    
+    
+      
+        <title>Guest Networking - msks</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.e442bf79.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.b60ce83d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="msks" class="md-header__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            msks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Guest Networking
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="msks" class="md-nav__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    msks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The host doctor
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  First run
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Host Share Mounts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The path
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-chain-enforces" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What the chain enforces
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-runs-where" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What runs where
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reaching-guest-services-the-forward" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reaching guest services (the forward)
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reaching guest services (the forward)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-workspace-ssh-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The workspace ssh identity
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#an-operator-supplied-key-for-one-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        An operator-supplied key for one workspace
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#identities-minted-before" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Identities minted before
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pushing-code-out-with-your-own-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pushing code out with your own credentials
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backend-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Backend support
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Lifecycle
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../egress-consent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Consent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development environment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The path
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-chain-enforces" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What the chain enforces
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-runs-where" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What runs where
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reaching-guest-services-the-forward" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reaching guest services (the forward)
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reaching guest services (the forward)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-workspace-ssh-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The workspace ssh identity
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#an-operator-supplied-key-for-one-workspace" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        An operator-supplied key for one workspace
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#identities-minted-before" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Identities minted before
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pushing-code-out-with-your-own-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Pushing code out with your own credentials
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backend-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Backend support
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Lifecycle
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="guest-networking">Guest networking<a class="headerlink" href="#guest-networking" title="Permanent link">&para;</a></h1>
+<p>A workspace talks to the network only when it was created with
+<code>egress: true</code> — and when it does, every piece of the path lives in
+the daemon, where the guest cannot reach it.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>.../api/v1/workspaces<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"id": "ws1", "egress": true}'</span><span class="w">        </span><span class="c1"># or: msks create ws1 --egress</span>
+</span></code></pre></div>
+<p>This chapter covers the plumbing — the NIC, the tap, DHCP, DNS,
+NAT, and the forward that carries ssh and rsync into the
+workspace. The consent layer that gates where a new connection
+may go is its own chapter: <a href="../egress-consent/">Egress
+consent</a> holds the first packet of each new
+connection for an allow/deny decision over the decider channel,
+built on the same per-VM chain.</p>
+<h2 id="the-path">The path<a class="headerlink" href="#the-path" title="Permanent link">&para;</a></h2>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>workspace VM ──virtio-net──► per-VM tap ──► per-VM nftables chain (host kernel)
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>                                              │  forward: guest source → uplink: accept;
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>                                              │  established replies back; all else drops
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>                                              │  input: only DHCP (67) and DNS (53) in
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>                                              ▼
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>                                     NAT (masquerade) → host uplink
+</span></code></pre></div>
+<p>Each egress workspace owns a dedicated /30 carved from the
+configured pool (<code>MSKSD_EGRESS_SUBNET</code>, default <code>172.31.0.0/16</code>):
+the guest holds the first host address, the daemon-side tap the
+second. The workspace's tap name, nftables table, and NIC MAC derive
+deterministically from the workspace id, and the pool slice is
+recorded on the workspace row at first attach. Stop/start
+cycles, daemon restarts, and even digest collisions between
+workspace ids therefore keep the same address.</p>
+<p>msksd is the only DHCP server and the only resolver the guest
+ever sees. The DHCP offer names the tap as gateway and as DNS
+server, and a small forwarder on the tap answers port 53 by
+relaying to the host's own upstream (<code>MSKSD_EGRESS_DNS_UPSTREAM</code>,
+or the first nameserver in the host's <code>/etc/resolv.conf</code>). The resolver
+speaks UDP; TCP/53 has no listener, so a query needing TCP fallback
+(DNSSEC validation, very large RRsets) fails fast. The forwarder
+answers queries from its own guest only; anything else arriving on
+the tap is dropped unread, so a spoofed-source datagram cannot turn
+the daemon into a reflection amplifier. The resolver also grows the
+naming layer: query cache, name learning for prompts, and the
+lockout that keeps DNS from being routed around, all behind that
+same offered
+resolver.</p>
+<h2 id="what-the-chain-enforces">What the chain enforces<a class="headerlink" href="#what-the-chain-enforces" title="Permanent link">&para;</a></h2>
+<p>The per-VM table hooks two places, both scoped to the workspace's
+tap:</p>
+<ul>
+<li><strong>Forward.</strong> The guest's own source address may leave via the
+  uplink, and the replies to connections the guest established may
+  come back. Everything else across the tap drops: traffic from a spoofed
+  source, traffic headed anywhere but the uplink (which is what
+  blocks one workspace from reaching another's tap), and inbound
+  the guest never asked for. Nothing outside initiates a
+  connection into a workspace.</li>
+<li><strong>Input.</strong> The guest may reach a fixed set of ports on the host
+  through its tap: DHCP (67), the resolver (53), the interceptor's
+  listener while armed, and the LLM proxy port when one is
+  configured. Everything else
+  from the tap drops before the host's own services — the API
+  listener among them — so guest root cannot port-scan the
+  host.</li>
+</ul>
+<p>What the chain deliberately permits depends on the
+workspace's consent mode (the <a href="../egress-consent/">egress consent</a>
+chapter). In <code>allow</code> mode, the
+<em>destination</em> of a guest-initiated connection is unconstrained:
+any host reachable through the host uplink is reachable. In
+<code>static</code> and <code>interactive</code> modes, every new flow passes a
+destination gate first.</p>
+<h2 id="what-runs-where">What runs where<a class="headerlink" href="#what-runs-where" title="Permanent link">&para;</a></h2>
+<p><strong>On the host:</strong> the tap, its address, the per-VM nftables
+table, the NAT masquerade on the uplink, the DHCP service, and
+the DNS forwarder are all owned by msksd. It runs as a
+dedicated service user holding exactly two ambient
+capabilities. <code>CAP_NET_ADMIN</code> covers taps and their addresses,
+the nftables tables, and (because ambient capabilities survive
+<code>exec</code>) the workspace VMM opening its tap. <code>CAP_NET_BIND_SERVICE</code>
+covers the DHCP and DNS listeners, UDP 67 and 53. Nothing in the daemon's process tree
+runs as uid 0; <code>/dev/kvm</code> reaches the VMM through the <code>kvm</code> group.
+The per-tap service listeners — the interceptor, the LLM proxy,
+and the probe service — bind ports above 1024 by default;
+a setting that names a privileged port needs the capability.
+The host's firewall is never touched; containment stays inside the
+host by design.</p>
+<p><strong>Inside the guest:</strong> nothing msks-specific. The image overlay ships
+a systemd-networkd DHCP unit (see <a href="../images/">images.md</a>); the
+kernel's <code>virtio_net</code> driver configures the NIC, DHCP configures the
+address and resolver, and that is the whole of it. No sidecar, no
+agent, no firewall.</p>
+<p><strong>A workspace created with <code>"egress": false</code></strong> presents no NIC
+at all: no tap, no chains, no services — the posture available on
+every backend, and the one that needs zero enforcement machinery.</p>
+<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MSKSD_EGRESS_ENABLED</code></td>
+<td><code>false</code></td>
+<td>Arm the egress plumbing at daemon start (the dev daemon and the NixOS module enable it)</td>
+</tr>
+<tr>
+<td><code>MSKSD_EGRESS_SUBNET</code></td>
+<td><code>172.31.0.0/16</code></td>
+<td>The pool per-workspace /30s are carved from</td>
+</tr>
+<tr>
+<td><code>MSKSD_EGRESS_UPLINK</code></td>
+<td><code>eth0</code></td>
+<td>The host uplink NAT hides guests behind</td>
+</tr>
+<tr>
+<td><code>MSKSD_EGRESS_DNS_UPSTREAM</code></td>
+<td>resolv.conf</td>
+<td>Where the forwarder relays queries</td>
+</tr>
+<tr>
+<td><code>MSKSD_EGRESS_LEASE_S</code></td>
+<td><code>3600</code></td>
+<td>DHCP lease lifetime</td>
+</tr>
+<tr>
+<td><code>MSKSD_EGRESS_DNS_TIMEOUT_S</code></td>
+<td><code>3.0</code></td>
+<td>How long the forwarder waits on the upstream</td>
+</tr>
+<tr>
+<td><code>MSKSD_IP_TOOL</code> / <code>MSKSD_NFT_TOOL</code></td>
+<td><code>ip</code> / <code>nft</code></td>
+<td>The plumbing tools' paths</td>
+</tr>
+</tbody>
+</table>
+<p>A ruleset apply hands <code>nft</code> a file under the daemon's state
+directory and names it by path, so the tool configured above
+runs with the daemon's own read access to that directory — a
+wrapper that execs the real <code>nft</code> as another user, or in another
+mount namespace, must carry that access along.</p>
+<p>Egress needs the daemon to hold <code>CAP_NET_ADMIN</code> and
+<code>CAP_NET_BIND_SERVICE</code> (the dev host's wrapper and the NixOS
+module grant exactly those two) and a kernel that routes. The
+host ships <code>net.ipv4.ip_forward=1</code> as a boot-time <code>sysctl.d</code>
+setting, and the daemon verifies it at startup. A daemon that
+reads <code>0</code> refuses every egress workspace with a cause naming
+the sysctl key. The deployment host satisfies the routing kernel the daemon
+verifies: the NixOS module in <code>nix/module.nix</code> sets
+<code>net.ipv4.ip_forward=1</code>, names its own uplink through settings, and
+grants the daemon the two capabilities — a <code>nixos-rebuild switch</code>
+is the whole host setup. The dev host's wrapper carries the same
+grant for <code>msks-dev</code> (its uplink default names this dev host's
+interface). Debian and Fedora deployment hosts run their setup
+tool — <code>msks-setup-debian-host</code> or <code>msks-setup-fedora-host</code> —
+and <a href="../installation/">the Installation
+chapter</a> walks the tool end to end. For egress
+it matters that the tool installs the same capability wrapper,
+lands the sysctl and the module set this section names, and
+registers the daemon's systemd user service with
+<code>MSKSD_EGRESS_ENABLED=true</code> and the detected uplink. An
+operator who sets <code>MSKSD_EGRESS_ENABLED=false</code> arms nothing, and
+every egress workspace then refuses to boot with the cause named.
+The dev-host egress smoke (<code>TEST_EGRESS=1</code>) runs as root,
+because ambient capabilities cannot be granted to an arbitrary
+shell. The harness creates real taps, loads nftables rules,
+and binds ports 67 and 53, so it runs as full root and sets
+<code>ip_forward</code> itself for the duration of the run. That is the test's constraint,
+not the server's: the daemon needs only the two capabilities and an
+already-routing kernel.</p>
+<h2 id="reaching-guest-services-the-forward">Reaching guest services (the forward)<a class="headerlink" href="#reaching-guest-services-the-forward" title="Permanent link">&para;</a></h2>
+<p>Egress is the guest's outbound path; the forward websocket
+(<code>msks forward</code>, issue) is the client's inbound one, and it rides
+the same per-VM tap.
+The daemon dials the workspace's deterministic tap address on
+the port the caller names and bridges raw bytes over its
+authenticated websocket API. The CLI chapter's <code>msks forward</code>
+section covers the stdio and <code>--local</code> shapes and the
+close-code contract.</p>
+<p>The workspace image meets the forward with a TCP service plane of
+its own: sshd — the image's Debian package, enabled — and
+rsync. sshd listens on all interfaces once the guest's NIC has its
+address; a boot-time unit holds the port behind DHCP, with a
+15s ceiling so a slow lease never blocks it for long. Every
+login is a key login: <code>PasswordAuthentication no</code>, and root may
+log in with a key only (<code>PermitRootLogin prohibit-password</code>). Host keys are
+generated on the workspace's first boot into its persistent root
+overlay, so a stop/start cycle presents the same host key — the
+<code>known_hosts</code> entry you recorded on first login keeps matching. The
+entry lives under the workspace's immutable id, so a workspace
+recreated under the same name is a new id with a fresh cache: it
+trusts its own first-boot host keys instead of refusing the first
+instance's.
+A workspace without egress carries the same image unchanged: its
+forward is refused at the API with close code 4501 before any dial,
+and its console is the virtio-console getty.</p>
+<h3 id="the-workspace-ssh-identity">The workspace ssh identity<a class="headerlink" href="#the-workspace-ssh-identity" title="Permanent link">&para;</a></h3>
+<p>A workspace created through the client carries the operator's
+key as its ssh identity (issues). <code>identity_file</code> (or
+<code>MSKSC_IDENTITY_FILE</code>) names your private key, its derived
+public half travels with the create request, and the first
+boot plants that line into <code>authorized_keys</code> for root and the
+workspace's login user. The planting rides the same cidata
+seed disk that carries <code>user_data</code>, so the guest needs no key
+steps of its own. msks
+generates no key: a client with no identity configured refuses
+the create with a one-line error naming the config keys, the
+variables, and <code>--pubkey</code>. <code>pubkey_file</code> (or
+<code>MSKSC_PUBKEY_FILE</code>) names the public half directly instead
+— a <code>.pub</code> file, read in place of any private material,
+the create form for a key kept encrypted while the operator's
+agent holds it. The daemon stores and seeds the public
+line only; its database never holds a private half and its key
+fetch carries no private field at all. The
+public half persists across daemon
+restarts and workspace stop/start: it lives on the workspace's
+row, and a stop/start cycle serves the same line again. The seed
+composes the identity's script with any <code>user_data</code> payload as
+MIME siblings, so a workspace can carry both.</p>
+<p>The daemon validates the supplied line by shape — a label in the
+algorithm-name charset, fields, base64 body, and a blob whose
+embedded algorithm name agrees with its label — and annotates it
+with its own provenance comment (<code>msks-client:&lt;id&gt;</code>). A supplied
+key is accepted at any type: the guest's sshd, the platform's
+own, is the authority on which keys it will authenticate.</p>
+<p>With the identity materialized, the usual client shapes work over
+the forward:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>msks<span class="w"> </span>forward<span class="w"> </span>myws<span class="w"> </span><span class="m">22</span><span class="w"> </span>--local<span class="w"> </span><span class="m">2201</span><span class="w"> </span><span class="p">&amp;</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>ssh<span class="w"> </span>-i<span class="w"> </span>~/.ssh/id_ed25519<span class="w"> </span>-p<span class="w"> </span><span class="m">2201</span><span class="w"> </span>root@127.0.0.1
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>rsync<span class="w"> </span>-e<span class="w"> </span><span class="s1">'ssh -i ~/.ssh/id_ed25519 -p 2201'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span>-av<span class="w"> </span>./site/<span class="w"> </span>root@127.0.0.1:/root/site/
+</span></code></pre></div>
+<p>The same login works as the workspace's login user —
+<code>ssh -i ... -p 2201 alice@127.0.0.1</code>, the name <code>msks create
+--user</code> recorded — whose home rides the persistent
+<code>/home</code> volume. A workspace created before records no user
+of its own; log in as <code>root</code>, or as <code>msks</code> — the account the
+image itself ships, named directly.</p>
+<p><code>msks ssh</code> is the zero-step form of the same login: it boots
+the workspace if needed and runs ssh with the forward as its
+ProxyCommand. It signs through the operator's own agent when
+it holds the workspace's key (<code>ssh-add</code>; matched on the key
+material, so the file the key came from and its name do not
+matter). Otherwise it stages the operator identity from
+<code>identity_file</code> in a transient in-process ssh-agent, and the
+private half never becomes a file. It logs in as the
+workspace's login user by default, and as <code>root</code> for a
+workspace that records none. <code>-l root</code> is also the recovery
+login; see the CLI chapter's <code>msks ssh</code> section. When the command itself booted the workspace, it holds the
+connection back until the guest accepts the workspace key. A
+probe login retries behind the first boot's identity seeding,
+so the first attempt lands as a session instead of
+<code>Permission denied (publickey)</code>.</p>
+<p><code>msks rsync</code> is the copy form of the same seam: it runs the
+host rsync over the forward with the identity staged in
+memory, and the copy opens its own forward. <code>msks rsync
+devbox -- -aP src/ :src/</code> targets the login user's home;
+<code>root@:/root/x</code> targets root-owned paths. The CLI chapter's
+<code>msks rsync</code> section has the details.</p>
+<p>The user's own ssh config carries the same workflow for plain <code>ssh</code>
+invocations — one wildcard block serves every workspace:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Host msks-*
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    ProxyCommand sh -c 'exec msks forward "${1#msks-}" 22' _ %h
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    UserKnownHostsFile ~/.cache/msks/%h/known_hosts
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    StrictHostKeyChecking accept-new
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    IdentityFile ~/.ssh/id_ed25519
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    IdentitiesOnly yes
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    ControlMaster auto
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    ControlPath ~/.cache/msks/%h.ctl
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    ControlPersist 10m
+</span></code></pre></div>
+<p><code>ssh msks-devbox</code>, <code>rsync -aP src/ msks-devbox:/src/</code>, <code>git clone
+msks-devbox:srv/proj.git</code>, and VS Code Remote-SSH work against the
+alias; ControlMaster shares one forward connection across
+concurrent invocations. The block sets no <code>User</code>: plain <code>ssh</code> logs in as its own
+default, the local username. That is the workspace's recorded
+login user for the operator who created it (the name <code>msks
+create --user</code> planted; <code>ssh -l alice</code> reaches a workspace
+another operator's name recorded). A workspace that records no
+user dials <code>root</code>, the account every seed provisions a key
+for. The alias block names the operator's own
+key with <code>IdentityFile</code> — the same file <code>identity_file</code> names.
+Those paths are the client cache root's defaults and stay
+where the block writes them: OpenSSH reads its own config, so
+<code>MSKSC_CACHE_DIR</code> (the variable the devenv shell presets for
+its command forms) moves only the <code>msks ssh</code>/<code>msks rsync</code>
+state. A relocated cache takes the alias block's paths with it
+only when you edit the block to match. <code>msks ssh</code> is the command form
+that carries the identity per-session from memory instead — plain
+<code>ssh</code> invocations against the alias need the file. The ProxyCommand runs <code>msks</code> in the user's environment, so
+<code>MSKSC_URL</code>, <code>MSKSC_TOKEN</code>, and <code>MSKSC_CAFILE</code> must be set
+there. <code>ssh -l root msks-devbox</code> is the recovery login. <code>-A</code>
+forwards the operator's own agent into the workspace, and so
+does <code>msks ssh -- -A</code>, which rewrites the request onto the
+same socket without the alias block.</p>
+<p>This is the client-held-secrets posture: the daemon host keeps
+every capability the console and forward grant, but holds no
+private key that opens the workspace's ssh.</p>
+<h3 id="an-operator-supplied-key-for-one-workspace">An operator-supplied key for one workspace<a class="headerlink" href="#an-operator-supplied-key-for-one-workspace" title="Permanent link">&para;</a></h3>
+<p><code>msks create --pubkey FILE</code> (issue) builds the workspace
+around a public key chosen for that one create — the key that
+<code>~/.ssh/id_ed25519.pub</code> names, a hardware token's key, any
+well-formed OpenSSH line — instead of the configured key. The
+supplied line travels to the daemon at its own key type and is
+accepted at any type — the guest's sshd, the platform's own, is
+the authority on which keys it will authenticate. The daemon
+re-annotates the line with its provenance comment and seeds it
+like any other identity; its database holds the public half only.</p>
+<p>The private half never leaves the operator's custody:
+nothing is written client-side, and login uses the operator's
+own key (<code>ssh -i</code> through a forward, or the <code>Host msks-*</code>
+alias with <code>IdentityFile</code> pointing at the operator's key
+file). The private half already exists wherever the operator
+keeps it, so the client fetches and stores nothing. <code>msks ssh</code> on such a workspace signs
+through the operator's agent when it holds the planted key
+, reads the key <code>identity_file</code> names when it pairs with
+the planted public half, and otherwise exits with a line naming
+those recoveries.</p>
+<h3 id="identities-minted-before">Identities minted before<a class="headerlink" href="#identities-minted-before" title="Permanent link">&para;</a></h3>
+<p>A workspace whose row predates keeps the public half it was
+created with, and the private half stays wherever the mint left
+it — on the client that minted it, or in the operator's own
+files. The daemon holds none (the stored halves and the serving of
+them are long dropped), so an older workspace logs in the same
+way a current one does. The login works through the operator's
+agent when it holds the key; through the file <code>identity_file</code>
+names when it pairs with the planted public half; or through
+<code>ssh -i</code> with the half directly. The
+console keeps working either way: the token-gated root
+autologin, not a key login.</p>
+<h3 id="pushing-code-out-with-your-own-credentials">Pushing code out with your own credentials<a class="headerlink" href="#pushing-code-out-with-your-own-credentials" title="Permanent link">&para;</a></h3>
+<p>Written for the developer working inside a workspace: your
+repo's remote (GitHub, a private GitLab host, anything
+reachable on the network) accepts a push only with your
+credentials, and the workspace has none of them and should
+hold none. The workflow is
+one login with agent forwarding, after which a push from inside
+the workspace works exactly as it does on your own machine.</p>
+<p>On your client machine, load the key into your agent (<code>ssh-add</code>),
+then log in through the forward with <code>-A</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ssh<span class="w"> </span>-A<span class="w"> </span>msks-devbox
+</span></code></pre></div>
+<p>Inside the session your agent is present: <code>ssh-add -l</code> lists your
+keys, and every ssh the session starts — git's included — offers
+them to the remote, so the ordinary push needs no extra setup:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>git<span class="w"> </span>-C<span class="w"> </span>~/work/proj<span class="w"> </span>push<span class="w"> </span>origin<span class="w"> </span>main
+</span></code></pre></div>
+<p>The credential stays on your machine. The agent rides the
+connection as a socket, so nothing is written to the workspace's
+disks, the image, or the seed; when the session closes, the
+workspace keeps no copy of the key. Host-key checking for the
+remote behaves as anywhere else (the workspace has its own
+<code>~/.ssh/known_hosts</code>).</p>
+<p>Two msks-specific details:</p>
+<ul>
+<li><code>msks ssh my-workspace -- -A</code>, the one-command login with
+  forwarding, forwards your agent too. The command rewrites
+  the request onto the socket <code>SSH_AUTH_SOCK</code> names, the same
+  agent the alias form above forwards, so no ssh-config block
+  is needed. The
+  plain alias (<code>ssh -A msks-devbox</code>) and the forward port directly
+  (<code>ssh -A -i ~/.cache/msks/msks-devbox.key -p 2201 msks@127.0.0.1</code>)
+  work as always.</li>
+<li>With the alias's ControlMaster, the agent arrives only on the
+  connection that creates the master. If you connected earlier
+  without <code>-A</code>, close the master first — <code>ssh -O exit msks-devbox</code>
+  — then reconnect with <code>-A</code>, or wait out the ControlPersist
+  window.</li>
+</ul>
+<p>What the network allows depends on the workspace's consent
+mode. <code>allow</code> reaches any destination beyond the host without
+a grant: remotes, package mirrors, any host reachable through
+the uplink. <code>static</code> and <code>interactive</code> gate each destination
+first (the <a href="../egress-consent/">egress consent</a> chapter covers
+the semantics).
+Guest-initiated connections aimed at the host itself stay
+dropped in every mode (only DHCP and the resolver answer it). The end-to-end proofs are the <code>test_local_egress_git_out</code>
+smoke (<code>TEST_EGRESS=1</code> locally, and part of CI's KVM
+workflow) and the <code>test_local_egress_consent_*</code> smokes. The git smoke installs git in the guest over a plain <code>allow</code>
+egress path and pushes a commit over a test-widened input pin.
+It uses only a key that arrived through the forward as a
+forwarded agent, since the host itself stays unreachable from
+the guest by design. The consent smokes drive a hold, a verdict,
+and the fail-closed denials through the real kernel path.</p>
+<h2 id="backend-support">Backend support<a class="headerlink" href="#backend-support" title="Permanent link">&para;</a></h2>
+<p>Egress is a local-backend feature; the consent API itself is
+enforcement-agnostic (see “Local-only semantics” in <a href="../egress-consent/">Egress
+consent</a>), so a future backend can drive a
+different mechanism from the same model. The no-NIC posture works
+everywhere: a workspace created with <code>"egress": false</code> presents no
+NIC whatever runs it.</p>
+<h2 id="lifecycle">Lifecycle<a class="headerlink" href="#lifecycle" title="Permanent link">&para;</a></h2>
+<p><code>start</code> arms the tap and services before the VMM boots (the VMM
+opens the tap by name); <code>stop</code>, <code>kill</code>, and <code>delete</code> tear the tap,
+its chain, and its services down again. A failed boot unwinds its
+own plumbing — no half-open path outlives a failed workspace start.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a2388154.min.js"></script>
+      
+    
+  </body>
+</html>

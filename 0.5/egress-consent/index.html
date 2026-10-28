@@ -1,0 +1,1146 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Microvm workspaces for AI coding agents">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/msks/0.5/egress-consent/">
+      
+      
+      
+        <link rel="prev" href="../networking/">
+      
+      
+        <link rel="next" href="../llm/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.71">
+    
+    
+      
+        <title>Egress Consent - msks</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.e442bf79.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.b60ce83d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="msks" class="md-header__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            msks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Egress Consent
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="msks" class="md-nav__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    msks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The host doctor
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  First run
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Configuration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Host Share Mounts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Consent
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Consent
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#switching-modes-live" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Switching modes live
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-probe-endpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The probe endpoint
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development environment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#switching-modes-live" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Switching modes live
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-probe-endpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The probe endpoint
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="egress-consent">Egress consent<a class="headerlink" href="#egress-consent" title="Permanent link">&para;</a></h1>
+<p>The consent layer decides, per workspace, where each new
+outbound connection is decided. It rides the per-VM chain the
+<a href="../networking/">guest networking</a> chapter builds — the same
+tap, the same resolver, the same nftables table — so the
+guest's every path out passes a gate the daemon owns.</p>
+<p><img alt="The egress consent page: three held requests queued over the
+in-effect verdicts" src="../screens/consent-holds.svg" /></p>
+<p>A workspace picks its consent posture at create time
+(<code>msks create --egress-mode</code>), and <code>msks egress mode</code> switches it
+afterwards — see <a href="#switching-modes-live">switching modes
+live</a> below. The posture decides where
+each new outbound connection is decided:</p>
+<ul>
+<li><strong><code>allow</code> (the create default).</strong> New flows pass. The daemon's
+  resolver records each off-allowlist name the guest looks up, as an
+  audit row, and that is the whole of it — the behavior plus the
+  naming-layer audit.</li>
+<li><strong><code>static</code>.</strong> The workspace's allowlist (repeatable
+  <code>--allow SPEC</code> at create) is the policy. Allowlisted names resolve
+  through the daemon's resolver and their addresses are pinned as
+  allowed in the kernel chain for the answer's TTL, so
+  <code>apt update</code> against <code>--allow .deb.debian.org</code> completes with no
+  prompt and no hold. An off-list name answers NXDOMAIN — the guest
+  learns nothing, and the lookup cannot serve as a resolution
+  oracle or an exfil channel — and the denial is recorded as an
+  audit row. Address-range entries (<code>10.0.0.0/8</code>, <code>203.0.113.7:5432</code>)
+  accept in the chain directly.</li>
+<li><strong><code>interactive</code>.</strong> The first packet of every new flow
+  queues to the workspace's own NFQUEUE number inside the host
+  kernel, and msksd holds it until a decider answers:</li>
+</ul>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>workspace VM ──virtio-net──► tap ──► per-VM nftables chain
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                                  │  ESTABLISHED → accept (conntrack)
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                                  │  allowlist / prior verdicts → accept
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>                                  │  NEW → NFQUEUE ──► msksd consent engine
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>                                  │                        │ verdict
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>                                  │                        ▼
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>                                  │             accept + pin / drop + RST
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>                                  ▼                        / expire
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>                                NAT → host uplink
+</span></code></pre></div>
+<p>A decider is any authenticated client that announced itself
+  on the events websocket (<code>msks egress watch &lt;workspace&gt;</code>).
+  New holds wait for a decider only while at least one is
+  connected, and the connection itself is the decider's
+  liveness. A hold created before the last decider left still
+  runs its timeout. Without a
+  decider an off-list connect fails fast — no prompt, no hang. The prompt names the DNS name (<code>api.anthropic.com:443</code>),
+  because the resolver is the one the DHCP lease hands the guest
+  and it remembers which name resolved to which address. A
+  destination given by address (a Postgres host) prompts with the
+  address itself and keys its verdict on the address.</p>
+<p><strong>Web flows while the interceptor is armed.</strong> A covered
+  workspace's TCP flows toward ports 80 and 443 redirect into
+  the <a href="../secrets/#the-interceptor-the-swap-on-the-wire">interceptor</a>
+  before the kernel chain, so those flows gate at the
+  interceptor itself. They gate on the name the wire carries,
+  which is the one thing the network layer cannot read: the SNI
+  of the TLS handshake on HTTPS, the Host header on plain
+  HTTP. The name counts only when the daemon's naming memory binds it
+  to the connection's address, which happens when the guest
+  resolved it through the daemon's resolver. An address the
+  memory never learned (a hosts-file entry) keys the gate by the
+  address itself, exactly as the kernel queue keys a raw-IP
+  connect. A name claiming an address the memory holds under a
+  different name keys by that name. A name's allowlist entry or
+  verdict therefore covers no address it never resolved to. The decision table matches the resolver gate's precedence: a
+  standing deny verdict first, then the static allowlist (name
+  specs against the gated name, address specs against the
+  original destination), then a standing allow, then the mode.
+  <code>static</code> records the denial and answers a local HTTP 403.
+  <code>interactive</code> holds through the consent engine, so the same
+  decider endpoints answer the same rows the kernel queue
+  writes; an allow completes the handshake, and a deny answers
+  the 403 locally (nothing forwards). The 403's body names what happened. A verdict's refusal says
+  consent denied the destination. A flow that lost the duplicate
+  race says a decision for the destination is already pending
+  and points the operator at the consent prompt. A prompt no
+  decider answered (none registered, or the request expired
+  undecided) says so. A request that ended without a decision
+  (the gate failed, the prompt cap refused the hold, or the
+  workspace vanished, stopped, or switched mode mid-hold) says
+  that instead. Verdicts and durations are shared: one allow
+  covers the destination's web flows and its other ports alike,
+  and the session memory that skips re-prompting is one table for
+  both gates. The gating boundary is the connection, both protocols alike.
+  A TLS handshake gates once; kept-alive requests, several Hosts
+  included, ride the connection's own verdict until it closes. A
+  plain connection answers each destination once: a different
+  Host gates fresh, and repeats of the same destination share
+  the connection's own answer. <code>msks egress revoke</code> therefore stops a destination's next
+  connection and its first plain request on a fresh connection.
+  Connections that already carry consent (established TLS, or a
+  plain connection that already answered that destination) keep
+  it until they close. The kernel path additionally kills
+  established flows with their conntrack entries; the
+  interceptor's connections have no conntrack entry to kill.</p>
+<p><strong>Verdicts and durations.</strong> <code>msks egress decide</code> records
+<code>allow</code>/<code>deny</code> with a duration — <code>once</code> (this connection only; a
+reconnect re-prompts), <code>5m</code>, <code>15m</code>, <code>tilrestart</code> (until the VM
+stops; the default), <code>forever</code> (the workspace's lifetime — replayed
+at every boot). An allow pins the destination in the kernel for its
+duration and covers the <em>name</em>, so a CDN-rotated address of an
+allowed host resolves and passes without re-prompting. A deny
+answers the SYN and its retransmits with a TCP RST — the guest's
+<code>connect()</code> fails immediately instead of hanging on the kernel's
+retransmit timer. On an address two names resolved to (shared hosting, a CDN
+front), a verdict stays with its own name. The address carries
+no allow pin while both names' resolutions are live; each new
+connection gates at the queue, named by whichever resolution
+came last. A deny refuses only its own connection (a per-flow
+RST, keyed by that connection's source port). The pins the
+address already carried are withdrawn the moment the second
+name resolves to it, except the pins a verdict given by
+address owns: those are address-scoped by construction and
+re-pin after the withdrawal. The queue attributes a connection to the most recent
+resolution of its address. A guest whose cached resolution
+outlives a later one for the same address is indistinguishable
+at this layer; separating those needs the connection's own
+hostname (TLS SNI), which the network layer does not read. A static workspace keeps its allowlist pins on a shared
+address: its chain has no queue to hand a withdrawn pin's
+connections to, and the allowlist's resolved-address pins are the
+whole of its enforcement. <code>msks egress revoke</code> undoes an in-effect verdict at once. The
+pinned rules clear, the destination's live connections die with
+their conntrack entries (on a shared address that includes the
+co-resident's live connections to it), and new connections
+gate again. Every row — request, verdict,
+expiry, revocation — lands in the consent table with its
+provenance, pruned past <code>MSKSD_EGRESS_CONSENT_RETENTION_DAYS</code> and
+the per-workspace <code>MSKSD_EGRESS_CONSENT_ROW_CAP</code>; with
+<code>MSKSD_AUDIT_HMAC_KEY</code> set each row also carries an HMAC-SHA256
+tag over its columns.</p>
+<p><strong>The naming layer owns DNS.</strong> Ports 53 and 853 toward anywhere but
+the daemon's own resolver drop in the per-VM chain, in every mode,
+so the guest cannot route around the resolver that names its
+prompts. Plain-IP egress to a DoH endpoint on 443 is enforced like
+any other flow — in <code>static</code>/<code>interactive</code> it meets the same
+destination gate.</p>
+<p><strong>Fail-closed, by construction.</strong> The queue rule carries no
+bypass: a queue with no listener (msksd down, the consumer not
+yet bound) and a full queue both <em>drop</em>. That is the opposite
+default of a sidecar-in-netns design, which inherits the
+namespace's plumbing only while its process lives. Each workspace owns its queue number
+(derived from its address-pool slice), so one workspace flooding
+SYNs delays only its own verdicts. And the whole mechanism — taps,
+chains, queues, the resolver, the verdict table — lives in the
+host's kernel and msksd's userspace: guest root sees none of
+it (no syscall, no <code>/proc</code>, no signal target).</p>
+<p><strong>Local-only semantics.</strong> Per-flow holds are the local backend's
+enforcement; the consent API itself (requests, verdicts, durations,
+revocation, audit) is enforcement-agnostic, so a future backend can
+drive a different mechanism from the same model.</p>
+<h2 id="switching-modes-live">Switching modes live<a class="headerlink" href="#switching-modes-live" title="Permanent link">&para;</a></h2>
+<p><code>msks egress mode &lt;ws&gt; &lt;mode&gt; [--allow SPEC]...</code> (or <code>m</code> in the
+decider TUI, from any of its screens) moves a workspace between the three
+postures without recreating it. The row's mode and allowlist change at once. A running
+workspace then swaps its whole per-VM table in one nft
+transaction (the same maneuver the interceptor's arm/disarm
+uses), carrying the consent elements (verdict pins,
+resolver-learned allows) across. Established connections
+survive the switch, and an attached <code>msks ssh</code> session stays
+up. A
+stopped workspace builds the new posture at its next start.</p>
+<p>The switch keeps three invariants:</p>
+<ul>
+<li><strong>The queue never dangles.</strong> Entering <code>interactive</code> binds
+  the workspace's NFQUEUE consumer before the chain references
+  the queue. Leaving it installs the queue-less table first
+  and unbinds the consumer after. An unbound queue drops, so
+  the order is the whole rule.</li>
+<li><strong>Held requests answer.</strong> A switch away from <code>interactive</code>
+  fail-closes every hold the workspace still owns — the held SYNs
+  answer deny at once rather than waiting out the timeout against
+  a queue that no longer exists.</li>
+<li><strong>Verdicts carry.</strong> The consent rows survive every switch,
+  and enforcement follows the current mode: an <code>allow forever</code>
+  granted under <code>interactive</code> keeps acting under <code>static</code>
+  (name-keyed verdicts at the resolver, address-keyed ones
+  re-pinned into the fresh table's sets). <code>static</code> after an
+  <code>interactive</code> session is therefore the frozen consent set:
+  everything approved so far, and nothing else. The pins rebuild from the rows across a direct
+  gated→gated switch and at every gated entry; a round-trip
+  through <code>allow</code> re-pins the <code>forever</code> rows, while a timed
+  address-keyed allow re-prompts or re-learns on the guest's next
+  resolution.</li>
+</ul>
+<p>The resolver flips with the chain in the same step, so a switch to
+<code>static</code> starts answering off-list names with NXDOMAIN mid-session
+(the guest's cached answers run out on their own TTLs). A switch to <code>static</code> with nothing effectively allowed (an
+empty allowlist and no in-effect allowed verdict) is refused
+with a message naming the escape: <code>--allow</code> entries, or
+<code>--offline</code> to run the switch. That posture answers every name
+NXDOMAIN, an offline workspace. The daemon logs each switch and broadcasts a
+refreshed <code>egress.rules</code> frame, so an attached TUI repaints its
+header without reconnecting.</p>
+<h2 id="the-probe-endpoint">The probe endpoint<a class="headerlink" href="#the-probe-endpoint" title="Permanent link">&para;</a></h2>
+<p>The daemon serves one deliberately ordinary HTTPS service every
+workspace can reach: <strong><code>https://secretprobe.msks/</code></strong> — an emulated
+external endpoint protected by HTTP basic auth, username <code>msks</code>,
+password <code>msks</code>. It exists so an operator can verify from inside a workspace
+that <strong>secret interception works end to end</strong>. The <code>ok</code> page
+it answers with can only exist when the whole chain ran:
+redirect, TLS splice, leaf mint, and the sentinel-to-secret
+swap.</p>
+<p>The daemon seeds the machinery itself at first-time startup
+(the daemon-wide placeholder named <code>probe</code>, whose secret is the
+base64 of the whole credential <code>bXNrczptc2tz</code>), and the
+interception CA is installed at first boot. Nothing is left to
+do by hand. The
+verification:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># on the host: read the seeded sentinel (token-gated API)</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>curl<span class="w"> </span>-s<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$TOKEN</span><span class="s2">"</span><span class="w"> </span>https://msksd/api/v1/probe
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># inside the workspace: the sentinel rides as the raw Basic blob</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Basic &lt;sentinel&gt;"</span><span class="w"> </span>https://secretprobe.msks/
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>ok
+</span></code></pre></div>
+<p>A request that reaches the service has already passed the nft
+redirect (guest TCP 80/443 to the per-tap interceptor
+listener), the splice tier (the SNI matched an allowlisted
+entry), and the daemon CA's leaf mint. The swap then rewrote
+the raw blob into a well-formed credential. The interceptor's upstream dial was repointed to the
+service's own per-tap port (<code>probe_port</code>, default 8644) and
+verified against the service CA the daemon mints. The guest's
+443 is the redirect's port; the service listener binds the
+setting's unprivileged number, which a host wildcard cannot
+squat. The service
+validated the fixed pair. A broken link answers
+distinctly: a TLS failure names the splice or the CA, a <code>401</code>
+names the swap (or a wrong credential), a timeout names the
+redirect.</p>
+<p>The endpoint performs no other action: it reads no workspace
+state, accepts no commands, and returns no other data. The credentials are a fixed probe value shared by every
+deployment, and the endpoint gates nothing beyond its own <code>ok</code>
+page. That is also why the seeded row's sentinel is served
+back over the token-gated API (<code>GET /api/v1/probe</code>): a token
+holder already owns the daemon.</p>
+<p>Two reachability notes. The probe answers only while the workspace is <strong>armed</strong>. A
+workspace scoped against daemon-wide placeholders (no covering
+row of its own) never arms, so its direct dial to
+<code>secretprobe.msks:443</code> finds nothing admitted and times out.
+That posture is the documented way to opt a workspace out of
+interception entirely. The guest's trust in its own interception CA is installed at
+first boot on both images. Debian guests link it into the
+system trust store. Both guests export <code>SSL_CERT_FILE</code> (a
+bundle built from the platform's own roots with the CA
+appended; the variable replaces the default lookup, so it must
+carry both) and <code>NODE_EXTRA_CA_CERTS</code> for node-based clients,
+plus <code>GIT_SSL_CAINFO</code> naming that same bundle for git. NixOS's
+<code>/etc/profile</code> reads no
+<code>profile.d</code>, so its sanctioned <code>/etc/profile.local</code> hook sources
+the same exports — which also brings the LLM proxy's environment
+alive there. On the NixOS image the trust then completes the NixOS way. A
+background oneshot (<code>msks-interceptor-ca</code>, ordered after
+cloud-init, one rebuild per fresh certificate, with a marker
+no-oping later boots) runs <code>nixos-rebuild switch</code>, whose
+evaluation reads the staged certificate into <code>security.pki</code>.
+The system bundle itself therefore carries the CA, and every
+client that reads the system bundle trusts it. node keeps its
+own exported variable, and the exports remain the first-boot
+bridge that keeps the workspace usable while that rebuild
+runs.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a2388154.min.js"></script>
+      
+    
+  </body>
+</html>
