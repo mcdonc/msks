@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.5] - 2026-10-28
+
 ### Changed
 
 - **virtiofsd 1.13.0 floor for host mounts (#655).** Host mounts
