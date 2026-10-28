@@ -199,6 +199,21 @@ def test_fs_daemon_args_carry_the_contracts(tmp_path: Path) -> None:
     assert "--readonly" in ro
 
 
+def test_xattrmap_passes_security_capability_through() -> None:
+    """The xattr map keeps ``security.capability`` identity-
+    mapped (#657): a remapped name hands virtiofsd the file-
+    capability clearing itself, and its ``fremovexattr`` on
+    every write re-checks the inode's mode even through a fd
+    opened writable at creation — so a file created without
+    write bits (git's loose-object tempfiles) fails every write
+    with EACCES. Identity-mapped, the host kernel clears
+    capabilities on write itself. The ``ok`` rule must lead the
+    catch-all ``map`` rule: the first matching rule applies."""
+    ok_rule, map_rule = XATTRMAP.split(":map:", 1)
+    assert ok_rule == ":ok:client:security.capability::"
+    assert map_rule == ":user.virtiofs.:"
+
+
 def test_fs_device_entries_shape(tmp_path: Path) -> None:
     """The vm.create fs list: one device per share, sorted by tag,
     the queue sizing pinned, DAX off (absent from the body)."""

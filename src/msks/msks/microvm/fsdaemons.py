@@ -67,9 +67,22 @@ def virtiofsd_meets_floor(version: tuple[int, ...] | None) -> bool:
 
 #: Guest xattrs remap under one host prefix (the virtiofsd
 #: documented mapping), so a guest cannot write host security
-#: labels or root-owned namespaces through the share. Posix ACLs
-#: stay off: uid translation and ACLs cannot combine.
-XATTRMAP = ":map::user.virtiofs.:"
+#: labels or root-owned namespaces through the share. One name
+#: passes through unmapped first: ``security.capability``
+#: (``ok``). A remapped name makes virtiofsd clear file
+#: capabilities itself on every write, and its ``fremovexattr``
+#: re-checks the inode's mode even through a fd opened writable
+#: at creation — a guest that creates a file without write bits
+#: and keeps writing through the fd (git's loose-object
+#: tempfiles, #657) then gets EACCES on every write. Unmapped,
+#: the host kernel clears capabilities on write itself, on the
+#: write path that never re-checks the mode. The pass-through
+#: keeps the boundary: a guest cannot set the attribute (the
+#: daemon runs unprivileged and drops its caps, and the guest
+#: kernel requires CAP_SETFCAP), and host ``security.*`` names
+#: stay unlisted. Posix ACLs stay off: uid translation and ACLs
+#: cannot combine.
+XATTRMAP = ":ok:client:security.capability:::map::user.virtiofs.:"
 
 #: The uid/gid translation count: the guest range [0, 2^32-2]
 #: squashes to the one host identity. The last guest uid

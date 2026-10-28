@@ -19,6 +19,17 @@ tagged `vX.Y.Z`.
   "exited at start" log tail. See
   [docs/mounts.md](mounts.md).
 
+### Fixed
+
+- **Host share mounts: git loose objects no longer fail with
+  EACCES (#657).** Creating a file without owner-write bits and
+  writing through the same open file descriptor (git's
+  loose-object path) failed on every virtiofs share. The share's
+  xattr remapping now passes `security.capability` through
+  unmapped, which leaves file-capability clearing to the host
+  kernel; a guest still cannot set security labels through a
+  share. Applies at each workspace start.
+
 ## \[v0.4] - 2026-10-27
 
 ### Added

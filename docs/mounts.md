@@ -120,3 +120,17 @@ guest mounts
 through systemd units the workspace's seed writes — one per
 mount, named for the guest path, re-baked at each start — so a
 reboot remounts without cloud-init running again.
+
+Extended attributes remap under one host prefix (`user.virtiofs.`),
+so a guest cannot write host security labels or root-owned
+namespaces through the share. One name passes through unmapped:
+`security.capability`. A remapped name would make virtiofsd clear
+file capabilities itself on every write, and that clearing path
+re-checks the file's mode even through a file descriptor opened
+writable at creation — so a program that creates a file without
+write bits and keeps writing through the open descriptor (git's
+loose-object files) would get EACCES on every write (#657).
+Unmapped, the host kernel clears capabilities on write itself.
+A guest still cannot set the attribute: setting file capabilities
+requires capabilities neither the unprivileged daemon nor the
+guest user holds, and host `security.*` names stay unlisted.
