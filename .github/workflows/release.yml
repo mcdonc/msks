@@ -311,6 +311,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ github.ref_name }}
+      REPO: ${{ github.repository }}
     steps:
       - name: Download both legs' rows
         uses: actions/download-artifact@v4
@@ -322,11 +323,13 @@ jobs:
       # Each leg's artifact carries its rows keyed by flavor/arch;
       # jq -s add unions the objects, [.[]] flattens to the list
       # the client imports. The floor of two rows is the shape
-      # check: one row per flavor per arch.
+      # check: one row per flavor per arch. The upload names the
+      # repository explicitly: this job checks nothing out, so gh
+      # cannot resolve one from a git remote.
       - name: Attach images.json to the version release
         run: |
           set -eu
           jq -s 'add | [.[]]' rows/rows-*.json > images.json
           test "$(jq length images.json)" -ge 2 \
             || { echo "merged manifest is unexpectedly small"; exit 1; }
-          gh release upload "$TAG" images.json --clobber
+          gh release upload "$TAG" images.json --clobber --repo "$REPO"
