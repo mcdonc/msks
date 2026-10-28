@@ -199,6 +199,25 @@ def test_fs_daemon_args_carry_the_contracts(tmp_path: Path) -> None:
     assert "--readonly" in ro
 
 
+def test_xattrmap_denies_security_capability() -> None:
+    """The xattr map denies ``security.capability`` to the guest
+    and leaves the name unmapped (#657). Denied, because a root
+    daemon keeps CAP_SETFCAP on purpose and would honor a
+    guest's file-capability writes on host files — the map, not
+    the daemon's privilege, holds the boundary. Unmapped,
+    because a remapped name makes virtiofsd clear file
+    capabilities itself on every write, and its ``fremovexattr``
+    re-checks the inode's mode even through a fd opened writable
+    at creation — so a file created without write bits (git's
+    loose-object tempfiles) fails every write with EACCES.
+    Unmapped, the host kernel clears capabilities on write
+    itself. The ``bad`` rule must lead the catch-all ``map``
+    rule: the first matching rule applies."""
+    bad_rule, map_rule = XATTRMAP.split(":map:", 1)
+    assert bad_rule == ":bad:client:security.capability::"
+    assert map_rule == ":user.virtiofs.:"
+
+
 def test_fs_device_entries_shape(tmp_path: Path) -> None:
     """The vm.create fs list: one device per share, sorted by tag,
     the queue sizing pinned, DAX off (absent from the body)."""
