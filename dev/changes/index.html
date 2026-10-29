@@ -1132,6 +1132,21 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>First boot seeds the login user onto the <code>/home</code> volume
+  instead of under it (#662).</strong> The first-boot seeding script
+  waits for the persistent <code>/home</code> volume's mount before writing
+  anything under <code>/home</code>: on a host whose first boot is slow
+  enough that the volume's first fsck+mount finishes after the
+  seeding, the seeded homes and their <code>authorized_keys</code> used to
+  land on the root filesystem and be buried when the volume
+  mounted — the login user held ssh for the first minutes of
+  first boot and lost it the moment the mount completed. A boot
+  with no volume attached stands the wait down after a minute
+  and seeds under the root filesystem's <code>/home</code>; a boot whose
+  volume is attached but never completes its mount holds the
+  wait's full 20 minutes first, then seeds the same way.</p>
+</li>
+<li>
 <p><strong>The devenv shell opens on macOS hosts (#665).</strong> The dev shell
   evaluates and opens on aarch64-darwin: the Linux-only VMM
   toolchain (cloud-hypervisor and the netfilter family) joins the
