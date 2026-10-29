@@ -93,6 +93,14 @@ def seed_script(
     the workspace's login user (#248) provisioned the same way when
     it names an account the image does not ship.
 
+    The script opens by waiting for the persistent /home volume's
+    mount (#662): everything it writes under /home must land on
+    the volume, not on the root filesystem's empty /home directory
+    that a still-running first fsck leaves in place (a mount
+    arriving later buries the seed under it — on a host slow
+    enough to lose the race, the login user loses ssh a few
+    minutes into first boot).
+
     The same mkdir/chmod/append shape #110's smoke planted by hand,
     now the daemon's own first-boot step. The msks user's home rides
     the persistent /home volume (#14): the seed makes it — owned by
@@ -148,6 +156,7 @@ def seed_script(
         "# for root and the msks user, planted first boot.\n"
         "set -eu\n"
         f"key='{public_key}'\n"
+        + home_mount_wait_block()
         + home_seed_block()
         + "install -d -m 0700 -o root -g root /root/.ssh\n"
         "touch /root/.ssh/authorized_keys\n"
@@ -231,6 +240,116 @@ def timezone_block(timezone: str) -> str:
     )
 
 
+def home_mount_wait_block() -> str:
+    """The #662 block: the wait for the persistent /home volume's
+    mount, ahead of everything the seed writes under /home.
+
+    The image's fstab mounts the volume ``nofail`` with a 30s
+    device timeout — a boot without the volume keeps moving, and a
+    boot with one runs the volume's first fsck (fstab pass 2) at
+    its own pace. cloud-init runs the seed on its own schedule,
+    with no ordering against ``home.mount``: on a host fast enough
+    the mount wins the race and the wait is the single /proc/mounts
+    read of an already-mounted /home; on a host slow enough (the
+    #649 rig's nested-VM first boot runs ~40× slower than native)
+    the seed ran first, its writes landed on the root filesystem's
+    empty /home directory, and the volume's mount then buried them
+    — the login user held a working ssh for the first minutes of
+    first boot and lost it the moment the mount completed.
+
+    The wait ends three ways. The volume mounts — the common
+    case, one /proc/mounts read and proceed. The guest carries no
+    writable virtio disk beyond the root, past a 60s grace — no
+    volume was attached at all (the demo-VM boot without one),
+    home.mount has failed for this boot, and seeding under the
+    root filesystem's /home is the right move: the seed says so
+    on stderr and proceeds (the pre-#662 posture, correct
+    whenever the volume is not coming). Or 1200 monotonic
+    seconds pass (20 minutes) — and a boot whose mount fails
+    permanently while the disk is present pays that whole wait
+    before seeding (the outcome was decided at the 30s device
+    timeout; the wait cannot see it, so it errs toward holding —
+    the alternative gave up early and re-created #662 on the
+    rig). The bound counts seconds, not polls: a first-boot host
+    can be slow enough that each fork in the poll loop itself
+    costs seconds, and an iteration-counted cap would stretch
+    the same count into tens of minutes of blocked first boot.
+    The #662 rig's slowest observed mount landed 29 seconds past
+    the 10-minute cap of the day — the cap was measured from the
+    seed's start, about 90 seconds into that boot, so the mount
+    fell at minute 12 — which is why the bound is 20 minutes; a
+    mount slower than that has not been observed on any host.
+    The volumeless grace stays a minute: a boot with no writable
+    volume disk never mounts /home, and there is nothing to wait
+    for.
+
+    The wait is paced by /proc/uptime, not the wall clock: first
+    boot is exactly when NTP steps the clock (a forward step
+    shortens the wait and can re-create #662; a backward step
+    stretches it past any bound), and uptime is monotonic and
+    fork-free — a shell-builtin read where an earlier revision
+    paid a date fork per poll.
+
+    The volume-present signal is the raw disk, not the
+    by-label node the fstab mounts: on a first boot slow enough
+    to need this wait, udev's own label probe can trail the boot
+    by many minutes (the #662 rig watched the by-label node
+    arrive eleven minutes in, the mount a minute behind it) — a
+    wait that gives up on the label's absence stops exactly when
+    it must keep holding. The raw virtio disk exists from the
+    kernel's device scan, seconds into boot: while a writable
+    disk beyond the root is present, the volume is attached and
+    its mount is merely late, so the wait holds it to the cap.
+    The read-only flag in /sys/block tells the volume from the
+    seed disk (the only other disk a workspace boots with); the
+    scan needs no lsblk, udevadm, D-Bus, or systemd — the image
+    side could instead order cloud-final After=home.mount the
+    way its own console gettys do, but that ships only in a new
+    image: this block rides the seed the daemon builds, so it
+    covers every existing image and every renewal with no
+    rebuild, and holds even a mount systemd has already failed
+    for the boot (an After= ordering is satisfied the moment the
+    unit fails). The mount test reads /proc/mounts directly for
+    the same reason.
+    """
+    return (
+        "# msks (#662): everything this seed writes under /home\n"
+        "# must land on the persistent volume, not on the root\n"
+        "# filesystem's empty /home directory that the volume's\n"
+        "# still-running first fsck+mount leaves in place — wait\n"
+        "# for the mount before writing.\n"
+        "read -r up _ < /proc/uptime\n"
+        "now=${up%%.*}\n"
+        "cap=$((now + 1200))\n"
+        "devcap=$((now + 60))\n"
+        "while ! grep -qs ' /home ' /proc/mounts; do\n"
+        "read -r up _ < /proc/uptime\n"
+        "now=${up%%.*}\n"
+        'if [ "$now" -ge "$cap" ]; then\n'
+        "printf 'msks: the /home volume did not mount within 1200s; "
+        "seeding under the root filesystem /home\\n' >&2\n"
+        "break\n"
+        "fi\n"
+        'if [ "$now" -ge "$devcap" ]; then\n'
+        "vol=no\n"
+        "for d in /dev/vd[b-z]; do\n"
+        '[ -e "$d" ] || continue\n'
+        'if [ "$(cat "/sys/block/${d##*/}/ro" 2>/dev/null)" = 0 ]; then\n'
+        "vol=yes\n"
+        "fi\n"
+        "done\n"
+        'if [ "$vol" = no ]; then\n'
+        "printf 'msks: the guest carries no writable volume disk, "
+        "so /home will not mount this boot; "
+        "seeding under the root filesystem /home\\n' >&2\n"
+        "break\n"
+        "fi\n"
+        "fi\n"
+        "sleep 1\n"
+        "done\n"
+    )
+
+
 def home_seed_block() -> str:
     """The workspace home (#171): install -d both creates the home
     and repairs one a pre-#171 seed left root-owned (it applies
@@ -271,6 +390,7 @@ def keyless_seed_script(
     mounts block every built seed carries (#620, part #623), and
     the timezone block when the create captured one (#633)."""
     script = "#!/bin/sh\n# msks (#424): the workspace's seed.\nset -eu\n"
+    script += home_mount_wait_block()
     script += home_seed_block()
     if llm_port:
         script += llm_seed_block(llm_port)

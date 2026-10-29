@@ -8,6 +8,20 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **First boot seeds the login user onto the `/home` volume
+  instead of under it (#662).** The first-boot seeding script
+  waits for the persistent `/home` volume's mount before writing
+  anything under `/home`: on a host whose first boot is slow
+  enough that the volume's first fsck+mount finishes after the
+  seeding, the seeded homes and their `authorized_keys` used to
+  land on the root filesystem and be buried when the volume
+  mounted — the login user held ssh for the first minutes of
+  first boot and lost it the moment the mount completed. A boot
+  with no volume attached stands the wait down after a minute
+  and seeds under the root filesystem's `/home`; a boot whose
+  volume is attached but never completes its mount holds the
+  wait's full 20 minutes first, then seeds the same way.
+
 - **The devenv shell opens on macOS hosts (#665).** The dev shell
   evaluates and opens on aarch64-darwin: the Linux-only VMM
   toolchain (cloud-hypervisor and the netfilter family) joins the

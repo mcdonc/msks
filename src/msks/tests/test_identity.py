@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives import serialization
 from msks.identity import (
     MIME_BOUNDARY,
     compose_user_data,
+    home_mount_wait_block,
     keyless_seed_script,
     operator_content_type,
     seed_script,
@@ -163,6 +164,16 @@ def sandboxed(script: str, sandbox) -> str:
             "/usr/local/share/ca-certificates",
             f"{sandbox}/usr-local-ca",
         )
+        # #662: the home-volume wait reads the guest's mount table
+        # and scans its virtio disks — pointed into the sandbox so
+        # a scenario decides what is mounted and whether a
+        # writable volume disk exists (the grep's ' /home ' pattern
+        # rides unrewritten — it matches the table's mount-point
+        # column, and the sandbox's table names the real path).
+        .replace("/proc/mounts", f"{sandbox}/mounts")
+        .replace("/proc/uptime", f"{sandbox}/uptime")
+        .replace("/dev/vd[b-z]", f"{sandbox}/dev-vd/vd[b-z]")
+        .replace("/sys/block/", f"{sandbox}/sys-block/")
     )
 
 
@@ -171,6 +182,9 @@ def run_seed(
     guest_passwd_line: str,
     useradd_fails: bool = False,
     ca_pem: str | None = None,
+    home_mounted: bool = True,
+    home_device: bool = True,
+    home_mount_arrives: bool = False,
 ):
     """Execute the sandboxed seed under stubbed guest tools.
 
@@ -182,6 +196,20 @@ def run_seed(
     last non-flag argument, ignoring the ownership flags only root
     could apply. Everything else — the shell, cut, grep, printf,
     cp, touch, chmod — runs for real against the sandbox.
+
+    The #662 home-volume wait has its own scenario knobs, all
+    against the sandbox's mount table and virtio disks (sandboxed()
+    points /proc/mounts and the disk scan there) with the
+    sandbox's /proc/uptime as the wait's clock:
+    ``home_mounted`` is the already-mounted guest (the wait's
+    one-grep fast path); ``home_device`` is the writable volume
+    disk — absent, the volumeless shape (the demo-VM boot without
+    a volume); and
+    ``home_mount_arrives`` starts the table bare and has the
+    ``sleep`` stub mount /home off its second call — the seed
+    waits, then seeds. ``sleep`` is stubbed to a logger that
+    ticks the fake uptime a second per call (so the capped shape
+    runs its whole wait in test time).
     """
     stubs = sandbox / "bin"
     stubs.mkdir(exist_ok=True)
@@ -196,6 +224,15 @@ def run_seed(
         "msks:x:1000:1000:msks:/home/msks:/bin/bash\n"
         + (f"{guest_passwd_line}\n" if guest_passwd_line else "")
     )
+    # #662: the slow-host scenarios start the mount table bare —
+    # no /home line, the fsck still running — and the volumeless
+    # one removes the writable volume disk (the seed stays, the
+    # only other virtio disk, and its RO flag is what tells the
+    # scan no volume is attached).
+    if not home_mounted:
+        (sandbox / "mounts").write_text("/dev/vda / ext4 rw,relatime 0 0\n")
+    if not home_device:
+        (sandbox / "dev-vd" / "vdb").unlink()
     verdict = "exit 1" if useradd_fails else "exit 0"
     stubs.joinpath("useradd").write_text(
         f'#!/bin/sh\necho "useradd $*" >> "{log}"\n{verdict}\n'
@@ -225,6 +262,34 @@ def run_seed(
     stubs.joinpath("systemctl").write_text(
         f'#!/bin/sh\necho "systemctl $*" >> "{log}"\nexit 0\n'
     )
+    # #662: the wait's clock is the sandbox's /proc/uptime — a
+    # monotonic read (a shell builtin, so no stub), advanced one
+    # fake second by the sleep stub below, so the cap and the
+    # grace run in test time, each poll costing one fake second.
+    # The wait's poll cadence: a logger that ticks the uptime
+    # file a second per call — and mounts /home off its second
+    # call when the scenario brings the volume in.
+    if home_mount_arrives:
+        stubs.joinpath("sleep").write_text(
+            "#!/bin/sh\n"
+            f'echo "sleep $*" >> "{log}"\n'
+            f'u=$(cut -d. -f1 "{sandbox}/uptime")\n'
+            f'echo "$((u+1)).00 8000.00" > "{sandbox}/uptime"\n'
+            f'c=$(cat "{sandbox}/sleep-n" 2>/dev/null || echo 0)\n'
+            f'c=$((c+1)); echo "$c" > "{sandbox}/sleep-n"\n'
+            f'if [ "$c" -ge 2 ]; then '
+            f'printf "/dev/vdb /home ext4 rw,relatime 0 0\\n" '
+            f'>> "{sandbox}/mounts"; fi\n'
+            "exit 0\n"
+        )
+    else:
+        stubs.joinpath("sleep").write_text(
+            "#!/bin/sh\n"
+            f'echo "sleep $*" >> "{log}"\n'
+            f'u=$(cut -d. -f1 "{sandbox}/uptime")\n'
+            f'echo "$((u+1)).00 8000.00" > "{sandbox}/uptime"\n'
+            "exit 0\n"
+        )
     for stub in stubs.iterdir():
         stub.chmod(0o755)
     env = {
@@ -249,6 +314,29 @@ def prepare_sandbox(tmp_path):
     for member in ("root", "msks", "skel"):
         (tmp_path / member).mkdir()
     (tmp_path / "skel" / ".profile").write_text("# skel\n")
+    # #662: the guest's mount table, /home on its persistent volume
+    # by default — the already-mounted guest every fast host boots
+    # — and its virtio disks: the writable volume (vdb) beside the
+    # read-only cidata seed (vdc), each carrying its /sys/block RO
+    # flag. A slow-host scenario rewrites the table bare
+    # (run_seed's home_mounted=False); a volumeless one removes the
+    # writable disk (home_device=False).
+    (tmp_path / "mounts").write_text(
+        "/dev/vda / ext4 rw,relatime 0 0\n"
+        "/dev/vdb /home ext4 rw,relatime 0 0\n"
+    )
+    # The wait's clock: a booted system's monotonic seconds (the
+    # sleep stub ticks it a second per poll when a scenario runs
+    # the wait past its first grep).
+    (tmp_path / "uptime").write_text("15000.00 8000.00\n")
+    dev_vd = tmp_path / "dev-vd"
+    dev_vd.mkdir()
+    (dev_vd / "vdb").write_text("")
+    (dev_vd / "vdc").write_text("")
+    for name, ro in (("vdb", "0\n"), ("vdc", "1\n")):
+        block = tmp_path / "sys-block" / name
+        block.mkdir(parents=True)
+        (block / "ro").write_text(ro)
     return tmp_path
 
 
@@ -341,6 +429,95 @@ def test_seed_script_skips_provisioning_for_shipped_users() -> None:
         assert "useradd" not in script
         assert "usermod" not in script
         assert script == seed_script(PUBLIC)
+
+
+def test_seed_script_waits_for_the_home_volume(tmp_path) -> None:
+    """The #662 slow-host shape, executable: the mount table starts
+    bare (the volume's first fsck still running) with the volume's
+    writable disk present, the seed polls the mount table, the
+    mount lands, and the seed then seeds on the volume — the wait
+    holds only as long as the volume has a chance of mounting."""
+    sandbox = prepare_sandbox(tmp_path)
+    done = run_seed(
+        sandbox,
+        guest_passwd_line="",
+        home_mounted=False,
+        home_mount_arrives=True,
+    )
+    assert done.returncode == 0, done.stderr
+    log = sandbox.joinpath("stub.log").read_text()
+    # The wait held at least one poll before the mount landed.
+    assert log.count("sleep 1") >= 1
+    # No give-up or cap message: the mount came.
+    assert "root filesystem /home" not in done.stderr
+    # The seeded paths land under the (rewritten) home — on the
+    # volume, in the guest.
+    assert (sandbox / "home" / "alice" / ".ssh" / "authorized_keys").exists()
+
+
+def test_seed_script_gives_up_when_no_volume_disk_exists(tmp_path) -> None:
+    """The #662 volumeless shape, executable: no writable virtio
+    disk beyond the root (the demo-VM boot without a volume, the
+    seed disk alone) — /home will not mount this boot, so the seed
+    stands the wait down at the grace with a line on stderr and
+    seeds under the root filesystem's /home, the pre-#662 posture
+    that is correct whenever the volume is not coming."""
+    sandbox = prepare_sandbox(tmp_path)
+    done = run_seed(
+        sandbox,
+        guest_passwd_line="",
+        home_mounted=False,
+        home_device=False,
+    )
+    assert done.returncode == 0, done.stderr
+    assert "no writable volume disk" in done.stderr
+    log = sandbox.joinpath("stub.log").read_text()
+    # The grace is 60 fake seconds — not the 1200s cap: the
+    # wait ends as soon as the volume has no path to mount.
+    sleeps = log.count("sleep 1")
+    assert 55 <= sleeps <= 70
+    assert (sandbox / "home" / "alice" / ".ssh" / "authorized_keys").exists()
+
+
+def test_seed_script_caps_the_home_wait_in_uptime_seconds(
+    tmp_path,
+) -> None:
+    """The #662 stuck-boot shape, executable: the writable volume
+    disk is there but the mount never lands (udev's label probe
+    crawling past every bound, a fsck that never finishes). The
+    cap counts monotonic uptime seconds, not polls — a slow host where
+    each fork costs seconds must not stretch the cap into tens of
+    minutes of blocked first boot. The seed proceeds at the cap
+    and says so."""
+    sandbox = prepare_sandbox(tmp_path)
+    done = run_seed(sandbox, guest_passwd_line="", home_mounted=False)
+    assert done.returncode == 0, done.stderr
+    assert "did not mount within 1200s" in done.stderr
+    log = sandbox.joinpath("stub.log").read_text()
+    # Exactly the cap in fake seconds: 1200 one-second polls, then
+    # the boundary check fires — a silently retuned cap changes
+    # this count, so the message and the bound stay pinned
+    # together.
+    assert log.count("sleep 1") == 1200
+
+
+def test_the_home_volume_wait_rides_every_seed() -> None:
+    """The wait rides the keyless seed too: its homes sit on the
+    same volume, and a slow host buries them the same way. The
+    already-mounted guest is the fast path — one grep, no polls —
+    so the ride costs nothing a host can notice. The wait also
+    stays where it is — ahead of everything the seed writes under
+    /home — and never speaks to systemd: an is-failed give-up was
+    an earlier falsified cut (a dependency failure leaves the unit
+    inactive, invisible to the state query), so its return is
+    pinned out."""
+    assert "/proc/mounts" in keyless_seed_script(0, None)
+    assert "/proc/mounts" in seed_script(PUBLIC, "alice")
+    keyed = seed_script(PUBLIC, "alice")
+    assert keyed.index("/proc/mounts") < keyed.index(
+        "install -d -m 0755 -o msks -g msks /home/msks"
+    )
+    assert "systemctl" not in home_mount_wait_block()
 
 
 def test_compose_without_key_is_verbatim() -> None:
@@ -677,6 +854,12 @@ def test_the_ca_block_executes_on_a_nixos_shaped_sandbox(
         # with the rest (this sandbox rebuilds the whole PATH — an
         # unstubbed systemctl would reach the runner's manager).
         ("systemctl", f'echo "systemctl $*" >> "{log}"\nexit 0\n'),
+        # #662: the wait's clock is /proc/uptime (sandboxed() points
+        # it at the sandbox file prepare_sandbox writes) — a shell
+        # builtin read, so no stub here — and with the mounts table
+        # already carrying /home, the wait's first grep exits it
+        # before any poll runs.
+        ("sleep", f'echo "sleep $*" >> "{log}"\nexit 0\n'),
     ):
         stubs.joinpath(name).write_text("#!/bin/sh\n" + body)
         stubs.joinpath(name).chmod(0o755)
