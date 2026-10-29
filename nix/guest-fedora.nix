@@ -123,11 +123,15 @@ let
   # as modules; the shared list below carries button/evdev/crc16
   # anyway, where a builtin resolves to nothing and a module
   # ships), so the arch extras are the nested-KVM pair alone;
-  # arm64 adds its kvm module.
+  # arm64 adds its kvm module and the gpio-keys power-button
+  # driver — cloud-hypervisor's aarch64 power button is a
+  # device-tree gpio-keys device, and without the module
+  # logind's power-key handling never sees the button (the x86
+  # ACPI button is one of the builtins above).
   archModules =
     {
       x86_64 = "kvm-intel kvm-amd";
-      aarch64 = "kvm";
+      aarch64 = "kvm gpio_keys";
     }
     .${arch};
 
