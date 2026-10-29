@@ -4,10 +4,12 @@
  * This is the reproducer from the patch comment in
  * https://github.com/podman-container-tools/podman/discussions/23886
  * (Docker Desktop's private fs/fuse patch, "[PATCH 9/9] hardlinks:
- * drop the cache of the existing entry", Feb 2024).  The original
- * posted code omitted its #include lines; they are restored below
- * verbatim otherwise.  Build and run with the working directory on
- * the virtiofs mount under test:
+ * drop the cache of the existing entry", Feb 2024).  The body is
+ * verbatim; the original's missing #include lines are restored
+ * and the two signatures modernized (`static int one(void)`,
+ * `int main(void)`) so modern C compilers accept it.  Build and
+ * run with the working directory on the virtiofs mount under
+ * test:
  *
  *   gcc -O2 -o linkloop linkloop.c
  *   mkdir -p work && cd work && ../linkloop

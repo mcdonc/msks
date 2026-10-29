@@ -14,8 +14,9 @@ a hardlink sometimes assigned a **new inode to the original file**:
 the Linux guest's dentry cache went stale, `link()` failed
 transiently with `ENOENT`, and `stat()`/`open()` returned `ENOENT`
 for files that existed. Docker Desktop hit it as intermittent
-`ld: cannot find ... No such file or directory` during Rust builds
-(docker/for-mac#6511, docker/for-mac#7059) and coped by carrying a
+build failures under virtiofs — `ld: cannot find ... No such file
+or directory` during Rust builds (docker/for-mac#7059, itself a
+duplicate of the rpmbuild report #6511) — and coped by carrying a
 private `fs/fuse` kernel patch in its VM ("[PATCH 9/9] hardlinks:
 drop the cache of the existing entry", Feb 2024 — when the dentry's
 inode has `nlink > 1`, force `entry_valid = 0` so the guest never
@@ -29,17 +30,17 @@ such override.
 
 ## The decision (#669)
 
-**The msks Lima VM keeps the stock kernel. No `fs/fuse` patch, no
-mount-level workaround, no UTM switch.** Four grounds:
+**The msks Lima VM keeps the stock kernel, and the design stays
+on Lima's vz backend.** Four grounds:
 
-1. **Apple fixed the server before msks's macOS floor.** The
+1. **The instability era ended below msks's macOS floor.** The
    podman reporter could not reproduce on macOS 15 (Sequoia), and
    the full suite below runs clean on macOS 27 (Tahoe successor)
    on an M3 host. The macOS-host mode needs nested virtualization
    to run workspace VMs inside the msksd VM, and Lima itself
    refuses `nestedVirtualization: true` on macOS < 15
    (`pkg/driver/vz/vm_darwin.go`), so every supported
-   configuration runs a virtiofs server from the fixed era.
+   configuration runs a virtiofs server from the post-fix era.
 2. **No stock-kernel mount knob approximates the patch.** The
    revalidation timeouts (`entry_timeout`, `negative_timeout`,
    `attr_timeout`) are values the **server** chooses per FUSE
@@ -63,12 +64,13 @@ mount-level workaround, no UTM switch.** Four grounds:
    Debian kernel security update, to work around a bug the
    platform vendor already fixed below our floor.
 4. **UTM trades the landmine for worse ones.** UTM's QEMU backend
-   shares directories as SPICE WebDAV or 9p/VirtFS — virtiofsd
-   needs Linux — and 9p is exactly the transport the msks Lima
-   template bans (`mountTypesUnsupported: [9p]`). Its Apple
-   backend runs the same VZ virtiofs server Lima's vz does, so the
-   landmine follows the switch, without limactl-grade headless
-   automation.
+   shares directories as SPICE WebDAV or 9p/VirtFS — its only
+   POSIX-filesystem transport is 9p, virtiofsd being Linux-only —
+   and 9p is the transport the msksd VM's Lima template keeps out
+   (`mountTypesUnsupported: [9p]`, the #649 course rig's template
+   the #667 design continues). Its Apple backend runs the same VZ
+   virtiofs server Lima's vz does, so the landmine follows the
+   switch — with a thinner automation story than limactl's.
 
 ## The evidence (macOS 27.0.1, Apple M3, limactl 2.2.1, vz)
 
@@ -77,12 +79,12 @@ one rw virtiofs mount (`lima-… on /Users/chrism/vzrepro type
 virtiofs (rw,relatime)`), created by a template mirroring the msks
 course VM (same image digest, same backend, `writable: true`).
 
-| workload                                   | load                                                                                         | result                                                         |
-| ------------------------------------------ | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `linkloop` (Docker's reproducer, verbatim) | 208,576 iterations in 3 min + a 5 min soak                                                   | clean — no `link()` retry, no `stat()` ENOENT, no inode change |
-| `inochange`                                | 20,000 create/link/unlink cycles                                                             | clean — inode stable across link and unlink every time         |
-| `cpal` (`cp -al` storm)                    | 271 cycles × 2,000 links                                                                     | clean — 542,000 link(2) calls, inodes stable                   |
-| `gitrepack`                                | 5 min loop of `git clone --local` + `repack -adf` + `gc --aggressive` on a 6,300-object repo | clean — no transient failures                                  |
+| workload                                        | load                                                                                         | result                                                                                                                  |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `linkloop` (Docker's reproducer, verbatim body) | 208,576 iterations in 3 min + a 5 min soak                                                   | clean — no `link()` retry, no `stat()` ENOENT, no inode change                                                          |
+| `inochange`                                     | 20,000 create/link/unlink cycles                                                             | clean — inode stable across link and unlink every time                                                                  |
+| `cpal` (`cp -al` storm)                         | 271 cycles × 2,000 links                                                                     | clean — 542,000 link(2) calls, no errors (that run compared f1's inode per cycle; the script now compares every file's) |
+| `gitrepack`                                     | 5 min loop of `git clone --local` + `repack -adf` + `gc --aggressive` on a 6,300-object repo | clean — no transient failures                                                                                           |
 
 The acceptance gate for #667: a git repack loop on an rw share with
 no transient `link()`/`stat()` failures — met.
@@ -100,11 +102,21 @@ limactl cp linkloop.c inochange.sh cpal.sh gitrepack.sh msks-vzrepro:~/vzrepro/
 limactl shell msks-vzrepro
   % cd ~/vzrepro && gcc -O2 -o linkloop linkloop.c
   % mkdir -p work && cd work && touch a && mkdir b
-  % timeout 180 ../linkloop          # prints dots; any FAIL line is the landmine
-  % cd .. && ./inochange.sh 20000    # direct inode-stability probe
-  % ./cpal.sh 5                      # dense link(2) storm, minutes
-  % ./gitrepack.sh <path-to-src-repo> 5
+  % timeout 180 ../linkloop        # dots on stdout; watch stderr
+  % cd .. && ./inochange.sh 20000  # direct inode-stability probe
+  % ./cpal.sh 5                    # dense link(2) storm, minutes
+  % git init -q src && cd src && git config user.email r@x && git config user.name r
+  % for c in $(seq 1 150); do for f in $(seq 1 40); do echo $c-$f > f$f.txt; done;
+      git add -A; git commit -qm c$c; done && cd ..
+  % ./gitrepack.sh ~/vzrepro/src 5 # src repo must live on the share
 ```
+
+Reading the results: the shell drivers print a `FAIL(...)` line
+and exit nonzero at the first failure. `linkloop` prints dots to
+stdout and its evidence to stderr — `Failed on iteration N`,
+`link succeeded after N retries ...`, or a `perror` message — and
+on a persistent failure its retry loop spins until `timeout`
+kills it, so read stderr, not the exit code, for its verdict.
 
 Any workload failing — `link` retry loops, ENOENT on files that
 exist, an inode changing across `ln` — reopens the landmine. The

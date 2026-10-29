@@ -4,7 +4,10 @@
 # `cp -al` turns every file in a tree into a fresh link(2) call,
 # the densest simple driver of the code path where VZ virtiofs
 # has been observed to renumber the original file's inode.
-# Any cp error, or an inode change across the copy, fails the run.
+# Any cp error, or an inode differing between the seed file and
+# its link, fails the run — every file's inode is compared each
+# cycle, and a stat that returns nothing fails rather than
+# passing on two empty strings.
 #
 # Usage: ./cpal.sh [minutes]
 set -u
@@ -29,10 +32,17 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     cat cp.err
     exit 1
   fi
-  i1=$(stat -c %i seed/f1)
-  i2=$(stat -c %i copy/f1)
-  if [ "$i1" != "$i2" ]; then
-    echo "FAIL(inode mismatch) iter $n: seed=$i1 copy=$i2"
+  # both globs expand in the same lexicographic order, so the two
+  # inode lists line up file-for-file
+  seedinos=$(stat -c %i seed/* 2>/dev/null)
+  copyinos=$(stat -c %i copy/* 2>/dev/null)
+  if [ -z "$seedinos" ] || [ -z "$copyinos" ]; then
+    echo "FAIL(stat empty) iter $n: a stat returned nothing"
+    exit 1
+  fi
+  if [ "$seedinos" != "$copyinos" ]; then
+    echo "FAIL(inode mismatch) iter $n: some seed/copy pair differs"
+    diff <(echo "$seedinos") <(echo "$copyinos") | head -3
     exit 1
   fi
   echo -n "."

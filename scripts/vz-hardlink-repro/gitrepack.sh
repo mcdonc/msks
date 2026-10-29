@@ -4,13 +4,23 @@
 # Git's local-path clone hardlinks every object from the source
 # repository's object store into the clone's, and `git repack`/`gc`
 # then rewrite and re-link packs.  The loop drives clone/repack/gc
-# until $SECONDS or the iteration cap; any nonzero exit or stderr
-# line naming "No such file" counts as the transient-link-failure
-# signature from mcdonc/msks#669.
+# until the time deadline; any nonzero exit or stderr line naming
+# "No such file" counts as the transient-link-failure signature
+# from mcdonc/msks#669.
 #
-# Usage: ./gitrepack.sh <src-repo> [minutes]
+# The source repository must sit on the same rw virtiofs share as
+# the working directory: `git clone --local` hardlinks across the
+# object store, and a source on any other filesystem fails every
+# link with EXDEV ("failed to create link ... Invalid cross-device
+# link") — a loud failure, but not the landmine.
+#
+# Usage: ./gitrepack.sh <src-repo-on-the-share> [minutes]
 set -eu
-SRC=$1
+[ $# -ge 1 ] || {
+  echo "usage: $0 <src-repo-on-the-share> [minutes]" >&2
+  exit 2
+}
+SRC=$(realpath "$1")
 MINS=${2:-5}
 deadline=$(($(date +%s) + MINS * 60))
 n=0
