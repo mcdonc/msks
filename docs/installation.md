@@ -344,10 +344,11 @@ that can diagnose installation issues.
 
 ## Apple Silicon hosts
 
-An Apple Silicon host (the Asahi Linux class — Fedora Asahi
-Remix on an M-series machine) runs the daemon, builds and
-imports guest images, and manages the workspace lifecycle, and
-its kernel's KVM does not yet deliver guest interrupts
+An Apple Silicon host whose kernel runs KVM in NV mode (today
+the Asahi Linux class — Fedora Asahi Remix on an M-series
+machine) runs the daemon, builds and imports guest images, and
+manages the workspace lifecycle, and its kernel's KVM does not
+yet deliver guest interrupts
 ([#649](https://github.com/mcdonc/msks/issues/649)): a workspace
 starts and its kernel boots deep into first boot, then stalls
 before ssh answers. Everything short of a guest boot works, so
@@ -357,6 +358,16 @@ whose KVM is complete, and drives workspaces there. `msksd
 doctor` names the condition on these hosts with a warning row;
 retest after each kernel update with `msks start` and the
 console — the limitation is the kernel's to lift.
+
+A Linux VM under macOS (UTM or Lima over the
+Virtualization.framework, with nested virtualization enabled)
+is a working Apple-silicon host in its own right: the VM's
+kernel runs its own KVM over the EL2 the hypervisor hands it,
+workspaces boot and ssh answers, and the daemon runs in the VM
+end to end — `msks image check` passes there too. The VM's
+silicon reads as Apple, so `msksd doctor` gates its apple-kvm
+row on the NV-mode markers and leaves the row off there
+([#664](https://github.com/mcdonc/msks/issues/664)).
 
 ## The alternative paths
 

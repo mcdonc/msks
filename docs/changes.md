@@ -8,6 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **doctor's apple-kvm row gates on the NV-mode marker (#664).**
+  The warning row now requires an NV-mode marker — the
+  `kvm-arm.mode=nested` command line, sysfs's kvm mode
+  parameter, or the kernel log's NV init line — beside the
+  Apple MIDR, so a Linux VM under macOS's
+  Virtualization.framework, whose silicon reads as Apple but
+  whose nested KVM boots guests to ssh, runs the report clean;
+  Apple-silicon hosts running KVM in NV mode keep the warning.
+  See [docs/doctor.md](doctor.md).
 - **First boot seeds the login user onto the `/home` volume
   instead of under it (#662).** The first-boot seeding script
   waits for the persistent `/home` volume's mount before writing

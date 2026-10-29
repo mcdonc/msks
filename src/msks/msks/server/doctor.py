@@ -913,45 +913,119 @@ def kvm_access_result(manager: str | None) -> CheckResult:
 
 
 #: The MIDR's implementer field names Apple's CPU business
-#: (0x61) — the marker for an Apple Silicon host, where the
-#: kernel's KVM is the Asahi tree's and the #649 limitation
-#: applies.
+#: (0x61) — the silicon marker for the Asahi host class. Apple's
+#: Virtualization.framework passes the host MIDR through to its
+#: guests, so the marker alone names every Apple-silicon Linux
+#: host, not just the ones the #649 limitation is about (#664);
+#: the NV-mode markers below decide which of them earn the row.
 APPLE_IMPLEMENTER = 0x61
 #: Where a Linux arm64 kernel publishes cpu0's MIDR — the
 #: register file sysfs presents per CPU.
 MIDR_EL1 = Path("/sys/devices/system/cpu/cpu0/regs/identification/midr_el1")
+#: The kernel command line, where the kvm-arm.mode early option
+#: lands when the bootloader or the operator sets it.
+PROC_CMDLINE = Path("/proc/cmdline")
+#: Where sysfs publishes kvm's mode parameter on kernels that
+#: expose the option as a module parameter.
+KVM_MODE_PARAM = Path("/sys/module/kvm/parameters/mode")
+#: The kvm-arm.mode value that runs arm64 KVM in nested-
+#: virtualization (NV) mode — the mode the Asahi kernel runs on
+#: Apple Silicon, whose vGIC does not yet deliver guest
+#: interrupts (#649). The Asahi tree's arm64 KVM accepts only
+#: none/protected/nvhe/nested; the numeric spelling the #649
+#: record first sketched is a malformed early option.
+KVM_MODE_NESTED = "nested"
+#: What KVM's init line in the kernel log names when NV mode is
+#: engaged (`VHE+NV2 mode initialized`, the NV generation
+#: varying with the hardware) — the running mode's own record,
+#: there whatever selected the mode.
+NV_INIT_MARKER = "VHE+NV"
 
 
-def apple_silicon_kvm_result() -> CheckResult | None:
-    """The Asahi-class warning (#649): on Apple Silicon, this
-    kernel's KVM does not yet deliver guest interrupts — a
-    workspace starts and its kernel boots deep into first boot,
-    then a vCPU's timer dies and the guest stalls before ssh can
-    answer. Everything short of a guest boot (builds, imports,
-    the console, workspace lifecycle) works, so the row warns
-    and names the behavior instead of failing the report.
+def cmdline_names_nv_mode() -> bool:
+    """Whether the kernel command line sets kvm-arm.mode=nested."""
+    try:
+        cmdline = PROC_CMDLINE.read_text()
+    except OSError:
+        return False
+    return f"kvm-arm.mode={KVM_MODE_NESTED}" in cmdline.split()
 
-    None on every other host: the row fires only where the
-    condition exists — the MIDR implementer names Apple — and
-    stays off x86_64 hosts and non-Apple arm64 servers alike;
-    a host that publishes no MIDR (an exotic arm64 platform)
-    gets no row either, the marker being the whole claim.
-    """
+
+def module_param_names_nv_mode() -> bool:
+    """Whether sysfs publishes kvm's mode parameter as nested."""
+    try:
+        mode = KVM_MODE_PARAM.read_text()
+    except OSError:
+        return False
+    return mode.strip() == KVM_MODE_NESTED
+
+
+def kernel_log_names_nv_mode() -> bool:
+    """Whether the kernel log carries KVM's NV-mode init line —
+    the runtime marker a kernel that selected the mode on its
+    own still names. A restricted kernel log (dmesg_restrict,
+    a missing dmesg) reads as absent, never as a failure."""
+    rc, out, _err = run(["dmesg"])
+    return rc == 0 and NV_INIT_MARKER in out
+
+
+def kvm_nv_mode() -> bool:
+    """Whether this kernel's KVM runs in NV mode (#664): the
+    command-line option, the sysfs parameter, or the init line —
+    any one of the three, each naming the same mode."""
+    return (
+        cmdline_names_nv_mode()
+        or module_param_names_nv_mode()
+        or kernel_log_names_nv_mode()
+    )
+
+
+def midr_names_apple() -> bool:
+    """Whether cpu0's MIDR implementer names Apple (#649) — the
+    silicon half of the row's two markers, on the Linux arm64
+    hosts alone that publish a MIDR. A host that publishes none
+    (an exotic arm64 platform, any other machine) answers no."""
     if sys.platform != "linux" or os.uname().machine != "aarch64":
-        return None
+        return False
     try:
         midr = int(MIDR_EL1.read_text(), 16)
     except OSError, ValueError:
+        return False
+    return (midr >> 24) & 0xFF == APPLE_IMPLEMENTER
+
+
+def apple_silicon_kvm_result() -> CheckResult | None:
+    """The Asahi-class warning (#649): on Apple Silicon with KVM
+    in NV mode, this kernel's KVM does not yet deliver guest
+    interrupts — a workspace starts and its kernel boots deep
+    into first boot, then a vCPU's timer dies and the guest
+    stalls before ssh can answer. Everything short of a guest
+    boot (builds, imports, the console, workspace lifecycle)
+    works, so the row warns and names the behavior instead of
+    failing the report.
+
+    None on every other host: the row fires only where the
+    condition exists — the MIDR implementer names Apple and the
+    kernel's KVM runs in NV mode (#664) — and stays off x86_64
+    hosts and non-Apple arm64 servers alike, and off Apple-
+    silicon hosts whose KVM is not in NV mode: a Linux VM under
+    macOS's Virtualization.framework reads as Apple silicon
+    (VZ passes the host MIDR through) while its own KVM
+    delivers guest interrupts, so workspaces boot and ssh
+    answers there.
+    """
+    if not midr_names_apple():
         return None
-    if (midr >> 24) & 0xFF != APPLE_IMPLEMENTER:
+    if not kvm_nv_mode():
         return None
     return CheckResult(
         name="apple-kvm",
         ok=False,
         is_warning=True,
         message=(
-            "Apple Silicon host: this kernel's KVM does not yet "
-            "deliver guest interrupts, so workspaces start and "
+            "Apple Silicon host with KVM in NV mode "
+            "(kvm-arm.mode=nested): this kernel's KVM does not "
+            "yet deliver guest interrupts, so workspaces start and "
             "their kernels boot, then stall before ssh answers "
             "(#649); everything that runs short of a guest boot "
             "works"

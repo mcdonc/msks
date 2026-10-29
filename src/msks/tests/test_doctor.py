@@ -708,10 +708,19 @@ def apple_seam(
     tmp_path: pathlib.Path,
     midr: str | None,
     machine: str = "aarch64",
+    *,
+    cmdline: str | None = None,
+    mode_param: str | None = None,
+    kernel_log: str | None = None,
 ) -> None:
     """The Apple-kvm row's seam: the platform, the machine, and
     cpu0's MIDR as sysfs presents it (0x-prefixed hex, or no file
-    at all on a host that publishes none)."""
+    at all on a host that publishes none), plus the three NV-mode
+    markers (#664) — the kernel command line, sysfs's kvm mode
+    parameter, and the kernel log — each left absent by default,
+    so no test reads the host's real markers. The kernel-log seam
+    wraps whatever `run` a prior seam installed, delegating every
+    non-dmesg probe to it."""
     monkeypatch.setattr(doctor_mod.sys, "platform", "linux")
     monkeypatch.setattr(
         doctor_mod.os, "uname", lambda: SimpleNamespace(machine=machine)
@@ -720,23 +729,133 @@ def apple_seam(
     if midr is not None:
         midr_path.write_text(midr)
     monkeypatch.setattr(doctor_mod, "MIDR_EL1", midr_path)
+    cmdline_path = tmp_path / "cmdline"
+    if cmdline is not None:
+        cmdline_path.write_text(cmdline)
+    monkeypatch.setattr(doctor_mod, "PROC_CMDLINE", cmdline_path)
+    param_path = tmp_path / "kvm-mode"
+    if mode_param is not None:
+        param_path.write_text(mode_param)
+    monkeypatch.setattr(doctor_mod, "KVM_MODE_PARAM", param_path)
+    outer_run = doctor_mod.run
+
+    def probe(cmd: list[str], timeout: float = 10.0):
+        if cmd[:1] == ["dmesg"]:
+            if kernel_log is None:
+                # the restricted-log shape: unreadable reads as
+                # absent, never as a failure
+                return (1, "", "dmesg: read kernel buffer failed")
+            return (0, kernel_log, "")
+        return outer_run(cmd, timeout)
+
+    monkeypatch.setattr(doctor_mod, "run", probe)
 
 
 def test_the_apple_kvm_row_warns_on_apple_silicon(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
-    """An Apple implementer in cpu0's MIDR earns the #649 warning:
-    the row names the stall (kernels boot, ssh never answers) and
-    grades as a warning, so the report still passes — everything
-    short of a guest boot works on such a host."""
-    # cpu0's actual MIDR on the M3 the #649 evidence came from.
-    apple_seam(monkeypatch, tmp_path, "0x00000000612f0430")
+    """An Apple implementer in cpu0's MIDR with the kernel's KVM
+    in NV mode earns the #649 warning: the row names the stall
+    (kernels boot, ssh never answers) and grades as a warning, so
+    the report still passes — everything short of a guest boot
+    works on such a host."""
+    # cpu0's actual MIDR on the M3 the #649 evidence came from,
+    # with the option line the Asahi bootloader sets.
+    apple_seam(
+        monkeypatch,
+        tmp_path,
+        "0x00000000612f0430",
+        cmdline="BOOT_IMAGE=/vmlinuz root=UUID=x kvm-arm.mode=nested",
+    )
     result = apple_silicon_kvm_result()
     assert result is not None and not result.ok
     assert result.is_warning
     assert result.name == "apple-kvm"
     assert "#649" in result.message
     assert "ssh" in result.message
+
+
+def test_the_apple_kvm_row_needs_the_nv_mode_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Apple silicon alone earns no row (#664): macOS's
+    Virtualization.framework passes the host MIDR through to its
+    Linux guests, and a VZ-nested VM's own KVM delivers guest
+    interrupts — workspaces boot and ssh answers there — so the
+    row stays off until an NV-mode marker names the kernel's
+    mode."""
+    apple_seam(monkeypatch, tmp_path, "0x00000000612f0430")
+    assert apple_silicon_kvm_result() is None
+
+
+def test_the_apple_kvm_row_fires_on_the_kernel_log_marker(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """The running mode is its own marker: a kernel that selected
+    NV mode without a command-line option still names it in
+    KVM's init line — the `VHE+NV2 mode initialized` the #649
+    retest recorded on the Asahi host."""
+    apple_seam(
+        monkeypatch,
+        tmp_path,
+        "0x00000000612f0430",
+        kernel_log=(
+            "[    0.000000] kvm [1]: VHE+NV2 mode initialized\n"
+            "[    0.000000] GICv3: no GICV resource entry\n"
+        ),
+    )
+    result = apple_silicon_kvm_result()
+    assert result is not None and result.is_warning
+
+
+def test_the_apple_kvm_row_fires_on_the_module_parameter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """A kernel that publishes kvm's mode parameter through
+    sysfs answers the same question there — the module-parameter
+    spelling #664's fix direction names."""
+    apple_seam(
+        monkeypatch,
+        tmp_path,
+        "0x00000000612f0430",
+        mode_param="nested\n",
+    )
+    result = apple_silicon_kvm_result()
+    assert result is not None and result.is_warning
+
+
+def test_the_apple_kvm_row_ignores_a_non_nv_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """Every marker present and none naming nested — a
+    kvm-arm.mode set to a non-NV value, sysfs's parameter at
+    nvhe, a kernel log whose KVM init names plain VHE (the
+    VZ-nested VM's shape) — leaves the row off: only the
+    nested mode carries the #649 limitation."""
+    apple_seam(
+        monkeypatch,
+        tmp_path,
+        "0x00000000612f0430",
+        cmdline="BOOT_IMAGE=/vmlinuz kvm-arm.mode=none",
+        mode_param="nvhe\n",
+        kernel_log="[    0.000000] kvm [1]: VHE mode initialized\n",
+    )
+    assert apple_silicon_kvm_result() is None
+
+
+def test_the_apple_kvm_row_survives_a_garbage_midr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """A MIDR file whose text is not hex parses to no marker:
+    the row stays off rather than guessing, whatever the NV
+    markers say."""
+    apple_seam(
+        monkeypatch,
+        tmp_path,
+        "garbage",
+        cmdline="BOOT_IMAGE=/vmlinuz kvm-arm.mode=nested",
+    )
+    assert apple_silicon_kvm_result() is None
 
 
 def test_the_apple_kvm_row_stays_off_other_arm64_hosts(
@@ -999,15 +1118,21 @@ def test_path_note_hints_the_distros_own_tool(
 def test_run_doctor_carries_the_apple_kvm_row_where_it_applies(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
-    """The wiring (#649): when cpu0's MIDR names Apple, the full
+    """The wiring (#649, tightened by #664): when cpu0's MIDR
+    names Apple and the kernel's KVM runs in NV mode, the full
     run carries the apple-kvm warning and the report still
-    passes. The seam pins the platform, the machine, and the
-    MIDR, so the row fires identically on x86_64 CI and on an
-    Apple dev machine — where the unseamed row would otherwise
-    cover this line only by host accident."""
+    passes. The seam pins the platform, the machine, the MIDR,
+    and the NV-mode markers, so the row fires identically on
+    x86_64 CI and on an Apple dev machine — where the unseamed
+    row would otherwise cover this line only by host accident."""
     all_found(monkeypatch)
     kvm_seam(monkeypatch)
-    apple_seam(monkeypatch, tmp_path, "0x00000000612f0430")
+    apple_seam(
+        monkeypatch,
+        tmp_path,
+        "0x00000000612f0430",
+        cmdline="BOOT_IMAGE=/vmlinuz kvm-arm.mode=nested",
+    )
     report = run_doctor(Settings())
     names = {result.name for result in report.warnings}
     assert "apple-kvm" in names
