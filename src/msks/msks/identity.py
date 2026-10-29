@@ -257,28 +257,31 @@ def home_mount_wait_block() -> str:
     — the login user held a working ssh for the first minutes of
     first boot and lost it the moment the mount completed.
 
-    So the block waits for the mount itself, in three shapes: the
-    volume mounts (the common case — the wait reads /proc/mounts
-    once and proceeds); systemd gives the mount up (``nofail``'s
-    device timeout expired — a boot without the volume — or the
-    fsck failed; the seed says so on stderr and seeds under the
-    root filesystem's /home, the pre-#662 posture, which a volume
-    that arrives never will); or neither happens within the cap
-    (10 minutes of one-second polls — a first fsck slower than
-    that has never been observed even 40× nested, and the cap
-    bounds a stuck boot's first-boot cost), where the seed proceeds
-    the same way and says so.
+    The wait ends three ways. The volume mounts — the common
+    case, one /proc/mounts read and proceed. Its device node is
+    still absent past a 60s grace — the fstab's by-label device
+    timed out, home.mount failed for this boot (a dependency
+    failure the mount never retries), and seeding under the root
+    filesystem's /home is the right move: the seed says so on
+    stderr and proceeds (the pre-#662 posture, correct whenever
+    the volume is not coming). Or 600 wall-clock seconds pass —
+    the bound counts seconds, not polls: a first-boot host can be
+    slow enough that each fork in the poll loop itself costs
+    seconds, and an iteration-counted cap would stretch the same
+    600 into tens of minutes of blocked first boot. A ``date``
+    call per poll paces it; the cap bounds even a mount whose
+    fsck crawls.
 
-    The mount test reads /proc/mounts directly — every Linux the
-    guests run ships it, and it carries no PATH requirement
-    (cloud-init's job PATH is not guaranteed to carry findmnt on
-    every image). A /home entry is matched as a mount-table field
-    (space-delimited on both sides — the mount-point column is
-    exactly ``/home``), and /proc/mounts escapes no spaces in any
-    field the guests produce. ``systemctl is-failed`` is the
-    give-up signal, gated on the binary the way the mounts block's
-    own systemctl calls are; the stubs the sandbox uses answer
-    both shapes.
+    The give-up signal is the device node itself
+    (``/dev/disk/by-label/msks-home`` — the label the images'
+    fstab mounts, #14), not systemd's unit state: a mount whose
+    device job failed reads ``inactive`` to ``systemctl
+    is-failed`` (the unit itself never ran), so the state query
+    cannot see exactly the shape the wait must give up on — the
+    #662 rig run watched a dependency-failed home.mount hold the
+    seed in the poll loop far past the cap's intent. The node
+    needs no PATH, no D-Bus, and no systemd at all, and the
+    mount test reads /proc/mounts directly for the same reason.
     """
     return (
         "# msks (#662): everything this seed writes under /home\n"
@@ -286,21 +289,24 @@ def home_mount_wait_block() -> str:
         "# filesystem's empty /home directory that the volume's\n"
         "# still-running first fsck+mount leaves in place — wait\n"
         "# for the mount before writing.\n"
-        "waited=0\n"
+        "now=$(date +%s)\n"
+        "cap=$((now + 600))\n"
+        "devcap=$((now + 60))\n"
         "while ! grep -qs ' /home ' /proc/mounts; do\n"
-        "if command -v systemctl >/dev/null 2>&1 \\\n"
-        "   && systemctl is-failed --quiet home.mount; then\n"
-        "printf 'msks: the /home volume failed to mount; "
-        "seeding under the root filesystem /home\\n' >&2\n"
-        "break\n"
-        "fi\n"
-        'if [ "$waited" -ge 600 ]; then\n'
+        "now=$(date +%s)\n"
+        'if [ "$now" -ge "$cap" ]; then\n'
         "printf 'msks: the /home volume did not mount within 600s; "
         "seeding under the root filesystem /home\\n' >&2\n"
         "break\n"
         "fi\n"
+        "if [ ! -e /dev/disk/by-label/msks-home ] "
+        '&& [ "$now" -ge "$devcap" ]; then\n'
+        "printf 'msks: the /home volume is not visible to the guest "
+        "(no /dev/disk/by-label/msks-home); "
+        "seeding under the root filesystem /home\\n' >&2\n"
+        "break\n"
+        "fi\n"
         "sleep 1\n"
-        "waited=$((waited+1))\n"
         "done\n"
     )
 

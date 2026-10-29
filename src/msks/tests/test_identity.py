@@ -163,12 +163,18 @@ def sandboxed(script: str, sandbox) -> str:
             "/usr/local/share/ca-certificates",
             f"{sandbox}/usr-local-ca",
         )
-        # #662: the home-volume wait reads the guest's mount table —
-        # pointed at the sandbox's own so a scenario decides what
-        # is mounted (the grep's ' /home ' pattern rides unrewritten
-        # — it matches the table's mount-point column, and the
-        # sandbox's table names the real path).
+        # #662: the home-volume wait reads the guest's mount table
+        # and probes its device node — both pointed into the
+        # sandbox so a scenario decides what is mounted and
+        # whether the volume's device exists (the grep's ' /home '
+        # pattern rides unrewritten — it matches the table's
+        # mount-point column, and the sandbox's table names the
+        # real path).
         .replace("/proc/mounts", f"{sandbox}/mounts")
+        .replace(
+            "/dev/disk/by-label/msks-home",
+            f"{sandbox}/dev-label/msks-home",
+        )
     )
 
 
@@ -178,7 +184,7 @@ def run_seed(
     useradd_fails: bool = False,
     ca_pem: str | None = None,
     home_mounted: bool = True,
-    home_mount_fails: bool = False,
+    home_device: bool = True,
     home_mount_arrives: bool = False,
 ):
     """Execute the sandboxed seed under stubbed guest tools.
@@ -193,16 +199,18 @@ def run_seed(
     cp, touch, chmod — runs for real against the sandbox.
 
     The #662 home-volume wait has its own scenario knobs, all
-    against the sandbox's mount table (sandboxed() points
-    /proc/mounts there) and a ``systemctl`` stub that answers
-    ``is-failed`` honestly by default: ``home_mounted`` is the
-    already-mounted guest (the wait's one-grep fast path);
-    ``home_mount_fails`` makes systemd give the mount up on the
-    first poll (the demo-VM boot without a volume); and
+    against the sandbox's mount table and device node (sandboxed()
+    points /proc/mounts and the by-label path there) with a
+    ``date`` stub whose clock advances one second per call:
+    ``home_mounted`` is the already-mounted guest (the wait's
+    one-grep fast path); ``home_device`` is the volume's device
+    node — absent, the give-up shape (the boot whose by-label
+    probe lost to systemd's device timeout); and
     ``home_mount_arrives`` starts the table bare and has the
-    stub mount /home off its first is-failed poll — the seed
-    waits one poll, then seeds. ``sleep`` is stubbed to a no-op
-    logger so the capped shape runs its 600 polls in test time.
+    ``sleep`` stub mount /home off its second call — the seed
+    waits, then seeds. ``sleep`` is stubbed to a no-op logger
+    (with the date stub advancing a second per call, the capped
+    shape runs its whole wait in test time).
     """
     stubs = sandbox / "bin"
     stubs.mkdir(exist_ok=True)
@@ -218,9 +226,13 @@ def run_seed(
         + (f"{guest_passwd_line}\n" if guest_passwd_line else "")
     )
     # #662: the slow-host scenarios start the mount table bare —
-    # no /home line, the fsck still running.
+    # no /home line, the fsck still running — and the device-less
+    # one removes the volume's device node (the by-label probe
+    # that lost to systemd's timeout).
     if not home_mounted:
         (sandbox / "mounts").write_text("/dev/vda / ext4 rw,relatime 0 0\n")
+    if not home_device:
+        (sandbox / "dev-label" / "msks-home").unlink()
     verdict = "exit 1" if useradd_fails else "exit 0"
     stubs.joinpath("useradd").write_text(
         f'#!/bin/sh\necho "useradd $*" >> "{log}"\n{verdict}\n'
@@ -247,33 +259,35 @@ def run_seed(
     # systemctl — stubbed, it logs like the guest tools and never
     # reaches the runner's own manager (an unstubbed systemctl
     # rides the host's D-Bus and trips the desktop's polkit).
-    # #662: the stub answers is-failed honestly (exit 1 — the
-    # mount is not failed) unless the scenario gives it up or has
-    # it arrive; everything else logs and succeeds, as before.
+    stubs.joinpath("systemctl").write_text(
+        f'#!/bin/sh\necho "systemctl $*" >> "{log}"\nexit 0\n'
+    )
+    # #662: the wait's clock, stubbed to advance one second per
+    # call — the wall-clock cap and the device grace run in test
+    # time, each poll costing one fake second.
+    stubs.joinpath("date").write_text(
+        "#!/bin/sh\n"
+        f'n=$(cat "{sandbox}/date-n" 2>/dev/null || echo 0)\n'
+        f'n=$((n+1)); echo "$n" > "{sandbox}/date-n"\n'
+        "echo $((1700000000 + n))\n"
+    )
+    # The wait's poll cadence: a no-op logger, mounting /home off
+    # its second call when the scenario brings the volume in.
     if home_mount_arrives:
-        stubs.joinpath("systemctl").write_text(
+        stubs.joinpath("sleep").write_text(
             "#!/bin/sh\n"
-            f'echo "systemctl $*" >> "{log}"\n'
-            'case "$1" in is-failed) '
+            f'echo "sleep $*" >> "{log}"\n'
+            f'c=$(cat "{sandbox}/sleep-n" 2>/dev/null || echo 0)\n'
+            f'c=$((c+1)); echo "$c" > "{sandbox}/sleep-n"\n'
+            f'if [ "$c" -ge 2 ]; then '
             f'printf "/dev/vdb /home ext4 rw,relatime 0 0\\n" '
-            f'>> "{sandbox}/mounts"; '
-            "exit 1;; esac\n"
+            f'>> "{sandbox}/mounts"; fi\n'
             "exit 0\n"
         )
     else:
-        verdict = 0 if home_mount_fails else 1
-        stubs.joinpath("systemctl").write_text(
-            "#!/bin/sh\n"
-            f'echo "systemctl $*" >> "{log}"\n'
-            'case "$1" in is-failed) '
-            f"exit {verdict};; esac\n"
-            "exit 0\n"
+        stubs.joinpath("sleep").write_text(
+            f'#!/bin/sh\necho "sleep $*" >> "{log}"\nexit 0\n'
         )
-    # The wait's poll cadence, stubbed to a no-op so the capped
-    # shape runs its whole 600 polls inside the test timeout.
-    stubs.joinpath("sleep").write_text(
-        f'#!/bin/sh\necho "sleep $*" >> "{log}"\nexit 0\n'
-    )
     for stub in stubs.iterdir():
         stub.chmod(0o755)
     env = {
@@ -300,12 +314,17 @@ def prepare_sandbox(tmp_path):
     (tmp_path / "skel" / ".profile").write_text("# skel\n")
     # #662: the guest's mount table, /home on its persistent
     # volume by default — the already-mounted guest every fast
-    # host boots. A scenario rewrites it bare for the wait's
-    # slow-host shapes (run_seed's home_mounted=False).
+    # host boots — and the volume's device node, present by
+    # default (a scenario removes it for the device-absent
+    # shape). A slow-host scenario rewrites the table bare
+    # (run_seed's home_mounted=False).
     (tmp_path / "mounts").write_text(
         "/dev/vda / ext4 rw,relatime 0 0\n"
         "/dev/vdb /home ext4 rw,relatime 0 0\n"
     )
+    dev_label = tmp_path / "dev-label"
+    dev_label.mkdir()
+    (dev_label / "msks-home").write_text("")
     return tmp_path
 
 
@@ -416,49 +435,57 @@ def test_seed_script_waits_for_the_home_volume(tmp_path) -> None:
     )
     assert done.returncode == 0, done.stderr
     log = sandbox.joinpath("stub.log").read_text()
-    assert "systemctl is-failed --quiet home.mount" in log
-    assert "sleep 1" in log
+    # The wait held at least one poll before the mount landed.
+    assert log.count("sleep 1") >= 1
+    # No give-up or cap message: the mount came.
+    assert "root filesystem /home" not in done.stderr
     # The seeded paths land under the (rewritten) home — on the
     # volume, in the guest.
     assert (sandbox / "home" / "alice" / ".ssh" / "authorized_keys").exists()
 
 
-def test_seed_script_seeds_when_systemd_gives_up_on_the_volume(
-    tmp_path,
-) -> None:
-    """The #662 gave-up shape, executable: a mount systemd has
-    failed (the demo-VM boot without a volume, the fsck failure)
-    stands the wait down at the first poll with a line on stderr,
-    and the seed proceeds under the root filesystem's /home — the
-    pre-#662 posture, which a volume that never arrives is the
-    right one."""
+def test_seed_script_gives_up_when_the_device_never_shows(tmp_path) -> None:
+    """The #662 device-absent shape, executable — the one the rig
+    actually produced: the by-label probe lost to systemd's device
+    timeout, home.mount failed as a dependency (a dependency
+    failure leaves the unit ``inactive``, invisible to ``systemctl
+    is-failed`` — the reason the give-up signal is the device
+    node). The seed stands the wait down at the device grace with
+    a line on stderr and seeds under the root filesystem's /home
+    — the right posture whenever the volume is not coming this
+    boot."""
     sandbox = prepare_sandbox(tmp_path)
     done = run_seed(
         sandbox,
         guest_passwd_line="",
         home_mounted=False,
-        home_mount_fails=True,
+        home_device=False,
     )
     assert done.returncode == 0, done.stderr
-    assert "the /home volume failed to mount" in done.stderr
+    assert "not visible to the guest" in done.stderr
     log = sandbox.joinpath("stub.log").read_text()
-    # Stood down at the first poll — no sleep, no cap.
-    assert "sleep 1" not in log
+    # The grace is 60 fake seconds — not the full 600s cap: the
+    # wait ends as soon as the volume has no path to mount.
+    sleeps = log.count("sleep 1")
+    assert 55 <= sleeps <= 70
     assert (sandbox / "home" / "alice" / ".ssh" / "authorized_keys").exists()
 
 
-def test_seed_script_caps_the_home_wait(tmp_path) -> None:
-    """The #662 stuck-boot shape, executable: a volume that neither
-    mounts nor fails (systemd never reaching a verdict on it) caps
-    the wait at 600 one-second polls, says so on stderr, and seeds
-    anyway — a bounded first-boot cost in exchange for never
-    planting the seed where a late mount buries it."""
+def test_seed_script_caps_the_home_wait_in_wall_clock(
+    tmp_path,
+) -> None:
+    """The #662 stuck-boot shape, executable: the device is there
+    but the mount never lands (a fsck crawling past every bound).
+    The cap counts wall-clock seconds, not polls — a slow host
+    where each fork costs seconds must not stretch the cap into
+    tens of minutes of blocked first boot. The seed proceeds at
+    the cap and says so."""
     sandbox = prepare_sandbox(tmp_path)
     done = run_seed(sandbox, guest_passwd_line="", home_mounted=False)
     assert done.returncode == 0, done.stderr
     assert "did not mount within 600s" in done.stderr
     log = sandbox.joinpath("stub.log").read_text()
-    assert log.count("sleep 1") == 600
+    assert log.count("sleep 1") >= 595
 
 
 def test_the_home_volume_wait_rides_every_seed() -> None:
@@ -804,6 +831,19 @@ def test_the_ca_block_executes_on_a_nixos_shaped_sandbox(
         # with the rest (this sandbox rebuilds the whole PATH — an
         # unstubbed systemctl would reach the runner's manager).
         ("systemctl", f'echo "systemctl $*" >> "{log}"\nexit 0\n'),
+        # #662: the wait's clock, advancing a second a call so a
+        # mountless table exits at the device grace in test time.
+        (
+            "date",
+            f'echo date >> "{log}"\n'
+            f'n=$(cat "{sandbox}/date-n" 2>/dev/null || echo 0)\n'
+            f'n=$((n+1)); echo "$n" > "{sandbox}/date-n"\n'
+            "echo $((1700000000 + n))\n",
+        ),
+        # #662: the wait's cadence, a no-op — with the mounts table
+        # (prepare_sandbox) already carrying /home, the wait's
+        # first grep exits it before any poll runs.
+        ("sleep", f'echo "sleep $*" >> "{log}"\nexit 0\n'),
     ):
         stubs.joinpath(name).write_text("#!/bin/sh\n" + body)
         stubs.joinpath(name).chmod(0o755)
