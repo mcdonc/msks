@@ -93,6 +93,14 @@ def seed_script(
     the workspace's login user (#248) provisioned the same way when
     it names an account the image does not ship.
 
+    The script opens by waiting for the persistent /home volume's
+    mount (#662): everything it writes under /home must land on
+    the volume, not on the root filesystem's empty /home directory
+    that a still-running first fsck leaves in place (a mount
+    arriving later buries the seed under it — on a host slow
+    enough to lose the race, the login user loses ssh a few
+    minutes into first boot).
+
     The same mkdir/chmod/append shape #110's smoke planted by hand,
     now the daemon's own first-boot step. The msks user's home rides
     the persistent /home volume (#14): the seed makes it — owned by
@@ -148,6 +156,7 @@ def seed_script(
         "# for root and the msks user, planted first boot.\n"
         "set -eu\n"
         f"key='{public_key}'\n"
+        + home_mount_wait_block()
         + home_seed_block()
         + "install -d -m 0700 -o root -g root /root/.ssh\n"
         "touch /root/.ssh/authorized_keys\n"
@@ -231,6 +240,71 @@ def timezone_block(timezone: str) -> str:
     )
 
 
+def home_mount_wait_block() -> str:
+    """The #662 block: the wait for the persistent /home volume's
+    mount, ahead of everything the seed writes under /home.
+
+    The image's fstab mounts the volume ``nofail`` with a 30s
+    device timeout — a boot without the volume keeps moving, and a
+    boot with one runs the volume's first fsck (fstab pass 2) at
+    its own pace. cloud-init runs the seed on its own schedule,
+    with no ordering against ``home.mount``: on a host fast enough
+    the mount wins the race and the wait is the single /proc/mounts
+    read of an already-mounted /home; on a host slow enough (the
+    #649 rig's nested-VM first boot runs ~40× slower than native)
+    the seed ran first, its writes landed on the root filesystem's
+    empty /home directory, and the volume's mount then buried them
+    — the login user held a working ssh for the first minutes of
+    first boot and lost it the moment the mount completed.
+
+    So the block waits for the mount itself, in three shapes: the
+    volume mounts (the common case — the wait reads /proc/mounts
+    once and proceeds); systemd gives the mount up (``nofail``'s
+    device timeout expired — a boot without the volume — or the
+    fsck failed; the seed says so on stderr and seeds under the
+    root filesystem's /home, the pre-#662 posture, which a volume
+    that arrives never will); or neither happens within the cap
+    (10 minutes of one-second polls — a first fsck slower than
+    that has never been observed even 40× nested, and the cap
+    bounds a stuck boot's first-boot cost), where the seed proceeds
+    the same way and says so.
+
+    The mount test reads /proc/mounts directly — every Linux the
+    guests run ships it, and it carries no PATH requirement
+    (cloud-init's job PATH is not guaranteed to carry findmnt on
+    every image). A /home entry is matched as a mount-table field
+    (space-delimited on both sides — the mount-point column is
+    exactly ``/home``), and /proc/mounts escapes no spaces in any
+    field the guests produce. ``systemctl is-failed`` is the
+    give-up signal, gated on the binary the way the mounts block's
+    own systemctl calls are; the stubs the sandbox uses answer
+    both shapes.
+    """
+    return (
+        "# msks (#662): everything this seed writes under /home\n"
+        "# must land on the persistent volume, not on the root\n"
+        "# filesystem's empty /home directory that the volume's\n"
+        "# still-running first fsck+mount leaves in place — wait\n"
+        "# for the mount before writing.\n"
+        "waited=0\n"
+        "while ! grep -qs ' /home ' /proc/mounts; do\n"
+        "if command -v systemctl >/dev/null 2>&1 \\\n"
+        "   && systemctl is-failed --quiet home.mount; then\n"
+        "printf 'msks: the /home volume failed to mount; "
+        "seeding under the root filesystem /home\\n' >&2\n"
+        "break\n"
+        "fi\n"
+        'if [ "$waited" -ge 600 ]; then\n'
+        "printf 'msks: the /home volume did not mount within 600s; "
+        "seeding under the root filesystem /home\\n' >&2\n"
+        "break\n"
+        "fi\n"
+        "sleep 1\n"
+        "waited=$((waited+1))\n"
+        "done\n"
+    )
+
+
 def home_seed_block() -> str:
     """The workspace home (#171): install -d both creates the home
     and repairs one a pre-#171 seed left root-owned (it applies
@@ -271,6 +345,7 @@ def keyless_seed_script(
     mounts block every built seed carries (#620, part #623), and
     the timezone block when the create captured one (#633)."""
     script = "#!/bin/sh\n# msks (#424): the workspace's seed.\nset -eu\n"
+    script += home_mount_wait_block()
     script += home_seed_block()
     if llm_port:
         script += llm_seed_block(llm_port)
