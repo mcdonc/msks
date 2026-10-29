@@ -264,18 +264,31 @@ def home_mount_wait_block() -> str:
     home.mount has failed for this boot, and seeding under the
     root filesystem's /home is the right move: the seed says so
     on stderr and proceeds (the pre-#662 posture, correct
-    whenever the volume is not coming). Or 1200 wall-clock
-    seconds pass (20 minutes) — the bound counts seconds, not
-    polls: a first-boot host can be slow enough that each fork in
-    the poll loop itself costs seconds, and an iteration-counted
-    cap would stretch the same count into tens of minutes of
-    blocked first boot. The #662 rig's slowest observed boot
-    mounted at minute 12 — 29 seconds past a 10-minute cap, which
-    is why the bound is 20 — and a mount slower than that has not
-    been observed on any host. A ``date`` call per poll paces it.
+    whenever the volume is not coming). Or 1200 monotonic
+    seconds pass (20 minutes) — and a boot whose mount fails
+    permanently while the disk is present pays that whole wait
+    before seeding (the outcome was decided at the 30s device
+    timeout; the wait cannot see it, so it errs toward holding —
+    the alternative gave up early and re-created #662 on the
+    rig). The bound counts seconds, not polls: a first-boot host
+    can be slow enough that each fork in the poll loop itself
+    costs seconds, and an iteration-counted cap would stretch
+    the same count into tens of minutes of blocked first boot.
+    The #662 rig's slowest observed mount landed 29 seconds past
+    the 10-minute cap of the day — the cap was measured from the
+    seed's start, about 90 seconds into that boot, so the mount
+    fell at minute 12 — which is why the bound is 20 minutes; a
+    mount slower than that has not been observed on any host.
     The volumeless grace stays a minute: a boot with no writable
     volume disk never mounts /home, and there is nothing to wait
     for.
+
+    The wait is paced by /proc/uptime, not the wall clock: first
+    boot is exactly when NTP steps the clock (a forward step
+    shortens the wait and can re-create #662; a backward step
+    stretches it past any bound), and uptime is monotonic and
+    fork-free — a shell-builtin read where an earlier revision
+    paid a date fork per poll.
 
     The volume-present signal is the raw disk, not the
     by-label node the fstab mounts: on a first boot slow enough
@@ -289,8 +302,15 @@ def home_mount_wait_block() -> str:
     its mount is merely late, so the wait holds it to the cap.
     The read-only flag in /sys/block tells the volume from the
     seed disk (the only other disk a workspace boots with); the
-    scan needs no PATH, no D-Bus, and no systemd, and the mount
-    test reads /proc/mounts directly for the same reason.
+    scan needs no lsblk, udevadm, D-Bus, or systemd — the image
+    side could instead order cloud-final After=home.mount the
+    way its own console gettys do, but that ships only in a new
+    image: this block rides the seed the daemon builds, so it
+    covers every existing image and every renewal with no
+    rebuild, and holds even a mount systemd has already failed
+    for the boot (an After= ordering is satisfied the moment the
+    unit fails). The mount test reads /proc/mounts directly for
+    the same reason.
     """
     return (
         "# msks (#662): everything this seed writes under /home\n"
@@ -298,11 +318,13 @@ def home_mount_wait_block() -> str:
         "# filesystem's empty /home directory that the volume's\n"
         "# still-running first fsck+mount leaves in place — wait\n"
         "# for the mount before writing.\n"
-        "now=$(date +%s)\n"
+        "read -r up _ < /proc/uptime\n"
+        "now=${up%%.*}\n"
         "cap=$((now + 1200))\n"
         "devcap=$((now + 60))\n"
         "while ! grep -qs ' /home ' /proc/mounts; do\n"
-        "now=$(date +%s)\n"
+        "read -r up _ < /proc/uptime\n"
+        "now=${up%%.*}\n"
         'if [ "$now" -ge "$cap" ]; then\n'
         "printf 'msks: the /home volume did not mount within 1200s; "
         "seeding under the root filesystem /home\\n' >&2\n"
