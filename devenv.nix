@@ -84,13 +84,17 @@ let
   ]);
   guestImages = import ./nix/guest.nix { pkgs = releasePkgs; };
 
-  # The daemon-side VMM toolchain, Linux-only in nixpkgs (#665):
-  # cloud-hypervisor and the netfilter family refuse to evaluate
-  # on aarch64-darwin, so they ride lib.optionals below — a macOS
-  # shell carries every tool whose work the host can do (the
-  # client over MSKSC_URL, the Python/uv toolchain, the gates),
-  # and the daemon, its processes, and the smoke paths stay
-  # Linux-only by nature (they drive /dev/kvm).
+  # The daemon-side VMM toolchain (#665): cloud-hypervisor and the
+  # netfilter family refuse to evaluate on aarch64-darwin (nixpkgs
+  # marks them Linux-only), so they gate the whole set behind
+  # lib.optionals below; the rest (e2fsprogs, cdrtools) evaluate
+  # on darwin too but ride along, because their work — growing and
+  # checking workspace volumes, building the cidata seed disks —
+  # runs on the daemon host. A macOS shell carries every tool
+  # whose work the host can do (the client over MSKSC_URL, the
+  # Python/uv toolchain, the gates), and the daemon, its
+  # processes, and the smoke paths stay Linux-only by nature (they
+  # drive /dev/kvm).
   linuxOnly = with pkgs; [
     cloud-hypervisor # VMM driven by the local backend (#1); ships ch-remote
     virtiofsd # the vhost-user-fs daemon behind host mounts (#620)
@@ -111,8 +115,8 @@ let
   ];
 in
 {
-  # msks dev environment: Python 3.14 + cloud-hypervisor toolchain (#2).
-  # Mirrors the klangk conventions (AGENTS.md): CI-identical test task,
+  # msks dev environment: Python 3.14 + the daemon-side VMM
+  # toolchain on Linux (#2). Mirrors the klangk conventions (AGENTS.md): CI-identical test task,
   # testmon for scoped iteration, xenon rank-A gate via a single script
   # shared with the pre-commit hook.
   languages.python = {
