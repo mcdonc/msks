@@ -1,0 +1,54 @@
+# Lima template for the #669 repro rig — this exact template
+# created the VM the README's evidence table ran on (limactl
+# 2.2.1, vz, macOS 27 on an M3 host). It mirrors the msks course
+# rig (#649): same Debian trixie image and digest, same vz
+# backend, nested virtualization on, and the same LLMNR
+# workaround Debian 13's sshd needs under vsock. The differences:
+# a 10GiB disk, and the scratch directory is mounted READ-WRITE —
+# the landmine only surfaces on links a guest may write.
+#
+# `mountTypesUnsupported: [9p]` is a deliberate msks choice in
+# every template here (the course rig carries it too): 9p's
+# guest-side quirks are the reason vz is the only backend these
+# templates run, and Lima's own default template does not carry
+# the field — the ban is ours, not Lima's.
+#
+# Create and enter with:
+#   mkdir -p ~/vzrepro
+#   limactl create --name msks-vzrepro lima-template.yaml
+#   limactl start msks-vzrepro
+vmType: vz
+arch: aarch64
+nestedVirtualization: true
+cpus: 4
+memory: 4GiB
+disk: 10GiB
+mounts:
+  - location: /Users/chrism/vzrepro
+    writable: true
+mountTypesUnsupported: [9p]
+images:
+  - location: "https://cloud.debian.org/images/cloud/trixie/20261001-2618/debian-13-genericcloud-arm64-20261001-2618.qcow2"
+    arch: "aarch64"
+    digest: "sha512:d8470b8c6c38fead046c794b5800a5a7b96672d5bcf543cc230ceb0c4b8ace05ed341a0c8928045422243fde26b2f1f2f58e99244c65709ffda2e3d4b674dd5a"
+    variant: "genericcloud"
+  - location: https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-genericcloud-arm64-daily.qcow2
+    arch: aarch64
+    variant: "genericcloud"
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      command -v systemctl >/dev/null 2>&1 || exit 0
+      command -v resolvectl >/dev/null 2>&1 || exit 0
+      conf_path=/etc/systemd/resolved.conf.d/10-lima-disable-llmnr.conf
+      conf_content='[Resolve]
+      LLMNR=no
+      '
+      if [ "$(echo "${conf_content}" | sha256sum)" != "$(sha256sum <"${conf_path}" 2>/dev/null)" ]; then
+        mkdir -p "$(dirname "${conf_path}")"
+        echo "${conf_content}" >"${conf_path}"
+        systemctl daemon-reload
+        systemctl restart systemd-resolved.service
+      fi

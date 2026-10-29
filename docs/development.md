@@ -574,3 +574,30 @@ Transport (#21), in the preferred vsock-first shape:
   dir on first serve). Without it the client proceeds with
   certificate verification off and says so on stderr — the CA
   fingerprint the daemon logs at startup is the cross-check.
+
+### The VZ virtiofs hardlink landmine (#669)
+
+The macOS host-share design (#667) passes host folders to
+workspace guests over virtiofs twice, and the first hop — Apple's
+VZ virtiofs server — carried a known instability through macOS 14:
+creating a hardlink sometimes renumbered the original file's
+synthetic inode, and the Linux guest's dentry cache went stale
+(`link()`/`stat()` returning `ENOENT` for files that exist). Docker
+Desktop answered with a private `fs/fuse` patch in its VM; the
+patch never mainlined. The decision for msks: **the msksd VM keeps
+the stock Debian kernel** — the instability is no longer
+reproducible on macOS 15 per the upstream report and the suite
+runs clean on macOS 27, and the unstable releases sit below the
+macOS floor the feature needs anyway (Lima refuses nested
+virtualization, which workspaces require, on older macOS); no
+stock-kernel mount knob exists that approximates the patch; and
+UTM shares the same VZ server on its Apple backend while its QEMU
+backend's only POSIX-filesystem transport is 9p (directory
+sharing there is SPICE WebDAV or 9p) — the transport every msks
+Lima template keeps out (`mountTypesUnsupported: [9p]`, a
+deliberate msks choice Lima's default does not make; the suite
+ships its own template). The evidence, the re-run procedure, and
+the escape hatch (the Docker patch carried in a custom kernel,
+should a future macOS regress) live in the suite's README under
+`scripts/vz-hardlink-repro/`; re-run the suite on new macOS
+releases before shipping rw shares.
