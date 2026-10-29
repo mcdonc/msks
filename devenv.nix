@@ -83,10 +83,40 @@ let
     })
   ]);
   guestImages = import ./nix/guest.nix { pkgs = releasePkgs; };
+
+  # The daemon-side VMM toolchain (#665): cloud-hypervisor and the
+  # netfilter family refuse to evaluate on aarch64-darwin (nixpkgs
+  # marks them Linux-only), so they gate the whole set behind
+  # lib.optionals below; the rest (e2fsprogs, cdrtools) evaluate
+  # on darwin too but ride along, because their work — growing and
+  # checking workspace volumes, building the cidata seed disks —
+  # runs on the daemon host. A macOS shell carries every tool
+  # whose work the host can do (the client over MSKSC_URL, the
+  # Python/uv toolchain, the gates), and the daemon, its
+  # processes, and the smoke paths stay Linux-only by nature (they
+  # drive /dev/kvm).
+  linuxOnly = with pkgs; [
+    cloud-hypervisor # VMM driven by the local backend (#1); ships ch-remote
+    virtiofsd # the vhost-user-fs daemon behind host mounts (#620)
+    e2fsprogs # resize2fs/e2fsck: grow and check workspace volumes
+    cdrtools # genisoimage: the #41 cidata seed disks (iso9660)
+    iproute2 # taps and addresses for the dev daemon's workspaces
+    iptables # diagnose foreign FORWARD drops (docker's policy on CI runners)
+    # that block the egress forward path the nft rules accept (#75/#52)
+    nftables # egress chains/NAT for the #52 smoke path
+    conntrack-tools # the consent-revocation tool the daemon execs (net/conntrack.py, #52)
+    # Egress consent's NFQUEUE binding (#69): the C libraries the
+    # vendored ctypes binding (msks/net/nfqbind.py, #542) loads by
+    # soname at runtime — present in every Linux dev/CI shell so
+    # the consent path runs, with LD_LIBRARY_PATH below pointing
+    # the load at these store paths.
+    libnetfilter_queue
+    libnfnetlink
+  ];
 in
 {
-  # msks dev environment: Python 3.14 + cloud-hypervisor toolchain (#2).
-  # Mirrors the klangk conventions (AGENTS.md): CI-identical test task,
+  # msks dev environment: Python 3.14 + the daemon-side VMM
+  # toolchain on Linux (#2). Mirrors the klangk conventions (AGENTS.md): CI-identical test task,
   # testmon for scoped iteration, xenon rank-A gate via a single script
   # shared with the pre-commit hook.
   languages.python = {
@@ -106,53 +136,42 @@ in
     directory = ".";
   };
 
-  packages = with pkgs; [
-    bash # explicit bash for shell scripts (CI /bin/sh may be dash)
-    cloud-hypervisor # VMM driven by the local backend (#1); ships ch-remote
-    virtiofsd # the vhost-user-fs daemon behind host mounts (#620)
-    curl # unix-socket REST poking during CH debugging
-    e2fsprogs # resize2fs/e2fsck: grow and check workspace volumes
-    cdrtools # genisoimage: the #41 cidata seed disks (iso9660)
-    iproute2 # taps and addresses for the dev daemon's workspaces
-    iptables # diagnose foreign FORWARD drops (docker's policy on CI runners)
-    # that block the egress forward path the nft rules accept (#75/#52)
-    jscpd # token-clone scanner (#71), pinned rust binary (see above)
-    nftables # egress chains/NAT for the #52 smoke path
-    conntrack-tools # the consent-revocation tool the daemon execs (net/conntrack.py, #52)
-    openssh # host-side ssh client: the forward-path smoke (#110) and
-    # the documented ssh workflow (#112) run over `msks forward`
-    qemu # qemu-img for rootfs conversion during guest-image experiments
-    rsync # host-side rsync over the forward (#110's sync path)
-    ruff
-    socat # AF_UNIX <-> pty/stdio plumbing for CH socket debugging
-    tcpdump # packet-level debugging of the egress path (tap vs uplink)
-    tmux # the #379 terminal_open_cmd launcher runs the workspace
-    # shell in a local tmux session and raises consent popups
-    # (display-popup) over it when a verdict is required
-    # cyclomatic-complexity gate tool: built against python3.14 because
-    # nixpkgs' top-level xenon runs on an older python whose parser can
-    # reject syntax ruff format writes for a 3.14 codebase, silently
-    # skipping files (klangk #3411/#3415 precedent). scripts/xenon-gate.sh
-    # turns any such skip into a hard failure.
-    (pkgs.callPackage (pkgs.path + "/pkgs/by-name/xe/xenon/package.nix") {
-      python3 = pkgs.python314;
-    })
-    (python314Packages.radon) # complexity introspection (radon cc)
-    # Egress consent's NFQUEUE binding (#69): the C libraries the
-    # vendored ctypes binding (msks/net/nfqbind.py, #542) loads by
-    # soname at runtime — present in every dev/CI shell so the
-    # consent path runs, with LD_LIBRARY_PATH below pointing the
-    # load at these store paths.
-    libnetfilter_queue
-    libnfnetlink
-  ];
+  packages =
+    with pkgs;
+    [
+      bash # explicit bash for shell scripts (CI /bin/sh may be dash)
+      curl # unix-socket REST poking during CH debugging
+      jscpd # token-clone scanner (#71), pinned rust binary (see above)
+      openssh # host-side ssh client: the forward-path smoke (#110) and
+      # the documented ssh workflow (#112) run over `msks forward`
+      qemu # qemu-img for rootfs conversion during guest-image experiments
+      rsync # host-side rsync over the forward (#110's sync path)
+      ruff
+      socat # AF_UNIX <-> pty/stdio plumbing for CH socket debugging
+      tcpdump # packet-level debugging of the egress path (tap vs uplink)
+      tmux # the #379 terminal_open_cmd launcher runs the workspace
+      # shell in a local tmux session and raises consent popups
+      # (display-popup) over it when a verdict is required
+      # cyclomatic-complexity gate tool: built against python3.14 because
+      # nixpkgs' top-level xenon runs on an older python whose parser can
+      # reject syntax ruff format writes for a 3.14 codebase, silently
+      # skipping files (klangk #3411/#3415 precedent). scripts/xenon-gate.sh
+      # turns any such skip into a hard failure.
+      (pkgs.callPackage (pkgs.path + "/pkgs/by-name/xe/xenon/package.nix") {
+        python3 = pkgs.python314;
+      })
+      (python314Packages.radon) # complexity introspection (radon cc)
+    ]
+    ++ lib.optionals pkgs.stdenv.isLinux linuxOnly;
 
   env.UV_PYTHON = config.languages.python.package;
   # The binding's runtime load (LD_LIBRARY_PATH) resolves against
   # the nix store — each library carries its .so in one output.
   # Nothing compiles against them anymore (#542), so no
-  # CFLAGS/LDFLAGS.
-  env.LD_LIBRARY_PATH = "${pkgs.libnetfilter_queue}/lib:${pkgs.libnfnetlink}/lib";
+  # CFLAGS/LDFLAGS. Linux only (#665): the libraries live in the
+  # Linux-only package set, so a macOS shell exports an empty path
+  # rather than forcing their (unevaluatable) store paths.
+  env.LD_LIBRARY_PATH = lib.optionalString pkgs.stdenv.isLinux "${pkgs.libnetfilter_queue}/lib:${pkgs.libnfnetlink}/lib";
 
   # The nixpkgs source the devenv lock pins — the revision every
   # guest build compiles against. Exported to every devenv context
