@@ -11,8 +11,12 @@
 # 2. release — create the version release: the changelog's
 #              human-authored section (scripts/release_notes.py
 #              extracts it at the tag) prepended to GitHub's
-#              auto-generated notes, with the wheel and its
-#              checksum attached.
+#              auto-generated notes, with the wheel, its checksum,
+#              and a provisional manifest — the previous
+#              release's images.json — attached (#659). The
+#              provisional keeps the channel URL answering while
+#              the image legs build; images-merge clobbers it with
+#              the merged manifest.
 # 3. images  — the hash-keyed channel, two legs (one per arch:
 #              x86_64 on ubuntu-latest, aarch64 on
 #              ubuntu-24.04-arm — GitHub's arm64 runners) walking
@@ -90,7 +94,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Full history: the provisional manifest's previous-tag
+      # lookup reads the tag list, and a depth-1 checkout carries
+      # only this tag.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Download the wheel
         uses: actions/download-artifact@v4
@@ -114,17 +123,48 @@ jobs:
             --jq .body > auto.md || printf '' > auto.md
           cat auto.md >> notes.md
 
+      # The provisional manifest (#659): the previous release's
+      # images.json, attached at creation so the channel URL —
+      # releases/latest/download/images.json — answers from the
+      # moment this release becomes latest. Without it the URL
+      # 404s for the hours the image legs build, and every
+      # client's image import fails. This tag's own release wins
+      # when one exists (a re-run or a re-tag keeps the manifest
+      # it already carries); else the newest v* tag strictly
+      # below this one; else an empty list on the first release.
+      - name: Fetch the provisional manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          if gh release download "$TAG" -p images.json -O images.json; then
+            echo "release exists: keeping its manifest"
+          elif prev_tag=$(git tag --list 'v*' --sort=-v:refname | \
+                  awk -v t="$TAG" '$0==t{seen=1;next} seen{print;exit}') && \
+               [ -n "$prev_tag" ] && \
+               gh release download "$prev_tag" -p images.json -O images.json
+          then
+            echo "provisional manifest carried forward from $prev_tag"
+          else
+            printf '[]' > images.json
+          fi
+
       - name: Create the release with the wheel
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
           sha256sum dist/* > dist/SHASUMS
+          # The fallback upload makes a re-run after the release
+          # exists refresh the assets instead of failing at
+          # create.
           gh release create "$TAG" \
             --title "$TAG" \
             --notes-file notes.md \
             --verify-tag \
-            dist/*
+            dist/* images.json \
+            || gh release upload "$TAG" dist/* images.json --clobber
 
   images:
     strategy:
@@ -163,17 +203,21 @@ jobs:
       - name: Install devenv.sh
         run: nix profile add github:cachix/devenv/v2.3.1
 
-      # The manifest being replaced: the previous version
-      # release's images.json — the newest tag strictly below
-      # this one (a re-tagged release's own manifest wins when it
-      # carries one) — so flavors whose derivation did not change
+      # The manifest being replaced: this tag's own images.json
+      # first — normally the provisional the release job attached
+      # (#659; the previous release's manifest by construction, so
+      # the comparison below behaves the same either way; a re-run
+      # after images-merge finds the finished manifest and every
+      # derivation reads as unchanged) — else the previous version
+      # release's images.json, the newest tag strictly below this
+      # one. Either way flavors whose derivation did not change
       # carry their rows — and their built_from — forward across
       # releases.
       - name: Read the previous manifest
         run: |
           set -eu
           if gh release download "$TAG" -p images.json -O published.json; then
-            echo "re-tagged release: keeping its manifest"
+            echo "this release carries a manifest: using it"
           elif prev_tag=$(git tag --sort=-v:refname | grep '^v' | \
                   grep -vx "$TAG" | while read -r t; do \
                     if [ "$t" = "$(printf '%s\n%s\n' "$TAG" "$t" | \
@@ -298,10 +342,12 @@ jobs:
           path: rows-${{ matrix.arch }}.json
           retention-days: 1
 
-  # The single manifest writer: the legs publish disjoint row sets
-  # (each arch's flavors under flavor/arch keys), and this job is
-  # the only one that touches the version release's images.json —
-  # the no-race property the single job held, moved up one level.
+  # The final manifest writer: the legs publish disjoint row
+  # sets (each arch's flavors under flavor/arch keys), and this
+  # job is the only one that writes the merged manifest — the
+  # no-race property the single job held, moved up one level.
+  # The --clobber replaces the provisional manifest the release
+  # job attached (#659).
   images-merge:
     runs-on: ubuntu-latest
     timeout-minutes: 10
