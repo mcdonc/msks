@@ -344,11 +344,11 @@ that can diagnose installation issues.
 
 ## Apple Silicon hosts
 
-An Apple Silicon host running the Asahi kernel in NV mode (the
-Asahi Linux class — Fedora Asahi Remix on an M-series machine)
-runs the daemon, builds and imports guest images, and manages
-the workspace lifecycle, and its kernel's KVM does not yet
-deliver guest interrupts
+An Apple Silicon host whose kernel runs KVM in NV mode (today
+the Asahi Linux class — Fedora Asahi Remix on an M-series
+machine) runs the daemon, builds and imports guest images, and
+manages the workspace lifecycle, and its kernel's KVM does not
+yet deliver guest interrupts
 ([#649](https://github.com/mcdonc/msks/issues/649)): a workspace
 starts and its kernel boots deep into first boot, then stalls
 before ssh answers. Everything short of a guest boot works, so

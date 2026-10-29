@@ -827,16 +827,33 @@ def test_the_apple_kvm_row_fires_on_the_module_parameter(
 def test_the_apple_kvm_row_ignores_a_non_nv_mode(
     monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
 ) -> None:
-    """A kvm-arm.mode set to a non-NV value — or a kernel log
-    whose KVM init names plain VHE, the VZ-nested VM's shape —
-    leaves the row off: only the nested mode carries the #649
-    limitation."""
+    """Every marker present and none naming nested — a
+    kvm-arm.mode set to a non-NV value, sysfs's parameter at
+    nvhe, a kernel log whose KVM init names plain VHE (the
+    VZ-nested VM's shape) — leaves the row off: only the
+    nested mode carries the #649 limitation."""
     apple_seam(
         monkeypatch,
         tmp_path,
         "0x00000000612f0430",
         cmdline="BOOT_IMAGE=/vmlinuz kvm-arm.mode=none",
+        mode_param="nvhe\n",
         kernel_log="[    0.000000] kvm [1]: VHE mode initialized\n",
+    )
+    assert apple_silicon_kvm_result() is None
+
+
+def test_the_apple_kvm_row_survives_a_garbage_midr(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    """A MIDR file whose text is not hex parses to no marker:
+    the row stays off rather than guessing, whatever the NV
+    markers say."""
+    apple_seam(
+        monkeypatch,
+        tmp_path,
+        "garbage",
+        cmdline="BOOT_IMAGE=/vmlinuz kvm-arm.mode=nested",
     )
     assert apple_silicon_kvm_result() is None
 

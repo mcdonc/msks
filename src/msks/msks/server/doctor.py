@@ -1023,8 +1023,8 @@ def apple_silicon_kvm_result() -> CheckResult | None:
         ok=False,
         is_warning=True,
         message=(
-            "Apple Silicon host running the Asahi kernel's NV-mode "
-            "KVM (kvm-arm.mode=nested): this kernel's KVM does not "
+            "Apple Silicon host with KVM in NV mode "
+            "(kvm-arm.mode=nested): this kernel's KVM does not "
             "yet deliver guest interrupts, so workspaces start and "
             "their kernels boot, then stall before ssh answers "
             "(#649); everything that runs short of a guest boot "

@@ -37,9 +37,9 @@ started by hand inherits the session's PATH, so the row's fix
 reaches that shape too.
 
 One check grades by platform, not by a tool: on an Apple
-Silicon host running the Asahi kernel's KVM in nested-
-virtualization mode, the report carries a warning row naming
-the kernel's guest-interrupt limitation
+Silicon host whose kernel runs KVM in nested-virtualization
+mode (the Asahi Linux class today), the report carries a
+warning row naming the kernel's guest-interrupt limitation
 ([#649](https://github.com/mcdonc/msks/issues/649)) — workspaces
 start and their kernels boot, then stall before ssh answers,
 while everything short of a guest boot works. The row requires
@@ -47,14 +47,17 @@ both markers: cpu0's MIDR names Apple's implementer, and the
 kernel runs KVM in NV mode — the command line sets
 `kvm-arm.mode=nested`, sysfs publishes kvm's mode parameter as
 `nested`, or the kernel log carries KVM's NV-mode init line
-(`VHE+NV2 mode initialized`). x86_64 hosts and non-Apple arm64
-servers carry none of this and get no row, and an Apple-
-silicon host whose KVM is not the Asahi NV kernel stays clean
-too — a Linux VM under macOS's Virtualization.framework reads
-as Apple silicon (the hypervisor passes the host MIDR through)
-while its own KVM delivers guest interrupts, so workspaces
-boot and ssh answers there
-([#664](https://github.com/mcdonc/msks/issues/664)).
+(`VHE+NV2 mode initialized`). The markers name the mode, not
+the kernel's provenance. Each marker is read where the host
+leaves it readable: a restricted kernel log reads as absent,
+while the command line and sysfs stay world-readable. x86_64
+hosts and non-Apple arm64 servers carry none of this and get
+no row, and an Apple-silicon host whose KVM is not in NV mode
+stays clean too — a Linux VM under macOS's
+Virtualization.framework reads as Apple silicon (the
+hypervisor passes the host MIDR through) while its own KVM
+delivers guest interrupts, so workspaces boot and ssh answers
+there ([#664](https://github.com/mcdonc/msks/issues/664)).
 
 ## Reading the report
 
