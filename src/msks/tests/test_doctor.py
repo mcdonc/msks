@@ -782,8 +782,8 @@ def test_the_apple_kvm_row_needs_the_nv_mode_marker(
     Virtualization.framework passes the host MIDR through to its
     Linux guests, and a VZ-nested VM's own KVM delivers guest
     interrupts — workspaces boot and ssh answers there — so the
-    row stays off until the NV-mode markers name the Asahi
-    kernel."""
+    row stays off until an NV-mode marker names the kernel's
+    mode."""
     apple_seam(monkeypatch, tmp_path, "0x00000000612f0430")
     assert apple_silicon_kvm_result() is None
 

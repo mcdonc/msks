@@ -1008,9 +1008,9 @@ def apple_silicon_kvm_result() -> CheckResult | None:
     condition exists — the MIDR implementer names Apple and the
     kernel's KVM runs in NV mode (#664) — and stays off x86_64
     hosts and non-Apple arm64 servers alike, and off Apple-
-    silicon hosts whose KVM is not the Asahi NV kernel: a Linux
-    VM under macOS's Virtualization.framework reads as Apple
-    silicon (VZ passes the host MIDR through) while its own KVM
+    silicon hosts whose KVM is not in NV mode: a Linux VM under
+    macOS's Virtualization.framework reads as Apple silicon
+    (VZ passes the host MIDR through) while its own KVM
     delivers guest interrupts, so workspaces boot and ssh
     answers there.
     """
