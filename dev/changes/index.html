@@ -1131,13 +1131,25 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>arm64 workspaces now power off on <code>msks stop</code> (#649).</strong> The
+<li>
+<p><strong>The devenv shell opens on macOS hosts (#665).</strong> The dev shell
+  evaluates and opens on aarch64-darwin: the Linux-only VMM
+  toolchain (cloud-hypervisor and the netfilter family) joins the
+  profile only on Linux, while the <code>msks</code> client, the Python/uv
+  toolchain, and the lint gates are available on every host. A Mac
+  checkout can now drive a remote daemon with <code>MSKSC_URL</code> straight
+  from <code>devenv shell</code>. Linux shells carry the same package set as
+  before, unchanged.</p>
+</li>
+<li>
+<p><strong>arm64 workspaces now power off on <code>msks stop</code> (#649).</strong> The
   arm64 guest images' runtime module tree ships <code>gpio_keys</code>, the
   input driver for cloud-hypervisor's device-tree power button, so
   the graceful-shutdown press reaches logind's power-key handling
   and the guest powers off within the deadline. The x86 ACPI
   button path is unchanged, and <code>msks image check</code>'s
-  <code>acpi-shutdown</code> row now passes on arm64 hosts.</li>
+  <code>acpi-shutdown</code> row now passes on arm64 hosts.</p>
+</li>
 <li><strong>Release image channel (#659).</strong> A version release now
   carries the previous release's <code>images.json</code> from the moment
   it is created, so image imports keep working — pulling the
