@@ -258,30 +258,34 @@ def home_mount_wait_block() -> str:
     first boot and lost it the moment the mount completed.
 
     The wait ends three ways. The volume mounts — the common
-    case, one /proc/mounts read and proceed. Its device node is
-    still absent past a 60s grace — the fstab's by-label device
-    timed out, home.mount failed for this boot (a dependency
-    failure the mount never retries), and seeding under the root
-    filesystem's /home is the right move: the seed says so on
-    stderr and proceeds (the pre-#662 posture, correct whenever
-    the volume is not coming). Or 600 wall-clock seconds pass —
-    the bound counts seconds, not polls: a first-boot host can be
-    slow enough that each fork in the poll loop itself costs
-    seconds, and an iteration-counted cap would stretch the same
-    600 into tens of minutes of blocked first boot. A ``date``
-    call per poll paces it; the cap bounds even a mount whose
-    fsck crawls.
+    case, one /proc/mounts read and proceed. The guest carries no
+    writable virtio disk beyond the root, past a 60s grace — no
+    volume was attached at all (the demo-VM boot without one),
+    home.mount has failed for this boot, and seeding under the
+    root filesystem's /home is the right move: the seed says so
+    on stderr and proceeds (the pre-#662 posture, correct
+    whenever the volume is not coming). Or 600 wall-clock
+    seconds pass — the bound counts seconds, not polls: a
+    first-boot host can be slow enough that each fork in the poll
+    loop itself costs seconds, and an iteration-counted cap would
+    stretch the same 600 into tens of minutes of blocked first
+    boot. A ``date`` call per poll paces it; the cap bounds even
+    a mount whose fsck crawls.
 
-    The give-up signal is the device node itself
-    (``/dev/disk/by-label/msks-home`` — the label the images'
-    fstab mounts, #14), not systemd's unit state: a mount whose
-    device job failed reads ``inactive`` to ``systemctl
-    is-failed`` (the unit itself never ran), so the state query
-    cannot see exactly the shape the wait must give up on — the
-    #662 rig run watched a dependency-failed home.mount hold the
-    seed in the poll loop far past the cap's intent. The node
-    needs no PATH, no D-Bus, and no systemd at all, and the
-    mount test reads /proc/mounts directly for the same reason.
+    The volume-present signal is the raw disk, not the
+    by-label node the fstab mounts: on a first boot slow enough
+    to need this wait, udev's own label probe can trail the boot
+    by many minutes (the #662 rig watched the by-label node
+    arrive eleven minutes in, the mount a minute behind it) — a
+    wait that gives up on the label's absence stops exactly when
+    it must keep holding. The raw virtio disk exists from the
+    kernel's device scan, seconds into boot: while a writable
+    disk beyond the root is present, the volume is attached and
+    its mount is merely late, so the wait holds it to the cap.
+    The read-only flag in /sys/block tells the volume from the
+    seed disk (the only other disk a workspace boots with); the
+    scan needs no PATH, no D-Bus, and no systemd, and the mount
+    test reads /proc/mounts directly for the same reason.
     """
     return (
         "# msks (#662): everything this seed writes under /home\n"
@@ -299,12 +303,20 @@ def home_mount_wait_block() -> str:
         "seeding under the root filesystem /home\\n' >&2\n"
         "break\n"
         "fi\n"
-        "if [ ! -e /dev/disk/by-label/msks-home ] "
-        '&& [ "$now" -ge "$devcap" ]; then\n'
-        "printf 'msks: the /home volume is not visible to the guest "
-        "(no /dev/disk/by-label/msks-home); "
+        'if [ "$now" -ge "$devcap" ]; then\n'
+        "vol=no\n"
+        "for d in /dev/vd[b-z]; do\n"
+        '[ -e "$d" ] || continue\n'
+        'if [ "$(cat "/sys/block/${d##*/}/ro" 2>/dev/null)" = 0 ]; then\n'
+        "vol=yes\n"
+        "fi\n"
+        "done\n"
+        'if [ "$vol" = no ]; then\n'
+        "printf 'msks: the guest carries no writable volume disk, "
+        "so /home will not mount this boot; "
         "seeding under the root filesystem /home\\n' >&2\n"
         "break\n"
+        "fi\n"
         "fi\n"
         "sleep 1\n"
         "done\n"

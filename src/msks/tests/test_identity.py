@@ -164,17 +164,14 @@ def sandboxed(script: str, sandbox) -> str:
             f"{sandbox}/usr-local-ca",
         )
         # #662: the home-volume wait reads the guest's mount table
-        # and probes its device node — both pointed into the
-        # sandbox so a scenario decides what is mounted and
-        # whether the volume's device exists (the grep's ' /home '
-        # pattern rides unrewritten — it matches the table's
-        # mount-point column, and the sandbox's table names the
-        # real path).
+        # and scans its virtio disks — pointed into the sandbox so
+        # a scenario decides what is mounted and whether a
+        # writable volume disk exists (the grep's ' /home ' pattern
+        # rides unrewritten — it matches the table's mount-point
+        # column, and the sandbox's table names the real path).
         .replace("/proc/mounts", f"{sandbox}/mounts")
-        .replace(
-            "/dev/disk/by-label/msks-home",
-            f"{sandbox}/dev-label/msks-home",
-        )
+        .replace("/dev/vd[b-z]", f"{sandbox}/dev-vd/vd[b-z]")
+        .replace("/sys/block/", f"{sandbox}/sys-block/")
     )
 
 
@@ -199,13 +196,13 @@ def run_seed(
     cp, touch, chmod — runs for real against the sandbox.
 
     The #662 home-volume wait has its own scenario knobs, all
-    against the sandbox's mount table and device node (sandboxed()
-    points /proc/mounts and the by-label path there) with a
-    ``date`` stub whose clock advances one second per call:
+    against the sandbox's mount table and virtio disks (sandboxed()
+    points /proc/mounts and the disk scan there) with a ``date``
+    stub whose clock advances one second per call:
     ``home_mounted`` is the already-mounted guest (the wait's
-    one-grep fast path); ``home_device`` is the volume's device
-    node — absent, the give-up shape (the boot whose by-label
-    probe lost to systemd's device timeout); and
+    one-grep fast path); ``home_device`` is the writable volume
+    disk — absent, the volumeless shape (the demo-VM boot without
+    a volume); and
     ``home_mount_arrives`` starts the table bare and has the
     ``sleep`` stub mount /home off its second call — the seed
     waits, then seeds. ``sleep`` is stubbed to a no-op logger
@@ -226,13 +223,14 @@ def run_seed(
         + (f"{guest_passwd_line}\n" if guest_passwd_line else "")
     )
     # #662: the slow-host scenarios start the mount table bare —
-    # no /home line, the fsck still running — and the device-less
-    # one removes the volume's device node (the by-label probe
-    # that lost to systemd's timeout).
+    # no /home line, the fsck still running — and the volumeless
+    # one removes the writable volume disk (the seed stays, the
+    # only other virtio disk, and its RO flag is what tells the
+    # scan no volume is attached).
     if not home_mounted:
         (sandbox / "mounts").write_text("/dev/vda / ext4 rw,relatime 0 0\n")
     if not home_device:
-        (sandbox / "dev-label" / "msks-home").unlink()
+        (sandbox / "dev-vd" / "vdb").unlink()
     verdict = "exit 1" if useradd_fails else "exit 0"
     stubs.joinpath("useradd").write_text(
         f'#!/bin/sh\necho "useradd $*" >> "{log}"\n{verdict}\n'
@@ -312,19 +310,25 @@ def prepare_sandbox(tmp_path):
     for member in ("root", "msks", "skel"):
         (tmp_path / member).mkdir()
     (tmp_path / "skel" / ".profile").write_text("# skel\n")
-    # #662: the guest's mount table, /home on its persistent
-    # volume by default — the already-mounted guest every fast
-    # host boots — and the volume's device node, present by
-    # default (a scenario removes it for the device-absent
-    # shape). A slow-host scenario rewrites the table bare
-    # (run_seed's home_mounted=False).
+    # #662: the guest's mount table, /home on its persistent volume
+    # by default — the already-mounted guest every fast host boots
+    # — and its virtio disks: the writable volume (vdb) beside the
+    # read-only cidata seed (vdc), each carrying its /sys/block RO
+    # flag. A slow-host scenario rewrites the table bare
+    # (run_seed's home_mounted=False); a volumeless one removes the
+    # writable disk (home_device=False).
     (tmp_path / "mounts").write_text(
         "/dev/vda / ext4 rw,relatime 0 0\n"
         "/dev/vdb /home ext4 rw,relatime 0 0\n"
     )
-    dev_label = tmp_path / "dev-label"
-    dev_label.mkdir()
-    (dev_label / "msks-home").write_text("")
+    dev_vd = tmp_path / "dev-vd"
+    dev_vd.mkdir()
+    (dev_vd / "vdb").write_text("")
+    (dev_vd / "vdc").write_text("")
+    for name, ro in (("vdb", "0\n"), ("vdc", "1\n")):
+        block = tmp_path / "sys-block" / name
+        block.mkdir(parents=True)
+        (block / "ro").write_text(ro)
     return tmp_path
 
 
@@ -444,16 +448,13 @@ def test_seed_script_waits_for_the_home_volume(tmp_path) -> None:
     assert (sandbox / "home" / "alice" / ".ssh" / "authorized_keys").exists()
 
 
-def test_seed_script_gives_up_when_the_device_never_shows(tmp_path) -> None:
-    """The #662 device-absent shape, executable — the one the rig
-    actually produced: the by-label probe lost to systemd's device
-    timeout, home.mount failed as a dependency (a dependency
-    failure leaves the unit ``inactive``, invisible to ``systemctl
-    is-failed`` — the reason the give-up signal is the device
-    node). The seed stands the wait down at the device grace with
-    a line on stderr and seeds under the root filesystem's /home
-    — the right posture whenever the volume is not coming this
-    boot."""
+def test_seed_script_gives_up_when_no_volume_disk_exists(tmp_path) -> None:
+    """The #662 volumeless shape, executable: no writable virtio
+    disk beyond the root (the demo-VM boot without a volume, the
+    seed disk alone) — /home will not mount this boot, so the seed
+    stands the wait down at the grace with a line on stderr and
+    seeds under the root filesystem's /home, the pre-#662 posture
+    that is correct whenever the volume is not coming."""
     sandbox = prepare_sandbox(tmp_path)
     done = run_seed(
         sandbox,
@@ -462,7 +463,7 @@ def test_seed_script_gives_up_when_the_device_never_shows(tmp_path) -> None:
         home_device=False,
     )
     assert done.returncode == 0, done.stderr
-    assert "not visible to the guest" in done.stderr
+    assert "no writable volume disk" in done.stderr
     log = sandbox.joinpath("stub.log").read_text()
     # The grace is 60 fake seconds — not the full 600s cap: the
     # wait ends as soon as the volume has no path to mount.
@@ -474,12 +475,13 @@ def test_seed_script_gives_up_when_the_device_never_shows(tmp_path) -> None:
 def test_seed_script_caps_the_home_wait_in_wall_clock(
     tmp_path,
 ) -> None:
-    """The #662 stuck-boot shape, executable: the device is there
-    but the mount never lands (a fsck crawling past every bound).
-    The cap counts wall-clock seconds, not polls — a slow host
-    where each fork costs seconds must not stretch the cap into
-    tens of minutes of blocked first boot. The seed proceeds at
-    the cap and says so."""
+    """The #662 stuck-boot shape, executable: the writable volume
+    disk is there but the mount never lands (udev's label probe
+    crawling past every bound, a fsck that never finishes). The
+    cap counts wall-clock seconds, not polls — a slow host where
+    each fork costs seconds must not stretch the cap into tens of
+    minutes of blocked first boot. The seed proceeds at the cap
+    and says so."""
     sandbox = prepare_sandbox(tmp_path)
     done = run_seed(sandbox, guest_passwd_line="", home_mounted=False)
     assert done.returncode == 0, done.stderr
