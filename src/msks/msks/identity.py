@@ -264,13 +264,18 @@ def home_mount_wait_block() -> str:
     home.mount has failed for this boot, and seeding under the
     root filesystem's /home is the right move: the seed says so
     on stderr and proceeds (the pre-#662 posture, correct
-    whenever the volume is not coming). Or 600 wall-clock
-    seconds pass — the bound counts seconds, not polls: a
-    first-boot host can be slow enough that each fork in the poll
-    loop itself costs seconds, and an iteration-counted cap would
-    stretch the same 600 into tens of minutes of blocked first
-    boot. A ``date`` call per poll paces it; the cap bounds even
-    a mount whose fsck crawls.
+    whenever the volume is not coming). Or 1200 wall-clock
+    seconds pass (20 minutes) — the bound counts seconds, not
+    polls: a first-boot host can be slow enough that each fork in
+    the poll loop itself costs seconds, and an iteration-counted
+    cap would stretch the same count into tens of minutes of
+    blocked first boot. The #662 rig's slowest observed boot
+    mounted at minute 12 — 29 seconds past a 10-minute cap, which
+    is why the bound is 20 — and a mount slower than that has not
+    been observed on any host. A ``date`` call per poll paces it.
+    The volumeless grace stays a minute: a boot with no writable
+    volume disk never mounts /home, and there is nothing to wait
+    for.
 
     The volume-present signal is the raw disk, not the
     by-label node the fstab mounts: on a first boot slow enough
@@ -294,12 +299,12 @@ def home_mount_wait_block() -> str:
         "# still-running first fsck+mount leaves in place — wait\n"
         "# for the mount before writing.\n"
         "now=$(date +%s)\n"
-        "cap=$((now + 600))\n"
+        "cap=$((now + 1200))\n"
         "devcap=$((now + 60))\n"
         "while ! grep -qs ' /home ' /proc/mounts; do\n"
         "now=$(date +%s)\n"
         'if [ "$now" -ge "$cap" ]; then\n'
-        "printf 'msks: the /home volume did not mount within 600s; "
+        "printf 'msks: the /home volume did not mount within 1200s; "
         "seeding under the root filesystem /home\\n' >&2\n"
         "break\n"
         "fi\n"

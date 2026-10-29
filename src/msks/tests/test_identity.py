@@ -485,9 +485,9 @@ def test_seed_script_caps_the_home_wait_in_wall_clock(
     sandbox = prepare_sandbox(tmp_path)
     done = run_seed(sandbox, guest_passwd_line="", home_mounted=False)
     assert done.returncode == 0, done.stderr
-    assert "did not mount within 600s" in done.stderr
+    assert "did not mount within 1200s" in done.stderr
     log = sandbox.joinpath("stub.log").read_text()
-    assert log.count("sleep 1") >= 595
+    assert log.count("sleep 1") >= 1195
 
 
 def test_the_home_volume_wait_rides_every_seed() -> None:
