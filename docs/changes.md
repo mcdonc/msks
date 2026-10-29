@@ -8,6 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **The devenv shell opens on macOS hosts (#665).** The dev shell
+  evaluates and opens on aarch64-darwin: the Linux-only VMM
+  toolchain (cloud-hypervisor and the netfilter family) joins the
+  profile only on Linux, while the `msks` client, the Python/uv
+  toolchain, and the lint gates are available on every host. A Mac
+  checkout can now drive a remote daemon with `MSKSC_URL` straight
+  from `devenv shell`. Linux shells carry the same package set as
+  before, unchanged.
+
 - **arm64 workspaces now power off on `msks stop` (#649).** The
   arm64 guest images' runtime module tree ships `gpio_keys`, the
   input driver for cloud-hypervisor's device-tree power button, so
