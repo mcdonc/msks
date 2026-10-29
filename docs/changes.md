@@ -15,6 +15,13 @@ tagged `vX.Y.Z`.
   and the guest powers off within the deadline. The x86 ACPI
   button path is unchanged, and `msks image check`'s
   `acpi-shutdown` row now passes on arm64 hosts.
+- **Release image channel (#659).** A version release now
+  carries the previous release's `images.json` from the moment
+  it is created, so image imports keep working — pulling the
+  previous images — while the release's guest images build (up
+  to hours); before, the manifest fetch failed during that
+  window. The manifest is replaced when the new images finish
+  publishing.
 
 ## \[v0.5] - 2026-10-28
 

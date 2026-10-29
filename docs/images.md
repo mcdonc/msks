@@ -832,3 +832,11 @@ the image itself: the build writes one line into the layer's
 rides the import into any catalog. `msks image ls` carries it
 (capped for the row), `msks image info` prints it at full length,
 and the manifest rows carry it for the release channel.
+
+The manifest answers from the moment the release exists: the
+release workflow attaches the previous release's manifest when it
+creates the version release, and replaces it with the new one
+when the image builds finish. While the builds run, the manifest
+names the previous images and an import pulls those; a release
+that changes no guest derivation publishes a manifest identical
+to the one it replaces.
