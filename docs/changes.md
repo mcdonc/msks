@@ -6,6 +6,16 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Fixed
+
+- **arm64 workspaces now power off on `msks stop` (#649).** The
+  arm64 guest images' runtime module tree ships `gpio_keys`, the
+  input driver for cloud-hypervisor's device-tree power button, so
+  the graceful-shutdown press reaches logind's power-key handling
+  and the guest powers off within the deadline. The x86 ACPI
+  button path is unchanged, and `msks image check`'s
+  `acpi-shutdown` row now passes on arm64 hosts.
+
 ## \[v0.5] - 2026-10-28
 
 ### Changed

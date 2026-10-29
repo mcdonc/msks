@@ -111,13 +111,19 @@ let
   # crc32c ext4's metadata_csum asks the crypto API for (x86's
   # hardware module, autoloaded via its x86cpu modalias; arm64's
   # generic implementation — the CRC32 instructions are the
-  # platform's own) and the nested-KVM modules (the x86 pair; the
+  # platform's own), the nested-KVM modules (the x86 pair; the
   # arm64 kvm module, which the 16K flavour carries — #635's
-  # scoping is why the kernel is 16K at all).
+  # scoping is why the kernel is 16K at all), and arm64's
+  # power-button driver: cloud-hypervisor's aarch64 power button
+  # is a device-tree gpio-keys device (the pl061 GPIO controller
+  # it hangs on is built into the 16K flavour), so the graceful
+  # shutdown's host-side press reaches logind's power-key
+  # handling only with gpio_keys in the tree — the x86 ACPI
+  # button module rides the shared list below.
   archModules =
     {
       x86_64 = "crc32c-intel kvm-intel kvm-amd";
-      aarch64 = "crc32c-generic kvm";
+      aarch64 = "crc32c-generic kvm gpio_keys";
     }
     .${arch};
 
