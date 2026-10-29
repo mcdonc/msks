@@ -1131,6 +1131,15 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>doctor's apple-kvm row gates on the NV-mode marker (#664).</strong>
+  The warning row now requires an NV-mode marker — the
+  <code>kvm-arm.mode=nested</code> command line, sysfs's kvm mode
+  parameter, or the kernel log's NV init line — beside the
+  Apple MIDR, so a Linux VM under macOS's
+  Virtualization.framework, whose silicon reads as Apple but
+  whose nested KVM boots guests to ssh, runs the report clean;
+  Apple-silicon hosts running KVM in NV mode keep the warning.
+  See <a href="../doctor/">docs/doctor.md</a>.</li>
 <li>
 <p><strong>First boot seeds the login user onto the <code>/home</code> volume
   instead of under it (#662).</strong> The first-boot seeding script

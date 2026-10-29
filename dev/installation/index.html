@@ -1216,10 +1216,11 @@ sanctioned VMM install — Debian's archive does not carry it.</p>
 <p>The <a href="../doctor/">The host doctor</a> chapter documents the <code>msksd doctor</code> command
 that can diagnose installation issues.</p>
 <h2 id="apple-silicon-hosts">Apple Silicon hosts<a class="headerlink" href="#apple-silicon-hosts" title="Permanent link">&para;</a></h2>
-<p>An Apple Silicon host (the Asahi Linux class — Fedora Asahi
-Remix on an M-series machine) runs the daemon, builds and
-imports guest images, and manages the workspace lifecycle, and
-its kernel's KVM does not yet deliver guest interrupts
+<p>An Apple Silicon host whose kernel runs KVM in NV mode (today
+the Asahi Linux class — Fedora Asahi Remix on an M-series
+machine) runs the daemon, builds and imports guest images, and
+manages the workspace lifecycle, and its kernel's KVM does not
+yet deliver guest interrupts
 (<a href="https://github.com/mcdonc/msks/issues/649">#649</a>): a workspace
 starts and its kernel boots deep into first boot, then stalls
 before ssh answers. Everything short of a guest boot works, so
@@ -1229,6 +1230,15 @@ whose KVM is complete, and drives workspaces there. <code>msksd
 doctor</code> names the condition on these hosts with a warning row;
 retest after each kernel update with <code>msks start</code> and the
 console — the limitation is the kernel's to lift.</p>
+<p>A Linux VM under macOS (UTM or Lima over the
+Virtualization.framework, with nested virtualization enabled)
+is a working Apple-silicon host in its own right: the VM's
+kernel runs its own KVM over the EL2 the hypervisor hands it,
+workspaces boot and ssh answers, and the daemon runs in the VM
+end to end — <code>msks image check</code> passes there too. The VM's
+silicon reads as Apple, so <code>msksd doctor</code> gates its apple-kvm
+row on the NV-mode markers and leaves the row off there
+(<a href="https://github.com/mcdonc/msks/issues/664">#664</a>).</p>
 <h2 id="the-alternative-paths">The alternative paths<a class="headerlink" href="#the-alternative-paths" title="Permanent link">&para;</a></h2>
 <p><strong>A development host</strong> (this repository's checkout) runs the
 daemon through Nix and devenv; the <a href="../development/">Development
