@@ -66,18 +66,20 @@ on Lima's vz backend.** Four grounds:
 4. **UTM trades the landmine for worse ones.** UTM's QEMU backend
    shares directories as SPICE WebDAV or 9p/VirtFS — its only
    POSIX-filesystem transport is 9p, virtiofsd being Linux-only —
-   and 9p is the transport the msksd VM's Lima template keeps out
-   (`mountTypesUnsupported: [9p]`, the #649 course rig's template
-   the #667 design continues). Its Apple backend runs the same VZ
-   virtiofs server Lima's vz does, so the landmine follows the
-   switch — with a thinner automation story than limactl's.
+   and 9p is the transport every msks Lima template keeps out
+   (`mountTypesUnsupported: [9p]`, an msks choice Lima's default
+   does not make; see `lima-template.yaml` beside this README).
+   Its Apple backend runs the same VZ virtiofs server Lima's vz
+   does, so the landmine follows the switch — with a thinner
+   automation story than limactl's.
 
 ## The evidence (macOS 27.0.1, Apple M3, limactl 2.2.1, vz)
 
 Guest: Debian 13 trixie, stock kernel `6.12.111+deb13-cloud-arm64`,
 one rw virtiofs mount (`lima-… on /Users/chrism/vzrepro type
-virtiofs (rw,relatime)`), created by a template mirroring the msks
-course VM (same image digest, same backend, `writable: true`).
+virtiofs (rw,relatime)`), created by `lima-template.yaml` in this
+directory — the template mirrors the msks course rig (#649): same
+image digest, same backend, plus `writable: true`.
 
 | workload                                        | load                                                                                         | result                                                                                                                  |
 | ----------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
@@ -96,7 +98,7 @@ host with limactl and a scratch directory it can share read-write:
 
 ```bash
 mkdir -p ~/vzrepro
-limactl create --name msks-vzrepro <template mounting ~/vzrepro rw, vmType: vz>
+limactl create --name msks-vzrepro lima-template.yaml
 limactl start msks-vzrepro
 limactl cp linkloop.c inochange.sh cpal.sh gitrepack.sh msks-vzrepro:~/vzrepro/
 limactl shell msks-vzrepro

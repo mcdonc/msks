@@ -15,8 +15,12 @@
  *   mkdir -p work && cd work && ../linkloop
  *
  * It prints one dot per clean iteration and stops at the first
- * failure — `link()` returning -1, `a` disappearing, or `b/b`
- * reporting ENOENT — naming which check failed.
+ * failure it detects — `link()` returning -1, `a` disappearing,
+ * or `b/b` reporting ENOENT — naming which check failed.  A
+ * transient failure prints its evidence and keeps going after
+ * the in-source retry loop recovers; a persistent one spins in
+ * that loop forever, so an outer `timeout` kill is the expected
+ * end of a buggy run — read stderr, not the exit code.
  */
 #include <errno.h>
 #include <fcntl.h>

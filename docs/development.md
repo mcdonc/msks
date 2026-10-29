@@ -587,15 +587,17 @@ Desktop answered with a private `fs/fuse` patch in its VM; the
 patch never mainlined. The decision for msks: **the msksd VM keeps
 the stock Debian kernel** — the instability is no longer
 reproducible on macOS 15 per the upstream report and the suite
-runs clean on macOS 27, releases at or below the floor the
-feature needs anyway (Lima refuses nested virtualization, which
-workspaces require, on older macOS); no stock-kernel mount knob
-exists that approximates the patch; and UTM shares the same VZ
-server on its Apple backend while its QEMU backend's only
-POSIX-filesystem transport is 9p (directory sharing there is
-SPICE WebDAV or 9p) — the transport the msksd VM's Lima template
-keeps out. The evidence, the re-run procedure, and the escape
-hatch (the Docker patch carried in a custom kernel, should a
-future macOS regress) live in the suite's README under
+runs clean on macOS 27, and the unstable releases sit below the
+macOS floor the feature needs anyway (Lima refuses nested
+virtualization, which workspaces require, on older macOS); no
+stock-kernel mount knob exists that approximates the patch; and
+UTM shares the same VZ server on its Apple backend while its QEMU
+backend's only POSIX-filesystem transport is 9p (directory
+sharing there is SPICE WebDAV or 9p) — the transport every msks
+Lima template keeps out (`mountTypesUnsupported: [9p]`, a
+deliberate msks choice Lima's default does not make; the suite
+ships its own template). The evidence, the re-run procedure, and
+the escape hatch (the Docker patch carried in a custom kernel,
+should a future macOS regress) live in the suite's README under
 `scripts/vz-hardlink-repro/`; re-run the suite on new macOS
 releases before shipping rw shares.
