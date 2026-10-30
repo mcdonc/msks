@@ -5120,10 +5120,28 @@ def test_mount_and_umount_agree_on_spelling(monkeypatch) -> None:
         "host": f"{home}/code",
         "guest": "/mnt/c",
     }
+    # The POSIX double-slash anchor: normpath preserves it, the
+    # daemon's canonical spelling re-anchors — the client sends
+    # and matches the daemon's shape, never its own.
+    assert workspaces.mount_spec(f"//{home}/code:/mnt/c", "--share") == {
+        "host": f"{home}/code",
+        "guest": "/mnt/c",
+    }
     row_mounts = [{"host": f"{home}/code", "guest": "/mnt/c", "mode": "rw"}]
-    for spelling in ("~/code", "~/code/", f"{home}//code", f"{home}/./code"):
+    spellings = (
+        "~/code",
+        "~/code/",
+        f"{home}//code",
+        f"{home}/./code",
+        f"//{home}/code",
+    )
+    for spelling in spellings:
         kept = workspaces.without_share(row_mounts, spelling, "ws")
         assert kept == []
+    with pytest.raises(SystemExit, match="must not contain"):
+        workspaces.mount_spec(f"{home}/../code:/mnt/c", "--share")
+    with pytest.raises(SystemExit, match="must not contain"):
+        workspaces.without_share(row_mounts, f"{home}/../code", "ws")
 
 
 def test_share_on_an_old_daemon_names_the_upgrade(monkeypatch) -> None:
