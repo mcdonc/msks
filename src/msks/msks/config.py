@@ -130,8 +130,12 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     # VmmSettings — the virtiofs daemon behind host mounts
     # (#620, part #622).
     "MSKSD_VIRTIOFSD",
-    # MountSettings — the host-mount shares (#620).
+    # MountSettings — the host-mount shares (#620) and the
+    # host-share gates (#672): the mode and the allowed roots
+    # (#667).
     "MSKSD_MOUNT_SHARES",
+    "MSKSD_MOUNT_HOST_MODE",
+    "MSKSD_MOUNT_HOST_ROOTS",
 )
 
 # The key↔variable mapping, derived by the one rule. ``state_dir``
@@ -194,6 +198,7 @@ LIST_KEYS = {
     "llm_models": "MSKSD_LLM_MODELS",
     "seed_images": "MSKSD_SEED_IMAGES",
     "mount_shares": "MSKSD_MOUNT_SHARES",
+    "mount_host_roots": "MSKSD_MOUNT_HOST_ROOTS",
 }
 
 

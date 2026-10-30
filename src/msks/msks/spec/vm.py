@@ -82,12 +82,14 @@ class VmSpec:
     # later does not drift a row already minted.
     timezone: str | None = None
     # The workspace's host mounts (#620, part #622): each names a
-    # configured share, the guest path it lands at, and its mode.
-    # The start path derives the attachable subset (shares gone
-    # from the config, denied modes, and rw conflicts skip with
-    # events — #621) and the seam attaches exactly what it is
-    # handed: one virtiofsd per mount, the tag the guest mounts
-    # by. Empty is the mountless workspace.
+    # configured share or — the #667 host form (#672) — an
+    # operator-typed host path through the policy gates, plus the
+    # guest path it lands at and its mode. The start path derives
+    # the attachable subset (shares gone from the config, denied
+    # modes, rw conflicts, and host paths a reload ungated skip
+    # with events — #621) and the seam attaches exactly what it
+    # is handed: one virtiofsd per mount, the tag the guest
+    # mounts by. Empty is the mountless workspace.
     mounts: tuple[MountSpec, ...] = ()
     # The workspace's LLM proxy credential (#259): minted at create,
     # stored on the row, and seeded into the guest (the token file

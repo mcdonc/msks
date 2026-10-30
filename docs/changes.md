@@ -8,6 +8,21 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Host-path workspace shares behind the #667 gates (#672).**
+  A workspace's mounts now take a host-path form —
+  `mounts: [{host: ~/code, guest: /mnt/code, mode: rw}]` —
+  alongside the named-share form: the daemon translates the path
+  by its host mode (`MSKSD_MOUNT_HOST_MODE`, `identity` on a
+  bare-Linux host or `prefix` on the Lima/macOS host), gates it
+  against the roots its VM actually mounts and the allowed roots
+  in `MSKSD_MOUNT_HOST_ROOTS` (both refusing at set time with
+  their remedy: VM recreation, or the config edit), and refuses
+  symlinks that resolve outside what the operator allowed. The
+  host form mounts read-only unless it says `rw`. The virtiofsd
+  lifecycle, the cloud-hypervisor `--fs` wiring, and the guest
+  mount units are the #620 machinery, keyed by a tag derived
+  from the path.
+
 - **Lima template share roots under the reserved prefix
   (#671).** The msksd-VM Lima template ships in the wheel
   (`msks/server/assets/msksd-vm.yaml`) with every share root
