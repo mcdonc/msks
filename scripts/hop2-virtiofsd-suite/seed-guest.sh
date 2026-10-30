@@ -23,7 +23,7 @@ if [ ! -b "$NBD" ]; then
 fi
 qemu-nbd -d "$NBD" >/dev/null 2>&1 || true
 qemu-nbd -c "$NBD" "$DISK"
-trap 'umount "$MNT" 2>/dev/null || true; qemu-nbd -d "$NBD" >/dev/null' EXIT
+trap 'umount "$MNT" 2>/dev/null || true; qemu-nbd -d "$NBD" >/dev/null; rm -rf "$MNT"' EXIT
 
 # Find the ext4 root partition on the disk (partition scan can lag
 # a moment after attach).
@@ -133,8 +133,8 @@ Description=hop2 suite guest driver
 After=local-fs.target
 [Service]
 Type=simple
-StandardOutput=append:/root/driver.console.log
-StandardError=append:/root/driver.console.log
+StandardOutput=journal+console
+StandardError=journal+console
 ExecStart=/root/guest-driver.sh
 [Install]
 WantedBy=multi-user.target

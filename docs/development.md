@@ -615,8 +615,9 @@ seven workloads the issue names. All pass on stock Debian
 byte-identical across the hop, link/unlink churn is clean, inodes
 from hop 1 pass through verbatim, a 40k-file tree leaves virtiofsd
 holding 6 fds, a mid-write kill of the daemon and VMM leaves every
-landed file complete, and cross-writer visibility stays under a
-second. Two findings shape the design: cloud-hypervisor's
+landed file complete, and cross-writer file visibility stays in
+the milliseconds once a responder is live (the first response after
+publishing one runs ~1.5s while the guest consumes its command). Two findings shape the design: cloud-hypervisor's
 userspace vhost-user master is what makes hop 2 possible on the
 stock kernel (Debian's cloud kernel builds no `/dev/vhost-vfs`, so
 a QEMU-shaped hop 2 would need a custom kernel), and ownership

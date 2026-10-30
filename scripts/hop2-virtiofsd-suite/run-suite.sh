@@ -43,7 +43,7 @@ verdict() { # verdict <name> <ok:0|1> <detail>
 }
 
 GSEQ=0
-guest() { # guest <cmd> [timeout] -> runs in guest, returns via $OUT
+guest() { # guest <cmd> [timeout] -> prints the guest's answer
   local t=${2:-180} line="$1"
   # The channel only works once the driver has claimed the share
   # (fresh boot, or after a crash restart).
@@ -115,19 +115,22 @@ fi
 guest 'mkdir -p /mnt/share/hlwork && cd /mnt/share/hlwork && touch a && mkdir -p b && timeout 60 ../bin/linkloop 2>/mnt/share/hl.err; rc=$?; echo "linkloop rc=$rc"; tail -2 /mnt/share/hl.err' 90 >"$RIG/logs/hardlink.txt"
 tail -3 "$RIG/logs/hardlink.txt" | tee -a "$LOG"
 # rc=124 is the expected clean-run end: linkloop loops forever, the
-# outer timeout ends it. Anything else, or stderr evidence, is a hit.
-if grep -qE "Failed|ENOENT|succeeded after" "$RIG/logs/hardlink.txt"; then
-  verdict hardlink 1 "evidence of transient link failure: $(grep -E "Failed|ENOENT|succeeded after" "$RIG/logs/hardlink.txt" | head -2)"
-elif grep -q "linkloop rc=124" "$RIG/logs/hardlink.txt"; then
-  verdict hardlink 0 "60s of link/unlink churn, zero failures (rc=124 = timeout kill of the loop)"
+# outer timeout ends it, and a clean run writes NOTHING to stderr -
+# both failure modes (transient: retry evidence; persistent: the
+# retry loop spins printing perror text until the timeout kills it)
+# leave stderr content, so an empty hl.err is the pass condition.
+RC_LINE=$(grep -o "linkloop rc=[0-9]*" "$RIG/logs/hardlink.txt" | tail -1)
+ERR_BYTES=$(wc -c <"$SHARE/hl.err" 2>/dev/null || echo missing)
+if [ "$RC_LINE" = "linkloop rc=124" ] && [ "$ERR_BYTES" = 0 ]; then
+  verdict hardlink 0 "60s of link/unlink churn, zero failures (rc=124 = timeout kill, stderr empty)"
 else
-  verdict hardlink 1 "unexpected linkloop end: $(tail -2 "$RIG/logs/hardlink.txt")"
+  verdict hardlink 1 "$RC_LINE, hl.err=${ERR_BYTES}B: $(tail -2 "$SHARE/hl.err" 2>/dev/null | tr '\n' ' ')"
 fi
 # inode stability across link/unlink, through both hops
 # shellcheck disable=SC2016  # the guest expands its own variables
 guest 'cd /mnt/share && mkdir -p inowork && cd inowork && : >a && i1=$(stat -c %i a) && ln a b && i2=$(stat -c %i a) && i3=$(stat -c %i b) && rm b && i4=$(stat -c %i a) && echo "inodes $i1 $i2 $i3 $i4"' 60 >"$RIG/logs/ino.txt"
 ino=$(tail -1 "$RIG/logs/ino.txt" | awk '{print $2" "$3" "$4" "$5}')
-if [ "$(printf '%s\n' "$ino" | sort -u | wc -l)" = 1 ]; then
+if [ -n "$ino" ] && [ "$(printf '%s\n' "$ino" | sort -u | wc -l)" = 1 ]; then
   verdict inochange 0 "inode $ino stable across link/unlink through both hops"
 else
   verdict inochange 1 "inode drift: $ino"
@@ -143,9 +146,9 @@ guest 'stat -c "%i %d" /mnt/share/identity/f' 60 >"$RIG/logs/identity.txt"
 GUEST_INO=$(awk '{print $1}' "$RIG/logs/identity.txt" | tail -1)
 GUEST_DEV=$(awk '{print $2}' "$RIG/logs/identity.txt" | tail -1)
 if [ "$OUTER_INO" = "$GUEST_INO" ]; then
-  verdict identity 0 "inode passthrough: outer=$OUTER_INO guest=$GUEST_INO (st_dev outer=$OUTER_DEV guest=$GUEST_DEV)"
+  verdict identity 0 "inode passthrough: outer=$OUTER_INO guest=$GUEST_INO (st_dev outer=$OUTER_DEV guest=$GUEST_DEV, valid within one hop)"
 else
-  verdict identity 0 "inode re-synthesized at hop 2: outer=$OUTER_INO guest=$GUEST_INO (st_dev outer=$OUTER_DEV guest=$GUEST_DEV)"
+  verdict identity 1 "inode NOT passed through: outer=$OUTER_INO guest=$GUEST_INO"
 fi
 
 # ---------------------------------------------------------------- 4 uidgid
@@ -155,7 +158,11 @@ cat "$RIG/logs/uidgid.txt" | tee -a "$LOG"
 GUEST_UID=$(head -1 "$RIG/logs/uidgid.txt")
 FILE_UID=$(sed -n 3p "$RIG/logs/uidgid.txt" | awk '{print $1}')
 OUTER_SEES=$(stat -c "%u %g" "$SHARE/identity/f")
-verdict uidgid 0 "guest uid=$GUEST_UID sees file uid=$FILE_UID; outer sees $OUTER_SEES (daemon runs as root)"
+if [ -n "$GUEST_UID" ] && [ "$GUEST_UID" = "$FILE_UID" ]; then
+  verdict uidgid 0 "guest uid=$GUEST_UID sees the share's files as its own; outer sees $OUTER_SEES (daemon runs as root)"
+else
+  verdict uidgid 1 "guest uid=$GUEST_UID vs file uid=$FILE_UID (outer sees $OUTER_SEES)"
+fi
 # A file created by the macOS user (prepared by the operator before the
 # run, see README) shows the unmapped host uid in both VMs.
 if [ -f "$SHARE/identity/hostuser.txt" ]; then
@@ -210,10 +217,15 @@ fi
 say "--- phase 7: crash consistency (destructive)"
 mkdir -p "$SHARE/crash"
 rm -f "$SHARE/crash"/*
-# Writer inside the guest: 2000 files write-tmp+rename, marker lists
+# Writer inside the guest: 20000 files write-tmp+rename, marker lists
 # every intended final name as it lands.
 # shellcheck disable=SC2016  # the guest expands its own variables
-guest 'nohup bash -c "cd /mnt/share/crash && for i in \$(seq 1 20000); do echo payload-\$i > tmp.\$i; mv tmp.\$i f.\$i; echo f.\$i >> intended.txt; done; echo WRITER-DONE >> intended.txt" >/dev/null 2>&1 & echo writer-started' 30 | tail -1
+WRITER_LINE=$(guest 'nohup bash -c "cd /mnt/share/crash && for i in \$(seq 1 20000); do echo payload-\$i > tmp.\$i; mv tmp.\$i f.\$i; echo f.\$i >> intended.txt; done; echo WRITER-DONE >> intended.txt" >/dev/null 2>&1 & echo writer-started' 30 | tail -1)
+if [ "$WRITER_LINE" != writer-started ]; then
+  verdict crash 1 "writer never started (channel answered: '$WRITER_LINE')"
+  say "=== suite done: PASS=$PASS FAIL=$FAIL"
+  exit 1
+fi
 sleep 5
 say "killing virtiofsd ($(cat "$RIG/run/virtiofsd.pid")) mid-write"
 kill -9 "$(cat "$RIG/run/virtiofsd.pid")" 2>/dev/null
@@ -229,6 +241,11 @@ say "rig back up; verifying tree state"
 LANDED=0
 for f in "$SHARE/crash"/f.*; do [ -e "$f" ] && LANDED=$((LANDED + 1)); done
 say "landed: $LANDED files"
+if [ "$LANDED" -le 100 ]; then
+  verdict crash 1 "only $LANDED files landed before the kill - vacuous crash test (need >100 mid-write)"
+  say "=== suite done: PASS=$PASS FAIL=$FAIL"
+  exit 1
+fi
 BAD=0
 for f in "$SHARE/crash"/f.*; do
   [ -e "$f" ] || continue

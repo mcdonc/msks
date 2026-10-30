@@ -9,6 +9,7 @@ set -euo pipefail
 
 RIG=/var/lib/hop2
 CH_VERSION=v54.0
+CH_SHA256=e8a6d9786ea678e739f1a386682846e93742dcb9c7b6e3e0c62e3bda6cff0ef3
 IMAGE_SHA=d8470b8c6c38fead046c794b5800a5a7b96672d5bcf543cc230ceb0c4b8ace05ed341a0c8928045422243fde26b2f1f2f58e99244c65709ffda2e3d4b674dd5a
 IMAGE_URL=https://cloud.debian.org/images/cloud/trixie/20261001-2618/debian-13-genericcloud-arm64-20261001-2618.qcow2
 
@@ -30,6 +31,7 @@ echo "== cloud-hypervisor $CH_VERSION"
 if ! /usr/local/bin/cloud-hypervisor --version 2>/dev/null | grep -q "$CH_VERSION"; then
   curl -sL -o /usr/local/bin/cloud-hypervisor \
     "https://github.com/cloud-hypervisor/cloud-hypervisor/releases/download/$CH_VERSION/cloud-hypervisor-static-aarch64"
+  echo "$CH_SHA256  /usr/local/bin/cloud-hypervisor" | sha256sum -c -
   chmod +x /usr/local/bin/cloud-hypervisor
 fi
 /usr/local/bin/cloud-hypervisor --version

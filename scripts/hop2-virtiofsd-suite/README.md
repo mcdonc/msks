@@ -20,17 +20,17 @@ Evidence (Debian 13 trixie, kernel `6.12.111+deb13-cloud-arm64`,
 virtiofsd 1.13.2-1+deb13u1, cloud-hypervisor v54.0, macOS 27.0.1 on
 an Apple M3, outer VM from `lima-template.yaml` beside this README):
 
-| workload                | load                                                                                                     | result                                                                                                                                                                  |
-| ----------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| listing                 | 100×100 tree (10k entries, spaces + unicode names)                                                       | 10,101 entries byte-identical across the hop, in 1s                                                                                                                     |
-| hardlink churn          | Docker's `linkloop` reproducer, 60s                                                                      | thousands of link/unlink iterations, zero `link()` retries, zero `stat()` ENOENT                                                                                        |
-| inode stability         | create/link/unlink cycle, both hops                                                                      | inode stable across link and unlink every time                                                                                                                          |
-| identity                | `stat` comparison, files created on macOS and in the outer VM                                            | hop-1 (VZ-synthetic) inodes pass through hop 2 verbatim; `st_dev` differs per hop                                                                                       |
-| uid/gid                 | file created by the macOS user (uid 501), daemon and guest as root                                       | macOS 501 → outer 0 → guest 0: VZ maps the host user to root, the daemon runs as root, and the guest matches it — virtiofsd's match-the-guest-UID guidance is satisfied |
-| fd pressure             | 40,000-file tree built and fully walked by the guest                                                     | clean; virtiofsd held **6 fds** the whole time (RLIMIT_NOFILE 1,000,000)                                                                                                |
-| crash consistency       | 20,000-file writer (write tmp + rename), `kill -9` of virtiofsd **and** the VMM mid-write, rig restarted | 1,825 files had landed; **all complete**, zero partial entries, share remounted clean                                                                                   |
-| snapshot gate           | virtiofsd version                                                                                        | 1.13.2 ≥ 1.11 — snapshot/migration capable                                                                                                                              |
-| cross-writer visibility | ping/pong files, 60 rounds, idle and under a sustained guest-side find storm                             | min 10ms, median 26ms, **max 0.87s**, no spike over 1s in any round                                                                                                     |
+| workload                | load                                                                                                     | result                                                                                                                                                                                                   |
+| ----------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| listing                 | 100×100 tree (10k entries, spaces + unicode names)                                                       | 10,101 entries byte-identical across the hop, in 1s                                                                                                                                                      |
+| hardlink churn          | Docker's `linkloop` reproducer, 60s                                                                      | thousands of clean iterations: killed by the outer timeout with stderr empty — both failure modes (transient retry, persistent spin) leave stderr evidence                                               |
+| inode stability         | create/link/unlink cycle, both hops                                                                      | inode stable across link and unlink every time                                                                                                                                                           |
+| identity                | `stat` comparison, files created on macOS and in the outer VM                                            | hop-1 (VZ-synthetic) inodes pass through hop 2 verbatim; `st_dev` differs per hop                                                                                                                        |
+| uid/gid                 | file created by the macOS user (uid 501), daemon and guest as root                                       | macOS 501 → outer 0 → guest 0: VZ maps the host user to root, the daemon runs as root, and the guest matches it — virtiofsd's match-the-guest-UID guidance is satisfied                                  |
+| fd pressure             | 40,000-file tree built and fully walked by the guest                                                     | clean; virtiofsd held 6 fds at each of three samples — before the build, after the build, after the full walk (RLIMIT_NOFILE 1,000,000)                                                                  |
+| crash consistency       | 20,000-file writer (write tmp + rename), `kill -9` of virtiofsd **and** the VMM mid-write, rig restarted | 1,825 files had landed; **all complete**, zero partial entries, share remounted clean                                                                                                                    |
+| snapshot gate           | virtiofsd version                                                                                        | 1.13.2 ≥ 1.11 — snapshot/migration capable                                                                                                                                                               |
+| cross-writer visibility | ping/pong files, 30 rounds each, idle and under a sustained guest-side find storm                        | steady-state median 3–126ms, max 0.19s; the first-response round after publishing the responder runs up to ~1.5s while the guest consumes its command — a one-time channel cost, not per-file visibility |
 
 The fd number deserves its own line: the one-O_PATH-fd-per-inode
 model the issue worried about (microvm.nix #472) does not manifest
@@ -60,14 +60,17 @@ trees do not approach any fd ceiling.
    mid-write leaves every landed file complete (the write-tmp+rename
    pattern is atomic through both hops) and the share remounts without
    residue after the restart.
-5. **Cross-writer visibility is sub-second — when completion is
-   signaled by a marker written after the data.** The control channel
+5. **Cross-writer visibility is sub-second in steady state — when
+   completion is signaled by a marker written after the data.** The control channel
    below was rewritten to a marker protocol after early versions
    (read the answer file directly) produced phantom multi-minute
    "wedges": a file created empty at command start, then filled,
    can be read empty by a concurrent poller through the hop-1 dentry
    cache. Marker-last is also the pattern msks workspace tooling
-   should use for cross-VM signaling on a share.
+   should use for cross-VM signaling on a share. The one measurable
+   latency class left is the first response after publishing a new
+   responder command (~1.5s while the guest consumes the command);
+   per-file visibility after that is milliseconds.
 
 ## The rig
 
@@ -77,7 +80,9 @@ trees do not approach any fd ceiling.
   20 GiB disk, `~/hop2` mounted rw — the share under test).
 - Guest: the same Debian genericcloud image and kernel the outer VM
   boots (direct kernel boot), seeded with a driver via `seed-guest.sh`
-  (qemu-nbd attach, systemd unit, no cloud-init, no network).
+  (qemu-nbd attach, systemd unit). cloud-init is disabled and the
+  guest has no network device: the seeded driver replaces boot
+  provisioning, and every interaction goes through the share.
 - cloud-hypervisor v54.0 static binary; virtiofsd from Debian trixie.
 
 ## Running
@@ -101,8 +106,9 @@ Copy the suite in and run it (the suite is destructive to
     % sudo bash /root/hop2-virtiofsd-suite/coherence.sh 30
     % sudo bash /root/hop2-virtiofsd-suite/down.sh
 
-`up.sh` leaves the rig running; `run-suite.sh` ends it (its crash
-phase kills and restarts the rig once). `logs/` under
+`up.sh` leaves the rig running. `run-suite.sh`'s crash phase kills
+the rig once and restarts it (the rig is left running, ready for
+`coherence.sh`); `down.sh` stops it. `logs/` under
 `/var/lib/hop2` keeps every phase's output, the guest serial console,
 and virtiofsd/cloud-hypervisor logs; the guest also logs to
 `/root/driver.local.log` on its own disk.
@@ -113,6 +119,7 @@ The suite drives the guest through the share itself: the outer side
 publishes `cmd` (`<seq> <command>`), the guest driver answers into
 `out.<seq>` and writes `end.<seq>` last, and the outer side polls
 only `end.<seq>` — a marker that exists only after its data does.
-Files are published by write-to-temp + rename. Anything that polls a
+The one file whose partial observation would race, `cmd`, is
+published by write-to-temp + rename. Anything that polls a
 data file for existence through this stack can read it empty; see
 finding 5.
