@@ -85,6 +85,10 @@ prefix`): the path, translated under `/mnt/msks`, must sit
    the same way — the share cannot walk out of what the
    operator allowed.
 
+The spec grammar splits its fields on colons, so a host path
+containing one is inexpressible on the wire (`--share` and the
+TUI editor both refuse it, naming the field the colon broke).
+
 A host-form mount attaches read-write unless it says `ro` —
 the same default the named form carries, and for the same
 reason: the trust decision is made before the mode matters (the

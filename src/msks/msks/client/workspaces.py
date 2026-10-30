@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import json
 import os
+import posixpath
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -397,16 +398,28 @@ def mount_entry_for(served: str, flag: str) -> dict:
     field is the host form — ``~`` and ``~user`` expand against
     the client's home, then the path must be absolute (the daemon
     refuses ``~`` itself; the expansion is the client's job) —
-    anything else is the named form's share name."""
+    anything else is the named form's share name. The create's
+    ``--mount`` flag keeps its meaning (a configured share): a
+    path-shaped spec there is one local line pointing at
+    ``--share``; the runtime ``mount`` command takes both."""
     if not served.startswith(("/", "~")):
         return {"share": served}
+    if flag == "--mount":
+        raise SystemExit(
+            f"msks: --mount takes a configured share's name; pass "
+            f"--share for the host path {served!r}"
+        )
     host = os.path.expanduser(served)
     if not host.startswith("/"):
         raise SystemExit(
             f"msks: {flag} host path {served!r} must be absolute "
             "after ~ expands"
         )
-    return {"host": host}
+    # The daemon canonicalizes what it stores; the client sends
+    # the same shape, so the umount matcher never loses to a
+    # spelling the mount side accepted (trailing slash, ``//``,
+    # ``.`` components).
+    return {"host": posixpath.normpath(host)}
 
 
 def cmd_mount(
@@ -469,7 +482,7 @@ def without_share(mounts: list, served: str, workspace_id: str) -> list:
     host path, matched on the key that carries it (``~`` expands
     the way the mount spec did). What the row does not mount is
     one local line."""
-    wanted = os.path.expanduser(served)
+    wanted = posixpath.normpath(os.path.expanduser(served))
     kept = [
         m
         for m in mounts

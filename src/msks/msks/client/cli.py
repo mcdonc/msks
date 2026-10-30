@@ -400,10 +400,11 @@ def create(
         None,
         "--mount",
         metavar="SPEC",
-        help="a host share mounted into the guest (#620), repeatable: "
-        "SHARE:GUEST_PATH:MODE — a share the daemon's config lists, "
-        "the absolute path it lands at, and ro or rw (rw when the "
-        "mode is omitted). Applies at the next start",
+        help="a configured share mounted into the guest (#620), "
+        "repeatable: SHARE:GUEST_PATH:MODE — a share the daemon's "
+        "config lists, the absolute path it lands at, and ro or rw "
+        "(rw when the mode is omitted). Host paths take --share. "
+        "Applies at the next start",
     ),
     share: list[str] | None = typer.Option(
         None,
@@ -519,12 +520,13 @@ def mount(
         "omitted)",
     ),
 ) -> int:
-    """Mount a host share into a workspace (#620).
+    """Mount a share into a workspace (#620, #667).
 
-    The share must be one the daemon's config lists; the mode is
-    bounded by the share (rw on a read-only share is refused).
-    Next-start semantics: a running workspace keeps the devices it
-    attached, and the next start attaches the new set.
+    The spec names a configured share or — path-shaped — a host
+    directory the daemon's allowed roots must cover; the mode is
+    bounded by the share's writability (named) or the gates
+    (host). Next-start semantics: a running workspace keeps the
+    devices it attached, and the next start attaches the new set.
     """
     return cmd_mount(workspace_id, spec, ctx.obj)
 
@@ -541,7 +543,8 @@ def umount(
         help="the share name or host path whose mounts leave the workspace",
     ),
 ) -> int:
-    """Remove a workspace's mounts of one share (#620).
+    """Remove a workspace's mounts of one share or host path
+    (#620, #667).
 
     The next start attaches the remainder; a running workspace
     keeps its attached devices until then.

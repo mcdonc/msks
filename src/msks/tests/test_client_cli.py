@@ -4994,9 +4994,6 @@ def test_mount_spec_takes_the_host_form() -> None:
     ("spec", "why"),
     [
         ("~/code:mnt/c", "must be absolute"),
-        # A relative host path is shape-identical to a share name:
-        # the client sends it as one, and the daemon's canonical-
-        # host-path rule refuses it in the 400 — no local refusal.
         ("/Users/x/code:/mnt/c:wo", "mode must be ro or rw"),
         # A ~user prefix naming an account the client host cannot
         # resolve expands to itself — relative, refused here.
@@ -5007,6 +5004,10 @@ def test_mount_spec_takes_the_host_form() -> None:
     ],
 )
 def test_host_share_spec_refuses_bad_shapes(spec: str, why: str) -> None:
+    """The local shape refusals. A relative host path is
+    shape-identical to a share name — the client sends it as one,
+    and the daemon's canonical-host-path rule refuses it in the
+    400, so no local refusal exists for it here."""
     with pytest.raises(SystemExit, match=why):
         workspaces.mount_spec(spec, "--share")
 
@@ -5107,6 +5108,56 @@ def test_mounts_line_renders_both_forms(monkeypatch, capsys) -> None:
     assert host_issue is not None and host_issue["kind"] == "skipped"
     named_issue = issue_for(row["mounts"][1], row["mount_issues"])
     assert named_issue is None
+
+
+def test_mount_and_umount_agree_on_spelling(monkeypatch) -> None:
+    """The round trip holds for every spelling the mount side
+    accepts: the client normalizes to the daemon's canonical
+    shape (trailing slash, ``//``, ``.`` components), so umount
+    matches what mount sent — the spelling the daemon stored."""
+    home = os.path.expanduser("~")
+    assert workspaces.mount_spec("~/code/:/mnt/c", "--share") == {
+        "host": f"{home}/code",
+        "guest": "/mnt/c",
+    }
+    row_mounts = [{"host": f"{home}/code", "guest": "/mnt/c", "mode": "rw"}]
+    for spelling in ("~/code", "~/code/", f"{home}//code", f"{home}/./code"):
+        kept = workspaces.without_share(row_mounts, spelling, "ws")
+        assert kept == []
+
+
+def test_share_on_an_old_daemon_names_the_upgrade(monkeypatch) -> None:
+    """The version-skew criterion (#667, #673): a daemon without
+    share support answers a host-form mount with the grammar's
+    unknown-key detail about the wire; the client rewrites it to
+    the upgrade line, never surfacing the wire detail."""
+    from msks.client.rest import (
+        PREDATES_SHARES_DETAIL,
+        PREDATES_SHARES_MESSAGE,
+        status_message,
+    )
+
+    response = httpx.Response(
+        400,
+        json={"detail": PREDATES_SHARES_DETAIL},
+        request=httpx.Request("POST", "http://x"),
+    )
+    exc = httpx.HTTPStatusError(
+        "400", request=response.request, response=response
+    )
+    assert status_message(exc) == PREDATES_SHARES_MESSAGE
+
+
+def test_create_mount_refuses_a_path_shaped_spec(monkeypatch) -> None:
+    """``--mount`` keeps its meaning (a configured share): a
+    path-shaped spec there is one local line pointing at
+    ``--share``."""
+    with pytest.raises(SystemExit, match="--share for the host path"):
+        workspaces.mount_spec("~/code:/mnt/c", "--mount")
+    assert workspaces.mount_spec("~/code:/mnt/c", "mount") == {
+        "host": f"{os.path.expanduser('~')}/code",
+        "guest": "/mnt/c",
+    }
 
 
 def test_ls_marks_unresolved_mounts(

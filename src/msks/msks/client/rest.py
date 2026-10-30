@@ -90,9 +90,28 @@ def reach_message(client: httpx.AsyncClient, exc: Exception) -> str:
     return f"msks: cannot reach {client.base_url}: {exc}"
 
 
+#: The refusal a daemon without share support answers a host-form
+#: mount with (#667's version-skew criterion, #673): the mount
+#: grammar's key check names the ``host`` key it does not know.
+#: A daemon that knows the key never says this, so the rewrite
+#: cannot false-positive.
+PREDATES_SHARES_DETAIL = "mounts entry has unknown keys: ['host']"
+
+#: The upgrade line the skew rewrite answers with: names the
+#: feature and the fix, not the wire detail.
+PREDATES_SHARES_MESSAGE = "msks: this daemon predates shares; upgrade msksd"
+
+
 def status_message(exc: httpx.HTTPStatusError) -> str:
-    """The API-status line: the daemon's detail, verbatim."""
-    return f"msks: {exc.response.status_code}: {error_detail(exc.response)}"
+    """The API-status line: the daemon's detail, verbatim — the
+    one deliberate rewrite being the version-skew refusal (#667,
+    #673): a daemon without share support answers a ``--share``
+    with an unknown-key detail about the wire, and the operator
+    needs the upgrade line, not the wire's."""
+    detail = error_detail(exc.response)
+    if detail == PREDATES_SHARES_DETAIL:
+        return PREDATES_SHARES_MESSAGE
+    return f"msks: {exc.response.status_code}: {detail}"
 
 
 async def guarded(client: httpx.AsyncClient, exchange):
