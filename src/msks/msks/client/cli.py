@@ -405,6 +405,17 @@ def create(
         "the absolute path it lands at, and ro or rw (rw when the "
         "mode is omitted). Applies at the next start",
     ),
+    share: list[str] | None = typer.Option(
+        None,
+        "--share",
+        metavar="SPEC",
+        help="a host directory mounted into the guest (#667), "
+        "repeatable: HOST_PATH:GUEST_PATH:MODE — an absolute host "
+        "path (~ expands against your home; the daemon's allowed "
+        "roots must cover it), the absolute guest path, and ro or "
+        "rw (rw when the mode is omitted). Applies at the next "
+        "start",
+    ),
     start: bool = typer.Option(
         False, "--start", help="boot the workspace immediately"
     ),
@@ -432,6 +443,7 @@ def create(
             user=user,
             pubkey=pubkey,
             mount=mount,
+            share=share,
             start=start,
         ),
         ctx.obj,
@@ -500,9 +512,11 @@ def mount(
     ),
     spec: str = typer.Argument(
         ...,
-        help="SHARE:GUEST_PATH:MODE — a share the daemon's config "
-        "lists, the absolute path it lands at in the guest, and "
-        "ro or rw (rw when omitted)",
+        help="HOST-OR-SHARE:GUEST_PATH:MODE — a share the daemon's "
+        "config lists (#620) or an absolute host path (~ expands; "
+        "the allowed roots must cover it, #667), the absolute "
+        "path it lands at in the guest, and ro or rw (rw when "
+        "omitted)",
     ),
 ) -> int:
     """Mount a host share into a workspace (#620).
@@ -523,7 +537,8 @@ def umount(
         ..., help="the workspace to unmount from (name or id)"
     ),
     share: str = typer.Argument(
-        ..., help="the share whose mounts leave the workspace"
+        ...,
+        help="the share name or host path whose mounts leave the workspace",
     ),
 ) -> int:
     """Remove a workspace's mounts of one share (#620).

@@ -43,13 +43,24 @@ def mount_spec_text(mount: dict) -> str:
 
 def issue_for(mount: dict, issues: list[dict]) -> dict | None:
     """The derived issue naming one mount, if any: matched on the
-    share and the guest path — the pair a row names."""
+    form's naming key — the share name or the host path — beside
+    the guest path, the pair a row names."""
     for issue in issues or []:
-        if issue.get("share") == mount.get("share") and issue.get(
-            "guest"
-        ) == mount.get("guest"):
+        if issue_names(issue, mount):
             return issue
     return None
+
+
+def issue_names(issue: dict, mount: dict) -> bool:
+    """Whether an issue frame names one mount: each naming key
+    present on either side agrees (``None == None`` included — a
+    frame and a row of one form carry no key for the other), and
+    the guest path matches."""
+    return (
+        issue.get("share") == mount.get("share")
+        and issue.get("host") == mount.get("host")
+        and issue.get("guest") == mount.get("guest")
+    )
 
 
 def mount_row_text(mount: dict, issues: list[dict]) -> str:

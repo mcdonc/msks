@@ -8,6 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`msks create --share HOST:GUEST[:MODE]` and the host form on
+  `msks mount`/`umount` (#673).** The client surface for #667's
+  host-path shares: a repeatable create flag whose `~` expands
+  against your home before the request, the same spec grammar on
+  `msks mount` (a path-shaped first field is a host path, a bare
+  name is a configured share), and `msks umount` names what
+  leaves by share name or host path. A refused share surfaces
+  the daemon's gate message verbatim — which gate refused and
+  the remedy. See the [mounts chapter](mounts.md#the-host-form).
+
 - **Host-path workspace shares behind the #667 gates (#672).**
   A workspace's mounts now take a host-path form —
   `mounts: [{host: ~/code, guest: /mnt/code, mode: rw}]` —

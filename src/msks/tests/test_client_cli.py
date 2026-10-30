@@ -4961,8 +4961,8 @@ def test_mount_spec_shapes_the_entry() -> None:
 @pytest.mark.parametrize(
     ("spec", "why"),
     [
-        ("proj", "takes SHARE:GUEST_PATH"),
-        ("proj:/mnt/p:ro:extra", "takes SHARE:GUEST_PATH"),
+        ("proj", "takes HOST-OR-SHARE:GUEST_PATH"),
+        ("proj:/mnt/p:ro:extra", "takes HOST-OR-SHARE:GUEST_PATH"),
         ("proj:mnt/p", "must be absolute"),
         ("proj:/mnt/p:wo", "mode must be ro or rw"),
     ],
@@ -4970,6 +4970,137 @@ def test_mount_spec_shapes_the_entry() -> None:
 def test_mount_spec_refuses_bad_shapes(spec: str, why: str) -> None:
     with pytest.raises(SystemExit, match=why):
         workspaces.mount_spec(spec, "--mount")
+
+
+def test_mount_spec_takes_the_host_form() -> None:
+    """The host form (#667, #673): a path-shaped first field is a
+    host path — ``~`` expands against the client's home — the
+    guest path stays absolute, and the mode is the same grammar."""
+    home = os.path.expanduser("~")
+    assert workspaces.mount_spec("~/code:/mnt/code", "--share") == {
+        "host": f"{home}/code",
+        "guest": "/mnt/code",
+    }
+    assert workspaces.mount_spec(
+        "/Users/chrism/code:/mnt/code:ro", "--share"
+    ) == {
+        "host": "/Users/chrism/code",
+        "guest": "/mnt/code",
+        "mode": "ro",
+    }
+
+
+@pytest.mark.parametrize(
+    ("spec", "why"),
+    [
+        ("~/code:mnt/c", "must be absolute"),
+        # A relative host path is shape-identical to a share name:
+        # the client sends it as one, and the daemon's canonical-
+        # host-path rule refuses it in the 400 — no local refusal.
+        ("/Users/x/code:/mnt/c:wo", "mode must be ro or rw"),
+    ],
+)
+def test_host_share_spec_refuses_bad_shapes(spec: str, why: str) -> None:
+    with pytest.raises(SystemExit, match=why):
+        workspaces.mount_spec(spec, "--share")
+
+
+def test_create_share_specs_ride_the_mounts(monkeypatch) -> None:
+    """``--share`` on create rides the body's mounts beside
+    ``--mount``: the host entries expand and shape locally, and
+    the daemon's gates answer the refusal taxonomy in their 400
+    detail (which the create surfaces verbatim)."""
+    posted: list[dict] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.method == "POST":
+            posted.append(json.loads(req.content))
+            return httpx.Response(201, json={"id": "ws-s"})
+        return httpx.Response(200, json={})
+
+    client_env(monkeypatch)
+    flags = cli.CreateFlags(
+        workspace_id="ws-s",
+        kernel="/k",
+        rootfs="/r",
+        mount=["proj:/mnt/p:ro"],
+        share=["~/code:/mnt/code"],
+    )
+    body = workspaces.create_body(flags)
+    assert body["mounts"] == [
+        {"share": "proj", "guest": "/mnt/p", "mode": "ro"},
+        {"host": f"{os.path.expanduser('~')}/code", "guest": "/mnt/code"},
+    ]
+
+
+def test_umount_matches_the_host_path(monkeypatch, capsys) -> None:
+    """``msks umount`` names what leaves by share name or host
+    path — the key that carries it, ``~`` expanded the way the
+    mount spec did."""
+    posted: list[object] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.method == "GET":
+            return httpx.Response(
+                200,
+                json={
+                    "id": "ws-h",
+                    "mounts": [
+                        {
+                            "host": f"{os.path.expanduser('~')}/code",
+                            "guest": "/mnt/code",
+                            "mode": "rw",
+                        },
+                        {"share": "proj", "guest": "/mnt/p"},
+                    ],
+                },
+            )
+        posted.append(json.loads(req.content))
+        return httpx.Response(
+            200,
+            json={
+                "id": "ws-h",
+                "mounts": [{"share": "proj", "guest": "/mnt/p"}],
+            },
+        )
+
+    client_env(monkeypatch)
+    rc = cli.cmd_umount("ws-h", "~/code", transport=mock(handler))
+    assert rc == 0
+    assert posted == [{"mounts": [{"share": "proj", "guest": "/mnt/p"}]}]
+    assert "ws-h mounts proj:/mnt/p:rw" in capsys.readouterr().out
+
+
+def test_mounts_line_renders_both_forms(monkeypatch, capsys) -> None:
+    """The mount/umount outcome line renders both forms' specs —
+    the host path and the share name — beside the derived skips,
+    each issue matched on the form's naming key."""
+    from msks.client.tui.mounts import issue_for
+
+    row = {
+        "id": "ws-b",
+        "mounts": [
+            {"host": "/Users/p/code", "guest": "/mnt/code", "mode": "rw"},
+            {"share": "proj", "guest": "/mnt/p"},
+        ],
+        "mount_issues": [
+            {
+                "kind": "skipped",
+                "host": "/Users/p/code",
+                "guest": "/mnt/code",
+                "mode": "rw",
+                "detail": "outside the allowed host-share roots",
+            }
+        ],
+    }
+    line = workspaces.mounts_line(row)
+    assert "/Users/p/code:/mnt/code:rw" in line
+    assert "proj:/mnt/p:rw" in line
+    assert "outside the allowed host-share roots" in line
+    host_issue = issue_for(row["mounts"][0], row["mount_issues"])
+    assert host_issue is not None and host_issue["kind"] == "skipped"
+    named_issue = issue_for(row["mounts"][1], row["mount_issues"])
+    assert named_issue is None
 
 
 def test_ls_marks_unresolved_mounts(
@@ -5082,7 +5213,7 @@ def test_cmd_umount_removes_the_share(
     assert posted == [{"mounts": []}]
     assert "alpha mounts nothing" in capsys.readouterr().out
 
-    with pytest.raises(SystemExit, match="mounts no share 'refs'"):
+    with pytest.raises(SystemExit, match="mounts no 'refs'"):
         cli.cmd_umount(
             "alpha",
             "refs",
