@@ -21,6 +21,10 @@ entry_points = [
   # #635: the Fedora sibling entry — its module carries only the
   # HostProfile; the shared phases live in hostsetup beside it.
   "msks.server.hostsetup_fedora",
+  # #676: the macOS host setup — the tool that creates the msksd
+  # Lima VM from the shipped template and bootstraps the daemon
+  # inside it.
+  "msks.server.hostsetup_macos",
   "msks.client.cli",
   "msks.client.term_popup",
   "msks.client.tui.decide_app",
@@ -268,8 +272,10 @@ secretcache = 2
 # validate_mounts (one name on the rows' mount statement).
 # #672: one more name — named_only, the named-form subset the
 # set-time gate bounds (deduplicated from the rows' local
-# helper).
-spec = 37
+# helper). #676: two more — the macOS setup tool reads the
+# version string and the TLS CA name for the VM bootstrap and
+# the preset it prints.
+spec = 39
 storage = 13
 
 [snapshot.settings]
