@@ -64,8 +64,10 @@ never sees the race.
 ## The host form
 
 A mount can name a host path instead of a share —
-`{host: ~/code, guest: /mnt/code, mode: rw}` — the operator
-types a path the way `--share` will (#673), and the daemon
+`{host: /Users/chrism/code, guest: /mnt/code, mode: rw}` — an
+absolute host path (the `--share` flag (#673) expands `~`
+against the client's home before the request; the daemon takes
+the path as typed), and the daemon
 translates it by its host mode and runs it through two gates,
 each refusing at set time with its remedy:
 
