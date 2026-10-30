@@ -713,6 +713,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Added
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -780,7 +791,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added" class="md-nav__link">
+  <a href="#added_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Added
@@ -830,7 +841,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added_1" class="md-nav__link">
+  <a href="#added_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Added
@@ -939,6 +950,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Added
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1006,7 +1028,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added" class="md-nav__link">
+  <a href="#added_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Added
@@ -1056,7 +1078,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added_1" class="md-nav__link">
+  <a href="#added_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Added
@@ -1129,6 +1151,20 @@
 <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>; versions are
 tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Lima template share roots under the reserved prefix
+  (#671).</strong> The msksd-VM Lima template ships in the wheel
+  (<code>msks/server/assets/msksd-vm.yaml</code>) with every share root
+  mounted under <code>/mnt/msks</code> — the WSL <code>/mnt/c</code> shape, so an
+  operator's <code>/Users/name</code> appears at
+  <code>/mnt/msks/Users/name</code> — and the default root (the invoking
+  user's home, writable) declared at VM creation. The
+  host-share vocabulary in <code>msks.spec.mounts</code> carries the
+  prefix, the host-mode translation (<code>identity</code> on bare Linux,
+  <code>prefix</code> on VM hosts), and the template validation that
+  refuses a mount outside the reserved-prefix shape.</li>
+</ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>doctor's apple-kvm row gates on the NV-mode marker (#664).</strong>
@@ -1209,7 +1245,7 @@ tagged <code>vX.Y.Z</code>.</p>
   Applies at each workspace start.</li>
 </ul>
 <h2 id="v04-2026-10-27">[v0.4] - 2026-10-27<a class="headerlink" href="#v04-2026-10-27" title="Permanent link">&para;</a></h2>
-<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Fedora 44 guest image (#651).</strong> A third catalog image family
   builds beside Debian and NixOS: <code>msks-build-guest fedora</code> (and
@@ -1288,7 +1324,7 @@ tagged <code>vX.Y.Z</code>.</p>
 <li>Guest image updates, docs changes.</li>
 </ul>
 <h2 id="v01-2026-10-18">[v0.1] - 2026-10-18<a class="headerlink" href="#v01-2026-10-18" title="Permanent link">&para;</a></h2>
-<h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
+<h3 id="added_2">Added<a class="headerlink" href="#added_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>The NixOS workspace guest image (#250).</strong> A second catalog image
   built from the devenv-pinned nixpkgs with
