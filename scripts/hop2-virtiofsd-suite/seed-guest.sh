@@ -23,7 +23,9 @@ if [ ! -b "$NBD" ]; then
 fi
 qemu-nbd -d "$NBD" >/dev/null 2>&1 || true
 qemu-nbd -c "$NBD" "$DISK"
-trap 'umount "$MNT" 2>/dev/null || true; qemu-nbd -d "$NBD" >/dev/null; rm -rf "$MNT"' EXIT
+# rm -rf only on a successful umount: never delete through a stuck
+# mount into the image being seeded.
+trap 'umount "$MNT" 2>/dev/null && rm -rf "$MNT"; qemu-nbd -d "$NBD" >/dev/null' EXIT
 
 # Find the ext4 root partition on the disk (partition scan can lag
 # a moment after attach).

@@ -19,8 +19,14 @@ SEQ=$$ # unique per invocation; the guest command carries it
   echo "rig not up"
   exit 1
 }
-[ "$ROUNDS" -ge 1 ] || {
-  echo "rounds must be >= 1"
+case "$ROUNDS" in
+''*.*)
+  echo "rounds must be an integer >= 1"
+  exit 1
+  ;;
+esac
+[ "$ROUNDS" -ge 1 ] 2>/dev/null || {
+  echo "rounds must be an integer >= 1"
   exit 1
 }
 rm -f "$SHARE"/{ping.*,pong.*,cmd,out}

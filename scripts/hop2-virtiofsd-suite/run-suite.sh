@@ -120,7 +120,7 @@ tail -3 "$RIG/logs/hardlink.txt" | tee -a "$LOG"
 # retry loop spins printing perror text until the timeout kills it)
 # leave stderr content, so an empty hl.err is the pass condition.
 RC_LINE=$(grep -o "linkloop rc=[0-9]*" "$RIG/logs/hardlink.txt" | tail -1)
-ERR_BYTES=$(wc -c <"$SHARE/hl.err" 2>/dev/null || echo missing)
+ERR_BYTES=$([ -f "$SHARE/hl.err" ] && wc -c <"$SHARE/hl.err" || echo missing)
 if [ "$RC_LINE" = "linkloop rc=124" ] && [ "$ERR_BYTES" = 0 ]; then
   verdict hardlink 0 "60s of link/unlink churn, zero failures (rc=124 = timeout kill, stderr empty)"
 else
@@ -241,8 +241,8 @@ say "rig back up; verifying tree state"
 LANDED=0
 for f in "$SHARE/crash"/f.*; do [ -e "$f" ] && LANDED=$((LANDED + 1)); done
 say "landed: $LANDED files"
-if [ "$LANDED" -le 100 ]; then
-  verdict crash 1 "only $LANDED files landed before the kill - vacuous crash test (need >100 mid-write)"
+if [ "$LANDED" -le 100 ] || [ "$LANDED" -ge 20000 ]; then
+  verdict crash 1 "$LANDED files landed - vacuous crash test (need 100..19999 mid-write; all-landed means the kill came after the writer finished)"
   say "=== suite done: PASS=$PASS FAIL=$FAIL"
   exit 1
 fi
