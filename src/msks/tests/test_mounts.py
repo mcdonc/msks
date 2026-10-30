@@ -1526,6 +1526,40 @@ async def test_a_narrowed_reload_skips_the_host_mount(
     ]
 
 
+async def test_the_listing_matches_the_row_for_host_skips(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The listing derives the same host-mount skips the row read
+    does (#672): both surfaces show the marker, so the CLI's ls
+    and the row's show agree."""
+    http, app, _stub = client
+    code = tmp_path / "code"
+    code.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    app.state.settings.mounts = host_world(tmp_path)
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-l",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "mounts": [{"host": str(code), "guest": "/mnt/code"}],
+        },
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+    app.state.settings.mounts = MountSettings(
+        host_mode="identity", host_roots=(str(other),)
+    )
+    row = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
+    listed = await http.get("/api/v1/workspaces", headers=auth())
+    mine = next(r for r in listed.json() if r["id"] == wid)
+    assert mine["mount_issues"] == row.json()["mount_issues"]
+    assert mine["mount_issues"][0]["kind"] == "skipped"
+
+
 async def test_host_mounts_hold_no_rw_exclusivity(
     client,  # noqa: F811
     tmp_path: Path,

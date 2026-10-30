@@ -786,12 +786,15 @@ def check_host_path_shape(host_path: str) -> None:
     """The shape refusals for one host path: absolute, no
     traversal component, and not the filesystem root — the
     last because a share root is one host tree, and the whole
-    filesystem is not one. No charset gate here, by contrast
-    with the guest paths' printable-ASCII rule: macOS folder
-    names carry arbitrary unicode, so the rule would refuse
-    legitimate shares — the guest rule exists for unit files,
-    a constraint this side does not have."""
+    filesystem is not one. Unicode stays allowed by contrast
+    with the guest paths' printable-ASCII rule (macOS folder
+    names carry it legitimately); control characters do not —
+    a newline in a path is legal POSIX but lands verbatim in the
+    guest mount unit's Description, where it would inject
+    directives (#672 review: the same injection the guest
+    grammar's charset rule exists to prevent)."""
     path = PurePosixPath(host_path)
+    check_host_path_controls(host_path)
     if not path.is_absolute():
         raise ValueError(f"share path {host_path!r} must be absolute")
     if ".." in path.parts:
@@ -858,6 +861,18 @@ def check_daemon_namespace_path(vm_path: str) -> None:
     if not isinstance(vm_path, str) or not vm_path:
         raise ValueError("a daemon-namespace path must be a non-empty string")
     check_host_path_shape(vm_path)
+
+
+def check_host_path_controls(host_path: str) -> None:
+    """One host path carries no control characters: C0 and DEL
+    are refused wherever they appear (a newline is legal POSIX
+    and injects directives into the guest unit's Description
+    line; a tab breaks the mount table's field split the same
+    way). Unicode passes — the macOS folder-name rationale."""
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in host_path):
+        raise ValueError(
+            f"share path {host_path!r} must not contain control characters"
+        )
 
 
 def check_host_mode(mode: str) -> None:

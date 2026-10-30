@@ -15,6 +15,7 @@ from ...spec.mounts import (
     MODE_RW,
     MountIssue,
     mount_issues,
+    named_only,
     parse_mounts,
     validate_mounts,
 )
@@ -366,15 +367,9 @@ def checked_mounts(app, raw_mounts: list) -> tuple:
         validate_mounts(mounts)
     except ValueError as exc:
         raise exc from None
-    check_mounts_config(app, named_mounts(mounts))
+    check_mounts_config(app, named_only(mounts))
     check_host_mounts(app, mounts)
     return mounts
-
-
-def named_mounts(mounts: tuple) -> tuple:
-    """The named-form subset — the half the config's share table
-    bounds (#620); the host half carries its own gates."""
-    return tuple(mount for mount in mounts if mount.host is None)
 
 
 def check_host_mounts(app, mounts: tuple) -> None:
@@ -467,16 +462,18 @@ async def list_mount_issues(app, rows: list[dict]) -> dict[str, tuple]:
             record_rw_holders(holders, other)
     shares = {share.name: share for share in app.state.settings.mounts.shares}
     return {
-        row["id"]: listed_mount_issues(row, shares, holders) for row in rows
+        row["id"]: listed_mount_issues(app, row, shares, holders)
+        for row in rows
     }
 
 
 def listed_mount_issues(
-    row: dict, shares: dict, holders: dict[str, str]
+    app, row: dict, shares: dict, holders: dict[str, str]
 ) -> tuple:
     """One listed row's derived issues: the whole table's holder
     map minus its own holds — a row never conflicts with its own
-    attachments."""
+    attachments. Host-form mounts run their gates too (#672), so
+    the listing's markers match the row read's."""
     mounts = parse_mounts(row.get("mounts"))
     row_holders = {
         share: holder
@@ -484,4 +481,17 @@ def listed_mount_issues(
         if holder != row["id"]
     }
     issues = mount_issues(mounts, shares, row_holders)
-    return (*issues, *drift_issues(mounts, shares))
+    return (
+        *issues,
+        *drift_issues(mounts, shares),
+        *listed_host_issues(app, mounts),
+    )
+
+
+def listed_host_issues(app, mounts: tuple) -> tuple:
+    """The host-form subset's gate issues (#672): the same gates
+    the row read runs, hoisted past the empty case — a listing
+    without host mounts reads no mount table at all."""
+    if not any(mount.host is not None for mount in mounts):
+        return ()
+    return host_mount_issues(app, mounts)

@@ -21,7 +21,9 @@ tagged `vX.Y.Z`.
   host form mounts read-only unless it says `rw`. The virtiofsd
   lifecycle, the cloud-hypervisor `--fs` wiring, and the guest
   mount units are the #620 machinery, keyed by a tag derived
-  from the path.
+  from the path. See the [mounts
+  chapter](mounts.md#the-host-form) for the two gates and their
+  refusal remedies.
 
 - **Lima template share roots under the reserved prefix
   (#671).** The msksd-VM Lima template ships in the wheel

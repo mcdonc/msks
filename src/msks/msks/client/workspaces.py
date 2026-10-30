@@ -482,15 +482,23 @@ def issue_notes(row: dict) -> str:
     if not issues:
         return ""
     notes = "; ".join(
-        f"{i['share']} {i['kind']} ({i['detail']})" for i in issues
+        f"{mount_identity(i)} {i['kind']} ({i['detail']})" for i in issues
     )
     return f" — {notes}"
 
 
+def mount_identity(entry: dict) -> str:
+    """What a mount row or issue frame serves, by its form: the
+    host path for a #672 host mount, the share name for a named
+    one — the one key either frame always carries."""
+    return entry.get("host") or entry.get("share") or "?"
+
+
 def spec_text(mount: dict) -> str:
-    """One mount's ``SHARE:GUEST:MODE`` spelling — the mode always
-    shown, the wire's default named."""
-    return f"{mount['share']}:{mount['guest']}:{mount.get('mode') or 'rw'}"
+    """One mount's ``HOST-OR-SHARE:GUEST:MODE`` spelling — the
+    mode always shown, the wire's default named per form."""
+    mode = mount.get("mode") or ("ro" if "host" in mount else "rw")
+    return f"{mount_identity(mount)}:{mount['guest']}:{mode}"
 
 
 def run_resize(

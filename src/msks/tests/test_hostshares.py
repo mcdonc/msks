@@ -22,6 +22,7 @@ from msks.spec.mounts import (
     HOST_TAG_PREFIX,
     SHARE_ROOT_PREFIX,
     MountSpec,
+    canonical_host_path,
     dump_mounts,
     mount_tag,
     mount_unit,
@@ -302,6 +303,22 @@ def test_mount_settings_carry_the_gate_inputs(tmp_path: Path) -> None:
 
 
 # --- the remaining grammar and payload edges -------------------------
+
+
+def test_control_characters_are_refused_unicode_passes() -> None:
+    """A newline in a host path is legal POSIX but lands verbatim
+    in the guest mount unit's Description, where it would inject
+    directives — C0 and DEL are refused at parse. Unicode folder
+    names pass: the macOS rationale the shape rules carry."""
+    with pytest.raises(ValueError, match="control characters"):
+        canonical_host_path("/Users/p/co\nde")
+    with pytest.raises(ValueError, match="control characters"):
+        canonical_host_path("/Users/p/ta\tb")
+    with pytest.raises(ValueError, match="control characters"):
+        canonical_host_path("/Users/p/del\x7f")
+    assert canonical_host_path("/Users/chrism/Ünïcode") == (
+        "/Users/chrism/Ünïcode"
+    )
 
 
 def test_a_non_string_host_field_is_a_named_refusal() -> None:

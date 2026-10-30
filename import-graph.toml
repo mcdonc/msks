@@ -266,7 +266,10 @@ secretcache = 2
 # refusal's frames.
 # #620 part #624: the set-time gate reads the row rules'
 # validate_mounts (one name on the rows' mount statement).
-spec = 36
+# #672: one more name — named_only, the named-form subset the
+# set-time gate bounds (deduplicated from the rows' local
+# helper).
+spec = 37
 storage = 13
 
 [snapshot.settings]
