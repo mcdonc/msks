@@ -2,7 +2,7 @@
 page's mounts line and the list editor screen.
 
 The editor edits the row's whole mount list — a workspace mounts
-several different shares at once — one ``SHARE:GUEST_PATH[:MODE]``
+several mounts at once — one ``HOST-OR-SHARE:GUEST_PATH[:MODE]``
 row each (the mode defaults to ``rw``), with add, edit, and remove
 per row. Every change posts the full list through the daemon's
 mounts route (next-start semantics, like resize: a running
@@ -43,13 +43,24 @@ def mount_spec_text(mount: dict) -> str:
 
 def issue_for(mount: dict, issues: list[dict]) -> dict | None:
     """The derived issue naming one mount, if any: matched on the
-    share and the guest path — the pair a row names."""
+    form's naming key — the share name or the host path — beside
+    the guest path, the pair a row names."""
     for issue in issues or []:
-        if issue.get("share") == mount.get("share") and issue.get(
-            "guest"
-        ) == mount.get("guest"):
+        if issue_names(issue, mount):
             return issue
     return None
+
+
+def issue_names(issue: dict, mount: dict) -> bool:
+    """Whether an issue frame names one mount: each naming key
+    present on either side agrees (``None == None`` included — a
+    frame and a row of one form carry no key for the other), and
+    the guest path matches."""
+    return (
+        issue.get("share") == mount.get("share")
+        and issue.get("host") == mount.get("host")
+        and issue.get("guest") == mount.get("guest")
+    )
 
 
 def mount_row_text(mount: dict, issues: list[dict]) -> str:
@@ -109,7 +120,7 @@ def mount_state_text(mount: dict, issues: list[dict]) -> str:
 class MountEditScreen(ModalScreen[str | None]):
     """One mount's spec on a single line (#620, part #624): the
     editor's add and edit path share it — the input holds the
-    CLI's own ``SHARE:GUEST_PATH[:MODE]`` grammar, seeded with the
+    CLI's own ``HOST-OR-SHARE:GUEST_PATH[:MODE]`` grammar, seeded with the
     row being edited. Enter accepts, Escape cancels."""
 
     BINDINGS = [
@@ -190,11 +201,8 @@ class MountsScreen(ModalScreen[dict | None]):
         ]
         if items:
             return items
-        return [
-            ListItem(
-                Static("no mounts — press a to add SHARE:GUEST_PATH[:MODE]")
-            )
-        ]
+        prompt = "no mounts — press a to add HOST-OR-SHARE:GUEST_PATH[:MODE]"
+        return [ListItem(Static(prompt))]
 
     def note(self, text: str) -> None:
         """The editor's note line: what the last change did, or
@@ -249,7 +257,7 @@ class MountsScreen(ModalScreen[dict | None]):
         line joins the list before the focused row's position —
         the new mount lands where the editor stands."""
         self.app.push_screen(
-            MountEditScreen("add  SHARE:GUEST_PATH[:MODE]"),
+            MountEditScreen("add  HOST-OR-SHARE:GUEST_PATH[:MODE]"),
             self.added,
         )
 
@@ -273,7 +281,7 @@ class MountsScreen(ModalScreen[dict | None]):
             return
         self.app.push_screen(
             MountEditScreen(
-                "edit  SHARE:GUEST_PATH[:MODE]",
+                "edit  HOST-OR-SHARE:GUEST_PATH[:MODE]",
                 initial=mount_spec_text(mount),
             ),
             self.edited,
