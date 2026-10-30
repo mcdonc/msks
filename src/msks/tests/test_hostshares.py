@@ -299,3 +299,37 @@ def test_mount_settings_carry_the_gate_inputs(tmp_path: Path) -> None:
     )
     assert settings.host_mode == HOST_MODE_PREFIX
     assert settings.host_roots == ("/Users/p",)
+
+
+# --- the remaining grammar and payload edges -------------------------
+
+
+def test_a_non_string_host_field_is_a_named_refusal() -> None:
+    with pytest.raises(ValueError, match="needs a host path"):
+        parse_mounts([{"host": 5, "guest": "/mnt"}])
+
+
+def test_an_issue_payload_carries_the_form_key() -> None:
+    from msks.spec.mounts import MountIssue
+
+    host = MountSpec(guest="/mnt/code", mode="ro", host="/Users/p/code")
+    frame = MountIssue(kind="skipped", mount=host, detail="why").payload("ws")
+    assert frame == {
+        "id": "ws",
+        "host": "/Users/p/code",
+        "guest": "/mnt/code",
+        "mode": "ro",
+        "detail": "why",
+    }
+
+
+def test_a_truncated_escape_reads_as_its_characters(tmp_path: Path) -> None:
+    """An escape-shaped run that is not a full octal triplet — a
+    backslash at the field's end, or two digits — reads as its
+    literal characters, the same decoding the kernel's writer
+    guarantees never to produce."""
+    table = tmp_path / "mounts"
+    table.write_text(mounts_text((f"{SHARE_ROOT_PREFIX}/a\\04b", "virtiofs")))
+    assert mounted_share_roots(table) == (f"{SHARE_ROOT_PREFIX}/a\\04b",)
+    table.write_text(mounts_text((f"{SHARE_ROOT_PREFIX}/tail\\", "virtiofs")))
+    assert mounted_share_roots(table) == (f"{SHARE_ROOT_PREFIX}/tail\\",)
