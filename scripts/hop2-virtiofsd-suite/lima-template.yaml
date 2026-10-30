@@ -1,0 +1,40 @@
+# Two-hop rig for mcdonc/msks#670: virtiofsd exporting a VZ virtiofs
+# mount into a nested cloud-hypervisor workspace VM. Mirrors the msks
+# course rig (#649): same Debian trixie image/digest, vz backend,
+# nested virtualization, LLMNR workaround. Differences: 20GiB disk,
+# 6GiB RAM (the nested guest runs inside), scratch dir ~/hop2 rw.
+vmType: vz
+arch: aarch64
+nestedVirtualization: true
+cpus: 4
+memory: 6GiB
+disk: 20GiB
+mounts:
+  - location: /Users/chrism/hop2
+    writable: true
+mountTypesUnsupported: [9p]
+images:
+  - location: "https://cloud.debian.org/images/cloud/trixie/20261001-2618/debian-13-genericcloud-arm64-20261001-2618.qcow2"
+    arch: "aarch64"
+    digest: "sha512:d8470b8c6c38fead046c794b5800a5a7b96672d5bcf543cc230ceb0c4b8ace05ed341a0c8928045422243fde26b2f1f2f58e99244c65709ffda2e3d4b674dd5a"
+    variant: "genericcloud"
+  - location: https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-genericcloud-arm64-daily.qcow2
+    arch: aarch64
+    variant: "genericcloud"
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      command -v systemctl >/dev/null 2>&1 || exit 0
+      command -v resolvectl >/dev/null 2>&1 || exit 0
+      conf_path=/etc/systemd/resolved.conf.d/10-lima-disable-llmnr.conf
+      conf_content='[Resolve]
+      LLMNR=no
+      '
+      if [ "$(echo "${conf_content}" | sha256sum)" != "$(sha256sum <"${conf_path}" 2>/dev/null)" ]; then
+        mkdir -p "$(dirname "${conf_path}")"
+        echo "${conf_content}" >"${conf_path}"
+        systemctl daemon-reload
+        systemctl restart systemd-resolved.service
+      fi
