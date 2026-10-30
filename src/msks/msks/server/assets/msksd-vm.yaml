@@ -1,0 +1,101 @@
+# The msksd VM on macOS (#667, part #671).
+#
+# The daemon's host when the operator is on a Mac: Lima runs this
+# VM under Apple Virtualization with nested virtualization on, so
+# workspaces boot inside it on /dev/kvm (the #637 arm64 images),
+# and the operator's macOS folders arrive over vz virtiofs — the
+# hop-1 transport the repro suites in scripts/vz-hardlink-repro/
+# and scripts/hop2-virtiofsd-suite/ validated.
+#
+# The share-root machinery: every share root mounts under the
+# reserved prefix /mnt/msks (msks.spec.mounts.SHARE_ROOT_PREFIX).
+# The daemon's host-mode translation composes a host path onto
+# that prefix — the WSL /mnt/c shape, /Users/chrism appears at
+# /mnt/msks/Users/chrism — and the suffix stays the host path, so
+# no mapping table exists anywhere. The default root is the
+# invoking macOS user's home, writable: Lima expands "~" on the
+# host side and renders "{{.User}}" on the guest side, so this
+# one file serves every user unchanged. Mounting more roots is a
+# template edit plus VM recreation — vz mounts are fixed at VM
+# start, and the client names that requirement when it applies
+# (#673). Every mountPoint here must keep the reserved-prefix
+# shape; the validators in msks.spec.mounts refuse one that does
+# not.
+#
+# msks-setup-macos-host (#676) instantiates this file; the
+# daemon-side gates against the roots mounted here are #672.
+
+vmType: vz
+arch: aarch64
+nestedVirtualization: true
+minimumLimaVersion: 2.2.1
+
+cpus: 4
+memory: 8GiB
+disk: 60GiB
+
+mounts:
+  # The default share root: the invoking user's home (#667). The
+  # writable default here is the mount gate, not the policy gate —
+  # msksd.conf's allowed roots still bound what workspaces may
+  # receive, and read-only is the per-share default at attach.
+  - location: "~"
+    mountPoint: /mnt/msks/Users/{{.User}}
+    writable: true
+
+# vz virtiofs is the only hop-1 transport the suites validated;
+# 9p carries the permissions and rename quirks that ban it.
+mountTypesUnsupported: [9p]
+
+# Host-originated file events do not cross virtiofs (#667's
+# accepted posture): watchers on shared trees poll, and no event
+# bridge ships.
+mountInotify: false
+
+ssh:
+  loadDotSSHPubKeys: false
+
+video:
+  display: none
+
+tpm: false
+
+# The daemon VM runs no containers of its own — user-mode
+# containerd stays off so the instance boots without downloading
+# the nerdctl archives.
+containerd:
+  system: false
+  user: false
+
+images:
+  - location: "https://cloud.debian.org/images/cloud/trixie/20261001-2618/debian-13-genericcloud-arm64-20261001-2618.qcow2"
+    arch: "aarch64"
+    digest: "sha512:d8470b8c6c38fead046c794b5800a5a7b96672d5bcf543cc230ceb0c4b8ace05ed341a0c8928045422243fde26b2f1f2f58e99244c65709ffda2e3d4b674dd5a"
+    variant: "genericcloud"
+  # Fallback when the pinned release image leaves the mirror.
+  - location: https://cloud.debian.org/images/cloud/trixie/daily/latest/debian-13-genericcloud-arm64-daily.qcow2
+    arch: "aarch64"
+    variant: "genericcloud"
+
+provision:
+  # Debian 13's sshd passes an UNKNOWN peer address for vsock
+  # connections to Linux audit, which tries to resolve it via
+  # LLMNR and delays interactive SSH logins.
+  # https://github.com/lima-vm/lima/issues/5389
+  # https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1147100
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      command -v systemctl >/dev/null 2>&1 || exit 0
+      command -v resolvectl >/dev/null 2>&1 || exit 0
+      conf_path=/etc/systemd/resolved.conf.d/10-lima-disable-llmnr.conf
+      conf_content='[Resolve]
+      LLMNR=no
+      '
+      if [ "$(echo "${conf_content}" | sha256sum)" != "$(sha256sum <"${conf_path}" 2>/dev/null)" ]; then
+        mkdir -p "$(dirname "${conf_path}")"
+        echo "${conf_content}" >"${conf_path}"
+        systemctl daemon-reload
+        systemctl restart systemd-resolved.service
+      fi
