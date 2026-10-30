@@ -271,9 +271,9 @@ class MountIn(BaseModel):
     """One mount on the wire (#620, #672): the configured share's
     name, or a host path through the #667 gates — exactly one of
     the two, refused by name when both or neither arrive. The
-    absolute guest path, and the mode — ``rw`` when omitted on
-    the share form, ``ro`` when omitted on the host form (#667:
-    writable is the opt-in). Unknown keys refuse (a typo'd
+    absolute guest path, and the mode — ``rw`` when omitted. The
+    trust decision precedes the mode: the share is listed or the
+    root allowed. Unknown keys refuse (a typo'd
     ``modee`` must not silently drop the mode it misspelled,
     landing the trust-bearing default)."""
 

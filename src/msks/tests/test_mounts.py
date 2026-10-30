@@ -1390,13 +1390,14 @@ def host_world(tmp_path: Path) -> MountSettings:
     return MountSettings(host_mode="identity", host_roots=(str(tmp_path),))
 
 
-async def test_a_host_mount_creates_read_only_by_default(
+async def test_a_host_mount_creates_read_write_by_default(
     client,  # noqa: F811
     tmp_path: Path,
 ) -> None:
     """The #667 client surface behind the API: a host-path mount
-    lands on the row read-only unless it says ``rw`` — writable
-    is the opt-in — and the row round-trips the host path."""
+    lands on the row read-write unless it says ``ro`` — the same
+    default the named form carries — and the row round-trips the
+    host path."""
     http, app, _stub = client
     code = tmp_path / "code"
     code.mkdir()
@@ -1413,7 +1414,7 @@ async def test_a_host_mount_creates_read_only_by_default(
     )
     assert created.status_code == 201, created.text
     assert created.json()["mounts"] == [
-        {"host": str(code), "guest": "/mnt/code", "mode": "ro"}
+        {"host": str(code), "guest": "/mnt/code", "mode": "rw"}
     ]
 
 
@@ -1516,7 +1517,7 @@ async def test_a_narrowed_reload_skips_the_host_mount(
             "kind": "skipped",
             "host": str(code),
             "guest": "/mnt/code",
-            "mode": "ro",
+            "mode": "rw",
             "detail": (
                 f"host path {str(code)!r} is outside the allowed "
                 "host-share roots; add it (or a parent directory) to "

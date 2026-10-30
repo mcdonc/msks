@@ -195,21 +195,21 @@ def test_prefix_mode_policy_gate_names_the_config(
 # --- the host-form row grammar ---------------------------------------
 
 
-def test_host_rows_parse_with_the_ro_default() -> None:
+def test_host_rows_parse_with_the_rw_default() -> None:
     mounts = parse_mounts([{"host": "/Users/p/code", "guest": "/mnt/code"}])
     assert mounts == (
-        MountSpec(guest="/mnt/code", mode="ro", host="/Users/p/code"),
+        MountSpec(guest="/mnt/code", mode="rw", host="/Users/p/code"),
     )
     assert dump_mounts(mounts) == (
-        '[{"guest": "/mnt/code", "mode": "ro", "host": "/Users/p/code"}]'
+        '[{"guest": "/mnt/code", "mode": "rw", "host": "/Users/p/code"}]'
     )
 
 
-def test_host_rows_take_rw_explicitly() -> None:
+def test_host_rows_take_ro_explicitly() -> None:
     mounts = parse_mounts(
-        [{"host": "/Users/p/code", "guest": "/mnt/code", "mode": "rw"}]
+        [{"host": "/Users/p/code", "guest": "/mnt/code", "mode": "ro"}]
     )
-    assert mounts[0].mode == "rw"
+    assert mounts[0].mode == "ro"
 
 
 def test_a_row_names_one_form() -> None:

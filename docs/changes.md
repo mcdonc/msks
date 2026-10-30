@@ -18,7 +18,9 @@ tagged `vX.Y.Z`.
   in `MSKSD_MOUNT_HOST_ROOTS` (both refusing at set time with
   their remedy: VM recreation, or the config edit), and refuses
   symlinks that resolve outside what the operator allowed. The
-  host form mounts read-only unless it says `rw`. The virtiofsd
+  host form defaults to `rw`, the same default the named form
+  carries — the trust decision (the share listed or the root
+  allowed) precedes the mode. The virtiofsd
   lifecycle, the cloud-hypervisor `--fs` wiring, and the guest
   mount units are the #620 machinery, keyed by a tag derived
   from the path. See the [mounts

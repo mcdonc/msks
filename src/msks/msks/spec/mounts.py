@@ -25,11 +25,11 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 #: The attach modes: ``ro`` serves the share read-only, ``rw``
-#: read-write. The named form defaults to ``rw`` (listing a share
-#: is the trust decision); the host form defaults to ``ro`` (#667:
-#: a workspace mounting a user's home read-write by default
-#: repeats the worst footgun in the space — writable is the
-#: opt-in, spelled ``rw``).
+#: read-write — the default for both forms. The trust decision
+#: is made before the mode matters: the named form's operator
+#: listed the share, the host form's operator allowed the root
+#: (``MSKSD_MOUNT_HOST_ROOTS``); a mount that wants less names
+#: ``ro`` explicitly.
 MOUNT_MODES = ("ro", "rw")
 MODE_RO = "ro"
 MODE_RW = "rw"
@@ -89,9 +89,9 @@ class MountSpec:
     lands at, and its mode — with the share named one of two ways.
     The named form (``share``) points at an operator-configured
     share (#620); the host form (``host``) carries an
-    operator-typed host path through the #667 gates (#672), and
-    its ``mode`` defaults to read-only. Exactly one of the two is
-    set; `mount_tag` gives both forms one device name."""
+    operator-typed host path through the #667 gates (#672).
+    Exactly one of the two is set; `mount_tag` gives both forms
+    one device name."""
 
     share: str = ""
     guest: str = ""
@@ -194,13 +194,13 @@ def mount_entry(entry: object) -> MountSpec:
     if host is not None:
         return MountSpec(
             guest=guest,
-            mode=mount_mode_field(entry, default=MODE_RO),
+            mode=mount_mode_field(entry),
             host=canonical_host_path(host_field(entry)),
         )
     return MountSpec(
         share=mount_text_field(entry, "share"),
         guest=guest,
-        mode=mount_mode_field(entry, default=MODE_RW),
+        mode=mount_mode_field(entry),
     )
 
 
@@ -264,11 +264,10 @@ def mount_text_field(entry: dict, key: str) -> str:
     return value
 
 
-def mount_mode_field(entry: dict, *, default: str) -> str:
-    """The entry's mode: absent reads the form's default (``rw``
-    for named shares, ``ro`` for host paths), any other value is a
-    named error."""
-    mode = entry.get("mode", default)
+def mount_mode_field(entry: dict) -> str:
+    """The entry's mode: absent reads the ``rw`` default, any
+    other value is a named error."""
+    mode = entry.get("mode", MODE_RW)
     if mode not in MOUNT_MODES:
         raise ValueError(
             f"mount mode must be one of {list(MOUNT_MODES)}, got {mode!r}"

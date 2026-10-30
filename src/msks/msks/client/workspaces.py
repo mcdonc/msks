@@ -497,7 +497,7 @@ def mount_identity(entry: dict) -> str:
 def spec_text(mount: dict) -> str:
     """One mount's ``HOST-OR-SHARE:GUEST:MODE`` spelling — the
     mode always shown, the wire's default named per form."""
-    mode = mount.get("mode") or ("ro" if "host" in mount else "rw")
+    mode = mount.get("mode") or "rw"
     return f"{mount_identity(mount)}:{mount['guest']}:{mode}"
 
 

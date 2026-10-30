@@ -85,10 +85,13 @@ prefix`): the path, translated under `/mnt/msks`, must sit
    the same way — the share cannot walk out of what the
    operator allowed.
 
-A host-form mount attaches read-only unless it says `rw` —
-writable is the opt-in. Read-write host mounts hold no
-exclusivity: any number of workspaces may attach the same tree,
-and the coherence contract (below) is their concurrency story.
+A host-form mount attaches read-write unless it says `ro` —
+the same default the named form carries, and for the same
+reason: the trust decision is made before the mode matters (the
+share is listed or the root allowed); a mount that wants less
+names `ro`. Read-write host mounts hold no exclusivity: any
+number of workspaces may attach the same tree, and the coherence
+contract (below) is their concurrency story.
 
 ## The skip behavior
 

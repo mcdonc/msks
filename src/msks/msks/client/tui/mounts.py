@@ -35,9 +35,8 @@ SPEC_W = 44
 def mount_spec_text(mount: dict) -> str:
     """One mount row's spec: ``HOST-OR-SHARE:GUEST_PATH:MODE`` —
     the words the CLI's ``--mount`` takes, the mode always shown
-    so the row reads whole (each form's wire default: ``ro`` for
-    host mounts, ``rw`` for named ones)."""
-    mode = mount.get("mode") or ("ro" if "host" in mount else "rw")
+    so the row reads whole (the wire's default is ``rw``)."""
+    mode = mount.get("mode") or "rw"
     served = mount.get("host") or mount.get("share")
     return f"{served}:{mount.get('guest')}:{mode}"
 
