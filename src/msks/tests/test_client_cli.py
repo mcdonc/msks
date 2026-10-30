@@ -4998,6 +4998,12 @@ def test_mount_spec_takes_the_host_form() -> None:
         # the client sends it as one, and the daemon's canonical-
         # host-path rule refuses it in the 400 — no local refusal.
         ("/Users/x/code:/mnt/c:wo", "mode must be ro or rw"),
+        # A ~user prefix naming an account the client host cannot
+        # resolve expands to itself — relative, refused here.
+        (
+            "~no-such-account-msks-673/code:/mnt/c",
+            "must be absolute after ~ expands",
+        ),
     ],
 )
 def test_host_share_spec_refuses_bad_shapes(spec: str, why: str) -> None:
