@@ -6,6 +6,20 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Added
+
+- **Lima template share roots under the reserved prefix
+  (#671).** The msksd-VM Lima template ships in the wheel
+  (`msks/server/assets/msksd-vm.yaml`) with every share root
+  mounted under `/mnt/msks` — the WSL `/mnt/c` shape, so an
+  operator's `/Users/name` appears at
+  `/mnt/msks/Users/name` — and the default root (the invoking
+  user's home, writable) declared at VM creation. The
+  host-share vocabulary in `msks.spec.mounts` carries the
+  prefix, the host-mode translation (`identity` on bare Linux,
+  `prefix` on VM hosts), and the template validation that
+  refuses a mount outside the reserved-prefix shape.
+
 ### Fixed
 
 - **doctor's apple-kvm row gates on the NV-mode marker (#664).**

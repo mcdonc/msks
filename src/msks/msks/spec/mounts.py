@@ -7,6 +7,16 @@ here own that grammar — the row shape, the guest-path rules, the
 mode bound, and the start-time issue derivation — with no
 filesystem or daemon imports, so the settings parser, the
 routes, and the attach path all speak one vocabulary.
+
+The same module owns the host-share geometry of #667 (#671): the
+reserved prefix a VM-hosted daemon's own VM mounts share roots
+under, the host-mode rule that translates operator-typed host
+paths to the paths inside that VM, and the validation that a
+share-root template's mounts conform (every root under the
+prefix, every mountPoint the prefix plus the host path). Those
+rules are string-level by design — the daemon-side realpath and
+policy gates (#672) and the VM's own mount state live above the
+leaf.
 """
 
 import hashlib
@@ -633,3 +643,191 @@ def mounts_seed_block(mounts: tuple[MountSpec, ...]) -> str:
         "mounts none of them' >&2\n"
         "fi\n"
     )
+
+
+# --- The host-share geometry (#667, part #671) -----------------
+
+#: The reserved prefix every share root mounts under inside a
+#: VM-hosted daemon's own VM — the msksd VM Lima runs on a Mac
+#: (the WSL ``/mnt/c`` shape: the operator's ``/Users/chrism``
+#: appears at ``/mnt/msks/Users/chrism``). One constant for the
+#: whole feature: the Lima template pins its mountPoints to it,
+#: the daemon's host-mode translation composes host paths onto
+#: it (#672), and every refusal message names it. A namespace
+#: the Linux FHS never claims, so a share root cannot shadow VM
+#: system state the way a same-path mount would — the structural
+#: safety that replaces an allowlist of "safe" host paths.
+SHARE_ROOT_PREFIX = "/mnt/msks"
+
+#: The daemon's host modes (#667): ``identity`` — a bare-Linux
+#: daemon, share roots are its own local paths and the path the
+#: client sends is the path on disk; ``prefix`` — the daemon runs
+#: inside its own VM (the Lima/macOS host), share roots are host
+#: directories mounted under SHARE_ROOT_PREFIX and translation
+#: composes the prefix. The daemon's settings pick the mode
+#: (#672); the two names are the whole of the rule.
+HOST_MODE_IDENTITY = "identity"
+HOST_MODE_PREFIX = "prefix"
+HOST_MODES = (HOST_MODE_IDENTITY, HOST_MODE_PREFIX)
+
+
+def canonical_host_path(host_path: str) -> str:
+    """One operator-typed host path in canonical form: absolute,
+    no ``..`` component, separators collapsed, trailing slash
+    dropped. The same shape rule the guest paths take (a ``..``
+    is refused, never silently collapsed), so a path the client
+    sends cannot dodge the prefix and policy checks with
+    spelling tricks."""
+    if not isinstance(host_path, str) or not host_path:
+        raise ValueError("a share path must be a non-empty string")
+    check_host_path_shape(host_path)
+    return canonical_guest(str(PurePosixPath(host_path)))
+
+
+def check_host_path_shape(host_path: str) -> None:
+    """The shape refusals for one host path: absolute, no
+    traversal component, and not the filesystem root — the
+    last because a share root is one host tree, and the whole
+    filesystem is not one."""
+    path = PurePosixPath(host_path)
+    if not path.is_absolute():
+        raise ValueError(f"share path {host_path!r} must be absolute")
+    if ".." in path.parts:
+        raise ValueError(f"share path {host_path!r} must not contain '..'")
+    if not path.parts[1:]:
+        raise ValueError(
+            "a share root is one host tree, not the filesystem root"
+        )
+
+
+def translate_host_path(mode: str, host_path: str) -> str:
+    """The path one share root takes inside the daemon's own
+    namespace (#667): under ``identity`` the host path itself;
+    under ``prefix`` SHARE_ROOT_PREFIX with the host path
+    composed on (``/Users/chrism/code`` →
+    ``/mnt/msks/Users/chrism/code``). The inverse spelling of the
+    same rule is `untranslate_vm_path`; both refuse a path the
+    rule cannot carry, naming it."""
+    check_host_mode(mode)
+    canonical = canonical_host_path(host_path)
+    if mode == HOST_MODE_IDENTITY:
+        return canonical
+    # String composition, not a pathlib join: the host path is
+    # absolute, and joining an absolute path onto a base replaces
+    # the base outright.
+    return SHARE_ROOT_PREFIX + canonical
+
+
+def untranslate_vm_path(mode: str, vm_path: str) -> str:
+    """The operator-facing host path a daemon-namespace path
+    spells: under ``identity`` the path itself; under ``prefix``
+    the part under SHARE_ROOT_PREFIX, refused when the path does
+    not sit under it. The refusal-message half of the
+    translation — the daemon reports paths the operator typed,
+    not the geometry of its own VM."""
+    check_host_mode(mode)
+    path = PurePosixPath(canonical_guest(vm_path))
+    if mode == HOST_MODE_IDENTITY:
+        return str(path)
+    if not under_root(path, SHARE_ROOT_PREFIX):
+        raise ValueError(
+            f"path {vm_path!r} is not under {SHARE_ROOT_PREFIX}; a "
+            "prefix-mode host path always is"
+        )
+    base = PurePosixPath(SHARE_ROOT_PREFIX).parts[1:]
+    rest = path.parts[1 + len(base) :]
+    if not rest:
+        raise ValueError(
+            f"{SHARE_ROOT_PREFIX} is the reserved prefix itself; a "
+            "share root mounts under it"
+        )
+    return "/" + "/".join(rest)
+
+
+def check_host_mode(mode: str) -> None:
+    """One of the two host modes; anything else is a named error
+    — the mode comes from the daemon's own settings, so a bad
+    value is a configuration bug to catch at load, not a path
+    decision at attach."""
+    if mode not in HOST_MODES:
+        raise ValueError(f"host mode must be one of {list(HOST_MODES)}")
+
+
+@dataclass(frozen=True)
+class ShareRoot:
+    """One share root a VM-hosted daemon's template mounts (#667):
+    the host tree (``location``, as Lima rendered it — ``~`` and
+    ``{{.User}}`` already expanded) and the path it mounts at
+    inside the daemon VM. The pair is validated at construction —
+    the mountPoint is always the reserved prefix plus the host
+    path, the suffix-preservation invariant the daemon's
+    translation and the client's paths both rely on."""
+
+    location: str
+    mount_point: str
+
+
+def share_root_row(location: str, mount_point: str | None) -> ShareRoot:
+    """Validate one rendered template mount (#667): the location
+    is a canonical host path and the mountPoint is exactly
+    SHARE_ROOT_PREFIX plus it — the WSL shape, checked on the
+    rendered pair (Lima expanded ``~`` and ``{{.User}}`` before
+    the validator ever runs). A mountPoint that misses the
+    prefix, lands beside it, or carries no mountPoint at all
+    (Lima's same-path default — the shadowing the prefix exists
+    to prevent) is a named refusal."""
+    host_path = canonical_host_path(location)
+    if mount_point is None:
+        raise ValueError(
+            f"mount of {location!r} carries no mountPoint; Lima's "
+            "default mounts the host path itself — share roots "
+            f"mount under {SHARE_ROOT_PREFIX}"
+        )
+    expected = translate_host_path(HOST_MODE_PREFIX, host_path)
+    rendered = canonical_guest(mount_point)
+    if rendered != expected:
+        raise ValueError(
+            f"mount of {location!r} at {mount_point!r} breaks the "
+            "reserved-prefix shape; the share root mounts at "
+            f"{expected}"
+        )
+    return ShareRoot(location=host_path, mount_point=rendered)
+
+
+def share_roots_from_template(rows: object) -> tuple[ShareRoot, ...]:
+    """The share roots a Lima template's ``mounts`` list declares,
+    validated as a set (#667): every row conforms
+    (`share_root_row`), and no location mounts twice — the only
+    duplicate the shape admits, since the invariant derives each
+    mountPoint from its location. Rows may nest — an operator
+    mounting a deeper tree beside a wider one composes the two
+    virtiofs mounts the way a nested bind mount would, and
+    translation stays well-defined (each host path composes onto
+    the prefix either way). Lima's own row keys (``sshfs``,
+    ``9p``, …) pass through untouched: Lima validates its
+    grammar, this module the geometry."""
+    if not isinstance(rows, list):
+        raise ValueError("a template's mounts must be a list")
+    roots = tuple(share_root_mount(row) for row in rows)
+    seen_locations: set[str] = set()
+    for root in roots:
+        if root.location in seen_locations:
+            raise ValueError(
+                f"host path {root.location!r} is mounted twice in the template"
+            )
+        seen_locations.add(root.location)
+    return roots
+
+
+def share_root_mount(row: object) -> ShareRoot:
+    """One template row to a share root: a mapping carrying
+    ``location`` and ``mountPoint`` as strings — the rendered
+    pair `share_root_row` validates. A row of any other shape is
+    a named error (the caller parsed the template; a bad row is
+    a template bug to catch here, not at VM boot)."""
+    if not isinstance(row, dict):
+        raise ValueError(
+            "template mounts entries must be mappings, "
+            f"got {type(row).__name__}"
+        )
+    return share_root_row(row.get("location"), row.get("mountPoint"))

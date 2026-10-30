@@ -6,6 +6,12 @@ rules and mode bound, the start-time issue derivation (missing
 share, rw conflict on an exclusive share, ro beside rw), the
 model roundtrip, and the start hook: a start with skipped mounts
 succeeds and publishes one event per skip.
+
+Also covers the host-share geometry of #667 (#671): the reserved
+prefix and the host-mode translation's two spellings, the
+share-root row validation (the suffix-preservation invariant and
+its refusals), the template-level set rules, and the shipped
+Lima template's conformance to all of it.
 """
 
 import json
@@ -23,12 +29,21 @@ from msks.settings import (
     mount_shares_from,
 )
 from msks.spec.mounts import (
+    HOST_MODE_IDENTITY,
+    HOST_MODE_PREFIX,
     MODE_RW,
+    SHARE_ROOT_PREFIX,
     MountShare,
     MountSpec,
+    ShareRoot,
+    canonical_host_path,
     dump_mounts,
     mount_issues,
     parse_mounts,
+    share_root_row,
+    share_roots_from_template,
+    translate_host_path,
+    untranslate_vm_path,
     validate_against_shares,
     validate_mounts,
 )
@@ -1203,3 +1218,122 @@ async def test_a_delete_racing_the_mounts_set_answers_404(
         headers=auth(),
     )
     assert gone.status_code == 404
+
+
+# --- the host-share geometry (#667, part #671) ----------------------
+
+
+def test_prefix_mode_composes_the_reserved_prefix() -> None:
+    """The Lima host mode spells a host path as the reserved
+    prefix plus the path, and the inverse recovers the operator's
+    path; identity leaves both spellings alone."""
+    composed = translate_host_path(HOST_MODE_PREFIX, "/Users/chrism/code")
+    assert composed == f"{SHARE_ROOT_PREFIX}/Users/chrism/code"
+    assert untranslate_vm_path(HOST_MODE_PREFIX, composed) == (
+        "/Users/chrism/code"
+    )
+    assert translate_host_path(HOST_MODE_IDENTITY, "/srv/data") == "/srv/data"
+    assert untranslate_vm_path(HOST_MODE_IDENTITY, "/srv/data") == "/srv/data"
+
+
+def test_share_path_shape_refusals() -> None:
+    """Relative paths, traversal, emptiness, and the filesystem
+    root are named refusals — spelling cannot dodge the gates."""
+    for bad in ("code", "~/code", "/a/../b", "", "/"):
+        with pytest.raises(ValueError):
+            canonical_host_path(bad)
+    assert canonical_host_path("/Users/x/") == "/Users/x"
+    assert canonical_host_path("/Users//x/./y") == "/Users/x/y"
+
+
+def test_prefix_translation_refuses_unprefixed_vm_paths() -> None:
+    with pytest.raises(ValueError, match="not under /mnt/msks"):
+        untranslate_vm_path(HOST_MODE_PREFIX, "/srv/data")
+    with pytest.raises(ValueError, match="prefix itself"):
+        untranslate_vm_path(HOST_MODE_PREFIX, SHARE_ROOT_PREFIX)
+    with pytest.raises(ValueError, match="host mode"):
+        translate_host_path("bridged", "/Users/chrism")
+
+
+def test_share_root_row_enforces_suffix_preservation() -> None:
+    root = share_root_row("/Users/chrism", f"{SHARE_ROOT_PREFIX}/Users/chrism")
+    assert root == ShareRoot(
+        location="/Users/chrism",
+        mount_point=f"{SHARE_ROOT_PREFIX}/Users/chrism",
+    )
+    with pytest.raises(ValueError, match="reserved-prefix shape"):
+        share_root_row("/Users/chrism", f"{SHARE_ROOT_PREFIX}/home/chrism")
+    with pytest.raises(ValueError, match="reserved-prefix shape"):
+        share_root_row("/Users/chrism", "/Users/chrism")
+    with pytest.raises(ValueError, match="no mountPoint"):
+        share_root_row("/Users/chrism", None)
+
+
+def test_share_roots_from_template_set_rules() -> None:
+    rows = [
+        {
+            "location": "/Users/chrism",
+            "mountPoint": f"{SHARE_ROOT_PREFIX}/Users/chrism",
+        },
+        {
+            "location": "/Users/chrism/projects",
+            "mountPoint": f"{SHARE_ROOT_PREFIX}/Users/chrism/projects",
+            "writable": False,
+            "sshfs": {"cache": True},
+        },
+    ]
+    roots = share_roots_from_template(rows)
+    assert [r.location for r in roots] == [
+        "/Users/chrism",
+        "/Users/chrism/projects",
+    ]
+    with pytest.raises(ValueError, match="mounted twice"):
+        share_roots_from_template([rows[0], rows[0]])
+    with pytest.raises(ValueError, match="mappings"):
+        share_roots_from_template(["/Users/chrism"])
+    with pytest.raises(ValueError, match="a list"):
+        share_roots_from_template(None)
+
+
+def template_doc() -> dict:
+    """The shipped Lima template, parsed. Tests render Lima's two
+    expansions themselves — "~" to the user's home path, the
+    "{{.User}}" guest template to the user's name — deterministically
+    for the probe user, which is what Lima 2.2.1 does at instance
+    creation (pkg/limayaml/defaults.go)."""
+    from importlib.resources import files
+
+    import yaml
+
+    text = files("msks.server").joinpath("assets/msksd-vm.yaml").read_text()
+    doc = yaml.safe_load(text)
+    doc["rendered_mounts"] = [
+        {
+            "location": row["location"].replace("~", "/Users/probe"),
+            "mountPoint": row["mountPoint"].replace("{{.User}}", "probe"),
+            "writable": row.get("writable"),
+        }
+        for row in doc["mounts"]
+    ]
+    return doc
+
+
+def test_shipped_template_mounts_conform() -> None:
+    doc = template_doc()
+    roots = share_roots_from_template(doc["rendered_mounts"])
+    assert roots == (
+        ShareRoot(
+            location="/Users/probe",
+            mount_point=f"{SHARE_ROOT_PREFIX}/Users/probe",
+        ),
+    )
+    assert doc["rendered_mounts"][0]["writable"] is True
+
+
+def test_shipped_template_hosts_the_daemon() -> None:
+    doc = template_doc()
+    assert doc["vmType"] == "vz"
+    assert doc["nestedVirtualization"] is True
+    assert doc["arch"] == "aarch64"
+    assert "9p" in doc["mountTypesUnsupported"]
+    assert doc["mountInotify"] is False
