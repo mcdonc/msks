@@ -1225,6 +1225,15 @@ console</code> bridges the client to the guest's serial device through the
   keeps the getty's own terminal geometry for its life. A
   workspace user's shell with the client's terminal size rides
   ssh through the forward seam.</li>
+<li><strong>Register the virtiofs filesystem driver when shares
+  attach.</strong> Host directories reach a workspace as virtiofs
+  mounts (#667), so the guest's kernel must know the filesystem —
+  built in (both pinned Debian flavours: <code>CONFIG_VIRTIO_FS=y</code>) or
+  loadable (Fedora's image ships the module in its runtime
+  closure and loads it at boot). <code>msks image check</code>'s <code>virtiofs</code>
+  row probes the driver; a workspace that attaches shares on an
+  image without it reports the named gap on the guest's console
+  and cloud-init log at start, and the mounts never come up.</li>
 <li><strong>Take an address over DHCP when a NIC is present.</strong>
   Workspaces are networked by default: the VM boots with a
   virtio-net NIC, and the daemon's DHCP service offers the
@@ -1636,15 +1645,19 @@ and reports each contract point by name:</p>
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>PASS archive        imported mine:1.0 (1d6a5e782fc0)
 </span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>PASS boot           guest answered the console in 3.4s (kernel 6.12.107+deb13-amd64)
 </span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>PASS console        root autologin getty on the console port
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>PASS user-data      seed payload ran on first boot
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>PASS acpi-shutdown  clean shutdown within 120s
-</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>PASS root-rw        root is writable and the write survived a stop/start (overlay)
-</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>PASS home-label     /home mounted by label msks-home and its write survived a stop/start (volume)
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>PASS virtiofs       the virtiofs filesystem driver answers (mount -t virtiofs works)
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>PASS user-data      seed payload ran on first boot
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>PASS acpi-shutdown  clean shutdown within 120s
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>PASS root-rw        root is writable and the write survived a stop/start (overlay)
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>PASS home-label     /home mounted by label msks-home and its write survived a stop/start (volume)
 </span></code></pre></div>
 <p>Any host with <code>/dev/kvm</code> runs it — nothing else from msks is
 needed (no daemon, no state). The points map one-to-one onto "What a guest must provide"
 above. The checks cover the archive layout and manifest, a
-guest whose console getty answers, a root that accepts writes
+guest whose console getty answers, the virtiofs driver a share
+mounts through (#674 — an image without it fails its own row
+with the named gap, before a workspace's share attaches as a
+mount unit that never comes up), a root that accepts writes
 through the overlay, and <code>/home</code> mounted by its label (both
 surviving a stop/start cycle). They also cover the seed
 payload running on first boot (checked when the manifest
