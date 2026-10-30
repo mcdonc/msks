@@ -415,11 +415,22 @@ def mount_entry_for(served: str, flag: str) -> dict:
             f"msks: {flag} host path {served!r} must be absolute "
             "after ~ expands"
         )
-    # The daemon canonicalizes what it stores; the client sends
-    # the same shape, so the umount matcher never loses to a
-    # spelling the mount side accepted (trailing slash, ``//``,
-    # ``.`` components).
-    return {"host": posixpath.normpath(host)}
+    return {"host": canonical_host_spelling(host, served, flag)}
+
+
+def canonical_host_spelling(host: str, served: str, flag: str) -> str:
+    """One host path in the daemon's canonical shape: ``..``
+    refused outright (the daemon's own rule — parity, not silent
+    collapsing), then normpath with the POSIX two-leading-slashes
+    anchor collapsed to one (normpath preserves it; the daemon's
+    canonical spelling re-anchors). The mount side sends this
+    shape and the umount matcher takes the same one, so the round
+    trip holds for every spelling the mount side accepts."""
+    if ".." in host.split("/"):
+        raise SystemExit(
+            f"msks: {flag} host path {served!r} must not contain '..'"
+        )
+    return posixpath.normpath("/" + host.lstrip("/"))
 
 
 def cmd_mount(
@@ -477,12 +488,24 @@ def mounts_after(row: dict, action: str, spec: str, workspace_id: str) -> list:
     return without_share(mounts, spec, workspace_id)
 
 
+def umount_target(served: str) -> str:
+    """What the umount argument names: a path-shaped argument is
+    the host spelling the mount side would send (`~` expanded,
+    canonicalized the same way); a bare name is the share's name,
+    untouched."""
+    if not served.startswith(("/", "~")):
+        return served
+    return canonical_host_spelling(
+        os.path.expanduser(served), served, "umount"
+    )
+
+
 def without_share(mounts: list, served: str, workspace_id: str) -> list:
     """The list minus what the argument names — a share name or a
     host path, matched on the key that carries it (``~`` expands
     the way the mount spec did). What the row does not mount is
     one local line."""
-    wanted = posixpath.normpath(os.path.expanduser(served))
+    wanted = umount_target(served)
     kept = [
         m
         for m in mounts
