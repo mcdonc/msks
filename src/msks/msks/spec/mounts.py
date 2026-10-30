@@ -687,6 +687,18 @@ def per_boot_installer() -> str:
         '  [ -e "$u" ] || continue\n'
         '  systemctl start "${u##*/}" 2>/dev/null || true\n'
         "done\n"
+        # #674: a guest without the virtiofs driver mounts none of
+        # its share units, and the systemctl swallow above would
+        # keep that silent — the named line reaches cloud-init's
+        # log and the serial console instead, the start-time half
+        # of the #661 pattern (the image-check row names it at
+        # preflight).
+        'if [ -n "$(ls /etc/msks/mount-units/*.mount 2>/dev/null)" ]; then\n'
+        "  modprobe virtiofs 2>/dev/null || true\n"
+        "  grep -qw virtiofs /proc/filesystems || echo "
+        "'msks: this image does not ship virtio_fs; "
+        "the workspace shares cannot mount' >&2\n"
+        "fi\n"
     )
 
 

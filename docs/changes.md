@@ -8,6 +8,17 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`msks image check` grows the `virtiofs` row (#674).** The
+  guest-image capability check now probes the virtiofs
+  filesystem driver a share mounts through: Debian's pinned
+  kernels build the driver in; Fedora's image ships it as a
+  module in the runtime closure — current images pass, and an
+  image without it fails its own row with the named gap. A
+  workspace that attaches shares on such an image reports the
+  same named gap on the guest's console and cloud-init log at
+  start (the per-boot mount installer checks the driver before
+  its units come up).
+
 - **`msks create --share HOST:GUEST[:MODE]` and the host form on
   `msks mount`/`umount` (#673).** The client surface for #667's
   host-path shares: a repeatable create flag whose `~` expands

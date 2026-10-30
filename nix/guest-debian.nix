@@ -186,12 +186,15 @@ let
   # version pin serve the workspace guest and its nested-KVM
   # workspaces; that sharing is the whole motivation (the flavor
   # difference itself costs the guest little: virtio-pci and
-  # virtiofs are BUILT IN here, ext4 and virtio_blk are modules —
-  # so the initramfs below loads six modules in dependency order,
-  # and the guest's runtime module tree is the modprobe closure of
-  # the modules it actually loads, see debianRoot). Pinned by pool
-  # URL and sha256; the deb carries vmlinuz, its config, and the
-  # matching /usr/lib/modules tree.
+  # virtiofs are BUILT IN here — CONFIG_VIRTIO_FS=y in the pinned
+  # configs, both flavours, verified from each deb's own config
+  # (#674: a share mounts through the built-in driver, no module
+  # in the closure) — ext4 and virtio_blk are modules, so the
+  # initramfs below loads six modules in dependency order, and
+  # the guest's runtime module tree is the modprobe closure of
+  # the modules it actually loads, see debianRoot). Pinned by
+  # pool URL and sha256; the deb carries vmlinuz, its config,
+  # and the matching /usr/lib/modules tree.
   genericKernelDeb = pkgs.fetchurl {
     url = "https://deb.debian.org/debian/pool/main/l/linux/" + facts.kernelDeb;
     hash = facts.kernelHash;
