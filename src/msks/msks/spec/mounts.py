@@ -733,7 +733,7 @@ def untranslate_vm_path(mode: str, vm_path: str) -> str:
     translation — the daemon reports paths the operator typed,
     not the geometry of its own VM."""
     check_host_mode(mode)
-    check_host_path_shape(vm_path)
+    check_daemon_namespace_path(vm_path)
     path = PurePosixPath(canonical_guest(vm_path))
     if mode == HOST_MODE_IDENTITY:
         return str(path)
@@ -750,6 +750,16 @@ def untranslate_vm_path(mode: str, vm_path: str) -> str:
             "share root mounts under it"
         )
     return "/" + "/".join(rest)
+
+
+def check_daemon_namespace_path(vm_path: str) -> None:
+    """The entry refusals for one daemon-namespace path: a
+    non-empty string (named the way every sibling refuses its
+    inputs), then the shape rules the forward translation takes —
+    absolute, no traversal component, not the filesystem root."""
+    if not isinstance(vm_path, str) or not vm_path:
+        raise ValueError("a daemon-namespace path must be a non-empty string")
+    check_host_path_shape(vm_path)
 
 
 def check_host_mode(mode: str) -> None:

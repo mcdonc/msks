@@ -1254,6 +1254,8 @@ def test_prefix_translation_refuses_unprefixed_vm_paths() -> None:
         untranslate_vm_path(HOST_MODE_PREFIX, SHARE_ROOT_PREFIX)
     with pytest.raises(ValueError, match="host mode"):
         translate_host_path("bridged", "/Users/chrism")
+    with pytest.raises(ValueError, match="non-empty string"):
+        untranslate_vm_path(HOST_MODE_PREFIX, 5)
 
 
 def test_untranslate_refuses_paths_that_lexically_escape() -> None:
