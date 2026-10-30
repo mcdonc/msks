@@ -25,9 +25,23 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 #: The attach modes: ``ro`` serves the share read-only, ``rw``
-#: read-write (the default — a mount that names no mode).
+#: read-write — the default for both forms. The trust decision
+#: is made before the mode matters: the named form's operator
+#: listed the share, the host form's operator allowed the root
+#: (``MSKSD_MOUNT_HOST_ROOTS``); a mount that wants less names
+#: ``ro`` explicitly.
 MOUNT_MODES = ("ro", "rw")
+MODE_RO = "ro"
 MODE_RW = "rw"
+
+#: The host form's tag prefix (#672): a host-path mount's tag is
+#: derived, not typed — ``hs-`` plus the first eight hex of the
+#: canonical host path's sha256 — because a tag names a virtiofs
+#: device (36-byte ceiling, safe charset) while a host path is an
+#: arbitrary POSIX string. The derivation is deterministic, so the
+#: same path is the same device across starts.
+HOST_TAG_PREFIX = "hs-"
+HOST_TAG_HEX = 8
 
 #: The guest paths a mount never lands on: the root itself and
 #: the pseudo-filesystems the kernel owns. A mount at or under
@@ -41,7 +55,10 @@ HOME_GUEST_ROOT = "/home"
 
 #: The mount row's allowed keys — every other key is a named
 #: error at parse, so a typo'd field fails at set, never at boot.
-MOUNT_KEYS = frozenset({"share", "guest", "mode"})
+#: ``share`` names the operator-configured share (#620); ``host``
+#: carries an operator-typed host path through the #667 gates
+#: (#672) — exactly one of the two per row.
+MOUNT_KEYS = frozenset({"share", "guest", "mode", "host"})
 
 #: The share config's allowed keys (#620): ``name`` and ``path``
 #: name the share, ``writable`` bounds the modes a request may
@@ -69,15 +86,25 @@ class MountShare:
 @dataclass(frozen=True)
 class MountSpec:
     """One workspace mount: the share it names, the guest path it
-    lands at, and its mode. ``mode`` defaults to ``rw`` — the
-    request names the mode, the share's config bounds it."""
+    lands at, and its mode — with the share named one of two ways.
+    The named form (``share``) points at an operator-configured
+    share (#620); the host form (``host``) carries an
+    operator-typed host path through the #667 gates (#672).
+    Exactly one of the two is set; `mount_tag` gives both forms
+    one device name."""
 
-    share: str
-    guest: str
+    share: str = ""
+    guest: str = ""
     mode: str = MODE_RW
+    host: str | None = None
 
     def as_dict(self) -> dict:
-        return {"share": self.share, "guest": self.guest, "mode": self.mode}
+        row = {"guest": self.guest, "mode": self.mode}
+        if self.host is not None:
+            row["host"] = self.host
+        else:
+            row["share"] = self.share
+        return row
 
 
 @dataclass(frozen=True)
@@ -100,15 +127,20 @@ class MountIssue:
         return f"mount.{self.kind}"
 
     def payload(self, workspace_id: str) -> dict:
-        """The event frame's data: the workspace, the mount, and
-        the named reason."""
-        return {
+        """The event frame's data: the workspace, the mount — its
+        form's naming key, ``share`` or ``host`` — and the named
+        reason."""
+        frame = {
             "id": workspace_id,
-            "share": self.mount.share,
             "guest": self.mount.guest,
             "mode": self.mount.mode,
             "detail": self.detail,
         }
+        if self.mount.host is not None:
+            frame["host"] = self.mount.host
+        else:
+            frame["share"] = self.mount.share
+        return frame
 
 
 def parse_mounts(raw: object) -> tuple[MountSpec, ...]:
@@ -140,22 +172,45 @@ def decoded_mount_entries(raw: object) -> list | None:
 
 
 def mount_entry(entry: object) -> MountSpec:
-    """One decoded mount: a mapping with ``share``, ``guest``, and
-    an optional ``mode`` — any other key, a missing field, or an
-    unknown mode is a named error. The guest path canonicalizes
-    here (``PurePosixPath`` collapses ``//`` and ``.``), so the
-    stored form is the form every later rule and the #622 attach
-    reason over."""
+    """One decoded mount: a mapping with ``guest`` and exactly one
+    of ``share`` (the #620 named form) or ``host`` (the #667 host
+    form), plus an optional ``mode`` — any other key, a missing
+    field, both forms at once, or an unknown mode is a named
+    error. The guest path and the host path canonicalize here, so
+    the stored form is the form every later rule and the #622
+    attach reason over."""
     if not isinstance(entry, dict):
         raise ValueError(
             f"mounts entries must be mappings, got {type(entry).__name__}"
         )
     check_mount_keys(entry)
+    guest = canonical_guest(mount_text_field(entry, "guest"))
+    share = entry.get("share")
+    host = entry.get("host")
+    if share is not None and host is not None:
+        raise ValueError(
+            "a mounts entry names both a share and a host path; pick one"
+        )
+    if host is not None:
+        return MountSpec(
+            guest=guest,
+            mode=mount_mode_field(entry),
+            host=canonical_host_path(host_field(entry)),
+        )
     return MountSpec(
         share=mount_text_field(entry, "share"),
-        guest=canonical_guest(mount_text_field(entry, "guest")),
+        guest=guest,
         mode=mount_mode_field(entry),
     )
+
+
+def host_field(entry: dict) -> str:
+    """The host form's path field: a non-empty string, the shape
+    rules `canonical_host_path` applies."""
+    value = entry.get("host")
+    if not isinstance(value, str) or not value:
+        raise ValueError("a host-form mounts entry needs a host path")
+    return value
 
 
 def canonical_guest(guest: str) -> str:
@@ -170,6 +225,26 @@ def canonical_guest(guest: str) -> str:
     if path.parts[:1] == ("//",):
         return "/" + "/".join(path.parts[1:])
     return str(path)
+
+
+def mount_tag(mount: MountSpec) -> str:
+    """The virtiofs device name a mount attaches as — the tag the
+    guest mounts by, the socket and pidfile stem, the unit's
+    What=. The named form's tag is the share's name; the host
+    form's is derived (`HOST_TAG_PREFIX` plus hash), because a
+    host path is an arbitrary POSIX string and a tag is a
+    36-byte safe-charset device name."""
+    if mount.host is not None:
+        digest = hashlib.sha256(mount.host.encode()).hexdigest()
+        return f"{HOST_TAG_PREFIX}{digest[:HOST_TAG_HEX]}"
+    return mount.share
+
+
+def mount_identity(mount: MountSpec) -> str:
+    """The human-facing name of what a mount serves: the host path
+    itself for the host form, the share name for the named form —
+    the name refusals and issues speak."""
+    return mount.host if mount.host is not None else mount.share
 
 
 def check_mount_keys(entry: dict) -> None:
@@ -210,27 +285,36 @@ def dump_mounts(mounts: tuple[MountSpec, ...]) -> str | None:
 
 def validate_mounts(mounts: tuple[MountSpec, ...]) -> None:
     """The row-level rules (#620): the guest paths must be
-    mountable and mutually disjoint, and a share appears once.
-    Every refusal names the mount."""
-    seen_shares: set[str] = set()
+    mountable and mutually disjoint, and what a mount serves
+    appears once — one share name, one host path, and no host
+    path whose derived tag collides with another mount's (the
+    collision would give two trees one device name). Every
+    refusal names the mount."""
+    seen_tags: dict[str, MountSpec] = {}
     seen_guests: dict[str, MountSpec] = {}
     for mount in mounts:
         check_guest_path(mount)
-        check_share_once(mount, seen_shares)
+        check_mount_once(mount, seen_tags)
         for prior in seen_guests.values():
             check_shadowing(prior, mount)
         seen_guests[mount.guest] = mount
 
 
-def check_share_once(mount: MountSpec, seen: set[str]) -> None:
-    """A share appears once per workspace: the second mount of
-    one share is a named refusal."""
-    if mount.share in seen:
+def check_mount_once(mount: MountSpec, seen: dict[str, MountSpec]) -> None:
+    """What a mount serves appears once per workspace, keyed by
+    its tag — the device name two mounts may not share: the same
+    share twice, the same host path twice, or a named share whose
+    name happens to equal a host path's derived tag (a real,
+    if unlikely, collision — one device name, two trees)."""
+    tag = mount_tag(mount)
+    prior = seen.get(tag)
+    if prior is not None:
         raise ValueError(
-            f"share {mount.share!r} is mounted twice; a share "
-            "appears once per workspace"
+            f"{mount_identity(mount)!r} is mounted twice "
+            f"({mount_identity(prior)!r} shares its device name "
+            f"{tag!r}); what a mount serves appears once per workspace"
         )
-    seen.add(mount.share)
+    seen[tag] = mount
 
 
 def check_guest_path(mount: MountSpec) -> None:
@@ -319,7 +403,7 @@ def check_shadowing(prior: MountSpec, mount: MountSpec) -> None:
     if prior.guest == mount.guest:
         raise ValueError(
             f"guest path {mount.guest!r} is mounted twice "
-            f"(shares {prior.share!r} and {mount.share!r})"
+            f"({mount_identity(prior)!r} and {mount_identity(mount)!r})"
         )
     prior_parts = PurePosixPath(prior.guest).parts
     mount_parts = PurePosixPath(mount.guest).parts
@@ -327,8 +411,15 @@ def check_shadowing(prior: MountSpec, mount: MountSpec) -> None:
     if tuple(deeper[: len(shallower)]) == shallower:
         raise ValueError(
             f"guest path {mount.guest!r} shadows {prior.guest!r} "
-            f"(shares {mount.share!r} and {prior.share!r})"
+            f"({mount_identity(mount)!r} and {mount_identity(prior)!r})"
         )
+
+
+def named_only(mounts: tuple[MountSpec, ...]) -> tuple[MountSpec, ...]:
+    """The named-form mounts — the half the config's share table
+    bounds (#620). The host form's gates are the #667 policy
+    gates (hostshares, #672), not the share table."""
+    return tuple(mount for mount in mounts if mount.host is None)
 
 
 def validate_against_shares(
@@ -339,7 +430,8 @@ def validate_against_shares(
     config, and an ``rw`` mount needs a share whose config says
     ``writable``. The refusal names the mismatch — never a silent
     read-only downgrade."""
-    for mount in mounts:
+    named = named_only(mounts)
+    for mount in named:
         share = shares.get(mount.share)
         if share is None:
             raise ValueError(
@@ -385,7 +477,12 @@ def mount_issue(
     """One mount's issue, or None when it attaches: the share
     left the config, a reload denied its mode, or an ``rw``
     mount wants a ``multi: false`` share another workspace
-    holds. Read-only mounts never conflict."""
+    holds. Read-only mounts never conflict. Host-form mounts carry
+    no issue here: their start-time derivation reads live
+    filesystem state (the #672 gates), which this config-only
+    pass does not see."""
+    if mount.host is not None:
+        return None
     share = shares.get(mount.share)
     if share is None:
         return MountIssue(
@@ -517,15 +614,15 @@ def mount_unit(mount: MountSpec) -> str:
     refuse writes together). The marker comment is the prune loop's
     ownership test: msks owns the units it wrote, and only
     those."""
-    options = "" if mount.mode == "rw" else "Options=ro\n"
+    options = "" if mount.mode == MODE_RW else "Options=ro\n"
     return (
         "# msks mount unit (#620): the seed writes and prunes this\n"
         "# file; change the workspace's mounts, not the unit.\n"
         "[Unit]\n"
-        f"Description=msks share {mount.share} at {mount.guest}\n"
+        f"Description=msks share {mount_identity(mount)} at {mount.guest}\n"
         f"RequiresMountsFor={mount_parent(mount.guest)}\n"
         "[Mount]\n"
-        f"What={mount.share}\n"
+        f"What={mount_tag(mount)}\n"
         f"Where={mount.guest}\n"
         "Type=virtiofs\n"
         f"{options}"
@@ -546,7 +643,7 @@ def mounts_fingerprint(mounts: tuple[MountSpec, ...]) -> str:
         # and an all-mounts-removed renewal writes exactly that.
         return ""
     lines = sorted(
-        f"{mount.share}:{mount.guest}:{mount.mode}" for mount in mounts
+        f"{mount_tag(mount)}:{mount.guest}:{mount.mode}" for mount in mounts
     )
     return hashlib.sha256("\n".join(lines).encode()).hexdigest()
 
@@ -688,12 +785,15 @@ def check_host_path_shape(host_path: str) -> None:
     """The shape refusals for one host path: absolute, no
     traversal component, and not the filesystem root — the
     last because a share root is one host tree, and the whole
-    filesystem is not one. No charset gate here, by contrast
-    with the guest paths' printable-ASCII rule: macOS folder
-    names carry arbitrary unicode, so the rule would refuse
-    legitimate shares — the guest rule exists for unit files,
-    a constraint this side does not have."""
+    filesystem is not one. Unicode stays allowed by contrast
+    with the guest paths' printable-ASCII rule (macOS folder
+    names carry it legitimately); control characters do not —
+    a newline in a path is legal POSIX but lands verbatim in the
+    guest mount unit's Description, where it would inject
+    directives (#672 review: the same injection the guest
+    grammar's charset rule exists to prevent)."""
     path = PurePosixPath(host_path)
+    check_host_path_controls(host_path)
     if not path.is_absolute():
         raise ValueError(f"share path {host_path!r} must be absolute")
     if ".." in path.parts:
@@ -760,6 +860,18 @@ def check_daemon_namespace_path(vm_path: str) -> None:
     if not isinstance(vm_path, str) or not vm_path:
         raise ValueError("a daemon-namespace path must be a non-empty string")
     check_host_path_shape(vm_path)
+
+
+def check_host_path_controls(host_path: str) -> None:
+    """One host path carries no control characters: C0 and DEL
+    are refused wherever they appear (a newline is legal POSIX
+    and injects directives into the guest unit's Description
+    line; a tab breaks the mount table's field split the same
+    way). Unicode passes — the macOS folder-name rationale."""
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in host_path):
+        raise ValueError(
+            f"share path {host_path!r} must not contain control characters"
+        )
 
 
 def check_host_mode(mode: str) -> None:

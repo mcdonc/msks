@@ -268,15 +268,19 @@ class WorkspaceCreate(BaseModel):
 
 
 class MountIn(BaseModel):
-    """One mount on the wire (#620): the configured share's name,
-    the absolute guest path, and the mode — ``rw`` when omitted.
-    Unknown keys refuse (a typo'd ``modee`` must not silently
-    drop the mode it misspelled, landing the trust-bearing
-    default)."""
+    """One mount on the wire (#620, #672): the configured share's
+    name, or a host path through the #667 gates — exactly one of
+    the two, refused by name when both or neither arrive. The
+    absolute guest path, and the mode — ``rw`` when omitted. The
+    trust decision precedes the mode: the share is listed or the
+    root allowed. Unknown keys refuse (a typo'd
+    ``modee`` must not silently drop the mode it misspelled,
+    landing the trust-bearing default)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    share: str = Field(min_length=1, max_length=256)
+    share: str | None = Field(default=None, min_length=1, max_length=256)
+    host: str | None = Field(default=None, min_length=1, max_length=4096)
     guest: str = Field(min_length=1, max_length=4096)
     mode: str | None = Field(default=None, pattern="^(ro|rw)$")
 

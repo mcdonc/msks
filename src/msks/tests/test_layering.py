@@ -120,7 +120,9 @@ ALLOWED_EDGES = {
     ("interceptor", "spec"),
     # the local driver: vocabulary and storage read directly
     # (#407); it mints the workspace's interceptor CA at create so
-    # the seed disk carries it (#424/#200)
+    # the seed disk carries it (#424/#200). #672: the host-share
+    # gates re-read at spawn.
+    ("microvm", "hostshares"),
     ("microvm", "interceptor"),
     ("microvm", "persist"),
     ("microvm", "spec"),
@@ -128,6 +130,10 @@ ALLOWED_EDGES = {
     # with the key vocabulary in the crypto leaf.
     ("model", "agecrypto"),
     ("model", "spec"),
+    # #672: the host-share gates' leaf — mounted-roots
+    # enumeration and the two-gate validation, over the mount
+    # vocabulary.
+    ("hostshares", "spec"),
     # the data plane: vocabulary and decided pins from spec alone
     # (#401 — the consent side decides, net applies)
     ("net", "spec"),
@@ -149,6 +155,8 @@ ALLOWED_EDGES = {
     ("server", "app"),
     ("server", "config"),
     ("server", "events"),
+    # #672: the set-time and start-time host-share gates.
+    ("server", "hostshares"),
     ("server", "identity"),
     ("server", "imagestore"),
     ("server", "microvm"),

@@ -25,6 +25,7 @@ import signal
 import socket
 from pathlib import Path
 
+from ..hostshares import check_host_share
 from ..interceptor import ca
 from ..persist import (
     ensure_artifacts,
@@ -35,7 +36,7 @@ from ..persist import (
     seed_path,
 )
 from ..spec.egress import EgressPolicy
-from ..spec.mounts import MODE_RW
+from ..spec.mounts import MODE_RW, mount_tag
 from ..spec.vm import VmInfo, VmSpec, VmStatus
 from .chapi import API_ROOT, CloudHypervisorApi
 from .driver import MicrovmDriver
@@ -357,6 +358,42 @@ async def kill_proc(proc) -> None:
     with contextlib.suppress(ProcessLookupError):
         proc.kill()
     await proc.wait()
+
+
+def spawn_share_for(mount, shares: dict):
+    """The config share a mount's spawn looks up, or None for the
+    host form (#672) — which carries no config share: its shared
+    directory comes from the #667 gates, its writability from the
+    mount's mode alone (there is no operator share to narrow
+    it)."""
+    if mount.host is not None:
+        return None
+    return shares.get(mount.share)
+
+
+def host_mount_facts(mount, mounts) -> tuple[str, bool]:
+    """One host-form mount's spawn facts (#672): the shared
+    directory through the #667 gates re-read at spawn (the flip
+    that lands between the route's derivation and this spawn
+    refuses here, naming its gate), and writability from the
+    mount's mode alone."""
+    try:
+        resolved = check_host_share(
+            mounts.host_mode, mounts.host_roots, mount.host
+        )
+    except ValueError as exc:
+        raise MicrovmError(str(exc)) from None
+    return resolved, mount.mode != MODE_RW
+
+
+def named_mount_facts(mount, share) -> tuple[str, bool]:
+    """One named-form mount's spawn facts (#620): the share
+    re-resolved against its load-time pin, and writability
+    composed from the share's config and the mount's mode."""
+    if share is None:
+        raise MicrovmError(f"share {mount.share!r} is not in the config")
+    resolved = resolve_fs_share(mount, share)
+    return resolved, not share.writable or mount.mode != MODE_RW
 
 
 def resolve_fs_share(mount, share) -> str:
@@ -784,10 +821,12 @@ class LocalCloudHypervisor(MicrovmDriver):
         sockets: dict[str, Path] = {}
         try:
             for mount in spec.mounts:
-                share = shares.get(mount.share)
+                share = spawn_share_for(mount, shares)
+                tag = mount_tag(mount)
                 proc = await self._spawn_one_fs(
                     binary,
                     mount,
+                    tag,
                     share,
                     vm_dir,
                     uid,
@@ -797,8 +836,8 @@ class LocalCloudHypervisor(MicrovmDriver):
                     sandbox,
                 )
                 procs.append(proc)
-                fs_pidfile_path(vm_dir, mount.share).write_text(str(proc.pid))
-                sockets[mount.share] = fs_socket_path(vm_dir, mount.share)
+                fs_pidfile_path(vm_dir, tag).write_text(str(proc.pid))
+                sockets[tag] = fs_socket_path(vm_dir, tag)
         except BaseException:
             await kill_procs(procs)
             raise
@@ -860,6 +899,7 @@ class LocalCloudHypervisor(MicrovmDriver):
         self,
         binary: str,
         mount,
+        tag: str,
         share,
         vm_dir: Path,
         uid: int,
@@ -868,27 +908,32 @@ class LocalCloudHypervisor(MicrovmDriver):
         guest_gid: int,
         sandbox: str,
     ):
-        """One mount's daemon: the share re-resolved against the
-        load-time pin (the last line of the drift guard), the
+        """One mount's daemon: the shared directory resolved —
+        the named form's share against its load-time pin (the
+        last line of the drift guard), the host form's through
+        the #667 gates re-read at spawn (the flip that lands
+        between the route's derivation and this spawn) — the
         socket swept of residue, and the spawn carrying the
-        pinned flag set — held until it serves its socket, then
+        pinned flag set, held until it serves its socket, then
         returned for the registry."""
-        if share is None:
-            raise MicrovmError(f"share {mount.share!r} is not in the config")
-        resolved = resolve_fs_share(mount, share)
-        socket = self._fs_socket_for(vm_dir, mount.share)
-        log_path = vm_dir / f"fs-{mount.share}.log"
+        resolved, readonly = (
+            host_mount_facts(mount, self._settings().mounts)
+            if mount.host is not None
+            else named_mount_facts(mount, share)
+        )
+        socket = self._fs_socket_for(vm_dir, tag)
+        log_path = vm_dir / f"fs-{tag}.log"
         proc = await self._spawn_fs(
             binary,
             fs_daemon_args(
                 resolved,
-                mount.share,
+                tag,
                 socket,
                 uid=uid,
                 gid=gid,
                 guest_uid=guest_uid,
                 guest_gid=guest_gid,
-                readonly=(not share.writable or mount.mode != MODE_RW),
+                readonly=readonly,
                 sandbox=sandbox,
             ),
             log_path,
@@ -900,7 +945,7 @@ class LocalCloudHypervisor(MicrovmDriver):
         # and a refused daemon dies here too, never left serving
         # (or half-serving) untracked behind a start that failed.
         try:
-            await self._wait_fs_socket(socket, proc, mount.share, log_path)
+            await self._wait_fs_socket(socket, proc, tag, log_path)
         except BaseException:
             await kill_proc(proc)
             raise

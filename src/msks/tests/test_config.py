@@ -500,6 +500,18 @@ KEY_CASES = [
         "mounts",
         MountSettings(shares=(MountShare(name="s", path="/srv/s"),)),
     ),
+    (
+        "mount_host_mode",
+        "prefix",
+        "mounts",
+        MountSettings(host_mode="prefix"),
+    ),
+    (
+        "mount_host_roots",
+        ["/Users/p", "/Users/q"],
+        "mounts",
+        MountSettings(host_roots=("/Users/p", "/Users/q")),
+    ),
     ("egress_enabled", True, "net.enabled", True),
     ("egress_subnet", "10.9.0.0/16", "net.pool", "10.9.0.0/16"),
     ("egress_uplink", "enp1s0", "net.uplink", "enp1s0"),

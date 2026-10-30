@@ -10,10 +10,12 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from ...hostshares import check_host_share
 from ...spec.mounts import (
     MODE_RW,
     MountIssue,
     mount_issues,
+    named_only,
     parse_mounts,
     validate_mounts,
 )
@@ -174,11 +176,36 @@ async def mount_state(app, row: dict) -> tuple[tuple, tuple]:
     shares = {share.name: share for share in app.state.settings.mounts.shares}
     issues = mount_issues(mounts, shares, await rw_holders(app, row["id"]))
     issues = (*issues, *drift_issues(mounts, shares))
+    issues = (*issues, *host_mount_issues(app, mounts))
     skipped = {issue.mount for issue in issues}
     return (
         tuple(mount for mount in mounts if mount not in skipped),
         issues,
     )
+
+
+def host_mount_issues(app, mounts: tuple) -> tuple:
+    """The host-form mounts a reload or a VM change took away
+    (#672): each re-runs the #667 gates against the live policy
+    and mount state, and a refusal becomes a ``skipped`` mount
+    with the gate's message — the same evidence shape a share
+    leaving the config produces. The start proceeds without the
+    mount, exactly as for the named form."""
+    issues = []
+    for mount in mounts:
+        if mount.host is None:
+            continue
+        try:
+            check_host_share(
+                app.state.settings.mounts.host_mode,
+                app.state.settings.mounts.host_roots,
+                mount.host,
+            )
+        except ValueError as exc:
+            issues.append(
+                MountIssue(kind="skipped", mount=mount, detail=str(exc))
+            )
+    return tuple(issues)
 
 
 def drift_issues(mounts, shares) -> tuple:
@@ -252,7 +279,10 @@ def record_rw_holders(holders: dict[str, str], row: dict) -> None:
     """Add one live row's rw mounts to the holder map — the first
     holder a share sees is the one a conflict names."""
     for mount in parse_mounts(row.get("mounts")):
-        if mount.mode == MODE_RW:
+        # Host-form mounts carry no exclusivity (#672): their
+        # concurrency safety is the coherence contract, not a
+        # ``multi: false`` hold.
+        if mount.mode == MODE_RW and mount.host is None:
             holders.setdefault(mount.share, row["id"])
 
 
@@ -313,10 +343,17 @@ def checked_mounts(app, raw_mounts: list) -> tuple:
     The gate reads the config as loaded (a SIGHUP reload re-shares
     without a restart); a share the operator removes later reads
     as a skip at start, not a set-time fact — the set speaks
-    against the config it can see."""
+    against the config it can see.
+
+    Host-form mounts (#672) run the #667 gates instead of the
+    share lookup: the translated path must sit under a root the
+    daemon's VM mounts and an allowed root, resolved against
+    symlink escapes — each refusal names its gate and remedy at
+    set time, so nothing lands on the row to fail at boot."""
     try:
         # The wire's absent fields arrive as None (the schema's
-        # optional mode); the parser takes absent-or-valued keys.
+        # optional mode and optional form fields); the parser
+        # takes absent-or-valued keys.
         mounts = parse_mounts(
             [
                 {
@@ -330,8 +367,25 @@ def checked_mounts(app, raw_mounts: list) -> tuple:
         validate_mounts(mounts)
     except ValueError as exc:
         raise exc from None
-    check_mounts_config(app, mounts)
+    check_mounts_config(app, named_only(mounts))
+    check_host_mounts(app, mounts)
     return mounts
+
+
+def check_host_mounts(app, mounts: tuple) -> None:
+    """Every host-form mount through the #667 gates (#672): the
+    set-time refusal taxonomy (not mounted in the VM / outside
+    the allowed roots / symlink escape / missing) is the whole
+    point of set-time validation — a share that cannot serve
+    never lands on the row."""
+    for mount in mounts:
+        if mount.host is None:
+            continue
+        check_host_share(
+            app.state.settings.mounts.host_mode,
+            app.state.settings.mounts.host_roots,
+            mount.host,
+        )
 
 
 def check_mounts_config(app, mounts: tuple) -> None:
@@ -378,7 +432,11 @@ def issue_payloads(issues: tuple[MountIssue, ...]) -> list[dict]:
     return [
         {
             "kind": issue.kind,
-            "share": issue.mount.share,
+            **(
+                {"host": issue.mount.host}
+                if issue.mount.host is not None
+                else {"share": issue.mount.share}
+            ),
             "guest": issue.mount.guest,
             "mode": issue.mount.mode,
             "detail": issue.detail,
@@ -404,16 +462,18 @@ async def list_mount_issues(app, rows: list[dict]) -> dict[str, tuple]:
             record_rw_holders(holders, other)
     shares = {share.name: share for share in app.state.settings.mounts.shares}
     return {
-        row["id"]: listed_mount_issues(row, shares, holders) for row in rows
+        row["id"]: listed_mount_issues(app, row, shares, holders)
+        for row in rows
     }
 
 
 def listed_mount_issues(
-    row: dict, shares: dict, holders: dict[str, str]
+    app, row: dict, shares: dict, holders: dict[str, str]
 ) -> tuple:
     """One listed row's derived issues: the whole table's holder
     map minus its own holds — a row never conflicts with its own
-    attachments."""
+    attachments. Host-form mounts run their gates too (#672), so
+    the listing's markers match the row read's."""
     mounts = parse_mounts(row.get("mounts"))
     row_holders = {
         share: holder
@@ -421,4 +481,17 @@ def listed_mount_issues(
         if holder != row["id"]
     }
     issues = mount_issues(mounts, shares, row_holders)
-    return (*issues, *drift_issues(mounts, shares))
+    return (
+        *issues,
+        *drift_issues(mounts, shares),
+        *listed_host_issues(app, mounts),
+    )
+
+
+def listed_host_issues(app, mounts: tuple) -> tuple:
+    """The host-form subset's gate issues (#672): the same gates
+    the row read runs, hoisted past the empty case — a listing
+    without host mounts reads no mount table at all."""
+    if not any(mount.host is not None for mount in mounts):
+        return ()
+    return host_mount_issues(app, mounts)

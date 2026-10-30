@@ -1379,3 +1379,215 @@ def test_shipped_template_hosts_the_daemon() -> None:
     assert doc["arch"] == "aarch64"
     assert "9p" in doc["mountTypesUnsupported"]
     assert doc["mountInotify"] is False
+
+
+# --- the host-form mounts through the API (#672) ---------------------
+
+
+def host_world(tmp_path: Path) -> MountSettings:
+    """A host-share world: identity mode, the throwaway root the
+    one allowed root."""
+    return MountSettings(host_mode="identity", host_roots=(str(tmp_path),))
+
+
+async def test_a_host_mount_creates_read_write_by_default(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The #667 client surface behind the API: a host-path mount
+    lands on the row read-write unless it says ``ro`` — the same
+    default the named form carries — and the row round-trips the
+    host path."""
+    http, app, _stub = client
+    code = tmp_path / "code"
+    code.mkdir()
+    app.state.settings.mounts = host_world(tmp_path)
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-h",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "mounts": [{"host": str(code), "guest": "/mnt/code"}],
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["mounts"] == [
+        {"host": str(code), "guest": "/mnt/code", "mode": "rw"}
+    ]
+
+
+async def test_host_mounts_refuse_with_the_gate_taxonomy(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The two gates refuse at set time with their remedies
+    (#667): a path outside the allowed roots names the config
+    edit, a path through the gates that does not exist names
+    itself — and nothing lands on the row."""
+    http, app, _stub = client
+    code = tmp_path / "code"
+    code.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    app.state.settings.mounts = MountSettings(
+        host_mode="identity", host_roots=(str(code),)
+    )
+    for path, why in (
+        (str(elsewhere), "outside the allowed host-share roots"),
+        (str(code / "nope"), "does not exist or is not a directory"),
+    ):
+        refused = await http.post(
+            "/api/v1/workspaces",
+            json={
+                "id": "ws-x",
+                "kernel": "/k",
+                "rootfs": "/r",
+                "mounts": [{"host": path, "guest": "/mnt/code"}],
+            },
+            headers=auth(),
+        )
+        assert refused.status_code == 400, refused.text
+        assert why in refused.json()["detail"]
+
+
+async def test_prefix_mode_names_vm_recreation(
+    client,  # noqa: F811
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """The mount gate on a VM-hosted daemon: a path whose root is
+    not mounted under the reserved prefix is refused with the
+    VM-recreation remedy, and the refusal lands at set time —
+    never as a boot-time mount hang (#667)."""
+    http, app, _stub = client
+    app.state.settings.mounts = MountSettings(
+        host_mode="prefix", host_roots=("/Users/probe",)
+    )
+    monkeypatch.setattr(
+        "msks.hostshares.mounted_share_roots", lambda source: ()
+    )
+    refused = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-v",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "mounts": [{"host": "/Users/probe/code", "guest": "/mnt/code"}],
+        },
+        headers=auth(),
+    )
+    assert refused.status_code == 400, refused.text
+    assert "recreate the VM" in refused.json()["detail"]
+
+
+async def test_a_narrowed_reload_skips_the_host_mount(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The reload story for host mounts: a share that cleared the
+    gates at set time and lost them to a reload reads as a skip
+    on the row — the start proceeds without it, the same evidence
+    shape a share leaving the config produces."""
+    http, app, _stub = client
+    code = tmp_path / "code"
+    code.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    app.state.settings.mounts = host_world(tmp_path)
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-n",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "mounts": [{"host": str(code), "guest": "/mnt/code"}],
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 201, created.text
+    wid = created.json()["id"]
+    app.state.settings.mounts = MountSettings(
+        host_mode="identity", host_roots=(str(other),)
+    )
+    row = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
+    assert row.json()["mount_issues"] == [
+        {
+            "kind": "skipped",
+            "host": str(code),
+            "guest": "/mnt/code",
+            "mode": "rw",
+            "detail": (
+                f"host path {str(code)!r} is outside the allowed "
+                "host-share roots; add it (or a parent directory) to "
+                "the daemon's config (MSKSD_MOUNT_HOST_ROOTS) and reload"
+            ),
+        }
+    ]
+
+
+async def test_the_listing_matches_the_row_for_host_skips(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The listing derives the same host-mount skips the row read
+    does (#672): both surfaces show the marker, so the CLI's ls
+    and the row's show agree."""
+    http, app, _stub = client
+    code = tmp_path / "code"
+    code.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    app.state.settings.mounts = host_world(tmp_path)
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-l",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "mounts": [{"host": str(code), "guest": "/mnt/code"}],
+        },
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+    app.state.settings.mounts = MountSettings(
+        host_mode="identity", host_roots=(str(other),)
+    )
+    row = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
+    listed = await http.get("/api/v1/workspaces", headers=auth())
+    mine = next(r for r in listed.json() if r["id"] == wid)
+    assert mine["mount_issues"] == row.json()["mount_issues"]
+    assert mine["mount_issues"][0]["kind"] == "skipped"
+
+
+async def test_host_mounts_hold_no_rw_exclusivity(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """Host-form mounts never enter the holder map (#672): two
+    workspaces may hold the same host tree read-write — the
+    coherence contract is their concurrency story, not a
+    ``multi: false`` hold."""
+    from msks.server.api.rows import record_rw_holders
+
+    holders: dict[str, str] = {}
+    record_rw_holders(
+        holders,
+        {
+            "id": "ws-a",
+            "mounts": json.dumps(
+                [{"host": "/Users/p/code", "guest": "/m", "mode": "rw"}]
+            ),
+        },
+    )
+    record_rw_holders(
+        holders,
+        {
+            "id": "ws-b",
+            "mounts": json.dumps(
+                [{"share": "proj", "guest": "/p", "mode": "rw"}]
+            ),
+        },
+    )
+    assert holders == {"proj": "ws-b"}

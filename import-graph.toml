@@ -61,6 +61,10 @@ agecrypto = 0
 configio = 0
 conformance_args = 0
 events = 0
+# #672: the daemon-side host-share gates — a leaf over the mount
+# vocabulary (the mounted-roots enumeration and the two-gate
+# validation), sitting at settings' rank.
+hostshares = 1
 identity = 0
 llm = 0
 msks = 0
@@ -137,6 +141,12 @@ settings = 5
 model = 2
 spec = 15
 
+[snapshot.hostshares]
+# #672: the gates speak the #671 mount vocabulary — the reserved
+# prefix, the host modes, the canonical host path, the
+# translation, and the under-root comparison.
+spec = 7
+
 [snapshot.imagestore]
 spec = 3
 
@@ -154,14 +164,19 @@ secretcache = 2
 spec = 17
 
 [snapshot.microvm]
+# #672: the spawn path re-runs the host-share gates for a
+# host-form mount — the shared directory and its refusal
+# vocabulary.
+hostshares = 2
 # interceptor: the local driver mints the workspace CA at create
 # so the seed carries it (#424/#200)
 interceptor = 2
 persist = 7
 # #620 part #622: the local driver reads the mount vocabulary
 # (MODE_RW for the readonly composition) beside the fs-daemon
-# module it already owns.
-spec = 16
+# module it already owns. #672: one more name — mount_tag, the
+# device name both mount forms attach as.
+spec = 17
 
 [snapshot.model]
 # #514: the blob staleness hash moved to the crypto leaf with the
@@ -195,6 +210,10 @@ secretcache = 3
 
 [snapshot.server]
 app = 2
+# #672: the set-time (checked_mounts) and start-time
+# (mount_state) host-share gates — the module and the
+# check entry.
+hostshares = 2
 # #464: msksd doctor reads the daemon's own tool-name settings
 # (load_settings) beside serve's — the checks name what the
 # daemon will actually exec.
@@ -247,12 +266,17 @@ secretcache = 2
 # refusal's frames.
 # #620 part #624: the set-time gate reads the row rules'
 # validate_mounts (one name on the rows' mount statement).
-spec = 36
+# #672: one more name — named_only, the named-form subset the
+# set-time gate bounds (deduplicated from the rows' local
+# helper).
+spec = 37
 storage = 13
 
 [snapshot.settings]
 # #620 part #621: the shares parser pulls the MountShare shape
 # and its key grammar from the mount leaf (two names, one
 # statement); part #622 adds safe_share_name and SHARE_NAME_MAX
-# (the virtiofs tag limit) for the tag rule.
-spec = 10
+# (the virtiofs tag limit) for the tag rule. #672: three more
+# names — the host modes' pair and the canonical host path —
+# for the host-share gates' settings.
+spec = 13

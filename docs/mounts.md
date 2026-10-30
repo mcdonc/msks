@@ -61,6 +61,38 @@ once from two terminals race last-write-wins — the surface sets
 the whole list; a workspace served by one operator at a time
 never sees the race.
 
+## The host form
+
+A mount can name a host path instead of a share —
+`{host: /Users/chrism/code, guest: /mnt/code, mode: rw}` — an
+absolute host path (the `--share` flag (#673) expands `~`
+against the client's home before the request; the daemon takes
+the path as typed), and the daemon
+translates it by its host mode and runs it through two gates,
+each refusing at set time with its remedy:
+
+1. **The mount gate** (VM-hosted daemons, `mount_host_mode:
+prefix`): the path, translated under `/mnt/msks`, must sit
+   under a root the daemon's VM actually has mounted. A path
+   whose root is not mounted is refused with the instruction to
+   recreate the VM from a template that mounts it — vz mounts
+   are fixed at VM start, so a config edit cannot add one.
+2. **The policy gate** (every host): the path, resolved against
+   symlink escapes, must sit under one of the allowed roots
+   (`mount_host_roots`). A path outside them is refused with the
+   instruction to add it or a parent to the daemon's config. A
+   symlink that resolves outside its allowed root is refused
+   the same way — the share cannot walk out of what the
+   operator allowed.
+
+A host-form mount attaches read-write unless it says `ro` —
+the same default the named form carries, and for the same
+reason: the trust decision is made before the mode matters (the
+share is listed or the root allowed); a mount that wants less
+names `ro`. Read-write host mounts hold no exclusivity: any
+number of workspaces may attach the same tree, and the coherence
+contract (below) is their concurrency story.
+
 ## The skip behavior
 
 A start proceeds when a mount cannot attach, and the skip is

@@ -29,9 +29,12 @@ from pathlib import Path
 
 from .spec.egress import EGRESS_MODES, MODE_ALLOW
 from .spec.mounts import (
+    HOST_MODE_IDENTITY,
+    HOST_MODES,
     SHARE_KEYS,
     SHARE_NAME_MAX,
     MountShare,
+    canonical_host_path,
     safe_share_name,
 )
 from .spec.tokens import validate_token_plaintext
@@ -394,9 +397,25 @@ class MountSettings:
 
     shares: tuple[MountShare, ...] = ()
 
+    #: The host-share gates' inputs (#667, #672): the host mode
+    #: (``identity`` on a bare-Linux daemon — host paths are its
+    #: own local paths; ``prefix`` on a VM-hosted daemon — the
+    #: Lima/macOS host, where share roots mount under the
+    #: reserved prefix) and the allowed roots the policy gate
+    #: bounds host-path shares to, typed as host paths and
+    #: translated by the same rule at gate time. Both reload
+    #: live like the shares list.
+    host_mode: str = HOST_MODE_IDENTITY
+    host_roots: tuple[str, ...] = ()
+
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> MountSettings:
-        return MountSettings(shares=mount_shares_from(live_env(env)))
+        live = live_env(env)
+        return MountSettings(
+            shares=mount_shares_from(live),
+            host_mode=host_mode_from(live),
+            host_roots=host_roots_from(live),
+        )
 
 
 @dataclass
@@ -823,6 +842,39 @@ def resolve_share_path(path: str, name: str) -> str | None:
     if not os.path.isdir(path):
         raise ValueError(f"share {name!r} path is not a directory: {path}")
     return os.path.realpath(path)
+
+
+def host_mode_from(env: Mapping[str, str]) -> str:
+    """The host-share mode (#672): ``MSKSD_MOUNT_HOST_MODE``,
+    defaulting to ``identity`` (a bare-Linux daemon — every
+    deployment that predates the macOS host). Any other value is
+    a named error at load, the same fail-at-startup rule every
+    config key carries."""
+    mode = env.get("MSKSD_MOUNT_HOST_MODE", "") or HOST_MODE_IDENTITY
+    if mode not in HOST_MODES:
+        raise ValueError(
+            "MSKSD_MOUNT_HOST_MODE must be one of "
+            f"{list(HOST_MODES)}, got {mode!r}"
+        )
+    return mode
+
+
+def host_roots_from(env: Mapping[str, str]) -> tuple[str, ...]:
+    """The allowed host-share roots (#672): the config file's
+    list under one flat key, or the environment's JSON array
+    string — the same walk the shares list takes. Each root is
+    canonicalized at load (a relative or traversing root is a
+    config bug named at startup, not a gate surprise later);
+    existence is not required — a root may name a tree the
+    operator mounts later. Empty or unset allows nothing: the
+    host-share surface stays off until the operator lists one."""
+    raw = env.get("MSKSD_MOUNT_HOST_ROOTS", "")
+    if raw in ("", None):
+        return ()
+    entries = mount_share_entries(raw)
+    if not all(isinstance(entry, str) for entry in entries):
+        raise ValueError("MSKSD_MOUNT_HOST_ROOTS must be a list of host paths")
+    return tuple(canonical_host_path(entry) for entry in entries)
 
 
 def unique_share_names(shares: tuple[MountShare, ...]) -> None:

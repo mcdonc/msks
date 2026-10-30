@@ -17,6 +17,7 @@ import types
 from pathlib import Path
 
 import pytest
+from msks.microvm.errors import MicrovmError
 from msks.microvm.fsdaemons import (
     QUEUE_SIZE,
     VIRTIOFSD_FLOOR,
@@ -43,7 +44,7 @@ from msks.settings import (
     Settings,
     VmmSettings,
 )
-from msks.spec.mounts import MountSpec, safe_share_name
+from msks.spec.mounts import MountSpec, mount_tag, safe_share_name
 from msks.spec.vm import VmSpec
 from test_api import auth, client  # noqa: F401 (fixture)
 
@@ -1392,3 +1393,67 @@ async def test_sweep_keeps_a_killproof_daemons_pidfile(tmp_path):
             live.kill()
         await live.wait()
     assert pidfile.exists()
+
+
+# --- the host form through the spawn path (#672) ---------------------
+
+
+async def test_a_host_mount_spawns_under_its_derived_tag(
+    tmp_path: Path,
+) -> None:
+    """The host form rides the same lifecycle keyed by its
+    derived tag (#672): the spawn's shared directory comes from
+    the #667 gates (identity mode over a real directory here),
+    the readonly flag from the mount's mode alone, and the socket
+    and pidfile carry the hs- tag — never a share lookup."""
+    shared = tmp_path / "code"
+    shared.mkdir()
+    vm_dir = tmp_path / "vms" / "ws-h"
+    vm_dir.mkdir(parents=True)
+    settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    settings.mounts = MountSettings(
+        host_mode="identity", host_roots=(str(tmp_path),)
+    )
+    driver, spawned = driver_over(settings)
+    spec = VmSpec(
+        workspace_id="ws-h",
+        kernel=Path("/k"),
+        rootfs=Path("/r"),
+        mounts=(MountSpec(guest="/mnt/code", mode="rw", host=str(shared)),),
+    )
+    await driver._start_fs_daemons(spec, vm_dir)
+    tag = mount_tag(spec.mounts[0])
+    assert tag.startswith("hs-")
+    assert (vm_dir / f"fs-{tag}.pid").exists()
+    await driver._stop_fs_daemons("ws-h")
+    binary, args = spawned[0]
+    assert args[args.index("--tag") + 1] == tag
+    assert args[args.index("--shared-dir") + 1] == str(shared)
+    assert "--readonly" not in args
+
+
+async def test_a_host_mount_spawn_refuses_an_ungated_path(
+    tmp_path: Path,
+) -> None:
+    """The spawn re-runs the gates (the flip between the route's
+    derivation and the spawn): a path the policy no longer allows
+    refuses at spawn, naming the config — never a daemon over a
+    tree the operator closed."""
+    shared = tmp_path / "code"
+    shared.mkdir()
+    vm_dir = tmp_path / "vms" / "ws-x"
+    vm_dir.mkdir(parents=True)
+    settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    settings.mounts = MountSettings(
+        host_mode="identity", host_roots=(str(tmp_path / "other"),)
+    )
+    driver, spawned = driver_over(settings)
+    spec = VmSpec(
+        workspace_id="ws-x",
+        kernel=Path("/k"),
+        rootfs=Path("/r"),
+        mounts=(MountSpec(guest="/m", mode="ro", host=str(shared)),),
+    )
+    with pytest.raises(MicrovmError, match="outside the allowed"):
+        await driver._start_fs_daemons(spec, vm_dir)
+    assert spawned == []
