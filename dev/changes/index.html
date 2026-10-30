@@ -1153,7 +1153,28 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Lima template share roots under the reserved prefix
+<li>
+<p><strong>Host-path workspace shares behind the #667 gates (#672).</strong>
+  A workspace's mounts now take a host-path form —
+  <code>mounts: [{host: ~/code, guest: /mnt/code, mode: rw}]</code> —
+  alongside the named-share form: the daemon translates the path
+  by its host mode (<code>MSKSD_MOUNT_HOST_MODE</code>, <code>identity</code> on a
+  bare-Linux host or <code>prefix</code> on the Lima/macOS host), gates it
+  against the roots its VM actually mounts and the allowed roots
+  in <code>MSKSD_MOUNT_HOST_ROOTS</code> (both refusing at set time with
+  their remedy: VM recreation, or the config edit), and refuses
+  symlinks that resolve outside what the operator allowed. The
+  host form defaults to <code>rw</code>, the same default the named form
+  carries — the trust decision (the share listed or the root
+  allowed) precedes the mode. The virtiofsd
+  lifecycle, the cloud-hypervisor <code>--fs</code> wiring, and the guest
+  mount units are the #620 machinery, keyed by a tag derived
+  from the path. See the <a href="../mounts/#the-host-form">mounts
+  chapter</a> for the two gates and their
+  refusal remedies.</p>
+</li>
+<li>
+<p><strong>Lima template share roots under the reserved prefix
   (#671).</strong> The msksd-VM Lima template ships in the wheel
   (<code>msks/server/assets/msksd-vm.yaml</code>) with every share root
   mounted under <code>/mnt/msks</code> — the WSL <code>/mnt/c</code> shape, so an
@@ -1163,7 +1184,8 @@ tagged <code>vX.Y.Z</code>.</p>
   host-share vocabulary in <code>msks.spec.mounts</code> carries the
   prefix, the host-mode translation (<code>identity</code> on bare Linux,
   <code>prefix</code> on VM hosts), and the template validation that
-  refuses a mount outside the reserved-prefix shape.</li>
+  refuses a mount outside the reserved-prefix shape.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>

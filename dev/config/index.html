@@ -1627,6 +1627,20 @@ and <code>path</code>, and two bounds: <code>writable</code> (default <code>true
 <td>The shares: entries of <code>name</code>, <code>path</code>, <code>writable</code> (default <code>true</code> — a listed share serves read-write), and <code>multi</code> (default <code>true</code> — a share attaches read-write to any number of workspaces; <code>false</code> makes read-write attaches exclusive). The environment form is a JSON array string.</td>
 </tr>
 <tr>
+<td><code>mount_host_mode</code></td>
+<td><code>MSKSD_MOUNT_HOST_MODE</code></td>
+<td>text</td>
+<td><code>identity</code></td>
+<td>How a host-path mount's path reaches the daemon's filesystem: <code>identity</code> — the daemon runs on bare Linux and the path is its own; <code>prefix</code> — the daemon runs in its own VM (the macOS host), and share roots mount under the reserved <code>/mnt/msks</code>, so the path composes onto that prefix (the WSL <code>/mnt/c</code> shape).</td>
+</tr>
+<tr>
+<td><code>mount_host_roots</code></td>
+<td><code>MSKSD_MOUNT_HOST_ROOTS</code></td>
+<td>list</td>
+<td><em>(unset)</em></td>
+<td>The allowed host-share roots, as host paths (translated by <code>mount_host_mode</code> at gate time): a host-path mount must resolve under one of them. Unset allows nothing — the host-path surface stays off until the operator lists one. Refusals name this key. The environment form is a JSON array string.</td>
+</tr>
+<tr>
 <td><code>virtiofsd</code></td>
 <td><code>MSKSD_VIRTIOFSD</code></td>
 <td>string</td>

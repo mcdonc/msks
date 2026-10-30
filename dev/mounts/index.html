@@ -543,6 +543,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-host-form" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The host form
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-skip-behavior" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -828,6 +839,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-host-form" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The host form
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-skip-behavior" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -934,6 +956,36 @@ lands the new set and prunes the dropped one. Two mounts set at
 once from two terminals race last-write-wins — the surface sets
 the whole list; a workspace served by one operator at a time
 never sees the race.</p>
+<h2 id="the-host-form">The host form<a class="headerlink" href="#the-host-form" title="Permanent link">&para;</a></h2>
+<p>A mount can name a host path instead of a share —
+<code>{host: /Users/chrism/code, guest: /mnt/code, mode: rw}</code> — an
+absolute host path (the <code>--share</code> flag (#673) expands <code>~</code>
+against the client's home before the request; the daemon takes
+the path as typed), and the daemon
+translates it by its host mode and runs it through two gates,
+each refusing at set time with its remedy:</p>
+<ol>
+<li><strong>The mount gate</strong> (VM-hosted daemons, <code>mount_host_mode:
+prefix</code>): the path, translated under <code>/mnt/msks</code>, must sit
+   under a root the daemon's VM actually has mounted. A path
+   whose root is not mounted is refused with the instruction to
+   recreate the VM from a template that mounts it — vz mounts
+   are fixed at VM start, so a config edit cannot add one.</li>
+<li><strong>The policy gate</strong> (every host): the path, resolved against
+   symlink escapes, must sit under one of the allowed roots
+   (<code>mount_host_roots</code>). A path outside them is refused with the
+   instruction to add it or a parent to the daemon's config. A
+   symlink that resolves outside its allowed root is refused
+   the same way — the share cannot walk out of what the
+   operator allowed.</li>
+</ol>
+<p>A host-form mount attaches read-write unless it says <code>ro</code> —
+the same default the named form carries, and for the same
+reason: the trust decision is made before the mode matters (the
+share is listed or the root allowed); a mount that wants less
+names <code>ro</code>. Read-write host mounts hold no exclusivity: any
+number of workspaces may attach the same tree, and the coherence
+contract (below) is their concurrency story.</p>
 <h2 id="the-skip-behavior">The skip behavior<a class="headerlink" href="#the-skip-behavior" title="Permanent link">&para;</a></h2>
 <p>A start proceeds when a mount cannot attach, and the skip is
 state, not a log line. A share gone from the config, an <code>rw</code>
