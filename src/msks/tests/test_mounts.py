@@ -31,6 +31,7 @@ from msks.settings import (
 from msks.spec.mounts import (
     HOST_MODE_IDENTITY,
     HOST_MODE_PREFIX,
+    HOST_MODES,
     MODE_RW,
     SHARE_ROOT_PREFIX,
     MountShare,
@@ -1253,6 +1254,45 @@ def test_prefix_translation_refuses_unprefixed_vm_paths() -> None:
         untranslate_vm_path(HOST_MODE_PREFIX, SHARE_ROOT_PREFIX)
     with pytest.raises(ValueError, match="host mode"):
         translate_host_path("bridged", "/Users/chrism")
+
+
+def test_untranslate_refuses_paths_that_lexically_escape() -> None:
+    """A ``..`` past the prefix names a path outside it even
+    though the component prefix matches, and a relative path is
+    no daemon-namespace path at all — both are named refusals,
+    so the round trip stays total (translate accepts every path
+    untranslate returns)."""
+    with pytest.raises(ValueError, match="must not contain"):
+        untranslate_vm_path(HOST_MODE_PREFIX, f"{SHARE_ROOT_PREFIX}/../etc")
+    with pytest.raises(ValueError, match="must not contain"):
+        untranslate_vm_path(
+            HOST_MODE_PREFIX, f"{SHARE_ROOT_PREFIX}/x/../../etc"
+        )
+    with pytest.raises(ValueError, match="must be absolute"):
+        untranslate_vm_path(HOST_MODE_PREFIX, "mnt/msks/x")
+    with pytest.raises(ValueError, match="must be absolute"):
+        untranslate_vm_path(HOST_MODE_IDENTITY, "srv/data")
+    with pytest.raises(ValueError, match="must not contain"):
+        untranslate_vm_path(HOST_MODE_IDENTITY, "/a/../b")
+    for mode in HOST_MODES:
+        for host in (
+            "/Users/chrism/code",
+            "/Volumes/data",
+            "/srv/a/deep/tree",
+        ):
+            assert (
+                untranslate_vm_path(mode, translate_host_path(mode, host))
+                == host
+            )
+
+
+def test_share_root_row_refuses_non_string_mount_point() -> None:
+    with pytest.raises(ValueError, match="must be a string, got int"):
+        share_root_row("/Users/chrism", 5)
+    with pytest.raises(ValueError, match="must be a string, got list"):
+        share_roots_from_template(
+            [{"location": "/Users/chrism", "mountPoint": ["/mnt/msks/x"]}]
+        )
 
 
 def test_share_root_row_enforces_suffix_preservation() -> None:

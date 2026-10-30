@@ -688,7 +688,11 @@ def check_host_path_shape(host_path: str) -> None:
     """The shape refusals for one host path: absolute, no
     traversal component, and not the filesystem root — the
     last because a share root is one host tree, and the whole
-    filesystem is not one."""
+    filesystem is not one. No charset gate here, by contrast
+    with the guest paths' printable-ASCII rule: macOS folder
+    names carry arbitrary unicode, so the rule would refuse
+    legitimate shares — the guest rule exists for unit files,
+    a constraint this side does not have."""
     path = PurePosixPath(host_path)
     if not path.is_absolute():
         raise ValueError(f"share path {host_path!r} must be absolute")
@@ -722,10 +726,14 @@ def untranslate_vm_path(mode: str, vm_path: str) -> str:
     """The operator-facing host path a daemon-namespace path
     spells: under ``identity`` the path itself; under ``prefix``
     the part under SHARE_ROOT_PREFIX, refused when the path does
-    not sit under it. The refusal-message half of the
+    not sit under it — a component-wise check, so a ``..`` that
+    lexically escapes the prefix is refused too, and
+    `translate_host_path` accepts every path this returns (the
+    round trip holds). The refusal-message half of the
     translation — the daemon reports paths the operator typed,
     not the geometry of its own VM."""
     check_host_mode(mode)
+    check_host_path_shape(vm_path)
     path = PurePosixPath(canonical_guest(vm_path))
     if mode == HOST_MODE_IDENTITY:
         return str(path)
@@ -782,6 +790,11 @@ def share_root_row(location: str, mount_point: str | None) -> ShareRoot:
             f"mount of {location!r} carries no mountPoint; Lima's "
             "default mounts the host path itself — share roots "
             f"mount under {SHARE_ROOT_PREFIX}"
+        )
+    if not isinstance(mount_point, str):
+        raise ValueError(
+            f"mountPoint for {location!r} must be a string, got "
+            f"{type(mount_point).__name__}"
         )
     expected = translate_host_path(HOST_MODE_PREFIX, host_path)
     rendered = canonical_guest(mount_point)
