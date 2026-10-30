@@ -601,3 +601,26 @@ the escape hatch (the Docker patch carried in a custom kernel,
 should a future macOS regress) live in the suite's README under
 `scripts/vz-hardlink-repro/`; re-run the suite on new macOS
 releases before shipping rw shares.
+
+### The two-hop virtiofs landmine (#670)
+
+The second hop of the host-share design (#667) — the msksd VM
+exporting a VZ virtiofs mount into workspace VMs through virtiofsd —
+is territory no shipping product covers (NFS-serving a virtiofs
+mount is broken upstream). The `scripts/hop2-virtiofsd-suite/`
+rig builds the real stack — a nested cloud-hypervisor guest whose
+virtiofs share is the outer VM's rw virtiofs mount — and runs the
+seven workloads the issue names. All pass on stock Debian
+(virtiofsd 1.13.2, cloud-hypervisor v54, macOS 27): listings are
+byte-identical across the hop, link/unlink churn is clean, inodes
+from hop 1 pass through verbatim, a 40k-file tree leaves virtiofsd
+holding 6 fds, a mid-write kill of the daemon and VMM leaves every
+landed file complete, and cross-writer visibility stays under a
+second. Two findings shape the design: cloud-hypervisor's
+userspace vhost-user master is what makes hop 2 possible on the
+stock kernel (Debian's cloud kernel builds no `/dev/vhost-vfs`, so
+a QEMU-shaped hop 2 would need a custom kernel), and ownership
+collapses to root across both hops (macOS uid 501 → 0 → 0), which
+the #667 single-writer contract already covers. The suite's README
+carries the evidence table, the re-run procedure, and the
+marker-file protocol for cross-VM signaling on a share.
