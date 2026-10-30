@@ -53,6 +53,7 @@ from .settings import (
 ARCHIVE = "archive"
 BOOT = "boot"
 CONSOLE = "console"
+VIRTIOFS = "virtiofs"
 ROOT_RW = "root-rw"
 HOME_LABEL = "home-label"
 USER_DATA = "user-data"
@@ -69,6 +70,7 @@ SKIP = "skip"
 CORE_POINTS = (
     BOOT,
     CONSOLE,
+    VIRTIOFS,
     USER_DATA,
     ACPI_SHUTDOWN,
     ROOT_RW,
@@ -404,6 +406,41 @@ async def boot_rows(
     return True
 
 
+async def virtiofs_row(
+    microvm, workspace_id: str, results: list[CheckResult]
+) -> None:
+    """The virtiofs capability row (#674, part #667): the guest
+    must carry the virtiofs filesystem driver — built into the
+    kernel or loadable as a module — for a workspace's shares to
+    mount. A missing driver fails legibly here, #661's pattern:
+    the check names the image's gap before a share attaches as a
+    mount unit that never comes up."""
+    try:
+        await probe(
+            microvm,
+            workspace_id,
+            "modprobe virtiofs 2>/dev/null; "
+            "grep -qw virtiofs /proc/filesystems "
+            "&& echo VIRTIOFS-$((6*7))",
+            "VIRTIOFS-42",
+        )
+    except (OSError, TimeoutError, ConnectionError) as exc:
+        results.append(
+            failed(
+                VIRTIOFS,
+                "this image does not ship virtio_fs — no virtiofs "
+                f"filesystem driver built in or loadable: {exc}",
+            )
+        )
+        return
+    results.append(
+        passed(
+            VIRTIOFS,
+            "the virtiofs filesystem driver answers (mount -t virtiofs works)",
+        )
+    )
+
+
 async def write_markers(
     microvm,
     workspace_id: str,
@@ -586,6 +623,7 @@ async def run_core_pass(
             boot_timeout_s=boot_timeout_s,
         ):
             return
+        await virtiofs_row(microvm, spec.workspace_id, results)
         root_exc, home_exc = await write_markers(
             microvm,
             spec.workspace_id,

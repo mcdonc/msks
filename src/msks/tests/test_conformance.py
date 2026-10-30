@@ -20,6 +20,7 @@ from msks.conformance import (
     HOME_LABEL,
     ROOT_RW,
     USER_DATA,
+    VIRTIOFS,
     CheckResult,
     check_image,
     default_uplink,
@@ -100,6 +101,8 @@ class FakeConsole:
     def respond(self, command: str) -> str | None:
         if "echo CONF-" in command:
             return "CONF-42\n"
+        if "proc/filesystems" in command:
+            return "VIRTIOFS-42\n"
         if "> /root/.msks-conformance" in command:
             self.root_marker = command.split()[1]
             return "WROTE-42\n"
@@ -263,6 +266,31 @@ async def run_check(
     return rows, microvm
 
 
+async def test_the_virtiofs_row_reports_the_driver(
+    tmp_path: Path,
+) -> None:
+    """The virtiofs capability row (#674): a guest whose driver
+    answers passes beside the console row; a guest with none —
+    the probe times out, the #661 legible-failure shape — fails
+    with the #667 wording, and the rest of the pass runs on."""
+    rows, _microvm = await run_check(tmp_path, FakeConsole())
+    assert statuses(rows)[VIRTIOFS] == "pass"
+    virtiofs = next(row for row in rows if row.name == VIRTIOFS)
+    assert "mount -t virtiofs" in virtiofs.detail
+    assert statuses(rows)[USER_DATA] == "pass"
+
+    silent = FakeConsole()
+    silent.failures = ["proc/filesystems"]
+    rows, _microvm = await run_check(tmp_path, silent)
+    virtiofs = next(row for row in rows if row.name == VIRTIOFS)
+    assert virtiofs.status == "fail"
+    assert "this image does not ship virtio_fs" in virtiofs.detail
+    # The missing driver costs the row alone: the rest of the
+    # contract still reports.
+    assert statuses(rows)[USER_DATA] == "pass"
+    assert statuses(rows)[ACPI_SHUTDOWN] == "pass"
+
+
 async def test_the_archive_row_names_the_declared_arch(
     tmp_path: Path,
 ) -> None:
@@ -354,6 +382,7 @@ async def test_full_pass_with_provisioner(tmp_path: Path) -> None:
         ARCHIVE: "pass",
         BOOT: "pass",
         CONSOLE: "pass",
+        VIRTIOFS: "pass",
         USER_DATA: "pass",
         ACPI_SHUTDOWN: "pass",
         ROOT_RW: "pass",

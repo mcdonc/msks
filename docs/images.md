@@ -538,6 +538,7 @@ $ msks image check workspace-mine-1.0.tar
 PASS archive        imported mine:1.0 (1d6a5e782fc0)
 PASS boot           guest answered the console in 3.4s (kernel 6.12.107+deb13-amd64)
 PASS console        root autologin getty on the console port
+PASS virtiofs       the virtiofs filesystem driver answers (mount -t virtiofs works)
 PASS user-data      seed payload ran on first boot
 PASS acpi-shutdown  clean shutdown within 120s
 PASS root-rw        root is writable and the write survived a stop/start (overlay)
@@ -547,7 +548,10 @@ PASS home-label     /home mounted by label msks-home and its write survived a st
 Any host with `/dev/kvm` runs it — nothing else from msks is
 needed (no daemon, no state). The points map one-to-one onto "What a guest must provide"
 above. The checks cover the archive layout and manifest, a
-guest whose console getty answers, a root that accepts writes
+guest whose console getty answers, the virtiofs driver a share
+mounts through (#674 — an image without it fails its own row
+with the named gap, before a workspace's share attaches as a
+mount unit that never comes up), a root that accepts writes
 through the overlay, and `/home` mounted by its label (both
 surviving a stop/start cycle). They also cover the seed
 payload running on first boot (checked when the manifest
