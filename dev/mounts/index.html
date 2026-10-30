@@ -979,6 +979,9 @@ prefix</code>): the path, translated under <code>/mnt/msks</code>, must sit
    the same way — the share cannot walk out of what the
    operator allowed.</li>
 </ol>
+<p>The spec grammar splits its fields on colons, so a host path
+containing one is inexpressible on the wire (<code>--share</code> and the
+TUI editor both refuse it, naming the field the colon broke).</p>
 <p>A host-form mount attaches read-write unless it says <code>ro</code> —
 the same default the named form carries, and for the same
 reason: the trust decision is made before the mode matters (the

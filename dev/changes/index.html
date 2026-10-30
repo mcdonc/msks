@@ -1154,6 +1154,17 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong><code>msks create --share HOST:GUEST[:MODE]</code> and the host form on
+  <code>msks mount</code>/<code>umount</code> (#673).</strong> The client surface for #667's
+  host-path shares: a repeatable create flag whose <code>~</code> expands
+  against your home before the request, the same spec grammar on
+  <code>msks mount</code> (a path-shaped first field is a host path, a bare
+  name is a configured share), and <code>msks umount</code> names what
+  leaves by share name or host path. A refused share surfaces
+  the daemon's gate message verbatim — which gate refused and
+  the remedy. See the <a href="../mounts/#the-host-form">mounts chapter</a>.</p>
+</li>
+<li>
 <p><strong>Host-path workspace shares behind the #667 gates (#672).</strong>
   A workspace's mounts now take a host-path form —
   <code>mounts: [{host: ~/code, guest: /mnt/code, mode: rw}]</code> —
