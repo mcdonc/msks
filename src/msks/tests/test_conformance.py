@@ -276,7 +276,7 @@ async def test_the_virtiofs_row_reports_the_driver(
     rows, _microvm = await run_check(tmp_path, FakeConsole())
     assert statuses(rows)[VIRTIOFS] == "pass"
     virtiofs = next(row for row in rows if row.name == VIRTIOFS)
-    assert "mount -t virtiofs" in virtiofs.detail
+    assert "mount -t virtiofs can find it" in virtiofs.detail
     assert statuses(rows)[USER_DATA] == "pass"
 
     silent = FakeConsole()

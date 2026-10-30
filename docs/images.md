@@ -100,6 +100,15 @@ console` bridges the client to the guest's serial device through the
   keeps the getty's own terminal geometry for its life. A
   workspace user's shell with the client's terminal size rides
   ssh through the forward seam.
+- **Register the virtiofs filesystem driver when shares
+  attach.** Host directories reach a workspace as virtiofs
+  mounts (#667), so the guest's kernel must know the filesystem —
+  built in (both pinned Debian flavours: `CONFIG_VIRTIO_FS=y`) or
+  loadable (Fedora's image ships the module in its runtime
+  closure and loads it at boot). `msks image check`'s `virtiofs`
+  row probes the driver; a workspace that attaches shares on an
+  image without it reports the named gap on the guest's console
+  and cloud-init log at start, and the mounts never come up.
 - **Take an address over DHCP when a NIC is present.**
   Workspaces are networked by default: the VM boots with a
   virtio-net NIC, and the daemon's DHCP service offers the

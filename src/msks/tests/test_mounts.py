@@ -725,6 +725,11 @@ def test_mounts_seed_block_writes_units_and_prunes() -> None:
     block = mounts_seed_block(mounts_for_guest_seed_tests())
     assert block.startswith("if command -v systemctl >/dev/null 2>&1; then")
     assert block.rstrip().endswith("fi")
+    # The installer names a missing virtiofs driver at start (#674):
+    # the units' filesystem, checked only when units exist, the
+    # named line on the console and cloud-init's log.
+    assert "does not ship virtio_fs" in block
+    assert "modprobe virtiofs 2>/dev/null || true" in block
     # The manifest names exactly the wanted units.
     assert "mnt-proj.mount\n" in block
     assert "srv-tree-docs.mount\n" in block

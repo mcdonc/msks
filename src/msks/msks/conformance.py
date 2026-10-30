@@ -436,7 +436,8 @@ async def virtiofs_row(
     results.append(
         passed(
             VIRTIOFS,
-            "the virtiofs filesystem driver answers (mount -t virtiofs works)",
+            "the virtiofs filesystem driver is registered "
+            "(mount -t virtiofs can find it)",
         )
     )
 
