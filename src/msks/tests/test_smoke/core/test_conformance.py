@@ -12,6 +12,7 @@ from msks.conformance import (
     HOME_LABEL,
     ROOT_RW,
     USER_DATA,
+    VIRTIOFS,
     check_image,
 )
 
@@ -37,8 +38,8 @@ def guest_archive() -> Path:
 @needs_local
 async def test_conformance_passes_on_the_built_guest() -> None:
     """The checker's own medicine: every contract point the shipped
-    image claims, it passes — boot, console getty, overlay, home
-    volume, seed, ACPI shutdown."""
+    image claims, it passes — boot, console getty, the virtiofs
+    driver, overlay, home volume, seed, ACPI shutdown."""
     rows = await check_image(
         guest_archive(),
         boot_timeout_s=GUEST_UP_TIMEOUT_S,
@@ -49,6 +50,7 @@ async def test_conformance_passes_on_the_built_guest() -> None:
         ARCHIVE,
         BOOT,
         CONSOLE,
+        VIRTIOFS,
         ROOT_RW,
         HOME_LABEL,
         USER_DATA,
