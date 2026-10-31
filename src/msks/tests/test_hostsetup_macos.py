@@ -202,6 +202,7 @@ def test_the_bootstrap_writes_the_geometry_and_survives_reruns() -> None:
     assert 'mount_host_roots: ["/Users/probe"]' in script
     assert f"port: {mac.VM_PORT}" in script
     assert 'socket: ""' in script
+    assert "egress_enabled: true" in script
     assert "bootstrap-token" in script
     assert "if [ ! -s" in script
     assert f"msks=={mac.vm_version()}" in script

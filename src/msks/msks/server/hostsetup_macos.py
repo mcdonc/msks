@@ -362,6 +362,9 @@ port: {VM_PORT}
 socket: ""
 bootstrap_token: "$token"
 state_dir: {VM_STATE}
+# Workspaces are networked by default; the daemon's egress stack
+# arms at startup when the setting says so.
+egress_enabled: true
 # The reserved-prefix geometry the VM's template mounted (#671):
 # share roots live under /mnt/msks, host paths translate by
 # composition, and the invoking user's home is the default
