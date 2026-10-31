@@ -108,7 +108,9 @@ failing commit and write the pinning test. On a non-Linux host the
 suite passes with its Linux-only surfaces named as skips (#691), so
 the suite's own total sits under 100 there — the pre-flight's
 covgaps pass over the changed sources stays the exact gate on every
-host, and CI's Linux run keeps the 100% bar.
+host, and CI's Linux run keeps the 100% bar. Off Linux, use
+`msks-preflight`, not bare `unit-tests`: a bare run there exits
+nonzero on the coverage total alone, green tests notwithstanding.
 
 ## Pre-flight the commit gates before the first commit attempt
 

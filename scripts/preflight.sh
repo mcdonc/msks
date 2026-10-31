@@ -226,17 +226,20 @@ else
       suite=FAIL
     fi
     if [ -f .coverage ]; then
-      if [ ${#backend[@]} -eq 0 ]; then
-        # No product source changed (tests, scripts, docs alone):
-        # covgaps defaults to every measured file, which on a
-        # non-Linux host reports the platform-dark surfaces the
+      if [ ${#backend[@]} -eq 0 ] && [ "$(uname -s)" != "Linux" ]; then
+        # No product source changed (tests, scripts, docs alone) and
+        # this host is off Linux: covgaps defaults to every measured
+        # file, which here reports the platform-dark surfaces the
         # suite names with skips (#691) — with nothing changed to
-        # grade, the pass is empty-handed, not all-files.
+        # grade, the pass is empty-handed, not all-files. Linux keeps
+        # the all-files grade for a tests-only change: the per-arc
+        # report is strictly sharper than the suite's aggregate
+        # fail_under and catches a weakened test the aggregate hides.
         echo "no product sources under src/msks/msks changed — nothing for covgaps to grade"
         gaps=PASS
       else
         gaps_out=$(mktemp)
-        if "$venv_python" scripts/covgaps.py "${backend[@]}" >"$gaps_out" 2>&1; then
+        if "$venv_python" scripts/covgaps.py ${backend[@]+"${backend[@]}"} >"$gaps_out" 2>&1; then
           gaps=PASS
         else
           gaps=FAIL
