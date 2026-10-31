@@ -285,6 +285,9 @@ def test_a_missing_ca_retries_then_refuses(
 def test_the_check_rows_answer_the_doctor_questions(
     monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
 ) -> None:
+    monkeypatch.setattr(
+        mac, "verify_daemon", lambda port, timeout_s=15.0: None
+    )
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
     rows = mac.check_rows(mac.PORT)
     assert rows[0] == "lima 2.2.1 at the template's floor"
@@ -425,6 +428,7 @@ def test_the_entry_prints_the_preset(
     monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, capsys
 ) -> None:
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    monkeypatch.setattr(mac, "verify_daemon", lambda port: None)
     monkeypatch.setattr(mac.sys, "platform", "darwin")
     monkeypatch.setattr(
         mac.os, "uname", lambda: SimpleNamespace(machine="arm64")
