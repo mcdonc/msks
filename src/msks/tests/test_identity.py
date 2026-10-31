@@ -205,10 +205,12 @@ def run_seed(
     ``home_mounted`` is the already-mounted guest (the wait's
     one-grep fast path); ``home_device`` is the writable volume
     disk — absent, the volumeless shape (the demo-VM boot without
-    a volume); and
-    ``home_mount_arrives`` starts the table bare and has the
-    ``sleep`` stub mount /home off its second call — the seed
-    waits, then seeds. ``sleep`` is stubbed to a logger that
+    a volume); ``home_mount_arrives`` starts the table bare and
+    has the ``sleep`` stub mount /home off its second call — the
+    seed waits, then seeds; and ``home_start_mounts`` makes the
+    ``systemctl`` stub itself mount off ``start home.mount`` —
+    the #686 dependency-failed shape, where the retry is the
+    thing that mounts. ``sleep`` is stubbed to a logger that
     ticks the fake uptime a second per call (so the capped shape
     runs its whole wait in test time).
     """
@@ -539,6 +541,7 @@ def test_the_home_volume_wait_rides_every_seed() -> None:
     assert "systemctl start home.mount" in wait
     assert "systemctl is-" not in wait
     assert "systemctl status" not in wait
+    assert "systemctl show" not in wait
 
 
 def test_seed_retries_a_dependency_failed_home_mount(tmp_path) -> None:

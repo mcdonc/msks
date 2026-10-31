@@ -326,7 +326,14 @@ def home_mount_wait_block() -> str:
     failure leaves it inactive, invisible to the query), which
     stays out. The macOS nested stack reproduced the dependency
     failure twice (both image generations); the retry mount took
-    under a second both times.
+    under a second both times. Two boundaries: the retry rides the
+    seed, and the seed runs once per instance — a later boot that
+    loses the same udev race has no seed running and needs the
+    image-side retry (#688); and on a disk present whose label
+    has not landed yet (the #662 rig watched the label trail by
+    eleven minutes), each start blocks the device unit's 30s
+    timeout before failing — the ask rate stays one per 30s
+    window, but the window is spent blocked rather than sleeping.
     """
     return (
         "# msks (#662): everything this seed writes under /home\n"
