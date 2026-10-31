@@ -204,6 +204,28 @@ in
       ];
     };
 
+    # The home-volume mount retry (#688), the Debian image's rule
+    # for the same race: a boot whose device job expires before
+    # udev's by-label symlink lands leaves home.mount failed as a
+    # dependency, systemd never retries a failed fstab mount, and
+    # the seed's #686 retry rides first boot only (the seed is
+    # per-instance) — so a RESTARTED workspace that loses the same
+    # race came up with /home down until a manual start. The rule
+    # fires when the labeled disk's udev event completes and asks
+    # for the start again; extraRules lands in the udev collection
+    # (99-local.rules) after the distro's blkid import
+    # (60-persistent-storage) has set ID_FS_LABEL, and --no-block
+    # keeps the RUN the short-lived foreground task udev rules are
+    # limited to. A store path for systemctl, not /usr/bin: the
+    # RUN program must exist where the rule text is checked
+    # (nixpkgs refuses a rule whose RUN target is absent) and
+    # where it runs, and the booted system's own systemd package
+    # answers both.
+    services.udev.extraRules = ''
+      # msks (#688): mount the home volume when its disk arrives.
+      ACTION=="add|change", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="msks-home", RUN+="${config.systemd.package}/bin/systemctl --no-block start home.mount"
+    '';
+
     boot.kernelParams = [ "console=${config.msks.consoleDevice}" ];
 
     # Stage-1 holds the discipline the Debian build's six-module

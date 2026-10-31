@@ -138,7 +138,13 @@ console` bridges the client to the guest's serial device through the
   ext4 volume at `/home`. Mount it by the volume label `msks-home`
   (the daemon formats the volume with that label) so the mount
   stays on the right device whatever the disk order is; `nofail`
-  keeps boots moving when the volume is absent.
+  keeps boots moving when the volume is absent. A udev rule asks
+  systemd for the mount again when the labeled disk appears, so
+  a boot whose device job expired while udev was still probing
+  mounts the volume moments after the label lands — every boot
+  the image ships, restarted workspaces included (the daemon's
+  identity seed carries the same retry for first boots on images
+  that predate the rule).
 - **Grant passwordless sudo to the `wheel` group.** Both
   images ship the conventional admin group `wheel` whose
   members administer the VM. Debian does it through a `%wheel`

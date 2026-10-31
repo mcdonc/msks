@@ -329,7 +329,9 @@ def home_mount_wait_block() -> str:
     under a second both times. Two boundaries: the retry rides the
     seed, and the seed runs once per instance — a later boot that
     loses the same udev race has no seed running and needs the
-    image-side retry (#688); and on a disk present whose label
+    image-side retry (#688 — the images ship one as a udev rule
+    that starts the mount when the labeled disk appears); and on
+    a disk present whose label
     has not landed yet (the #662 rig watched the label trail by
     eleven minutes), each start blocks the device unit's 30s
     timeout before failing — the ask rate stays one per 30s
