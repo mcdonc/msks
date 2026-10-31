@@ -1450,7 +1450,7 @@ def test_socket_stale_sweeps_a_dangling_symlink(tmp_path: Path) -> None:
     assert socket_stale(link)
 
 
-def test_socket_stale_contract(tmp_path: Path) -> None:
+def test_socket_stale_contract() -> None:
     """Absent no, abandoned yes, live no — the sweep's whole policy.
 
     The sockets live under a shallow mkdtemp in /tmp (the
@@ -1513,24 +1513,42 @@ def test_socket_stale_contract(tmp_path: Path) -> None:
 def test_read_cmdline_reads_ps_argv_off_procfs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """read_cmdline's non-procfs arm, pinned on every host by
-    steering the platform (#690): a live pid's argv comes back
-    NUL-joined with its fields intact (the identity match's
-    shape), a dead pid answers None through the ps failure, and
-    a pid the /proc path cannot read falls through to the
-    not-darwin answer."""
+    """read_cmdline's ps arm, pinned on every host (#690).
+
+    Steering the platform alone is not enough on Linux — /proc
+    answers for a live pid before the arm is reached — so this
+    test also steers the /proc read to fail, driving the ps arm
+    on the Linux CI host exactly as a Mac dev host drives it.
+    The assertions pin the arm's own shape: argv re-joined with
+    NULs after ps's space join, so a spaced argument arrives as
+    split fragments (the docstring's approximation, pinned
+    here), a dead pid answers None through the ps failure, and
+    off the darwin arm a pid the /proc path cannot read answers
+    None everywhere (natively on Linux, through the failed read
+    on a Mac)."""
     import msks.microvm.local as local_mod
+
+    real_read_bytes = Path.read_bytes
+
+    def procless_read_bytes(self: Path) -> bytes:
+        if str(self).startswith("/proc/"):
+            raise OSError("steered: no procfs")
+        return real_read_bytes(self)
 
     child = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(30)"]
     )
     try:
+        monkeypatch.setattr(local_mod.Path, "read_bytes", procless_read_bytes)
         monkeypatch.setattr(local_mod.sys, "platform", "darwin")
         cmdline = local_mod.read_cmdline(child.pid)
         assert cmdline is not None
         fields = [f for f in cmdline.split(b"\0") if f]
         assert fields[0].endswith(b"python3") or fields[0].endswith(b"python")
         assert b"-c" in fields
+        # ps joined the argv with spaces before the NUL re-join,
+        # so the spaced argument arrives as fragments — the shape
+        # the darwin arm delivers on every host.
         assert b"time.sleep(30)" in fields
         # A pid nothing answers: ps exits nonzero, the arm
         # answers None — never a guess at an identity.
