@@ -17,7 +17,10 @@ the other tools never see:
    reserved ``/mnt/msks`` prefix) with the daemon's port forward
    appended — the one piece the template leaves to this tool,
    because the port is a deployment choice.
-3. **The in-VM bootstrap** — the wheel installed into /opt/msks
+3. **The in-VM bootstrap** — the daemon's Debian tool set
+   (egress plumbing, volume trio, seed tooling) and its kernel
+   routing setting, the pinned cloud-hypervisor static release,
+   the wheel installed into /opt/msks
    (the PyPI release matching this tool's version, or ``--wheel``
    for a build in hand), ``/etc/msksd.yaml`` written (the daemon
    on the forwarded port, host-share mode ``prefix`` — the
@@ -83,6 +86,27 @@ LIMA_FLOOR = (2, 2, 1)
 #: ships 3.13, so the bootstrap provisions the standalone 3.14
 #: through uv rather than fighting the distro's interpreter.
 VM_PREFIX = "/opt/msks"
+
+#: The daemon's own tool set — the packages a Debian deployment
+#: host installs (hostsetup's map): the egress plumbing (nft,
+#: ip, conntrack), the volume trio, the seed's iso tooling, the
+#: client workflows' pair, and the console's multiplexer. The
+#: daemon execs them by name; a missing one is a workspace-start
+#: refusal naming it.
+VM_PACKAGES = (
+    "python3-venv virtiofsd nftables iproute2 conntrack "
+    "e2fsprogs qemu-utils genisoimage openssh-client rsync tmux"
+)
+
+#: The VMM the daemon boots workspaces with: upstream's static
+#: aarch64 release (the tool is Apple-Silicon-only, one arch),
+#: pinned by sha256 the way the repro suites pin theirs — Debian
+#: carries cloud-hypervisor in no suite.
+CH_URL = (
+    "https://github.com/cloud-hypervisor/cloud-hypervisor/"
+    "releases/download/v54.0/cloud-hypervisor-static-aarch64"
+)
+CH_SHA256 = "e8a6d9786ea678e739f1a386682846e93742dcb9c7b6e3e0c62e3bda6cff0ef3"
 
 #: The uv release the bootstrap installs from PyPI — pinned like
 #: every fetched artifact; uv provisions the VM's Python 3.14
@@ -340,7 +364,19 @@ def bootstrap_script(wheel: str | None, home: str) -> str:
     install = f"/tmp/{Path(wheel).name}" if wheel else f"msks=={vm_version()}"
     return f"""set -eux
 apt-get update -qq
-apt-get install -y -qq python3-venv virtiofsd >/dev/null
+apt-get install -y -qq {VM_PACKAGES} >/dev/null
+# The egress stack's kernel setting (#101): the daemon verifies
+# it at startup and refuses an egress workspace on 0.
+echo net.ipv4.ip_forward=1 >/etc/sysctl.d/99-msksd-egress.conf
+sysctl -w net.ipv4.ip_forward=1 >/dev/null
+# The VMM: pinned, verified, and left alone once present.
+ch_url={CH_URL}
+ch_sha={CH_SHA256}
+if ! [ -x /usr/local/bin/cloud-hypervisor ]; then
+  curl -sL -o /usr/local/bin/cloud-hypervisor "$ch_url"
+  echo "$ch_sha  /usr/local/bin/cloud-hypervisor" | sha256sum -c - >/dev/null
+  chmod +x /usr/local/bin/cloud-hypervisor
+fi
 python3 -m venv /opt/uv-bootstrap
 /opt/uv-bootstrap/bin/pip install -q uv=={UV_PIN}
 /opt/uv-bootstrap/bin/uv venv -q --python 3.14 {VM_PREFIX}

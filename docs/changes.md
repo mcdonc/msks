@@ -16,8 +16,10 @@ tagged `vX.Y.Z`.
   daemon inside it (the PyPI release matching the tool's
   version, or `--wheel` for a build in hand), writes its config
   with host-share mode `prefix` and the user's home the default
-  allowed root, enables its service, and prints the client
-  preset (`MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` — the CA
+  allowed root, the daemon's tool set (egress plumbing, volume
+  trio, seed tooling) with its kernel routing setting and the
+  pinned cloud-hypervisor release beside it, enables its
+  service, and prints the client preset (`MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` — the CA
   written under `~/.config/msks/`). `--check` runs the doctor
   rows (Lima at the template's floor, the VM running, the
   nested-virtualization marker, virtiofsd inside, the listener

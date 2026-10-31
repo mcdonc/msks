@@ -203,6 +203,12 @@ def test_the_bootstrap_writes_the_geometry_and_survives_reruns() -> None:
     assert f"port: {mac.VM_PORT}" in script
     assert 'socket: ""' in script
     assert "egress_enabled: true" in script
+    # The daemon's tool set, its kernel routing setting, and the
+    # pinned VMM — the pieces a workspace start execs or checks.
+    assert "nftables iproute2 conntrack" in script
+    assert "net.ipv4.ip_forward=1" in script
+    assert mac.CH_SHA256 in script
+    assert mac.CH_URL in script
     assert "bootstrap-token" in script
     assert "if [ ! -s" in script
     assert f"msks=={mac.vm_version()}" in script
