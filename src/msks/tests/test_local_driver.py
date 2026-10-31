@@ -783,6 +783,21 @@ async def test_reset_bumps_the_disk_epoch(env, fake, tmp_path: Path) -> None:
     assert (await app.state.model.get_ssh_key(WID))["disk_epoch"] == 2
 
 
+async def test_reset_without_an_overlay_bumps_nothing(
+    env, tmp_path: Path
+) -> None:
+    """#697 review: a reset of a workspace with no overlay to drop
+    (a never-started pre-#14 row, a second reset in a row)
+    advances the epoch for nothing — the epoch stays an honest
+    count of overlay recreations."""
+    app, _state_dir, _ = env
+    await app.state.model.create_workspace(spec(tmp_path))
+    await app.state.microvm.reset(WID)
+    assert (await app.state.model.get_ssh_key(WID))["disk_epoch"] == 0
+    await app.state.microvm.reset(WID)
+    assert (await app.state.model.get_ssh_key(WID))["disk_epoch"] == 0
+
+
 async def test_reset_refuses_a_running_vm(env, fake, tmp_path: Path) -> None:
     app, _state_dir, _ = env
     await app.state.microvm.launch(spec(tmp_path))

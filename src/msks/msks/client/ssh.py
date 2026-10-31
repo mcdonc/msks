@@ -1296,18 +1296,23 @@ def staged_session(workspace_id: str, transport=None):
         prepare(workspace_id, url, token, ssl_ctx, transport)
     )
     pin = session_pin(key, workspace_id)
-    if key.get("disk_epoch"):
+    cache_ref, instance = cache_key(key, workspace_id)
+    hosts = known_hosts_path(cache_ref, instance=instance)
+    if key.get("disk_epoch") and not Path(hosts).is_file():
+        # Once per rotation (#697 review): the rotated directory
+        # starts empty and the first successful connect writes the
+        # entry, so the notice rides the one session that re-pins
+        # and every later session keeps quiet.
         label = key.get("name") or pin
         print(
             f"msks: {label}'s disks were recreated; pinning fresh host keys",
             file=sys.stderr,
         )
     with session_identity(key, workspace_id) as served:
-        cache_ref, instance = cache_key(key, workspace_id)
         yield (
             booted,
             served,
-            known_hosts_path(cache_ref, instance=instance),
+            hosts,
             workspace_user(key),
             pin,
         )

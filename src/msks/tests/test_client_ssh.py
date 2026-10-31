@@ -1851,6 +1851,13 @@ def test_staged_session_names_recreated_disks(
         assert (booted, pin) == (False, "03c31bd241")
     assert keyed_paths == [("03c31bd241", "e1")]
     assert "disks were recreated" in capsys.readouterr().err
+    # Once per rotation (#697 review): a session whose rotated
+    # known_hosts already exists — the first connect wrote it —
+    # says nothing.
+    (tmp_path / "03c31bd241.e1").write_text("")
+    with ssh.staged_session("tree") as (_booted, _served, _h, _u, _pin):
+        pass
+    assert "disks were recreated" not in capsys.readouterr().err
 
 
 def test_run_workspace_ssh_names_a_missing_binary(

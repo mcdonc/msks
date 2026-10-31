@@ -706,6 +706,16 @@ class LocalCloudHypervisor(MicrovmDriver):
         nothing — there is no cache to rotate."""
         overlay = overlay_path(vmm.state_dir, spec.workspace_id)
         healed_overlay = not overlay.is_file()
+        if healed_overlay:
+            # The bump precedes the heal (#697 review): a bump
+            # failure aborts with no artifact touched, and a heal
+            # that then rolls its install back leaves the bump
+            # over-counted — harmless for a monotonic token —
+            # instead of the reverse (a healed overlay the epoch
+            # never recorded, the silent refusal this fix exists
+            # for). No row (the fixture launch, a create in flight)
+            # bumps nothing.
+            await self.app.state.model.bump_disk_epoch(spec.workspace_id)
         # Boots heal their artifacts (#14): a workspace row whose
         # overlay or volume is missing (a crash mid-create, or a row
         # that predates #14) gets them back before the VM starts.
@@ -715,8 +725,6 @@ class LocalCloudHypervisor(MicrovmDriver):
             self._settings().llm.port,
             await self.interceptor_ca_pem(),
         )
-        if healed_overlay:
-            await self.app.state.model.bump_disk_epoch(spec.workspace_id)
         # The share daemons spawn before the VMM (#620, part #622):
         # cloud-hypervisor opens each vhost-user socket at
         # vm.create, so the daemon behind it must already serve.
@@ -1387,13 +1395,14 @@ class LocalCloudHypervisor(MicrovmDriver):
             )
         await self._net_detach(workspace_id)
         await self._stop_fs_daemons(workspace_id)
-        remove_overlay(self._settings().vmm.state_dir, workspace_id)
         # The dropped overlay takes the guest's ssh host keys with
         # it (#110): the next boot heals a fresh overlay and the
-        # guest regenerates them, so the epoch advances now — the
-        # row still stands (reset keeps it and the home volume),
-        # and the client re-pins instead of refusing (#697).
-        await self.app.state.model.bump_disk_epoch(workspace_id)
+        # guest regenerates them, so the epoch advances the moment
+        # an overlay actually drops — a reset with none to drop (a
+        # never-started pre-#14 row, a second reset) bumps nothing,
+        # keeping the epoch an honest count of recreations.
+        if remove_overlay(self._settings().vmm.state_dir, workspace_id):
+            await self.app.state.model.bump_disk_epoch(workspace_id)
 
     async def cleanup(self, workspace_id: str) -> None:
         # Deleting a workspace stops its VMM first: the unlocked kill
