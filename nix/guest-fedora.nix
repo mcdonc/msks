@@ -328,6 +328,7 @@ let
           $out/etc/cloud/cloud.cfg.d \
           $out/etc/sudoers.d \
           $out/etc/ssh/sshd_config.d \
+          $out/etc/udev/rules.d \
           $out/etc/systemd/system/serial-getty@${facts.console}.service.d \
           $out/etc/systemd/system/ssh.service.d \
           $out/etc/systemd/system/multi-user.target.wants \
@@ -503,12 +504,32 @@ let
         # /dev/vdb) keeps /home on the right device even if the disk
         # order ever shifts. nofail plus a device timeout keeps a boot
         # without the volume (a demo VM, a pre-#14 image) moving
-        # instead of stalling the default 90s.
+        # instead of stalling the default 90s; a boot whose device job
+        # expires before the label lands is healed by the udev rule
+        # below (#688).
         printf '%s\n' \
           '# msks: root comes from the kernel cmdline; no swap.' \
           '# /home is the second persistent disk (#14), labeled msks-home.' \
           'LABEL=msks-home /home ext4 defaults,nofail,x-systemd.device-timeout=30s 0 2' \
           > $out/etc/fstab
+
+        # The home-volume mount retry (#688), the Debian image's
+        # rule word for word: a boot whose device job expires before
+        # udev's by-label symlink lands leaves home.mount failed as
+        # a dependency, systemd never retries a failed fstab mount,
+        # and the seed's #686 retry rides first boot only (the seed
+        # is per-instance) — so a RESTARTED workspace that loses the
+        # same race came up with /home down until a manual start.
+        # The rule fires when the labeled disk's udev event completes
+        # and asks for the start again; sorted at 99 so the distro's
+        # blkid import (60-persistent-storage) has set ID_FS_LABEL
+        # first, and --no-block keeps the RUN the short-lived
+        # foreground task udev rules are limited to. selinux=0 on
+        # this guest's cmdline (#651), so nothing mediates the RUN.
+        cat > $out/etc/udev/rules.d/99-msks-home-mount.rules <<'HOMERULE'
+        # msks (#688): mount the home volume when its disk arrives.
+        ACTION=="add|change", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="msks-home", RUN+="/usr/bin/systemctl --no-block start home.mount"
+        HOMERULE
 
         # Egress networking (#52): a workspace created with egress boots
         # with a virtio-net NIC; everything else presents none. The
@@ -1131,6 +1152,18 @@ let
     test -x "$tree"/sbin/init
     test -x "$tree"/usr/bin/rsync
     test -x "$tree"/usr/sbin/sshd
+    # Sanity: the home-volume mount retry (#688) — the RUN's
+    # target exists in the tree, and the rule's load-bearing
+    # lines, not just the file's existence: a rule whose match
+    # or verb drifted must fail the build here, not a workspace
+    # boot that never retries the mount.
+    test -x "$tree"/usr/bin/systemctl
+    grep -q 'ACTION=="add|change", SUBSYSTEM=="block"' \
+      "$tree"/etc/udev/rules.d/99-msks-home-mount.rules
+    grep -q 'ENV{ID_FS_LABEL}=="msks-home"' \
+      "$tree"/etc/udev/rules.d/99-msks-home-mount.rules
+    grep -q 'systemctl --no-block start home.mount' \
+      "$tree"/etc/udev/rules.d/99-msks-home-mount.rules
     # Sanity: the baked agent toolchain (#266) — an upstream
     # tarball or layout change must fail the build here, not
     # boot a workspace with a broken agent (the #36 bug class).

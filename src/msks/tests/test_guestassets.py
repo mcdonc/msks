@@ -573,6 +573,55 @@ def test_the_nixos_image_folds_the_interceptor_ca() -> None:
     assert "msks-interceptor-ca" not in debian
 
 
+def test_the_images_retry_the_home_volume_mount() -> None:
+    """The image-side #688 retry: every guest image ships a udev
+    rule that asks systemd to start home.mount again when the
+    labeled volume disk's udev event completes — the fstab unit
+    itself never retries a dependency failure, and the seed's
+    #686 retry rides first boot only (the seed is per-instance),
+    so a RESTARTED workspace that loses the same race relied on
+    this rule to mount at all. Debian and Fedora stage the same
+    rule in their overlays (absolute /usr/bin/systemctl); NixOS
+    declares it through extraRules (a store path, the form
+    nixpkgs' own udev-rules check accepts); each build fails on
+    a rule whose match or verb drifted."""
+    debian = (REPO_ROOT / "nix" / "guest-debian.nix").read_text()
+    fedora = (REPO_ROOT / "nix" / "guest-fedora.nix").read_text()
+    nixos = (REPO_ROOT / "nix" / "guest-nixos-configuration.nix").read_text()
+    nixos_build = (REPO_ROOT / "nix" / "guest-nixos.nix").read_text()
+    # The rule's load-bearing line, both deb/rpm overlays: the
+    # label match (the value blkid's 60-persistent-storage import
+    # sets, which the 99- sort puts behind), the start verb, and
+    # the no-block ask that keeps the RUN the short-lived
+    # foreground task udev rules are limited to.
+    for build in (debian, fedora):
+        assert "99-msks-home-mount.rules" in build
+        assert (
+            'ACTION=="add|change", SUBSYSTEM=="block", '
+            'ENV{ID_FS_LABEL}=="msks-home"' in build
+        )
+        assert 'RUN+="/usr/bin/systemctl --no-block start home.mount"' in build
+    # NixOS declares the same match and verb; a store path for
+    # systemctl, never /usr/bin (nixpkgs' rules check refuses a
+    # RUN target outside the store that does not exist at build
+    # time).
+    assert "services.udev.extraRules" in nixos
+    assert 'ACTION=="add|change", SUBSYSTEM=="block"' in nixos
+    assert 'ENV{ID_FS_LABEL}=="msks-home"' in nixos
+    assert "systemctl --no-block start home.mount" in nixos
+    assert "${config.systemd.package}/bin/systemctl" in nixos
+    assert "/usr/bin/systemctl" not in nixos
+    # Every build pins the rule's full match and verb, and the
+    # deb/rpm trees carry the RUN's target — a drifted rule fails
+    # the image build, not a workspace boot that never retries.
+    for build in (debian, fedora, nixos_build):
+        assert 'ACTION=="add|change", SUBSYSTEM=="block"' in build
+        assert 'ENV{ID_FS_LABEL}=="msks-home"' in build
+        assert "systemctl --no-block start home.mount" in build
+    assert 'test -x "$root"/usr/bin/systemctl' in debian
+    assert 'test -x "$tree"/usr/bin/systemctl' in fedora
+
+
 def test_the_extension_bounds_its_single_fetch() -> None:
     """The startup fetch posture (#266 review): one attempt, bounded
     by an abort signal — no retry loop, no sleeps. The environment

@@ -450,6 +450,19 @@ let
                  needs && /Name: / {print f, $3}')"
         grep -Rq 'llm-models.ts' "$toplevel"/etc/tmpfiles.d/
         grep -Rq 'settings.json' "$toplevel"/etc/tmpfiles.d/
+        # Sanity: the home-volume mount retry's rule (#688) — the
+        # match and the verb wherever nixpkgs' extraRules collected
+        # them (99-local.rules), not just any rules file: a
+        # configuration whose rule drifted must fail the build here,
+        # not a workspace boot that never retries the mount.
+        grep -rq 'ACTION=="add|change", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="msks-home"' \
+          "$toplevel"/etc/udev/rules.d/ \
+          || { echo "the #688 home-mount retry rule lost its " \
+               "ACTION/SUBSYSTEM match" >&2; exit 1; }
+        grep -rq 'systemctl --no-block start home.mount' \
+          "$toplevel"/etc/udev/rules.d/ \
+          || { echo "the #688 home-mount retry rule lost its start " \
+               "verb" >&2; exit 1; }
         grep -q 'guest-pi-extension' "$closureInfo"/store-paths
         # The launchers must execute (#272): a profile link proves
         # presence, not a working interpreter — the bug this closes

@@ -117,6 +117,17 @@ tagged `vX.Y.Z`.
   suite drops from a hang to about a minute on an
   Apple-Silicon dev host.
 
+- **Guest images retry the home-volume mount on every boot
+  (#688).** A restarted workspace that lost the udev race — the
+  volume's by-label symlink landing after the mount unit's 30s
+  device timeout — came up with `/home` unmounted indefinitely
+  (the first-boot retry that rides the identity seed never runs
+  on a later boot). Every guest image now ships a udev rule that
+  asks systemd for the mount when the labeled disk appears, so
+  `/home` mounts moments after the label lands, on every boot a
+  rebuilt image serves; existing images keep the seed's retry
+  for first boots.
+
 - **The seed retries a dependency-failed home-volume mount
   (#686).** On a boot slow enough that udev's by-label symlink
   lands after the fstab unit's 30s device timeout, `home.mount`
