@@ -61,6 +61,7 @@ def test_setting_vars_match_the_settings_source() -> None:
     text = Path(msks_settings.__file__).read_text()
     read_vars = set(re.findall(r'"(MSKSD_[A-Z0-9_]+)"', text))
     removed = set(getattr(msks_settings, "REMOVED_SECRET_STORE_KEYS", ()))
+    removed |= set(getattr(msks_settings, "REMOVED_MOUNT_VARS", ()))
     assert read_vars - removed == set(SETTING_ENV_VARS)
 
 

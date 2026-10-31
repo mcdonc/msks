@@ -271,11 +271,18 @@ class MountIn(BaseModel):
     ``rw`` when omitted. The trust decision precedes the mode:
     the root is allowed or the mount is refused. Unknown keys
     refuse (a typo'd ``modee`` must not silently drop the mode it
-    misspelled, landing the trust-bearing default)."""
+    misspelled, landing the trust-bearing default) — with one
+    carried exception: ``share``, the #620 named form removed by
+    #685, stays an accepted key so a pre-#685 client — or a row
+    it reads back — can post its stored list; the parser drops
+    the entry, so the set that carries it lands the row clean
+    (the removal's migration story, and the reason the old
+    client's mounts keep working across the upgrade)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    host: str = Field(min_length=1, max_length=4096)
+    host: str | None = Field(default=None, min_length=1, max_length=4096)
+    share: str | None = Field(default=None, min_length=1, max_length=256)
     guest: str = Field(min_length=1, max_length=4096)
     mode: str | None = Field(default=None, pattern="^(ro|rw)$")
 

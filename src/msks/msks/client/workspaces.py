@@ -534,8 +534,8 @@ def mounts_line(row: dict) -> str:
 
 
 def issue_notes(row: dict) -> str:
-    """The derived skips and conflicts as the outcome line's
-    em-dash half; empty on the healthy row."""
+    """The derived skips as the outcome line's em-dash half;
+    empty on the healthy row."""
     issues = row.get("mount_issues") or []
     if not issues:
         return ""

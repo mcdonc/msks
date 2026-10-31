@@ -127,7 +127,7 @@ def router(app) -> APIRouter:
             )
         boot["secret_coverage"] = coverage
         # The workspace's mounts (#620, part #624): validated here
-        # against the config's shares and the row rules — a create
+        # against the #667 gates and the row rules — a create
         # with a mount the daemon refuses answers a named 400 with
         # nothing written, like every other create-time fact.
         if body.mounts:

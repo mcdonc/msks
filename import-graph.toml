@@ -187,8 +187,10 @@ spec = 17
 # blob-writing path (model imports the one name).
 agecrypto = 2
 # #620 part #624: the create stores its mounts through the
-# spec's dump (the module edge and the one name).
-spec = 18
+# spec's dump (the module edge and the one name). #685: the
+# row's served mounts parse through the leaf (parse_mounts
+# beside dump_mounts) so a legacy named entry drops at read.
+spec = 19
 
 [snapshot.net]
 # spec grew by one import: the resolver answers the probe name (#424);

@@ -586,6 +586,58 @@ async def test_create_refuses_mounts_the_row_rules_deny(
     assert why in created.json()["detail"]
 
 
+async def test_a_set_carrying_the_retired_form_lands_clean(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The removal's migration seam (#685), at the API: a stored
+    row's named entries ride a set back — a pre-#685 client's
+    read-modify-write, or an old row's first save through a new
+    client — and the parser drops them, so the row lands carrying
+    only the host form. The reply shows the cleaned list, and a
+    row's read serves the cleaned list too: no surface ever sees
+    a named entry back."""
+    http, app, _stub = client
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    app.state.settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-m", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+    # The stored pre-#685 shape, written through the model (the
+    # schema cannot spell it — the row predates).
+    await app.state.model.set_mounts(
+        wid,
+        [
+            {"share": "proj", "guest": "/mnt/p", "mode": "rw"},
+            {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+        ],
+    )
+    # The read serves the cleaned list.
+    row = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
+    assert row.json()["mounts"] == []
+
+    # A set carrying the retired entries beside a live host form
+    # (the old client's read-modify-write) lands the row clean.
+    set_clean = await http.post(
+        f"/api/v1/workspaces/{wid}/mounts",
+        json={
+            "mounts": [
+                {"share": "proj", "guest": "/mnt/p", "mode": "rw"},
+                {"host": str(proj), "guest": "/mnt/proj"},
+            ]
+        },
+        headers=auth(),
+    )
+    assert set_clean.status_code == 200, set_clean.text
+    assert set_clean.json()["mounts"] == [
+        {"host": str(proj), "guest": "/mnt/proj", "mode": "rw"}
+    ]
+
+
 async def test_mounts_refuse_while_no_root_is_allowed(
     client,  # noqa: F811
 ) -> None:

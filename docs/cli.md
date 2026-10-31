@@ -281,7 +281,7 @@ refs-reader   9c1d2e3f4a  running, 1 mount skipped  allow        2026-06-18  9f2
 The status column speaks the daemon's lifecycle vocabulary:
 `created` (row exists, never booted), `starting`, `running`,
 `paused`, `stopped`, `unknown`, `absent`. A workspace whose mounts
-skip or conflict carries the count beside its status — `running,
+skip carries the count beside its status — `running,
 1 mount skipped` above — a standing marker that lasts until the
 config and the row agree again; the [mounts
 chapter](mounts.md#the-skip-behavior) names every kind of skip

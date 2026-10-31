@@ -273,7 +273,8 @@ PACKAGE_HINTS: dict[str, dict[str, str]] = {
     },
     # The host-mount daemon (#620, part #622): the name is its
     # own package on the families that carry it; the doctor row
-    # is warning-grade — a daemon without shares never execs it.
+    # is warning-grade — a daemon without allowed host roots
+    # never execs it.
     "virtiofsd": {
         "dnf": "virtiofsd",
         "yum": "virtiofsd",
@@ -541,8 +542,8 @@ def check_virtiofsd(binary: str, manager: str | None) -> CheckResult:
     Mint 22's archive ships 1.10.0), so a below-floor binary
     warns with the gap named instead of passing a check whose
     mounts then fail one start at a time. Warning grade like the
-    presence check it replaces: a daemon without shares never
-    execs virtiofsd."""
+    presence check it replaces: a daemon without allowed host
+    roots never execs virtiofsd."""
     use = "serves host mounts into each workspace (#620)"
     path = probe_which(binary)
     if not path:

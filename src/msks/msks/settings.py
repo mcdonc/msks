@@ -392,6 +392,19 @@ class MountSettings:
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> MountSettings:
         live = live_env(env)
+        # The removed env spelling refuses like the config key
+        # (#685): a profile or unit still exporting it would
+        # otherwise turn the surface off in silence. The tuple is
+        # the mounts-side sibling of REMOVED_SECRET_STORE_KEYS —
+        # the pin test subtracts both.
+        stale = [name for name in REMOVED_MOUNT_VARS if live.get(name)]
+        if stale:
+            raise ValueError(
+                f"{' and '.join(stale)} was removed (#685); host paths "
+                "are the one share surface — allow them with "
+                "MSKSD_MOUNT_HOST_ROOTS and mount them with 'msks "
+                "create --share' / 'msks mount HOST:GUEST[:MODE]'"
+            )
         return MountSettings(
             host_mode=host_mode_from(live),
             host_roots=host_roots_from(live),
@@ -585,6 +598,11 @@ def secret_store_settings_from_env(
 #: provider family (the store became the agefile), and #514
 #: retired the agefile family itself (the store became the
 #: database's per-recipient blobs — no vault file, no identity, no
+#: The removed mounts-side settings (#685): the named-share
+#: list. Refused at load beside the config key's removal message
+#: — the store tuple's pattern, mounts-scoped.
+REMOVED_MOUNT_VARS = ("MSKSD_MOUNT_SHARES",)
+
 #: CLI child, no per-call timeout). A config that still names any
 #: of them names behavior msksd no longer has; refused at load
 #: with the removal named — not silently ignored — so a stale

@@ -15,7 +15,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from ..agecrypto import secret_key_hash
-from ..spec.mounts import dump_mounts
+from ..spec.mounts import dump_mounts, parse_mounts
 from ..spec.tokens import validate_token_plaintext
 from ..spec.vm import VmSpec
 from .db import Base, engine_for, sessionmaker_for, tighten_db_mode, utcnow
@@ -372,9 +372,9 @@ class Model:
 
         The whole list writes at once (set/replace semantics, the
         resize pattern): the caller has validated it against the
-        row rules and the configured shares. None clears the
-        column — the mountless row. The next start reads the row;
-        a running VM is untouched."""
+        row rules and the daemon's gates. None clears the column
+        — the mountless row. The next start reads the row; a
+        running VM is untouched."""
         maker = sessionmaker_for(self.engine())
         encoded = json.dumps(mounts) if mounts is not None else None
         async with maker() as session:
@@ -917,7 +917,11 @@ def audit_dict(row: SecretAudit) -> dict:
 
 
 def workspace_dict(row: Workspace) -> dict:
-    """The API-facing dict for a workspace row."""
+    """The API-facing dict for a workspace row. The mounts list
+    serves the parsed form: a row a pre-#685 daemon wrote keeps
+    its stored shape in the column until the next set, but every
+    read serves the entries the one grammar admits (#685's drop
+    at read) — no surface ever sees a named entry back."""
     return {
         "id": row.id,
         "name": row.name,
@@ -938,7 +942,7 @@ def workspace_dict(row: Workspace) -> dict:
         "egress_allowlist": json.loads(row.egress_allowlist)
         if row.egress_allowlist
         else [],
-        "mounts": json.loads(row.mounts) if row.mounts else [],
+        "mounts": [mount.as_dict() for mount in parse_mounts(row.mounts)],
         "user_data": row.user_data,
         "ssh_pubkey": row.ssh_pubkey,
         "login_user": row.login_user,

@@ -9,10 +9,9 @@ mounts route (next-start semantics, like resize: a running
 workspace keeps its attached devices; the next start attaches the
 new set), and the daemon's reply — the refreshed row with its
 derived per-mount state — repaints the editor and the page behind
-it. The derived state rides every row: ``healthy`` mounts attach at
-the next start; a ``skipped``/``denied``/``conflict``/``drift``
-mount names its reason, and the reason stands until the config and
-the row agree again.
+it. The derived state rides every row: ``healthy`` mounts attach
+at the next start; a ``skipped`` mount names its reason, and the
+reason stands until the config and the row agree again.
 """
 
 from functools import partial
@@ -73,9 +72,9 @@ def mount_row_text(mount: dict, issues: list[dict]) -> str:
 def mounts_line(row: dict) -> str:
     """The workspace page's mounts line (#620, part #624): one
     entry per mount, its state riding beside — healthy mounts read
-    their spec alone; a skip or conflict names itself, the marker
-    that stands until the config and the row agree again. Empty
-    when the workspace mounts nothing."""
+    their spec alone; a skip names itself, the marker that stands
+    until the config and the row agree again. Empty when the
+    workspace mounts nothing."""
     mounts = row.get("mounts") or []
     if not mounts:
         return ""
@@ -104,8 +103,7 @@ def clamp_index(focused: int, count: int) -> int | None:
 
 def mount_state_text(mount: dict, issues: list[dict]) -> str:
     """One mount's line entry: its spec alone when healthy, its
-    kind riding beside when the daemon derived a skip or
-    conflict."""
+    kind riding beside when the daemon derived a skip."""
     issue = issue_for(mount, issues)
     state = "" if issue is None else f" ({issue['kind']})"
     return f"{mount_spec_text(mount)}{state}"

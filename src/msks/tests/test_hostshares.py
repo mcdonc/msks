@@ -268,6 +268,16 @@ def test_units_and_fingerprints_key_off_the_tag() -> None:
 # --- the settings keys ------------------------------------------------
 
 
+def test_the_removed_env_spelling_refuses() -> None:
+    """MSKSD_MOUNT_SHARES in the environment fails at load like
+    the config key (#685): a profile or unit still exporting it
+    gets the removal message, never a silent surface-off."""
+    with pytest.raises(ValueError, match="MSKSD_MOUNT_SHARES was removed"):
+        MountSettings.from_env({"MSKSD_MOUNT_SHARES": "[]"})
+    assert MountSettings.from_env({"MSKSD_MOUNT_SHARES": ""}).host_roots == ()
+    assert MountSettings.from_env({}).host_roots == ()
+
+
 def test_host_mode_defaults_and_refuses(tmp_path: Path) -> None:
     assert host_mode_from({}) == HOST_MODE_IDENTITY
     assert host_mode_from({"MSKSD_MOUNT_HOST_MODE": "prefix"}) == "prefix"

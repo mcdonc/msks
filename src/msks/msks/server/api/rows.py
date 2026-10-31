@@ -234,7 +234,10 @@ def checked_mounts(app, raw_mounts: list) -> tuple:
     gates it can see."""
     try:
         # The wire's absent fields arrive as None (the schema's
-        # optional mode); the parser takes absent-or-valued keys.
+        # optional mode and form keys); the parser takes
+        # absent-or-valued keys, and drops a retired named entry
+        # (#685) before the rules run — the set that carries one
+        # lands the row clean.
         mounts = parse_mounts(
             [
                 {

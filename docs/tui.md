@@ -23,7 +23,7 @@ type. Enter opens the workspace's page.
 The list re-reads the daemon every five seconds, so a workspace another surface
 moved (the CLI, another operator) appears without a keypress.
 
-A workspace whose mounts skip or conflict carries a marker in the
+A workspace whose mounts skip carries a marker in the
 status column — `✗1 stopped` — the count of mounts the daemon's
 derived state holds unresolved; the marker stands until the
 config and the row agree again, and the [mounts
