@@ -2,6 +2,7 @@
 
 import asyncio
 import struct
+import sys
 from pathlib import Path
 
 import pytest
@@ -547,6 +548,13 @@ async def test_a_once_allow_pins_nothing(consumer_app) -> None:
     assert net.allows == []  # once: this connection only
 
 
+@pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="the assertion pins the Linux test host's own load: "
+    "libnetfilter_queue is a Linux kernel interface, and the "
+    "guarded import (nfq.py) answers None everywhere else — "
+    "the guard's OSError arm is the default on this host",
+)
 def test_the_import_guard_is_defense_not_default() -> None:
     """The binding ships with every install; the ImportError arm is
     the exotic-install guard and cannot fire on the test host."""

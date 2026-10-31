@@ -11,6 +11,8 @@ import itertools
 import os
 import shutil
 import socket
+import subprocess
+import sys
 import tempfile
 from dataclasses import replace
 from pathlib import Path
@@ -1198,8 +1200,16 @@ async def test_launch_names_a_sweep_obstacle_it_cannot_remove(
     vm_dir.mkdir(parents=True, exist_ok=True)
     (vm_dir / "api.sock").mkdir()
     (vm_dir / "ch.pid").mkdir()
+    # Both obstacles are directories — unlink-proof on every host.
+    # The socket one is named first everywhere: on Linux connect()
+    # against a non-socket path answers ECONNREFUSED, on darwin
+    # ENOTSOCK (probe_refusal_is_stale), and both read as stale —
+    # the sweep attempts the socket unlink first and names that
+    # obstacle when it fails. The match stays socket-exact so a
+    # regression that named the pidfile first fails this test.
     with pytest.raises(
-        MicrovmError, match="cannot remove stale socket.*remove it by hand"
+        MicrovmError,
+        match="cannot remove stale socket.*remove it by hand",
     ):
         await app.state.microvm.launch(spec(tmp_path))
     # The pidfile obstacle names itself the same way.
@@ -1440,37 +1450,147 @@ def test_socket_stale_sweeps_a_dangling_symlink(tmp_path: Path) -> None:
     assert socket_stale(link)
 
 
-def test_socket_stale_contract(tmp_path: Path) -> None:
-    """Absent no, abandoned yes, live no — the sweep's whole policy."""
+def test_socket_stale_contract() -> None:
+    """Absent no, abandoned yes, live no — the sweep's whole policy.
+
+    The sockets live under a shallow mkdtemp in /tmp (the
+    AF_UNIX-length rule; see the env fixture): a per-test tmp_path
+    under a deep basetemp crosses the path limit on hosts with
+    long /tmp prefixes, and the bind itself then fails before the
+    contract is exercised.
+    """
     from msks.microvm.local import socket_stale
 
-    assert not socket_stale(tmp_path / "absent.sock")
-    abandoned = tmp_path / "abandoned.sock"
-    bind_then_abandon(abandoned)
-    assert socket_stale(abandoned)
-    live = tmp_path / "live.sock"
-    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    srv.bind(str(live))
-    srv.listen(1)
-    fillers: list[socket.socket] = []
+    root = Path(tempfile.mkdtemp(prefix="msks-test-", dir="/tmp"))
     try:
-        assert not socket_stale(live)
-        # Saturate the accept backlog (#154 review): a live listener
-        # whose queue is full must still read as LIVE -- connect
-        # then answers EAGAIN or times out, neither of the refusal
-        # pair that may be swept.
-        for _ in range(64):
-            filler = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            filler.settimeout(0.2)
-            try:
-                filler.connect(str(live))
-                fillers.append(filler)
-            except OSError:
-                break  # the queue is full; the probe is next
-        else:
-            pytest.fail("could not saturate the backlog")
-        assert not socket_stale(live)  # EAGAIN must read as LIVE
+        assert not socket_stale(root / "absent.sock")
+        abandoned = root / "abandoned.sock"
+        bind_then_abandon(abandoned)
+        assert socket_stale(abandoned)
+        # A non-socket path squatting on the name is residue on
+        # every host: Linux's connect() answers ECONNREFUSED (the
+        # refusal pair), darwin's answers ENOTSOCK — the
+        # probe_refusal_is_stale arm (#690). One assertion pins
+        # the taxonomy on both.
+        squatter = root / "squatter.sock"
+        squatter.touch()
+        assert socket_stale(squatter)
+        live = root / "live.sock"
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(str(live))
+        srv.listen(1)
+        fillers: list[socket.socket] = []
+        try:
+            assert not socket_stale(live)
+            # Saturate the accept backlog (#154 review): a live
+            # listener whose queue is full must still read as LIVE
+            # -- connect then answers EAGAIN or times out, neither
+            # of the refusal pair that may be swept. A Linux
+            # kernel contract: darwin refuses the same connect
+            # with ECONNREFUSED -- the errno an abandoned socket
+            # gives -- so the saturation leg is unprobeable there;
+            # absent/abandoned/squatter/idle-live still run.
+            if sys.platform != "darwin":
+                for _ in range(64):
+                    filler = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    filler.settimeout(0.2)
+                    try:
+                        filler.connect(str(live))
+                        fillers.append(filler)
+                    except OSError:
+                        break  # the queue is full; the probe is next
+                else:
+                    pytest.fail("could not saturate the backlog")
+                assert not socket_stale(live)  # EAGAIN must read as LIVE
+        finally:
+            for filler in fillers:
+                filler.close()
+            srv.close()
     finally:
-        for filler in fillers:
-            filler.close()
-        srv.close()
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_read_cmdline_reads_ps_argv_off_procfs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """read_cmdline's ps arm, pinned on every host (#690).
+
+    Steering the platform alone is not enough on Linux — /proc
+    answers for a live pid before the arm is reached — so this
+    test also steers the /proc read to fail, driving the ps arm
+    on the Linux CI host exactly as a Mac dev host drives it.
+    The assertions pin the arm's own shape: argv re-joined with
+    NULs after ps's space join, so a spaced argument arrives as
+    split fragments (the docstring's approximation, pinned
+    here), a dead pid answers None through the ps failure, and
+    off the darwin arm a pid the /proc path cannot read answers
+    None everywhere (natively on Linux, through the failed read
+    on a Mac)."""
+    import msks.microvm.local as local_mod
+
+    real_read_bytes = Path.read_bytes
+
+    def procless_read_bytes(self: Path) -> bytes:
+        if str(self).startswith("/proc/"):
+            raise OSError("steered: no procfs")
+        return real_read_bytes(self)
+
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"]
+    )
+    try:
+        monkeypatch.setattr(local_mod.Path, "read_bytes", procless_read_bytes)
+        monkeypatch.setattr(local_mod.sys, "platform", "darwin")
+        cmdline = local_mod.read_cmdline(child.pid)
+        assert cmdline is not None
+        fields = [f for f in cmdline.split(b"\0") if f]
+        assert fields[0].endswith(b"python3") or fields[0].endswith(b"python")
+        assert b"-c" in fields
+        # ps joined the argv with spaces before the NUL re-join,
+        # so the spaced argument arrives as fragments — the shape
+        # the darwin arm delivers on every host.
+        assert b"time.sleep(30)" in fields
+        # A pid nothing answers: ps exits nonzero, the arm
+        # answers None — never a guess at an identity.
+        assert local_mod.read_cmdline(child.pid + 2_000_000) is None
+    finally:
+        child.kill()
+        child.wait()
+    monkeypatch.setattr(local_mod.sys, "platform", "linux")
+    # Off the darwin arm, a pid whose /proc entry cannot be read
+    # answers None on every host: natively on Linux (ENOENT),
+    # through the failed /proc read on a Mac dev host.
+    assert local_mod.read_cmdline(999_999_999) is None
+
+
+def test_probe_refusal_taxonomy_by_steered_platform(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """probe_refusal_is_stale's two answers on every host
+    (#690): ENOTSOCK names residue where connect() can produce
+    it (the darwin errno taxonomy — steered here so the Linux CI
+    host runs the arm too), EAGAIN names live everywhere."""
+    import errno as errno_mod
+
+    import msks.microvm.local as local_mod
+
+    monkeypatch.setattr(local_mod.sys, "platform", "darwin")
+    assert (
+        local_mod.probe_refusal_is_stale(
+            OSError(errno_mod.ENOTSOCK, "not a socket")
+        )
+        is True
+    )
+    assert (
+        local_mod.probe_refusal_is_stale(
+            OSError(errno_mod.EAGAIN, "resource unavailable")
+        )
+        is False
+    )
+    monkeypatch.setattr(local_mod.sys, "platform", "linux")
+    assert (
+        local_mod.probe_refusal_is_stale(
+            OSError(errno_mod.ENOTSOCK, "not a socket")
+        )
+        is False
+    )

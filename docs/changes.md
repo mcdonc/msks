@@ -8,6 +8,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`msks-preflight` prints per-section durations (#690).**
+  Every gate section carries a wall-clock column and a total in
+  the summary, a `--collect-only` pass names an unimportable
+  module in seconds before the suite runs, and the suite run
+  itself carries a 40-minute wall-clock budget that fails loudly
+  — a wedged run can no longer hang a pre-flight session
+  indefinitely.
+
 - **`msks-setup-macos-host` (#676).** The macOS host setup: a
   stock Apple-Silicon Mac reaches a working msksd in one run —
   the tool creates the msksd Lima VM from the shipped template
@@ -80,6 +88,21 @@ tagged `vX.Y.Z`.
   refuses a mount outside the reserved-prefix shape.
 
 ### Fixed
+
+- **The gated suite terminates on a Mac dev host (#690).** The
+  microvm driver's VMM and virtiofsd identity checks read the
+  process command line through procfs only, so on a Mac every
+  kill, shutdown, and launch sweep read its own spawned daemons
+  as foreign — the signal never fired, the test waited forever,
+  and a pre-flight run wedged past half an hour. The read now
+  falls back to `ps(1)` on darwin (Linux keeps the procfs path),
+  the stale-socket probe sweeps a non-socket path that darwin's
+  `connect()` answers `ENOTSOCK` where Linux answers
+  `ECONNREFUSED`, and the Linux-only pieces (the NFQUEUE
+  binding's import, a SIGSTOP escalation path the darwin event
+  loop cannot schedule) skip with their reasons named. The
+  suite drops from a hang to about a minute on an
+  Apple-Silicon dev host.
 
 - **The seed retries a dependency-failed home-volume mount
   (#686).** On a boot slow enough that udev's by-label symlink
