@@ -21,6 +21,17 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`msks-setup-macos-host` writes the client config and a
+  login agent (#689).** The tool now writes `msks.yaml` itself —
+  the daemon alias pointing a bare `msks` at the forwarded port
+  with the token file and CA beside it — and a launchd agent runs
+  `limactl start msksd` at login, so the daemon answers after a
+  reboot with no exports in the shell profile. An operator's own
+  `msks.yaml` is kept untouched (the printed exports remain the
+  copy-paste fallback); `--check` reports both the config file
+  and the agent, and `--uninstall` removes the agent along with
+  the VM.
+
 - **`msks-preflight` prints per-section durations (#690).**
   Every gate section carries a wall-clock column and a total in
   the summary, a `--collect-only` pass names an unimportable

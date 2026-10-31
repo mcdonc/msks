@@ -29,15 +29,22 @@ the other tools never see:
    starts msksd at boot.
 4. **The verify pass** — the daemon's TLS listener answers
    through the forward; the CA and the bootstrap token come back
-   out, and the client preset prints: the three exports a Mac
-   shell needs to reach this daemon (``MSKSC_URL``,
-   ``MSKSC_TOKEN``, ``MSKSC_CAFILE`` — the CA written under
-   ``~/.config/msks/``).
+   out, the CA written under ``~/.config/msks/``.
+5. **The client config and the login agent** — ``msks.yaml`` itself
+   (the client's own config tree): a daemon alias pointing a bare
+   ``msks`` at the forward (``url``, ``token_file``, ``cafile`` —
+   the token written beside the CA), so every CLI invocation
+   reaches the daemon with no exports in the shell profile; and a
+   launchd agent that runs ``limactl start msksd`` at login, so
+   the daemon answers after a reboot. The printed exports remain
+   as a copy-paste fallback, and an operator's own ``msks.yaml`` is
+   never overwritten — the run names the file it kept.
 
 ``--check`` runs the verify pass alone — the macOS doctor row
 set: Lima, the VM, the nested-virtualization marker, virtiofsd
-inside the VM, the listener. ``--uninstall`` stops and deletes
-the VM (Lima and the installed wheel stay, and the summary names
+inside the VM, the listener, the client config, the login agent.
+``--uninstall`` stops and deletes the VM and its login agent
+(Lima and the client config stay, and the summary names
 them). Every phase is idempotent: re-run any time; a rerun
 preserves the token, the CA, and the daemon's state.
 """
@@ -45,7 +52,9 @@ preserves the token, the CA, and the daemon's state.
 import argparse
 import json
 import os
+import plistlib
 import re
+import shutil
 import socket
 import ssl
 import subprocess
@@ -56,6 +65,11 @@ import urllib.request
 from importlib.resources import files
 from pathlib import Path
 
+from ..client.config import (
+    default_config_path,
+    parse_config_doc,
+    render_template,
+)
 from ..spec.version import __version__
 from .tls import CA_CERT
 
@@ -119,6 +133,26 @@ VM_STATE = "/var/lib/msksd"
 #: Where the CA lands on the Mac — beside the client config the
 #: preset's CAFILE names.
 MAC_CA = Path("~/.config/msks/msksd-vm-ca.pem").expanduser()
+
+#: Where the bootstrap token lands, beside the CA: the managed
+#: config's ``token_file`` names it (the config tree stays free
+#: of inline credentials — a file is the client's own shape).
+MAC_TOKEN = Path("~/.config/msks/msksd-vm.token").expanduser()
+
+#: The daemon alias the managed client config defines — the name
+#: a bare ``msks`` addresses through ``active_daemon``.
+MANAGED_ALIAS = "msksd-vm"
+#: The managed config's first line: the marker a rerun reads to
+#: know the file is this tool's to refresh.
+MANAGED_HEADER = "# Written by msks-setup-macos-host"
+
+#: The login agent (launchd): ``RunAtLoad`` runs ``limactl start``
+#: at login, so the VM — and with it the daemon — answers after a
+#: reboot with no manual step. The plist lives in the user's own
+#: LaunchAgents: a user agent, no root, matching the VM it owns.
+AGENT_LABEL = "com.msks.msksd-vm"
+AGENT_PLIST = Path(f"~/Library/LaunchAgents/{AGENT_LABEL}.plist").expanduser()
+AGENT_LOG = Path("~/Library/Logs/msksd-vm-agent.log").expanduser()
 
 
 class MacSetupError(Exception):
@@ -507,11 +541,13 @@ def verify_chain(port: int, ca_pem: str) -> None:
 
 
 def client_preset(port: int) -> str:
-    """The CA and the token out of the VM, the CA written beside
-    the client config, the preset block returned for printing.
-    The CA fetch retries briefly: the restart this run's
-    bootstrap just issued returns before the daemon's first
-    startup writes the file."""
+    """The CA and the token out of the VM, the client's three
+    files written (the CA, the token beside it, the config naming
+    both), the preset block returned for printing — the exports a
+    shell can paste when it prefers them to the config. The CA
+    fetch retries briefly: the restart this run's bootstrap just
+    issued returns before the daemon's first startup writes the
+    file."""
     ca = fetch_vm_file(f"{VM_STATE}/{CA_CERT}").strip()
     if not ca.startswith("-----BEGIN CERTIFICATE-----"):
         raise MacSetupError(
@@ -522,11 +558,194 @@ def client_preset(port: int) -> str:
     MAC_CA.write_text(ca + "\n")
     verify_chain(port, ca)
     token = fetch_vm_file(f"{VM_STATE}/bootstrap-token").strip()
+    write_private(MAC_TOKEN, token + "\n")
+    say(ensure_client_config(port))
     return (
         f"export MSKSC_URL=https://127.0.0.1:{port}\n"
         f"export MSKSC_TOKEN={token}\n"
         f"export MSKSC_CAFILE={MAC_CA}"
     )
+
+
+# --- phase 5: the client config and the login agent -------------------
+
+
+def write_private(path: Path, body: str) -> None:
+    """Write a private file the house way: the parent 0700, the
+    file 0600 — the token is a credential, and the config and
+    the template join it for uniformity."""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(body)
+
+
+def client_config_body(port: int) -> str:
+    """The managed client config: the daemon alias a bare ``msks``
+    addresses — the forwarded port, the token file, the CA — with
+    ``active_daemon`` naming it, so every CLI invocation reaches
+    the daemon with no exports in the shell profile."""
+    return (
+        f"{MANAGED_HEADER} (#689); re-run the tool\n"
+        "# to refresh this file.\n"
+        "daemons:\n"
+        f"  {MANAGED_ALIAS}:\n"
+        f"    url: https://127.0.0.1:{port}\n"
+        f"    token_file: {MAC_TOKEN}\n"
+        f"    cafile: {MAC_CA}\n"
+        f"active_daemon: {MANAGED_ALIAS}\n"
+    )
+
+
+def ensure_client_config(port: int) -> str:
+    """Write or refresh the managed client config, idempotently.
+
+    A missing file is written; the client's own first-run
+    template (all comments, nothing set) is replaced without
+    ceremony — the client regenerates it on demand any time; a
+    file this tool wrote is refreshed; an operator's own file is
+    left untouched, and the returned status names that choice —
+    the preset's exports remain the copy-paste fallback, and the
+    alias block pastes by hand the same way."""
+    path = Path(default_config_path())
+    body = client_config_body(port)
+    try:
+        text = path.read_text()
+    except OSError:
+        write_private(path, body)
+        return f"wrote the client config ({path})"
+    if text == body:
+        return f"the client config is current ({path})"
+    if text == render_template():
+        write_private(path, body)
+        return f"wrote the client config over the empty template ({path})"
+    if text.startswith(MANAGED_HEADER):
+        write_private(path, body)
+        return f"refreshed the client config ({path})"
+    return (
+        f"kept the operator's config at {path} — paste the preset "
+        "block into it by hand to point a bare msks here"
+    )
+
+
+def client_config_row(port: int) -> str:
+    """The check row: a bare ``msks`` reaches THIS daemon — the
+    active alias names this forward with the VM's token and CA.
+    Anything else (no file, a file that will not parse, an active
+    daemon pointing elsewhere) is a named refusal with the
+    re-run remedy."""
+    path = Path(default_config_path())
+    try:
+        text = path.read_text()
+    except OSError:
+        raise MacSetupError(
+            f"the client config ({path}) does not exist; re-run {TOOL} "
+            "or write the daemon alias into it by hand"
+        ) from None
+    entry = active_daemon_entry(text, path)
+    if not entry_points_at(entry, port):
+        raise MacSetupError(
+            f"the client config's active daemon does not point a bare "
+            f"msks at this daemon (https://127.0.0.1:{port} with the "
+            f"VM's token and CA); re-run {TOOL} or edit {path} by hand"
+        )
+    return f"a bare msks reaches the daemon ({path})"
+
+
+def active_daemon_entry(text: str, path: Path) -> dict:
+    """The active alias's settings from the config file's text,
+    parsed by the client's own loader — a file that will not load
+    is a named refusal, and an active name no alias defines
+    answers an empty entry (the pointing check refuses it)."""
+    try:
+        doc = parse_config_doc(text, str(path))
+    except ValueError as exc:
+        raise MacSetupError(
+            f"the client config does not load ({exc})"
+        ) from None
+    return doc.get("daemons", {}).get(doc.get("active_daemon"), {})
+
+
+def entry_points_at(entry: dict, port: int) -> bool:
+    """Whether an alias's settings name this forward with the VM's
+    token and CA — the three facts a bare ``msks`` dials."""
+    return (
+        entry.get("url") == f"https://127.0.0.1:{port}"
+        and entry.get("token_file") == str(MAC_TOKEN)
+        and entry.get("cafile") == str(MAC_CA)
+    )
+
+
+def limactl_path() -> str:
+    """The absolute limactl path the agent names — launchd's own
+    environment carries none of the brew prefixes, so the agent
+    cannot look the binary up by name at run time."""
+    found = shutil.which("limactl")
+    if found is None:
+        raise MacSetupError(
+            "limactl is not on PATH; install Lima first: brew install lima"
+        )
+    return found
+
+
+def agent_plist(limactl: str) -> bytes:
+    """The agent's plist: ``RunAtLoad`` brings the VM up at login
+    (``limactl start`` on an already-running VM is a quick no-op,
+    so a login into a live session costs one command). Both
+    streams land in one log under ~/Library/Logs — the file a
+    silent login failure reads."""
+    return plistlib.dumps(
+        {
+            "Label": AGENT_LABEL,
+            "ProgramArguments": [limactl, "start", VM_NAME],
+            "RunAtLoad": True,
+            "StandardOutPath": str(AGENT_LOG),
+            "StandardErrorPath": str(AGENT_LOG),
+        }
+    )
+
+
+def unload_agent() -> None:
+    """Boot the agent out of launchd, tolerant of nothing being
+    loaded — the state after a first install and after an
+    uninstall alike."""
+    subprocess.run(
+        ["launchctl", "bootout", f"gui/{os.getuid()}/{AGENT_LABEL}"],
+        capture_output=True,
+    )
+
+
+def agent_loaded() -> bool:
+    """Whether launchd carries the agent: ``launchctl print`` on
+    the label answers 0 only for a loaded service."""
+    done = subprocess.run(
+        ["launchctl", "print", f"gui/{os.getuid()}/{AGENT_LABEL}"],
+        capture_output=True,
+    )
+    return done.returncode == 0
+
+
+def ensure_agent() -> None:
+    """Install and load the login agent, idempotently: the plist
+    is rewritten every run (the agent is updated, never
+    duplicated — one label, one file), the old service boots out,
+    and the new one bootstraps in loaded — bootstrap fires
+    ``RunAtLoad``, so the VM starts now too, not only at the next
+    login."""
+    limactl = limactl_path()
+    AGENT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    AGENT_PLIST.parent.mkdir(parents=True, exist_ok=True)
+    AGENT_PLIST.write_bytes(agent_plist(limactl))
+    unload_agent()
+    run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(AGENT_PLIST)])
+    say(f"the login agent starts the {VM_NAME} VM at login")
+
+
+def remove_agent() -> None:
+    """The uninstall mirror: boot the agent out and remove its
+    plist — idempotent, an absent agent uninstalls cleanly."""
+    unload_agent()
+    AGENT_PLIST.unlink(missing_ok=True)
 
 
 def nested_marker() -> str:
@@ -613,6 +832,22 @@ def check_rows(port: int) -> list[str]:
         f"the daemon answers https://127.0.0.1:{port}/ through the "
         "forward, chained to the VM's CA"
     )
+    rows.extend(client_side_rows(port))
+    return rows
+
+
+def client_side_rows(port: int) -> list[str]:
+    """The client-side rows: the config a bare ``msks`` reads and
+    the login agent that brings the VM up after a reboot — the
+    two #689 rows, one refusal each with the re-run remedy."""
+    rows = [client_config_row(port)]
+    if not agent_loaded():
+        raise MacSetupError(
+            f"the login agent ({AGENT_LABEL}) is not loaded; re-run {TOOL}"
+        )
+    rows.append(
+        f"the login agent brings the {VM_NAME} VM up at login ({AGENT_LABEL})"
+    )
     return rows
 
 
@@ -650,22 +885,27 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--uninstall",
         action="store_true",
-        help="stop and delete the msksd VM (Lima and the client "
-        "config stay, and the summary names them)",
+        help="stop and delete the msksd VM and its login agent "
+        "(Lima and the client config stay, and the summary "
+        "names them)",
     )
     return parser.parse_args(argv)
 
 
 def run_setup(args: argparse.Namespace) -> str:
     """The phases in order; the preset block returns for the
-    caller to print. The verify pass runs last so the preset's
-    token and CA are real."""
+    caller to print. The verify pass runs before the client
+    files and the login agent so a green run is what they
+    provision — the preset's token and CA are real, and the agent
+    earns its login slot."""
     check_host()
     home = str(Path.home())
     ensure_vm(host_port=args.port)
     bootstrap_vm(args.wheel, home)
     verify_daemon(args.port)
-    return client_preset(args.port)
+    preset = client_preset(args.port)
+    ensure_agent()
+    return preset
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -675,12 +915,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         if args.uninstall:
-            say(f"deleting the {VM_NAME} VM (Lima and the client config stay)")
+            say(f"removing the login agent and the {VM_NAME} VM")
+            remove_agent()
             run(["limactl", "delete", "-f", VM_NAME])
             print(
-                f"{TOOL}: the {VM_NAME} VM is gone. Lima itself and "
-                "the CA under ~/.config/msks/msksd-vm-ca.pem stay; "
-                "remove them by hand when you want them gone."
+                f"{TOOL}: the {VM_NAME} VM and its login agent are gone. "
+                "Lima itself, the client config, and the CA and token "
+                "under ~/.config/msks/ stay; remove them by hand when "
+                "you want them gone."
             )
             return 0
         if args.check:
