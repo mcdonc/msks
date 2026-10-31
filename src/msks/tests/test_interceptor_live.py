@@ -6,12 +6,19 @@ and a patched ``SO_ORIGINAL_DST`` seam that plays the nft redirect's
 part (the production path needs CAP_NET_ADMIN the test host does
 not grant). 127.0.0.2 stands in for the tap address: the whole
 127/8 is loopback, so the per-tap listener binds without privileges.
+
+That loopback shape is a Linux fact — darwin's lo0 carries
+127.0.0.1 alone, so the tap stand-in's bind answers EADDRNOTAVAIL —
+and the probe chain's listener pins its socket with SO_BINDTODEVICE
+beside it: the whole replay runs on the Linux host the interceptor
+serves, the named-skip posture the NFQUEUE binding's suite takes.
 """
 
 import asyncio
 import json
 import socket
 import ssl
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -26,6 +33,14 @@ from msks.interceptor import Interceptor, ca
 from msks.microvm import VmSpec
 from msks.secretstore import backend_ref, new_sentinel
 from msks.settings import NetSettings, ServerSettings, Settings, VmmSettings
+
+if sys.platform != "linux":
+    pytest.skip(
+        "the live replay binds the whole-127/8 loopback stand-in for "
+        "the tap and pins a listener with SO_BINDTODEVICE — both Linux "
+        "kernel behaviors; the engine's stubbed suites run everywhere",
+        allow_module_level=True,
+    )
 
 TAP_IP = "127.0.0.2"
 API = "api.example.com"

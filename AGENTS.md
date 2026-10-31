@@ -104,7 +104,13 @@ same tree (#27). Run it on the tree being pushed: commit first, or
 confirm `git status --porcelain` is empty. Any change after the last
 run — including a post-review `--amend` — requires re-running it. If
 CI reports a gap local runs missed, the gap is real: check out the
-failing commit and write the pinning test.
+failing commit and write the pinning test. On a non-Linux host the
+suite passes with its Linux-only surfaces named as skips (#691), so
+the suite's own total sits under 100 there — the pre-flight's
+covgaps pass over the changed sources stays the exact gate on every
+host, and CI's Linux run keeps the 100% bar. Off Linux, use
+`msks-preflight`, not bare `unit-tests`: a bare run there exits
+nonzero on the coverage total alone, green tests notwithstanding.
 
 ## Pre-flight the commit gates before the first commit attempt
 
@@ -131,7 +137,11 @@ quiet output — so a green coverage section satisfies the rule above
 — and prints every missing line and
 branch arc for the changed sources (`scripts/covgaps.py` reads the
 `.coverage` the suite leaves; `bash scripts/preflight.sh --fast`
-skips the suite for an instant lint/complexity pass).
+skips the suite for an instant lint/complexity pass). Off Linux the
+suite's 100% total drops to a coarse floor (#691): the vendored
+NFQUEUE binding and the Linux-only socket surfaces cannot execute
+there, so their lines stay dark however green the run — the exact
+changed-sources gate above holds on every host.
 
 The working rule: run the pre-flight after writing code, fix
 EVERYTHING it names in one editing pass, re-run, then commit. A green

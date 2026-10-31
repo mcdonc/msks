@@ -102,6 +102,14 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **`msks-preflight` goes green on a Mac dev host (#691).** The
+  remaining darwin failures in the gated suite are closed: the
+  Linux-only surfaces skip with their platform reasons named, the
+  host-independent paths they hid run on every host, and the
+  suite's coverage bar adapts off Linux where those surfaces
+  cannot execute. A Mac pre-flight runs the full gate stack green
+  in about a minute; Linux CI is unchanged.
+
 - **The gated suite terminates on a Mac dev host (#690).** The
   microvm driver's VMM and virtiofsd identity checks read the
   process command line through procfs only, so on a Mac every

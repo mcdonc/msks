@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
+from ext4tools import realtools
 from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 from msks.app import build_app
@@ -54,8 +55,10 @@ async def test_relay_and_close_all() -> None:
     assert sent[0]["text"] == json.dumps({"event": "e", "data": {"n": 1}})
 
 
-def api_with_stub(tmp_path: Path):
-    settings = Settings(
+def api_with_stub(tmp_path: Path, settings: Settings | None = None):
+    """An app over a tmp db; a caller may pass its own settings —
+    the resize test's state dir belongs under tmp_path too."""
+    settings = settings or Settings(
         net=NetSettings(enabled=False),
         server=ServerSettings(
             db_path=tmp_path / "ws.db",
@@ -353,13 +356,26 @@ async def test_scan_storage_publishes_a_baseline(tmp_path: Path) -> None:
     assert message["data"]["pressure"] in ("ok", "warn")
 
 
+@realtools
 async def test_resize_publishes_the_event(tmp_path: Path) -> None:
     """A completed resize announces workspace.resized with the new
     sizes and a non-empty change list (#187 review: the payload was
-    unpinned)."""
+    unpinned). The resize moves a genuinely formatted volume with
+    the real tools, so it runs where e2fsprogs lives; the state
+    dir sits under the test's tmp tree — the daemon's real state
+    dir belongs to a running daemon, not the suite."""
     import httpx
 
-    api, app, _stub = api_with_stub(tmp_path)
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path / "state"),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "ws.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=0.05,
+        ),
+    )
+    api, app, _stub = api_with_stub(tmp_path, settings)
     async with api.router.lifespan_context(api):
         import subprocess as sp
 

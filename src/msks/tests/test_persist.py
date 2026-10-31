@@ -9,11 +9,12 @@ error mapping) without the real binaries.
 
 import os
 import re
-import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
+from ext4tools import realtools, write_e2fsck_stub
 from msks.microvm.errors import MicrovmError
 from msks.settings import VmmSettings
 from msks.spec.vm import VmSpec
@@ -295,13 +296,22 @@ async def test_tool_failure_maps_to_named_error(tools) -> None:
 
 async def test_garbage_info_maps_to_named_error(tmp_path: Path) -> None:
     """A qemu-img that answers something other than a JSON document
-    with a virtual-size is a named error, not a KeyError."""
+    with a virtual-size is a named error, not a KeyError. The mkfs
+    leg is a stub too (a Mac dev host carries no mkfs.ext4): the
+    subject is the info parse, not the format."""
     stub = tmp_path / "qemu-img"
     stub.write_text('#!/bin/sh\nprintf "not json\n"\n')
     stub.chmod(0o755)
+    mkfs = tmp_path / "mkfs.ext4"
+    mkfs.write_text("#!/bin/sh\nexit 0\n")
+    mkfs.chmod(0o755)
     base = tmp_path / "base.ext4"
     base.write_bytes(b"x")
-    settings = VmmSettings(state_dir=tmp_path / "state", qemu_img=str(stub))
+    settings = VmmSettings(
+        state_dir=tmp_path / "state",
+        qemu_img=str(stub),
+        mkfs_ext4=str(mkfs),
+    )
     with pytest.raises(MicrovmError, match="no virtual-size"):
         await persist.ensure_artifacts(
             VmSpec(workspace_id=WID, kernel=tmp_path / "k", rootfs=base),
@@ -481,6 +491,30 @@ async def test_import_home_volume_installs_the_body(tools) -> None:
     assert await collect(home) == image
 
 
+def holes_report_as_allocation() -> bool:
+    """Whether st_blocks under-reports a holey file on this test
+    filesystem: ext4 and tmpfs answer the bytes actually allocated,
+    APFS the file's logical size (a three-MiB file with two MiB of
+    holes stats at three MiB), so the hole-saving the import writes
+    cannot be observed there. A tmp-dir probe keeps the gate on the
+    filesystem's actual answer rather than the platform name."""
+    with tempfile.TemporaryDirectory() as scratch:
+        probe = Path(scratch) / "probe"
+        fd = os.open(probe, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.pwrite(fd, b"x" * 4096, 0)
+        os.ftruncate(fd, 3 * persist.HOME_WINDOW_B)
+        os.close(fd)
+        return probe.stat().st_blocks * 512 < 3 * persist.HOME_WINDOW_B
+
+
+measured_holes = pytest.mark.skipif(
+    not holes_report_as_allocation(),
+    reason="this filesystem's st_blocks reports the logical size for "
+    "holes (APFS), so the import's hole-saving is not observable",
+)
+
+
+@measured_holes
 async def test_import_home_volume_keeps_zero_windows_sparse(tools) -> None:
     """All-zero windows become holes: a 3 MiB volume whose two last
     windows are blank costs ~1 MiB of real disk, not 3."""
@@ -565,15 +599,6 @@ async def test_import_home_volume_keeps_short_zero_tail_sparse(tools) -> None:
 
 # --- Home-volume resize and overlay growth (#184) ---
 
-REAL_TOOLS = all(
-    shutil.which(tool) is not None
-    for tool in ("mkfs.ext4", "e2fsck", "resize2fs", "dumpe2fs")
-)
-
-realtools = pytest.mark.skipif(
-    not REAL_TOOLS, reason="mkfs.ext4/e2fsck/resize2fs/dumpe2fs not on PATH"
-)
-
 
 async def make_real_volume(path: Path, mib: int) -> Path:
     """A genuinely formatted ext4 volume (the resize pair's input)."""
@@ -657,14 +682,6 @@ def tmp_overlay(settings) -> Path:
     overlay.parent.mkdir(parents=True, exist_ok=True)
     overlay.write_bytes(b"")
     return overlay
-
-
-def write_e2fsck_stub(directory: Path) -> Path:
-    """An always-clean e2fsck stand-in (records nothing)."""
-    stub = directory / "e2fsck"
-    stub.write_text("#!/bin/sh\nexit 0\n")
-    stub.chmod(0o755)
-    return stub
 
 
 async def test_resize_accepts_a_corrected_volume(tmp_path: Path) -> None:
