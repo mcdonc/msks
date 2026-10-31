@@ -129,6 +129,17 @@ class Workspace(Base):
     # like user_data: a host timezone change later does not drift
     # a row already minted.
     timezone: Mapped[str | None] = mapped_column(String, nullable=True)
+    # The workspace's disk set epoch (#697): 0 from create, bumped
+    # each time the daemon recreates the root overlay under a live
+    # row — a boot's heal of a lost overlay, a factory reset. The
+    # overlay is where the guest's ssh host keys live (#110: the
+    # image ships none, the first boot writes them there), so a
+    # recreated overlay means regenerated host keys: the identity
+    # endpoint serves the epoch and the client rotates its
+    # host-key cache on a change, re-pinning instead of refusing.
+    disk_epoch: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
     status: Mapped[str] = mapped_column(String, default="created")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(

@@ -114,6 +114,18 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **ssh re-pins host keys when a workspace's disks are recreated
+  (#697).** The daemon records a disk epoch on each workspace and
+  advances it whenever it recreates the root overlay under a live
+  row (a healed loss, a factory reset) — the guest regenerates its
+  ssh host keys with the fresh overlay. The identity answer
+  carries the epoch, the client rotates its per-workspace
+  host-key cache on a change and prints a notice naming the
+  recreation, and every invocation — `msks ssh <name>` and the
+  TUI's shell action alike — pins under the workspace's id, so a
+  regenerated key no longer refuses from one entry point while
+  the other silently re-pins.
+
 - **`msks-preflight` goes green on a Mac dev host (#691).** The
   remaining darwin failures in the gated suite are closed: the
   Linux-only surfaces skip with their platform reasons named, the

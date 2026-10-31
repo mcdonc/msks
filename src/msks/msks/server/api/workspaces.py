@@ -276,6 +276,7 @@ def router(app) -> APIRouter:
             "public_key": key["public_key"],
             "created_at": key["created_at"],
             "user": key["login_user"],
+            "disk_epoch": key["disk_epoch"],
         }
 
     # The #41 immutability contract, said out loud: the create-time

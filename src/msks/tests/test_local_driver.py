@@ -116,7 +116,13 @@ def env(tmp_path: Path):
             mkisofs=str(geniso_stub),
         )
     )
-    yield build_app(settings), state_dir, None
+    app = build_app(settings)
+    # The disk epoch rides every boot (#697): a launch that heals
+    # an overlay bumps the row, so the driver's app needs a real
+    # model on a migrated tmp db — not the dev daemon's path.
+    app.state.settings.server.db_path = tmp_path / "driver.db"
+    app.state.model.migrate()
+    yield app, state_dir, None
     shutil.rmtree(state_dir, ignore_errors=True)
 
 
@@ -729,6 +735,52 @@ async def test_reset_drops_overlay_keeps_home(
     await app.state.microvm.reset(WID)
     assert not persist.overlay_path(state_dir, WID).exists()
     assert persist.home_volume_path(state_dir, WID).is_file()
+
+
+async def test_launch_heal_bumps_the_disk_epoch(
+    env, fake, tmp_path: Path
+) -> None:
+    """#697: a boot that heals a *missing overlay* recreates the
+    guest's root — and with it the ssh host keys the first boot
+    writes there (#110) — so the row's disk epoch advances and the
+    client rotates its host-key cache. A boot with the overlay
+    present (the stop/start cycle) bumps nothing."""
+    app, state_dir, _ = env
+    await app.state.model.create_workspace(spec(tmp_path))
+    await app.state.microvm.launch(spec(tmp_path))
+    first = await app.state.model.get_ssh_key(WID)
+    assert first["disk_epoch"] == 1  # the launch healed a lost overlay
+    await app.state.microvm.kill(WID)
+    await app.state.microvm.launch(spec(tmp_path))
+    again = await app.state.model.get_ssh_key(WID)
+    assert again["disk_epoch"] == 1  # the healed pair persists; no bump
+    assert persist.overlay_path(state_dir, WID).is_file()
+
+
+async def test_launch_after_prepare_keeps_the_epoch_zero(
+    env, fake, tmp_path: Path
+) -> None:
+    """The create path's shape: prepare lands the artifacts before
+    the row, so a first start finds its overlay and never bumps
+    (#697)."""
+    app, _state_dir, _ = env
+    await app.state.microvm.prepare(spec(tmp_path))
+    await app.state.model.create_workspace(spec(tmp_path))
+    await app.state.microvm.launch(spec(tmp_path))
+    assert (await app.state.model.get_ssh_key(WID))["disk_epoch"] == 0
+    await app.state.microvm.kill(WID)
+
+
+async def test_reset_bumps_the_disk_epoch(env, fake, tmp_path: Path) -> None:
+    """A factory reset drops the overlay deliberately (#697): the
+    next boot's heal regenerates the guest's ssh host keys, and the
+    epoch says so the moment the overlay goes."""
+    app, _state_dir, _ = env
+    await app.state.model.create_workspace(spec(tmp_path))
+    await app.state.microvm.launch(spec(tmp_path))
+    await app.state.microvm.kill(WID)
+    await app.state.microvm.reset(WID)
+    assert (await app.state.model.get_ssh_key(WID))["disk_epoch"] == 2
 
 
 async def test_reset_refuses_a_running_vm(env, fake, tmp_path: Path) -> None:

@@ -508,6 +508,10 @@ async def test_recreated_name_is_a_new_instance(client) -> None:
     first_key = (
         await http.get("/api/v1/workspaces/ws-again/ssh-key", headers=auth())
     ).json()
+    # The disk epoch rides the identity (#697): the client rotates
+    # its host-key cache when the daemon recreates the workspace's
+    # overlay. A fresh create serves zero.
+    assert first_key["disk_epoch"] == 0
     await http.delete("/api/v1/workspaces/ws-again", headers=auth())
     second = await http.post(
         "/api/v1/workspaces",
@@ -566,10 +570,10 @@ async def test_workspace_ref_resolution_prefers_the_id(client) -> None:
     assert key.json()["name"] == "ws-ref"
 
 
-async def test_the_ssh_key_answer_is_exactly_the_five_fields(client) -> None:
+async def test_the_ssh_key_answer_is_exactly_the_six_fields(client) -> None:
     """#499: the unread fields stay gone — the answer carries the
-    id, name, public half, instance stamp, and login user the
-    client reads, and nothing else."""
+    id, name, public half, instance stamp, login user, and disk
+    epoch (#697) the client reads, and nothing else."""
     http, _app, _stub = client
     from testkeys import mint
 
@@ -592,6 +596,7 @@ async def test_the_ssh_key_answer_is_exactly_the_five_fields(client) -> None:
         "public_key",
         "created_at",
         "user",
+        "disk_epoch",
     }
 
 

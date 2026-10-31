@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import sqlalchemy as sa
 from alembic import command
+from alembic.script import ScriptDirectory
 from msks.app import App, build_app
 from msks.microvm import VmSpec
 from msks.model import hash_token, new_token
@@ -178,16 +179,20 @@ async def test_migration_moves_coverage_into_the_workspaces_column(
     ] == "scoped"
 
 
-async def test_migration_survives_a_torn_0013_and_downgrades(
+async def test_migration_survives_a_torn_head_and_downgrades(
     tmp_path: Path, app_for
 ) -> None:
-    """#339 review pins: a torn 0013 (schema at head, alembic stamp
-    lost at 0012 — the #10 story healing exists for) re-runs as a
-    no-op and stamps head, because the upgrade inspects the live
-    columns instead of trusting the stamp. The downgrade stages
-    through shadow tables: rows survive it with their first
-    workspace back in the legacy column, and a re-upgrade returns
-    to the coverage shape."""
+    """#339 review pins, generalized past 0013 (#697): a torn head
+    (schema at head, alembic stamp lost one step back — the #10
+    story healing exists for) re-runs as a no-op and stamps head,
+    because the upgrade inspects the live columns instead of
+    trusting the stamp. The heal bridges exactly one torn step —
+    the last pending one — so the stamp rewinds to head's parent,
+    whatever head is when this runs (a new migration must not move
+    the tear into history, where an operator is needed). The
+    downgrade stages through shadow tables: rows survive it with
+    their first workspace back in the legacy column, and a
+    re-upgrade returns to the coverage shape."""
     app = app_for()
     db_path = tmp_path / "t.db"
     config = alembic_config(db_path)
@@ -212,12 +217,15 @@ async def test_migration_survives_a_torn_0013_and_downgrades(
             )
     finally:
         engine.dispose()
-    # Complete the migration, then rewind ONLY the stamp: the torn
-    # shape a hard cut between the committed DDL and the version
-    # write leaves behind.
+    # Complete the migration, then rewind ONLY the stamp — one step:
+    # the torn shape a hard cut between the committed DDL and the
+    # version write leaves behind, at the one depth the heal
+    # bridges.
     command.upgrade(config, "head")
-    command.stamp(config, "0012")
-    app.state.model.migrate()  # re-runs 0013 onto the finished shape
+    script = ScriptDirectory.from_config(config)
+    parent = next(script.walk_revisions()).down_revision
+    command.stamp(config, parent)
+    app.state.model.migrate()  # re-runs the torn head, no-op, stamps
     row = await app.state.model.get_placeholder(1)
     assert row["workspaces"] == ["legacy"]
     # The downgrade keeps the rows: first workspace back in the
@@ -251,8 +259,10 @@ async def test_migration_0015_drops_the_private_half_column(
     stamped at 0014 upgrades to head with `workspaces.ssh_privkey`
     gone — the stored halves drop as dead bytes, the rows survive —
     and a torn 0015 (DDL committed, stamp rewound to 0014) re-runs
-    as a no-op and reaches head, the same live-columns guard
-    0013/0014 heal with."""
+    as a no-op, the same live-columns guard 0013/0014 heal with.
+    The re-run is bounded to 0015: replaying to head would cross
+    later unguarded steps, and the torn-**head** half of that
+    story is the sibling test's (#697 generalized it past 0015)."""
     app = app_for()
     db_path = tmp_path / "t.db"
     config = alembic_config(db_path)
@@ -299,12 +309,14 @@ async def test_migration_0015_drops_the_private_half_column(
         "public_key": "ssh-ed25519 AAAA x",
         "created_at": row["created_at"],
         "login_user": None,
+        "disk_epoch": 0,
     }
     # The torn shape: DDL committed, stamp rewound — the guard
-    # inspects the live columns and lands at head as a no-op.
+    # inspects the live columns and lands as a no-op.
     command.stamp(config, "0014")
-    app.state.model.migrate()  # re-runs 0015 onto the finished shape
+    command.upgrade(config, "0015")  # re-runs 0015 onto the finished shape
     assert "ssh_privkey" not in columns()
+    command.stamp(config, "head")
 
 
 async def test_migration_gives_legacy_rows_a_null_name(
@@ -409,8 +421,14 @@ async def test_get_ssh_key_serves_the_public_half_alone(app_for) -> None:
         "public_key": pub,
         "created_at": key["created_at"],  # the instance stamp (#245)
         "login_user": "alice",
+        "disk_epoch": 0,  # the disks have not been recreated (#697)
     }
     assert key["created_at"]  # present, non-empty, per-instance
+    # A recreated overlay advances the epoch (#697); the client
+    # rotates its host-key cache on the change.
+    assert await app.state.model.bump_disk_epoch("ws1") is True
+    assert (await app.state.model.get_ssh_key("ws1"))["disk_epoch"] == 1
+    assert await app.state.model.bump_disk_epoch("nope") is False
 
 
 async def test_get_ssh_key_without_identity_and_absent(app_for) -> None:
@@ -428,6 +446,7 @@ async def test_get_ssh_key_without_identity_and_absent(app_for) -> None:
         "public_key": None,
         "created_at": key["created_at"],
         "login_user": None,
+        "disk_epoch": 0,
     }
     assert await app.state.model.get_ssh_key("nope") is None
 

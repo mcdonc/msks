@@ -407,11 +407,30 @@ def cache_key(key: dict, ref: str) -> tuple[str, str | None]:
     id when the daemon serves it (#246 — the id names the instance,
     so two workspaces created under one name never share a cache),
     else the typed reference with the #245 created_at stamp
-    separating instances (a daemon one version behind).
+    separating instances (a daemon one version behind). A nonzero
+    disk epoch (#697) joins the key as a suffix: the daemon
+    recreated the workspace's root overlay, the guest's ssh host
+    keys regenerated with it, and the rotated directory re-pins
+    fresh instead of refusing — epoch 0 and an unserved epoch
+    (a daemon one version behind) spell the same directory the
+    pre-#697 client used, so nothing churns on upgrade.
     """
     if key.get("id"):
-        return key["id"], None
+        epoch = key.get("disk_epoch") or 0
+        return key["id"], None if epoch == 0 else f"e{epoch}"
     return ref, instance_token(key)
+
+
+def session_pin(key: dict, ref: str) -> str:
+    """The one host alias every ssh invocation pins under (#697):
+    the workspace's immutable id when the daemon serves it, else
+    the typed reference. ``msks ssh tree`` and the TUI's
+    ``msks ssh <id>`` used to pin the same workspace under two
+    aliases — one could refuse a regenerated host key while the
+    other silently re-pinned — so the session's hostname and
+    known_hosts alias come from here, never from what was typed.
+    """
+    return key.get("id") or ref
 
 
 def known_hosts_path(
@@ -1263,18 +1282,26 @@ def staged_session(workspace_id: str, transport=None):
     session's identity — served from the operator's own agent
     when it holds the key (#490) or staged in the transient agent
     (:mod:`msks.client.agent`). Yields ``(booted, served,
-    known_hosts, user)`` — whether this session booted the workspace
-    (the #168 wait runs only then), the agent holder carrying the
-    identity (either branch of :func:`session_identity`), the
-    per-instance known_hosts path
-    (#246), and the workspace's login user (#248).
-    ``msks ssh`` (#112) and ``msks rsync`` (#190) share it."""
+    known_hosts, user, pin)`` — whether this session booted the
+    workspace (the #168 wait runs only then), the agent holder
+    carrying the identity (either branch of :func:`session_identity`),
+    the per-instance known_hosts path (#246), the workspace's login
+    user (#248), and the one host alias the session pins under
+    (#697). ``msks ssh`` (#112) and ``msks rsync`` (#190) share it.
+    """
     token = env_token()
     url = env_url()
     ssl_ctx = None if is_unix(url) else ssl_context()
     key, booted = asyncio.run(
         prepare(workspace_id, url, token, ssl_ctx, transport)
     )
+    pin = session_pin(key, workspace_id)
+    if key.get("disk_epoch"):
+        label = key.get("name") or pin
+        print(
+            f"msks: {label}'s disks were recreated; pinning fresh host keys",
+            file=sys.stderr,
+        )
     with session_identity(key, workspace_id) as served:
         cache_ref, instance = cache_key(key, workspace_id)
         yield (
@@ -1282,6 +1309,7 @@ def staged_session(workspace_id: str, transport=None):
             served,
             known_hosts_path(cache_ref, instance=instance),
             workspace_user(key),
+            pin,
         )
 
 
@@ -1310,10 +1338,11 @@ def run_workspace_ssh(
         served,
         known_hosts,
         user,
+        pin,
     ):
         if booted:
             probe_argv = probe_args(
-                workspace_id,
+                pin,
                 served.server_address,
                 served.identity_path,
                 known_hosts,
@@ -1327,7 +1356,7 @@ def run_workspace_ssh(
                     time.monotonic() + SSH_SEED_WAIT_S,
                 )
         argv = build_args(
-            workspace_id,
+            pin,
             served.server_address,
             served.identity_path,
             known_hosts,
