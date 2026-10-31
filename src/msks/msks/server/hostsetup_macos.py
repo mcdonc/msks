@@ -278,7 +278,9 @@ def forward_host_port(name: str) -> int | None:
         text = config.read_text()
     except OSError:
         return None
-    match = re.search(rf"guestPort: {VM_PORT}\n.*?hostPort: (\d+)", text)
+    match = re.search(
+        rf"guestPort: {VM_PORT}\n.*?hostPort: (\d+)", text, re.DOTALL
+    )
     return int(match.group(1)) if match else None
 
 

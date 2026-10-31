@@ -168,6 +168,7 @@ def test_the_vm_is_created_started_or_left_alone(
         procs.calls.clear()
         procs.listing = listing
         monkeypatch.setattr(mac, "say", lambda _message: None)
+        monkeypatch.setattr(mac, "forward_host_port", lambda name: None)
         mac.ensure_vm()
         starts = [c for c in procs.calls if c[1] == "start"]
         if expect_start is None:
@@ -358,6 +359,66 @@ def test_a_stopped_vm_names_the_start(procs: FakeProcesses) -> None:
 
 
 # --- the entry ---------------------------------------------------------
+
+
+def test_creation_writes_the_rendered_instance(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, tmp_path
+) -> None:
+    """The create branch: limactl start reads the rendered
+    instance config (template plus this tool's forward) from a
+    temp path."""
+    monkeypatch.setattr(mac, "say", lambda _message: None)
+    monkeypatch.setattr(mac.Path, "home", lambda: tmp_path)
+    procs.listing = ""
+    mac.ensure_vm(host_port=8662)
+    starts = [c for c in procs.calls if c[:2] == ["limactl", "start"]]
+    assert starts and len(starts[0]) == 5
+
+
+def test_a_port_change_on_an_existing_vm_names_the_recreation(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, tmp_path
+) -> None:
+    """The forward is fixed at creation: a mid-life --port is a
+    named refusal with the delete-and-recreate remedy, never a
+    silent wrong port."""
+    monkeypatch.setattr(mac, "say", lambda _message: None)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(mac.Path, "home", lambda: home)
+    (home / ".lima" / mac.VM_NAME).mkdir(parents=True)
+    (home / ".lima" / mac.VM_NAME / "lima.yaml").write_text(
+        f"portForwards:\n- guestPort: {mac.VM_PORT}\n"
+        '  guestIP: "127.0.0.1"\n  hostPort: 8661\n'
+    )
+    with pytest.raises(mac.MacSetupError, match="limactl delete -f"):
+        mac.ensure_vm(host_port=8662)
+
+
+def test_the_check_only_entry_prints_rows(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, capsys
+) -> None:
+    """--check runs the platform gate and the rows, prints them
+    on stdout, mutates nothing."""
+    monkeypatch.setattr(mac.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        mac.os, "uname", lambda: SimpleNamespace(machine="arm64")
+    )
+    monkeypatch.setattr(
+        mac.subprocess,
+        "run",
+        lambda command, **kwargs: (
+            completed(0, "Apple M3\n", "")
+            if command[:1] == ["sysctl"]
+            else procs._run(command, **kwargs)
+        ),
+    )
+    monkeypatch.setattr(
+        mac, "verify_daemon", lambda port, timeout_s=15.0: None
+    )
+    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    assert mac.main(["--check", "--port", "8661"]) == 0
+    out = capsys.readouterr().out
+    assert "  ok  " in out and "chained to the VM's CA" in out
 
 
 def test_the_entry_prints_the_preset(
