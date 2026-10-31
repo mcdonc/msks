@@ -598,11 +598,6 @@ def secret_store_settings_from_env(
 #: provider family (the store became the agefile), and #514
 #: retired the agefile family itself (the store became the
 #: database's per-recipient blobs — no vault file, no identity, no
-#: The removed mounts-side settings (#685): the named-share
-#: list. Refused at load beside the config key's removal message
-#: — the store tuple's pattern, mounts-scoped.
-REMOVED_MOUNT_VARS = ("MSKSD_MOUNT_SHARES",)
-
 #: CLI child, no per-call timeout). A config that still names any
 #: of them names behavior msksd no longer has; refused at load
 #: with the removal named — not silently ignored — so a stale
@@ -618,6 +613,12 @@ REMOVED_SECRET_STORE_KEYS = (
     "MSKSD_SECRET_STORE_CLI",
     "MSKSD_SECRET_STORE_TIMEOUT_S",
 )
+
+
+#: The removed mounts-side settings (#685): the named-share
+#: list. Refused at load beside the config key's removal message
+#: — the store tuple's pattern, mounts-scoped.
+REMOVED_MOUNT_VARS = ("MSKSD_MOUNT_SHARES",)
 
 
 def refuse_removed_store_settings(env: Mapping[str, str]) -> None:

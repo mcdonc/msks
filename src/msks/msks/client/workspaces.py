@@ -73,10 +73,10 @@ def workspace_cells(row: dict) -> list[str]:
 
 def status_with_mounts(row: dict) -> str:
     """The status cell with the mounts' standing marker (#620,
-    part #624): a row whose mounts skip or conflict carries the
-    count beside its status — ``running, 1 mount skipped`` — the
-    marker an unresolved share leaves until the config and the
-    row agree again. The healthy row prints its status alone."""
+    part #624): a row whose mounts skip carries the count beside
+    its status — ``running, 1 mount skipped`` — the marker an
+    unresolved mount leaves until the config and the row agree
+    again. The healthy row prints its status alone."""
     status = row["status"]
     issues = row.get("mount_issues") or []
     if not issues:
