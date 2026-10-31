@@ -17,11 +17,18 @@
 #     counts, fan-in ceiling, reachability, facades)
 #   - every xenon offender in the graded set (scripts/xenon-gate.sh)
 #   - the jscpd clone report (scripts/jscpd-gate.sh)
+#   - a --collect-only pass before the suite (#690): a module that
+#     cannot import is named in seconds instead of a long suite run
+#     that fails the same way at the end
 #   - when anything under src/msks/ differs from the fork point on
 #     origin/main (committed or working tree): the gated suite run —
 #     `unit-tests` under the same coverage gate, -q output — then
 #     every missing coverage line and branch arc for the changed
 #     backend sources (scripts/covgaps.py)
+#
+# Every section is timed (#690) and the summary carries a duration
+# column plus a total, so the slow phase of a run is visible without
+# reaching for a stopwatch.
 #
 # Usage: preflight.sh [--fast]
 #   --fast skips the suite run: an instant lint/complexity pass.
@@ -48,8 +55,25 @@ trap '[ -z "$gaps_out" ] || rm -f "$gaps_out"' EXIT
 
 note() { printf '\n== %s ==\n' "$1"; }
 
+# Wall-clock seconds since the script started (bash's SECONDS ticks
+# from shell startup; capture an explicit zero point so the total
+# describes this script, not the enclosing shell's age).
+start_seconds=$SECONDS
+
+fmt_duration() {
+  s=$1
+  if [ "$s" -ge 60 ]; then
+    printf '%dm%02ds' $((s / 60)) $((s % 60))
+  else
+    printf '%ds' "$s"
+  fi
+}
+
 record() {
-  summary+=("$1|$2")
+  # name|status|seconds — the seconds feed the summary's timing
+  # column (#690): the slow section is visible in every run, not
+  # only when someone thinks to reach for a stopwatch.
+  summary+=("$1|$2|${3:-0}")
   if [ "$2" = FAIL ]; then
     fail=1
   fi
@@ -59,11 +83,13 @@ run_section() {
   name=$1
   shift
   note "$name"
+  section_start=$SECONDS
   if "$@"; then
-    record "$name" PASS
+    status=PASS
   else
-    record "$name" FAIL
+    status=FAIL
   fi
+  record "$name" "$status" "$((SECONDS - section_start))"
 }
 
 # Tracked-or-untracked Python files: the set the ruff and
@@ -131,6 +157,7 @@ done < <(
 )
 
 note "coverage"
+coverage_start=$SECONDS
 if [ "$fast" -eq 1 ]; then
   echo "skipped (--fast: lint and complexity only)"
   record "coverage" SKIP
@@ -142,41 +169,76 @@ else
   while IFS= read -r f; do
     echo "  $f"
   done < <(printf '%s\n' "$changed_all")
-  # The suite writes .coverage fresh: a stale file from an earlier run
-  # would let covgaps report gaps that no longer exist (or hide new
-  # ones) — delete first so the gap list describes THIS run.
-  rm -f .coverage
-  echo
-  if "$venv_python" -m pytest src/msks/tests -q -n auto; then
-    suite=PASS
+  # Collection gate (#690): a module that cannot import — a
+  # Linux-only .so on a Mac, a syntax error — fails the suite run
+  # minutes in and under xdist the error surfaces only in the final
+  # report. A --collect-only pass costs seconds and names the
+  # offender up front; the suite result is unchanged (a collection
+  # error fails the run either way), only the wait to learn it.
+  collect_out=$(mktemp)
+  if ! "$venv_python" -m pytest src/msks/tests --collect-only -q >"$collect_out" 2>&1; then
+    echo
+    echo "collection failed — the suite cannot start; the error names the module:"
+    tail -25 "$collect_out"
+    rm -f "$collect_out"
+    record "coverage" FAIL "$((SECONDS - coverage_start))"
   else
-    suite=FAIL
-  fi
-  if [ -f .coverage ]; then
-    gaps_out=$(mktemp)
-    if "$venv_python" scripts/covgaps.py ${backend[@]+"${backend[@]}"} >"$gaps_out" 2>&1; then
-      gaps=PASS
+    rm -f "$collect_out"
+    # The suite writes .coverage fresh: a stale file from an earlier run
+    # would let covgaps report gaps that no longer exist (or hide new
+    # ones) — delete first so the gap list describes THIS run.
+    rm -f .coverage
+    echo
+    # A wall-clock budget (#690): a wedged test or a leaked
+    # non-daemon thread at session end can hang the suite forever
+    # (the macOS wedge this issue chased) — the budget fails the
+    # run loudly, named, instead. 40 minutes covers the slowest
+    # known healthy host (a cold CI-class Linux box) with margin.
+    suite_budget=$((40 * 60))
+    timeout "$suite_budget" "$venv_python" -m pytest src/msks/tests -q -n auto
+    suite_rc=$?
+    if [ "$suite_rc" -eq 124 ]; then
+      echo
+      echo "preflight: the suite exceeded its ${suite_budget}s budget —"
+      echo "a test wedged past every per-test timeout, or a session-end"
+      echo "leak (a parked non-daemon thread) kept the run from exiting."
+      suite=FAIL
+    elif [ "$suite_rc" -eq 0 ]; then
+      suite=PASS
     else
+      suite=FAIL
+    fi
+    if [ -f .coverage ]; then
+      gaps_out=$(mktemp)
+      if "$venv_python" scripts/covgaps.py ${backend[@]+"${backend[@]}"} >"$gaps_out" 2>&1; then
+        gaps=PASS
+      else
+        gaps=FAIL
+      fi
+      cat "$gaps_out"
+      rm -f "$gaps_out"
+      gaps_out=""
+    else
+      echo "no coverage data written — the suite run above failed before measuring"
       gaps=FAIL
     fi
-    cat "$gaps_out"
-    rm -f "$gaps_out"
-    gaps_out=""
-  else
-    echo "no coverage data written — the suite run above failed before measuring"
-    gaps=FAIL
-  fi
-  if [ "$suite" = PASS ] && [ "$gaps" = PASS ]; then
-    record "coverage" PASS
-  else
-    record "coverage" FAIL
+    if [ "$suite" = PASS ] && [ "$gaps" = PASS ]; then
+      record "coverage" PASS "$((SECONDS - coverage_start))"
+    else
+      record "coverage" FAIL "$((SECONDS - coverage_start))"
+    fi
   fi
 fi
 
 note "preflight summary"
 for item in "${summary[@]}"; do
-  printf '  %-16s %s\n' "${item%%|*}" "${item##*|}"
+  name=${item%%|*}
+  rest=${item#*|}
+  status=${rest%%|*}
+  secs=${rest##*|}
+  printf '  %-16s %-4s %8s\n' "$name" "$status" "$(fmt_duration "$secs")"
 done
+printf '  %-16s %-4s %8s\n' "total" "" "$(fmt_duration "$((SECONDS - start_seconds))")"
 if [ "$fail" -eq 0 ]; then
   echo "preflight: green — the Python gates hold; ready to commit."
   exit 0

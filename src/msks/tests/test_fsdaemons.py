@@ -50,7 +50,7 @@ from test_api import auth, client  # noqa: F401 (fixture)
 
 
 async def socket_sleeper(
-    socket: Path, ack: Path
+    socket: Path, ack: Path, *, ignore_term: bool = False
 ) -> asyncio.subprocess.Process:
     """A process that stays alive with the socket in its argv —
     the virtiofsd stand-in for the pidfile-guard tests. GNU sleep
@@ -61,12 +61,25 @@ async def socket_sleeper(
     helper waits for that word: a freshly exec'd pid's /proc
     view settles late — for a window after the spawn returns the
     cmdline reads empty — so the spawn's return is not yet proof
-    the argv is readable."""
+    the argv is readable. ``ignore_term`` installs a SIGTERM
+    handler that keeps sleeping — the TERM-immortal shape every
+    host can schedule (the SIGSTOP shape pins the stronger
+    undelivered-signal case, which darwin's event loop cannot
+    wait out)."""
     ack.write_text("", encoding="utf-8")
+    body = (
+        "import signal, sys, time\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        "open(sys.argv[1], 'a').write('up')\n"
+        "time.sleep(30)\n"
+        if ignore_term
+        else "import sys, time; open(sys.argv[1], 'a')"
+        ".write('up'); time.sleep(30)"
+    )
     proc = await asyncio.create_subprocess_exec(
         sys.executable,
         "-c",
-        "import sys, time; open(sys.argv[1], 'a').write('up'); time.sleep(30)",
+        body,
         str(ack),
         str(socket),
         stdin=asyncio.subprocess.DEVNULL,
@@ -1208,6 +1221,13 @@ async def test_spawn_refuses_a_path_drifted_past_the_pin(
         await driver._start_fs_daemons(spec, vm_dir)
 
 
+@pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="darwin's asyncio event loop never returns from its "
+    "kevent wait while a spawned child is SIGSTOPped (Python "
+    "3.14 stdlib behavior, reproducible with a five-line "
+    "script); the escalation is pinned on the Linux CI host",
+)
 async def test_untracked_sweep_escalates_to_kill(tmp_path: Path) -> None:
     """A TERM-immortal daemon cannot wedge the workspace behind
     its own live socket: the sweep waits out the grace, KILLs,
@@ -1242,6 +1262,38 @@ async def test_untracked_sweep_escalates_to_kill(tmp_path: Path) -> None:
         with contextlib.suppress(ProcessLookupError):
             immortal.kill()
         await immortal.wait()
+
+
+async def test_untracked_sweep_kills_a_term_ignoring_daemon(
+    tmp_path: Path,
+) -> None:
+    """The same escalation on the TERM-ignored shape every host
+    can schedule: the daemon's handler swallows the TERM, the
+    grace runs out, and only the KILL lands — the pidfile goes
+    with the pid."""
+    import msks.microvm.local as local_mod
+
+    real_grace = local_mod.FS_TERM_GRACE_S
+    local_mod.FS_TERM_GRACE_S = 0.2
+    try:
+        vm_dir = tmp_path / "vms" / "ws-imm2"
+        vm_dir.mkdir(parents=True)
+        driver, _spawned = driver_over(Settings())
+        socket = fs_socket_path(vm_dir, "proj")
+        stubborn = await socket_sleeper(
+            socket, vm_dir / "sleeper-up", ignore_term=True
+        )
+        pidfile = fs_pidfile_path(vm_dir, "proj")
+        pidfile.write_text(str(stubborn.pid), encoding="utf-8")
+        driver._dir = lambda workspace_id: vm_dir  # type: ignore[method-assign]
+        await driver._kill_untracked_fs_daemons("ws-imm2")
+        assert not pidfile.exists()
+        assert await local_mod.pid_dead_by(stubborn.pid, 2.0)
+    finally:
+        local_mod.FS_TERM_GRACE_S = real_grace
+        with contextlib.suppress(ProcessLookupError):
+            stubborn.kill()
+        await stubborn.wait()
 
 
 async def test_pid_dead_by_reports_a_live_pid() -> None:

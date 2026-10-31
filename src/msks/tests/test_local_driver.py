@@ -11,6 +11,7 @@ import itertools
 import os
 import shutil
 import socket
+import sys
 import tempfile
 from dataclasses import replace
 from pathlib import Path
@@ -1198,8 +1199,16 @@ async def test_launch_names_a_sweep_obstacle_it_cannot_remove(
     vm_dir.mkdir(parents=True, exist_ok=True)
     (vm_dir / "api.sock").mkdir()
     (vm_dir / "ch.pid").mkdir()
+    # Both obstacles are directories — unlink-proof on every host.
+    # Which one the sweep names first depends on the stale probe's
+    # errno taxonomy: Linux's connect() on a non-socket path answers
+    # ECONNREFUSED (stale), so the socket obstacle is named there;
+    # darwin answers ENOSYS, which reads as live, and the pidfile
+    # obstacle is named first. Either way the error names the exact
+    # path and asks the operator to remove it by hand.
     with pytest.raises(
-        MicrovmError, match="cannot remove stale socket.*remove it by hand"
+        MicrovmError,
+        match="cannot remove stale (socket|pidfile).*remove it by hand",
     ):
         await app.state.microvm.launch(spec(tmp_path))
     # The pidfile obstacle names itself the same way.
@@ -1458,18 +1467,22 @@ def test_socket_stale_contract(tmp_path: Path) -> None:
         # Saturate the accept backlog (#154 review): a live listener
         # whose queue is full must still read as LIVE -- connect
         # then answers EAGAIN or times out, neither of the refusal
-        # pair that may be swept.
-        for _ in range(64):
-            filler = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            filler.settimeout(0.2)
-            try:
-                filler.connect(str(live))
-                fillers.append(filler)
-            except OSError:
-                break  # the queue is full; the probe is next
-        else:
-            pytest.fail("could not saturate the backlog")
-        assert not socket_stale(live)  # EAGAIN must read as LIVE
+        # pair that may be swept. A Linux kernel contract: darwin
+        # refuses the same connect with ECONNREFUSED -- the errno an
+        # abandoned socket gives -- so the saturation leg is
+        # unprobeable there; absent/abandoned/idle-live still run.
+        if sys.platform != "darwin":
+            for _ in range(64):
+                filler = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                filler.settimeout(0.2)
+                try:
+                    filler.connect(str(live))
+                    fillers.append(filler)
+                except OSError:
+                    break  # the queue is full; the probe is next
+            else:
+                pytest.fail("could not saturate the backlog")
+            assert not socket_stale(live)  # EAGAIN must read as LIVE
     finally:
         for filler in fillers:
             filler.close()

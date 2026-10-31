@@ -12,10 +12,20 @@ import ctypes
 import errno
 import os
 import re
+import sys
 from ctypes import c_void_p
 from pathlib import Path
 
 import pytest
+
+if sys.platform != "linux":
+    pytest.skip(
+        "nfqbind loads libnetfilter_queue at import, and the Linux "
+        "kernel interface is absent here — shipped code guards the "
+        "same import (nfq.py), and these tests pin that binding",
+        allow_module_level=True,
+    )
+
 from msks.net import nfqbind
 from msks.net.nfqbind import (
     ACCEPT,

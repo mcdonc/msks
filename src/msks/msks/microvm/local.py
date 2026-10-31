@@ -19,10 +19,13 @@ for process exit, all under one deadline.
 
 import asyncio
 import contextlib
+import errno
 import os
 import shutil
 import signal
 import socket
+import subprocess
+import sys
 from pathlib import Path
 
 from ..hostshares import check_host_share
@@ -75,11 +78,35 @@ def socket_stale(path: Path) -> bool:
         probe.connect(str(path))
     except ConnectionRefusedError, FileNotFoundError:
         return True
-    except OSError:
-        return False
+    except OSError as exc:
+        # EAGAIN and timeouts mean live; the classification of
+        # the remaining errnos (one darwin-only residue shape)
+        # lives beside its taxonomy.
+        return probe_refusal_is_stale(exc)
     finally:
         probe.close()
     return False
+
+
+def probe_refusal_is_stale(exc: OSError) -> bool:
+    """Whether a connect() failure beyond the refusal pair still
+    names dead residue — the one case that differs by host
+    (#690's taxonomy): darwin's connect() against a non-socket
+    path answers ENOTSOCK where Linux answers ECONNREFUSED (a
+    refusal, matched above), so a plain file squatting on the
+    socket name is swept on both. Every other OSError — EAGAIN
+    from a full backlog, a timeout against a slow acceptor —
+    means live.
+    """
+    if (
+        sys.platform == "darwin" and exc.errno == errno.ENOTSOCK
+    ):  # pragma: no cover
+        # The darwin dev host alone reaches the arm; the Linux
+        # CI host answers ECONNREFUSED for the same shape.
+        return True
+    return False  # pragma: no cover — the EAGAIN/timeout leg is
+    # pinned on the Linux CI host (the saturation test); the
+    # darwin suite skips that leg, so it never runs here.
 
 
 def has_socket_arg(fields: list[bytes], sock: Path) -> bool:
@@ -88,6 +115,41 @@ def has_socket_arg(fields: list[bytes], sock: Path) -> bool:
         a == b"--api-socket" and b == want_sock
         for a, b in zip(fields, fields[1:])
     )
+
+
+def read_cmdline(pid: int) -> bytes | None:
+    """The pid's argv as /proc cmdline bytes — NUL-separated fields.
+
+    Linux reads ``/proc/<pid>/cmdline`` directly (#151's identity
+    source). A darwin dev host has no procfs, and without it the
+    identity checks fell into their not-ours branch: kills never
+    fired, and every suite run on a Mac left spawned VMM stubs
+    alive while tests waited on their exit forever (#690). ps(1)
+    carries the same argv there — space-joined, so the fields are
+    re-joined with NULs and the exact-field match below keeps its
+    semantics. The deployment host keeps the /proc path.
+    """
+    try:
+        return Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        pass
+    if sys.platform == "darwin":  # pragma: no cover — the darwin
+        # dev host alone; CI and the deployment hosts run Linux
+        # and take the /proc path above. The driver suite
+        # exercises this branch on Mac dev hosts (#690).
+        try:
+            out = subprocess.run(
+                ["ps", "-ww", "-o", "command=", "-p", str(pid)],
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+        except OSError, subprocess.CalledProcessError:
+            return None
+        return b"\0".join(out.split())
+    return None  # pragma: no cover — reached on the Linux CI
+    # host when a /proc read fails against an alive pid (the
+    # fs-daemon dead-pid tests); the darwin arm above answers
+    # first on a Mac.
 
 
 def cmdline_is_vmm(cmdline: bytes, binary: str, sock: Path) -> bool:
@@ -485,9 +547,8 @@ def fs_pid_serves(pid: int, socket_path: Path) -> bool:
     virtiofs socket — the guard that keeps a recycled pid alive
     (#56's rule, the fs shape): only a process that says it serves
     the socket dies by its pidfile."""
-    try:
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
-    except OSError:
+    cmdline = read_cmdline(pid)
+    if cmdline is None:
         return False
     return os.fsencode(str(socket_path)) in cmdline.split(b"\0")
 
@@ -1184,12 +1245,11 @@ class LocalCloudHypervisor(MicrovmDriver):
     def _pid_is_vmm(self, pid: int, workspace_id: str) -> bool:
         binary = self._settings().vmm.cloud_hypervisor
         sock = self._dir(workspace_id) / "api.sock"
-        try:
-            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
-        except OSError:  # pragma: no cover
-            # An alive pid whose procfs entry cannot be read (a
-            # kill(0)-vs-read race, or a hidepid procfs mount) is
-            # not provably ours.
+        cmdline = read_cmdline(pid)
+        if cmdline is None:  # pragma: no cover — a kill(0)-vs-read
+            # race or a hidepid mount; liveness callers reach here
+            # only with an alive pid, and both suite hosts read
+            # those (procfs on Linux, ps on the Mac dev host).
             return False
         return cmdline_is_vmm(cmdline, binary, sock)
 
