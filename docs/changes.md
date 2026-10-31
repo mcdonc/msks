@@ -8,6 +8,25 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`msks-setup-macos-host` (#676).** The macOS host setup: a
+  stock Apple-Silicon Mac reaches a working msksd in one run —
+  the tool creates the msksd Lima VM from the shipped template
+  (the invoking user's home mounted under the reserved prefix,
+  the daemon's port forwarded on both loopbacks), installs the
+  daemon inside it (the PyPI release matching the tool's
+  version, or `--wheel` for a build in hand), writes its config
+  with host-share mode `prefix` and the user's home the default
+  allowed root, the daemon's tool set (egress plumbing, volume
+  trio, seed tooling) with its kernel routing setting and the
+  pinned cloud-hypervisor release beside it, enables its
+  service, and prints the client preset (`MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` — the CA
+  written under `~/.config/msks/`). `--check` runs the doctor
+  rows (Lima at the template's floor, the VM running, the
+  nested-virtualization marker, virtiofsd inside, the listener
+  answering); `--uninstall` deletes the VM. Every phase is
+  idempotent; reruns preserve the token, the CA, and the
+  daemon's state.
+
 - **`msks image check` grows the `virtiofs` row (#674).** The
   guest-image capability check now probes the virtiofs
   filesystem driver a share mounts through: Debian's pinned
