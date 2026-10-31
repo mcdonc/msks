@@ -6,6 +6,19 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Removed
+
+- **The `mount_shares` config feature (#685).** Host paths are
+  the one share surface: the `mount_shares` key and
+  `MSKSD_MOUNT_SHARES` are removed, `msks create --share` /
+  `msks mount HOST:GUEST[:MODE]` are the one grammar, and the
+  TUI's mounts editor takes host paths only. A config that still
+  names the key or the env var fails at load with a message
+  pointing at `mount_host_roots` and `--share`; workspaces whose
+  stored rows carry named mounts drop them at read and at the
+  next set (they mount nothing for them at the next start) —
+  recreate those mounts with host paths.
+
 ### Added
 
 - **`msks-preflight` prints per-section durations (#690).**

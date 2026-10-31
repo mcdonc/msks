@@ -273,7 +273,8 @@ PACKAGE_HINTS: dict[str, dict[str, str]] = {
     },
     # The host-mount daemon (#620, part #622): the name is its
     # own package on the families that carry it; the doctor row
-    # is warning-grade — a daemon without shares never execs it.
+    # is warning-grade — a daemon without allowed host roots
+    # never execs it.
     "virtiofsd": {
         "dnf": "virtiofsd",
         "yum": "virtiofsd",
@@ -541,8 +542,8 @@ def check_virtiofsd(binary: str, manager: str | None) -> CheckResult:
     Mint 22's archive ships 1.10.0), so a below-floor binary
     warns with the gap named instead of passing a check whose
     mounts then fail one start at a time. Warning grade like the
-    presence check it replaces: a daemon without shares never
-    execs virtiofsd."""
+    presence check it replaces: a daemon without allowed host
+    roots never execs virtiofsd."""
     use = "serves host mounts into each workspace (#620)"
     path = probe_which(binary)
     if not path:
@@ -1163,43 +1164,13 @@ def run_doctor(settings: Settings) -> DoctorReport:
         )
     )
     # Warning grade: the host-mount machinery (#620, part #622).
-    # A daemon without configured shares never execs virtiofsd,
-    # so a miss warns (it only breaks the mounts feature) — and
-    # every configured share whose path is missing gets its own
-    # warning row, so the operator sees which share will skip.
-    # The check reads the VERSION, not only presence: the mounts'
+    # A daemon without allowed host roots never execs virtiofsd,
+    # so a miss warns (it only breaks the mounts feature). The
+    # check reads the VERSION, not only presence: the mounts'
     # flag set needs >= 1.13.0 (#655).
     report.add(check_virtiofsd(vmm.virtiofsd, manager))
-    for share in settings.mounts.shares:
-        report.add(share_path_result(share))
     add_path_note(report)
     return report
-
-
-def share_path_result(share) -> CheckResult:
-    """One configured share's path check (#620, part #622): the
-    directory must exist or every mount naming the share skips at
-    start with the path named — a warning row per missing share,
-    never an error, so a share staged later does not fail the
-    run."""
-
-    resolved = os.path.realpath(share.path)
-    if os.path.isdir(resolved):
-        return CheckResult(
-            name=f"share {share.name}",
-            ok=True,
-            message=f"share {share.name} ok ({resolved})",
-        )
-    return CheckResult(
-        name=f"share {share.name}",
-        ok=False,
-        is_warning=True,
-        message=(
-            f"share {share.name} path does not exist or is not a "
-            f"directory: {share.path}"
-        ),
-        hint="create the directory, or drop the share from the config",
-    )
 
 
 # ---------------------------------------------------------------------------

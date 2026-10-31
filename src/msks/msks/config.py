@@ -130,10 +130,9 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     # VmmSettings — the virtiofs daemon behind host mounts
     # (#620, part #622).
     "MSKSD_VIRTIOFSD",
-    # MountSettings — the host-mount shares (#620) and the
-    # host-share gates (#672): the mode and the allowed roots
-    # (#667).
-    "MSKSD_MOUNT_SHARES",
+    # MountSettings — the host-share gates (#667, #672): the
+    # mode and the allowed roots. The #620 named-share list
+    # (MSKSD_MOUNT_SHARES) is removed (#685).
     "MSKSD_MOUNT_HOST_MODE",
     "MSKSD_MOUNT_HOST_ROOTS",
 )
@@ -191,13 +190,12 @@ def scalar_to_str(key: str, value: object) -> str:
 #: The file's list-valued keys (#259, #448): ``llm_models``
 #: entries may be colon-delimited strings or LiteLLM-native dicts,
 #: matching klangk's YAML shape; ``seed_images`` entries are
-#: archive path strings; ``mount_shares`` entries are the
-#: host-mount share mappings (#620). Env vars stay strings
-#: (comma-separated; the shares key reads JSON).
+#: archive path strings; ``mount_host_roots`` entries are host
+#: paths. Env vars stay strings (comma-separated; the roots key
+#: reads JSON).
 LIST_KEYS = {
     "llm_models": "MSKSD_LLM_MODELS",
     "seed_images": "MSKSD_SEED_IMAGES",
-    "mount_shares": "MSKSD_MOUNT_SHARES",
     "mount_host_roots": "MSKSD_MOUNT_HOST_ROOTS",
 }
 
@@ -272,9 +270,19 @@ def check_key_string(key: object, path: str) -> None:
 def config_var(key: str, path: str) -> str:
     """One key's ``MSKSD_*`` variable: the hyphen-to-underscore
     normalization (#332) then the one-rule lookup; an unknown key
-    fails naming itself and the snake_case valid-keys list."""
+    fails naming itself and the snake_case valid-keys list. The
+    removed key names the removal (#685): the message points at
+    the one surface that replaced it, not the valid-keys list a
+    retiree would drown in."""
     var = CONFIG_ENV_VARS.get(key.replace("-", "_"))
     if var is None:
+        if key.replace("-", "_") == "mount_shares":
+            raise ValueError(
+                f"{path}: config key {key!r} was removed (#685); host "
+                "paths are the one share surface — allow them with "
+                "mount_host_roots and mount them with 'msks create "
+                "--share' / 'msks mount HOST:GUEST[:MODE]'"
+            )
         valid = ", ".join(sorted(CONFIG_ENV_VARS))
         raise ValueError(
             f"{path}: unknown config key {key!r} (valid keys: {valid})"
@@ -528,8 +536,8 @@ def render_template() -> str:
 # cloud_hypervisor: cloud-hypervisor  # the VMM binary the local
 #                           # driver execs
 # virtiofsd: virtiofsd       # the daemon that serves host mounts
-#                           # (#620); a daemon without shares
-#                           # never execs it
+#                           # (#620); a daemon without allowed
+#                           # host roots never execs it
 # console_wait_timeout_s: 15.0  # seconds to wait for the console
 #                           # device at boot
 # console_stall_timeout_s: 60.0  # seconds of input-unanswered

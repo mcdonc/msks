@@ -23,7 +23,7 @@ type. Enter opens the workspace's page.
 The list re-reads the daemon every five seconds, so a workspace another surface
 moved (the CLI, another operator) appears without a keypress.
 
-A workspace whose mounts skip or conflict carries a marker in the
+A workspace whose mounts skip carries a marker in the
 status column — `✗1 stopped` — the count of mounts the daemon's
 derived state holds unresolved; the marker stands until the
 config and the row agree again, and the [mounts
@@ -106,7 +106,7 @@ consent, an edit dialog for the sizes and topology, and the
 mounts editor; and start and stop.
 
 The **mounts editor** holds the workspace's mounts one row each —
-the CLI's own `SHARE:GUEST_PATH:MODE` grammar, the mode always
+the CLI's own `HOST_PATH:GUEST_PATH:MODE` grammar, the mode always
 shown. `a` adds a row (a single-line input), Enter edits the
 focused row seeded with its spec, `r` removes it, and Escape
 closes the editor with the last saved set. Every change posts the
@@ -114,9 +114,9 @@ whole list through the daemon's mounts route — the reply repaints
 each row with its derived state (`healthy`, or the skip's kind
 and reason), and a refusal names itself on the editor's note line
 with the list it refused rolled back. The daemon owns the rules:
-a share the config does not carry, and `rw` on a read-only
-share, refuse with the remedy named. The [mounts
-chapter](mounts.md) and the [configuration
+a host path outside the allowed roots, or one whose root the
+daemon's VM does not mount, refuses with the remedy named. The
+[mounts chapter](mounts.md) and the [configuration
 rows](config.md#host-share-mounts) hold the behavior; the CLI's
 [`msks mount`](cli.md#msks-mount) rides the same route.
 

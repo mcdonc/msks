@@ -4945,31 +4945,40 @@ async def test_fetch_manifest_reads_the_channel() -> None:
 
 
 def test_mount_spec_shapes_the_entry() -> None:
-    """The CLI's SPEC grammar: share, absolute guest path, and the
-    mode — present when named, absent for the rw default."""
-    assert workspaces.mount_spec("proj:/mnt/p", "--mount") == {
-        "share": "proj",
+    """The CLI's SPEC grammar: host path, absolute guest path, and
+    the mode — present when named, absent for the rw default."""
+    assert workspaces.mount_spec("/srv/proj:/mnt/p", "mount") == {
+        "host": "/srv/proj",
         "guest": "/mnt/p",
     }
-    assert workspaces.mount_spec("proj:/mnt/p:ro", "--mount") == {
-        "share": "proj",
+    assert workspaces.mount_spec("/srv/proj:/mnt/p:ro", "mount") == {
+        "host": "/srv/proj",
         "guest": "/mnt/p",
         "mode": "ro",
     }
 
 
+def test_a_bare_name_names_the_removal() -> None:
+    """The retired named form (#685): a bare first field is one
+    local line pointing at the host-path grammar."""
+    with pytest.raises(SystemExit, match="takes a host path"):
+        workspaces.mount_spec("proj:/mnt/p", "mount")
+    with pytest.raises(SystemExit, match="shares by name were removed"):
+        workspaces.mount_spec("proj:/mnt/p", "mount")
+
+
 @pytest.mark.parametrize(
     ("spec", "why"),
     [
-        ("proj", "takes HOST-OR-SHARE:GUEST_PATH"),
-        ("proj:/mnt/p:ro:extra", "takes HOST-OR-SHARE:GUEST_PATH"),
-        ("proj:mnt/p", "must be absolute"),
-        ("proj:/mnt/p:wo", "mode must be ro or rw"),
+        ("/srv/proj", "takes HOST_PATH:GUEST_PATH"),
+        ("/srv/proj:/mnt/p:ro:extra", "takes HOST_PATH:GUEST_PATH"),
+        ("/srv/proj:mnt/p", "must be absolute"),
+        ("/srv/proj:/mnt/p:wo", "mode must be ro or rw"),
     ],
 )
 def test_mount_spec_refuses_bad_shapes(spec: str, why: str) -> None:
     with pytest.raises(SystemExit, match=why):
-        workspaces.mount_spec(spec, "--mount")
+        workspaces.mount_spec(spec, "mount")
 
 
 def test_mount_spec_takes_the_host_form() -> None:
@@ -5013,8 +5022,8 @@ def test_host_share_spec_refuses_bad_shapes(spec: str, why: str) -> None:
 
 
 def test_create_share_specs_ride_the_mounts(monkeypatch) -> None:
-    """``--share`` on create rides the body's mounts beside
-    ``--mount``: the host entries expand and shape locally, and
+    """``--share`` on create rides the body's mounts — the one
+    grammar (#685): the host entries expand and shape locally, and
     the daemon's gates answer the refusal taxonomy in their 400
     detail (which the create surfaces verbatim)."""
     posted: list[dict] = []
@@ -5030,20 +5039,19 @@ def test_create_share_specs_ride_the_mounts(monkeypatch) -> None:
         workspace_id="ws-s",
         kernel="/k",
         rootfs="/r",
-        mount=["proj:/mnt/p:ro"],
-        share=["~/code:/mnt/code"],
+        share=["~/code:/mnt/code", "/srv/refs:/srv/refs:ro"],
     )
     body = workspaces.create_body(flags)
     assert body["mounts"] == [
-        {"share": "proj", "guest": "/mnt/p", "mode": "ro"},
         {"host": f"{os.path.expanduser('~')}/code", "guest": "/mnt/code"},
+        {"host": "/srv/refs", "guest": "/srv/refs", "mode": "ro"},
     ]
 
 
 def test_umount_matches_the_host_path(monkeypatch, capsys) -> None:
-    """``msks umount`` names what leaves by share name or host
-    path — the key that carries it, ``~`` expanded the way the
-    mount spec did."""
+    """``msks umount`` names what leaves by host path — ``~``
+    expanded the way the mount spec did; a bare name is the
+    retired form, one local line."""
     posted: list[object] = []
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -5058,7 +5066,7 @@ def test_umount_matches_the_host_path(monkeypatch, capsys) -> None:
                             "guest": "/mnt/code",
                             "mode": "rw",
                         },
-                        {"share": "proj", "guest": "/mnt/p"},
+                        {"host": "/srv/proj", "guest": "/mnt/p", "mode": "rw"},
                     ],
                 },
             )
@@ -5067,28 +5075,34 @@ def test_umount_matches_the_host_path(monkeypatch, capsys) -> None:
             200,
             json={
                 "id": "ws-h",
-                "mounts": [{"share": "proj", "guest": "/mnt/p"}],
+                "mounts": [
+                    {"host": "/srv/proj", "guest": "/mnt/p", "mode": "rw"}
+                ],
             },
         )
 
     client_env(monkeypatch)
     rc = cli.cmd_umount("ws-h", "~/code", transport=mock(handler))
     assert rc == 0
-    assert posted == [{"mounts": [{"share": "proj", "guest": "/mnt/p"}]}]
-    assert "ws-h mounts proj:/mnt/p:rw" in capsys.readouterr().out
+    assert posted == [
+        {"mounts": [{"host": "/srv/proj", "guest": "/mnt/p", "mode": "rw"}]}
+    ]
+    assert "ws-h mounts /srv/proj:/mnt/p:rw" in capsys.readouterr().out
+    with pytest.raises(SystemExit, match="takes a host path"):
+        cli.cmd_umount("ws-h", "proj", transport=mock(handler))
 
 
-def test_mounts_line_renders_both_forms(monkeypatch, capsys) -> None:
-    """The mount/umount outcome line renders both forms' specs —
-    the host path and the share name — beside the derived skips,
-    each issue matched on the form's naming key."""
+def test_mounts_line_renders_the_derived_state(monkeypatch, capsys) -> None:
+    """The mount/umount outcome line renders the specs — host
+    paths, the one form (#685) — beside the derived skips, each
+    issue matched on its naming key."""
     from msks.client.tui.mounts import issue_for
 
     row = {
         "id": "ws-b",
         "mounts": [
             {"host": "/Users/p/code", "guest": "/mnt/code", "mode": "rw"},
-            {"share": "proj", "guest": "/mnt/p"},
+            {"host": "/srv/proj", "guest": "/mnt/p", "mode": "rw"},
         ],
         "mount_issues": [
             {
@@ -5102,12 +5116,12 @@ def test_mounts_line_renders_both_forms(monkeypatch, capsys) -> None:
     }
     line = workspaces.mounts_line(row)
     assert "/Users/p/code:/mnt/code:rw" in line
-    assert "proj:/mnt/p:rw" in line
+    assert "/srv/proj:/mnt/p:rw" in line
     assert "outside the allowed host-share roots" in line
     host_issue = issue_for(row["mounts"][0], row["mount_issues"])
     assert host_issue is not None and host_issue["kind"] == "skipped"
-    named_issue = issue_for(row["mounts"][1], row["mount_issues"])
-    assert named_issue is None
+    healthy = issue_for(row["mounts"][1], row["mount_issues"])
+    assert healthy is None
 
 
 def test_mount_and_umount_agree_on_spelling(monkeypatch) -> None:
@@ -5136,12 +5150,12 @@ def test_mount_and_umount_agree_on_spelling(monkeypatch) -> None:
         f"//{home}/code",
     )
     for spelling in spellings:
-        kept = workspaces.without_share(row_mounts, spelling, "ws")
+        kept = workspaces.without_mount(row_mounts, spelling, "ws")
         assert kept == []
     with pytest.raises(SystemExit, match="must not contain"):
         workspaces.mount_spec(f"{home}/../code:/mnt/c", "--share")
     with pytest.raises(SystemExit, match="must not contain"):
-        workspaces.without_share(row_mounts, f"{home}/../code", "ws")
+        workspaces.without_mount(row_mounts, f"{home}/../code", "ws")
 
 
 def test_share_on_an_old_daemon_names_the_upgrade(monkeypatch) -> None:
@@ -5166,12 +5180,10 @@ def test_share_on_an_old_daemon_names_the_upgrade(monkeypatch) -> None:
     assert status_message(exc) == PREDATES_SHARES_MESSAGE
 
 
-def test_create_mount_refuses_a_path_shaped_spec(monkeypatch) -> None:
-    """``--mount`` keeps its meaning (a configured share): a
-    path-shaped spec there is one local line pointing at
-    ``--share``."""
-    with pytest.raises(SystemExit, match="--share for the host path"):
-        workspaces.mount_spec("~/code:/mnt/c", "--mount")
+def test_the_runtime_grammar_takes_the_same_paths(monkeypatch) -> None:
+    """``msks mount``'s runtime spec grammar and the create's
+    ``--share`` are one grammar (#685): the same host paths, the
+    same expansion, the same shape."""
     assert workspaces.mount_spec("~/code:/mnt/c", "mount") == {
         "host": f"{os.path.expanduser('~')}/code",
         "guest": "/mnt/c",
@@ -5219,7 +5231,7 @@ def mounted_row() -> dict:
     return {
         "id": "1a2b3c4d",
         "name": "alpha",
-        "mounts": [{"share": "proj", "guest": "/mnt/proj", "mode": "rw"}],
+        "mounts": [{"host": "/srv/proj", "guest": "/mnt/proj", "mode": "rw"}],
         "mount_issues": [],
     }
 
@@ -5243,14 +5255,16 @@ def test_cmd_mount_posts_the_whole_list(
             json={
                 **mounted_row(),
                 "mounts": [
-                    {"share": "proj", "guest": "/mnt/proj", "mode": "rw"},
-                    {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+                    {"host": "/srv/proj", "guest": "/mnt/proj", "mode": "rw"},
+                    {"host": "/srv/refs", "guest": "/srv/refs", "mode": "ro"},
                 ],
             },
         )
 
     client_env(monkeypatch)
-    rc = cli.cmd_mount("alpha", "refs:/srv/refs:ro", transport=mock(handler))
+    rc = cli.cmd_mount(
+        "alpha", "/srv/refs:/srv/refs:ro", transport=mock(handler)
+    )
     assert rc == 0
     assert seen[0][:2] == ("GET", "https://daemon/api/v1/workspaces/alpha")
     assert seen[1][:2] == (
@@ -5259,21 +5273,21 @@ def test_cmd_mount_posts_the_whole_list(
     )
     assert seen[1][2] == {
         "mounts": [
-            {"share": "proj", "guest": "/mnt/proj", "mode": "rw"},
-            {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+            {"host": "/srv/proj", "guest": "/mnt/proj", "mode": "rw"},
+            {"host": "/srv/refs", "guest": "/srv/refs", "mode": "ro"},
         ]
     }
     out = capsys.readouterr().out
-    assert "alpha mounts proj:/mnt/proj:rw, refs:/srv/refs:ro" in out
+    assert "alpha mounts /srv/proj:/mnt/proj:rw, /srv/refs:/srv/refs:ro" in out
     assert "(next start)" in out
 
 
-def test_cmd_umount_removes_the_share(
+def test_cmd_umount_removes_the_mount(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """``msks umount`` removes every mount of the share and posts
-    the remainder; a share the row does not mount is one local
-    line."""
+    """``msks umount`` removes every mount of the host path and
+    posts the remainder; a path the row does not mount is one
+    local line."""
     posted: list[object] = []
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -5283,15 +5297,15 @@ def test_cmd_umount_removes_the_share(
         return httpx.Response(200, json={**mounted_row(), "mounts": []})
 
     client_env(monkeypatch)
-    rc = cli.cmd_umount("alpha", "proj", transport=mock(handler))
+    rc = cli.cmd_umount("alpha", "/srv/proj", transport=mock(handler))
     assert rc == 0
     assert posted == [{"mounts": []}]
     assert "alpha mounts nothing" in capsys.readouterr().out
 
-    with pytest.raises(SystemExit, match="mounts no 'refs'"):
+    with pytest.raises(SystemExit, match="mounts no"):
         cli.cmd_umount(
             "alpha",
-            "refs",
+            "/srv/refs",
             transport=mock(
                 lambda req: httpx.Response(200, json=mounted_row())
             ),
@@ -5300,34 +5314,37 @@ def test_cmd_umount_removes_the_share(
 
 def test_the_mount_line_names_derived_skips() -> None:
     """The outcome line carries the daemon's derived state: a
-    skip names the share and its reason."""
+    skip names the host path and its reason."""
     row = {
         **mounted_row(),
         "mount_issues": [
             {
                 "kind": "skipped",
-                "share": "proj",
+                "host": "/srv/proj",
                 "guest": "/mnt/proj",
                 "mode": "rw",
-                "detail": "share 'proj' is not in the daemon's config",
+                "detail": (
+                    "host path '/srv/proj' is outside the allowed "
+                    "host-share roots"
+                ),
             }
         ],
     }
     line = workspaces.mounts_line(row)
-    assert "proj:/mnt/proj:rw" in line
-    assert "proj skipped (share 'proj' is not in the daemon's config)" in line
+    assert "/srv/proj:/mnt/proj:rw" in line
+    assert "/srv/proj skipped (host path '/srv/proj' is outside" in line
 
 
-def test_create_body_carries_the_mount_specs() -> None:
-    """``--mount`` repeats into the body's mounts list — the
+def test_create_body_carries_the_share_specs() -> None:
+    """``--share`` repeats into the body's mounts list — the
     entries parsed to the wire's shape."""
     args = cli.CreateFlags(
-        workspace_id="ws", mount=["a:/mnt/a", "b:/srv/b:ro"]
+        workspace_id="ws", share=["/srv/a:/mnt/a", "/srv/b:/srv/b:ro"]
     )
     body = workspaces.create_body(args)
     assert body["mounts"] == [
-        {"share": "a", "guest": "/mnt/a"},
-        {"share": "b", "guest": "/srv/b", "mode": "ro"},
+        {"host": "/srv/a", "guest": "/mnt/a"},
+        {"host": "/srv/b", "guest": "/srv/b", "mode": "ro"},
     ]
 
 
@@ -5346,27 +5363,28 @@ def test_mount_and_umount_run_through_the_entry_point(
             json={
                 **mounted_row(),
                 "mounts": [
-                    {"share": "proj", "guest": "/mnt/proj", "mode": "rw"},
-                    {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+                    {"host": "/srv/proj", "guest": "/mnt/proj", "mode": "rw"},
+                    {"host": "/srv/refs", "guest": "/srv/refs", "mode": "ro"},
                 ],
             },
         )
 
     client_env(monkeypatch)
     rc = cli.main(
-        ["mount", "alpha", "refs:/srv/refs:ro"], transport=mock(handler)
+        ["mount", "alpha", "/srv/refs:/srv/refs:ro"],
+        transport=mock(handler),
     )
     assert rc == 0
-    assert "refs:/srv/refs:ro" in capsys.readouterr().out
+    assert "/srv/refs:/srv/refs:ro" in capsys.readouterr().out
     with_refs = {
         **mounted_row(),
         "mounts": [
-            {"share": "proj", "guest": "/mnt/proj", "mode": "rw"},
-            {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+            {"host": "/srv/proj", "guest": "/mnt/proj", "mode": "rw"},
+            {"host": "/srv/refs", "guest": "/srv/refs", "mode": "ro"},
         ],
     }
     rc = cli.main(
-        ["umount", "alpha", "refs"],
+        ["umount", "alpha", "/srv/refs"],
         transport=mock(lambda req: httpx.Response(200, json=with_refs)),
     )
     assert rc == 0
@@ -5382,5 +5400,5 @@ def test_mount_help_names_the_grammar(
         cli.main(["mount", "--help"])
     assert caught.value.code == 0
     flat = capsys.readouterr().out
-    assert "SHARE:GUEST_PATH:MODE" in flat
+    assert "HOST_PATH:GUEST_PATH:MODE" in flat
     assert "next start" in flat.lower()

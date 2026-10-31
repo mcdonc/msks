@@ -24,7 +24,6 @@ from msks.config import (
     resolve_config_path,
 )
 from msks.settings import MountSettings, Settings
-from msks.spec.mounts import MountShare
 
 
 def write_config(tmp_path, doc: str) -> str:
@@ -62,6 +61,7 @@ def test_setting_vars_match_the_settings_source() -> None:
     text = Path(msks_settings.__file__).read_text()
     read_vars = set(re.findall(r'"(MSKSD_[A-Z0-9_]+)"', text))
     removed = set(getattr(msks_settings, "REMOVED_SECRET_STORE_KEYS", ()))
+    removed |= set(getattr(msks_settings, "REMOVED_MOUNT_VARS", ()))
     assert read_vars - removed == set(SETTING_ENV_VARS)
 
 
@@ -493,12 +493,6 @@ KEY_CASES = [
         "/usr/local/bin/virtiofsd",
         "vmm.virtiofsd",
         "/usr/local/bin/virtiofsd",
-    ),
-    (
-        "mount_shares",
-        [{"name": "s", "path": "/srv/s"}],
-        "mounts",
-        MountSettings(shares=(MountShare(name="s", path="/srv/s"),)),
     ),
     (
         "mount_host_mode",

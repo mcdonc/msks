@@ -396,16 +396,6 @@ def create(
         "(#336) — msks generates no key, and an unconfigured client "
         "refuses the create (#486)",
     ),
-    mount: list[str] | None = typer.Option(
-        None,
-        "--mount",
-        metavar="SPEC",
-        help="a configured share mounted into the guest (#620), "
-        "repeatable: SHARE:GUEST_PATH:MODE — a share the daemon's "
-        "config lists, the absolute path it lands at, and ro or rw "
-        "(rw when the mode is omitted). Host paths take --share. "
-        "Applies at the next start",
-    ),
     share: list[str] | None = typer.Option(
         None,
         "--share",
@@ -443,7 +433,6 @@ def create(
             user_data=user_data,
             user=user,
             pubkey=pubkey,
-            mount=mount,
             share=share,
             start=start,
         ),
@@ -513,20 +502,18 @@ def mount(
     ),
     spec: str = typer.Argument(
         ...,
-        help="HOST-OR-SHARE:GUEST_PATH:MODE — a share the daemon's "
-        "config lists (#620) or an absolute host path (~ expands; "
-        "the allowed roots must cover it, #667), the absolute "
-        "path it lands at in the guest, and ro or rw (rw when "
-        "omitted)",
+        help="HOST_PATH:GUEST_PATH:MODE — an absolute host path "
+        "(~ expands; the allowed roots must cover it, #667), the "
+        "absolute path it lands at in the guest, and ro or rw "
+        "(rw when omitted)",
     ),
 ) -> int:
-    """Mount a share into a workspace (#620, #667).
+    """Mount a host directory into a workspace (#667).
 
-    The spec names a configured share or — path-shaped — a host
-    directory the daemon's allowed roots must cover; the mode is
-    bounded by the share's writability (named) or the gates
-    (host). Next-start semantics: a running workspace keeps the
-    devices it attached, and the next start attaches the new set.
+    The spec names a host directory the daemon's allowed roots
+    must cover; the gates bound the attach at set and start.
+    Next-start semantics: a running workspace keeps the devices
+    it attached, and the next start attaches the new set.
     """
     return cmd_mount(workspace_id, spec, ctx.obj)
 
@@ -540,11 +527,10 @@ def umount(
     ),
     share: str = typer.Argument(
         ...,
-        help="the share name or host path whose mounts leave the workspace",
+        help="the host path (~ expands) whose mounts leave the workspace",
     ),
 ) -> int:
-    """Remove a workspace's mounts of one share or host path
-    (#620, #667).
+    """Remove a workspace's mounts of one host path (#667).
 
     The next start attaches the remainder; a running workspace
     keeps its attached devices until then.
