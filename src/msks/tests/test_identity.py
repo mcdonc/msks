@@ -185,6 +185,7 @@ def run_seed(
     home_mounted: bool = True,
     home_device: bool = True,
     home_mount_arrives: bool = False,
+    home_start_mounts: bool = False,
 ):
     """Execute the sandboxed seed under stubbed guest tools.
 
@@ -259,9 +260,23 @@ def run_seed(
     # systemctl — stubbed, it logs like the guest tools and never
     # reaches the runner's own manager (an unstubbed systemctl
     # rides the host's D-Bus and trips the desktop's polkit).
-    stubs.joinpath("systemctl").write_text(
-        f'#!/bin/sh\necho "systemctl $*" >> "{log}"\nexit 0\n'
-    )
+    # #686: `systemctl start home.mount` can be the thing that
+    # mounts (the dependency-failed unit, retried) — the stub
+    # appends the /home line to the mount table when the knob
+    # says so, exactly what the real guest's start does.
+    if home_start_mounts:
+        stubs.joinpath("systemctl").write_text(
+            "#!/bin/sh\n"
+            f'echo "systemctl $*" >> "{log}"\n'
+            'case "$*" in "start home.mount") '
+            f'printf "/dev/vdb /home ext4 rw,relatime 0 0\n" '
+            f'>> "{sandbox}/mounts";; esac\n'
+            "exit 0\n"
+        )
+    else:
+        stubs.joinpath("systemctl").write_text(
+            f'#!/bin/sh\necho "systemctl $*" >> "{log}"\nexit 0\n'
+        )
     # #662: the wait's clock is the sandbox's /proc/uptime — a
     # monotonic read (a shell builtin, so no stub), advanced one
     # fake second by the sleep stub below, so the cap and the
@@ -517,7 +532,69 @@ def test_the_home_volume_wait_rides_every_seed() -> None:
     assert keyed.index("/proc/mounts") < keyed.index(
         "install -d -m 0755 -o msks -g msks /home/msks"
     )
-    assert "systemctl" not in home_mount_wait_block()
+    # #686 grows the start-verb retry; the falsified state query
+    # stays out (a dependency failure leaves the unit inactive,
+    # invisible to it).
+    wait = home_mount_wait_block()
+    assert "systemctl start home.mount" in wait
+    assert "systemctl is-" not in wait
+    assert "systemctl status" not in wait
+
+
+def test_seed_retries_a_dependency_failed_home_mount(tmp_path) -> None:
+    """The #686 shape, executable: the by-label device unit
+    expired before udev's symlink, home.mount failed as a
+    dependency at boot, and systemd never retries it — the volume
+    disk is present, the mount is one ``systemctl start`` away,
+    and the wait asks for it. The start mounts; the seed proceeds
+    in seconds, seeding under the volume, never near the cap."""
+    sandbox = prepare_sandbox(tmp_path)
+    done = run_seed(
+        sandbox,
+        guest_passwd_line="",
+        home_mounted=False,
+        home_start_mounts=True,
+    )
+    assert done.returncode == 0, done.stderr
+    log = sandbox.joinpath("stub.log").read_text()
+    assert log.count("systemctl start home.mount") == 1
+    # Seconds, not the cap: the first paced retry window opened at
+    # the seed's start, the start fired on its first poll.
+    assert log.count("sleep 1") <= 2
+    assert "root filesystem /home" not in done.stderr
+    assert (sandbox / "home" / "alice" / ".ssh" / "authorized_keys").exists()
+
+
+def test_seed_paces_the_home_mount_retry(tmp_path) -> None:
+    """The retry's pace: a stuck boot (the start cannot succeed,
+    the mount never lands) pays one start per 30s window — not
+    one per poll — and still caps at 1200s."""
+    sandbox = prepare_sandbox(tmp_path)
+    done = run_seed(sandbox, guest_passwd_line="", home_mounted=False)
+    assert done.returncode == 0, done.stderr
+    assert "did not mount within 1200s" in done.stderr
+    log = sandbox.joinpath("stub.log").read_text()
+    starts = log.count("systemctl start home.mount")
+    # 1200 one-second polls, starts every 30: the first window at
+    # t=0, then 39 more — a per-poll start would log 1200.
+    assert 39 <= starts <= 41, starts
+
+
+def test_seed_never_retries_without_a_volume_disk(tmp_path) -> None:
+    """The volumeless shape asks systemd for nothing: with no
+    writable disk beyond the root, the start has no device to
+    find, and the wait stands down at the grace instead."""
+    sandbox = prepare_sandbox(tmp_path)
+    done = run_seed(
+        sandbox,
+        guest_passwd_line="",
+        home_mounted=False,
+        home_device=False,
+    )
+    assert done.returncode == 0, done.stderr
+    assert "no writable volume disk" in done.stderr
+    log = sandbox.joinpath("stub.log").read_text()
+    assert "systemctl start home.mount" not in log
 
 
 def test_compose_without_key_is_verbatim() -> None:

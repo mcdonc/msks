@@ -81,6 +81,17 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **The seed retries a dependency-failed home-volume mount
+  (#686).** On a boot slow enough that udev's by-label symlink
+  lands after the fstab unit's 30s device timeout, `home.mount`
+  fails as a dependency and systemd never retries it — the
+  volume disk is present, and first boot paid the seed's whole
+  20-minute wait (observed on the macOS nested stack). The
+  seed's wait now asks systemd for the start itself when the
+  volume disk is present: paced at 30s, best-effort, and only
+  the start verb. The retry mount took under a second on every
+  reproduction.
+
 - **doctor's apple-kvm row gates on the NV-mode marker (#664).**
   The warning row now requires an NV-mode marker — the
   `kvm-arm.mode=nested` command line, sysfs's kvm mode

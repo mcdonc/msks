@@ -311,6 +311,22 @@ def home_mount_wait_block() -> str:
     for the boot (an After= ordering is satisfied the moment the
     unit fails). The mount test reads /proc/mounts directly for
     the same reason.
+
+    #686 grows the retry: a boot slow enough that udev's by-label
+    symlink lands after the fstab unit's 30s device timeout fails
+    ``home.mount`` as a dependency — the disk arrives moments
+    later, but systemd never retries a failed fstab mount, and
+    the wait would pay its whole cap for a mount one ``systemctl
+    start`` away. So the wait, finding the volume disk present
+    and the mount still down, asks systemd for the start itself —
+    paced at 30s (a fork per poll on a host slow enough to need
+    this block is its own tax), best-effort (a guest without
+    systemd proceeds as before), and always the start verb: the
+    earlier falsified cut queried unit state (a dependency
+    failure leaves it inactive, invisible to the query), which
+    stays out. The macOS nested stack reproduced the dependency
+    failure twice (both image generations); the retry mount took
+    under a second both times.
     """
     return (
         "# msks (#662): everything this seed writes under /home\n"
@@ -318,10 +334,21 @@ def home_mount_wait_block() -> str:
         "# filesystem's empty /home directory that the volume's\n"
         "# still-running first fsck+mount leaves in place — wait\n"
         "# for the mount before writing.\n"
+        "# The volume scan: a writable virtio disk beyond the root\n"
+        "# means the volume is attached (the seed disk reads RO).\n"
+        "vol_present() {\n"
+        "for d in /dev/vd[b-z]; do\n"
+        '[ -e "$d" ] || continue\n'
+        '[ "$(cat "/sys/block/${d##*/}/ro" 2>/dev/null)" = 0 ] '
+        "&& return 0\n"
+        "done\n"
+        "return 1\n"
+        "}\n"
         "read -r up _ < /proc/uptime\n"
         "now=${up%%.*}\n"
         "cap=$((now + 1200))\n"
         "devcap=$((now + 60))\n"
+        "try=$now\n"
         "while ! grep -qs ' /home ' /proc/mounts; do\n"
         "read -r up _ < /proc/uptime\n"
         "now=${up%%.*}\n"
@@ -331,19 +358,22 @@ def home_mount_wait_block() -> str:
         "break\n"
         "fi\n"
         'if [ "$now" -ge "$devcap" ]; then\n'
-        "vol=no\n"
-        "for d in /dev/vd[b-z]; do\n"
-        '[ -e "$d" ] || continue\n'
-        'if [ "$(cat "/sys/block/${d##*/}/ro" 2>/dev/null)" = 0 ]; then\n'
-        "vol=yes\n"
-        "fi\n"
-        "done\n"
-        'if [ "$vol" = no ]; then\n'
+        "if ! vol_present; then\n"
         "printf 'msks: the guest carries no writable volume disk, "
         "so /home will not mount this boot; "
         "seeding under the root filesystem /home\\n' >&2\n"
         "break\n"
         "fi\n"
+        "fi\n"
+        "# #686: a boot whose by-label device unit expired before\n"
+        "# udev's symlink left home.mount failed as a dependency —\n"
+        "# systemd never retries it, the disk is here, so ask for\n"
+        "# the start, paced at 30s and best-effort (a guest without\n"
+        "# systemd, or a start that cannot succeed, keeps waiting).\n"
+        'if [ "$now" -ge "$try" ] && vol_present; then\n'
+        "command -v systemctl >/dev/null 2>&1 && "
+        "systemctl start home.mount >/dev/null 2>&1 || :\n"
+        "try=$((now + 30))\n"
         "fi\n"
         "sleep 1\n"
         "done\n"
