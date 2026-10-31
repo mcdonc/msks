@@ -1154,6 +1154,26 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong><code>msks-setup-macos-host</code> (#676).</strong> The macOS host setup: a
+  stock Apple-Silicon Mac reaches a working msksd in one run —
+  the tool creates the msksd Lima VM from the shipped template
+  (the invoking user's home mounted under the reserved prefix,
+  the daemon's port forwarded on both loopbacks), installs the
+  daemon inside it (the PyPI release matching the tool's
+  version, or <code>--wheel</code> for a build in hand), writes its config
+  with host-share mode <code>prefix</code> and the user's home the default
+  allowed root, the daemon's tool set (egress plumbing, volume
+  trio, seed tooling) with its kernel routing setting and the
+  pinned cloud-hypervisor release beside it, enables its
+  service, and prints the client preset (<code>MSKSC_URL</code>/<code>MSKSC_TOKEN</code>/<code>MSKSC_CAFILE</code> — the CA
+  written under <code>~/.config/msks/</code>). <code>--check</code> runs the doctor
+  rows (Lima at the template's floor, the VM running, the
+  nested-virtualization marker, virtiofsd inside, the listener
+  answering); <code>--uninstall</code> deletes the VM. Every phase is
+  idempotent; reruns preserve the token, the CA, and the
+  daemon's state.</p>
+</li>
+<li>
 <p><strong><code>msks image check</code> grows the <code>virtiofs</code> row (#674).</strong> The
   guest-image capability check now probes the virtiofs
   filesystem driver a share mounts through: Debian's pinned
