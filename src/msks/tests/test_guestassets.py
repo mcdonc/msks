@@ -606,14 +606,16 @@ def test_the_images_retry_the_home_volume_mount() -> None:
     # RUN target outside the store that does not exist at build
     # time).
     assert "services.udev.extraRules" in nixos
+    assert 'ACTION=="add|change", SUBSYSTEM=="block"' in nixos
     assert 'ENV{ID_FS_LABEL}=="msks-home"' in nixos
     assert "systemctl --no-block start home.mount" in nixos
     assert "${config.systemd.package}/bin/systemctl" in nixos
     assert "/usr/bin/systemctl" not in nixos
-    # Every build pins the rule's match and verb, and the deb/rpm
-    # trees carry the RUN's target — a drifted rule fails the
-    # image build, not a workspace boot that never retries.
+    # Every build pins the rule's full match and verb, and the
+    # deb/rpm trees carry the RUN's target — a drifted rule fails
+    # the image build, not a workspace boot that never retries.
     for build in (debian, fedora, nixos_build):
+        assert 'ACTION=="add|change", SUBSYSTEM=="block"' in build
         assert 'ENV{ID_FS_LABEL}=="msks-home"' in build
         assert "systemctl --no-block start home.mount" in build
     assert 'test -x "$root"/usr/bin/systemctl' in debian

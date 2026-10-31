@@ -531,7 +531,6 @@ let
         ACTION=="add|change", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="msks-home", RUN+="/usr/bin/systemctl --no-block start home.mount"
         HOMERULE
 
-
         # Egress networking (#52): a workspace created with egress boots
         # with a virtio-net NIC; everything else presents none. The
         # module loads at boot either way (NetworkManager would
@@ -1159,6 +1158,8 @@ let
     # or verb drifted must fail the build here, not a workspace
     # boot that never retries the mount.
     test -x "$tree"/usr/bin/systemctl
+    grep -q 'ACTION=="add|change", SUBSYSTEM=="block"' \
+      "$tree"/etc/udev/rules.d/99-msks-home-mount.rules
     grep -q 'ENV{ID_FS_LABEL}=="msks-home"' \
       "$tree"/etc/udev/rules.d/99-msks-home-mount.rules
     grep -q 'systemctl --no-block start home.mount' \

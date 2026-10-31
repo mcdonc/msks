@@ -33,6 +33,7 @@ on:
       - nix/guest-debian.nix
       - nix/guest-fedora.nix
       - nix/guest-nixos.nix
+      - nix/guest-nixos-configuration.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
       - scripts/build-guest.sh
@@ -49,6 +50,7 @@ on:
       - nix/guest-debian.nix
       - nix/guest-fedora.nix
       - nix/guest-nixos.nix
+      - nix/guest-nixos-configuration.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
       - scripts/build-guest.sh

@@ -455,6 +455,10 @@ let
         # them (99-local.rules), not just any rules file: a
         # configuration whose rule drifted must fail the build here,
         # not a workspace boot that never retries the mount.
+        grep -rq 'ACTION=="add|change", SUBSYSTEM=="block"' \
+          "$toplevel"/etc/udev/rules.d/ \
+          || { echo "the #688 home-mount retry rule lost its " \
+               "ACTION/SUBSYSTEM match" >&2; exit 1; }
         grep -rq 'ENV{ID_FS_LABEL}=="msks-home"' \
           "$toplevel"/etc/udev/rules.d/ \
           || { echo "the #688 home-mount retry rule is absent " \

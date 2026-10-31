@@ -610,12 +610,15 @@ let
         # rescan revalidates the label on a change event; the start is
         # idempotent either way (a fast boot's mount job already ran,
         # and --no-block enqueues without waiting, keeping the RUN the
-        # short-lived foreground task udev rules are limited to).
+        # short-lived foreground task udev rules are limited to). A
+        # deliberate stop of home.mount does not hold past the next
+        # matching event — the fstab's standing policy is "mounted",
+        # and a later change event remounts; an operator taking /home
+        # down does it with the rule in mind.
         cat > $out/etc/udev/rules.d/99-msks-home-mount.rules <<'HOMERULE'
         # msks (#688): mount the home volume when its disk arrives.
         ACTION=="add|change", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="msks-home", RUN+="/usr/bin/systemctl --no-block start home.mount"
         HOMERULE
-
 
         # Egress networking (#52): a workspace created with egress boots
         # with a virtio-net NIC; everything else presents none. The
@@ -1436,6 +1439,8 @@ let
         # or verb drifted must fail the build here, not a
         # workspace boot that never retries the mount.
         test -x "$root"/usr/bin/systemctl
+        grep -q 'ACTION=="add|change", SUBSYSTEM=="block"' \
+          "$root"/etc/udev/rules.d/99-msks-home-mount.rules
         grep -q 'ENV{ID_FS_LABEL}=="msks-home"' \
           "$root"/etc/udev/rules.d/99-msks-home-mount.rules
         grep -q 'systemctl --no-block start home.mount' \
