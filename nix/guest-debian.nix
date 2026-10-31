@@ -374,6 +374,7 @@ let
           $out/etc/cloud/cloud.cfg.d \
           $out/etc/sudoers.d \
           $out/etc/ssh/sshd_config.d \
+          $out/etc/udev/rules.d \
           $out/etc/systemd/system/serial-getty@${facts.console}.service.d \
           $out/etc/systemd/system/ssh.service.d \
           $out/etc/systemd/system/multi-user.target.wants \
@@ -578,18 +579,43 @@ let
         # for /dev/disk/by-label/msks-home is enqueued at sysinit start,
         # before udevd itself runs, and udevd must probe the volume for
         # its label before the clock expires — else home.mount fails for
-        # the whole boot (nofail keeps the boot moving; it never retries
-        # the mount). A first boot from a fresh overlay is the slow
-        # case: every root read is a copy-on-write miss against the
-        # backing image, and module loading and journal writes compete
-        # with the coldplug for the same I/O. 30s covers it; a boot
-        # without the volume pays the same 30s once, in parallel with
-        # the rest of boot, and continues.
+        # the whole boot (nofail keeps the boot moving, and the fstab
+        # unit itself never retries — the udev rule right below re-asks
+        # for the mount when the disk arrives, #688). A first boot from
+        # a fresh overlay is the slow case: every root read is a
+        # copy-on-write miss against the backing image, and module
+        # loading and journal writes compete with the coldplug for the
+        # same I/O. 30s covers it; a boot without the volume pays the
+        # same 30s once, in parallel with the rest of boot, and
+        # continues.
         printf '%s\n' \
           '# msks: root comes from the kernel cmdline; no swap.' \
           '# /home is the second persistent disk (#14), labeled msks-home.' \
           'LABEL=msks-home /home ext4 defaults,nofail,x-systemd.device-timeout=30s 0 2' \
           > $out/etc/fstab
+
+        # The home-volume mount retry (#688): a boot whose device job
+        # expires before udev's by-label symlink lands leaves home.mount
+        # failed as a dependency, and systemd never retries a failed
+        # fstab mount — the seed's #686 retry heals exactly first boot
+        # (the seed is per-instance), so a RESTARTED workspace that
+        # loses the same race came up with /home down until a manual
+        # start (observed on the macOS nested stack). The rule fires
+        # when the labeled disk's udev event completes — the same
+        # moment the by-label symlink appears, the moment the manual
+        # start was observed to mount instantly — and asks for the
+        # start again. Sorted at 99 so every distro rule (the blkid
+        # import that sets ID_FS_LABEL rides 60-persistent-storage)
+        # has run first. add|change, not add alone: a partition-table
+        # rescan revalidates the label on a change event; the start is
+        # idempotent either way (a fast boot's mount job already ran,
+        # and --no-block enqueues without waiting, keeping the RUN the
+        # short-lived foreground task udev rules are limited to).
+        cat > $out/etc/udev/rules.d/99-msks-home-mount.rules <<'HOMERULE'
+        # msks (#688): mount the home volume when its disk arrives.
+        ACTION=="add|change", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="msks-home", RUN+="/usr/bin/systemctl --no-block start home.mount"
+        HOMERULE
+
 
         # Egress networking (#52): a workspace created with egress boots
         # with a virtio-net NIC; everything else presents none. The
@@ -1404,6 +1430,16 @@ let
         test -x "$root"/usr/bin/fdfind
         test -x "$root"/usr/bin/rg
         test -x "$root"/usr/sbin/sshd
+        # Sanity: the home-volume mount retry (#688) — the RUN's
+        # target exists in the tree, and the rule's load-bearing
+        # lines, not just the file's existence: a rule whose match
+        # or verb drifted must fail the build here, not a
+        # workspace boot that never retries the mount.
+        test -x "$root"/usr/bin/systemctl
+        grep -q 'ENV{ID_FS_LABEL}=="msks-home"' \
+          "$root"/etc/udev/rules.d/99-msks-home-mount.rules
+        grep -q 'systemctl --no-block start home.mount' \
+          "$root"/etc/udev/rules.d/99-msks-home-mount.rules
         # Sanity: the baked agent toolchain (#266) — an upstream
         # tarball or layout change must fail the build here, not
         # boot a workspace with a broken agent (the #36 bug class).
