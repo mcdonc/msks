@@ -28,15 +28,7 @@ from ipaddress import IPv4Network
 from pathlib import Path
 
 from .spec.egress import EGRESS_MODES, MODE_ALLOW
-from .spec.mounts import (
-    HOST_MODE_IDENTITY,
-    HOST_MODES,
-    SHARE_KEYS,
-    SHARE_NAME_MAX,
-    MountShare,
-    canonical_host_path,
-    safe_share_name,
-)
+from .spec.mounts import HOST_MODE_IDENTITY, HOST_MODES, canonical_host_path
 from .spec.tokens import validate_token_plaintext
 
 VALID_DRIVERS = ("local",)
@@ -375,44 +367,45 @@ class LlmSettings:
 
 @dataclass
 class MountSettings:
-    """The host-mount shares (#620, part #621).
+    """The host-share gates' inputs (#667, #672): the host mode
+    (``identity`` on a bare-Linux daemon — host paths are its
+    own local paths; ``prefix`` on a VM-hosted daemon — the
+    Lima/macOS host, where share roots mount under the reserved
+    prefix) and the allowed roots the policy gate bounds
+    host-path shares to, typed as host paths and translated by
+    the same rule at gate time. Both read live, so a SIGHUP
+    reload re-opens the surface without a restart: running VMs
+    keep their attached devices, and the next start of each
+    workspace runs the gates against the current set. Empty
+    roots allow nothing — the host-share surface stays off until
+    the operator lists one.
 
-    The list is the switch: a daemon with no shares refuses every
-    mount request, and existing deployments gain no new surface
-    until the operator lists one. Each share names the host tree
-    (an absolute path), bounds the modes a request may take
-    (``writable``, default true — listing a share is the trust
-    decision, and read-only is the explicit narrowing), and sets
-    whether ``rw`` attaches are exclusive (``multi``, default
-    true; ``multi: false`` makes the share read-write in one
-    workspace at a time). Entries read live, so a SIGHUP reload
-    re-shares without a restart: running VMs keep their attached
-    devices, and the next start of each workspace reads the
-    current set.
-
-    ``resolved`` is the realpath at load — the attach path
-    (#622) re-resolves and refuses drift, so a symlink planted or
-    retargeted inside a shareable tree cannot walk out of it.
+    The #620 named-share list (``mount_shares`` /
+    ``MSKSD_MOUNT_SHARES``) is removed (#685): host paths are the
+    one share surface, and a config still naming the key fails
+    at load with the removal message.
     """
 
-    shares: tuple[MountShare, ...] = ()
-
-    #: The host-share gates' inputs (#667, #672): the host mode
-    #: (``identity`` on a bare-Linux daemon — host paths are its
-    #: own local paths; ``prefix`` on a VM-hosted daemon — the
-    #: Lima/macOS host, where share roots mount under the
-    #: reserved prefix) and the allowed roots the policy gate
-    #: bounds host-path shares to, typed as host paths and
-    #: translated by the same rule at gate time. Both reload
-    #: live like the shares list.
     host_mode: str = HOST_MODE_IDENTITY
     host_roots: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> MountSettings:
         live = live_env(env)
+        # The removed env spelling refuses like the config key
+        # (#685): a profile or unit still exporting it would
+        # otherwise turn the surface off in silence. The tuple is
+        # the mounts-side sibling of REMOVED_SECRET_STORE_KEYS —
+        # the pin test subtracts both.
+        stale = [name for name in REMOVED_MOUNT_VARS if live.get(name)]
+        if stale:
+            raise ValueError(
+                f"{' and '.join(stale)} was removed (#685); host paths "
+                "are the one share surface — allow them with "
+                "MSKSD_MOUNT_HOST_ROOTS and mount them with 'msks "
+                "create --share' / 'msks mount HOST:GUEST[:MODE]'"
+            )
         return MountSettings(
-            shares=mount_shares_from(live),
             host_mode=host_mode_from(live),
             host_roots=host_roots_from(live),
         )
@@ -622,6 +615,12 @@ REMOVED_SECRET_STORE_KEYS = (
 )
 
 
+#: The removed mounts-side settings (#685): the named-share
+#: list. Refused at load beside the config key's removal message
+#: — the store tuple's pattern, mounts-scoped.
+REMOVED_MOUNT_VARS = ("MSKSD_MOUNT_SHARES",)
+
+
 def refuse_removed_store_settings(env: Mapping[str, str]) -> None:
     """Name every removed store setting still set."""
     stale = [name for name in REMOVED_SECRET_STORE_KEYS if env.get(name)]
@@ -721,129 +720,6 @@ def parse_tap_port(env: Mapping[str, str], name: str, default: int) -> int:
     return value
 
 
-def mount_shares_from(env: Mapping[str, str]) -> tuple[MountShare, ...]:
-    """The configured shares (#620): the config file's list of
-    mappings under one flat key, or the environment's JSON array
-    string — the same walk either way, so an invalid share fails
-    identically wherever it came from and the error names
-    ``MSKSD_MOUNT_SHARES``. Empty or unset is the feature off."""
-    raw = env.get("MSKSD_MOUNT_SHARES", "")
-    if raw in ("", None):
-        return ()
-    shares = tuple(
-        mount_share_entry(entry) for entry in mount_share_entries(raw)
-    )
-    unique_share_names(shares)
-    return shares
-
-
-def mount_share_entries(raw: object) -> list:
-    """The raw entries behind ``MSKSD_MOUNT_SHARES``: the file
-    layer's already-parsed list, or the environment's JSON array
-    string; anything else is a named error."""
-    if isinstance(raw, list):
-        return raw
-    if isinstance(raw, str):
-        try:
-            decoded = json.loads(raw)
-        except ValueError:
-            raise ValueError(
-                "MSKSD_MOUNT_SHARES must be a JSON array of share mappings"
-            ) from None
-        if isinstance(decoded, list):
-            return decoded
-    raise ValueError(
-        "MSKSD_MOUNT_SHARES must be a JSON array of share mappings"
-    )
-
-
-def mount_share_entry(entry: object) -> MountShare:
-    """One share: a mapping with ``name`` and an absolute
-    ``path``, optional boolean ``writable`` (default true) and
-    ``multi`` (default true). Any other key, a duplicate name, or
-    a relative path is a named error at load — the same
-    fail-at-startup rule every config key carries. The path is
-    realpath'd when it exists; a missing one keeps ``resolved``
-    None and the doctor warns (#622)."""
-    if not isinstance(entry, dict):
-        raise ValueError(
-            "MSKSD_MOUNT_SHARES entries must be mappings, got "
-            f"{type(entry).__name__}"
-        )
-    check_share_keys(entry)
-    name, path = share_name_and_path(entry)
-    writable = mount_share_flag(entry, "writable", name)
-    multi = mount_share_flag(entry, "multi", name)
-    return MountShare(
-        name=name,
-        path=path,
-        writable=writable,
-        multi=multi,
-        resolved=resolve_share_path(path, name),
-    )
-
-
-def check_share_keys(entry: dict) -> None:
-    """The share entry's key grammar: ``name``, ``path``,
-    ``writable``, ``multi`` — any other key is a named error at
-    load."""
-    unknown = set(entry) - SHARE_KEYS
-    if unknown:
-        raise ValueError(
-            f"MSKSD_MOUNT_SHARES entry has unknown keys: {sorted(unknown)}"
-        )
-
-
-def share_name_and_path(entry: dict) -> tuple[str, str]:
-    """The entry's ``name`` and absolute ``path``, each validated
-    in place with a named error."""
-    name = share_name(entry)
-    path = entry.get("path")
-    if not isinstance(path, str) or not path.startswith("/"):
-        raise ValueError(f"share {name!r} needs an absolute path")
-    return name, path
-
-
-def share_name(entry: dict) -> str:
-    """The entry's name: a non-empty string that is also
-    filename-safe (#620, part #622) — it becomes the virtiofs tag
-    and a socket and pidfile stem inside the workspace's vm
-    directory."""
-    name = entry.get("name")
-    if not isinstance(name, str) or not name:
-        raise ValueError("MSKSD_MOUNT_SHARES entries need a name")
-    if not safe_share_name(name):
-        raise ValueError(
-            f"share name {name!r} may use ASCII letters, digits, "
-            f"dot, underscore, and hyphen only, up to "
-            f"{SHARE_NAME_MAX} bytes (the virtiofs tag limit)"
-        )
-    return name
-
-
-def mount_share_flag(entry: dict, key: str, name: str) -> bool:
-    """One share's boolean (``writable``/``multi``): absent is the
-    true default; a non-boolean value is a named error."""
-    value = entry.get(key, True)
-    if not isinstance(value, bool):
-        raise ValueError(f"share {name!r}: {key} must be true or false")
-    return value
-
-
-def resolve_share_path(path: str, name: str) -> str | None:
-    """The realpath taken at load (#620): None when the path does
-    not exist yet (the doctor warns per missing share); a path
-    that exists but is not a directory is a named error — a
-    share serves a tree, and the failure belongs at load with
-    every other malformed share, not deferred to the attach.
-    The attach path re-resolves and refuses drift against this."""
-    if not os.path.exists(path):
-        return None
-    if not os.path.isdir(path):
-        raise ValueError(f"share {name!r} path is not a directory: {path}")
-    return os.path.realpath(path)
-
-
 def host_mode_from(env: Mapping[str, str]) -> str:
     """The host-share mode (#672): ``MSKSD_MOUNT_HOST_MODE``,
     defaulting to ``identity`` (a bare-Linux daemon — every
@@ -871,23 +747,26 @@ def host_roots_from(env: Mapping[str, str]) -> tuple[str, ...]:
     raw = env.get("MSKSD_MOUNT_HOST_ROOTS", "")
     if raw in ("", None):
         return ()
-    entries = mount_share_entries(raw)
+    entries = env_list_entries(raw, "MSKSD_MOUNT_HOST_ROOTS")
     if not all(isinstance(entry, str) for entry in entries):
         raise ValueError("MSKSD_MOUNT_HOST_ROOTS must be a list of host paths")
     return tuple(canonical_host_path(entry) for entry in entries)
 
 
-def unique_share_names(shares: tuple[MountShare, ...]) -> None:
-    """A name appears once: the config-key grammar already
-    refuses duplicate keys, and this guards the env-array form's
-    duplicate names the same way."""
-    seen: set[str] = set()
-    for share in shares:
-        if share.name in seen:
-            raise ValueError(
-                f"MSKSD_MOUNT_SHARES names share {share.name!r} twice"
-            )
-        seen.add(share.name)
+def env_list_entries(raw: object, name: str) -> list:
+    """The raw entries behind a list-valued environment key: the
+    file layer's already-parsed list, or the environment's JSON
+    array string; anything else is a named error."""
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str):
+        try:
+            decoded = json.loads(raw)
+        except ValueError:
+            raise ValueError(f"{name} must be a JSON array") from None
+        if isinstance(decoded, list):
+            return decoded
+    raise ValueError(f"{name} must be a JSON array")
 
 
 def egress_mode(env: Mapping[str, str], name: str, default: str) -> str:

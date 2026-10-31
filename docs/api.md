@@ -137,16 +137,15 @@ curl -X POST "$MSKSC_URL/api/v1/workspaces" \
 curl -X POST "$MSKSC_URL/api/v1/workspaces/ws1/mounts" \
   -H "Authorization: Bearer $MSKSC_TOKEN" \
   -H 'content-type: application/json' \
-  -d '{"mounts": [{"share": "projects", "guest": "/mnt/projects"}]}'
+  -d '{"mounts": [{"host": "/srv/projects", "guest": "/mnt/projects"}]}'
 ```
 
-The daemon validates the list against the configured shares (a
-share the config does not carry, and `rw` on a share narrowed
-to read-only, are named 400s) and answers with the refreshed
-row; every row the daemon serves carries `mounts` and the
-derived `mount_issues` — the skip and conflict state `msks ls`
-and the TUI render. `msks mount`/`umount` and the TUI's editor
-ride this route.
+The daemon validates the list against its #667 gates (a host
+path outside the allowed roots, and one that does not resolve
+under them, are named 400s) and answers with the refreshed row;
+every row the daemon serves carries `mounts` and the derived
+`mount_issues` — the skip state `msks ls` and the TUI render.
+`msks mount`/`umount` and the TUI's editor ride this route.
 
 - `GET`/`PUT …/home` export and import the home volume as a
   byte stream — the same stream `msks home import`/`export`

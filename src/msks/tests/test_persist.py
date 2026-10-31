@@ -791,8 +791,8 @@ def two_mounts():
     from msks.spec.mounts import MountSpec
 
     return (
-        MountSpec(share="proj", guest="/mnt/proj"),
-        MountSpec(share="docs", guest="/srv/docs", mode="ro"),
+        MountSpec(host="/srv/proj", guest="/mnt/proj"),
+        MountSpec(host="/srv/docs", guest="/srv/docs", mode="ro"),
     )
 
 
@@ -826,7 +826,7 @@ async def test_a_seed_renews_when_its_mount_set_drifts(tools) -> None:
 
     settings, record, base = tools
     mounts = two_mounts()
-    grown = mounts + (MountSpec(share="extra", guest="/mnt/extra"),)
+    grown = mounts + (MountSpec(host="/srv/extra", guest="/mnt/extra"),)
     row = spec(base, ssh_pubkey="key-one", mounts=mounts)
     await persist.create_seed(row, settings, 8770, None)
     seed = persist.seed_path(settings.state_dir, WID)

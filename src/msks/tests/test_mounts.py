@@ -1,11 +1,10 @@
-"""The host-mount state and policy layer (#620, part #621).
+"""The host-mount state and policy layer (#620, #667; #685).
 
-Covers the share config's parse (file list, env JSON, defaults,
-named refusals, realpath at load), the mount vocabulary's row
-rules and mode bound, the start-time issue derivation (missing
-share, rw conflict on an exclusive share, ro beside rw), the
-model roundtrip, and the start hook: a start with skipped mounts
-succeeds and publishes one event per skip.
+Covers the retired config key's removal message, the mount
+vocabulary's row rules (host-path grammar, the retired named
+form dropped at read, guest-path rules, mode bound), the model
+roundtrip, and the start hook: a start with a gate-refused mount
+succeeds and publishes its skip event.
 
 Also covers the host-share geometry of #667 (#671): the reserved
 prefix and the host-mode translation's two spellings, the
@@ -19,33 +18,26 @@ from pathlib import Path
 
 import pytest
 from msks.app import build_app
-from msks.config import LayeredEnv, file_env_overrides
+from msks.config import file_env_overrides
 from msks.microvm import VmSpec
-from msks.server.api.rows import record_rw_holders, starting_workspaces
-from msks.settings import (
-    MountSettings,
-    ServerSettings,
-    Settings,
-    mount_shares_from,
-)
+from msks.server.api.rows import starting_workspaces
+from msks.settings import MountSettings, ServerSettings, Settings
 from msks.spec.mounts import (
     HOST_MODE_IDENTITY,
     HOST_MODE_PREFIX,
     HOST_MODES,
     MODE_RW,
     SHARE_ROOT_PREFIX,
-    MountShare,
     MountSpec,
     ShareRoot,
     canonical_host_path,
     dump_mounts,
-    mount_issues,
+    mount_tag,
     parse_mounts,
     share_root_row,
     share_roots_from_template,
     translate_host_path,
     untranslate_vm_path,
-    validate_against_shares,
     validate_mounts,
 )
 from test_api import auth, client  # noqa: F401 (fixture)
@@ -53,135 +45,36 @@ from test_api import auth, client  # noqa: F401 (fixture)
 # --- the share config -------------------------------------------------
 
 
-def test_shares_default_to_off() -> None:
-    """No MSKSD_MOUNT_SHARES anywhere is the feature off: the
-    settings carry an empty tuple and every mount request will
-    refuse on the missing share."""
-    assert mount_shares_from({}) == ()
-
-
-def test_env_json_array_parses(tmp_path: Path) -> None:
-    """The environment's form is one JSON array string; each entry
-    lands with the true defaults (writable, multi) and the
-    realpath taken at load."""
-    root = tmp_path / "projects"
-    root.mkdir()
-    shares = mount_shares_from(
-        {
-            "MSKSD_MOUNT_SHARES": json.dumps(
-                [{"name": "projects", "path": str(root)}]
-            )
-        }
-    )
-    assert shares == (
-        MountShare(
-            name="projects",
-            path=str(root),
-            writable=True,
-            multi=True,
-            resolved=str(root),
-        ),
-    )
-
-
-def test_missing_share_path_keeps_unresolved(tmp_path: Path) -> None:
-    """A share whose path does not exist yet parses — the doctor
-    warns (#622) — with resolved None; no realpath is pinned."""
-    missing = tmp_path / "gone"
-    (shares,) = mount_shares_from(
-        {
-            "MSKSD_MOUNT_SHARES": json.dumps(
-                [{"name": "gone", "path": str(missing)}]
-            )
-        }
-    )
-    assert shares.resolved is None
-
-
-def test_share_flags_and_refusals(tmp_path: Path) -> None:
-    """The narrowings spell out (writable: false, multi: false) and
-    every malformed entry is a named error at load."""
-    root = tmp_path / "data"
-    root.mkdir()
-    raw = [
-        {"name": "ro", "path": str(root), "writable": False},
-        {"name": "one", "path": str(root), "multi": False},
-    ]
-    shares = mount_shares_from({"MSKSD_MOUNT_SHARES": json.dumps(raw)})
-    assert [s.writable for s in shares] == [False, True]
-    assert [s.multi for s in shares] == [True, False]
-    with pytest.raises(ValueError, match="unknown keys.*bogus"):
-        mount_shares_from(
-            {
-                "MSKSD_MOUNT_SHARES": json.dumps(
-                    [{"name": "x", "path": str(root), "bogus": 1}]
-                )
-            }
+def test_mount_shares_config_key_names_the_removal(
+    tmp_path: Path,
+) -> None:
+    """The removed key (#685): a config that still names
+    ``mount_shares`` — in either spelling, hyphen or underscore —
+    fails at load with the removal message, not the valid-keys
+    list a retiree would drown in. The message points at the one
+    surface that replaced it."""
+    for spelling in ("mount_shares", "mount-shares"):
+        config = tmp_path / "msksd.yaml"
+        config.write_text(
+            f"{spelling}:\n  - name: share\n    path: /srv/share\n",
+            encoding="utf-8",
         )
-    with pytest.raises(ValueError, match="absolute path"):
-        mount_shares_from(
-            {
-                "MSKSD_MOUNT_SHARES": json.dumps(
-                    [{"name": "x", "path": "relative"}]
-                )
-            }
-        )
-    with pytest.raises(ValueError, match="writable must be true or false"):
-        mount_shares_from(
-            {
-                "MSKSD_MOUNT_SHARES": json.dumps(
-                    [{"name": "x", "path": str(root), "writable": "yes"}]
-                )
-            }
-        )
-    with pytest.raises(ValueError, match="names share 'x' twice"):
-        mount_shares_from(
-            {
-                "MSKSD_MOUNT_SHARES": json.dumps(
-                    [
-                        {"name": "x", "path": str(root)},
-                        {"name": "x", "path": str(tmp_path)},
-                    ]
-                )
-            }
-        )
-    with pytest.raises(ValueError, match="JSON array"):
-        mount_shares_from({"MSKSD_MOUNT_SHARES": "not-json"})
-    with pytest.raises(ValueError, match="JSON array"):
-        mount_shares_from({"MSKSD_MOUNT_SHARES": json.dumps("scalar")})
-    with pytest.raises(ValueError, match="must be mappings"):
-        mount_shares_from({"MSKSD_MOUNT_SHARES": json.dumps(["x"])})
-    with pytest.raises(ValueError, match="need a name"):
-        mount_shares_from(
-            {"MSKSD_MOUNT_SHARES": json.dumps([{"path": str(root)}])}
-        )
+        with pytest.raises(ValueError) as raised:
+            file_env_overrides(str(config))
+        assert "was removed (#685)" in str(raised.value)
+        assert "mount_host_roots" in str(raised.value)
+        assert "--share" in str(raised.value)
 
 
-def test_config_file_list_parses(tmp_path: Path) -> None:
-    """The config file's form is the flat ``mount_shares`` key with
-    a YAML list of mappings — the same walk as the env's JSON,
-    validated through the shared layer."""
-    root = tmp_path / "share"
-    root.mkdir()
+def test_the_removal_leaves_every_unknown_key_its_own_error(
+    tmp_path: Path,
+) -> None:
+    """A different unknown key keeps the ordinary refusal: the
+    removal message is the retiree's alone."""
     config = tmp_path / "msksd.yaml"
-    config.write_text(
-        "mount_shares:\n"
-        f"  - name: share\n    path: {root}\n"
-        "    writable: false\n",
-        encoding="utf-8",
-    )
-    settings = Settings.from_env(LayeredEnv(file_env_overrides(str(config))))
-    assert settings.mounts == MountSettings(
-        shares=(
-            MountShare(
-                name="share",
-                path=str(root),
-                writable=False,
-                multi=True,
-                resolved=str(root),
-            ),
-        )
-    )
+    config.write_text("mount_share: []\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="unknown config key"):
+        file_env_overrides(str(config))
 
 
 def test_unknown_config_key_still_refuses(tmp_path: Path) -> None:
@@ -198,14 +91,14 @@ def test_unknown_config_key_still_refuses(tmp_path: Path) -> None:
 
 def mounts(*entries: dict) -> tuple[MountSpec, ...]:
     """Decode through the row's JSON form, the shape the model
-    stores — parse and construct share one path."""
+    stores — parse and construct host one path."""
     return parse_mounts(json.dumps(list(entries)))
 
 
 def test_parse_defaults_mode_to_rw() -> None:
     """A mount that names no mode reads rw — the request names the
     mode, and rw is the default it names."""
-    (mount,) = mounts({"share": "projects", "guest": "/mnt/p"})
+    (mount,) = mounts({"host": "/srv/projects", "guest": "/mnt/p"})
     assert mount.mode == MODE_RW
     assert parse_mounts(None) == ()
     assert parse_mounts("[]") == ()
@@ -215,19 +108,37 @@ def test_parse_defaults_mode_to_rw() -> None:
 def test_parse_refusals() -> None:
     """Every malformed row shape is a named error at parse."""
     with pytest.raises(ValueError, match="unknown keys"):
-        mounts({"share": "s", "guest": "/g", "extra": 1})
-    with pytest.raises(ValueError, match="needs a share"):
+        mounts({"host": "/srv/s", "guest": "/g", "extra": 1})
+    with pytest.raises(ValueError, match="needs a host path"):
         mounts({"guest": "/g"})
     with pytest.raises(ValueError, match="needs a guest"):
-        mounts({"share": "s"})
+        mounts({"host": "/srv/s"})
     with pytest.raises(ValueError, match="mode must be one of"):
-        mounts({"share": "s", "guest": "/g", "mode": "rw+"})
+        mounts({"host": "/srv/s", "guest": "/g", "mode": "rw+"})
     with pytest.raises(ValueError, match="must be mappings"):
         parse_mounts(["not-a-mapping"])
     with pytest.raises(ValueError, match="must be a JSON array"):
-        parse_mounts({"share": "s"})
+        parse_mounts({"host": "/s"})
     with pytest.raises(ValueError, match="must be a JSON array"):
         parse_mounts("not-json")
+
+
+def test_retired_named_entries_drop_at_read() -> None:
+    """The #620 named form is removed (#685): entries a pre-#685
+    daemon stored drop at read — the row keeps its stored shape
+    until the workspace's mounts are set again, and every read
+    sees the drop. A healthy host mount beside them survives, and
+    the mix that carries both keys is not the retired form: it
+    fails on the unknown key, the same refusal a typo takes."""
+    parsed = mounts(
+        {"share": "projects", "guest": "/mnt/p"},
+        {"host": "/srv/other", "guest": "/srv/other-guest"},
+        {"share": "gone", "guest": "/mnt/gone", "mode": "ro"},
+    )
+    assert [mount.host for mount in parsed] == ["/srv/other"]
+    assert [mount.guest for mount in parsed] == ["/srv/other-guest"]
+    with pytest.raises(ValueError, match="unknown keys.*share"):
+        mounts({"share": "s", "host": "/srv/s", "guest": "/g"})
 
 
 @pytest.mark.parametrize(
@@ -254,14 +165,14 @@ def test_parse_refusals() -> None:
 )
 def test_guest_path_refusals(guest: str, why: str) -> None:
     with pytest.raises(ValueError, match=why):
-        validate_mounts(mounts({"share": "s", "guest": guest}))
+        validate_mounts(mounts({"host": "/srv/s", "guest": guest}))
 
 
 def test_guest_path_takes_spaces() -> None:
     """A space prints (#623): the path keeps it, and the unit name
     escapes it — the mount point is the one the operator typed."""
-    validate_mounts(mounts({"share": "s", "guest": "/mnt/my share"}))
-    parsed = parse_mounts('[{"share": "s", "guest": "/mnt/my share"}]')
+    validate_mounts(mounts({"host": "/srv/s", "guest": "/mnt/my share"}))
+    parsed = parse_mounts('[{"host": "/srv/s", "guest": "/mnt/my share"}]')
     assert parsed[0].guest == "/mnt/my share"
 
 
@@ -271,100 +182,24 @@ def test_row_disjointness_refusals() -> None:
     with pytest.raises(ValueError, match="mounted twice"):
         validate_mounts(
             mounts(
-                {"share": "a", "guest": "/mnt/a"},
-                {"share": "a", "guest": "/mnt/b"},
+                {"host": "/srv/a", "guest": "/mnt/a"},
+                {"host": "/srv/a", "guest": "/mnt/b"},
             )
         )
     with pytest.raises(ValueError, match="guest path '/mnt/a' is mounted"):
         validate_mounts(
             mounts(
-                {"share": "a", "guest": "/mnt/a"},
-                {"share": "b", "guest": "/mnt/a"},
+                {"host": "/srv/a", "guest": "/mnt/a"},
+                {"host": "/srv/b", "guest": "/mnt/a"},
             )
         )
     with pytest.raises(ValueError, match="shadows"):
         validate_mounts(
             mounts(
-                {"share": "a", "guest": "/mnt/a"},
-                {"share": "b", "guest": "/mnt/a/deep"},
+                {"host": "/srv/a", "guest": "/mnt/a"},
+                {"host": "/srv/b", "guest": "/mnt/a/deep"},
             )
         )
-
-
-def test_mode_bound_against_shares() -> None:
-    """rw needs a share whose config says writable; ro is a valid
-    self-restriction; a share the config never listed refuses."""
-    shares = {
-        "data": MountShare(name="data", path="/srv/data", writable=False)
-    }
-    with pytest.raises(ValueError, match="configured read-only"):
-        validate_against_shares(
-            mounts({"share": "data", "guest": "/mnt/data"}), shares
-        )
-    validate_against_shares(
-        mounts({"share": "data", "guest": "/mnt/data", "mode": "ro"}),
-        shares,
-    )
-    with pytest.raises(ValueError, match="no share named"):
-        validate_against_shares(
-            mounts({"share": "ghost", "guest": "/mnt/g"}), shares
-        )
-
-
-# --- the start-time derivation ----------------------------------------
-
-
-def share_map(*shares: MountShare) -> dict[str, MountShare]:
-    return {share.name: share for share in shares}
-
-
-def test_missing_share_issue() -> None:
-    """A share the reload deleted skips at start with the
-    skipped reason; the healthy mount beside it attaches."""
-    issues = mount_issues(
-        mounts(
-            {"share": "gone", "guest": "/mnt/g"},
-            {"share": "live", "guest": "/mnt/l"},
-        ),
-        share_map(MountShare(name="live", path="/srv/live")),
-        {},
-    )
-    assert [issue.kind for issue in issues] == ["skipped"]
-    assert issues[0].event == "mount.skipped"
-    assert issues[0].payload("ws1")["share"] == "gone"
-    assert dump_mounts((issues[0].mount,)) is not None
-
-
-def test_rw_conflict_on_exclusive_share() -> None:
-    """A multi: false share held rw elsewhere conflicts; the same
-    share mounted ro beside the holder never does, and a multi
-    share never conflicts at all."""
-    exclusive = MountShare(name="db", path="/srv/db", multi=False)
-    wide = MountShare(name="scratch", path="/srv/scratch")
-    issues = mount_issues(
-        mounts({"share": "db", "guest": "/mnt/db"}),
-        share_map(exclusive, wide),
-        {"db": "holder-1"},
-    )
-    assert [issue.kind for issue in issues] == ["conflict"]
-    assert "holder-1" in issues[0].detail
-    assert issues[0].event == "mount.conflict"
-    assert (
-        mount_issues(
-            mounts({"share": "db", "guest": "/mnt/db", "mode": "ro"}),
-            share_map(exclusive),
-            {"db": "holder-1"},
-        )
-        == ()
-    )
-    assert (
-        mount_issues(
-            mounts({"share": "scratch", "guest": "/mnt/s"}),
-            share_map(wide),
-            {"scratch": "holder-1"},
-        )
-        == ()
-    )
 
 
 # --- the model roundtrip and the start hook ---------------------------
@@ -388,11 +223,11 @@ async def test_set_mounts_roundtrip(tmp_path: Path) -> None:
     )
     await model.set_mounts(
         "ws-m",
-        [{"share": "projects", "guest": "/mnt/p", "mode": "rw"}],
+        [{"host": "/srv/projects", "guest": "/mnt/p", "mode": "rw"}],
     )
     row = await model.get_workspace("ws-m")
     assert row["mounts"] == [
-        {"share": "projects", "guest": "/mnt/p", "mode": "rw"}
+        {"host": "/srv/projects", "guest": "/mnt/p", "mode": "rw"}
     ]
     await model.set_mounts("ws-m", None)
     row = await model.get_workspace("ws-m")
@@ -403,11 +238,16 @@ async def test_start_publishes_skips_and_proceeds(
     client,  # noqa: F811
     tmp_path: Path,
 ) -> None:
-    """The resilient start (#620): a mount whose share left the
-    config (or whose exclusive rw is held elsewhere) skips — the
-    start still launches, and each skip publishes its event with
-    the named reason."""
+    """The resilient start (#620, #672): a mount whose root the
+    policy gate no longer allows skips — the start still
+    launches, and the skip publishes its event with the named
+    reason and the host key."""
     http, app, stub = client
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    app.state.settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     created = await http.post(
         "/api/v1/workspaces",
         json={"id": "ws-mounts", "kernel": "/k", "rootfs": "/r"},
@@ -418,15 +258,13 @@ async def test_start_publishes_skips_and_proceeds(
     await app.state.model.set_mounts(
         wid,
         [
-            {"share": "gone", "guest": "/mnt/gone", "mode": "rw"},
-            {"share": "fine", "guest": "/mnt/fine", "mode": "ro"},
+            {"host": str(gone), "guest": "/mnt/gone", "mode": "rw"},
+            {"host": str(proj), "guest": "/mnt/fine", "mode": "ro"},
         ],
     )
-    fine = tmp_path / "fine"
-    fine.mkdir()
-    app.state.settings.mounts = MountSettings(
-        shares=(MountShare(name="fine", path=str(fine)),)
-    )
+    # The reload narrows the allowed roots away from `gone`: the
+    # mount's skip is derived state, the reload's story.
+    app.state.settings.mounts = MountSettings(host_roots=(str(proj),))
     published: list[tuple[str, dict]] = []
     real_publish = app.state.hub.publish
 
@@ -446,66 +284,18 @@ async def test_start_publishes_skips_and_proceeds(
             "mount.skipped",
             {
                 "id": wid,
-                "share": "gone",
+                "host": str(gone),
                 "guest": "/mnt/gone",
                 "mode": "rw",
-                "detail": "share 'gone' is not in the daemon's config",
+                "detail": (
+                    f"host path {str(gone)!r} is outside the allowed "
+                    "host-share roots; add it (or a parent directory) to "
+                    "the daemon's config (MSKSD_MOUNT_HOST_ROOTS) and "
+                    "reload"
+                ),
             },
         )
     ]
-
-
-async def test_start_publishes_conflict_and_proceeds(
-    client,  # noqa: F811
-    tmp_path: Path,
-) -> None:
-    """The exclusive-share conflict (#620): another workspace's
-    live VM holds the share rw, so this start skips its rw mount
-    with a mount.conflict naming the holder — and still runs."""
-    http, app, stub = client
-    holder = await http.post(
-        "/api/v1/workspaces",
-        json={"id": "holder", "kernel": "/k", "rootfs": "/r"},
-        headers=auth(),
-    )
-    challenger = await http.post(
-        "/api/v1/workspaces",
-        json={"id": "challenger", "kernel": "/k", "rootfs": "/r"},
-        headers=auth(),
-    )
-    holder_id = holder.json()["id"]
-    challenger_id = challenger.json()["id"]
-    db = tmp_path / "db"
-    db.mkdir()
-    exclusive = MountShare(name="db", path=str(db), multi=False)
-    app.state.settings.mounts = MountSettings(shares=(exclusive,))
-    for wid in (holder_id, challenger_id):
-        await app.state.model.set_mounts(
-            wid, [{"share": "db", "guest": "/mnt/db", "mode": "rw"}]
-        )
-    first = await http.post(
-        f"/api/v1/workspaces/{holder_id}/start", headers=auth()
-    )
-    assert first.status_code == 200
-    published: list[tuple[str, dict]] = []
-    real_publish = app.state.hub.publish
-
-    async def spy_publish(event: str, data: dict) -> None:
-        published.append((event, data))
-        await real_publish(event, data)
-
-    app.state.hub.publish = spy_publish
-    second = await http.post(
-        f"/api/v1/workspaces/{challenger_id}/start", headers=auth()
-    )
-    assert second.status_code == 200
-    assert ("launch", challenger_id) in stub.calls
-    assert len(published) == 1
-    assert published[0][0] == "mount.conflict"
-    assert published[0][1]["detail"] == (
-        f"share 'db' is exclusive and already mounted rw by "
-        f"workspace {holder_id}"
-    )
 
 
 def test_disjoint_mounts_validate_clean() -> None:
@@ -514,104 +304,10 @@ def test_disjoint_mounts_validate_clean() -> None:
     validate_mounts(())
     validate_mounts(
         mounts(
-            {"share": "a", "guest": "/mnt/a"},
-            {"share": "b", "guest": "/mnt/b", "mode": "ro"},
+            {"host": "/srv/a", "guest": "/mnt/a"},
+            {"host": "/srv/b", "guest": "/mnt/b", "mode": "ro"},
         )
     )
-
-
-def test_non_string_share_layer_value_refuses() -> None:
-    """A layer value that is neither list nor string — a config
-    grammar no file form can spell — is the same named error as
-    malformed JSON."""
-    with pytest.raises(ValueError, match="JSON array"):
-        mount_shares_from({"MSKSD_MOUNT_SHARES": 5})
-
-
-def test_ro_only_holder_holds_nothing() -> None:
-    """A live row whose mounts are all read-only holds no share:
-    the conflict map stays empty, so an rw mount elsewhere never
-    conflicts against it."""
-    holders: dict[str, str] = {}
-    record_rw_holders(
-        holders,
-        {
-            "id": "ro-row",
-            "status": "running",
-            "mounts": [{"share": "db", "guest": "/mnt/db", "mode": "ro"}],
-        },
-    )
-    assert holders == {}
-
-
-@pytest.mark.parametrize("guest", ["//", "/./", "/."])
-def test_root_equivalent_guest_paths_refuse(guest: str) -> None:
-    """Every spelling of the filesystem root refuses: the guest
-    path canonicalizes at parse, so `//` and `/./` are `/` by the
-    time the rules see them, and a mount may not own the root."""
-    with pytest.raises(ValueError, match="filesystem root"):
-        validate_mounts(mounts({"share": "s", "guest": guest}))
-
-
-def test_guest_path_canonicalizes_at_parse() -> None:
-    """The stored form is the canonical one: collapsed separators
-    and resolved `.` components, trailing slash dropped — `..`
-    survives for the row rules to refuse, never silently
-    collapsed."""
-    (mount,) = mounts({"share": "s", "guest": "/mnt//./a/"})
-    assert mount.guest == "/mnt/a"
-    with pytest.raises(ValueError, match="must not contain"):
-        validate_mounts(mounts({"share": "s", "guest": "/mnt/../etc"}))
-
-
-def test_proc_named_directory_is_allowed() -> None:
-    """The pseudo-filesystem refusal is component-wise, not a
-    string prefix: `/mnt/proc` — a directory that merely carries
-    the name — passes."""
-    validate_mounts(mounts({"share": "s", "guest": "/mnt/proc"}))
-
-
-def test_shadowing_pair_found_across_a_third_mount() -> None:
-    """The shadow check sees every earlier mount, not just the
-    adjacent one: the third mount shadows the first."""
-    with pytest.raises(ValueError, match="shadows"):
-        validate_mounts(
-            mounts(
-                {"share": "a", "guest": "/mnt/a"},
-                {"share": "b", "guest": "/mnt/b"},
-                {"share": "c", "guest": "/mnt/a/deep"},
-            )
-        )
-
-
-def test_writable_narrowing_denies_at_start() -> None:
-    """A reload that narrows a share to read-only under an rw
-    mount skips it with the denied reason — honored, never a
-    silent read-only downgrade."""
-    narrowed = MountShare(name="data", path="/srv/data", writable=False)
-    issues = mount_issues(
-        mounts({"share": "data", "guest": "/mnt/data"}),
-        share_map(narrowed),
-        {},
-    )
-    assert [issue.kind for issue in issues] == ["denied"]
-    assert issues[0].event == "mount.denied"
-    assert "read-only" in issues[0].detail
-
-
-def test_file_share_path_refuses(tmp_path: Path) -> None:
-    """A share path that exists but is not a directory is a named
-    error at load — a share serves a tree."""
-    plain = tmp_path / "plain"
-    plain.write_text("file", encoding="utf-8")
-    with pytest.raises(ValueError, match="not a directory"):
-        mount_shares_from(
-            {
-                "MSKSD_MOUNT_SHARES": json.dumps(
-                    [{"name": "f", "path": str(plain)}]
-                )
-            }
-        )
 
 
 def test_double_slash_anchor_canonicalizes() -> None:
@@ -619,75 +315,22 @@ def test_double_slash_anchor_canonicalizes() -> None:
     a distinct anchor that would dodge the disjoint rules. The
     canonical form pins the anchor to one slash, so `//tmp` and
     `/tmp` collide as one guest path."""
-    (mount,) = mounts({"share": "s", "guest": "//tmp"})
+    (mount,) = mounts({"host": "/srv/s", "guest": "//tmp"})
     assert mount.guest == "/tmp"
     with pytest.raises(ValueError, match="is mounted twice"):
         validate_mounts(
             mounts(
-                {"share": "a", "guest": "/tmp"},
-                {"share": "b", "guest": "//tmp"},
+                {"host": "/srv/a", "guest": "/tmp"},
+                {"host": "/srv/b", "guest": "//tmp"},
             )
         )
     with pytest.raises(ValueError, match="shadows"):
         validate_mounts(
             mounts(
-                {"share": "a", "guest": "/mnt"},
-                {"share": "b", "guest": "//mnt/a/deep"},
+                {"host": "/srv/a", "guest": "/mnt"},
+                {"host": "/srv/b", "guest": "//mnt/a/deep"},
             )
         )
-
-
-async def test_start_publishes_denied_and_proceeds(
-    client,  # noqa: F811
-    tmp_path: Path,
-) -> None:
-    """The reload narrowing at start (#620): an rw mount on a
-    share the config flipped to read-only skips with mount.denied
-    naming both remediations — and the start still runs."""
-    http, app, stub = client
-    created = await http.post(
-        "/api/v1/workspaces",
-        json={"id": "ws-narrowed", "kernel": "/k", "rootfs": "/r"},
-        headers=auth(),
-    )
-    wid = created.json()["id"]
-    await app.state.model.set_mounts(
-        wid, [{"share": "data", "guest": "/mnt/data", "mode": "rw"}]
-    )
-    data = tmp_path / "data"
-    data.mkdir()
-    app.state.settings.mounts = MountSettings(
-        shares=(MountShare(name="data", path=str(data), writable=False),)
-    )
-    published: list[tuple[str, dict]] = []
-    real_publish = app.state.hub.publish
-
-    async def spy_publish(event: str, data: dict) -> None:
-        published.append((event, data))
-        await real_publish(event, data)
-
-    app.state.hub.publish = spy_publish
-    started = await http.post(
-        f"/api/v1/workspaces/{wid}/start", headers=auth()
-    )
-    assert started.status_code == 200
-    assert ("launch", wid) in stub.calls
-    assert published == [
-        (
-            "mount.denied",
-            {
-                "id": wid,
-                "share": "data",
-                "guest": "/mnt/data",
-                "mode": "rw",
-                "detail": (
-                    "share 'data' is configured read-only; widen it in "
-                    "the daemon's config, or recreate the workspace "
-                    "with mode 'ro'"
-                ),
-            },
-        )
-    ]
 
 
 async def test_starting_workspaces_installs_when_absent(client) -> None:  # noqa: F811
@@ -703,12 +346,12 @@ async def test_starting_workspaces_installs_when_absent(client) -> None:  # noqa
 
 def mounts_for_guest_seed_tests():
     """Two mounts the seed-block tests render: one rw at a plain
-    path, one ro under a deeper tree."""
-    from msks.spec.mounts import MountSpec
-
+    path, one ro under a deeper tree. The What= values are the
+    derived tags (hs- plus hash), not the host paths — a tag
+    names a virtiofs device."""
     return (
-        MountSpec(share="proj", guest="/mnt/proj"),
-        MountSpec(share="docs", guest="/srv/tree/docs", mode="ro"),
+        MountSpec(host="/srv/proj", guest="/mnt/proj"),
+        MountSpec(host="/srv/tree/docs", guest="/srv/tree/docs", mode="ro"),
     )
 
 
@@ -741,8 +384,11 @@ def test_mounts_seed_block_writes_units_and_prunes() -> None:
         "cat > '/etc/msks/mount-units/srv-tree-docs.mount' <<'MSEOF'" in block
     )
     # The units carry the ownership marker the prune loop greps and
-    # the virtiofs facts.
-    assert "What=proj" in block
+    # the virtiofs facts — the tag on What is the derived device
+    # name, computed from the host path.
+    proj, docs = mounts_for_guest_seed_tests()
+    assert f"What={mount_tag(proj)}" in block
+    assert f"What={mount_tag(docs)}" in block
     assert "Where=/mnt/proj" in block
     assert "Type=virtiofs" in block
     assert "Options=ro" in block  # the ro mount
@@ -774,9 +420,13 @@ def test_mounts_seed_block_quotes_hard_paths() -> None:
     one with a quote uses the close-reopen spelling — both mount."""
     from msks.spec.mounts import MountSpec, mounts_seed_block
 
-    spaced = mounts_seed_block((MountSpec(share="a", guest="/mnt/my dir"),))
+    spaced = mounts_seed_block(
+        (MountSpec(host="/srv/a", guest="/mnt/my dir"),)
+    )
     assert "install -d -m 0755 '/mnt/my dir'" in spaced
-    quoted = mounts_seed_block((MountSpec(share="a", guest="/mnt/o'brien"),))
+    quoted = mounts_seed_block(
+        (MountSpec(host="/srv/a", guest="/mnt/o'brien"),)
+    )
     # The exact spelling: the path opens, closes around a quoted
     # quote, and reopens.
     assert "'/mnt/o'\\''brien'" in quoted
@@ -843,8 +493,8 @@ def test_mount_unit_grammar() -> None:
         mount_unit_name,
     )
 
-    rw = MountSpec(share="proj", guest="/mnt/proj")
-    ro = MountSpec(share="docs", guest="/srv/tree/docs", mode="ro")
+    rw = MountSpec(host="/srv/proj", guest="/mnt/proj")
+    ro = MountSpec(host="/srv/docs", guest="/srv/tree/docs", mode="ro")
     assert mount_unit_name(rw) == "mnt-proj.mount"
     assert mount_unit(rw).startswith("# msks mount unit")
     assert "Options=" not in mount_unit(rw)
@@ -861,10 +511,10 @@ def test_mounts_fingerprint_keys_on_the_whole_set() -> None:
     order, and differs from the empty set."""
     from msks.spec.mounts import MountSpec, mounts_fingerprint
 
-    a = MountSpec(share="a", guest="/mnt/a")
-    same_a = MountSpec(share="a", guest="/mnt/a")
-    b = MountSpec(share="a", guest="/mnt/a", mode="ro")
-    c = MountSpec(share="a", guest="/mnt/c")
+    a = MountSpec(host="/srv/a", guest="/mnt/a")
+    same_a = MountSpec(host="/srv/a", guest="/mnt/a")
+    b = MountSpec(host="/srv/a", guest="/mnt/a", mode="ro")
+    c = MountSpec(host="/srv/a", guest="/mnt/c")
     assert mounts_fingerprint((a,)) == mounts_fingerprint((same_a,))
     assert mounts_fingerprint((a,)) != mounts_fingerprint((b,))
     assert mounts_fingerprint((a,)) != mounts_fingerprint((c,))
@@ -881,100 +531,47 @@ def test_guest_path_unit_length_refuses_at_the_boundary() -> None:
 
     at_edge = "/" + "a" * (255 - len(".mount"))
     assert len(mount_unit_name(mounts_for_edge(at_edge)).encode()) == 255
-    validate_mounts(mounts({"share": "s", "guest": at_edge}))
+    validate_mounts(mounts({"host": "/srv/s", "guest": at_edge}))
     # Escape inflation counts: a shorter path with spaces crosses
     # the same ceiling.
     spaced = "/" + "a " * 64
     assert len(spaced) < len(at_edge)
     with pytest.raises(ValueError, match="longer than 255"):
-        validate_mounts(mounts({"share": "s", "guest": spaced}))
+        validate_mounts(mounts({"host": "/srv/s", "guest": spaced}))
 
 
 def mounts_for_edge(guest: str):
     from msks.spec.mounts import MountSpec
 
-    return MountSpec(share="s", guest=guest)
-
-
-def share_dir(tmp_path: Path) -> tuple[Path, MountSettings]:
-    """A configured-share world: two shares on disk — a writable
-    ``proj`` and a read-only ``refs`` — the pair a two-mount
-    workspace names (a share appears once per workspace)."""
-    proj = tmp_path / "proj"
-    proj.mkdir()
-    refs = tmp_path / "refs"
-    refs.mkdir()
-    return proj, MountSettings(
-        shares=(
-            MountShare(name="proj", path=str(proj)),
-            MountShare(name="refs", path=str(refs), writable=False),
-        )
-    )
-
-
-async def test_create_with_mounts_stores_them(
-    client,  # noqa: F811
-    tmp_path: Path,
-) -> None:
-    """The create's mounts (#620, part #624): validated against
-    the config's shares and the row rules, stored on the row, and
-    served with the derived state — a create naming a share the
-    config carries lands both mounts."""
-    http, app, _stub = client
-    _root, settings = share_dir(tmp_path)
-    app.state.settings.mounts = settings
-    created = await http.post(
-        "/api/v1/workspaces",
-        json={
-            "id": "ws-m",
-            "kernel": "/k",
-            "rootfs": "/r",
-            "mounts": [
-                {"share": "proj", "guest": "/mnt/proj"},
-                {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
-            ],
-        },
-        headers=auth(),
-    )
-    assert created.status_code == 201, created.text
-    row = created.json()
-    assert row["mounts"] == [
-        {"share": "proj", "guest": "/mnt/proj", "mode": "rw"},
-        {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
-    ]
-    assert row["mount_issues"] == []
+    return MountSpec(host="/srv/s", guest=guest)
 
 
 @pytest.mark.parametrize(
     ("mounts_body", "why"),
     [
-        ([{"share": "nope", "guest": "/mnt/x"}], "no share named 'nope'"),
-        ([{"share": "proj", "guest": "/mnt/x", "mode": "rw"}], "read-only"),
-        ([{"share": "proj", "guest": "relative"}], "must be absolute"),
+        ([{"host": "/srv/p", "guest": "relative"}], "must be absolute"),
         (
             [
-                {"share": "proj", "guest": "/mnt/a"},
-                {"share": "proj", "guest": "/mnt/b"},
+                {"host": "/srv/p", "guest": "/mnt/a"},
+                {"host": "/srv/p", "guest": "/mnt/b"},
             ],
             "mounted twice",
         ),
     ],
 )
-async def test_create_refuses_mounts_the_config_or_rules_deny(
+async def test_create_refuses_mounts_the_row_rules_deny(
     client,  # noqa: F811
     tmp_path: Path,
     mounts_body: list,
     why: str,
 ) -> None:
-    """The create's mount refusals (#620, part #624): a share the
-    config does not carry, rw on a share narrowed to read-only,
-    and the row rules — each a named 400 with nothing written."""
+    """The create's row-rule refusals (#620, part #624): a guest
+    path that is not absolute and a host path mounted twice —
+    each a named 400 with nothing written."""
     http, app, _stub = client
-    root = tmp_path / "proj"
+    root = tmp_path / "code"
     root.mkdir()
-    app.state.settings.mounts = MountSettings(
-        shares=(MountShare(name="proj", path=str(root), writable=False),)
-    )
+    app.state.settings.mounts = MountSettings(host_roots=(str(root),))
     created = await http.post(
         "/api/v1/workspaces",
         json={
@@ -989,11 +586,64 @@ async def test_create_refuses_mounts_the_config_or_rules_deny(
     assert why in created.json()["detail"]
 
 
-async def test_mounts_are_refused_while_the_config_lists_no_shares(
+async def test_a_set_carrying_the_retired_form_lands_clean(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The removal's migration seam (#685), at the API: a stored
+    row's named entries ride a set back — a pre-#685 client's
+    read-modify-write, or an old row's first save through a new
+    client — and the parser drops them, so the row lands carrying
+    only the host form. The reply shows the cleaned list, and a
+    row's read serves the cleaned list too: no surface ever sees
+    a named entry back."""
+    http, app, _stub = client
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    app.state.settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-m", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+    # The stored pre-#685 shape, written through the model (the
+    # schema cannot spell it — the row predates).
+    await app.state.model.set_mounts(
+        wid,
+        [
+            {"share": "proj", "guest": "/mnt/p", "mode": "rw"},
+            {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+        ],
+    )
+    # The read serves the cleaned list.
+    row = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
+    assert row.json()["mounts"] == []
+
+    # A set carrying the retired entries beside a live host form
+    # (the old client's read-modify-write) lands the row clean.
+    set_clean = await http.post(
+        f"/api/v1/workspaces/{wid}/mounts",
+        json={
+            "mounts": [
+                {"share": "proj", "guest": "/mnt/p", "mode": "rw"},
+                {"host": str(proj), "guest": "/mnt/proj"},
+            ]
+        },
+        headers=auth(),
+    )
+    assert set_clean.status_code == 200, set_clean.text
+    assert set_clean.json()["mounts"] == [
+        {"host": str(proj), "guest": "/mnt/proj", "mode": "rw"}
+    ]
+
+
+async def test_mounts_refuse_while_no_root_is_allowed(
     client,  # noqa: F811
 ) -> None:
-    """Empty config is the feature off (#620): every mount request
-    — create or set — refuses with the config's remedy named."""
+    """Empty allowed roots is the feature off (#672): every mount
+    request — create or set — refuses with the config's remedy
+    named."""
     http, _app, _stub = client
     created = await http.post(
         "/api/v1/workspaces",
@@ -1001,12 +651,12 @@ async def test_mounts_are_refused_while_the_config_lists_no_shares(
             "id": "ws-m",
             "kernel": "/k",
             "rootfs": "/r",
-            "mounts": [{"share": "proj", "guest": "/mnt/proj"}],
+            "mounts": [{"host": "/srv/proj", "guest": "/mnt/proj"}],
         },
         headers=auth(),
     )
     assert created.status_code == 400
-    assert "lists no shares" in created.json()["detail"]
+    assert "outside the allowed host-share roots" in created.json()["detail"]
 
 
 async def test_the_mounts_route_sets_replaces_and_clears(
@@ -1018,8 +668,11 @@ async def test_the_mounts_route_sets_replaces_and_clears(
     clears, and a running workspace's set succeeds — next-start
     semantics, like resize: the VM keeps its attached devices."""
     http, app, stub = client
-    _root, settings = share_dir(tmp_path)
-    app.state.settings.mounts = settings
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    refs = tmp_path / "refs"
+    refs.mkdir()
+    app.state.settings.mounts = host_world(tmp_path)
     created = await http.post(
         "/api/v1/workspaces",
         json={"id": "ws-m", "kernel": "/k", "rootfs": "/r"},
@@ -1029,12 +682,12 @@ async def test_the_mounts_route_sets_replaces_and_clears(
 
     set_one = await http.post(
         f"/api/v1/workspaces/{wid}/mounts",
-        json={"mounts": [{"share": "proj", "guest": "/mnt/proj"}]},
+        json={"mounts": [{"host": str(proj), "guest": "/mnt/proj"}]},
         headers=auth(),
     )
     assert set_one.status_code == 200
     assert set_one.json()["mounts"] == [
-        {"share": "proj", "guest": "/mnt/proj", "mode": "rw"}
+        {"host": str(proj), "guest": "/mnt/proj", "mode": "rw"}
     ]
 
     # A running workspace sets fine: nothing launches, the reply's
@@ -1047,8 +700,8 @@ async def test_the_mounts_route_sets_replaces_and_clears(
         f"/api/v1/workspaces/{wid}/mounts",
         json={
             "mounts": [
-                {"share": "proj", "guest": "/mnt/proj", "mode": "ro"},
-                {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+                {"host": str(proj), "guest": "/mnt/proj", "mode": "ro"},
+                {"host": str(refs), "guest": "/srv/refs", "mode": "ro"},
             ]
         },
         headers=auth(),
@@ -1067,71 +720,15 @@ async def test_the_mounts_route_sets_replaces_and_clears(
     assert cleared.json()["mount_issues"] == []
 
 
-async def test_rows_carry_the_derived_mount_state(
-    client,  # noqa: F811
-    tmp_path: Path,
-) -> None:
-    """The listing and the row read carry the derived per-mount
-    state (#620, part #624): a share gone from the config names
-    its skip on both surfaces — the markers the CLI's ls and the
-    TUI render."""
-    http, app, _stub = client
-    _root, settings = share_dir(tmp_path)
-    gone = tmp_path / "gone"
-    gone.mkdir()
-    # The share exists at set time — the set-time gate passes —
-    # and leaves the config before the read: the skip is derived
-    # state, the reload's story.
-    app.state.settings.mounts = MountSettings(
-        shares=(
-            *settings.shares,
-            MountShare(name="gone", path=str(gone)),
-        )
-    )
-    created = await http.post(
-        "/api/v1/workspaces",
-        json={
-            "id": "ws-m",
-            "kernel": "/k",
-            "rootfs": "/r",
-            "mounts": [
-                {"share": "proj", "guest": "/mnt/proj"},
-                {"share": "gone", "guest": "/mnt/gone"},
-            ],
-        },
-        headers=auth(),
-    )
-    assert created.status_code == 201, created.text
-    wid = created.json()["id"]
-    app.state.settings.mounts = settings
-
-    row = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
-    issues = row.json()["mount_issues"]
-    assert issues == [
-        {
-            "kind": "skipped",
-            "share": "gone",
-            "guest": "/mnt/gone",
-            "mode": "rw",
-            "detail": "share 'gone' is not in the daemon's config",
-        }
-    ]
-
-    listed = await http.get("/api/v1/workspaces", headers=auth())
-    mine = next(r for r in listed.json() if r["id"] == wid)
-    assert mine["mount_issues"] == issues
-
-
 async def test_the_mounts_route_names_its_refusals(
     client,  # noqa: F811
     tmp_path: Path,
 ) -> None:
-    """The set route's 400s (#620, part #624): a share the config
-    does not carry refuses with the config's remedy named, and
-    the row keeps the mounts it had."""
+    """The set route's 400s (#672): a host path outside the
+    allowed roots refuses with the config's remedy named, and the
+    row keeps the mounts it had."""
     http, app, _stub = client
-    _root, settings = share_dir(tmp_path)
-    app.state.settings.mounts = settings
+    app.state.settings.mounts = host_world(tmp_path)
     created = await http.post(
         "/api/v1/workspaces",
         json={"id": "ws-m", "kernel": "/k", "rootfs": "/r"},
@@ -1140,22 +737,22 @@ async def test_the_mounts_route_names_its_refusals(
     wid = created.json()["id"]
     refused = await http.post(
         f"/api/v1/workspaces/{wid}/mounts",
-        json={"mounts": [{"share": "nope", "guest": "/mnt/x"}]},
+        json={"mounts": [{"host": "/srv/nope", "guest": "/mnt/x"}]},
         headers=auth(),
     )
     assert refused.status_code == 400
-    assert "no share named 'nope'" in refused.json()["detail"]
+    assert "outside the allowed host-share roots" in refused.json()["detail"]
     kept = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
     assert kept.json()["mounts"] == []
 
 
-async def test_clearing_mounts_needs_no_shares_configured(
+async def test_clearing_mounts_needs_no_roots_allowed(
     client,  # noqa: F811
 ) -> None:
     """Clearing is always legal (#620, part #624): the operator
-    who removed the last share can still empty a workspace's
-    mounts — the empty list passes the gate the config's emptiness
-    would otherwise refuse."""
+    who removed the last allowed root can still empty a
+    workspace's mounts — the empty list passes the gate the
+    roots' emptiness would otherwise refuse."""
     http, app, _stub = client
     created = await http.post(
         "/api/v1/workspaces",
@@ -1180,15 +777,16 @@ async def test_a_typod_mount_key_refuses_instead_of_dropping(
     ``modee`` is a named 422, never a silently dropped mode that
     lands the trust-bearing ``rw`` default."""
     http, app, _stub = client
-    _root, settings = share_dir(tmp_path)
-    app.state.settings.mounts = settings
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    app.state.settings.mounts = host_world(tmp_path)
     created = await http.post(
         "/api/v1/workspaces",
         json={
             "id": "ws-m",
             "kernel": "/k",
             "rootfs": "/r",
-            "mounts": [{"share": "proj", "guest": "/mnt/p", "modee": "ro"}],
+            "mounts": [{"host": str(proj), "guest": "/mnt/p", "modee": "ro"}],
         },
         headers=auth(),
     )
@@ -1203,8 +801,9 @@ async def test_a_delete_racing_the_mounts_set_answers_404(
     landing between the set and the refreshed read answers 404 —
     the row is gone, not a 500 on the missing row."""
     http, app, _stub = client
-    _root, settings = share_dir(tmp_path)
-    app.state.settings.mounts = settings
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    app.state.settings.mounts = host_world(tmp_path)
     created = await http.post(
         "/api/v1/workspaces",
         json={"id": "ws-m", "kernel": "/k", "rootfs": "/r"},
@@ -1220,7 +819,7 @@ async def test_a_delete_racing_the_mounts_set_answers_404(
     app.state.model.set_mounts = set_then_delete
     gone = await http.post(
         f"/api/v1/workspaces/{wid}/mounts",
-        json={"mounts": [{"share": "proj", "guest": "/mnt/proj"}]},
+        json={"mounts": [{"host": str(proj), "guest": "/mnt/proj"}]},
         headers=auth(),
     )
     assert gone.status_code == 404
@@ -1570,29 +1169,25 @@ async def test_host_mounts_hold_no_rw_exclusivity(
     client,  # noqa: F811
     tmp_path: Path,
 ) -> None:
-    """Host-form mounts never enter the holder map (#672): two
-    workspaces may hold the same host tree read-write — the
-    coherence contract is their concurrency story, not a
-    ``multi: false`` hold."""
-    from msks.server.api.rows import record_rw_holders
-
-    holders: dict[str, str] = {}
-    record_rw_holders(
-        holders,
-        {
-            "id": "ws-a",
-            "mounts": json.dumps(
-                [{"host": "/Users/p/code", "guest": "/m", "mode": "rw"}]
-            ),
-        },
-    )
-    record_rw_holders(
-        holders,
-        {
-            "id": "ws-b",
-            "mounts": json.dumps(
-                [{"share": "proj", "guest": "/p", "mode": "rw"}]
-            ),
-        },
-    )
-    assert holders == {"proj": "ws-b"}
+    """Two workspaces mount the same host tree read-write (#672,
+    #685): both sets succeed — a host share carries no exclusivity
+    anywhere, and the coherence contract is the concurrency
+    story."""
+    http, app, _stub = client
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    app.state.settings.mounts = host_world(tmp_path)
+    for wid in ("ws-a", "ws-b"):
+        created = await http.post(
+            "/api/v1/workspaces",
+            json={"id": wid, "kernel": "/k", "rootfs": "/r"},
+            headers=auth(),
+        )
+        assert created.status_code == 201, created.text
+        set_rw = await http.post(
+            f"/api/v1/workspaces/{wid}/mounts",
+            json={"mounts": [{"host": str(tree), "guest": "/mnt/tree"}]},
+            headers=auth(),
+        )
+        assert set_rw.status_code == 200
+        assert set_rw.json()["mount_issues"] == []

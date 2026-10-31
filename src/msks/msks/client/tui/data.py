@@ -114,8 +114,8 @@ class TuiData:
     async def set_mounts(self, workspace_id: str, mounts: list) -> dict:
         """POST the mounts list whole (#620, part #624) — the same
         exchange ``msks mount`` makes. The daemon validates against
-        the configured shares and answers with the refreshed row,
-        whose derived state the editor paints."""
+        its gates and answers with the refreshed row, whose
+        derived state the editor paints."""
         return await api_call(
             "POST",
             env_url(),

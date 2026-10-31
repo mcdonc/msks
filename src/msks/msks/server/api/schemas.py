@@ -254,33 +254,35 @@ class WorkspaceCreate(BaseModel):
     # (#500); the CLI fills its invoking user's name before the
     # request ever leaves.
     user: str | None = Field(default=None, pattern=LOGIN_NAME_RE.pattern)
-    # The workspace's host mounts (#620, part #624): each names a
-    # configured share, the guest path it lands at, and a mode —
+    # The workspace's host mounts (#620, part #624; #667): each
+    # names a host path, the guest path it lands at, and a mode —
     # ``ro`` or ``rw``, defaulting to ``rw``. Set at create and
     # changeable later through the mounts route; a start attaches
     # the current set (next-start semantics, like resize). The
-    # daemon validates against the configured shares: a config
-    # that lists none refuses every mount, a share the config
-    # narrows to read-only refuses ``rw``, and the row rules
-    # (canonical paths, mutual disjointness, a share once) apply
-    # in full.
+    # daemon runs each host path through the #667 gates, and the
+    # row rules (canonical paths, mutual disjointness, a host
+    # path once) apply in full.
     mounts: list[MountIn] | None = Field(default=None, max_length=64)
 
 
 class MountIn(BaseModel):
-    """One mount on the wire (#620, #672): the configured share's
-    name, or a host path through the #667 gates — exactly one of
-    the two, refused by name when both or neither arrive. The
-    absolute guest path, and the mode — ``rw`` when omitted. The
-    trust decision precedes the mode: the share is listed or the
-    root allowed. Unknown keys refuse (a typo'd
-    ``modee`` must not silently drop the mode it misspelled,
-    landing the trust-bearing default)."""
+    """One mount on the wire (#620, #672): a host path through
+    the #667 gates, the absolute guest path, and the mode —
+    ``rw`` when omitted. The trust decision precedes the mode:
+    the root is allowed or the mount is refused. Unknown keys
+    refuse (a typo'd ``modee`` must not silently drop the mode it
+    misspelled, landing the trust-bearing default) — with one
+    carried exception: ``share``, the #620 named form removed by
+    #685, stays an accepted key so a pre-#685 client — or a row
+    it reads back — can post its stored list; the parser drops
+    the entry, so the set that carries it lands the row clean
+    (the removal's migration story, and the reason the old
+    client's mounts keep working across the upgrade)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    share: str | None = Field(default=None, min_length=1, max_length=256)
     host: str | None = Field(default=None, min_length=1, max_length=4096)
+    share: str | None = Field(default=None, min_length=1, max_length=256)
     guest: str = Field(min_length=1, max_length=4096)
     mode: str | None = Field(default=None, pattern="^(ro|rw)$")
 

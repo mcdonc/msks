@@ -240,9 +240,9 @@ def row_cells(row: dict) -> tuple[str, ...]:
 
 def status_with_issues(row: dict) -> str:
     """The status cell with the mounts' standing marker (#620,
-    part #624): a row whose mounts skip or conflict leads with
-    the count beside a plain status word — ahead, where a
-    trailing one would middle-clip the word it marks — and the
+    part #624): a row whose mounts skip leads with the count
+    beside a plain status word — ahead, where a trailing one
+    would middle-clip the word it marks — and the
     workspace's page names each issue. A healthy row prints the
     status dot and word alone."""
     issues = row.get("mount_issues") or []
