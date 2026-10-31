@@ -213,7 +213,9 @@ def test_host_rows_take_ro_explicitly() -> None:
 
 
 def test_a_row_names_one_form() -> None:
-    with pytest.raises(ValueError, match="pick one"):
+    """The one grammar (#685): the share key is an unknown key
+    again, and a row without its host path is a named error."""
+    with pytest.raises(ValueError, match="unknown keys.*share"):
         parse_mounts(
             [
                 {
@@ -223,7 +225,7 @@ def test_a_row_names_one_form() -> None:
                 }
             ]
         )
-    with pytest.raises(ValueError, match="needs a share"):
+    with pytest.raises(ValueError, match="needs a host path"):
         parse_mounts([{"guest": "/mnt"}])
 
 
@@ -247,26 +249,20 @@ def test_validate_refuses_a_repeated_host_and_tag_collisions() -> None:
     )
     with pytest.raises(ValueError, match="mounted twice"):
         validate_mounts(twice)
-    # A named share whose name happens to equal a host path's
-    # derived tag: one device name, two trees — refused.
-    host = MountSpec(guest="/b", mode="ro", host="/Users/p/code")
-    collides = (
-        MountSpec(share=mount_tag(host), guest="/a"),
-        host,
-    )
-    with pytest.raises(ValueError, match="device name"):
-        validate_mounts(collides)
 
 
 def test_units_and_fingerprints_key_off_the_tag() -> None:
+    """The tag is the device name (#685: every mount derives one)
+    — the unit's What and the fingerprint's key both ride it, and
+    a different guest path under the same host keeps the tag but
+    changes the fingerprint."""
     host = parse_mounts([{"host": "/Users/p/code", "guest": "/mnt/c"}])[0]
-    named = parse_mounts([{"share": "proj", "guest": "/mnt/p"}])[0]
+    other_guest = parse_mounts(
+        [{"host": "/Users/p/code", "guest": "/mnt/other"}]
+    )[0]
     assert f"What={mount_tag(host)}" in mount_unit(host)
-    assert "What=proj" in mount_unit(named)
-    assert mounts_fingerprint((named,)) == mounts_fingerprint((named,))
-    assert mounts_fingerprint((named,)) != mounts_fingerprint(
-        (MountSpec(share="proj", guest="/mnt/other"),)
-    )
+    assert mounts_fingerprint((host,)) == mounts_fingerprint((host,))
+    assert mounts_fingerprint((host,)) != mounts_fingerprint((other_guest,))
 
 
 # --- the settings keys ------------------------------------------------
@@ -289,6 +285,12 @@ def test_host_roots_parse_and_canonicalize(tmp_path: Path) -> None:
         host_roots_from({"MSKSD_MOUNT_HOST_ROOTS": "[5]"})
     with pytest.raises(ValueError, match="must be absolute"):
         host_roots_from({"MSKSD_MOUNT_HOST_ROOTS": '["relative"]'})
+    # The raw-list walk's own refusals: malformed JSON and a
+    # scalar both name the JSON-array shape.
+    with pytest.raises(ValueError, match="MSKSD_MOUNT_HOST_ROOTS must be"):
+        host_roots_from({"MSKSD_MOUNT_HOST_ROOTS": "not-json"})
+    with pytest.raises(ValueError, match="MSKSD_MOUNT_HOST_ROOTS must be"):
+        host_roots_from({"MSKSD_MOUNT_HOST_ROOTS": '"scalar"'})
 
 
 def test_mount_settings_carry_the_gate_inputs(tmp_path: Path) -> None:

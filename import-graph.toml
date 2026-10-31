@@ -274,15 +274,16 @@ secretcache = 2
 # set-time gate bounds (deduplicated from the rows' local
 # helper). #676: the macOS setup entry's statement joins (the
 # version string the VM bootstrap installs; the +2 is the module
-# edge beside the name).
-spec = 39
+# edge beside the name). #685: the named form's removal drops
+# three names (mount_issues, named_only, validate_against_shares
+# never imported again).
+spec = 36
 storage = 13
 
 [snapshot.settings]
-# #620 part #621: the shares parser pulls the MountShare shape
-# and its key grammar from the mount leaf (two names, one
-# statement); part #622 adds safe_share_name and SHARE_NAME_MAX
-# (the virtiofs tag limit) for the tag rule. #672: three more
-# names — the host modes' pair and the canonical host path —
-# for the host-share gates' settings.
-spec = 13
+# #620 part #621: the shares parser pulled the MountShare shape
+# and its key grammar from the mount leaf; #672 added the host
+# modes' pair and the canonical host path for the host-share
+# gates' settings. #685: the named form's removal drops the
+# shares parser whole — the host gates' three names remain.
+spec = 9

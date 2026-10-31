@@ -1,8 +1,8 @@
-"""The TUI's mounts surfaces (#620, part #624): the workspace
-page's mounts line and the list editor screen.
+"""The TUI's mounts surfaces (#620, part #624; #667): the
+workspace page's mounts line and the list editor screen.
 
 The editor edits the row's whole mount list — a workspace mounts
-several mounts at once — one ``HOST-OR-SHARE:GUEST_PATH[:MODE]``
+several mounts at once — one ``HOST_PATH:GUEST_PATH[:MODE]``
 row each (the mode defaults to ``rw``), with add, edit, and remove
 per row. Every change posts the full list through the daemon's
 mounts route (next-start semantics, like resize: a running
@@ -33,18 +33,16 @@ SPEC_W = 44
 
 
 def mount_spec_text(mount: dict) -> str:
-    """One mount row's spec: ``HOST-OR-SHARE:GUEST_PATH:MODE`` —
-    the words the CLI's ``--mount`` takes, the mode always shown
-    so the row reads whole (the wire's default is ``rw``)."""
+    """One mount row's spec: ``HOST_PATH:GUEST_PATH:MODE`` — the
+    words the CLI's ``--share`` takes, the mode always shown so
+    the row reads whole (the wire's default is ``rw``)."""
     mode = mount.get("mode") or "rw"
-    served = mount.get("host") or mount.get("share")
-    return f"{served}:{mount.get('guest')}:{mode}"
+    return f"{mount.get('host')}:{mount.get('guest')}:{mode}"
 
 
 def issue_for(mount: dict, issues: list[dict]) -> dict | None:
     """The derived issue naming one mount, if any: matched on the
-    form's naming key — the share name or the host path — beside
-    the guest path, the pair a row names."""
+    host path beside the guest path, the pair a row names."""
     for issue in issues or []:
         if issue_names(issue, mount):
             return issue
@@ -52,15 +50,11 @@ def issue_for(mount: dict, issues: list[dict]) -> dict | None:
 
 
 def issue_names(issue: dict, mount: dict) -> bool:
-    """Whether an issue frame names one mount: each naming key
-    present on either side agrees (``None == None`` included — a
-    frame and a row of one form carry no key for the other), and
-    the guest path matches."""
-    return (
-        issue.get("share") == mount.get("share")
-        and issue.get("host") == mount.get("host")
-        and issue.get("guest") == mount.get("guest")
-    )
+    """Whether an issue frame names one mount: the host path and
+    the guest path agree."""
+    return issue.get("host") == mount.get("host") and issue.get(
+        "guest"
+    ) == mount.get("guest")
 
 
 def mount_row_text(mount: dict, issues: list[dict]) -> str:
@@ -120,7 +114,7 @@ def mount_state_text(mount: dict, issues: list[dict]) -> str:
 class MountEditScreen(ModalScreen[str | None]):
     """One mount's spec on a single line (#620, part #624): the
     editor's add and edit path share it — the input holds the
-    CLI's own ``HOST-OR-SHARE:GUEST_PATH[:MODE]`` grammar, seeded with the
+    CLI's own ``HOST_PATH:GUEST_PATH[:MODE]`` grammar, seeded with the
     row being edited. Enter accepts, Escape cancels."""
 
     BINDINGS = [
@@ -201,7 +195,7 @@ class MountsScreen(ModalScreen[dict | None]):
         ]
         if items:
             return items
-        prompt = "no mounts — press a to add HOST-OR-SHARE:GUEST_PATH[:MODE]"
+        prompt = "no mounts — press a to add HOST_PATH:GUEST_PATH[:MODE]"
         return [ListItem(Static(prompt))]
 
     def note(self, text: str) -> None:
@@ -257,7 +251,7 @@ class MountsScreen(ModalScreen[dict | None]):
         line joins the list before the focused row's position —
         the new mount lands where the editor stands."""
         self.app.push_screen(
-            MountEditScreen("add  HOST-OR-SHARE:GUEST_PATH[:MODE]"),
+            MountEditScreen("add  HOST_PATH:GUEST_PATH[:MODE]"),
             self.added,
         )
 
@@ -281,7 +275,7 @@ class MountsScreen(ModalScreen[dict | None]):
             return
         self.app.push_screen(
             MountEditScreen(
-                "edit  HOST-OR-SHARE:GUEST_PATH[:MODE]",
+                "edit  HOST_PATH:GUEST_PATH[:MODE]",
                 initial=mount_spec_text(mount),
             ),
             self.edited,
@@ -317,8 +311,10 @@ class MountsScreen(ModalScreen[dict | None]):
     def entry(self, spec: str) -> dict | None:
         """One spec line as the wire's mount entry — the CLI's own
         grammar and shape refusals (:func:`mount_spec`): the
-        daemon owns the share and rule checks and names them in
-        its 400."""
+        daemon owns the gate checks and names them in its 400.
+        A bare name — the retired #620 named form (#685) — is
+        refused here too: the host-path grammar is the only one
+        enterable."""
         try:
             return mount_spec(spec, "mount")
         except SystemExit as exc:

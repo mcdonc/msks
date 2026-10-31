@@ -3,13 +3,12 @@
 Covers the virtiofsd argument grammar (the coherence and identity
 contracts), the cloud-hypervisor fs device entries, the spawn and
 teardown lifecycle (tracked daemons, the restarted-daemon pidfile
-fallback, the recycled-pid guard), the start path's drift
+fallback, the recycled-pid guard), the start path's gate
 refusal, and the doctor rows.
 """
 
 import asyncio
 import contextlib
-import json
 import os
 import shutil
 import sys
@@ -40,13 +39,8 @@ from msks.microvm.local import (
     read_fs_pid,
     vm_config,
 )
-from msks.settings import (
-    MountSettings,
-    MountShare,
-    Settings,
-    VmmSettings,
-)
-from msks.spec.mounts import MountSpec, mount_tag, safe_share_name
+from msks.settings import MountSettings, Settings, VmmSettings
+from msks.spec.mounts import MountSpec, mount_tag
 from msks.spec.vm import VmSpec
 from test_api import auth, client  # noqa: F401 (fixture)
 
@@ -151,9 +145,7 @@ async def test_the_spawn_presents_as_the_login_user(
     vm_dir = state_dir / "vms" / "ws-owner"
     vm_dir.mkdir(parents=True)
     settings = Settings(vmm=VmmSettings(state_dir=state_dir))
-    settings.mounts = MountSettings(
-        shares=(MountShare(name="share", path=str(shared)),)
-    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, spawned = driver_over(settings)
     try:
         for login_user, expect in ((None, 1000), ("chrism", 1001)):
@@ -163,7 +155,7 @@ async def test_the_spawn_presents_as_the_login_user(
                 kernel=Path("/k"),
                 rootfs=Path("/r"),
                 login_user=login_user,
-                mounts=(MountSpec(share="share", guest="/mnt/s"),),
+                mounts=(MountSpec(host=str(shared), guest="/mnt/s"),),
             )
             await driver._start_fs_daemons(spec, vm_dir)
             await driver._stop_fs_daemons("ws-owner")
@@ -293,15 +285,16 @@ def test_vm_config_carries_fs_devices(tmp_path: Path) -> None:
     assert with_fs["memory"]["shared"] is True
 
 
-def test_share_names_must_be_filename_safe() -> None:
-    """The name becomes a tag and a socket stem: letters, digits,
-    dot, underscore, hyphen — anything else refuses at settings
-    load."""
-    assert safe_share_name("projects")
-    assert safe_share_name("data.v2_old-1")
-    assert not safe_share_name("a/b")
-    assert not safe_share_name("a b")
-    assert not safe_share_name("")
+def test_the_tag_derives_from_the_host_path() -> None:
+    """The tag names a virtiofs device (#672): the hs- prefix plus
+    the first eight hex of the canonical host path's sha256 —
+    deterministic, so the same path is the same device across
+    starts, and the same for every spelling of the path."""
+    mount = MountSpec(host="/srv/projects", guest="/mnt/p")
+    tag = mount_tag(mount)
+    assert tag.startswith("hs-") and len(tag) == len("hs-") + 8
+    assert mount_tag(MountSpec(host="/srv/projects", guest="/x")) == tag
+    assert mount_tag(MountSpec(host="/srv/other", guest="/mnt/p")) != tag
 
 
 def test_pidfile_helpers(tmp_path: Path) -> None:
@@ -340,37 +333,33 @@ async def test_fs_pid_serves_matches_the_socket(tmp_path: Path) -> None:
         await proc.wait()
 
 
-async def test_start_refuses_drifted_share_paths(client, tmp_path):  # noqa: F811
-    """The drift refusal (#620, part #622): a share whose path
-    resolves elsewhere than the settings load pinned skips with
-    mount.drift naming both ends — the symlink retargeted inside a
-    shareable tree never walks the attach out of what the
-    operator configured."""
+async def test_start_skips_a_gate_refused_host_path(client, tmp_path):  # noqa: F811
+    """The host form's skip at start (#672): a mount whose root
+    the policy gate no longer allows — here a symlink retargeted
+    to walk out of the allowed root, the escape rule #667 names
+    — skips with mount.skipped carrying the gate's message; the
+    start proceeds."""
     http, app, _stub = client
-    real = tmp_path / "real"
-    real.mkdir()
-    link = tmp_path / "link"
-    link.symlink_to(real)
+    allowed = tmp_path / "allowed"
+    allowed.mkdir()
+    link = allowed / "tree"
+    link.symlink_to(allowed / "real")
+    (allowed / "real").mkdir()
     created = await http.post(
         "/api/v1/workspaces",
-        json={"id": "ws-drift", "kernel": "/k", "rootfs": "/r"},
+        json={"id": "ws-escape", "kernel": "/k", "rootfs": "/r"},
         headers=auth(),
     )
     wid = created.json()["id"]
     await app.state.model.set_mounts(
-        wid, [{"share": "moved", "guest": "/mnt/moved", "mode": "rw"}]
+        wid, [{"host": str(link), "guest": "/mnt/tree", "mode": "rw"}]
     )
-    # Load-time pin: the link resolves at `real`...
-    # Load-time pin: the settings parser would realpath the link
-    # to `real` at load — construct the pinned share directly.
-    app.state.settings.mounts = MountSettings(
-        shares=(MountShare(name="moved", path=str(link), resolved=str(real)),)
-    )
-    # ...then the operator retargets it past the load.
-    other = tmp_path / "other"
-    other.mkdir()
+    # The operator retargets the symlink past the allowed root
+    # after the set: the gate refuses at read, the skip is state.
+    outside = tmp_path / "outside"
+    outside.mkdir()
     link.unlink()
-    link.symlink_to(other)
+    link.symlink_to(outside)
     published = []
     real_publish = app.state.hub.publish
 
@@ -383,18 +372,20 @@ async def test_start_refuses_drifted_share_paths(client, tmp_path):  # noqa: F81
         f"/api/v1/workspaces/{wid}/start", headers=auth()
     )
     assert started.status_code == 200
-    assert published[0][0] == "mount.drift"
-    assert str(real) in published[0][1]["detail"]
-    assert str(other) in published[0][1]["detail"]
+    assert published[0][0] == "mount.skipped"
+    assert "outside the allowed host-share roots" in published[0][1]["detail"]
+    assert published[0][1]["host"] == str(link)
 
 
 async def test_start_passes_only_attachable_mounts(client, tmp_path):  # noqa: F811
     """The seam attaches exactly the attachable subset (#620,
-    part #622): a skipped mount (share gone from the config)
+    part #622): a skipped mount (its root no longer allowed)
     never reaches the spec the driver launches."""
     http, app, stub = client
     live = tmp_path / "live"
     live.mkdir()
+    gone = tmp_path / "gone"
+    gone.mkdir()
     created = await http.post(
         "/api/v1/workspaces",
         json={"id": "ws-mix", "kernel": "/k", "rootfs": "/r"},
@@ -404,13 +395,13 @@ async def test_start_passes_only_attachable_mounts(client, tmp_path):  # noqa: F
     await app.state.model.set_mounts(
         wid,
         [
-            {"share": "gone", "guest": "/mnt/gone", "mode": "rw"},
-            {"share": "live", "guest": "/mnt/live", "mode": "rw"},
+            {"host": str(gone), "guest": "/mnt/gone", "mode": "rw"},
+            {"host": str(live), "guest": "/mnt/live", "mode": "rw"},
         ],
     )
-    app.state.settings.mounts = MountSettings(
-        shares=(MountShare(name="live", path=str(live)),)
-    )
+    # The reload narrows the allowed roots to live's alone: gone
+    # skips at read, live attaches.
+    app.state.settings.mounts = MountSettings(host_roots=(str(live),))
     launched = []
     real_launch = stub.launch
 
@@ -424,7 +415,7 @@ async def test_start_passes_only_attachable_mounts(client, tmp_path):  # noqa: F
     )
     assert started.status_code == 200
     assert launched[0].mounts == (
-        MountSpec(share="live", guest="/mnt/live", mode="rw"),
+        MountSpec(host=str(live), guest="/mnt/live", mode="rw"),
     )
 
 
@@ -504,30 +495,26 @@ async def test_fs_daemons_spawn_and_stop(tmp_path: Path) -> None:
     settings = Settings(
         vmm=VmmSettings(state_dir=tmp_path),
     )
-    settings.mounts = MountSettings(
-        shares=(
-            MountShare(name="proj", path=str(share_dir)),
-            MountShare(name="data", path=str(data_dir)),
-        )
-    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, spawned = driver_over(settings)
     spec = VmSpec(
         workspace_id="ws1",
         kernel=Path("/k"),
         rootfs=Path("/r"),
         mounts=(
-            MountSpec(share="proj", guest="/mnt/proj"),
-            MountSpec(share="data", guest="/mnt/data", mode="ro"),
+            MountSpec(host=str(share_dir), guest="/mnt/proj"),
+            MountSpec(host=str(data_dir), guest="/mnt/data", mode="ro"),
         ),
     )
     entries = await driver._start_fs_daemons(spec, vm_dir)
-    assert [entry["tag"] for entry in entries] == ["data", "proj"]
+    tags = [mount_tag(m) for m in spec.mounts]
+    assert sorted(entry["tag"] for entry in entries) == sorted(tags)
     assert len(spawned) == 2
     binary, args = spawned[0]
     assert binary == "virtiofsd"
     assert str(share_dir) in args
-    assert fs_pidfile_path(vm_dir, "proj").is_file()
-    assert fs_pidfile_path(vm_dir, "data").is_file()
+    assert fs_pidfile_path(vm_dir, mount_tag(spec.mounts[0])).is_file()
+    assert fs_pidfile_path(vm_dir, mount_tag(spec.mounts[1])).is_file()
     procs = driver._fs_procs["ws1"]
     await driver._stop_fs_daemons("ws1")
     assert [proc.terminated for proc in procs] == [True, True]
@@ -550,13 +537,7 @@ async def test_spawn_failure_unwinds_earlier_daemons(
     settings = Settings()
     docs = tmp_path / "docs"
     docs.mkdir()
-    settings.mounts = MountSettings(
-        shares=(
-            MountShare(name="proj", path=str(proj)),
-            MountShare(name="data", path=str(data)),
-            MountShare(name="docs", path=str(docs)),
-        )
-    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, spawned = driver_over(settings)
 
     async def flaky_spawn(binary, args, log_path):
@@ -572,9 +553,9 @@ async def test_spawn_failure_unwinds_earlier_daemons(
         kernel=Path("/k"),
         rootfs=Path("/r"),
         mounts=(
-            MountSpec(share="proj", guest="/mnt/proj"),
-            MountSpec(share="data", guest="/mnt/data"),
-            MountSpec(share="docs", guest="/mnt/docs"),
+            MountSpec(host=str(proj), guest="/mnt/proj"),
+            MountSpec(host=str(data), guest="/mnt/data"),
+            MountSpec(host=str(docs), guest="/mnt/docs"),
         ),
     )
     with pytest.raises(FileNotFoundError):
@@ -617,26 +598,19 @@ async def test_restarted_daemon_kills_by_pidfile(tmp_path: Path) -> None:
 
 
 def test_doctor_reports_virtiofsd_and_share_paths(tmp_path: Path) -> None:
-    """The warning-grade rows: virtiofsd's presence (a daemon
-    without shares never execs it), and one row per configured
-    share naming a missing path."""
+    """The warning-grade row: virtiofsd's presence (a daemon
+    without allowed roots never execs it). The per-share path
+    rows are gone with the named form (#685) — the gates refuse
+    a missing host path at set time, not the doctor."""
     from msks.server.doctor import run_doctor
 
-    missing = tmp_path / "missing"
-    present = tmp_path / "present"
-    present.mkdir()
     settings = Settings()
     # A floor-clearing double, not the host's own binary: a Mint
     # 22 box (1.10.0) would otherwise fail the suite.
     settings.vmm.virtiofsd = fake_virtiofsd(
         tmp_path / "virtiofsd", "virtiofsd 1.13.0"
     )
-    settings.mounts = MountSettings(
-        shares=(
-            MountShare(name="gone", path=str(missing)),
-            MountShare(name="here", path=str(present)),
-        )
-    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     report = run_doctor(settings)
     rows = {result.name: result for result in report.results}
     assert rows[settings.vmm.virtiofsd].ok is True
@@ -649,11 +623,6 @@ def test_doctor_reports_virtiofsd_and_share_paths(tmp_path: Path) -> None:
     }
     assert gone_rows["virtiofsd-absent"].ok is False
     assert gone_rows["virtiofsd-absent"].is_warning is True
-    share_gone = rows["share gone"]
-    assert share_gone.ok is False
-    assert str(missing) in share_gone.message
-    assert rows["share here"].ok is True
-    assert str(present) in rows["share here"].message
 
 
 def fake_virtiofsd(path: Path, output: str) -> str:
@@ -748,14 +717,12 @@ async def test_the_start_refuses_a_below_floor_virtiofsd(
     vm_dir = tmp_path / "vms" / "ws-old"
     vm_dir.mkdir(parents=True)
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
-    settings.mounts = MountSettings(
-        shares=(MountShare(name="share", path=str(shared)),)
-    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     spec = VmSpec(
         workspace_id="ws-old",
         kernel=Path("/k"),
         rootfs=Path("/r"),
-        mounts=(MountSpec(share="share", guest="/mnt/s"),),
+        mounts=(MountSpec(host=str(shared), guest="/mnt/s"),),
     )
     for version in ((1, 10, 0), None):
         driver, _spawned = driver_over(settings, version=version)
@@ -766,9 +733,7 @@ async def test_the_start_refuses_a_below_floor_virtiofsd(
 
     absent = Settings(vmm=VmmSettings(state_dir=tmp_path))
     absent.vmm.virtiofsd = str(tmp_path / "virtiofsd-absent")
-    absent.mounts = MountSettings(
-        shares=(MountShare(name="share", path=str(shared)),)
-    )
+    absent.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(absent)
     # The real probe: the missing binary keeps the spawn seam's
     # named error instead of the floor's.
@@ -845,9 +810,12 @@ def test_doctor_names_a_probe_failing_virtiofsd(tmp_path: Path) -> None:
 
 async def test_missing_share_path_skips_at_start(client, tmp_path):  # noqa: F811
     """A share path that vanished (or never existed) skips with
-    the path named — the same event kind a config deletion
+    the path named — the same event kind a policy narrowing
     carries, a detail the operator can act on."""
     http, app, _stub = client
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    app.state.settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     created = await http.post(
         "/api/v1/workspaces",
         json={"id": "ws-nopath", "kernel": "/k", "rootfs": "/r"},
@@ -855,11 +823,13 @@ async def test_missing_share_path_skips_at_start(client, tmp_path):  # noqa: F81
     )
     wid = created.json()["id"]
     await app.state.model.set_mounts(
-        wid, [{"share": "gone", "guest": "/mnt/gone", "mode": "rw"}]
+        wid, [{"host": str(tree), "guest": "/mnt/tree", "mode": "rw"}]
     )
-    app.state.settings.mounts = MountSettings(
-        shares=(MountShare(name="gone", path=str(tmp_path / "nowhere")),)
-    )
+    # The tree vanishes after the set: the gate refuses at read,
+    # the skip is state.
+    import shutil
+
+    shutil.rmtree(tree)
     published = []
     real_publish = app.state.hub.publish
 
@@ -873,31 +843,31 @@ async def test_missing_share_path_skips_at_start(client, tmp_path):  # noqa: F81
     )
     assert started.status_code == 200
     assert published[0][0] == "mount.skipped"
-    assert "path does not exist" in published[0][1]["detail"]
+    assert "does not exist or is not a directory" in published[0][1]["detail"]
 
 
 async def test_spawn_guards_name_every_refusal(tmp_path: Path) -> None:
-    """The last-line guards: a share the route did not filter (it
-    cannot through this seam) and a path that vanished between
-    derivation and spawn each refuse by name."""
+    """The last-line guards: the gates re-read at spawn — a path
+    the policy no longer allows, and one that vanished between
+    the route's derivation and this spawn — each refuse by
+    name."""
     from msks.microvm.errors import MicrovmError
 
     vm_dir = tmp_path / "vms" / "ws-g"
     vm_dir.mkdir(parents=True)
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
     spec = VmSpec(
         workspace_id="ws-g",
         kernel=Path("/k"),
         rootfs=Path("/r"),
-        mounts=(MountSpec(share="ghost", guest="/mnt/ghost"),),
+        mounts=(MountSpec(host=str(tmp_path / "void"), guest="/mnt/void"),),
     )
-    with pytest.raises(MicrovmError, match="is not in the config"):
+    with pytest.raises(MicrovmError, match="does not exist or is not a"):
         await driver._start_fs_daemons(spec, vm_dir)
-    settings.mounts = MountSettings(
-        shares=(MountShare(name="ghost", path=str(tmp_path / "void")),)
-    )
-    with pytest.raises(MicrovmError, match="missing or not a directory"):
+    settings.mounts = MountSettings(host_roots=("/srv/elsewhere",))
+    with pytest.raises(MicrovmError, match="outside the allowed"):
         await driver._start_fs_daemons(spec, vm_dir)
 
 
@@ -919,11 +889,11 @@ async def test_live_socket_refuses_a_second_start(tmp_path: Path) -> None:
     vm_dir = state_dir / "vms" / "ws-s"
     vm_dir.mkdir(parents=True)
     settings = Settings(vmm=VmmSettings(state_dir=state_dir))
-    settings.mounts = MountSettings(
-        shares=(MountShare(name="proj", path=str(share_dir)),)
-    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
-    live = fs_socket_path(vm_dir, "proj")
+    live = fs_socket_path(
+        vm_dir, mount_tag(MountSpec(host=str(share_dir), guest="/mnt/proj"))
+    )
     server = socket_mod.socket(socket_mod.AF_UNIX, socket_mod.SOCK_STREAM)
     server.bind(str(live))
     server.listen(1)
@@ -932,7 +902,7 @@ async def test_live_socket_refuses_a_second_start(tmp_path: Path) -> None:
             workspace_id="ws-s",
             kernel=Path("/k"),
             rootfs=Path("/r"),
-            mounts=(MountSpec(share="proj", guest="/mnt/proj"),),
+            mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
         )
         with pytest.raises(MicrovmError, match="live virtiofs daemon"):
             await driver._start_fs_daemons(spec, vm_dir)
@@ -953,9 +923,7 @@ async def test_stop_is_idempotent_and_kills_a_hang(tmp_path: Path) -> None:
     vm_dir = tmp_path / "vms" / "ws-h"
     vm_dir.mkdir(parents=True)
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
-    settings.mounts = MountSettings(
-        shares=(MountShare(name="proj", path=str(share_dir)),)
-    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
 
     class HangingProc(FakeProc):
@@ -979,7 +947,7 @@ async def test_stop_is_idempotent_and_kills_a_hang(tmp_path: Path) -> None:
         workspace_id="ws-h",
         kernel=Path("/k"),
         rootfs=Path("/r"),
-        mounts=(MountSpec(share="proj", guest="/mnt/proj"),),
+        mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
     )
     await driver._start_fs_daemons(spec, vm_dir)
     proc = driver._fs_procs["ws-h"][0]
@@ -989,21 +957,6 @@ async def test_stop_is_idempotent_and_kills_a_hang(tmp_path: Path) -> None:
         await driver._stop_fs_daemons("ws-h")  # idempotent second call
     finally:
         local_mod.FS_TERM_GRACE_S = real_grace
-
-
-def test_unsafe_share_name_refuses_at_load() -> None:
-    """A name that would build ambiguous paths (a slash, a space)
-    refuses at settings load with the rule named."""
-    from msks.settings import mount_shares_from
-
-    with pytest.raises(ValueError, match="letters, digits, dot"):
-        mount_shares_from(
-            {
-                "MSKSD_MOUNT_SHARES": json.dumps(
-                    [{"name": "a/b", "path": "/srv"}]
-                )
-            }
-        )
 
 
 async def test_real_spawn_wraps_a_missing_binary(tmp_path: Path) -> None:
@@ -1036,9 +989,7 @@ async def test_terminate_of_an_external_death_is_tolerated(
     vm_dir = tmp_path / "vms" / "ws-e"
     vm_dir.mkdir(parents=True)
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
-    settings.mounts = MountSettings(
-        shares=(MountShare(name="proj", path=str(share_dir)),)
-    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
 
     class ExternalDeath(FakeProc):
@@ -1056,7 +1007,7 @@ async def test_terminate_of_an_external_death_is_tolerated(
         workspace_id="ws-e",
         kernel=Path("/k"),
         rootfs=Path("/r"),
-        mounts=(MountSpec(share="proj", guest="/mnt/proj"),),
+        mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
     )
     await driver._start_fs_daemons(spec, vm_dir)
     await driver._stop_fs_daemons("ws-e")
@@ -1092,26 +1043,6 @@ async def test_untracked_sweep_tolerates_garbage_pidfiles(
         pytest.fail("the serving daemon survived its pidfile kill")
 
 
-def test_drift_issue_passes_a_pinned_unchanged_path(tmp_path):
-    """The no-baseline and unchanged-path shapes attach: a share
-    that did not exist at load (resolved None) and one whose
-    current resolution equals the load-time pin both clear the
-    drift check."""
-    from msks.server.api.rows import drift_issue
-
-    share = tmp_path / "proj"
-    share.mkdir()
-    mount = MountSpec(share="proj", guest="/mnt/proj")
-    assert drift_issue(mount, MountShare("proj", str(share))) is None
-    assert (
-        drift_issue(
-            mount,
-            MountShare("proj", str(share), resolved=str(share)),
-        )
-        is None
-    )
-
-
 async def test_stop_skips_an_already_exited_daemon(tmp_path: Path) -> None:
     """A tracked daemon that exited on its own between the
     registry and the teardown: the TERM pass finds a returncode
@@ -1121,9 +1052,7 @@ async def test_stop_skips_an_already_exited_daemon(tmp_path: Path) -> None:
     vm_dir = tmp_path / "vms" / "ws-x"
     vm_dir.mkdir(parents=True)
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
-    settings.mounts = MountSettings(
-        shares=(MountShare(name="proj", path=str(share_dir)),)
-    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
 
     class ExitedProc(FakeProc):
@@ -1142,62 +1071,30 @@ async def test_stop_skips_an_already_exited_daemon(tmp_path: Path) -> None:
         workspace_id="ws-x",
         kernel=Path("/k"),
         rootfs=Path("/r"),
-        mounts=(MountSpec(share="proj", guest="/mnt/proj"),),
+        mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
     )
     await driver._start_fs_daemons(spec, vm_dir)
     await driver._stop_fs_daemons("ws-x")
 
 
-async def test_share_name_length_is_capped_at_the_tag_limit() -> None:
-    """virtiofsd refuses a tag longer than 36 bytes at exec; the
-    name rule refuses at settings load instead — a 37-byte name
-    never reaches a dying daemon."""
-    from msks.settings import mount_shares_from
-
-    assert safe_share_name("a" * 36)
-    assert not safe_share_name("a" * 37)
-    with pytest.raises(ValueError, match="36 bytes"):
-        mount_shares_from(
-            {
-                "MSKSD_MOUNT_SHARES": json.dumps(
-                    [{"name": "a" * 37, "path": "/srv"}]
-                )
-            }
-        )
-    assert not safe_share_name("café")
-
-
 async def test_readonly_composes_from_both_sides(tmp_path: Path) -> None:
-    """--readonly arrives when the mount asked ro, when the
-    operator narrowed the share, and when both — and only then: a
-    plain rw mount on a writable share spawns writable. The
-    composition is pinned on the real arg vectors. The state dir
+    """--readonly arrives exactly when the mount asked ro (#685:
+    the mode is the mount's alone — there is no operator share to
+    narrow it). Pinned on the real arg vectors. The state dir
     sits under a shallow mkdtemp for the same AF_UNIX-length
     reason as the login-user spawn test above."""
     plain = tmp_path / "plain"
     plain.mkdir()
-    narrowed = tmp_path / "narrowed"
-    narrowed.mkdir()
     state_dir = Path(tempfile.mkdtemp(prefix="msks-test-", dir="/tmp"))
     vm_dir = state_dir / "vms" / "ws-ro"
     vm_dir.mkdir(parents=True)
     settings = Settings(vmm=VmmSettings(state_dir=state_dir))
-    settings.mounts = MountSettings(
-        shares=(
-            MountShare(name="plain", path=str(plain)),
-            MountShare(name="narrowed", path=str(narrowed), writable=False),
-        )
-    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, spawned = driver_over(settings)
-    # One spec per combination (the row rules refuse duplicate
-    # guests); the transient narrowing shape (valid at set, denied
-    # at the route after a reload) rides the fourth combination.
     try:
         for mount, expect_ro in (
-            (MountSpec(share="plain", guest="/mnt/p"), False),
-            (MountSpec(share="plain", guest="/mnt/p", mode="ro"), True),
-            (MountSpec(share="narrowed", guest="/mnt/n", mode="ro"), True),
-            (MountSpec(share="narrowed", guest="/mnt/n"), True),
+            (MountSpec(host=str(plain), guest="/mnt/p"), False),
+            (MountSpec(host=str(plain), guest="/mnt/p", mode="ro"), True),
         ):
             spawned.clear()
             spec = VmSpec(
@@ -1214,39 +1111,6 @@ async def test_readonly_composes_from_both_sides(tmp_path: Path) -> None:
         shutil.rmtree(state_dir, ignore_errors=True)
 
 
-async def test_spawn_refuses_a_path_drifted_past_the_pin(
-    tmp_path: Path,
-) -> None:
-    """The drift guard holds at spawn too: a share retargeted
-    between the route's derivation and the daemon spawn never
-    attaches the new target — the last line refuses by name, not
-    only the filter."""
-    from msks.microvm.errors import MicrovmError
-
-    real = tmp_path / "real"
-    real.mkdir()
-    other = tmp_path / "other"
-    other.mkdir()
-    link = tmp_path / "link"
-    link.symlink_to(real)
-    share = MountShare(name="moved", path=str(link), resolved=str(real))
-    vm_dir = tmp_path / "vms" / "ws-d"
-    vm_dir.mkdir(parents=True)
-    settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
-    settings.mounts = MountSettings(shares=(share,))
-    driver, _spawned = driver_over(settings)
-    link.unlink()
-    link.symlink_to(other)  # past the pin, before the spawn
-    spec = VmSpec(
-        workspace_id="ws-d",
-        kernel=Path("/k"),
-        rootfs=Path("/r"),
-        mounts=(MountSpec(share="moved", guest="/mnt/m"),),
-    )
-    with pytest.raises(MicrovmError, match="drifted since load"):
-        await driver._start_fs_daemons(spec, vm_dir)
-
-
 @pytest.mark.skipif(
     sys.platform == "darwin",
     reason="darwin's asyncio event loop never returns from its "
@@ -1254,6 +1118,7 @@ async def test_spawn_refuses_a_path_drifted_past_the_pin(
     "3.14 stdlib behavior, reproducible with a five-line "
     "script); the escalation is pinned on the Linux CI host",
 )
+
 async def test_untracked_sweep_escalates_to_kill(tmp_path: Path) -> None:
     """A TERM-immortal daemon cannot wedge the workspace behind
     its own live socket: the sweep waits out the grace, KILLs,
@@ -1354,9 +1219,7 @@ async def test_a_daemon_dying_at_exec_names_its_log(tmp_path: Path) -> None:
     vm_dir = tmp_path / "vms" / "ws-dead"
     vm_dir.mkdir(parents=True)
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
-    settings.mounts = MountSettings(
-        shares=(MountShare(name="proj", path=str(share_dir)),)
-    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
 
     class DiedAtExec(FakeProc):
@@ -1372,7 +1235,7 @@ async def test_a_daemon_dying_at_exec_names_its_log(tmp_path: Path) -> None:
         workspace_id="ws-dead",
         kernel=Path("/k"),
         rootfs=Path("/r"),
-        mounts=(MountSpec(share="proj", guest="/mnt/proj"),),
+        mounts=(MountSpec(host=str(share_dir), guest="/mnt/proj"),),
     )
     with pytest.raises(MicrovmError, match="exited at start"):
         await driver._start_fs_daemons(spec, vm_dir)
@@ -1391,9 +1254,7 @@ async def test_a_silent_daemon_refuses_past_the_grace(tmp_path: Path) -> None:
     vm_dir = tmp_path / "vms" / "ws-silent"
     vm_dir.mkdir(parents=True)
     settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
-    settings.mounts = MountSettings(
-        shares=(MountShare(name="proj", path=str(share_dir)),)
-    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     driver, _spawned = driver_over(settings)
     refused: list[FakeProc] = []
 
@@ -1412,7 +1273,9 @@ async def test_a_silent_daemon_refuses_past_the_grace(tmp_path: Path) -> None:
                     workspace_id="ws-silent",
                     kernel=Path("/k"),
                     rootfs=Path("/r"),
-                    mounts=(MountSpec(share="proj", guest="/mnt/proj"),),
+                    mounts=(
+                        MountSpec(host=str(share_dir), guest="/mnt/proj"),
+                    ),
                 ),
                 vm_dir,
             )

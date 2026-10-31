@@ -366,18 +366,17 @@ def cmd_resize(
 
 
 def mount_spec(spec: str, flag: str) -> dict:
-    """One ``HOST-OR-SHARE:GUEST_PATH[:MODE]`` as the wire's mount
-    entry: the host form (#667, #673) when the first field names a
-    path — absolute or ``~``-shaped, expanded against the
-    client's home — the named form (#620) otherwise. The guest
-    path is absolute in both; the mode names ``ro`` or ``rw``
-    (``rw`` is the daemon's default). The local refusals are the
-    shape ones — the daemon owns the rules and names them in its
-    400 (which gate refused a host path, and the remedy)."""
+    """One ``HOST_PATH:GUEST_PATH[:MODE]`` as the wire's mount
+    entry: the host path (#667, #673) is absolute or
+    ``~``-shaped, expanded against the client's home; the guest
+    path is absolute; the mode names ``ro`` or ``rw`` (``rw`` is
+    the daemon's default). The local refusals are the shape ones
+    — the daemon owns the gates and names them in its 400 (which
+    gate refused a host path, and the remedy)."""
     fields = spec.split(":")
     if len(fields) not in (2, 3):
         raise SystemExit(
-            f"msks: {flag} takes HOST-OR-SHARE:GUEST_PATH[:MODE], got {spec!r}"
+            f"msks: {flag} takes HOST_PATH:GUEST_PATH[:MODE], got {spec!r}"
         )
     served, guest = fields[0], fields[1]
     if not guest.startswith("/"):
@@ -394,20 +393,17 @@ def mount_spec(spec: str, flag: str) -> dict:
 
 
 def mount_entry_for(served: str, flag: str) -> dict:
-    """The naming half of one mount spec: a path-shaped first
-    field is the host form — ``~`` and ``~user`` expand against
-    the client's home, then the path must be absolute (the daemon
-    refuses ``~`` itself; the expansion is the client's job) —
-    anything else is the named form's share name. The create's
-    ``--mount`` flag keeps its meaning (a configured share): a
-    path-shaped spec there is one local line pointing at
-    ``--share``; the runtime ``mount`` command takes both."""
+    """The naming half of one mount spec: a host path — ``~`` and
+    ``~user`` expand against the client's home, then the path
+    must be absolute (the daemon refuses ``~`` itself; the
+    expansion is the client's job). A bare name is the retired
+    named form (#620; removed by #685) — one local line points
+    at the host-path grammar that replaced it."""
     if not served.startswith(("/", "~")):
-        return {"share": served}
-    if flag == "--mount":
         raise SystemExit(
-            f"msks: --mount takes a configured share's name; pass "
-            f"--share for the host path {served!r}"
+            f"msks: {flag} takes a host path; shares by name were "
+            f"removed — pass {served!r} as HOST_PATH:GUEST_PATH "
+            "(see 'msks create --share')"
         )
     host = os.path.expanduser(served)
     if not host.startswith("/"):
@@ -485,32 +481,30 @@ def mounts_after(row: dict, action: str, spec: str, workspace_id: str) -> list:
     mounts = list(row.get("mounts") or [])
     if action == "add":
         return [*mounts, mount_spec(spec, "mount")]
-    return without_share(mounts, spec, workspace_id)
+    return without_mount(mounts, spec, workspace_id)
 
 
 def umount_target(served: str) -> str:
-    """What the umount argument names: a path-shaped argument is
-    the host spelling the mount side would send (`~` expanded,
-    canonicalized the same way); a bare name is the share's name,
-    untouched."""
+    """What the umount argument names: the host spelling the
+    mount side would send (`~` expanded, canonicalized the same
+    way). A bare name is the retired named form (#685) — one
+    local line points at the host-path grammar."""
     if not served.startswith(("/", "~")):
-        return served
+        raise SystemExit(
+            "msks: umount takes a host path; shares by name were "
+            "removed — pass HOST_PATH (~ expands)"
+        )
     return canonical_host_spelling(
         os.path.expanduser(served), served, "umount"
     )
 
 
-def without_share(mounts: list, served: str, workspace_id: str) -> list:
-    """The list minus what the argument names — a share name or a
-    host path, matched on the key that carries it (``~`` expands
-    the way the mount spec did). What the row does not mount is
-    one local line."""
+def without_mount(mounts: list, served: str, workspace_id: str) -> list:
+    """The list minus what the argument names — the host path
+    (``~`` expands the way the mount spec did). What the row does
+    not mount is one local line."""
     wanted = umount_target(served)
-    kept = [
-        m
-        for m in mounts
-        if m.get("share") != wanted and m.get("host") != wanted
-    ]
+    kept = [m for m in mounts if m.get("host") != wanted]
     if len(kept) == len(mounts):
         raise SystemExit(
             f"msks: workspace {workspace_id} mounts no {served!r}"
@@ -552,15 +546,14 @@ def issue_notes(row: dict) -> str:
 
 
 def mount_identity(entry: dict) -> str:
-    """What a mount row or issue frame serves, by its form: the
-    host path for a #672 host mount, the share name for a named
-    one — the one key either frame always carries."""
-    return entry.get("host") or entry.get("share") or "?"
+    """What a mount row or issue frame serves: the host path —
+    the one key every frame carries."""
+    return entry.get("host") or "?"
 
 
 def spec_text(mount: dict) -> str:
-    """One mount's ``HOST-OR-SHARE:GUEST:MODE`` spelling — the
-    mode always shown, the wire's default named per form."""
+    """One mount's ``HOST:GUEST:MODE`` spelling — the mode always
+    shown, the wire's default named."""
     mode = mount.get("mode") or "rw"
     return f"{mount_identity(mount)}:{mount['guest']}:{mode}"
 
@@ -630,14 +623,12 @@ def create_body(args: CreateFlags) -> dict:
 
 
 def mount_fields(args: CreateFlags) -> dict:
-    """The create's --mount (named, #620) and --share (host form,
-    #667) specs as the body's mounts list: shape refusals are one
-    local line; the daemon owns the share, gate, and rule checks
-    — a refused host path names its gate and remedy in the 400."""
-    entries = []
-    for flag, specs in (("--mount", args.mount), ("--share", args.share)):
-        for spec in specs or []:
-            entries.append(mount_spec(spec, flag))
+    """The create's --share (#667, #673) specs as the body's
+    mounts list: shape refusals are one local line; the daemon
+    owns the gate and rule checks — a refused host path names its
+    gate and remedy in the 400. The --mount flag (the #620 named
+    form) is removed (#685): host paths are the one grammar."""
+    entries = [mount_spec(spec, "--share") for spec in args.share or []]
     if not entries:
         return {}
     return {"mounts": entries}
@@ -689,7 +680,6 @@ class CreateFlags:
     user_data: str | None = None
     user: str | None = None
     pubkey: str | None = None
-    mount: list[str] | None = None
     share: list[str] | None = None
     start: bool = False
 

@@ -2449,9 +2449,9 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     # The mounts seam (#620, part #624): the editor's save POSTs
     # the whole list — the same route ``msks mount`` speaks.
     reply = await data.set_mounts(
-        "ws1", [{"share": "proj", "guest": "/mnt/proj"}]
+        "ws1", [{"host": "/srv/proj", "guest": "/mnt/proj"}]
     )
-    assert reply["mounts"] == [{"share": "proj", "guest": "/mnt/proj"}]
+    assert reply["mounts"] == [{"host": "/srv/proj", "guest": "/mnt/proj"}]
     assert (
         "POST",
         "/api/v1/workspaces/ws1/mounts",
@@ -5633,16 +5633,19 @@ def mounted_row(status: str = "stopped") -> dict:
     return {
         **row(status=status),
         "mounts": [
-            {"share": "proj", "guest": "/mnt/proj", "mode": "rw"},
-            {"share": "gone", "guest": "/mnt/gone", "mode": "rw"},
+            {"host": "/srv/proj", "guest": "/mnt/proj", "mode": "rw"},
+            {"host": "/srv/gone", "guest": "/mnt/gone", "mode": "rw"},
         ],
         "mount_issues": [
             {
                 "kind": "skipped",
-                "share": "gone",
+                "host": "/srv/gone",
                 "guest": "/mnt/gone",
                 "mode": "rw",
-                "detail": "share 'gone' is not in the daemon's config",
+                "detail": (
+                    "host path '/srv/gone' is outside the allowed "
+                    "host-share roots"
+                ),
             }
         ],
     }
@@ -5673,10 +5676,13 @@ def test_the_mounts_editor_boundary_branches() -> None:
     # mounts do not carry reads no mount, and an edited spec with
     # no focused row changes nothing.
     screen = MountsScreen(mounted_row(), FakeData([]))
-    assert screen.entry("a:/mnt/a") == {
-        "share": "a",
+    assert screen.entry("/srv/a:/mnt/a") == {
+        "host": "/srv/a",
         "guest": "/mnt/a",
     }
+    # A bare name — the retired #620 form (#685) — is not
+    # enterable either: the composed editor's test pins that
+    # refusal (this un-composed screen cannot paint the note).
 
 
 def test_the_mounts_line_names_each_state() -> None:
@@ -5685,8 +5691,8 @@ def test_the_mounts_line_names_each_state() -> None:
     from msks.client.tui.mounts import mounts_line
 
     line = mounts_line(mounted_row())
-    assert "proj:/mnt/proj:rw" in line
-    assert "gone:/mnt/gone:rw (skipped)" in line
+    assert "/srv/proj:/mnt/proj:rw" in line
+    assert "/srv/gone:/mnt/gone:rw (skipped)" in line
     assert "(next start)" in line
     assert mounts_line(row()) == ""
 
@@ -5729,7 +5735,7 @@ async def test_the_mounts_editor_adds_edits_and_removes(
         await pilot.press("a")
         await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
         editor = app.screen
-        editor.query_one("#mount-spec", Input).value = "refs:/srv/refs:ro"
+        editor.query_one("#mount-spec", Input).value = "/srv/refs:/srv/refs:ro"
         await pilot.press("enter")
         await wait_for(
             lambda: (
@@ -5737,9 +5743,21 @@ async def test_the_mounts_editor_adds_edits_and_removes(
                     "set-mounts",
                     WS,
                     [
-                        {"share": "proj", "guest": "/mnt/proj", "mode": "rw"},
-                        {"share": "gone", "guest": "/mnt/gone", "mode": "rw"},
-                        {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+                        {
+                            "host": "/srv/proj",
+                            "guest": "/mnt/proj",
+                            "mode": "rw",
+                        },
+                        {
+                            "host": "/srv/gone",
+                            "guest": "/mnt/gone",
+                            "mode": "rw",
+                        },
+                        {
+                            "host": "/srv/refs",
+                            "guest": "/srv/refs",
+                            "mode": "ro",
+                        },
                     ],
                 )
                 in data.calls
@@ -5760,8 +5778,16 @@ async def test_the_mounts_editor_adds_edits_and_removes(
                     "set-mounts",
                     WS,
                     [
-                        {"share": "proj", "guest": "/mnt/proj", "mode": "rw"},
-                        {"share": "refs", "guest": "/srv/refs", "mode": "ro"},
+                        {
+                            "host": "/srv/proj",
+                            "guest": "/mnt/proj",
+                            "mode": "rw",
+                        },
+                        {
+                            "host": "/srv/refs",
+                            "guest": "/srv/refs",
+                            "mode": "ro",
+                        },
                     ],
                 )
                 in data.calls
@@ -5769,7 +5795,7 @@ async def test_the_mounts_editor_adds_edits_and_removes(
         )
         # Close: the page's line carries the reply's row.
         await press_until(pilot, "escape", lambda: on_page(app))
-        assert "refs:/srv/refs:ro" in mounts_text(app)
+        assert "/srv/refs:/srv/refs:ro" in mounts_text(app)
         assert "gone" not in mounts_text(app)
 
 
@@ -5781,7 +5807,9 @@ async def test_the_mounts_editor_names_a_refusal(monkeypatch) -> None:
 
     scripted_link(monkeypatch, [rules_frame()])
     data = FakeData([mounted_row()])
-    data.mounts_refusal = "msks: 400: share 'x' is configured read-only"
+    data.mounts_refusal = (
+        "msks: 400: host path '/srv/x' is outside the allowed host-share roots"
+    )
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await open_page(pilot, app)
@@ -5793,11 +5821,11 @@ async def test_the_mounts_editor_names_a_refusal(monkeypatch) -> None:
         await pilot.press("a")
         await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
         editor = app.screen
-        editor.query_one("#mount-spec", Input).value = "x:/mnt/x"
+        editor.query_one("#mount-spec", Input).value = "/srv/x:/mnt/x"
         await pilot.press("enter")
         await wait_for(
             lambda: (
-                "configured read-only"
+                "outside the allowed"
                 in str(app.screen.query_one("#mount-note", Static).content)
             )
         )
@@ -5813,9 +5841,9 @@ async def test_the_mounts_editor_names_a_refusal(monkeypatch) -> None:
         # remove dropped — the refused mount rides nothing.
         posted = calls[-1][2]
         assert len(posted) == 1
-        assert posted[0]["share"] in ("proj", "gone")
+        assert posted[0]["host"] in ("/srv/proj", "/srv/gone")
         await press_until(pilot, "escape", lambda: on_page(app))
-        assert "x:" not in mounts_text(app)
+        assert "/srv/x:" not in mounts_text(app)
 
 
 async def test_a_mounts_dialog_cancel_decides_nothing(monkeypatch) -> None:
@@ -5861,9 +5889,9 @@ async def test_the_mounts_editor_edits_in_place(monkeypatch) -> None:
         await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
         editor = app.screen
         assert editor.query_one("#mount-spec", Input).value == (
-            "proj:/mnt/proj:rw"
+            "/srv/proj:/mnt/proj:rw"
         )
-        editor.query_one("#mount-spec", Input).value = "proj:/data:ro"
+        editor.query_one("#mount-spec", Input).value = "/srv/proj:/data:ro"
         await pilot.press("enter")
         await wait_for(
             lambda: (
@@ -5871,8 +5899,12 @@ async def test_the_mounts_editor_edits_in_place(monkeypatch) -> None:
                     "set-mounts",
                     WS,
                     [
-                        {"share": "proj", "guest": "/data", "mode": "ro"},
-                        {"share": "gone", "guest": "/mnt/gone", "mode": "rw"},
+                        {"host": "/srv/proj", "guest": "/data", "mode": "ro"},
+                        {
+                            "host": "/srv/gone",
+                            "guest": "/mnt/gone",
+                            "mode": "rw",
+                        },
                     ],
                 )
                 in data.calls
@@ -5912,7 +5944,7 @@ async def test_the_mounts_editor_edit_cancel_and_refusal(
         await pilot.press("enter")
         await pilot.pause()
         assert data.calls == calls_before
-        assert "SHARE:GUEST_PATH" in str(
+        assert "HOST_PATH:GUEST_PATH" in str(
             app.screen.query_one("#mount-note", Static).content
         )
 
@@ -5922,7 +5954,7 @@ async def test_the_mounts_editor_refuses_a_bad_spec_locally(
 ) -> None:
     """A spec line the CLI's shape rules refuse names itself on
     the note line and posts nothing — the daemon owns only the
-    share and rule checks."""
+    gate and rule checks."""
     from msks.client.tui.mounts import MountsScreen
 
     scripted_link(monkeypatch, [rules_frame()])
@@ -5943,7 +5975,19 @@ async def test_the_mounts_editor_refuses_a_bad_spec_locally(
         await pilot.press("enter")
         await pilot.pause()
         assert data.calls == calls_before
-        assert "SHARE:GUEST_PATH" in str(
+        assert "HOST_PATH:GUEST_PATH" in str(
+            app.screen.query_one("#mount-note", Static).content
+        )
+        # A bare name — the retired #620 named form (#685) — is
+        # not enterable: the refusal names the host-path grammar.
+        await pilot.press("a")
+        await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
+        editor = app.screen
+        editor.query_one("#mount-spec", Input).value = "bare:/mnt/b"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert data.calls == calls_before
+        assert "takes a host path" in str(
             app.screen.query_one("#mount-note", Static).content
         )
 
@@ -6042,7 +6086,6 @@ async def test_the_mounts_editor_deletes_through_the_real_api(
     from msks.server.api import build_api
     from msks.settings import (
         MountSettings,
-        MountShare,
         NetSettings,
         ServerSettings,
         Settings,
@@ -6061,9 +6104,7 @@ async def test_the_mounts_editor_deletes_through_the_real_api(
             event_poll_s=10.0,
         ),
     )
-    settings.mounts = MountSettings(
-        shares=(MountShare(name="projects", path=str(share)),)
-    )
+    settings.mounts = MountSettings(host_roots=(str(tmp_path),))
     api_app = build_app(settings)
     api_app.state.microvm = StubMicrovm()
     api = build_api(api_app)
@@ -6078,7 +6119,7 @@ async def test_the_mounts_editor_deletes_through_the_real_api(
                     "id": "ws-631",
                     "kernel": "/k",
                     "rootfs": "/r",
-                    "mounts": [{"share": "projects", "guest": "/mnt/p"}],
+                    "mounts": [{"host": str(share), "guest": "/mnt/p"}],
                 },
                 headers={"Authorization": f"Bearer {TOKEN}"},
             )
@@ -6102,6 +6143,6 @@ async def test_the_mounts_editor_deletes_through_the_real_api(
                 )
             )
             await press_until(pilot, "escape", lambda: on_page(tui))
-            assert "projects" not in mounts_text(tui)
+            assert str(share) not in mounts_text(tui)
         fresh = await TuiData(transport=transport).workspaces()
         assert fresh[0]["mounts"] == []

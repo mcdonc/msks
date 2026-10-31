@@ -188,16 +188,17 @@ the file itself carries them all at one level.
 
 ### Host share mounts
 
-The named host trees a workspace may mount into its guest ([mounts
-chapter](mounts.md) for the behavior). Each entry carries `name`
-and `path`, and two bounds: `writable` (default `true`) and
-`multi` (default `true`).
+Host paths are the one share surface ([mounts
+chapter](mounts.md) for the behavior): a workspace names a host
+directory through the daemon's two gates, and this table is the
+second one's config. The named-share list (`mount_shares`) was
+removed — a config that still names the key fails at load with
+the removal message pointing at these keys.
 
 | Key                | Environment variable     | Type   | Default     | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------------ | ------------------------ | ------ | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mount_shares`     | `MSKSD_MOUNT_SHARES`     | list   | _(unset)_   | The shares: entries of `name`, `path`, `writable` (default `true` — a listed share serves read-write), and `multi` (default `true` — a share attaches read-write to any number of workspaces; `false` makes read-write attaches exclusive). The environment form is a JSON array string.                                                                                                                                                                   |
 | `mount_host_mode`  | `MSKSD_MOUNT_HOST_MODE`  | text   | `identity`  | How a host-path mount's path reaches the daemon's filesystem: `identity` — the daemon runs on bare Linux and the path is its own; `prefix` — the daemon runs in its own VM (the macOS host), and share roots mount under the reserved `/mnt/msks`, so the path composes onto that prefix (the WSL `/mnt/c` shape).                                                                                                                                         |
-| `mount_host_roots` | `MSKSD_MOUNT_HOST_ROOTS` | list   | _(unset)_   | The allowed host-share roots, as host paths (translated by `mount_host_mode` at gate time): a host-path mount must resolve under one of them. Unset allows nothing — the host-path surface stays off until the operator lists one. Refusals name this key. The environment form is a JSON array string.                                                                                                                                                    |
+| `mount_host_roots` | `MSKSD_MOUNT_HOST_ROOTS` | list   | _(unset)_   | The allowed host-share roots, as host paths (translated by `mount_host_mode` at gate time): a host-path mount must resolve under one of them. Unset allows nothing — the host-share surface stays off until the operator lists one. Refusals name this key. The environment form is a JSON array string.                                                                                                                                                   |
 | `virtiofsd`        | `MSKSD_VIRTIOFSD`        | string | `virtiofsd` | Path to the virtiofsd binary each attached share spawns. A value with a slash is used exactly as named; a bare name resolves on PATH first, then the locations the distro packages install the binary at (`/usr/libexec/virtiofsd`, `/usr/lib/qemu/virtiofsd` — Debian's and Ubuntu's `virtiofsd` packages install it off PATH). The resolution runs at settings load and again on SIGHUP: a binary installed after the daemon started is one reload away. |
 
 ### The placeholder secret store
@@ -253,14 +254,12 @@ losing entries, `llm_port`, `egress_subnet`) re-applies the
 table at the next workspace start, masquerade included, from
 the live `egress_uplink`.
 
-`mount_shares` reads live after a reload: each workspace's next
-start derives its attachments from the shares the reload left —
-a share the reload removed reads as a skip at start (the
-[mounts chapter](mounts.md) names the skip behavior), and a
-share the reload narrowed to read-only refuses the workspace's
-`rw` mount the same way. Running VMs keep the devices they
-attached. `virtiofsd` reads live too: the next start spawns the
-binary the reload names.
+`mount_host_roots` reads live after a reload: each workspace's
+next start derives its attachments from the roots the reload
+left — a root the reload removed reads as a skip at start (the
+[mounts chapter](mounts.md) names the skip behavior). Running
+VMs keep the devices they attached. `virtiofsd` reads live too:
+the next start spawns the binary the reload names.
 
 A config that fails to load or validate is refused: the daemon
 reports the error on stderr and keeps the previous settings. A

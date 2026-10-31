@@ -430,23 +430,13 @@ async def kill_proc(proc) -> None:
     await proc.wait()
 
 
-def spawn_share_for(mount, shares: dict):
-    """The config share a mount's spawn looks up, or None for the
-    host form (#672) — which carries no config share: its shared
-    directory comes from the #667 gates, its writability from the
-    mount's mode alone (there is no operator share to narrow
-    it)."""
-    if mount.host is not None:
-        return None
-    return shares.get(mount.share)
-
-
 def host_mount_facts(mount, mounts) -> tuple[str, bool]:
-    """One host-form mount's spawn facts (#672): the shared
-    directory through the #667 gates re-read at spawn (the flip
-    that lands between the route's derivation and this spawn
-    refuses here, naming its gate), and writability from the
-    mount's mode alone."""
+    """One mount's spawn facts (#672): the shared directory
+    through the #667 gates re-read at spawn (the flip that lands
+    between the route's derivation and this spawn refuses here,
+    naming its gate), and writability from the mount's mode
+    alone — there is no operator share to narrow it (#685
+    removed the named form)."""
     try:
         resolved = check_host_share(
             mounts.host_mode, mounts.host_roots, mount.host
@@ -454,37 +444,6 @@ def host_mount_facts(mount, mounts) -> tuple[str, bool]:
     except ValueError as exc:
         raise MicrovmError(str(exc)) from None
     return resolved, mount.mode != MODE_RW
-
-
-def named_mount_facts(mount, share) -> tuple[str, bool]:
-    """One named-form mount's spawn facts (#620): the share
-    re-resolved against its load-time pin, and writability
-    composed from the share's config and the mount's mode."""
-    if share is None:
-        raise MicrovmError(f"share {mount.share!r} is not in the config")
-    resolved = resolve_fs_share(mount, share)
-    return resolved, not share.writable or mount.mode != MODE_RW
-
-
-def resolve_fs_share(mount, share) -> str:
-    """The share's host path resolved now, refusing by name when
-    it is missing or when the load-time pin disagrees — the
-    symlink-walk guard holds at spawn too, not only at the
-    route's derivation: a retarget between the two never attaches
-    the new target."""
-    resolved = os.path.realpath(share.path)
-    if not os.path.isdir(resolved):
-        raise MicrovmError(
-            f"share {mount.share!r} path is missing or not a "
-            f"directory: {share.path}"
-        )
-    if share.resolved is not None and resolved != share.resolved:
-        raise MicrovmError(
-            f"share {mount.share!r} path drifted since load: "
-            f"{share.resolved} became {resolved}; widen the "
-            "config's path or reload it"
-        )
-    return resolved
 
 
 async def sweep_fs_pidfile(vm_dir: Path, pidfile: Path) -> None:
@@ -882,7 +841,6 @@ class LocalCloudHypervisor(MicrovmDriver):
         settings = self._settings()
         binary = settings.vmm.virtiofsd
         await self._require_virtiofsd_floor(binary)
-        shares = {s.name: s for s in settings.mounts.shares}
         uid, gid = os.getuid(), os.getgid()
         guest_uid, guest_gid = guest_user_ids(spec.login_user)
         sandbox = sandbox_mode(uid)
@@ -890,13 +848,11 @@ class LocalCloudHypervisor(MicrovmDriver):
         sockets: dict[str, Path] = {}
         try:
             for mount in spec.mounts:
-                share = spawn_share_for(mount, shares)
                 tag = mount_tag(mount)
                 proc = await self._spawn_one_fs(
                     binary,
                     mount,
                     tag,
-                    share,
                     vm_dir,
                     uid,
                     gid,
@@ -969,7 +925,6 @@ class LocalCloudHypervisor(MicrovmDriver):
         binary: str,
         mount,
         tag: str,
-        share,
         vm_dir: Path,
         uid: int,
         gid: int,
@@ -977,19 +932,13 @@ class LocalCloudHypervisor(MicrovmDriver):
         guest_gid: int,
         sandbox: str,
     ):
-        """One mount's daemon: the shared directory resolved —
-        the named form's share against its load-time pin (the
-        last line of the drift guard), the host form's through
-        the #667 gates re-read at spawn (the flip that lands
-        between the route's derivation and this spawn) — the
-        socket swept of residue, and the spawn carrying the
-        pinned flag set, held until it serves its socket, then
-        returned for the registry."""
-        resolved, readonly = (
-            host_mount_facts(mount, self._settings().mounts)
-            if mount.host is not None
-            else named_mount_facts(mount, share)
-        )
+        """One mount's daemon: the shared directory through the
+        #667 gates re-read at spawn (the flip that lands between
+        the route's derivation and this spawn) — the socket swept
+        of residue, and the spawn carrying the pinned flag set,
+        held until it serves its socket, then returned for the
+        registry."""
+        resolved, readonly = host_mount_facts(mount, self._settings().mounts)
         socket = self._fs_socket_for(vm_dir, tag)
         log_path = vm_dir / f"fs-{tag}.log"
         proc = await self._spawn_fs(

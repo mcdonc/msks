@@ -24,7 +24,6 @@ from msks.config import (
     resolve_config_path,
 )
 from msks.settings import MountSettings, Settings
-from msks.spec.mounts import MountShare
 
 
 def write_config(tmp_path, doc: str) -> str:
@@ -493,12 +492,6 @@ KEY_CASES = [
         "/usr/local/bin/virtiofsd",
         "vmm.virtiofsd",
         "/usr/local/bin/virtiofsd",
-    ),
-    (
-        "mount_shares",
-        [{"name": "s", "path": "/srv/s"}],
-        "mounts",
-        MountSettings(shares=(MountShare(name="s", path="/srv/s"),)),
     ),
     (
         "mount_host_mode",

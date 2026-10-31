@@ -314,11 +314,11 @@ def router(app) -> APIRouter:
         attached; the next start attaches this set (and the seed
         it bakes carries these units, #623).
 
-        The daemon validates the list against the config's shares
-        (a config that lists none refuses every mount; ``rw`` on a
-        read-only share is refused with the mismatch named) and the
-        row rules (canonical absolute paths, mutual disjointness,
-        a share once). The reply is the refreshed row with its
+        The daemon validates the list against its gates (an
+        empty allowed-roots config refuses every mount; a path
+        outside them names the config's remedy) and the row rules
+        (canonical absolute paths, mutual disjointness, a host
+        path once). The reply is the refreshed row with its
         derived mount state."""
         row = await workspace_or_404(app, workspace_id)
         try:
@@ -387,12 +387,10 @@ def router(app) -> APIRouter:
             try:
                 await app.state.model.set_status(workspace_id, "starting")
                 # The mount skips publish before the launch (#620,
-                # part #621): a start proceeds without a mount whose
-                # share left the config, whose mode a reload denied,
-                # whose exclusive rw is held elsewhere, or whose
-                # path drifted since load — every skip is state, an
-                # event now, derived again on every later read. The
-                # seam (#622) attaches exactly the remainder.
+                # part #621): a start proceeds without a mount the
+                # #667 gates refuse — every skip is state, an event
+                # now, derived again on every later read. The seam
+                # (#622) attaches exactly the remainder.
                 attachable, issues = await mount_state(app, row)
                 for issue in issues:
                     await app.state.hub.publish(

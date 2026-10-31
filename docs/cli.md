@@ -389,7 +389,7 @@ below generate theirs):
 | `--user-data` | `user_data`             | First-boot provisioning payload file; `-` reads stdin                              |
 | `--pubkey`    | `ssh_pubkey` (verbatim) | Use a public key you already own as this one workspace's identity; `-` reads stdin |
 | `--user`      | `user`                  | The workspace's login user; default: your username                                 |
-| `--mount`     | `mounts`                | A host share mounted into the guest: `SHARE:GUEST_PATH:MODE`, repeatable           |
+| `--share`     | `mounts`                | A host directory mounted into the guest: `HOST_PATH:GUEST_PATH:MODE`, repeatable   |
 
 Only the flags you pass are sent — unset flags let the daemon apply
 its own defaults. An `--image` reference resolves against the
@@ -397,22 +397,22 @@ daemon's image catalog (`docs/images.md`); explicit `--kernel` and
 `--rootfs` bypass it. Size ranges are enforced server-side; a value
 outside them comes back as a validation error (below).
 
-`--mount` names a share the daemon's config carries, the absolute
-guest path it lands at, and a mode — `ro` or `rw`, defaulting to
-`rw` when the mode is omitted:
+`--share` names a host directory, the absolute guest path it lands
+at, and a mode — `ro` or `rw`, defaulting to `rw` when the mode is
+omitted:
 
 ```bash
-msks create ws1 --mount projects:/mnt/projects --mount refs:/srv/refs:ro
+msks create ws1 --share /srv/projects:/mnt/projects --share /srv/refs:/srv/refs:ro
 ```
 
-The share must be one the operator listed (`mount_shares`,
-[configuration](config.md#host-share-mounts)); `rw` on a share
-narrowed to read-only refuses with the mismatch named. The mounts
-apply at the workspace's next start — a `--start` create attaches
-them on its first boot. The [mounts chapter](mounts.md) holds the
-behavior: what a share is, the mode bounds, and the coherence
-between guests sharing one tree. `msks mount` and `msks umount`
-change the set later.
+The host path must sit under one of the daemon's allowed roots
+(`mount_host_roots`,
+[configuration](config.md#host-share-mounts)), resolved against
+symlink escapes. The mounts apply at the workspace's next start —
+a `--start` create attaches them on its first boot. The [mounts
+chapter](mounts.md) holds the behavior: the two gates, the mode
+bound, and the coherence between guests sharing one tree.
+`msks mount` and `msks umount` change the set later.
 
 `--user NAME` records the workspace's login user, and the
 name rides the row. The guest's first boot seeds the account:
@@ -604,11 +604,11 @@ holds for a workspace that was never booted; the row records
 
 Adds one host share to a workspace's mounts (`POST
 /api/v1/workspaces/{id-or-name}/mounts`) — the spec is the
-create's own `--mount` grammar:
+create's own `--share` grammar:
 
 ```text
-$ msks mount ws1 refs:/srv/refs:ro
-ws1 mounts projects:/mnt/projects:rw, refs:/srv/refs:ro (next start)
+$ msks mount ws1 /srv/refs:/srv/refs:ro
+ws1 mounts /srv/projects:/mnt/projects:rw, /srv/refs:/srv/refs:ro (next start)
 ```
 
 The outcome line names the resulting set and the next-start
@@ -617,25 +617,25 @@ note: setting mounts never touches a running VM, and the next
 is](mounts.md#what-a-mount-is) states the lifecycle — the seed
 each boot carries bakes the current set, so a restart after a
 change lands it and prunes the dropped mounts). The daemon
-validates the whole list against the configured shares and the
-row rules (a share appears once per workspace, guest paths are
-absolute and mutually disjoint); a refusal names itself on one
-line. A mount the daemon's derived state holds unresolved names
-itself after the set — the [mounts
+validates the whole list against its gates and the row rules (a
+host path appears once per workspace, guest paths are absolute
+and mutually disjoint); a refusal names itself on one line. A
+mount the daemon's derived state holds unresolved names itself
+after the set — the [mounts
 chapter](mounts.md#the-skip-behavior) holds every kind and its
 reason.
 
 ## `msks umount`
 
-Removes a workspace's mounts of one share — every guest path the
-share occupies:
+Removes a workspace's mounts of one host path — every guest path
+the share occupies:
 
 ```text
-$ msks umount ws1 refs
-ws1 mounts projects:/mnt/projects:rw (next start)
+$ msks umount ws1 /srv/refs
+ws1 mounts /srv/projects:/mnt/projects:rw (next start)
 ```
 
-A share the workspace does not mount is one local line. The next
+A host path the workspace does not mount is one local line. The next
 start attaches the remainder, and a workspace whose last mount
 leaves this way mounts nothing at its next boot. The [mounts
 chapter](mounts.md#what-a-mount-is) states the lifecycle.

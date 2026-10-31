@@ -1,9 +1,12 @@
-"""Host-share mount smokes (#620, part #623): the guest side.
+"""Host-share mount smokes (#620, part #623; #667): the guest
+side.
 
 The seed carries the systemd mount units for the workspace's
 current mount set; each boot bakes the set this start attached,
 and a changed set renews the seed so cloud-init re-provisions the
-units (the prune half removes the dropped mounts').
+units (the prune half removes the dropped mounts'). The mounts
+are host-path shares (#685: the one grammar), identity mode on
+the Linux smoke host.
 """
 
 import contextlib
@@ -13,7 +16,7 @@ from pathlib import Path
 
 from msks.app import build_app
 from msks.microvm import VmSpec
-from msks.settings import MountSettings, MountShare, Settings, VmmSettings
+from msks.settings import MountSettings, Settings, VmmSettings
 from msks.spec.mounts import MountSpec
 
 from test_smoke import (
@@ -29,17 +32,17 @@ from test_smoke import (
 )
 
 
-def smoke_shares(state_dir: Path) -> tuple[MountShare, ...]:
-    """Two shares under the smoke state dir, each carrying a file
-    whose content names it — the in-guest probe reads the files
-    through the mounts."""
-    shares = []
+def smoke_shares(state_dir: Path) -> tuple[Path, Path]:
+    """Two host trees under the smoke state dir, each carrying a
+    file whose content names it — the in-guest probe reads the
+    files through the mounts."""
+    trees = []
     for name in ("alpha", "beta"):
-        share = state_dir / f"share-{name}"
-        share.mkdir(parents=True)
-        (share / "who.txt").write_text(f"share-{name}\n")
-        shares.append(MountShare(name=name, path=str(share)))
-    return tuple(shares)
+        tree = state_dir / f"share-{name}"
+        tree.mkdir(parents=True)
+        (tree / "who.txt").write_text(f"share-{name}\n")
+        trees.append(tree)
+    return trees[0], trees[1]
 
 
 def spec_of(wid: str, mounts: tuple) -> VmSpec:
@@ -65,16 +68,16 @@ async def test_local_mounts_land_and_follow_the_set() -> None:
     re-provisions the units, the surviving mounts keep their
     data."""
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
-    shares = smoke_shares(state_dir)
+    alpha_tree, beta_tree = smoke_shares(state_dir)
     settings = Settings(vmm=VmmSettings(state_dir=state_dir))
-    settings.mounts = MountSettings(shares=shares)
+    settings.mounts = MountSettings(host_roots=(str(state_dir),))
     app = build_app(settings)
     microvm = app.state.microvm
     wid = f"smoke-{uuid.uuid4().hex[:8]}"
     serial_log = state_dir / "vms" / wid / "serial.log"
 
-    alpha = MountSpec(share="alpha", guest="/mnt/alpha")
-    beta = MountSpec(share="beta", guest="/srv/beta")
+    alpha = MountSpec(host=str(alpha_tree), guest="/mnt/alpha")
+    beta = MountSpec(host=str(beta_tree), guest="/srv/beta")
     try:
         # Two mounts, first boot: both land, both read their
         # share's file through the guest path.

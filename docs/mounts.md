@@ -2,74 +2,50 @@
 
 A workspace can mount host directory trees into its guest. The
 host side is the operator's decision: the daemon's config names
-the trees a guest may see, as _shares_. The guest side is the
-requester's: each workspace names a share, the absolute guest
-path it lands at, and a mode — `ro` or `rw`, defaulting to `rw`.
+the allowed roots a guest's mounts must sit under, and (on a
+VM-hosted daemon) the trees its own VM carries. The guest side is
+the requester's: each workspace names a host path, the absolute
+guest path it lands at, and a mode — `ro` or `rw`, defaulting to
+`rw`.
 
 ```bash
-# the operator names the shares (msksd.yaml; reloadable on SIGHUP)
-mount_shares:
-  - name: projects
-    path: /srv/projects
-  - name: refs
-    path: /srv/refs
-    writable: false      # read-only in every guest
-  - name: state
-    path: /srv/state
-    multi: false         # rw attaches exclusive, one workspace at a time
+# the operator allows the roots (msksd.yaml; reloadable on SIGHUP)
+mount_host_roots:
+  - /srv/projects
+  - /srv/refs
 
-# a workspace mounts them (applies at its next start)
-msks create ws1 --mount projects:/mnt/projects
-msks mount ws1 refs:/mnt/refs:ro
-msks umount ws1 refs
+# a workspace mounts host paths (applies at its next start)
+msks create ws1 --share /srv/projects:/mnt/projects
+msks mount ws1 /srv/refs:/mnt/refs:ro
+msks umount ws1 /srv/refs
 ```
 
-## What a share is
-
-The config's `mount_shares` list is the complete set of trees any
-guest can see. Listing a share is the trust decision: a listed
-share serves read-write to any number of workspaces by default,
-and the two bounds narrow that. `writable: false` serves the
-tree read-only in every guest — an `rw` mount on it is refused
-with the mismatch named, and `ro` on a writable share is a valid
-self-restriction. `multi: false` makes read-write attaches
-exclusive: one workspace holds the share at a time, and a second
-read-write attach skips with a conflict that names the holder.
-Read-only attaches are never exclusive — any number sit beside
-one read-write holder.
-
-Shares reload on `SIGHUP`: each workspace's next start reads the
-shares the reload left. A share the reload removed reads as a
-skip at start (below), and a share narrowed to read-only refuses
-the workspace's `rw` mount the same way. Running VMs keep the
-devices they attached.
+Shares by name — a `mount_shares` config list and mounts that
+referenced one — were removed: host paths are the one surface, and
+a config that still names the key fails at load with the removal
+message.
 
 ## What a mount is
 
-A workspace's mount names a share, an absolute guest path, and a
-mode. The guest path becomes a root-owned mount point inside the
+A workspace's mount names a host path, an absolute guest path, and
+a mode. The guest path becomes a root-owned mount point inside the
 VM: absolute, below the filesystem root, outside the
 pseudo-filesystems (`/proc`, `/sys`, `/dev`, `/run`) and outside
 `/home` (the home volume owns it — see the [storage
 chapter](storage.md)). Two mounts of one workspace never overlap,
-and a share appears once per workspace. Mounts follow next-start
-semantics, like resize: setting them never touches a running VM,
-and the next start attaches the current set — the seed that boot
-carries bakes exactly these mounts, so a restart after a change
-lands the new set and prunes the dropped one. Two mounts set at
-once from two terminals race last-write-wins — the surface sets
-the whole list; a workspace served by one operator at a time
-never sees the race.
+and a host path appears once per workspace. Mounts follow
+next-start semantics, like resize: setting them never touches a
+running VM, and the next start attaches the current set — the seed
+that boot carries bakes exactly these mounts, so a restart after a
+change lands the new set and prunes the dropped one. Two mounts set
+at once from two terminals race last-write-wins — the surface sets
+the whole list; a workspace served by one operator at a time never
+sees the race.
 
-## The host form
+## The two gates
 
-A mount can name a host path instead of a share —
-`{host: /Users/chrism/code, guest: /mnt/code, mode: rw}` — an
-absolute host path (the `--share` flag (#673) expands `~`
-against the client's home before the request; the daemon takes
-the path as typed), and the daemon
-translates it by its host mode and runs it through two gates,
-each refusing at set time with its remedy:
+Each host path runs two gates at set time, each refusing with its
+remedy:
 
 1. **The mount gate** (VM-hosted daemons, `mount_host_mode:
 prefix`): the path, translated under `/mnt/msks`, must sit
@@ -89,39 +65,33 @@ The spec grammar splits its fields on colons, so a host path
 containing one is inexpressible on the wire (`--share` and the
 TUI editor both refuse it, naming the field the colon broke).
 
-A host-form mount attaches read-write unless it says `ro` —
-the same default the named form carries, and for the same
-reason: the trust decision is made before the mode matters (the
-share is listed or the root allowed); a mount that wants less
-names `ro`. Read-write host mounts hold no exclusivity: any
-number of workspaces may attach the same tree, and the coherence
-contract (below) is their concurrency story.
+A mount attaches read-write unless it says `ro`: the trust
+decision is made before the mode matters (the root is allowed),
+and a mount that wants less names `ro`. Read-write mounts hold no
+exclusivity: any number of workspaces may attach the same tree,
+and the coherence contract (below) is their concurrency story.
 
 ## The skip behavior
 
 A start proceeds when a mount cannot attach, and the skip is
-state, not a log line. A share gone from the config, an `rw`
-mount a reload narrowed its share under, an `rw` attach whose
-exclusive share another workspace holds, or a share path that
-moved since the daemon loaded its config — each publishes an
-event (`mount.skipped`, `mount.denied`, `mount.conflict`,
-`mount.drift`) naming
-the mount and the reason, and the row carries the standing
-marker (`msks ls` prints `running, 1 mount skipped`) until the
-config and the row agree again. The workspace's other mounts
-attach.
+state, not a log line. A root the reload removed from the allowed
+list, a path whose root the daemon's VM no longer mounts, a
+symlink that moved out from under its allowed root, or a path
+that vanished since the set — each publishes an event
+(`mount.skipped`) naming the mount and the reason, and the row
+carries the standing marker (`msks ls` prints `running, 1 mount
+skipped`) until the config and the row agree again. The
+workspace's other mounts attach.
 
 ## Coherence between guests
 
-A `multi: true` share (the default) attaches read-write to any
-number of workspaces at once, and every attach forces
-`cache=never`: data writes become promptly coherent through the
-one host page cache, and lockfile coordination (`O_EXCL` creates
-— git, cargo) works because the host kernel serializes it. Two
-things do not coordinate between guests on the same share:
-`flock`/`fcntl` locks (each attach is its own virtiofsd), and
-`mmap` coherence. `multi: false` sidesteps the class the other
-way — the exclusive holder is the only writer.
+A host tree attaches read-write to any number of workspaces at
+once, and every attach forces `cache=never`: data writes become
+promptly coherent through the one host page cache, and lockfile
+coordination (`O_EXCL` creates — git, cargo) works because the
+host kernel serializes it. Two things do not coordinate between
+guests on the same share: `flock`/`fcntl` locks (each attach is
+its own virtiofsd), and `mmap` coherence.
 
 ## The plumbing
 
