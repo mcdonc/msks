@@ -11,7 +11,9 @@ import asyncio
 import contextlib
 import json
 import os
+import shutil
 import sys
+import tempfile
 import time
 import types
 from pathlib import Path
@@ -134,33 +136,45 @@ async def test_the_spawn_presents_as_the_login_user(
     """The spawn path derives the squash-host target from the
     spec's login user (#631): a workspace that names one mounts
     its shares as that user's guest identity, a loginless one as
-    the image's own account — pinned on the real arg vectors."""
+    the image's own account — pinned on the real arg vectors.
+
+    The state dir lives under a shallow mkdtemp in /tmp (the
+    local_driver env fixture's rule): under pytest-xdist the
+    worker's basetemp gains a popen-gwN component, and the deep
+    per-test tree pushes the socket path past AF_UNIX's limit —
+    the stale probe then answers "path too long" instead of the
+    taxonomy, and the guard refuses a spawn it should sweep.
+    """
     shared = tmp_path / "share"
     shared.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-owner"
+    state_dir = Path(tempfile.mkdtemp(prefix="msks-test-", dir="/tmp"))
+    vm_dir = state_dir / "vms" / "ws-owner"
     vm_dir.mkdir(parents=True)
-    settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    settings = Settings(vmm=VmmSettings(state_dir=state_dir))
     settings.mounts = MountSettings(
         shares=(MountShare(name="share", path=str(shared)),)
     )
     driver, spawned = driver_over(settings)
-    for login_user, expect in ((None, 1000), ("chrism", 1001)):
-        spawned.clear()
-        spec = VmSpec(
-            workspace_id="ws-owner",
-            kernel=Path("/k"),
-            rootfs=Path("/r"),
-            login_user=login_user,
-            mounts=(MountSpec(share="share", guest="/mnt/s"),),
-        )
-        await driver._start_fs_daemons(spec, vm_dir)
-        await driver._stop_fs_daemons("ws-owner")
-        args = spawned[0][1]
-        joined = " ".join(args)
-        assert f"squash-host:0:{expect}:{WHOLE_RANGE}" in joined, (
-            login_user,
-            args,
-        )
+    try:
+        for login_user, expect in ((None, 1000), ("chrism", 1001)):
+            spawned.clear()
+            spec = VmSpec(
+                workspace_id="ws-owner",
+                kernel=Path("/k"),
+                rootfs=Path("/r"),
+                login_user=login_user,
+                mounts=(MountSpec(share="share", guest="/mnt/s"),),
+            )
+            await driver._start_fs_daemons(spec, vm_dir)
+            await driver._stop_fs_daemons("ws-owner")
+            args = spawned[0][1]
+            joined = " ".join(args)
+            assert f"squash-host:0:{expect}:{WHOLE_RANGE}" in joined, (
+                login_user,
+                args,
+            )
+    finally:
+        shutil.rmtree(state_dir, ignore_errors=True)
 
 
 def test_fs_daemon_args_carry_the_contracts(tmp_path: Path) -> None:
@@ -897,9 +911,14 @@ async def test_live_socket_refuses_a_second_start(tmp_path: Path) -> None:
 
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-s"
+    # A shallow state dir (the AF_UNIX-length rule; see the
+    # login-user spawn test): the test binds a real socket at the
+    # vm dir, and under xdist the worker's deeper basetemp pushes
+    # that path past the limit — the bind itself would fail.
+    state_dir = Path(tempfile.mkdtemp(prefix="msks-test-", dir="/tmp"))
+    vm_dir = state_dir / "vms" / "ws-s"
     vm_dir.mkdir(parents=True)
-    settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    settings = Settings(vmm=VmmSettings(state_dir=state_dir))
     settings.mounts = MountSettings(
         shares=(MountShare(name="proj", path=str(share_dir)),)
     )
@@ -919,6 +938,7 @@ async def test_live_socket_refuses_a_second_start(tmp_path: Path) -> None:
             await driver._start_fs_daemons(spec, vm_dir)
     finally:
         server.close()
+        shutil.rmtree(state_dir, ignore_errors=True)
 
 
 async def test_stop_is_idempotent_and_kills_a_hang(tmp_path: Path) -> None:
@@ -1151,14 +1171,17 @@ async def test_readonly_composes_from_both_sides(tmp_path: Path) -> None:
     """--readonly arrives when the mount asked ro, when the
     operator narrowed the share, and when both — and only then: a
     plain rw mount on a writable share spawns writable. The
-    composition is pinned on the real arg vectors."""
+    composition is pinned on the real arg vectors. The state dir
+    sits under a shallow mkdtemp for the same AF_UNIX-length
+    reason as the login-user spawn test above."""
     plain = tmp_path / "plain"
     plain.mkdir()
     narrowed = tmp_path / "narrowed"
     narrowed.mkdir()
-    vm_dir = tmp_path / "vms" / "ws-ro"
+    state_dir = Path(tempfile.mkdtemp(prefix="msks-test-", dir="/tmp"))
+    vm_dir = state_dir / "vms" / "ws-ro"
     vm_dir.mkdir(parents=True)
-    settings = Settings(vmm=VmmSettings(state_dir=tmp_path))
+    settings = Settings(vmm=VmmSettings(state_dir=state_dir))
     settings.mounts = MountSettings(
         shares=(
             MountShare(name="plain", path=str(plain)),
@@ -1169,23 +1192,26 @@ async def test_readonly_composes_from_both_sides(tmp_path: Path) -> None:
     # One spec per combination (the row rules refuse duplicate
     # guests); the transient narrowing shape (valid at set, denied
     # at the route after a reload) rides the fourth combination.
-    for mount, expect_ro in (
-        (MountSpec(share="plain", guest="/mnt/p"), False),
-        (MountSpec(share="plain", guest="/mnt/p", mode="ro"), True),
-        (MountSpec(share="narrowed", guest="/mnt/n", mode="ro"), True),
-        (MountSpec(share="narrowed", guest="/mnt/n"), True),
-    ):
-        spawned.clear()
-        spec = VmSpec(
-            workspace_id="ws-ro",
-            kernel=Path("/k"),
-            rootfs=Path("/r"),
-            mounts=(mount,),
-        )
-        await driver._start_fs_daemons(spec, vm_dir)
-        await driver._stop_fs_daemons("ws-ro")
-        args = spawned[0][1]
-        assert ("--readonly" in args) is expect_ro, (mount, args)
+    try:
+        for mount, expect_ro in (
+            (MountSpec(share="plain", guest="/mnt/p"), False),
+            (MountSpec(share="plain", guest="/mnt/p", mode="ro"), True),
+            (MountSpec(share="narrowed", guest="/mnt/n", mode="ro"), True),
+            (MountSpec(share="narrowed", guest="/mnt/n"), True),
+        ):
+            spawned.clear()
+            spec = VmSpec(
+                workspace_id="ws-ro",
+                kernel=Path("/k"),
+                rootfs=Path("/r"),
+                mounts=(mount,),
+            )
+            await driver._start_fs_daemons(spec, vm_dir)
+            await driver._stop_fs_daemons("ws-ro")
+            args = spawned[0][1]
+            assert ("--readonly" in args) is expect_ro, (mount, args)
+    finally:
+        shutil.rmtree(state_dir, ignore_errors=True)
 
 
 async def test_spawn_refuses_a_path_drifted_past_the_pin(
