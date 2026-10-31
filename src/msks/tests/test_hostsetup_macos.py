@@ -12,6 +12,7 @@ one fake at ``subprocess.run`` (the whole tool is subprocesses;
 the fakes answer at that boundary so every real body runs).
 """
 
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -750,10 +751,66 @@ def test_the_config_row_refusals(
     # An operator file whose active daemon names this forward with
     # the VM's token and CA passes — the alias name is theirs.
     mac.ensure_client_config(mac.PORT)
-    body = Path(mac.default_config_path()).read_text()
-    monkeypatch.setattr(mac, "MANAGED_ALIAS", "theirs")
-    path.write_text(body.replace(mac.MANAGED_ALIAS, "theirs"))
+    body = (
+        path.read_text()
+        .replace(f"  {mac.MANAGED_ALIAS}:", "  theirs:")
+        .replace(
+            f"active_daemon: {mac.MANAGED_ALIAS}", "active_daemon: theirs"
+        )
+    )
+    path.write_text(body)
     assert mac.client_config_row(mac.PORT)
+
+
+def test_an_unreadable_config_refuses_by_name(
+    client_tree: Path,
+) -> None:
+    """A config the read cannot reach (a directory in the way) is
+    a named refusal — never the missing-file arm's overwrite, and
+    never a traceback through main()."""
+    path = Path(mac.default_config_path())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.mkdir()
+    with pytest.raises(mac.MacSetupError, match="cannot be read"):
+        mac.ensure_client_config(mac.PORT)
+    with pytest.raises(mac.MacSetupError, match="cannot be read"):
+        mac.client_config_row(mac.PORT)
+
+
+def test_a_refused_write_is_a_named_refusal(
+    monkeypatch: pytest.MonkeyPatch, client_tree: Path
+) -> None:
+    """A write the filesystem refuses surfaces as this tool's own
+    refusal naming the path — the house rule over raw
+    tracebacks."""
+
+    def refused(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(mac.os, "open", refused)
+    with pytest.raises(mac.MacSetupError, match="could not write"):
+        mac.ensure_client_config(mac.PORT)
+
+
+def test_a_kept_config_rides_the_stanza_beside_the_exports(
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    client_tree: Path,
+) -> None:
+    """The file this tool never wrote: the preset prints the
+    paste-able alias block (the YAML half, without the managed
+    header) beside the shell exports, and the file stands
+    untouched."""
+    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    path = Path(mac.default_config_path())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# the operator's own config\n")
+    preset = mac.client_preset(mac.PORT)
+    assert "export MSKSC_URL=https://127.0.0.1:8660" in preset
+    assert "the daemon alias to add to" in preset
+    assert mac.alias_stanza(mac.PORT) in preset
+    assert mac.MANAGED_HEADER not in preset
+    assert path.read_text() == "# the operator's own config\n"
 
 
 def test_the_agent_plist_names_the_absolute_limactl(
@@ -808,6 +865,11 @@ def test_agent_loaded_reads_the_print_exit(
     procs: FakeProcesses,
 ) -> None:
     assert mac.agent_loaded() is True
+    assert procs.calls[-1] == [
+        "launchctl",
+        "print",
+        f"gui/{os.getuid()}/{mac.AGENT_LABEL}",
+    ]
     procs.fail_output = {"launchctl print": "not loaded"}
     assert mac.agent_loaded() is False
 

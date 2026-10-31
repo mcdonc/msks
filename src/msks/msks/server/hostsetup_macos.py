@@ -37,8 +37,10 @@ the other tools never see:
    reaches the daemon with no exports in the shell profile; and a
    launchd agent that runs ``limactl start msksd`` at login, so
    the daemon answers after a reboot. The printed exports remain
-   as a copy-paste fallback, and an operator's own ``msks.yaml`` is
-   never overwritten — the run names the file it kept.
+   as a copy-paste fallback, and a config this tool never wrote is
+   kept untouched — the run names the file and prints the alias
+   block to paste into it; a file this tool wrote is refreshed on
+   re-run (its header says so, operator edits included).
 
 ``--check`` runs the verify pass alone — the macOS doctor row
 set: Lima, the VM, the nested-virtualization marker, virtiofsd
@@ -559,25 +561,46 @@ def client_preset(port: int) -> str:
     verify_chain(port, ca)
     token = fetch_vm_file(f"{VM_STATE}/bootstrap-token").strip()
     write_private(MAC_TOKEN, token + "\n")
-    say(ensure_client_config(port))
-    return (
+    status = ensure_client_config(port)
+    say(status)
+    exports = (
         f"export MSKSC_URL=https://127.0.0.1:{port}\n"
         f"export MSKSC_TOKEN={token}\n"
         f"export MSKSC_CAFILE={MAC_CA}"
     )
+    if status.startswith("kept"):
+        # The file this tool never wrote: the paste-able half rides
+        # beside the exports — the YAML alias block for the config,
+        # where the exports are the shell's fallback.
+        return (
+            exports
+            + "\n\n# the daemon alias to add to "
+            + str(Path(default_config_path()))
+            + ":\n"
+            + alias_stanza(port)
+        )
+    return exports
 
 
 # --- phase 5: the client config and the login agent -------------------
 
 
 def write_private(path: Path, body: str) -> None:
-    """Write a private file the house way: the parent 0700, the
-    file 0600 — the token is a credential, and the config and
-    the template join it for uniformity."""
+    """Write a private file the house way: the parent 0700 when
+    created, the file 0600 — the token is a credential, and the
+    config and the template join it for uniformity. A write the
+    filesystem refuses is a named refusal, never a raw
+    traceback."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(body)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(body)
+    except OSError as exc:
+        raise MacSetupError(
+            f"could not write {path} ({exc}); fix the path or its "
+            "permissions, then re-run"
+        ) from None
 
 
 def client_config_body(port: int) -> str:
@@ -587,7 +610,17 @@ def client_config_body(port: int) -> str:
     the daemon with no exports in the shell profile."""
     return (
         f"{MANAGED_HEADER} (#689); re-run the tool\n"
-        "# to refresh this file.\n"
+        "# to refresh this file — a rerun rewrites what this tool\n"
+        "# wrote, edits included.\n" + alias_stanza(port)
+    )
+
+
+def alias_stanza(port: int) -> str:
+    """The daemon alias block alone: the paste-able half of the
+    managed config for an operator's own ``msks.yaml`` — without
+    the managed header, which would hand this tool ownership of
+    their file on the next rerun."""
+    return (
         "daemons:\n"
         f"  {MANAGED_ALIAS}:\n"
         f"    url: https://127.0.0.1:{port}\n"
@@ -600,20 +633,35 @@ def client_config_body(port: int) -> str:
 def ensure_client_config(port: int) -> str:
     """Write or refresh the managed client config, idempotently.
 
-    A missing file is written; the client's own first-run
-    template (all comments, nothing set) is replaced without
-    ceremony — the client regenerates it on demand any time; a
-    file this tool wrote is refreshed; an operator's own file is
-    left untouched, and the returned status names that choice —
-    the preset's exports remain the copy-paste fallback, and the
-    alias block pastes by hand the same way."""
+    A missing file is written; a file the read cannot reach is a
+    named refusal (never the missing arm's overwrite); an
+    existing file takes :func:`refresh_managed_config`'s policy,
+    whose status this returns for the caller to say."""
     path = Path(default_config_path())
     body = client_config_body(port)
     try:
         text = path.read_text()
-    except OSError:
+    except FileNotFoundError:
         write_private(path, body)
         return f"wrote the client config ({path})"
+    except OSError as exc:
+        raise MacSetupError(
+            f"the client config ({path}) cannot be read ({exc}); fix "
+            "the file or remove it, then re-run"
+        ) from None
+    return refresh_managed_config(text, body, path)
+
+
+def refresh_managed_config(text: str, body: str, path: Path) -> str:
+    """The four-way policy over an existing config file's text:
+    the current body is a no-op; the client's own first-run
+    template (all comments, nothing set) is replaced without
+    ceremony — the client regenerates it on demand any time; a
+    file this tool wrote (its header says so) is refreshed —
+    re-running rewrites what the tool wrote, operator edits to it
+    included; a file it never wrote is kept untouched, and the
+    status names that choice — the preset this run prints carries
+    the alias block to paste into such a file."""
     if text == body:
         return f"the client config is current ({path})"
     if text == render_template():
@@ -623,8 +671,9 @@ def ensure_client_config(port: int) -> str:
         write_private(path, body)
         return f"refreshed the client config ({path})"
     return (
-        f"kept the operator's config at {path} — paste the preset "
-        "block into it by hand to point a bare msks here"
+        f"kept the config at {path} (this tool never wrote it) — add "
+        f"the {MANAGED_ALIAS} daemon entry to it by hand, or remove "
+        "the file and re-run"
     )
 
 
@@ -637,10 +686,15 @@ def client_config_row(port: int) -> str:
     path = Path(default_config_path())
     try:
         text = path.read_text()
-    except OSError:
+    except FileNotFoundError:
         raise MacSetupError(
             f"the client config ({path}) does not exist; re-run {TOOL} "
             "or write the daemon alias into it by hand"
+        ) from None
+    except OSError as exc:
+        raise MacSetupError(
+            f"the client config ({path}) cannot be read ({exc}); fix "
+            "the file or remove it, then re-run"
         ) from None
     entry = active_daemon_entry(text, path)
     if not entry_points_at(entry, port):
