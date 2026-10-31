@@ -556,8 +556,8 @@ def client_preset(port: int) -> str:
             "the daemon's CA did not come back from the VM (the "
             "daemon may still be generating it; re-run)"
         )
-    MAC_CA.parent.mkdir(parents=True, exist_ok=True)
-    MAC_CA.write_text(ca + "\n")
+    MAC_CA.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    write_private(MAC_CA, ca + "\n")
     verify_chain(port, ca)
     token = fetch_vm_file(f"{VM_STATE}/bootstrap-token").strip()
     write_private(MAC_TOKEN, token + "\n")
@@ -570,14 +570,19 @@ def client_preset(port: int) -> str:
     )
     if status.startswith("kept"):
         # The file this tool never wrote: the paste-able half rides
-        # beside the exports — the YAML alias block for the config,
-        # where the exports are the shell's fallback.
+        # beside the exports — the entry block for the config (no
+        # top-level key, so a verbatim paste cannot duplicate one
+        # and corrupt the file), where the exports are the shell's
+        # fallback.
         return (
             exports
-            + "\n\n# the daemon alias to add to "
+            + "\n\n# add this entry under the daemons: mapping in "
             + str(Path(default_config_path()))
-            + ":\n"
-            + alias_stanza(port)
+            + "\n# (write the daemons: line too if the file carries "
+            "none), then\n# set active_daemon: "
+            + MANAGED_ALIAS
+            + " there:\n"
+            + alias_entry(port)
         )
     return exports
 
@@ -588,11 +593,11 @@ def client_preset(port: int) -> str:
 def write_private(path: Path, body: str) -> None:
     """Write a private file the house way: the parent 0700 when
     created, the file 0600 — the token is a credential, and the
-    config and the template join it for uniformity. A write the
-    filesystem refuses is a named refusal, never a raw
-    traceback."""
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    CA and the config join it for uniformity. A step the
+    filesystem refuses (the mkdir, the open, the write) is a
+    named refusal, never a raw traceback."""
     try:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(body)
@@ -616,17 +621,25 @@ def client_config_body(port: int) -> str:
 
 
 def alias_stanza(port: int) -> str:
-    """The daemon alias block alone: the paste-able half of the
-    managed config for an operator's own ``msks.yaml`` — without
-    the managed header, which would hand this tool ownership of
-    their file on the next rerun."""
+    """The daemon alias block alone: the managed config's body —
+    for the file this tool writes."""
     return (
-        "daemons:\n"
+        "daemons:\n" + alias_entry(port) + f"active_daemon: {MANAGED_ALIAS}\n"
+    )
+
+
+def alias_entry(port: int) -> str:
+    """The alias's own entry block, indented to sit under a
+    ``daemons:`` mapping — the paste-able piece for an
+    operator's own ``msks.yaml``. It carries no top-level key
+    (the client's loader refuses duplicates, so a verbatim paste
+    can never corrupt the file) and no managed header (which
+    would hand this tool ownership of it on the next rerun)."""
+    return (
         f"  {MANAGED_ALIAS}:\n"
         f"    url: https://127.0.0.1:{port}\n"
         f"    token_file: {MAC_TOKEN}\n"
         f"    cafile: {MAC_CA}\n"
-        f"active_daemon: {MANAGED_ALIAS}\n"
     )
 
 

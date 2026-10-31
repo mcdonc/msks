@@ -792,25 +792,38 @@ def test_a_refused_write_is_a_named_refusal(
         mac.ensure_client_config(mac.PORT)
 
 
-def test_a_kept_config_rides_the_stanza_beside_the_exports(
+def test_a_kept_config_rides_the_entry_beside_the_exports(
     monkeypatch: pytest.MonkeyPatch,
     procs: FakeProcesses,
     client_tree: Path,
 ) -> None:
     """The file this tool never wrote: the preset prints the
-    paste-able alias block (the YAML half, without the managed
-    header) beside the shell exports, and the file stands
-    untouched."""
+    paste-able entry (indented, no top-level key — the loader
+    refuses duplicates, so a verbatim paste cannot corrupt a file
+    that already carries a daemons: mapping) beside the shell
+    exports, and the file stands untouched."""
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
     path = Path(mac.default_config_path())
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("# the operator's own config\n")
+    path.write_text(
+        "# the operator's own config\n"
+        "daemons:\n"
+        "  lab:\n"
+        "    url: https://hv-1.lab.example.com:8660\n"
+        "active_daemon: lab\n"
+    )
     preset = mac.client_preset(mac.PORT)
     assert "export MSKSC_URL=https://127.0.0.1:8660" in preset
-    assert "the daemon alias to add to" in preset
-    assert mac.alias_stanza(mac.PORT) in preset
+    assert "add this entry under the daemons: mapping" in preset
+    assert "set active_daemon: " + mac.MANAGED_ALIAS in preset
+    assert mac.alias_entry(mac.PORT) in preset
+    # No top-level key rides the print: a verbatim paste cannot
+    # duplicate one, and the managed header stays out (it would
+    # hand this tool the operator's file on the next rerun).
+    assert "\ndaemons:\n" not in preset
+    assert "\nactive_daemon:" not in preset
     assert mac.MANAGED_HEADER not in preset
-    assert path.read_text() == "# the operator's own config\n"
+    assert "lab" in path.read_text()
 
 
 def test_the_agent_plist_names_the_absolute_limactl(
@@ -843,14 +856,22 @@ def test_ensure_agent_rewrites_reloads_and_creates_the_log_dir(
     mac.ensure_agent()  # idempotent: rewritten, booted out, reloaded
     assert mac.AGENT_PLIST.is_file()
     assert mac.AGENT_LOG.parent.is_dir()
-    commands = [" ".join(c) for c in procs.calls]
-    bootout = [i for i, c in enumerate(commands) if "bootout" in c]
-    bootstraps = [i for i, c in enumerate(commands) if "bootstrap" in c]
-    assert len(bootstraps) == 2
-    # Each bootstrap is preceded by its bootout — the reload pair,
-    # never a duplicate load of one label.
-    assert len(bootout) == 2 and bootout[0] < bootstraps[0]
-    assert bootout[1] < bootstraps[1]
+    # The launchctl argv shapes, pinned whole: the gui/<uid> domain
+    # is load-bearing (a domain-less bootout or bootstrap errors on
+    # a real Mac while every substring check stays green).
+    domain = f"gui/{os.getuid()}"
+    bootout_argv = ["launchctl", "bootout", f"{domain}/{mac.AGENT_LABEL}"]
+    bootstrap_argv = [
+        "launchctl",
+        "bootstrap",
+        domain,
+        str(mac.AGENT_PLIST),
+    ]
+    assert procs.calls.count(bootout_argv) == 2
+    assert procs.calls.count(bootstrap_argv) == 2
+    # Each bootstrap follows its bootout — the reload pair, never a
+    # duplicate load of one label.
+    assert procs.calls.index(bootout_argv) < procs.calls.index(bootstrap_argv)
 
 
 def test_a_missing_limactl_refuses_the_agent(
