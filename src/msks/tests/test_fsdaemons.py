@@ -1118,7 +1118,6 @@ async def test_readonly_composes_from_both_sides(tmp_path: Path) -> None:
     "3.14 stdlib behavior, reproducible with a five-line "
     "script); the escalation is pinned on the Linux CI host",
 )
-
 async def test_untracked_sweep_escalates_to_kill(tmp_path: Path) -> None:
     """A TERM-immortal daemon cannot wedge the workspace behind
     its own live socket: the sweep waits out the grace, KILLs,

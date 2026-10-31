@@ -301,6 +301,10 @@ def test_host_roots_parse_and_canonicalize(tmp_path: Path) -> None:
         host_roots_from({"MSKSD_MOUNT_HOST_ROOTS": "not-json"})
     with pytest.raises(ValueError, match="MSKSD_MOUNT_HOST_ROOTS must be"):
         host_roots_from({"MSKSD_MOUNT_HOST_ROOTS": '"scalar"'})
+    # A layer value that is neither list nor string — a config
+    # grammar no file form can spell — is the same named error.
+    with pytest.raises(ValueError, match="must be a JSON array"):
+        host_roots_from({"MSKSD_MOUNT_HOST_ROOTS": 5})
 
 
 def test_mount_settings_carry_the_gate_inputs(tmp_path: Path) -> None:
