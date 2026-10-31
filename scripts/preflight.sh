@@ -194,8 +194,12 @@ else
     # (the macOS wedge this issue chased) — the budget fails the
     # run loudly, named, instead. 40 minutes covers the slowest
     # known healthy host (a cold CI-class Linux box) with margin.
+    # GNU coreutils' timeout (the devenv shell provides it); -k
+    # follows up a TERM a pytest child ignores with a KILL, so
+    # even a stubborn teardown cannot outlast the budget.
     suite_budget=$((40 * 60))
-    timeout "$suite_budget" "$venv_python" -m pytest src/msks/tests -q -n auto
+    timeout -k 30 "$suite_budget" \
+      "$venv_python" -m pytest src/msks/tests -q -n auto
     suite_rc=$?
     if [ "$suite_rc" -eq 124 ]; then
       echo

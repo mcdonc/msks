@@ -98,15 +98,16 @@ def probe_refusal_is_stale(exc: OSError) -> bool:
     from a full backlog, a timeout against a slow acceptor —
     means live.
     """
-    if (
-        sys.platform == "darwin" and exc.errno == errno.ENOTSOCK
-    ):  # pragma: no cover
-        # The darwin dev host alone reaches the arm; the Linux
-        # CI host answers ECONNREFUSED for the same shape.
+    if sys.platform == "darwin" and exc.errno == errno.ENOTSOCK:
+        # darwin's connect() produces ENOTSOCK against a
+        # non-socket path; Linux's answers ECONNREFUSED (the
+        # refusal pair above). The steering test below reaches
+        # this arm on every host, so it carries no pragma.
         return True
-    return False  # pragma: no cover — the EAGAIN/timeout leg is
-    # pinned on the Linux CI host (the saturation test); the
-    # darwin suite skips that leg, so it never runs here.
+    # The EAGAIN/timeout leg: pinned on the Linux CI host by the
+    # saturation test (darwin's backlog refusal is ECONNREFUSED,
+    # so the same leg cannot run there).
+    return False
 
 
 def has_socket_arg(fields: list[bytes], sock: Path) -> bool:
@@ -125,18 +126,26 @@ def read_cmdline(pid: int) -> bytes | None:
     identity checks fell into their not-ours branch: kills never
     fired, and every suite run on a Mac left spawned VMM stubs
     alive while tests waited on their exit forever (#690). ps(1)
-    carries the same argv there — space-joined, so the fields are
-    re-joined with NULs and the exact-field match below keeps its
-    semantics. The deployment host keeps the /proc path.
+    carries the argv there — space-joined, re-joined with NULs —
+    so the exact-field match keeps its shape with one
+    approximation: a field containing a space splits, and a
+    spaced path reads as foreign (a daemon of ours leaks — the
+    #690 wedge again) while a foreign argument whose pieces
+    happen to spell a workspace's socket path can read as ours
+    (a recycled pid the sweep would signal). The deployment
+    hosts are Linux and keep the /proc path byte-for-byte; the
+    approximation is the darwin dev host's alone.
     """
     try:
         return Path(f"/proc/{pid}/cmdline").read_bytes()
     except OSError:
         pass
-    if sys.platform == "darwin":  # pragma: no cover — the darwin
-        # dev host alone; CI and the deployment hosts run Linux
-        # and take the /proc path above. The driver suite
-        # exercises this branch on Mac dev hosts (#690).
+    if sys.platform == "darwin":
+        # The darwin dev host's arm (#690): CI and the deployment
+        # hosts run Linux and take the /proc path above. The
+        # platform-steering test below runs this arm on every
+        # host — ps(1) answers argv on Linux too — so it carries
+        # no pragma.
         try:
             out = subprocess.run(
                 ["ps", "-ww", "-o", "command=", "-p", str(pid)],
@@ -146,10 +155,9 @@ def read_cmdline(pid: int) -> bytes | None:
         except OSError, subprocess.CalledProcessError:
             return None
         return b"\0".join(out.split())
-    return None  # pragma: no cover — reached on the Linux CI
-    # host when a /proc read fails against an alive pid (the
-    # fs-daemon dead-pid tests); the darwin arm above answers
-    # first on a Mac.
+    # A non-darwin host without a readable procfs entry: the
+    # fs-daemon dead-pid tests reach this on the Linux CI host.
+    return None
 
 
 def cmdline_is_vmm(cmdline: bytes, binary: str, sock: Path) -> bool:
