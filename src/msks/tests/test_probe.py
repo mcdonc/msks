@@ -5,6 +5,7 @@ import asyncio
 import base64
 import socket
 import ssl
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -275,6 +276,18 @@ async def test_concurrent_bundle_calls_mint_once(
     assert len(calls) == 1
 
 
+#: The probe's live listener pins its socket to one interface
+#: with SO_BINDTODEVICE (the tap-listener it shares with the LLM
+#: proxy), a Linux socket option — the row runs on the Linux host
+#: the daemon runs on.
+needs_bindtodevice = pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="the live listener pins its socket with SO_BINDTODEVICE, "
+    "a Linux socket option (#483)",
+)
+
+
+@needs_bindtodevice
 async def test_listener_serves_real_https_and_stops(tmp_path: Path) -> None:
     """The service speaks TLS from its own CA: a client that trusts
     that CA completes, and the fixed credential answers ok over it."""

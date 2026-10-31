@@ -9,6 +9,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from ext4tools import realtools, write_e2fsck_stub
 from msks.app import build_app
 from msks.microvm.errors import MicrovmError, MicrovmTimeoutError
 from msks.server import api as api_mod
@@ -1801,6 +1802,19 @@ async def plant_volume(app, workspace_id: str, mib: int) -> None:
     sp.run(["mkfs.ext4", "-q", "-F", "-L", "msks-home", str(home)], check=True)
 
 
+async def plant_raw_volume(app, workspace_id: str, mib: int) -> None:
+    """A home-volume file with no filesystem in it: the resize
+    route's stubbed-tool and error-mapping tests need only the
+    file at its size, so they plant raw — the mkfs is this host's
+    to have or lack (#691), and these tests run everywhere."""
+    home = (
+        app.state.settings.vmm.state_dir / "volumes" / f"{workspace_id}.ext4"
+    )
+    home.parent.mkdir(parents=True, exist_ok=True)
+    with home.open("wb") as handle:
+        handle.truncate(mib * 1024 * 1024)
+
+
 async def plant_qcow2(app, workspace_id: str, mib: int) -> None:
     """A genuinely formatted qcow2 overlay under the state dir."""
     import subprocess as sp
@@ -1815,6 +1829,7 @@ async def plant_qcow2(app, workspace_id: str, mib: int) -> None:
     )
 
 
+@realtools
 async def test_resize_grows_the_home_volume(client) -> None:
     http, app, _stub = client
     created = await http.post(
@@ -1837,6 +1852,7 @@ async def test_resize_grows_the_home_volume(client) -> None:
     assert volume.stat().st_size == 128 * 1024 * 1024
 
 
+@realtools
 async def test_resize_shrinks_the_home_volume(client) -> None:
     http, app, _stub = client
     created = await http.post(
@@ -1944,7 +1960,7 @@ async def test_resize_is_idempotent_on_identical_sizes(client) -> None:
     )
     assert empty.status_code == 400
     assert "nothing to resize" in empty.json()["detail"]
-    await plant_volume(app, wid, 2048)
+    await plant_raw_volume(app, wid, 2048)
     same = await http.post(
         "/api/v1/workspaces/ws-noop/resize",
         json={"home_mib": 2048},
@@ -1976,12 +1992,15 @@ async def test_resize_without_a_volume_updates_the_row(client) -> None:
 
 async def test_resize_maps_a_refused_shrink_to_409(client, tmp_path) -> None:
     """resize2fs's refusal (an fs too full) reaches the caller as a
-    named 409 with the remediation spelled out."""
+    named 409 with the remediation spelled out. The volume plants
+    raw and the check's e2fsck is an always-clean stub: the subject
+    is the refusal's mapping, not either tool's answer."""
     http, app, _stub = client
     failing = tmp_path / "resize2fs"
     failing.write_text("#!/bin/sh\necho 'new size too small' >&2\nexit 1\n")
     failing.chmod(0o755)
     app.state.settings.vmm.resize2fs = str(failing)
+    app.state.settings.vmm.e2fsck = str(write_e2fsck_stub(tmp_path))
     created = await http.post(
         "/api/v1/workspaces",
         json={
@@ -1994,7 +2013,7 @@ async def test_resize_maps_a_refused_shrink_to_409(client, tmp_path) -> None:
     )
     assert created.status_code == 201
     wid = created.json()["id"]
-    await plant_volume(app, wid, 128)
+    await plant_raw_volume(app, wid, 128)
     refused = await http.post(
         "/api/v1/workspaces/ws-full/resize",
         json={"home_mib": 64},
@@ -2092,7 +2111,9 @@ async def test_resize_refuses_below_the_overlays_virtual_size(client) -> None:
 
 async def test_resize_combined_failure_leaves_nothing_moved(client) -> None:
     """The overlay grow runs first: its failure strands no half-moved
-    home side, and the row keeps its old sizes."""
+    home side, and the row keeps its old sizes. The volume plants
+    raw — the home tools never run when the overlay side fails
+    first."""
     http, app, _stub = client
     failing_qemu = app.state.settings.vmm.state_dir / "qemu-img-fail"
     failing_qemu.parent.mkdir(parents=True, exist_ok=True)
@@ -2112,7 +2133,7 @@ async def test_resize_combined_failure_leaves_nothing_moved(client) -> None:
     )
     assert created.status_code == 201
     wid = created.json()["id"]
-    await plant_volume(app, wid, 64)
+    await plant_raw_volume(app, wid, 64)
     overlay = app.state.settings.vmm.state_dir / "vms" / wid / "root.qcow2"
     overlay.parent.mkdir(parents=True, exist_ok=True)
     overlay.write_bytes(b"")
@@ -2188,7 +2209,8 @@ async def test_resize_maps_an_e2fsck_operational_failure_to_503(
 ) -> None:
     """e2fsck exit 8 (operational error) is a daemon fault even on a
     row-classified shrink: it keeps its 503, never the client-fixable
-    409 (#187 review round 2)."""
+    409 (#187 review round 2). The volume plants raw — the check's
+    stub never reads it, and the move never runs."""
     http, app, _stub = client
     e2fsck = tmp_path / "e2fsck8"
     e2fsck.write_text("#!/bin/sh\necho 'I/O error' >&2\nexit 8\n")
@@ -2206,7 +2228,7 @@ async def test_resize_maps_an_e2fsck_operational_failure_to_503(
     )
     assert created.status_code == 201
     wid = created.json()["id"]
-    await plant_volume(app, wid, 128)
+    await plant_raw_volume(app, wid, 128)
     failed = await http.post(
         "/api/v1/workspaces/ws-op/resize",
         json={"home_mib": 64},
@@ -2219,12 +2241,15 @@ async def test_resize_maps_an_e2fsck_operational_failure_to_503(
 
 async def test_resize_maps_a_grow_failure_to_503(client, tmp_path) -> None:
     """A grow-direction tool failure stays the daemon's 503 (the
-    client-fixable 409 belongs to executed shrinks alone)."""
+    client-fixable 409 belongs to executed shrinks alone). The
+    volume plants raw and the check's e2fsck is an always-clean
+    stub: only the failing move is under test."""
     http, app, _stub = client
     failing = tmp_path / "resize2fs"
     failing.write_text("#!/bin/sh\necho 'no room' >&2\nexit 1\n")
     failing.chmod(0o755)
     app.state.settings.vmm.resize2fs = str(failing)
+    app.state.settings.vmm.e2fsck = str(write_e2fsck_stub(tmp_path))
     created = await http.post(
         "/api/v1/workspaces",
         json={
@@ -2237,7 +2262,7 @@ async def test_resize_maps_a_grow_failure_to_503(client, tmp_path) -> None:
     )
     assert created.status_code == 201
     wid = created.json()["id"]
-    await plant_volume(app, wid, 64)
+    await plant_raw_volume(app, wid, 64)
     failed = await http.post(
         "/api/v1/workspaces/ws-grow/resize",
         json={"home_mib": 128},
@@ -2247,6 +2272,7 @@ async def test_resize_maps_a_grow_failure_to_503(client, tmp_path) -> None:
     assert "free data" not in failed.json()["detail"]
 
 
+@realtools
 async def test_resize_follows_the_file_not_the_row(client) -> None:
     """A home import can swap the volume in above the row's size: the
     move classifies by the file (a shrink here), and a matching
@@ -2289,6 +2315,7 @@ async def test_resize_follows_the_file_not_the_row(client) -> None:
     assert again.json()["changes"] == []
 
 
+@realtools
 async def test_resize_combined_success_reports_each_side(client) -> None:
     """A combined resize reports what moved, root first."""
     http, app, _stub = client
@@ -2445,6 +2472,7 @@ async def test_resize_topology_bounds_mirror_create(client) -> None:
         assert refused.status_code == 422, body
 
 
+@realtools
 async def test_resize_mixes_disks_and_topology(client) -> None:
     """One invocation moves the disks and the topology together
     (#277): each side lands, and the changes report each."""
@@ -2500,11 +2528,16 @@ async def test_a_resized_topology_boots(client) -> None:
     assert spec.mem_mib == 8192
 
 
-async def test_resize_names_a_vanished_volume(client, monkeypatch) -> None:
+async def test_resize_names_a_vanished_volume(
+    client, tmp_path, monkeypatch
+) -> None:
     """A volume that vanishes between the check and the move answers
-    a named 503, not a bare 500."""
+    a named 503, not a bare 500. The check's e2fsck is an
+    always-clean stub and the volume plants raw: only the vanished
+    move is under test."""
 
     http, app, _stub = client
+    app.state.settings.vmm.e2fsck = str(write_e2fsck_stub(tmp_path))
     created = await http.post(
         "/api/v1/workspaces",
         json={
@@ -2517,7 +2550,7 @@ async def test_resize_names_a_vanished_volume(client, monkeypatch) -> None:
     )
     assert created.status_code == 201
     wid = created.json()["id"]
-    await plant_volume(app, wid, 64)
+    await plant_raw_volume(app, wid, 64)
 
     async def vanish(target, home_mib, settings):
         raise FileNotFoundError(str(target))

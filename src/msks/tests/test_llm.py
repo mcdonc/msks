@@ -3,6 +3,7 @@
 import asyncio
 import json
 import socket
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -30,6 +31,16 @@ from msks.llm import (
 from msks.settings import LlmSettings, Settings
 
 from msks import llm as llm_mod
+
+#: The device pin rides SO_BINDTODEVICE, a Linux socket option
+#: absent elsewhere — and the daemon's taps are Linux interfaces
+#: — so the listener's bind-and-serve rows run on the Linux host
+#: the daemon runs on, with the reason named.
+needs_bindtodevice = pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="SO_BINDTODEVICE pins a listener to its tap on Linux "
+    "alone; the daemon's taps are Linux's (#483)",
+)
 
 TOKEN = "msksllm1_testtoken"  # a credential-shaped value the proxy ignores
 AUTH = {"authorization": f"Bearer {TOKEN}"}
@@ -366,6 +377,7 @@ async def test_spawn_aclose_and_its_done_callback() -> None:
 # --- the device pin (#483) -------------------------------------------------
 
 
+@needs_bindtodevice
 def test_bind_records_an_ephemeral_asks_chosen_port() -> None:
     """``port=0`` binds a kernel-chosen number and the listener
     records it (#532): the probe dial repoint reads the served
@@ -381,6 +393,7 @@ def test_bind_records_an_ephemeral_asks_chosen_port() -> None:
             listener._sock.close()
 
 
+@needs_bindtodevice
 def test_bind_to_device_pins_the_named_tap() -> None:
     """The pin is one setsockopt carrying the tap name as a NUL-
     terminated bytes value — the shape SO_BINDTODEVICE reads."""
@@ -568,6 +581,7 @@ async def test_completions_endpoint_streams_and_maps_upstream_failure() -> (
 # --- the tap listener ------------------------------------------------------
 
 
+@needs_bindtodevice
 async def test_tap_listener_serves_real_http_and_stops() -> None:
     proxy = proxy_under_test(
         settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
@@ -593,6 +607,7 @@ async def test_tap_listener_serves_real_http_and_stops() -> None:
     assert listener._task is None
 
 
+@needs_bindtodevice
 async def test_tap_listener_leaves_process_logging_and_signals_alone() -> None:
     """The embedded server configures nothing global (#433 fix).
 
@@ -729,6 +744,7 @@ def test_listener_for_follows_the_model_list() -> None:
     assert listener.port == 8770
 
 
+@needs_bindtodevice
 async def test_tap_listener_accepts_a_prebound_socket() -> None:
     proxy = proxy_under_test(
         settings=llm_settings(("*:http://up.stream/v1:sk-x",)),

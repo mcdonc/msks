@@ -198,8 +198,21 @@ else
     # follows up a TERM a pytest child ignores with a KILL, so
     # even a stubborn teardown cannot outlast the budget.
     suite_budget=$((40 * 60))
+    # Off Linux the suite's 100% total is the wrong bar (#691): the
+    # vendored NFQUEUE binding dlopens a Linux library at import and
+    # dies mid-module, and the Linux-only surfaces the suite names
+    # with skips (SO_PEERCRED, SO_BINDTODEVICE, the ext4 resize
+    # pair, the 127/8 live-interceptor replay) keep their lines
+    # dark however green the run. The exact gate stays the covgaps
+    # pass below over the changed sources; this coarse floor only
+    # catches a run that stopped measuring outright. Linux keeps
+    # the config's exact 100 as its explicit bar.
+    cov_floor=(--cov-fail-under=100)
+    if [ "$(uname -s)" != "Linux" ]; then
+      cov_floor=(--cov-fail-under=90)
+    fi
     timeout -k 30 "$suite_budget" \
-      "$venv_python" -m pytest src/msks/tests -q -n auto
+      "$venv_python" -m pytest src/msks/tests -q -n auto "${cov_floor[@]}"
     suite_rc=$?
     if [ "$suite_rc" -eq 124 ]; then
       echo
@@ -213,15 +226,25 @@ else
       suite=FAIL
     fi
     if [ -f .coverage ]; then
-      gaps_out=$(mktemp)
-      if "$venv_python" scripts/covgaps.py ${backend[@]+"${backend[@]}"} >"$gaps_out" 2>&1; then
+      if [ ${#backend[@]} -eq 0 ]; then
+        # No product source changed (tests, scripts, docs alone):
+        # covgaps defaults to every measured file, which on a
+        # non-Linux host reports the platform-dark surfaces the
+        # suite names with skips (#691) — with nothing changed to
+        # grade, the pass is empty-handed, not all-files.
+        echo "no product sources under src/msks/msks changed — nothing for covgaps to grade"
         gaps=PASS
       else
-        gaps=FAIL
+        gaps_out=$(mktemp)
+        if "$venv_python" scripts/covgaps.py "${backend[@]}" >"$gaps_out" 2>&1; then
+          gaps=PASS
+        else
+          gaps=FAIL
+        fi
+        cat "$gaps_out"
+        rm -f "$gaps_out"
+        gaps_out=""
       fi
-      cat "$gaps_out"
-      rm -f "$gaps_out"
-      gaps_out=""
     else
       echo "no coverage data written — the suite run above failed before measuring"
       gaps=FAIL

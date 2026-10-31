@@ -482,6 +482,10 @@ def test_library_missing_everywhere(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_nfq_load_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The platform gate stays pinned to Linux: the row's subject is
+    # the load probe's answer, and off Linux the check answers the
+    # platform contract before any probe runs.
+    monkeypatch.setattr(doctor_mod.sys, "platform", "linux")
     monkeypatch.setattr(
         doctor_mod, "run", lambda cmd, timeout=10.0: (0, "", "")
     )
@@ -495,13 +499,16 @@ def test_nfq_load_miss_names_the_runtime_package(
 ) -> None:
     """A load miss names the runtime soname package for the
     detected manager — nothing compiles anymore, so no header
-    package rides the fix (#542)."""
+    package rides the fix (#542). The platform gate stays pinned
+    to Linux: the miss under test is the load's, not the
+    platform's."""
 
     def refuse(cmd, timeout=10.0):
         if "CDLL" in cmd[2]:
             return (1, "", "OSError")
         return (0, "", "")
 
+    monkeypatch.setattr(doctor_mod.sys, "platform", "linux")
     monkeypatch.setattr(doctor_mod, "run", refuse)
     result = doctor_mod.check_nfq_load("apt")
     assert result.ok is False
@@ -678,7 +685,13 @@ def kvm_seam(
     database answers the row reads. *session_carries* says the
     live session holds the gid (supplementary list or primary);
     *sudo_lifted* makes the effective uid root's, the run that
-    cannot read the daemon user's session."""
+    cannot read the daemon user's session. The platform gate is
+    pinned to Linux with them (apple_seam's seam): the /dev/kvm
+    and consent-library rows are Linux-only surfaces, so a test
+    that pins their answers pins the platform that carries them
+    — on a Mac dev host the rows would answer the platform miss
+    the report ships there, not the host state under test."""
+    monkeypatch.setattr(doctor_mod.sys, "platform", "linux")
     monkeypatch.setattr(
         doctor_mod, "executing_user", lambda: ("op", 1000, 1000, "/home/op")
     )

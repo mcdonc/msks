@@ -7,8 +7,11 @@ without a token."""
 import asyncio
 import contextlib
 import os
+import shutil
 import socket as socketlib
 import stat
+import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,6 +28,32 @@ from msks.spec.sockets import (
     is_socket_file,
     socket_candidates,
 )
+
+#: The end-to-end rows ride SO_PEERCRED, a Linux socket option
+#: (macOS's LOCAL_PEERCRED answers a different option and a
+#: different struct): the kernel vouches for the connecting
+#: process there and nowhere else, so the listener's live
+#: exchanges are pinned on the Linux host the daemon runs on —
+#: the named-skip posture the NFQUEUE binding's suite takes.
+needs_peercred = pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="SO_PEERCRED names the peer across a unix socket on "
+    "Linux alone; the daemon's local listener runs there (#555)",
+)
+
+
+@pytest.fixture
+def shallow_socket_dir() -> Path:
+    """A directory short enough for AF_UNIX's sun_path on every
+    host: darwin caps the path at 104 bytes (Linux at 108), and a
+    deep xdist tmp tree under /private/tmp overflows it — the
+    shallow-/tmp rule the local_driver env fixture set."""
+    path = Path(tempfile.mkdtemp(prefix="msks-sock-", dir="/tmp"))
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
+
 
 # --- the socket vocabulary -----------------------------------------------
 
@@ -74,9 +103,9 @@ def test_find_default_socket_skips_non_sockets(
 
 
 def test_find_default_socket_answers_a_real_socket(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    shallow_socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    user_run = tmp_path / "runtime"
+    user_run = shallow_socket_dir / "runtime"
     path = user_run / "msks" / "msksd.sock"
     sock = localsocket.bind(path)
     try:
@@ -90,8 +119,10 @@ def test_find_default_socket_answers_a_real_socket(
 # --- bind / unlink --------------------------------------------------------
 
 
-def test_bind_creates_the_directory_and_a_socket_file(tmp_path: Path) -> None:
-    path = tmp_path / "nested" / "msks" / "msksd.sock"
+def test_bind_creates_the_directory_and_a_socket_file(
+    shallow_socket_dir: Path,
+) -> None:
+    path = shallow_socket_dir / "nested" / "msks" / "msksd.sock"
     sock = localsocket.bind(path)
     try:
         assert stat.S_ISSOCK(path.stat().st_mode)
@@ -134,6 +165,7 @@ class FakeTransport:
         return self.sock if name == "socket" else None
 
 
+@needs_peercred
 def test_peer_credentials_answer_over_a_socketpair() -> None:
     ours, theirs = socketlib.socketpair()
     try:
@@ -324,6 +356,7 @@ async def serve_over_socket(tmp_path: Path, api: FastAPI):
     raise AssertionError("the socket server never started")
 
 
+@needs_peercred
 async def test_the_listener_serves_and_names_the_peer(
     tmp_path: Path,
 ) -> None:
@@ -354,6 +387,7 @@ async def test_the_listener_serves_and_names_the_peer(
         localsocket.unlink(path)
 
 
+@needs_peercred
 async def test_the_listener_authenticates_a_websocket_by_peer(
     tmp_path: Path,
 ) -> None:
@@ -380,6 +414,7 @@ async def test_the_listener_authenticates_a_websocket_by_peer(
         localsocket.unlink(path)
 
 
+@needs_peercred
 def test_platform_supported_on_linux() -> None:
     assert localsocket.platform_supported() is True
 
@@ -571,6 +606,7 @@ def test_api_client_dials_the_socket_without_a_token() -> None:
     assert "Authorization" not in client.headers
 
 
+@needs_peercred
 async def test_serve_listeners_serves_both_and_cleans_up(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
