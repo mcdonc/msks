@@ -127,6 +127,16 @@ def test_the_lima_floor(
         assert mac.require_lima() == version
 
 
+def test_a_failed_run_without_a_tail_still_names_the_command(
+    procs: FakeProcesses,
+) -> None:
+    """A failing command whose stderr is empty (or runs uncaptured)
+    refuses naming the command alone — the no-tail arm."""
+    procs.fail_output = {"limactl list": ""}
+    with pytest.raises(mac.MacSetupError, match="`limactl list"):
+        mac.run(["limactl", "list", "--json"], capture=True)
+
+
 def test_a_failed_run_carries_the_tail(procs: FakeProcesses) -> None:
     procs.fail_output = {"limactl list": "the daemon is angry"}
     with pytest.raises(mac.MacSetupError, match="the daemon is angry"):
@@ -416,6 +426,25 @@ def test_m1_and_m2_refuse_at_the_gate(
             mac.check_host()
 
 
+def test_the_not_found_nested_row_reports_truthfully(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
+) -> None:
+    """A VM whose markers have not landed yet (kvm loads on
+    demand) reports the not-found row and the pass continues."""
+    procs.vm = {
+        "msks-ca.pem": "-----BEGIN CERTIFICATE-----\nxyz\n"
+        "-----END CERTIFICATE-----\n",
+        "bootstrap-token": "the-token\n",
+        "dpkg -s virtiofsd": "present\n",
+    }
+    monkeypatch.setattr(
+        mac, "verify_daemon", lambda port, timeout_s=15.0: None
+    )
+    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    rows = mac.check_rows(mac.PORT)
+    assert any("marker not found" in row for row in rows)
+
+
 def test_a_missing_virtiofsd_refuses_the_check(
     procs: FakeProcesses,
 ) -> None:
@@ -424,6 +453,60 @@ def test_a_missing_virtiofsd_refuses_the_check(
     procs.vm["dpkg -s virtiofsd"] = "missing\n"
     with pytest.raises(mac.MacSetupError, match="re-run the tool"):
         mac.check_rows(mac.PORT)
+
+
+def test_a_mismatched_chain_refuses_with_the_port_remedy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A listener that answers with another daemon's certificate
+    (the port-collision case) refuses naming --port — the
+    verification-error arm, distinct from a torn CA's parse
+    failure."""
+    import ssl as ssl_mod
+
+    class VerifiedSocket:
+        def __enter__(self):
+            raise ssl_mod.SSLCertVerificationError("certificate verify failed")
+
+        def __exit__(self, *exc):
+            return False
+
+    class RawSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(
+        mac.ssl,
+        "create_default_context",
+        lambda **kwargs: SimpleNamespace(
+            wrap_socket=lambda *a, **kw: VerifiedSocket()
+        ),
+    )
+
+    class Connect:
+        def __enter__(self):
+            return RawSocket()
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(
+        mac.socket, "create_connection", lambda a, timeout=None: Connect()
+    )
+    with pytest.raises(mac.MacSetupError, match="--port"):
+        mac.verify_chain(8660, "whatever")
+
+
+def test_the_nested_marker_skips_blank_lines(
+    procs: FakeProcesses,
+) -> None:
+    """A probe whose output is blank lines yields the empty
+    marker — the loop's skip arm."""
+    procs.vm = {"VHE": "\n   \n"}
+    assert mac.nested_marker() == ""
 
 
 def test_a_torn_ca_read_refuses_with_the_rerun_remedy() -> None:
