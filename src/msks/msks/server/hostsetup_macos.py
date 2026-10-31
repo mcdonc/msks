@@ -35,8 +35,10 @@ the other tools never see:
    ``msks`` at the forward (``url``, ``token_file``, ``cafile`` —
    the token written beside the CA), so every CLI invocation
    reaches the daemon with no exports in the shell profile; and a
-   launchd agent that runs ``limactl start msksd`` at login, so
-   the daemon answers after a reboot. The printed exports remain
+   launchd agent that runs ``limactl start msksd`` at login —
+   kickstarted when installed, so the VM starts through the
+   agent immediately too — so the daemon answers after a reboot.
+   The printed exports remain
    as a copy-paste fallback, and a config this tool never wrote is
    kept untouched — the run names the file and prints the alias
    block to paste into it; a file this tool wrote is refreshed on
@@ -796,8 +798,11 @@ def ensure_agent() -> None:
     """Install and load the login agent, idempotently: the plist
     is rewritten every run (the agent is updated, never
     duplicated — one label, one file), the old service boots out,
-    and the new one bootstraps in loaded — bootstrap fires
-    ``RunAtLoad``, so the VM starts now too, not only at the next
+    and the new one bootstraps in loaded. The kickstart that
+    follows runs the agent's job immediately — the same
+    ``limactl start`` every login runs — so the VM starts through
+    the agent now, and a green install has already proven the
+    login path instead of discovering a broken one at the next
     login."""
     limactl = limactl_path()
     AGENT_LOG.parent.mkdir(parents=True, exist_ok=True)
@@ -805,7 +810,14 @@ def ensure_agent() -> None:
     AGENT_PLIST.write_bytes(agent_plist(limactl))
     unload_agent()
     run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(AGENT_PLIST)])
-    say(f"the login agent starts the {VM_NAME} VM at login")
+    run(
+        [
+            "launchctl",
+            "kickstart",
+            f"gui/{os.getuid()}/{AGENT_LABEL}",
+        ]
+    )
+    say(f"the login agent starts the {VM_NAME} VM now and at every login")
 
 
 def remove_agent() -> None:

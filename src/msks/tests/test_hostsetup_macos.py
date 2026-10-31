@@ -867,11 +867,23 @@ def test_ensure_agent_rewrites_reloads_and_creates_the_log_dir(
         domain,
         str(mac.AGENT_PLIST),
     ]
+    kickstart_argv = [
+        "launchctl",
+        "kickstart",
+        f"{domain}/{mac.AGENT_LABEL}",
+    ]
     assert procs.calls.count(bootout_argv) == 2
     assert procs.calls.count(bootstrap_argv) == 2
-    # Each bootstrap follows its bootout — the reload pair, never a
-    # duplicate load of one label.
+    # The VM starts through the agent immediately — one kickstart
+    # per install, right behind its bootstrap.
+    assert procs.calls.count(kickstart_argv) == 2
+    # Each bootstrap follows its bootout, and each kickstart its
+    # bootstrap — the reload-then-run triple, never a duplicate
+    # load of one label.
     assert procs.calls.index(bootout_argv) < procs.calls.index(bootstrap_argv)
+    assert procs.calls.index(bootstrap_argv) < procs.calls.index(
+        kickstart_argv
+    )
 
 
 def test_a_missing_limactl_refuses_the_agent(
