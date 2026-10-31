@@ -272,9 +272,9 @@ secretcache = 2
 # validate_mounts (one name on the rows' mount statement).
 # #672: one more name — named_only, the named-form subset the
 # set-time gate bounds (deduplicated from the rows' local
-# helper). #676: two more — the macOS setup tool reads the
-# version string and the TLS CA name for the VM bootstrap and
-# the preset it prints.
+# helper). #676: the macOS setup entry's statement joins (the
+# version string the VM bootstrap installs; the +2 is the module
+# edge beside the name).
 spec = 39
 storage = 13
 

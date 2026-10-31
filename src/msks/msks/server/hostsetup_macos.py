@@ -40,7 +40,9 @@ preserves the token, the CA, and the daemon's state.
 """
 
 import argparse
+import json
 import os
+import re
 import socket
 import ssl
 import subprocess
@@ -156,7 +158,28 @@ def check_host() -> dict:
             "this tool needs Apple Silicon (the guest images are aarch64; "
             "nested virtualization is the Apple Virtualization framework's)"
         )
+    check_chip_class()
     return {"lima": require_lima()}
+
+
+def check_chip_class() -> None:
+    """The chip can nest: Apple's Virtualization framework grew
+    nested virtualization on the M3 class — an M1 or M2 boots the
+    daemon VM but its workspaces can never start (#676's gate:
+    warn here, never provision a VM whose workspaces cannot
+    run). Newer, unrecognized chips pass (the floor is what the
+    framework refuses, not what this list knows)."""
+    brand = subprocess.run(
+        ["sysctl", "-n", "machdep.cpu.brand_string"],
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if brand.startswith(("Apple M1", "Apple M2")):
+        raise MacSetupError(
+            f"this Mac's chip ({brand}) does not provide nested "
+            "virtualization; the daemon VM would boot but its "
+            "workspaces cannot start"
+        )
 
 
 def require_lima() -> str:
@@ -217,13 +240,57 @@ def instance_yaml(host_port: int) -> str:
     return template + forward
 
 
+def vm_entry(name: str) -> dict | None:
+    """This tool's entry from ``limactl list --json`` — the
+    listing parsed, the one VM named, so a status read never
+    borrows another VM's (the course VM runs beside this one on
+    dev Macs)."""
+    listing = run(["limactl", "list", "--json"], capture=True)
+    for entry in listing_entries(listing):
+        if entry.get("name") == name:
+            return entry
+    return None
+
+
+def listing_entries(listing: str) -> list:
+    """The entries a ``limactl list --json`` listing carries: one
+    object per line is limactl's shape; a whole array on one line
+    parses to a list all the same."""
+    entries = []
+    for line in listing.splitlines():
+        if not line.strip():
+            continue
+        try:
+            decoded = json.loads(line)
+        except ValueError:
+            continue
+        entries.extend(decoded if isinstance(decoded, list) else [decoded])
+    return entries
+
+
+def forward_host_port(name: str) -> int | None:
+    """The host port the VM's own config forwards for the daemon
+    — read from the instance config Lima wrote at creation, so a
+    mid-life ``--port`` change is a named refusal (the forward is
+    fixed at creation), never a silent wrong port."""
+    config = Path.home() / ".lima" / name / "lima.yaml"
+    try:
+        text = config.read_text()
+    except OSError:
+        return None
+    match = re.search(rf"guestPort: {VM_PORT}\n.*?hostPort: (\d+)", text)
+    return int(match.group(1)) if match else None
+
+
 def ensure_vm(name: str = VM_NAME, host_port: int = PORT) -> None:
     """The VM exists and runs: created from the rendered instance
     config on first sight, started when stopped, left alone when
-    running. vz mounts are fixed at creation — a recreation is
-    the remedy for template changes, and the shares doc names it."""
-    listing = run(["limactl", "list", "--json"], capture=True)
-    if f'"name":"{name}"' not in listing.replace(" ", ""):
+    running. vz mounts and the port forward are fixed at
+    creation — a template change or a ``--port`` change takes a
+    VM recreation, and a mid-life port mismatch is a named
+    refusal with that remedy, never a silent wrong port."""
+    entry = vm_entry(name)
+    if entry is None:
         say(f"creating the {name} VM (the image downloads on first run)")
         with tempfile.NamedTemporaryFile(
             "w", suffix=".yaml", delete=False
@@ -235,9 +302,16 @@ def ensure_vm(name: str = VM_NAME, host_port: int = PORT) -> None:
         finally:
             os.unlink(path)
         return
-    if '"status":"Running"' not in listing.replace(" ", ""):
+    if entry.get("status") != "Running":
         say(f"starting the stopped {name} VM")
         run(["limactl", "start", name])
+    forward = forward_host_port(name)
+    if forward is not None and forward != host_port:
+        raise MacSetupError(
+            f"the {name} VM forwards host port {forward} (fixed at "
+            f"creation); --port {host_port} wants a recreation: "
+            f"limactl delete -f {name} && re-run {TOOL}"
+        )
 
 
 # --- phase 3: the in-VM bootstrap ------------------------------------
@@ -352,8 +426,9 @@ def verify_daemon(port: int, timeout_s: float = 90.0) -> None:
         time.sleep(2.0)
     raise MacSetupError(
         f"the daemon never answered https://127.0.0.1:{port}/ within "
-        f"{timeout_s:.0f}s ({last}); the VM's journal names the cause: "
-        f"limactl shell {VM_NAME} -- sudo journalctl -u msksd -e"
+        f"{timeout_s:.0f}s ({last}); either the VM's journal names the "
+        f"cause (limactl shell {VM_NAME} -- sudo journalctl -u msksd -e) "
+        "or another listener answers this host port (pass --port)"
     )
 
 
@@ -362,13 +437,27 @@ def verify_chain(port: int, ca_pem: str) -> None:
     certificate chains to the VM's CA. A mismatch names the
     collision — something else on the Mac already answers this
     port (another VM's forward, a local daemon), and the remedy
-    is another ``--port``."""
-    context = ssl.create_default_context(cadata=ca_pem)
+    is another ``--port``. A CA that will not parse (a torn read
+    inside the daemon's write window) refuses with the re-run
+    remedy, never a raw traceback."""
     try:
+        context = ssl.create_default_context(cadata=ca_pem)
         with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
             with context.wrap_socket(raw, server_hostname="127.0.0.1"):
                 return
-    except (OSError, ssl.SSLError) as exc:
+    except ssl.SSLCertVerificationError as exc:
+        # The chain does not hold: the listener answering this
+        # port serves another daemon's certificate.
+        raise MacSetupError(
+            f"something other than the msksd VM's daemon answers "
+            f"127.0.0.1:{port} ({exc}); pass --port to use another "
+            "host port"
+        ) from None
+    except ssl.SSLError as exc:
+        raise MacSetupError(
+            f"the daemon's CA did not parse ({exc}); re-run the tool"
+        ) from None
+    except OSError as exc:
         raise MacSetupError(
             f"something other than the msksd VM's daemon answers "
             f"127.0.0.1:{port} ({exc}); pass --port to use another "
@@ -400,15 +489,25 @@ def client_preset(port: int) -> str:
 
 
 def nested_marker() -> str:
-    """The nested-virtualization marker inside the VM: the
-    arm64 kvm mode parameter (``nv``) or the kernel log's NV
-    init line — the same probe shape #664's doctor row reads,
-    empty when neither answers."""
-    marker = vm_shell(
-        "cat /sys/module/kvm/parameters/kvm-arm.mode 2>/dev/null "
-        "|| dmesg | grep -m1 -i 'kvm.*nested' || true"
-    ).strip()
-    return marker if marker else ""
+    """The nested-virtualization marker inside the VM, in #664's
+    doctor-row shape (doctor.py's kvm_nv_mode): the kvm mode
+    parameter names ``nested``, the kernel command line sets
+    ``kvm-arm.mode=nested``, or KVM's init line in the kernel log
+    names NV engaged (the kernel's own spellings: ``VHE+NV`` on
+    the Asahi tree, ``nVHE`` and the ``nv:`` handler counts on
+    Debian's) — the running mode's own record. Empty when
+    none answers (the kvm module loads on demand; a freshly
+    booted VM may carry none of the three yet)."""
+    probe = (
+        "cat /sys/module/kvm/parameters/mode 2>/dev/null; "
+        "grep -o 'kvm-arm.mode=nested' /proc/cmdline 2>/dev/null; "
+        "dmesg | grep -m1 -E 'VHE\\+NV|nVHE|nv: [0-9]+ coarse' "
+        "2>/dev/null || true"
+    )
+    for line in vm_shell(probe).splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
 
 
 def virtiofsd_state() -> str:
@@ -437,14 +536,17 @@ def check_rows(port: int) -> list[str]:
     """The macOS doctor rows: Lima at the floor, the VM running,
     the nested-virtualization marker inside it, virtiofsd
     installed there, and the daemon's listener answering through
-    the forward. Each row names its finding; the first refusal
-    stops the pass."""
+    the forward — chained to THIS daemon's CA, so a port
+    collision (another VM's forward, a local daemon) refuses
+    instead of reporting another daemon green. virtiofsd's
+    absence is a refusal, not a degraded pass: shares are this
+    VM's headline feature."""
     lima = require_lima()
     rows = [f"lima {lima} at the template's floor"]
-    listing = run(["limactl", "list", "--json"], capture=True).replace(" ", "")
-    if f'"name":"{VM_NAME}"' not in listing:
+    entry = vm_entry(VM_NAME)
+    if entry is None:
         raise MacSetupError(f"the {VM_NAME} VM does not exist; run {TOOL}")
-    if '"status":"Running"' not in listing:
+    if entry.get("status") != "Running":
         raise MacSetupError(
             f"the {VM_NAME} VM is not running; limactl start {VM_NAME}"
         )
@@ -454,16 +556,21 @@ def check_rows(port: int) -> list[str]:
         rows.append(f"nested virtualization is on ({nested})")
     else:
         rows.append(
-            "nested virtualization marker not found (workspaces "
-            "need it; the VM may still be probing)"
+            "nested virtualization marker not found (the kvm module "
+            "loads on demand; start a workspace and re-check)"
         )
-    if virtiofsd_state() == "present":
-        rows.append("virtiofsd present inside the VM")
-    else:
-        rows.append("virtiofsd missing inside the VM (a re-run installs it)")
+    if virtiofsd_state() != "present":
+        raise MacSetupError(
+            "virtiofsd is not installed inside the VM; re-run the "
+            "tool to install it (shares spawn it per attach)"
+        )
+    rows.append("virtiofsd present inside the VM")
     verify_daemon(port, timeout_s=15.0)
+    ca = fetch_vm_file(f"{VM_STATE}/{CA_CERT}").strip()
+    verify_chain(port, ca)
     rows.append(
-        f"the daemon answers https://127.0.0.1:{port}/ through the forward"
+        f"the daemon answers https://127.0.0.1:{port}/ through the "
+        "forward, chained to the VM's CA"
     )
     return rows
 
@@ -522,19 +629,21 @@ def run_setup(args: argparse.Namespace) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     """The console entry: 0 on success, 1 on a named refusal; the
-    preset prints on stdout, everything else on stderr."""
+    preset and the check rows print on stdout, progress and
+    refusals on stderr."""
     args = parse_args(argv)
     try:
         if args.uninstall:
             say(f"deleting the {VM_NAME} VM (Lima and the client config stay)")
             run(["limactl", "delete", "-f", VM_NAME])
             print(
-                f"{TOOL}: the {VM_NAME} VM is gone. Lima itself, the "
-                "client config, and the CA under ~/.config/msks stay; "
+                f"{TOOL}: the {VM_NAME} VM is gone. Lima itself and "
+                "the CA under ~/.config/msks/msksd-vm-ca.pem stay; "
                 "remove them by hand when you want them gone."
             )
             return 0
         if args.check:
+            check_host()
             for row in check_rows(args.port):
                 print(f"  ok  {row}")
             return 0

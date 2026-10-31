@@ -74,7 +74,9 @@ def procs(monkeypatch: pytest.MonkeyPatch) -> FakeProcesses:
         "msks-ca.pem": "-----BEGIN CERTIFICATE-----\nxyz\n"
         "-----END CERTIFICATE-----\n",
         "bootstrap-token": "the-token\n",
-        "kvm-arm.mode": "nv\n",
+        "nVHE|nv: [0-9]+ coarse": (
+            "kvm [1]: nv: 554 coarse grained trap handlers\n"
+        ),
         "dpkg -s virtiofsd": "present\n",
     }
     return fake
@@ -280,13 +282,67 @@ def test_a_missing_ca_retries_then_refuses(
 
 
 def test_the_check_rows_answer_the_doctor_questions(
-    procs: FakeProcesses,
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
 ) -> None:
+    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
     rows = mac.check_rows(mac.PORT)
     assert rows[0] == "lima 2.2.1 at the template's floor"
     assert any("nested virtualization is on" in row for row in rows)
+    assert any("nv: 554 coarse" in row for row in rows)
     assert any("virtiofsd present" in row for row in rows)
-    assert any("answers https" in row for row in rows)
+    assert any("chained to the VM's CA" in row for row in rows)
+
+
+def test_m1_and_m2_refuse_at_the_gate(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
+) -> None:
+    """#676's gate: an M1 or M2 boots the daemon VM but its
+    workspaces can never start — the tool refuses before
+    provisioning; newer, unrecognized chips pass."""
+    monkeypatch.setattr(mac.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        mac.os, "uname", lambda: SimpleNamespace(machine="arm64")
+    )
+    for brand, refuses in (
+        ("Apple M2 Pro", True),
+        ("Apple M1", True),
+        ("Apple M3", False),
+        ("Apple M4 Max", False),
+        ("Some Future Chip", False),
+    ):
+        procs.calls.clear()
+        procs.vm_fail = None
+        procs.fail_output = {}
+        procs.version = "limactl version 2.2.1"
+
+        def fake_sysctl(command, **kwargs):
+            if command[:1] == ["sysctl"]:
+                return completed(0, brand + "\n", "")
+            return procs._run(command, **kwargs)
+
+        monkeypatch.setattr(mac.subprocess, "run", fake_sysctl)
+        if refuses:
+            with pytest.raises(mac.MacSetupError, match="nested"):
+                mac.check_host()
+        else:
+            mac.check_host()
+
+
+def test_a_missing_virtiofsd_refuses_the_check(
+    procs: FakeProcesses,
+) -> None:
+    """virtiofsd's absence is a refusal, not a degraded pass —
+    shares are this VM's headline feature."""
+    procs.vm["dpkg -s virtiofsd"] = "missing\n"
+    with pytest.raises(mac.MacSetupError, match="re-run the tool"):
+        mac.check_rows(mac.PORT)
+
+
+def test_a_torn_ca_read_refuses_with_the_rerun_remedy() -> None:
+    """A CA that will not parse (a torn read inside the daemon's
+    write window) refuses by name, never a raw traceback."""
+    with pytest.raises(mac.MacSetupError, match="re-run the tool"):
+        mac.verify_chain(8660, "-----BEGIN CERTIFICATE-----\nMIIabc\n")
 
 
 def test_a_missing_vm_names_the_tool(procs: FakeProcesses) -> None:
