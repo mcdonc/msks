@@ -592,10 +592,16 @@ def test_the_check_only_entry_prints_rows(
 
 
 def test_the_entry_prints_the_preset(
-    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, capsys
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    capsys,
+    tmp_path,
 ) -> None:
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
     monkeypatch.setattr(mac, "verify_daemon", lambda port: None)
+    # The CA target: the entry path writes it, and a test run
+    # must never reach the operator's real file.
+    monkeypatch.setattr(mac, "MAC_CA", tmp_path / "ca.pem")
     monkeypatch.setattr(mac.sys, "platform", "darwin")
     monkeypatch.setattr(
         mac.os, "uname", lambda: SimpleNamespace(machine="arm64")
