@@ -1221,8 +1221,9 @@ reset), the guest regenerates its host keys: the daemon advances
 the workspace's disk epoch, the cache rotates with it, and the
 next connection pins the fresh keys with a notice naming the
 recreation instead of refusing. A rotation leaves the previous
-epoch's cache directory behind (`<id>/known_hosts` beside
-`<id>.e1/`); those directories are dead — delete them at will.
+epoch's cache behind (the `<id>/` directory, then `<id>.e1/`,
+`<id>.e2/`, … as rotations accumulate); those directories are
+dead — delete them at will.
 The alias block keeps its own known_hosts under
 `~/.cache/msks/msks-<ws>/`; the two paths record the same host
 key independently. Agent forwarding asked for on the command
