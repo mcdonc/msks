@@ -5,21 +5,87 @@ Covers the host check's refusals (the platform, the Silicon, the
 Lima floor with its remedies), the instance config (the shipped
 template plus the port forward this tool owns), the bootstrap
 script's contract with the config and unit it writes, the token's
-survival across reruns, the verify pass's any-answer-is-proof
-shape, the preset's three exports, and the check rows' refusals —
-against fakes at the two subprocess seams (`run`, `vm_shell`).
+survival across reruns, the verify pass's any-answer and
+chain-proof shapes, the preset's three exports, the check rows'
+refusals, and the two subprocess seams' failure tails — against
+one fake at ``subprocess.run`` (the whole tool is subprocesses;
+the fakes answer at that boundary so every real body runs).
 """
 
+import subprocess
 from types import SimpleNamespace
 from urllib.error import HTTPError
 
 import pytest
 from msks.server import hostsetup_macos as mac
 
+# --- the one fake: subprocess.run -------------------------------------
+
+
+class FakeProcesses:
+    """Answers at the subprocess boundary: a table of command
+    prefixes to outputs, a table of commands that fail, and a
+    table of in-VM scripts to outputs (vm_shell sends the script
+    on stdin)."""
+
+    def __init__(self):
+        self.listing = '[{"name":"msksd","status":"Running"}]'
+        self.version = "limactl version 2.2.1"
+        self.fail: list[str] = []
+        self.fail_output: dict = {}
+        self.vm: dict[str, str] = {}
+        self.vm_fail: str | None = None
+        self.calls: list[list[str]] = []
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> FakeProcesses:
+        monkeypatch.setattr(mac.subprocess, "run", self._run)
+        return self
+
+    def _run(self, command, **_kwargs):
+        self.calls.append(command)
+        script = _kwargs.get("input")
+        if script is not None:
+            if self.vm_fail is not None and self.vm_fail in script:
+                return completed(1, "", "boom: the VM said no")
+            for needle, out in self.vm.items():
+                if needle in script:
+                    return completed(0, out, "")
+            return completed(0, "", "")
+        for bad, output in self.fail_output.items():
+            if bad in " ".join(command):
+                return completed(1, "", output)
+        if command[:2] == ["limactl", "--version"]:
+            return completed(0, self.version + "\n", "")
+        if command[:2] == ["limactl", "list"]:
+            return completed(0, self.listing, "")
+        return completed(0, "", "")
+
+
+def completed(rc: int, out: str, err: str) -> subprocess.CompletedProcess:
+    """The shape run() and vm_shell() read."""
+    return subprocess.CompletedProcess([], rc, out, err)
+
+
+@pytest.fixture
+def procs(monkeypatch: pytest.MonkeyPatch) -> FakeProcesses:
+    fake = FakeProcesses()
+    fake.install(monkeypatch)
+    fake.vm = {
+        "msks-ca.pem": "-----BEGIN CERTIFICATE-----\nxyz\n"
+        "-----END CERTIFICATE-----\n",
+        "bootstrap-token": "the-token\n",
+        "kvm-arm.mode": "nv\n",
+        "dpkg -s virtiofsd": "present\n",
+    }
+    return fake
+
+
 # --- the host check ---------------------------------------------------
 
 
-def test_the_platform_refusals(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_platform_refusals(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
+) -> None:
     monkeypatch.setattr(mac.sys, "platform", "linux")
     with pytest.raises(mac.MacSetupError, match="runs on macOS"):
         mac.check_host()
@@ -32,12 +98,9 @@ def test_the_platform_refusals(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_a_missing_lima_names_the_brew_line(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
 ) -> None:
-    def missing(command, **_):
-        raise mac.MacSetupError("not found")
-
-    monkeypatch.setattr(mac, "run", missing)
+    procs.fail_output = {"limactl --version": "not found"}
     with pytest.raises(mac.MacSetupError, match="brew install lima"):
         mac.require_lima()
 
@@ -45,26 +108,34 @@ def test_a_missing_lima_names_the_brew_line(
 @pytest.mark.parametrize(
     ("version", "refuses"),
     [
-        ("limactl version 2.2.1", False),
-        ("limactl version 2.3.0", False),
-        ("limactl version 2.1.0", True),
+        ("2.2.1", False),
+        ("2.3.0", False),
+        ("2.1.0", True),
     ],
 )
 def test_the_lima_floor(
-    monkeypatch: pytest.MonkeyPatch, version: str, refuses: bool
+    procs: FakeProcesses, version: str, refuses: bool
 ) -> None:
-    monkeypatch.setattr(
-        mac,
-        "run",
-        lambda command, **_: (
-            version if command[:2] == ["limactl", "--version"] else ""
-        ),
-    )
+    procs.version = f"limactl version {version}"
     if refuses:
         with pytest.raises(mac.MacSetupError, match="upgrade"):
             mac.require_lima()
     else:
-        assert mac.require_lima() == version.split()[-1]
+        assert mac.require_lima() == version
+
+
+def test_a_failed_run_carries_the_tail(procs: FakeProcesses) -> None:
+    procs.fail_output = {"limactl list": "the daemon is angry"}
+    with pytest.raises(mac.MacSetupError, match="the daemon is angry"):
+        mac.run(["limactl", "list", "--json"], capture=True)
+
+
+def test_a_failed_vm_command_carries_its_tail(
+    procs: FakeProcesses,
+) -> None:
+    procs.vm_fail = "apt-get"
+    with pytest.raises(mac.MacSetupError, match="the VM said no"):
+        mac.vm_shell("apt-get install nothing")
 
 
 # --- the instance config ----------------------------------------------
@@ -78,36 +149,29 @@ def test_the_instance_config_appends_the_forward() -> None:
     document = mac.instance_yaml(mac.PORT)
     assert "mountPoint: /mnt/msks/Users/{{.User}}" in document
     assert "nestedVirtualization: true" in document
+    assert f"guestPort: {mac.VM_PORT}" in document
     assert document.rstrip().endswith(
-        f'  hostPort: {mac.PORT}\n  hostIP: "127.0.0.1"'
+        f'hostPort: {mac.PORT}\n  hostIP: "127.0.0.1"'
     )
-    assert f"guestPort: {mac.PORT}" in document
 
 
 def test_the_vm_is_created_started_or_left_alone(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
 ) -> None:
-    calls: list[list[str]] = []
-
-    def fake_run(command, **_):
-        calls.append(command)
-        if command[:2] == ["limactl", "list"]:
-            return state
-        return ""
-
-    for state, expect in (
-        ('[{"name":"other"}]', ["start", "--name", mac.VM_NAME]),
-        ('[{"name":"msksd","status":"Stopped"}]', ["start", mac.VM_NAME]),
+    for listing, expect_start in (
+        ('[{"name":"other"}]', "creating"),
+        ('[{"name":"msksd","status":"Stopped"}]', "starting"),
         ('[{"name":"msksd","status":"Running"}]', None),
     ):
-        calls.clear()
-        monkeypatch.setattr(mac, "run", fake_run)
+        procs.calls.clear()
+        procs.listing = listing
         monkeypatch.setattr(mac, "say", lambda _message: None)
         mac.ensure_vm()
-        if expect is None:
-            assert not any(c[1] == "start" for c in calls)
+        starts = [c for c in procs.calls if c[1] == "start"]
+        if expect_start is None:
+            assert not starts
         else:
-            assert any(expect == c[1 : 1 + len(expect)] for c in calls)
+            assert starts
 
 
 # --- the bootstrap ----------------------------------------------------
@@ -116,9 +180,9 @@ def test_the_vm_is_created_started_or_left_alone(
 def test_the_bootstrap_writes_the_geometry_and_survives_reruns() -> None:
     """The script installs the wheel, writes the config with the
     prefix-mode geometry (the template's reserved prefix, the
-    user's home the default allowed root), the unit, and keeps
-    the token file across runs — a rerun refreshes, never
-    re-mints."""
+    user's home the default allowed root), the unit with
+    --config, and keeps the token file across runs — a rerun
+    refreshes, never re-mints."""
     script = mac.bootstrap_script(None, "/Users/probe")
     assert "mount_host_mode: prefix" in script
     assert 'mount_host_roots: ["/Users/probe"]' in script
@@ -128,6 +192,7 @@ def test_the_bootstrap_writes_the_geometry_and_survives_reruns() -> None:
     assert "if [ ! -s" in script
     assert f"msks=={mac.vm_version()}" in script
     assert "systemctl restart msksd.service" in script
+    assert f"--config {mac.VM_CONF}" in script
 
 
 def test_a_named_wheel_installs_the_file() -> None:
@@ -135,7 +200,13 @@ def test_a_named_wheel_installs_the_file() -> None:
         "/builds/msks-0.5.0-py3-none-any.whl", "/Users/p"
     )
     assert "/tmp/msks-0.5.0-py3-none-any.whl" in script
-    assert f"port: {mac.VM_PORT}" in script
+
+
+def test_the_bootstrap_copies_a_named_wheel(procs: FakeProcesses) -> None:
+    procs.vm = {}
+    mac.bootstrap_vm("/builds/w.whl", "/Users/p")
+    copied = [c for c in procs.calls if c[:2] == ["limactl", "copy"]]
+    assert copied
 
 
 # --- the verify pass and the preset -----------------------------------
@@ -169,20 +240,25 @@ def test_a_silent_listener_refuses_with_the_journal_line(
         mac.verify_daemon(mac.PORT, timeout_s=0.0)
 
 
+def test_a_chain_mismatch_names_the_collision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        mac.ssl, "create_default_context", lambda **_kwargs: None
+    )
+
+    def fake_connect(address, timeout=None):
+        raise OSError("refused")
+
+    monkeypatch.setattr(mac.socket, "create_connection", fake_connect)
+    with pytest.raises(mac.MacSetupError, match="--port"):
+        mac.verify_chain(8660, "whatever")
+
+
 def test_the_preset_carries_the_three_exports(
-    monkeypatch: pytest.MonkeyPatch, tmp_path
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, tmp_path
 ) -> None:
     monkeypatch.setattr(mac, "MAC_CA", tmp_path / "ca.pem")
-
-    def fake_vm(script):
-        assert "msks-ca.pem" in script or "bootstrap-token" in script
-        if "msks-ca" in script:
-            return (
-                "-----BEGIN CERTIFICATE-----\nxyz\n-----END CERTIFICATE-----\n"
-            )
-        return "the-token\n"
-
-    monkeypatch.setattr(mac, "vm_shell", fake_vm)
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
     preset = mac.client_preset(mac.PORT)
     assert "export MSKSC_URL=https://127.0.0.1:8660" in preset
@@ -191,8 +267,11 @@ def test_the_preset_carries_the_three_exports(
     assert (tmp_path / "ca.pem").read_text().startswith("-----BEGIN")
 
 
-def test_a_missing_ca_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mac, "vm_shell", lambda _script: "not a cert")
+def test_a_missing_ca_retries_then_refuses(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
+) -> None:
+    procs.vm = {"msks-ca.pem": ""}
+    monkeypatch.setattr(mac, "MAC_CA", mac.MAC_CA)
     with pytest.raises(mac.MacSetupError, match="CA did not come back"):
         mac.client_preset(mac.PORT)
 
@@ -201,53 +280,23 @@ def test_a_missing_ca_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_the_check_rows_answer_the_doctor_questions(
-    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
 ) -> None:
-    monkeypatch.setattr(mac, "require_lima", lambda: "2.2.1")
-    monkeypatch.setattr(
-        mac,
-        "run",
-        lambda command, **_: (
-            '[{"name":"msksd","status":"Running"}]'
-            if command[:2] == ["limactl", "list"]
-            else ""
-        ),
-    )
-    monkeypatch.setattr(
-        mac, "verify_daemon", lambda port, timeout_s=15.0: None
-    )
-    answers = iter(
-        [
-            "nv\n",
-            "present\n",
-        ]
-    )
-    monkeypatch.setattr(mac, "vm_shell", lambda script: next(answers))
     rows = mac.check_rows(mac.PORT)
     assert rows[0] == "lima 2.2.1 at the template's floor"
-    assert any("nested virtualization" in row for row in rows)
+    assert any("nested virtualization is on" in row for row in rows)
     assert any("virtiofsd present" in row for row in rows)
     assert any("answers https" in row for row in rows)
 
 
-def test_a_missing_vm_names_the_tool(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(mac, "require_lima", lambda: "2.2.1")
-    monkeypatch.setattr(mac, "run", lambda command, **_: "[]")
+def test_a_missing_vm_names_the_tool(procs: FakeProcesses) -> None:
+    procs.listing = "[]"
     with pytest.raises(mac.MacSetupError, match=f"run {mac.TOOL}"):
         mac.check_rows(mac.PORT)
 
 
-def test_a_stopped_vm_names_the_start(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(mac, "require_lima", lambda: "2.2.1")
-    monkeypatch.setattr(
-        mac,
-        "run",
-        lambda command, **_: '[{"name":"msksd","status":"Stopped"}]',
-    )
+def test_a_stopped_vm_names_the_start(procs: FakeProcesses) -> None:
+    procs.listing = '[{"name":"msksd","status":"Stopped"}]'
     with pytest.raises(mac.MacSetupError, match="limactl start msksd"):
         mac.check_rows(mac.PORT)
 
@@ -256,59 +305,31 @@ def test_a_stopped_vm_names_the_start(
 
 
 def test_the_entry_prints_the_preset(
-    monkeypatch: pytest.MonkeyPatch, capsys
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, capsys
 ) -> None:
-    monkeypatch.setattr(mac, "check_host", lambda: {"lima": "2.2.1"})
-    monkeypatch.setattr(mac, "ensure_vm", lambda: None)
-    monkeypatch.setattr(mac, "bootstrap_vm", lambda *args: None)
-    monkeypatch.setattr(mac, "verify_daemon", lambda port: None)
+    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    monkeypatch.setattr(mac.sys, "platform", "darwin")
     monkeypatch.setattr(
-        mac, "client_preset", lambda port: "export MSKSC_URL=x"
+        mac.os, "uname", lambda: SimpleNamespace(machine="arm64")
     )
-    monkeypatch.setattr(mac, "ensure_vm", lambda **kwargs: None)
-    assert mac.main([]) == 0
-    assert "export MSKSC_URL=x" in capsys.readouterr().out
+    assert mac.main(["--port", "8661"]) == 0
+    out = capsys.readouterr().out
+    assert "export MSKSC_URL=https://127.0.0.1:8661" in out
+    assert "export MSKSC_TOKEN=the-token" in out
 
 
-def test_the_uninstall_mirror(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
-    calls: list[list[str]] = []
-
-    def fake_run(command, **_):
-        calls.append(command)
-        return ""
-
-    monkeypatch.setattr(mac, "run", fake_run)
+def test_the_uninstall_mirror(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, capsys
+) -> None:
     monkeypatch.setattr(mac, "say", lambda _message: None)
     assert mac.main(["--uninstall"]) == 0
-    assert calls == [["limactl", "delete", "-f", "msksd"]]
+    assert any(c[:2] == ["limactl", "delete"] for c in procs.calls)
     assert "Lima itself" in capsys.readouterr().out
 
 
 def test_a_named_refusal_exits_one(
-    monkeypatch: pytest.MonkeyPatch, capsys
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, capsys
 ) -> None:
-    monkeypatch.setattr(
-        mac,
-        "check_host",
-        lambda: (_ for _ in ()).throw(mac.MacSetupError("nope")),
-    )
+    monkeypatch.setattr(mac.sys, "platform", "linux")
     assert mac.main([]) == 1
-    assert "nope" in capsys.readouterr().err
-
-
-def test_a_chain_mismatch_names_the_collision(monkeypatch) -> None:
-    """The verify pass proves the served certificate chains to
-    the VM's CA — the collision case (another VM's forward or a
-    local daemon answering the host port) names the remedy."""
-
-    def fake_context(**_kwargs):
-        return None
-
-    monkeypatch.setattr(mac.ssl, "create_default_context", fake_context)
-
-    def fake_connect(address, timeout=None):
-        raise OSError("refused")
-
-    monkeypatch.setattr(mac.socket, "create_connection", fake_connect)
-    with pytest.raises(mac.MacSetupError, match="--port"):
-        mac.verify_chain(8660, "whatever")
+    assert "runs on macOS" in capsys.readouterr().err
