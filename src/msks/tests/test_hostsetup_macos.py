@@ -13,6 +13,7 @@ the fakes answer at that boundary so every real body runs).
 """
 
 import subprocess
+from pathlib import Path
 from types import SimpleNamespace
 from urllib.error import HTTPError
 
@@ -230,6 +231,89 @@ def test_any_http_answer_proves_the_stack(
     monkeypatch.setattr(mac.urllib.request, "urlopen", fake_urlopen)
     mac.verify_daemon(mac.PORT, timeout_s=1.0)
     assert opened == [f"https://127.0.0.1:{mac.PORT}/"]
+
+
+def test_listing_entries_skips_noise_lines() -> None:
+    """The listing parser skips blank and non-JSON lines — the
+    dmesg-grade noise a limactl burp can interleave."""
+    entries = mac.listing_entries(
+        ' {"name":"msksd","status":"Running"}\n'
+        "\n"
+        "not json at all\n"
+        '[{"name":"other"}]'
+    )
+    assert entries == [
+        {"name": "msksd", "status": "Running"},
+        {"name": "other"},
+    ]
+
+
+def test_a_two_xx_answer_proves_the_stack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 200-level answer returns on the urlopen return path."""
+    monkeypatch.setattr(
+        mac.urllib.request,
+        "urlopen",
+        lambda url, timeout, context=None: object(),
+    )
+    mac.verify_daemon(mac.PORT, timeout_s=1.0)
+
+
+def test_a_retry_then_answer_proves_the_stack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A first refused dial that answers on retry covers the
+    loop's retry arm — the daemon coming up mid-verify."""
+    attempts = []
+
+    def flaky(url, timeout, context=None):
+        attempts.append(url)
+        if len(attempts) == 1:
+            raise OSError("refused")
+        raise HTTPError(url, 401, "no token", None, None)
+
+    sleeps = []
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(mac.urllib.request, "urlopen", flaky)
+    monkeypatch.setattr(mac.time, "sleep", fake_sleep)
+    monkeypatch.setattr(mac.time, "monotonic", lambda: 0.0)
+    mac.verify_daemon(mac.PORT, timeout_s=30.0)
+    assert len(attempts) == 2 and sleeps
+
+
+def test_the_chain_holds_on_a_verified_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wrap-socket return path: a real context over a real
+    local listener is CI-hostile, so the socket layers fake and
+    the context is real over a self-owned CA pair."""
+    import http.server
+    import ssl as ssl_mod
+    import tempfile
+    import threading
+
+    # A one-shot TLS server answering on a random loopback port,
+    # self-signed through the same CA the check reads.
+    ca_dir = tempfile.mkdtemp()
+    from msks.server.tls import load_or_generate
+
+    cert, key, _fp = load_or_generate(Path(ca_dir), "127.0.0.1", None, None)
+    ca_pem = (Path(ca_dir) / "msks-ca.pem").read_text()
+    context = ssl_mod.SSLContext(ssl_mod.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(cert, key)
+    server = http.server.HTTPServer(("127.0.0.1", 0), None)
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        mac.verify_chain(port, ca_pem)
+    finally:
+        server.shutdown()
 
 
 def test_a_silent_listener_refuses_with_the_journal_line(
