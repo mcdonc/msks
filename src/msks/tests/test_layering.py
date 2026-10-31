@@ -153,6 +153,12 @@ ALLOWED_EDGES = {
     # the HTTP surface orchestrates; main.py pulls the composer,
     # the hub relay comes from the events root leaf (#408)
     ("server", "app"),
+    # #689: the macOS setup tool writes the client's own config —
+    # the path resolution, the first-run template it may replace,
+    # and the validated read come from the module that owns them
+    # (hostsetup_macos, the tool's entry module; no daemon path
+    # imports the client).
+    ("server", "client"),
     ("server", "config"),
     ("server", "events"),
     # #672: the set-time and start-time host-share gates.

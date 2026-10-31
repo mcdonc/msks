@@ -216,6 +216,12 @@ secretcache = 3
 
 [snapshot.server]
 app = 2
+# #689: the macOS setup tool writes the client's own msks.yaml —
+# default_config_path, render_template, and parse_config_doc (the
+# path, the replaceable first-run template, and the validated
+# read) come from the module that owns them; hostsetup_macos is
+# the tool's entry module, and no daemon path imports the client.
+client = 4
 # #672: the set-time (checked_mounts) and start-time
 # (mount_state) host-share gates — the module and the
 # check entry.

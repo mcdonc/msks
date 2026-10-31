@@ -12,6 +12,7 @@ one fake at ``subprocess.run`` (the whole tool is subprocesses;
 the fakes answer at that boundary so every real body runs).
 """
 
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -81,6 +82,21 @@ def procs(monkeypatch: pytest.MonkeyPatch) -> FakeProcesses:
         "dpkg -s virtiofsd": "present\n",
     }
     return fake
+
+
+@pytest.fixture
+def client_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """The client's config tree and the agent's paths, relocated:
+    the entry paths write these, and a test run must never reach
+    the operator's real files."""
+    monkeypatch.setenv("MSKSC_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(mac, "MAC_CA", tmp_path / "config" / "ca.pem")
+    monkeypatch.setattr(mac, "MAC_TOKEN", tmp_path / "config" / "vm.token")
+    monkeypatch.setattr(
+        mac, "AGENT_PLIST", tmp_path / "LaunchAgents" / "agent.plist"
+    )
+    monkeypatch.setattr(mac, "AGENT_LOG", tmp_path / "Logs" / "agent.log")
+    return tmp_path
 
 
 # --- the host check ---------------------------------------------------
@@ -360,15 +376,28 @@ def test_a_chain_mismatch_names_the_collision(
 
 
 def test_the_preset_carries_the_three_exports(
-    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, tmp_path
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, client_tree: Path
 ) -> None:
-    monkeypatch.setattr(mac, "MAC_CA", tmp_path / "ca.pem")
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
     preset = mac.client_preset(mac.PORT)
     assert "export MSKSC_URL=https://127.0.0.1:8660" in preset
     assert "export MSKSC_TOKEN=the-token" in preset
-    assert f"export MSKSC_CAFILE={tmp_path / 'ca.pem'}" in preset
-    assert (tmp_path / "ca.pem").read_text().startswith("-----BEGIN")
+    assert f"export MSKSC_CAFILE={mac.MAC_CA}" in preset
+    assert mac.MAC_CA.read_text().startswith("-----BEGIN")
+    # The token file and the config beside it: the pair a bare
+    # msks reads (the exports remain the copy-paste fallback).
+    assert mac.MAC_TOKEN.read_text() == "the-token\n"
+    assert mac.MAC_TOKEN.stat().st_mode & 0o777 == 0o600
+    config = Path(mac.default_config_path())
+    assert config.read_text() == mac.client_config_body(mac.PORT)
+    from msks.client.config import parse_config_doc
+
+    doc = parse_config_doc(config.read_text(), str(config))
+    entry = doc["daemons"][mac.MANAGED_ALIAS]
+    assert entry["url"] == "https://127.0.0.1:8660"
+    assert entry["token_file"] == str(mac.MAC_TOKEN)
+    assert entry["cafile"] == str(mac.MAC_CA)
+    assert doc["active_daemon"] == mac.MANAGED_ALIAS
 
 
 def test_a_missing_ca_retries_then_refuses(
@@ -384,12 +413,15 @@ def test_a_missing_ca_retries_then_refuses(
 
 
 def test_the_check_rows_answer_the_doctor_questions(
-    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    client_tree: Path,
 ) -> None:
     monkeypatch.setattr(
         mac, "verify_daemon", lambda port, timeout_s=15.0: None
     )
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    mac.ensure_client_config(mac.PORT)
     rows = mac.check_rows(mac.PORT)
     assert rows[0] == "lima 2.2.1 at the template's floor"
     assert any("nested virtualization is on" in row for row in rows)
@@ -434,7 +466,9 @@ def test_m1_and_m2_refuse_at_the_gate(
 
 
 def test_the_not_found_nested_row_reports_truthfully(
-    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    client_tree: Path,
 ) -> None:
     """A VM whose markers have not landed yet (kvm loads on
     demand) reports the not-found row and the pass continues."""
@@ -448,6 +482,7 @@ def test_the_not_found_nested_row_reports_truthfully(
         mac, "verify_daemon", lambda port, timeout_s=15.0: None
     )
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    mac.ensure_client_config(mac.PORT)
     rows = mac.check_rows(mac.PORT)
     assert any("marker not found" in row for row in rows)
 
@@ -572,7 +607,10 @@ def test_a_port_change_on_an_existing_vm_names_the_recreation(
 
 
 def test_the_check_only_entry_prints_rows(
-    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, capsys
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    capsys,
+    client_tree: Path,
 ) -> None:
     """--check runs the platform gate and the rows, prints them
     on stdout, mutates nothing."""
@@ -593,39 +631,63 @@ def test_the_check_only_entry_prints_rows(
         mac, "verify_daemon", lambda port, timeout_s=15.0: None
     )
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    mac.ensure_client_config(8661)
     assert mac.main(["--check", "--port", "8661"]) == 0
     out = capsys.readouterr().out
     assert "  ok  " in out and "chained to the VM's CA" in out
+    assert "a bare msks reaches the daemon" in out
+    assert "login agent brings the msksd VM up at login" in out
 
 
 def test_the_entry_prints_the_preset(
     monkeypatch: pytest.MonkeyPatch,
     procs: FakeProcesses,
     capsys,
-    tmp_path,
+    client_tree: Path,
 ) -> None:
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
     monkeypatch.setattr(mac, "verify_daemon", lambda port: None)
-    # The CA target: the entry path writes it, and a test run
-    # must never reach the operator's real file.
-    monkeypatch.setattr(mac, "MAC_CA", tmp_path / "ca.pem")
     monkeypatch.setattr(mac.sys, "platform", "darwin")
     monkeypatch.setattr(
         mac.os, "uname", lambda: SimpleNamespace(machine="arm64")
     )
+    monkeypatch.setattr(
+        mac.shutil, "which", lambda name: "/opt/homebrew/bin/limactl"
+    )
+    # Path.home pinned: run_setup's home and the instance-config
+    # read stay in the test tree (a dev Mac's real ~/.lima/msksd
+    # would answer the port read and break the run's hermeticity).
+    monkeypatch.setattr(mac.Path, "home", lambda: client_tree)
     assert mac.main(["--port", "8661"]) == 0
     out = capsys.readouterr().out
     assert "export MSKSC_URL=https://127.0.0.1:8661" in out
     assert "export MSKSC_TOKEN=the-token" in out
+    # The config and the login agent the run installed beside the
+    # preset: the file a bare msks reads, and the plist launchd
+    # loads (both under the relocated tree, never the real home).
+    assert Path(mac.default_config_path()).is_file()
+    assert mac.AGENT_PLIST.is_file()
+    bootstraps = [
+        c for c in procs.calls if c[:2] == ["launchctl", "bootstrap"]
+    ]
+    assert bootstraps and str(mac.AGENT_PLIST) in bootstraps[0]
 
 
 def test_the_uninstall_mirror(
-    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, capsys
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    capsys,
+    client_tree: Path,
 ) -> None:
     monkeypatch.setattr(mac, "say", lambda _message: None)
+    mac.AGENT_PLIST.parent.mkdir(parents=True, exist_ok=True)
+    mac.AGENT_PLIST.write_bytes(b"stale plist")
     assert mac.main(["--uninstall"]) == 0
     assert any(c[:2] == ["limactl", "delete"] for c in procs.calls)
-    assert "Lima itself" in capsys.readouterr().out
+    assert any(c[:2] == ["launchctl", "bootout"] for c in procs.calls)
+    assert not mac.AGENT_PLIST.exists()
+    out = capsys.readouterr().out
+    assert "Lima itself" in out and "login agent" in out
 
 
 def test_a_named_refusal_exits_one(
@@ -634,3 +696,227 @@ def test_a_named_refusal_exits_one(
     monkeypatch.setattr(mac.sys, "platform", "linux")
     assert mac.main([]) == 1
     assert "runs on macOS" in capsys.readouterr().err
+
+
+# --- phase 5: the client config and the login agent ---------------------
+
+
+def test_the_config_write_policies(
+    monkeypatch: pytest.MonkeyPatch, client_tree: Path
+) -> None:
+    """One policy per prior state: a missing file is written, the
+    current body is a no-op, the client's own empty template is
+    replaced (nothing was set; the client regenerates it on
+    demand), this tool's file is refreshed, and an operator's own
+    file is kept byte-for-byte — the run names the choice."""
+    from msks.client.config import render_template
+
+    path = Path(mac.default_config_path())
+    body = mac.client_config_body(mac.PORT)
+    assert mac.ensure_client_config(mac.PORT).startswith("wrote")
+    assert path.read_text() == body
+    assert "is current" in mac.ensure_client_config(mac.PORT)
+    path.write_text(render_template())
+    assert mac.ensure_client_config(mac.PORT).startswith("wrote")
+    assert path.read_text() == body
+    path.write_text(mac.client_config_body(8661))  # this tool's, stale
+    assert mac.ensure_client_config(mac.PORT).startswith("refreshed")
+    assert path.read_text() == body
+    path.write_text("# the operator's own config\nurl: https://elsewhere\n")
+    assert mac.ensure_client_config(mac.PORT).startswith("kept")
+    assert "elsewhere" in path.read_text()
+
+
+def test_the_config_file_is_private(client_tree: Path) -> None:
+    mac.ensure_client_config(mac.PORT)
+    mode = Path(mac.default_config_path()).stat().st_mode & 0o777
+    assert mode == 0o600
+
+
+def test_the_config_row_refusals(
+    monkeypatch: pytest.MonkeyPatch, client_tree: Path
+) -> None:
+    path = Path(mac.default_config_path())
+    with pytest.raises(mac.MacSetupError, match="does not exist"):
+        mac.client_config_row(mac.PORT)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("daemons: [not, a, mapping]\n")
+    with pytest.raises(mac.MacSetupError, match="does not load"):
+        mac.client_config_row(mac.PORT)
+    # A green file pointed at another port: the wrong-daemon arm.
+    path.unlink()
+    mac.ensure_client_config(8661)
+    with pytest.raises(mac.MacSetupError, match="does not point"):
+        mac.client_config_row(mac.PORT)
+    # An operator file whose active daemon names this forward with
+    # the VM's token and CA passes — the alias name is theirs.
+    mac.ensure_client_config(mac.PORT)
+    body = (
+        path.read_text()
+        .replace(f"  {mac.MANAGED_ALIAS}:", "  theirs:")
+        .replace(
+            f"active_daemon: {mac.MANAGED_ALIAS}", "active_daemon: theirs"
+        )
+    )
+    path.write_text(body)
+    assert mac.client_config_row(mac.PORT)
+
+
+def test_an_unreadable_config_refuses_by_name(
+    client_tree: Path,
+) -> None:
+    """A config the read cannot reach (a directory in the way) is
+    a named refusal — never the missing-file arm's overwrite, and
+    never a traceback through main()."""
+    path = Path(mac.default_config_path())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.mkdir()
+    with pytest.raises(mac.MacSetupError, match="cannot be read"):
+        mac.ensure_client_config(mac.PORT)
+    with pytest.raises(mac.MacSetupError, match="cannot be read"):
+        mac.client_config_row(mac.PORT)
+
+
+def test_a_refused_write_is_a_named_refusal(
+    monkeypatch: pytest.MonkeyPatch, client_tree: Path
+) -> None:
+    """A write the filesystem refuses surfaces as this tool's own
+    refusal naming the path — the house rule over raw
+    tracebacks."""
+
+    def refused(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(mac.os, "open", refused)
+    with pytest.raises(mac.MacSetupError, match="could not write"):
+        mac.ensure_client_config(mac.PORT)
+
+
+def test_a_kept_config_rides_the_entry_beside_the_exports(
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    client_tree: Path,
+) -> None:
+    """The file this tool never wrote: the preset prints the
+    paste-able entry (indented, no top-level key — the loader
+    refuses duplicates, so a verbatim paste cannot corrupt a file
+    that already carries a daemons: mapping) beside the shell
+    exports, and the file stands untouched."""
+    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    path = Path(mac.default_config_path())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "# the operator's own config\n"
+        "daemons:\n"
+        "  lab:\n"
+        "    url: https://hv-1.lab.example.com:8660\n"
+        "active_daemon: lab\n"
+    )
+    preset = mac.client_preset(mac.PORT)
+    assert "export MSKSC_URL=https://127.0.0.1:8660" in preset
+    assert "add this entry under the daemons: mapping" in preset
+    assert "set active_daemon: " + mac.MANAGED_ALIAS in preset
+    assert mac.alias_entry(mac.PORT) in preset
+    # No top-level key rides the print: a verbatim paste cannot
+    # duplicate one, and the managed header stays out (it would
+    # hand this tool the operator's file on the next rerun).
+    assert "\ndaemons:\n" not in preset
+    assert "\nactive_daemon:" not in preset
+    assert mac.MANAGED_HEADER not in preset
+    assert "lab" in path.read_text()
+
+
+def test_the_agent_plist_names_the_absolute_limactl(
+    client_tree: Path,
+) -> None:
+    import plistlib
+
+    doc = plistlib.loads(mac.agent_plist("/opt/homebrew/bin/limactl"))
+    assert doc["Label"] == mac.AGENT_LABEL
+    assert doc["ProgramArguments"] == [
+        "/opt/homebrew/bin/limactl",
+        "start",
+        mac.VM_NAME,
+    ]
+    assert doc["RunAtLoad"] is True
+    assert doc["StandardOutPath"] == str(mac.AGENT_LOG)
+    assert doc["StandardErrorPath"] == str(mac.AGENT_LOG)
+
+
+def test_ensure_agent_rewrites_reloads_and_creates_the_log_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    client_tree: Path,
+) -> None:
+    monkeypatch.setattr(mac, "say", lambda _message: None)
+    monkeypatch.setattr(
+        mac.shutil, "which", lambda name: "/opt/homebrew/bin/limactl"
+    )
+    mac.ensure_agent()
+    mac.ensure_agent()  # idempotent: rewritten, booted out, reloaded
+    assert mac.AGENT_PLIST.is_file()
+    assert mac.AGENT_LOG.parent.is_dir()
+    # The launchctl argv shapes, pinned whole: the gui/<uid> domain
+    # is load-bearing (a domain-less bootout or bootstrap errors on
+    # a real Mac while every substring check stays green).
+    domain = f"gui/{os.getuid()}"
+    bootout_argv = ["launchctl", "bootout", f"{domain}/{mac.AGENT_LABEL}"]
+    bootstrap_argv = [
+        "launchctl",
+        "bootstrap",
+        domain,
+        str(mac.AGENT_PLIST),
+    ]
+    kickstart_argv = [
+        "launchctl",
+        "kickstart",
+        f"{domain}/{mac.AGENT_LABEL}",
+    ]
+    assert procs.calls.count(bootout_argv) == 2
+    assert procs.calls.count(bootstrap_argv) == 2
+    # The VM starts through the agent immediately — one kickstart
+    # per install, right behind its bootstrap.
+    assert procs.calls.count(kickstart_argv) == 2
+    # Each bootstrap follows its bootout, and each kickstart its
+    # bootstrap — the reload-then-run triple, never a duplicate
+    # load of one label.
+    assert procs.calls.index(bootout_argv) < procs.calls.index(bootstrap_argv)
+    assert procs.calls.index(bootstrap_argv) < procs.calls.index(
+        kickstart_argv
+    )
+
+
+def test_a_missing_limactl_refuses_the_agent(
+    monkeypatch: pytest.MonkeyPatch, client_tree: Path
+) -> None:
+    monkeypatch.setattr(mac.shutil, "which", lambda name: None)
+    with pytest.raises(mac.MacSetupError, match="brew install lima"):
+        mac.ensure_agent()
+
+
+def test_agent_loaded_reads_the_print_exit(
+    procs: FakeProcesses,
+) -> None:
+    assert mac.agent_loaded() is True
+    assert procs.calls[-1] == [
+        "launchctl",
+        "print",
+        f"gui/{os.getuid()}/{mac.AGENT_LABEL}",
+    ]
+    procs.fail_output = {"launchctl print": "not loaded"}
+    assert mac.agent_loaded() is False
+
+
+def test_the_check_refuses_when_the_agent_is_not_loaded(
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    client_tree: Path,
+) -> None:
+    monkeypatch.setattr(
+        mac, "verify_daemon", lambda port, timeout_s=15.0: None
+    )
+    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    mac.ensure_client_config(mac.PORT)
+    procs.fail_output = {"launchctl print": "not loaded"}
+    with pytest.raises(mac.MacSetupError, match="re-run"):
+        mac.check_rows(mac.PORT)
