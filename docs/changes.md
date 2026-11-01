@@ -130,6 +130,13 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **`msks-setup-macos-host --uninstall` names a missing limactl
+  (#701).** On a Mac where `limactl` is not on PATH, the
+  uninstall arm died with a raw `FileNotFoundError` traceback;
+  it now prints the install-Lima remedy on stderr and exits 1,
+  the same named-refusal shape the setup and `--check` paths
+  answer with.
+
 - **ssh re-pins host keys when a workspace's disks are recreated
   (#697).** The daemon records a disk epoch on each workspace and
   advances it whenever it recreates the root overlay under a live

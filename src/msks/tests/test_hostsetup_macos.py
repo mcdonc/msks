@@ -941,6 +941,23 @@ def test_the_uninstall_mirror(
     assert "Lima itself" in out and "login agent" in out
 
 
+def test_the_uninstall_names_a_missing_limactl(
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    capsys,
+) -> None:
+    """#701: --uninstall on a Mac without limactl on PATH (a
+    stock Mac, or a Lima removed by hand) answers the named
+    install-again remedy and exits 1 — the FileNotFoundError the
+    subprocess raises never escapes main as a traceback."""
+    monkeypatch.setattr(mac, "say", lambda _message: None)
+    procs.absent = ["limactl"]
+    assert mac.main(["--uninstall"]) == 1
+    err = capsys.readouterr().err
+    assert "limactl is not on PATH" in err
+    assert "brew install lima" in err
+
+
 def test_a_named_refusal_exits_one(
     monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, capsys
 ) -> None:
