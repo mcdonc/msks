@@ -2,8 +2,10 @@
 running msksd-VM.
 
 Covers the host check's refusals (the platform, the Silicon, the
-Lima floor with its remedies), the instance config (the shipped
-template plus the port forward this tool owns), the bootstrap
+Lima floor with its remedies, the brew self-install's arms), the
+instance config (the shipped template plus the port forward this
+tool owns — the forward a run without ``--port`` adopts, #699),
+the bootstrap
 script's contract with the config and unit it writes, the token's
 survival across reruns, the verify pass's any-answer and
 chain-proof shapes, the preset's three exports, the check rows'
@@ -35,6 +37,8 @@ class FakeProcesses:
         self.version = "limactl version 2.2.1"
         self.fail: list[str] = []
         self.fail_output: dict = {}
+        self.absent: list[str] = []
+        self.absent_first: list[str] = []
         self.vm: dict[str, str] = {}
         self.vm_fail: str | None = None
         self.calls: list[list[str]] = []
@@ -53,8 +57,20 @@ class FakeProcesses:
                 if needle in script:
                     return completed(0, out, "")
             return completed(0, "", "")
+        joined = " ".join(command)
+        for missing in self.absent:
+            if missing in joined:
+                raise FileNotFoundError(
+                    2, "No such file or directory", missing
+                )
+        for missing in list(self.absent_first):
+            if missing in joined:
+                self.absent_first.remove(missing)
+                raise FileNotFoundError(
+                    2, "No such file or directory", missing
+                )
         for bad, output in self.fail_output.items():
-            if bad in " ".join(command):
+            if bad in joined:
                 return completed(1, "", output)
         if command[:2] == ["limactl", "--version"]:
             return completed(0, self.version + "\n", "")
@@ -66,6 +82,18 @@ class FakeProcesses:
 def completed(rc: int, out: str, err: str) -> subprocess.CompletedProcess:
     """The shape run() and vm_shell() read."""
     return subprocess.CompletedProcess([], rc, out, err)
+
+
+def write_forward(home: Path, host_port: int) -> None:
+    """The instance config Lima wrote at creation, carrying the
+    daemon's forward — the file ``forward_host_port`` reads."""
+    lima = home / ".lima" / mac.VM_NAME
+    lima.mkdir(parents=True)
+    (lima / "lima.yaml").write_text(
+        f"portForwards:\n- guestPort: {mac.VM_PORT}\n"
+        '  guestIP: "127.0.0.1"'
+        f"\n  hostPort: {host_port}\n"
+    )
 
 
 @pytest.fixture
@@ -116,12 +144,57 @@ def test_the_platform_refusals(
         mac.check_host()
 
 
-def test_a_missing_lima_names_the_brew_line(
+def test_a_missing_lima_installs_through_brew(
     monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
 ) -> None:
-    procs.fail_output = {"limactl --version": "not found"}
-    with pytest.raises(mac.MacSetupError, match="brew install lima"):
+    """#699: a Lima the Mac does not carry — limactl raises
+    FileNotFoundError, a stock Mac's answer, not a nonzero exit —
+    installs through brew, then the floor check reads the
+    installed version."""
+    procs.absent_first = ["limactl"]
+    monkeypatch.setattr(
+        mac.shutil, "which", lambda name: "/opt/homebrew/bin/brew"
+    )
+    assert mac.require_lima() == "2.2.1"
+    assert any(c[:2] == ["brew", "install"] for c in procs.calls)
+
+
+def test_a_mac_without_brew_names_the_homebrew_line(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
+) -> None:
+    """The install step refuses on a Mac without brew — the tool
+    installs through brew, never around it."""
+    procs.absent = ["limactl"]
+    monkeypatch.setattr(mac.shutil, "which", lambda name: None)
+    with pytest.raises(mac.MacSetupError, match="brew.sh"):
         mac.require_lima()
+    assert not any(c[:2] == ["brew", "install"] for c in procs.calls)
+
+
+def test_a_lima_the_install_leaves_unfindable_names_the_fresh_shell(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
+) -> None:
+    """A brew install that leaves limactl off this shell's PATH
+    (brew's bin dir joined PATH only in fresh shells) names the
+    fresh-shell remedy, never a bare floor refusal."""
+    procs.absent = ["limactl"]
+    monkeypatch.setattr(
+        mac.shutil, "which", lambda name: "/opt/homebrew/bin/brew"
+    )
+    with pytest.raises(mac.MacSetupError, match="fresh shell"):
+        mac.require_lima()
+
+
+def test_a_broken_limactl_refuses_by_name_without_installing(
+    procs: FakeProcesses,
+) -> None:
+    """A limactl that is present but answers nonzero is a broken
+    install — the refusal carries the command's tail, and another
+    brew install is never the remedy."""
+    procs.fail_output = {"limactl --version": "state is corrupt"}
+    with pytest.raises(mac.MacSetupError, match="state is corrupt"):
+        mac.require_lima()
+    assert not any(c[:2] == ["brew", "install"] for c in procs.calls)
 
 
 @pytest.mark.parametrize(
@@ -196,7 +269,9 @@ def test_the_vm_is_created_started_or_left_alone(
         procs.listing = listing
         monkeypatch.setattr(mac, "say", lambda _message: None)
         monkeypatch.setattr(mac, "forward_host_port", lambda name: None)
-        mac.ensure_vm()
+        # With no --port and no readable forward, every arm returns
+        # the tool's default — the run's port for the phases after.
+        assert mac.ensure_vm() == mac.PORT
         starts = [c for c in procs.calls if c[1] == "start"]
         if expect_start is None:
             assert not starts
@@ -582,7 +657,7 @@ def test_creation_writes_the_rendered_instance(
     monkeypatch.setattr(mac, "say", lambda _message: None)
     monkeypatch.setattr(mac.Path, "home", lambda: tmp_path)
     procs.listing = ""
-    mac.ensure_vm(host_port=8662)
+    assert mac.ensure_vm(host_port=8662) == 8662
     starts = [c for c in procs.calls if c[:2] == ["limactl", "start"]]
     assert starts and len(starts[0]) == 5
 
@@ -597,13 +672,43 @@ def test_a_port_change_on_an_existing_vm_names_the_recreation(
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(mac.Path, "home", lambda: home)
-    (home / ".lima" / mac.VM_NAME).mkdir(parents=True)
-    (home / ".lima" / mac.VM_NAME / "lima.yaml").write_text(
-        f"portForwards:\n- guestPort: {mac.VM_PORT}\n"
-        '  guestIP: "127.0.0.1"\n  hostPort: 8661\n'
-    )
+    write_forward(home, 8661)
     with pytest.raises(mac.MacSetupError, match="limactl delete -f"):
         mac.ensure_vm(host_port=8662)
+
+
+def test_a_run_without_a_port_adopts_the_existing_forward(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, tmp_path
+) -> None:
+    """#699: with no --port, the VM's own forward (fixed at
+    creation) is the run's port — the run continues on it instead
+    of demanding a recreation; an explicit --port that agrees
+    with the forward passes too."""
+    says = []
+    monkeypatch.setattr(mac, "say", says.append)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(mac.Path, "home", lambda: home)
+    write_forward(home, 8661)
+    assert mac.ensure_vm() == 8661
+    assert any("8661" in message for message in says)
+    assert mac.ensure_vm(host_port=8661) == 8661
+
+
+def test_a_default_forward_returns_without_a_word(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, tmp_path
+) -> None:
+    """A VM already forwarding the default port returns it with
+    nothing said — the everyday rerun, distinct from adopting a
+    non-default forward."""
+    says = []
+    monkeypatch.setattr(mac, "say", says.append)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(mac.Path, "home", lambda: home)
+    write_forward(home, mac.PORT)
+    assert mac.ensure_vm() == mac.PORT
+    assert not says
 
 
 def test_the_check_only_entry_prints_rows(
@@ -631,12 +736,112 @@ def test_the_check_only_entry_prints_rows(
         mac, "verify_daemon", lambda port, timeout_s=15.0: None
     )
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    # Path.home pinned: the check's port resolution reads the
+    # VM's forward — a dev Mac's real ~/.lima/msksd must not
+    # answer it.
+    monkeypatch.setattr(mac.Path, "home", lambda: client_tree)
     mac.ensure_client_config(8661)
     assert mac.main(["--check", "--port", "8661"]) == 0
     out = capsys.readouterr().out
     assert "  ok  " in out and "chained to the VM's CA" in out
     assert "a bare msks reaches the daemon" in out
     assert "login agent brings the msksd VM up at login" in out
+
+
+def test_the_check_adopts_the_forward_too(
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    capsys,
+    client_tree: Path,
+) -> None:
+    """--check without --port reads the VM's own forward — the
+    same policy the setup run applies (#699), so the doctor rows
+    answer for the deployment's real port."""
+    monkeypatch.setattr(mac.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        mac.os, "uname", lambda: SimpleNamespace(machine="arm64")
+    )
+    monkeypatch.setattr(
+        mac.subprocess,
+        "run",
+        lambda command, **kwargs: (
+            completed(0, "Apple M3\n", "")
+            if command[:1] == ["sysctl"]
+            else procs._run(command, **kwargs)
+        ),
+    )
+    monkeypatch.setattr(
+        mac, "verify_daemon", lambda port, timeout_s=15.0: None
+    )
+    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    monkeypatch.setattr(mac.Path, "home", lambda: client_tree)
+    write_forward(client_tree, 8661)
+    mac.ensure_client_config(8661)
+    assert mac.main(["--check"]) == 0
+    out = capsys.readouterr().out
+    assert "the daemon answers https://127.0.0.1:8661/" in out
+
+
+def test_the_check_installs_nothing_on_a_lima_less_mac(
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    capsys,
+    client_tree: Path,
+) -> None:
+    """--check's own contract ("verify only, nothing mutated"):
+    a Lima the Mac does not carry is the run-the-tool refusal —
+    the check pass never runs brew install."""
+    monkeypatch.setattr(mac.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        mac.os, "uname", lambda: SimpleNamespace(machine="arm64")
+    )
+    monkeypatch.setattr(
+        mac.subprocess,
+        "run",
+        lambda command, **kwargs: (
+            completed(0, "Apple M3\n", "")
+            if command[:1] == ["sysctl"]
+            else procs._run(command, **kwargs)
+        ),
+    )
+    procs.absent = ["limactl"]
+    assert mac.main(["--check"]) == 1
+    assert "run the tool" in capsys.readouterr().err
+    assert not any(c[:2] == ["brew", "install"] for c in procs.calls)
+
+
+def test_the_check_names_the_recreation_refusal_on_a_port_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    capsys,
+    client_tree: Path,
+) -> None:
+    """--check with an explicit --port that disagrees with the
+    VM's forward answers what the setup run answers — the named
+    recreation refusal, before the 15s listener probe ever
+    runs."""
+    monkeypatch.setattr(mac.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        mac.os, "uname", lambda: SimpleNamespace(machine="arm64")
+    )
+    monkeypatch.setattr(
+        mac.subprocess,
+        "run",
+        lambda command, **kwargs: (
+            completed(0, "Apple M3\n", "")
+            if command[:1] == ["sysctl"]
+            else procs._run(command, **kwargs)
+        ),
+    )
+    probes = []
+    monkeypatch.setattr(
+        mac, "verify_daemon", lambda port, timeout_s=15.0: probes.append(port)
+    )
+    monkeypatch.setattr(mac.Path, "home", lambda: client_tree)
+    write_forward(client_tree, 8661)
+    assert mac.main(["--check", "--port", str(mac.PORT)]) == 1
+    assert "limactl delete -f" in capsys.readouterr().err
+    assert not probes
 
 
 def test_the_entry_prints_the_preset(
@@ -671,6 +876,52 @@ def test_the_entry_prints_the_preset(
         c for c in procs.calls if c[:2] == ["launchctl", "bootstrap"]
     ]
     assert bootstraps and str(mac.AGENT_PLIST) in bootstraps[0]
+
+
+def test_a_default_run_reaches_the_client_config_on_the_adopted_port(
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    capsys,
+    client_tree: Path,
+) -> None:
+    """#699's repro shape: an existing VM forwarding 8661, a bare
+    run with no --port. The run finishes — the preset, the client
+    config, and the CA/token pair all point at 8661, so a bare
+    msks reaches the daemon through the forward the VM carries."""
+    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    monkeypatch.setattr(mac, "verify_daemon", lambda port: None)
+    monkeypatch.setattr(mac.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        mac.os, "uname", lambda: SimpleNamespace(machine="arm64")
+    )
+    monkeypatch.setattr(
+        mac.subprocess,
+        "run",
+        lambda command, **kwargs: (
+            completed(0, "Apple M3\n", "")
+            if command[:1] == ["sysctl"]
+            else procs._run(command, **kwargs)
+        ),
+    )
+    monkeypatch.setattr(
+        mac.shutil, "which", lambda name: "/opt/homebrew/bin/limactl"
+    )
+    monkeypatch.setattr(mac.Path, "home", lambda: client_tree)
+    write_forward(client_tree, 8661)
+    assert mac.main([]) == 0
+    out = capsys.readouterr().out
+    assert "export MSKSC_URL=https://127.0.0.1:8661" in out
+    # The safety property the issue's title carries: an adopted
+    # run never deletes the VM — the old remedy stays refused.
+    assert not any(c[:2] == ["limactl", "delete"] for c in procs.calls)
+    from msks.client.config import parse_config_doc
+
+    config = Path(mac.default_config_path())
+    doc = parse_config_doc(config.read_text(), str(config))
+    entry = doc["daemons"][mac.MANAGED_ALIAS]
+    assert entry["url"] == "https://127.0.0.1:8661"
+    assert entry["token_file"] == str(mac.MAC_TOKEN)
+    assert entry["cafile"] == str(mac.MAC_CA)
 
 
 def test_the_uninstall_mirror(
