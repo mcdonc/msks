@@ -99,8 +99,8 @@ On a Mac the daemon runs inside its own Linux VM (Lima over
 Apple's Virtualization.framework, on an M3-or-newer Mac), and a
 shared Mac folder crosses two hops to reach a workspace: vz
 virtiofs carries it from macOS into the daemon's VM under the
-reserved prefix (the Mac's `/Users/chrism` at
-`/mnt/msks/Users/chrism`), and one virtiofsd per attached share
+reserved prefix (the Mac's `/Users/name` at
+`/mnt/msks/Users/name`), and one virtiofsd per attached share
 carries it from there into the workspace guest. The client
 speaks Mac paths throughout — `--share ~/code:/mnt/code` — and
 the daemon's `prefix` host mode does the translation before
@@ -114,11 +114,13 @@ dangles past the Mac — under the prefix the tree lives at
 `/mnt/msks/...`, so the link's absolute target resolves against
 the daemon VM's own root, and against the workspace's own root
 one hop later — while relative symlinks cross intact.
-Hardlink-heavy workloads run clean on the stack's floor (macOS
-15, where Lima enables the nested virtualization workspaces
-need): `git repack`, `cp -al` storms, and Docker's own inode
-reproducer all pass there — the inode instability older macOS
-carried was fixed at the vendor.
+Hardlink-heavy workloads run clean on the validated stack:
+`git repack`, `cp -al` storms, and Docker's own inode
+reproducer all pass on macOS 27, and the instability the older
+releases carried is no longer reproducible on macOS 15 per the
+upstream report — the releases that had it sit below the macOS
+floor Lima needs anyway (nested virtualization), so the stack
+never runs them.
 
 The far end of the share is the Mac's own volume, and its
 behaviors cross with the tree. Four of them are contract, not
@@ -131,9 +133,9 @@ editor's save, a build's output — reach every attached
 workspace as data, promptly coherent the way [coherence
 between guests](#coherence-between-guests) describes, but no
 inotify event follows them: the share carries data, not
-notifications, in either direction. Watchers on shared trees
-run in polling mode — `vite dev --poll`, `jest --watchAll`,
-or the tool's own poll setting — and a tool that can watch
+notifications. Watchers on shared trees run in polling mode —
+Vite's `server.watch.usePolling` setting, jest's `--watchAll`,
+or the tool's own poll option — and a tool that can watch
 only through events cannot watch a share at all. Signaling
 built on the same polling takes one care: a file's existence
 becomes visible before its content does (a writer creates
@@ -143,8 +145,9 @@ the writer emits after the data, never for the file itself.
 ### Case and normalization follow the Mac volume
 
 The tree a workspace mounts is the Mac's volume, and its naming
-rules cross with it: the volume matches names case-insensitively,
-storing them as typed (case-preserving), and compares them
+rules cross with it: a Mac's default volume matches names
+case-insensitively, storing them as typed (case-preserving),
+and compares them
 Unicode-normalization-insensitively — a name typed
 composed (NFC) and the same name decomposed (NFD) are one file.
 Tools inside the workspace that expect Linux naming can trip:
@@ -181,10 +184,13 @@ A file the stack holds open keeps its Mac volume mounted, so a
 disk whose tree is shared into a running workspace refuses to
 eject — the Finder reports the volume in use — until the
 workspace stops and its files close. `msks stop` on the
-workspace, eject the disk, and the next `msks start` brings the
-share back with it; sharing the volume at all was the template
-edit above, since a `/Volumes/...` root sits outside the
-default home mount.
+workspace, eject the disk, and start again — with the volume
+back on the Mac, the share reattaches at the next start the
+way every mount set does; without it, the start skips the
+mount and carries the marker ([the skip
+behavior](#the-skip-behavior)). Sharing the volume at all was
+the template edit above, since a `/Volumes/...` root sits
+outside the default home mount.
 
 ## The plumbing
 
