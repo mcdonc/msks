@@ -181,7 +181,10 @@ def say(message: str) -> None:
 
 def run(command: list[str], *, capture: bool = False) -> str:
     """One subprocess; a nonzero exit is a named refusal carrying
-    the command's tail."""
+    the command's tail. A binary the host does not carry raises
+    FileNotFoundError unchanged — the caller decides what it
+    means: lima_version_output reads it as the stock-Mac answer,
+    delete_vm maps it to the install remedy."""
     done = subprocess.run(
         command,
         capture_output=capture,
@@ -478,6 +481,23 @@ def ensure_vm(name: str = VM_NAME, host_port: int | None = None) -> int:
         say(f"starting the stopped {name} VM")
         run(["limactl", "start", name])
     return adopted_port(name, host_port)
+
+
+def delete_vm(name: str) -> None:
+    """Delete the VM through limactl (#701): a limactl that is
+    nowhere on PATH — a stock Mac, or a Lima removed by hand —
+    is the named install-again remedy, never the raw
+    FileNotFoundError the subprocess raises (a present limactl
+    that answers nonzero already refuses by name through
+    run())."""
+    try:
+        run(["limactl", "delete", "-f", name])
+    except FileNotFoundError:
+        raise MacSetupError(
+            "limactl is not on PATH; install Lima (brew install "
+            "lima), then --uninstall again — the VM's files live "
+            f"under ~/.lima/{name} for removal by hand"
+        ) from None
 
 
 # --- phase 3: the in-VM bootstrap ------------------------------------
@@ -1105,7 +1125,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.uninstall:
             say(f"removing the login agent and the {VM_NAME} VM")
             remove_agent()
-            run(["limactl", "delete", "-f", VM_NAME])
+            delete_vm(VM_NAME)
             print(
                 f"{TOOL}: the {VM_NAME} VM and its login agent are gone. "
                 "Lima itself, the client config, and the CA and token "
