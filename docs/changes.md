@@ -103,7 +103,8 @@ tagged `vX.Y.Z`.
   `msks mount`/`umount` (#673).** The client surface for #667's
   host-path shares: a repeatable create flag whose `~` expands
   against your home before the request, the same spec grammar on
-  `msks mount`, and `msks umount` names what leaves. A refused
+  `msks mount`, and `msks umount` names what leaves by host
+  path. A refused
   share surfaces
   the daemon's gate message verbatim — which gate refused and
   the remedy. See the [mounts chapter](mounts.md#what-a-mount-is).
