@@ -10,13 +10,19 @@ the other tools never see:
    aarch64 and nested virtualization needs the Apple Virtualization
    framework), and a Lima at the template's floor (2.2.1, the
    version the template's own expansions were verified against).
-   A missing Lima names the brew line that installs it.
+   A Lima the Mac does not carry installs through brew (#699) —
+   the stock-Mac step this tool runs itself; a Mac without brew
+   names the Homebrew line and stops.
 2. **The msksd VM** — created from the template that ships in the
    wheel (``server/assets/msksd-vm.yaml``, #671: vz, nested
    virtualization, the invoking user's home mounted under the
    reserved ``/mnt/msks`` prefix) with the daemon's port forward
    appended — the one piece the template leaves to this tool,
-   because the port is a deployment choice.
+   because the port is a deployment choice. A run without
+   ``--port`` talks through the forward the existing VM already
+   carries (#699: the forward is fixed at creation, so the VM's
+   own answer is this deployment's port); an explicit ``--port``
+   that disagrees with it stays the named recreation refusal.
 3. **The in-VM bootstrap** — the daemon's Debian tool set
    (egress plumbing, volume trio, seed tooling) and its kernel
    routing setting, the pinned cloud-hypervisor static release,
@@ -46,7 +52,9 @@ the other tools never see:
 
 ``--check`` runs the verify pass alone — the macOS doctor row
 set: Lima, the VM, the nested-virtualization marker, virtiofsd
-inside the VM, the listener, the client config, the login agent.
+inside the VM, the listener, the client config, the login agent
+— and mutates nothing: a missing Lima refuses with the
+run-the-tool remedy, never an install.
 ``--uninstall`` stops and deletes the VM and its login agent
 (Lima and the client config stay, and the summary names
 them). Every phase is idempotent: re-run any time; a rerun
@@ -89,7 +97,10 @@ VM_NAME = "msksd"
 #: course VM verified the shape live). The host port is a
 #: ``--port`` choice: anything else on the Mac already answering
 #: there — another VM's forward, a local daemon — makes the
-#: verify pass name the collision and the operator picks another.
+#: verify pass name the collision and the operator picks
+#: another. A run without ``--port`` adopts the forward the
+#: existing VM carries (#699); a fresh creation renders this
+#: default.
 VM_PORT = 8660
 PORT = 8660
 
@@ -205,11 +216,14 @@ def vm_shell(script: str) -> str:
 # --- phase 1: the host check -----------------------------------------
 
 
-def check_host() -> dict:
+def check_host(install: bool = True) -> dict:
     """The Mac itself: Apple Silicon (the images are aarch64,
     nested virtualization is the Apple Virtualization
-    framework's) and a Lima at the template's floor. A missing
-    Lima names the brew line; an old Lima names the upgrade."""
+    framework's) and a Lima at the template's floor — installed
+    through brew when missing (#699), unless the caller passed
+    install=False (the check pass, which mutates nothing). A Mac
+    without brew names the Homebrew line; an old Lima names the
+    upgrade."""
     if sys.platform != "darwin":
         raise MacSetupError(
             "this tool runs on macOS (the Linux hosts take "
@@ -221,7 +235,7 @@ def check_host() -> dict:
             "nested virtualization is the Apple Virtualization framework's)"
         )
     check_chip_class()
-    return {"lima": require_lima()}
+    return {"lima": require_lima(install)}
 
 
 def check_chip_class() -> None:
@@ -244,10 +258,17 @@ def check_chip_class() -> None:
         )
 
 
-def require_lima() -> str:
-    """The installed Lima's version word, refused below the
-    template's floor with the upgrade remedy."""
+def require_lima(install: bool = True) -> str:
+    """The installed Lima's version word, at the template's floor
+    or newer. A Lima the Mac does not carry takes
+    :func:`lima_after_install`'s path (#699) — brew, unless the
+    caller passed install=False (the check pass, which mutates
+    nothing). A limactl that answers nonzero refuses by name
+    through run() (a broken install is not healed by another);
+    a Lima below the floor names the upgrade remedy."""
     word = lima_version_output()
+    if not word:
+        word = lima_after_install(install)
     if lima_version_tuple(word) < LIMA_FLOOR:
         floor = ".".join(str(p) for p in LIMA_FLOOR)
         raise MacSetupError(
@@ -258,16 +279,53 @@ def require_lima() -> str:
     return word
 
 
+def lima_after_install(install: bool) -> str:
+    """The word after the missing-Lima step. The check pass
+    (install=False) refuses with the run-the-tool remedy — it
+    mutates nothing; the setup pass brew-installs Lima and
+    re-reads, and a still-empty word (brew's bin dir joined PATH
+    only in fresh shells) is the fresh-shell refusal."""
+    if not install:
+        raise MacSetupError(
+            "limactl is not on PATH; run the tool (it installs "
+            "Lima itself through brew), then --check again"
+        )
+    install_lima()
+    word = lima_version_output()
+    if not word:
+        raise MacSetupError(
+            "brew install lima finished but limactl is still not on "
+            "this shell's PATH; open a fresh shell (brew's bin dir "
+            f"joins PATH there) and re-run {TOOL}"
+        )
+    return word
+
+
+def install_lima() -> None:
+    """Install Lima through brew (#699): the stock-Mac step this
+    tool runs itself. A Mac without brew names the Homebrew line
+    and stops — this tool installs through brew, never around
+    it."""
+    if shutil.which("brew") is None:
+        raise MacSetupError(
+            "brew is not on PATH; install Homebrew first "
+            "(https://brew.sh), then re-run this tool — it installs "
+            "Lima itself from there"
+        )
+    say("installing Lima through brew (brew install lima)")
+    run(["brew", "install", "lima"])
+
+
 def lima_version_output() -> str:
-    """The version word from ``limactl --version``, or the named
-    refusal with the brew line when limactl is nowhere on
-    PATH."""
+    """The version word from ``limactl --version``, or the empty
+    word when limactl is nowhere on PATH (the caller installs or
+    refuses by name — a stock Mac's answer). A limactl that is
+    present but answers nonzero refuses by name through run(),
+    carrying the command's tail."""
     try:
         out = run(["limactl", "--version"], capture=True)
-    except MacSetupError:
-        raise MacSetupError(
-            "limactl is not on PATH; install Lima first: brew install lima"
-        ) from None
+    except FileNotFoundError:
+        return ""
     return out.strip().split()[-1] if out.strip() else ""
 
 
@@ -346,36 +404,80 @@ def forward_host_port(name: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def ensure_vm(name: str = VM_NAME, host_port: int = PORT) -> None:
-    """The VM exists and runs: created from the rendered instance
-    config on first sight, started when stopped, left alone when
-    running. vz mounts and the port forward are fixed at
-    creation — a template change or a ``--port`` change takes a
-    VM recreation, and a mid-life port mismatch is a named
-    refusal with that remedy, never a silent wrong port."""
-    entry = vm_entry(name)
-    if entry is None:
-        say(f"creating the {name} VM (the image downloads on first run)")
-        with tempfile.NamedTemporaryFile(
-            "w", suffix=".yaml", delete=False
-        ) as handle:
-            handle.write(instance_yaml(host_port))
-            path = handle.name
-        try:
-            run(["limactl", "start", "--name", name, path])
-        finally:
-            os.unlink(path)
-        return
-    if entry.get("status") != "Running":
-        say(f"starting the stopped {name} VM")
-        run(["limactl", "start", name])
+def resolved_port(explicit: int | None, forward: int | None) -> int:
+    """The host port a run talks through: an explicit ``--port``
+    stands (a disagreement with the existing forward is the
+    caller's named refusal); with none, the VM's own forward —
+    fixed at creation — is this deployment's port (#699); a VM
+    without a readable forward (none exists yet, or Lima never
+    wrote the config) falls back to the tool's default."""
+    if explicit is not None:
+        return explicit
+    return forward if forward is not None else PORT
+
+
+def create_vm(name: str, port: int) -> int:
+    """The first-sight creation: the rendered instance config
+    (template plus this tool's forward) starts the VM through
+    limactl from a temp path — the image downloads on first run
+    — and the creation port returns for the phases after."""
+    say(f"creating the {name} VM (the image downloads on first run)")
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".yaml", delete=False
+    ) as handle:
+        handle.write(instance_yaml(port))
+        path = handle.name
+    try:
+        run(["limactl", "start", "--name", name, path])
+    finally:
+        os.unlink(path)
+    return port
+
+
+def adopted_port(name: str, host_port: int | None) -> int:
+    """The port an existing VM's run talks through (#699): the
+    explicit ``--port`` when it agrees with the fixed-at-creation
+    forward (a disagreement is the named recreation refusal,
+    never a silent wrong port), the VM's own forward when no
+    ``--port`` was named — the deployment chose it at creation —
+    and the tool's default when the forward reads nothing (the
+    verify pass then catches a wrong port)."""
     forward = forward_host_port(name)
-    if forward is not None and forward != host_port:
+    if forward is None:
+        return resolved_port(host_port, None)
+    if host_port is None:
+        if forward != PORT:
+            say(
+                f"the existing {name} VM forwards host port {forward}; "
+                "the run continues on it"
+            )
+        return forward
+    if forward != host_port:
         raise MacSetupError(
             f"the {name} VM forwards host port {forward} (fixed at "
             f"creation); --port {host_port} wants a recreation: "
             f"limactl delete -f {name} && re-run {TOOL}"
         )
+    return host_port
+
+
+def ensure_vm(name: str = VM_NAME, host_port: int | None = None) -> int:
+    """The VM exists and runs, and the run's host port returns:
+    created from the rendered instance config on first sight (the
+    explicit port when one was named, the default otherwise),
+    started when stopped, left alone when running. The port for
+    an existing VM is :func:`adopted_port`'s policy: an explicit
+    ``--port`` that disagrees with the forward (fixed at creation)
+    refuses naming the recreation remedy; with no ``--port``, the
+    run adopts the forward the VM carries — the deployment
+    already chose it at creation (#699)."""
+    entry = vm_entry(name)
+    if entry is None:
+        return create_vm(name, resolved_port(host_port, None))
+    if entry.get("status") != "Running":
+        say(f"starting the stopped {name} VM")
+        run(["limactl", "start", name])
+    return adopted_port(name, host_port)
 
 
 # --- phase 3: the in-VM bootstrap ------------------------------------
@@ -752,7 +854,8 @@ def limactl_path() -> str:
     found = shutil.which("limactl")
     if found is None:
         raise MacSetupError(
-            "limactl is not on PATH; install Lima first: brew install lima"
+            "limactl is not on PATH; re-run the tool (it installs "
+            "Lima itself through brew) or run brew install lima"
         )
     return found
 
@@ -871,7 +974,7 @@ def fetch_vm_file(path: str, timeout_s: float = 20.0) -> str:
     return last
 
 
-def check_rows(port: int) -> list[str]:
+def check_rows(port: int, install: bool = True) -> list[str]:
     """The macOS doctor rows: Lima at the floor, the VM running,
     the nested-virtualization marker inside it, virtiofsd
     installed there, and the daemon's listener answering through
@@ -879,8 +982,10 @@ def check_rows(port: int) -> list[str]:
     collision (another VM's forward, a local daemon) refuses
     instead of reporting another daemon green. virtiofsd's
     absence is a refusal, not a degraded pass: shares are this
-    VM's headline feature."""
-    lima = require_lima()
+    VM's headline feature. The Lima row installs through brew on
+    the mutating default; the check pass passes install=False —
+    it refuses on a missing Lima instead of installing it."""
+    lima = require_lima(install)
     rows = [f"lima {lima} at the template's floor"]
     entry = vm_entry(VM_NAME)
     if entry is None:
@@ -953,8 +1058,10 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--port",
         type=int,
-        default=PORT,
-        help=f"the daemon's port, both loopbacks (default: {PORT})",
+        default=None,
+        help="the daemon's host port, both loopbacks; a run "
+        "without it adopts the existing VM's forward (a fresh "
+        f"creation takes {PORT})",
     )
     parser.add_argument(
         "--check",
@@ -976,13 +1083,15 @@ def run_setup(args: argparse.Namespace) -> str:
     caller to print. The verify pass runs before the client
     files and the login agent so a green run is what they
     provision — the preset's token and CA are real, and the agent
-    earns its login slot."""
+    earns its login slot. The port the phases share is the one
+    ``ensure_vm`` resolves: the explicit ``--port``, or the
+    forward the existing VM already carries (#699)."""
     check_host()
     home = str(Path.home())
-    ensure_vm(host_port=args.port)
+    port = ensure_vm(host_port=args.port)
     bootstrap_vm(args.wheel, home)
-    verify_daemon(args.port)
-    preset = client_preset(args.port)
+    verify_daemon(port)
+    preset = client_preset(port)
     ensure_agent()
     return preset
 
@@ -1005,8 +1114,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
         if args.check:
-            check_host()
-            for row in check_rows(args.port):
+            check_host(install=False)
+            for row in check_rows(
+                adopted_port(VM_NAME, args.port), install=False
+            ):
                 print(f"  ok  {row}")
             return 0
         preset = run_setup(args)

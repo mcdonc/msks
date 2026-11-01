@@ -6,6 +6,17 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Changed
+
+- **`msks-setup-macos-host` without `--port` (#699).** The run
+  now talks through the forward the existing msksd VM already
+  carries — the forward is fixed at VM creation, so the VM's own
+  answer is the deployment's port — and finishes the verify
+  pass, the client config, and the preset on it. A VM created
+  with a non-default host port needs no recreation; an explicit
+  `--port` that disagrees with the existing VM's forward stays a
+  named refusal naming the recreation remedy.
+
 ### Removed
 
 - **The `mount_shares` config feature (#685).** Host paths are
@@ -20,6 +31,11 @@ tagged `vX.Y.Z`.
   recreate those mounts with host paths.
 
 ### Added
+
+- **Lima self-install in `msks-setup-macos-host` (#699).** A Mac
+  without Lima now gets it through `brew install lima` run by the
+  tool itself, so a stock Mac reaches a working msksd in one
+  run; a Mac without brew names the Homebrew line and stops.
 
 - **`msks-setup-macos-host` writes the client config and a
   login agent (#689).** The tool now writes `msks.yaml` itself —
