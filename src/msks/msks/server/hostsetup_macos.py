@@ -495,8 +495,8 @@ def delete_vm(name: str) -> None:
     except FileNotFoundError:
         raise MacSetupError(
             "limactl is not on PATH; install Lima (brew install "
-            "lima) or run the tool (it installs Lima itself "
-            "through brew), then --uninstall again"
+            "lima), then --uninstall again — the VM's files live "
+            f"under ~/.lima/{name} for removal by hand"
         ) from None
 
 
