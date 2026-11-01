@@ -231,12 +231,13 @@ def run_workspace_rsync(
         served,
         known_hosts,
         user,
+        pin,
     ):
         extra = forward_agent_args(with_config_options([]), "msks rsync")
         config_path = write_ssh_config(
             served,
             session_options(
-                workspace_id,
+                pin,
                 served.server_address,
                 served.identity_path,
                 known_hosts,
@@ -247,7 +248,7 @@ def run_workspace_rsync(
             wait_for_identity(
                 workspace_id,
                 probe_args(
-                    workspace_id,
+                    pin,
                     served.server_address,
                     served.identity_path,
                     known_hosts,
@@ -259,6 +260,6 @@ def run_workspace_rsync(
                 "msks rsync",
             )
         return exec_child(
-            build_args(workspace_id, config_path, passthrough, extra),
+            build_args(pin, config_path, passthrough, extra),
             "msks rsync: rsync not found on PATH",
         )

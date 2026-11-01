@@ -21,6 +21,7 @@ from pathlib import Path
 from msks.app import build_app
 from msks.microvm import VmSpec
 from msks.settings import (
+    ServerSettings,
     Settings,
     VmmSettings,
 )
@@ -41,8 +42,15 @@ from test_smoke import (
 @needs_local
 async def test_local_agent_toolchain() -> None:
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
-    settings = Settings(vmm=VmmSettings(state_dir=state_dir))
+    settings = Settings(
+        vmm=VmmSettings(state_dir=state_dir),
+        server=ServerSettings(db_path=state_dir / "smoke.db"),
+    )
+    # A healed launch bumps the disk epoch (#697), so the app's
+    # throwaway db (not the default daemon path) is migrated here —
+    # the driver-direct app never enters the lifespan that migrates.
     app = build_app(settings)
+    app.state.model.migrate()
     microvm = app.state.microvm
     wid = f"smoke-{uuid.uuid4().hex[:8]}"
     serial_log = state_dir / "vms" / wid / "serial.log"

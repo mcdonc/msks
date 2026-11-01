@@ -359,8 +359,8 @@ async def fetch_ssh_key(
 ) -> dict:
     """GET the workspace's identity: the public half alone (#486,
     #497 — the answer carries no private field at all), with the
-    row's id, name, instance stamp, and login user beside it — the
-    five fields the client reads (#499).
+    row's id, name, instance stamp, login user, and disk epoch
+    (#697) beside it — the six fields the client reads (#499).
 
     ``msks key`` prints it; ``msks ssh`` (#112) stages the session
     identity through this same call. An already-built ``ssl_ctx``

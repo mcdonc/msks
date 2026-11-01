@@ -544,6 +544,45 @@ def test_cache_key_uses_the_immutable_id_when_served(tmp_path: Path) -> None:
     assert one != other
 
 
+def test_cache_key_rotates_on_a_disk_epoch(tmp_path: Path) -> None:
+    """#697: a nonzero disk epoch means the daemon recreated the
+    workspace's root overlay and the guest's ssh host keys
+    regenerated with it — the cache directory rotates (``e<N>``),
+    so the next connect re-pins fresh instead of refusing. Epoch
+    zero and an unserved epoch (a daemon one version behind) spell
+    the pre-#697 directory, so an upgrade churns nothing."""
+    ident = {"id": "1a2b3c4d5e6f7890", "created_at": "2026-10-04"}
+    assert ssh.cache_key(dict(ident), "ws") == (
+        "1a2b3c4d5e6f7890",
+        None,
+    )
+    assert ssh.cache_key({**ident, "disk_epoch": 0}, "ws") == (
+        "1a2b3c4d5e6f7890",
+        None,
+    )
+    assert ssh.cache_key({**ident, "disk_epoch": 1}, "ws") == (
+        "1a2b3c4d5e6f7890",
+        "e1",
+    )
+    assert ssh.cache_key({**ident, "disk_epoch": 2}, "ws") == (
+        "1a2b3c4d5e6f7890",
+        "e2",
+    )
+    legacy_created = {"created_at": "2026-10-04 10:00:00"}
+    assert ssh.cache_key(dict(legacy_created), "ws") == (
+        "ws",
+        ssh.instance_token(legacy_created),
+    )
+
+
+def test_session_pin_prefers_the_served_id() -> None:
+    """#697: the ssh hostname and its known_hosts alias come from
+    the identity, not from what was typed — the id when the daemon
+    serves it, the typed reference when it does not."""
+    assert ssh.session_pin({"id": "03c31bd241"}, "tree") == "03c31bd241"
+    assert ssh.session_pin({}, "tree") == "tree"
+
+
 def test_known_hosts_path_names_an_unusable_cache(tmp_path: Path) -> None:
     taken = tmp_path / "alpha"
     taken.write_text("a file where the cache dir should be")
@@ -1726,6 +1765,99 @@ def test_run_workspace_ssh_runs_ssh_and_stops_the_agent(
     assert argv[-1] == "alpha"
     assert argv[1:3] == ["-l", "root"]
     assert stopped == ["stopped"]  # the agent tears down after ssh exits
+
+
+def test_run_workspace_ssh_pins_under_the_served_id(
+    monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
+) -> None:
+    """#697: the session pins one alias regardless of what was
+    typed — ``msks ssh tree`` and the TUI's ``msks ssh <id>`` build
+    the same hostname and the same known_hosts entry, so a
+    regenerated host key refuses (or re-pins) identically from
+    both entry points instead of diverging."""
+    keyed = {
+        **KEY,
+        "id": "03c31bd241",
+        "name": "tree",
+        "created_at": "2026-10-28 09:00:00",
+    }
+
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return keyed, False
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
+    )
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    argvs: list[list[str]] = []
+
+    def fake_run(argv, **kwargs) -> SimpleNamespace:
+        argvs.append(argv)
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(ssh.subprocess, "run", fake_run)
+    ssh.run_workspace_ssh("tree", [])
+    ssh.run_workspace_ssh("03c31bd241", [])
+    # One hostname for both spellings: the final positional and the
+    # forward target inside ProxyCommand both name the served id.
+    assert argvs[0][-1] == argvs[1][-1] == "03c31bd241"
+    proxy = [w for w in argvs[0] if w.startswith("ProxyCommand=")][0]
+    assert proxy.endswith("forward 03c31bd241 22")
+
+
+def test_staged_session_names_recreated_disks(
+    monkeypatch: pytest.MonkeyPatch,
+    client_env: None,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#697: a served disk epoch rotates the known_hosts directory
+    and says why on stderr — the operator learns the workspace's
+    disks were recreated, not that ssh mysteriously re-pinned."""
+    keyed = {
+        **KEY,
+        "id": "03c31bd241",
+        "name": "tree",
+        "created_at": "2026-10-28 09:00:00",
+        "disk_epoch": 1,
+    }
+
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return keyed, False
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    keyed_paths: list[tuple] = []
+
+    def fake_known_hosts(ws, base=None, instance=None):
+        keyed_paths.append((ws, instance))
+        return str(tmp_path / f"{ws}.{instance}")
+
+    monkeypatch.setattr(ssh, "known_hosts_path", fake_known_hosts)
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    with ssh.staged_session("tree") as (booted, served, hosts, user, pin):
+        assert (booted, pin) == (False, "03c31bd241")
+    assert keyed_paths == [("03c31bd241", "e1")]
+    assert "disks were recreated" in capsys.readouterr().err
+    # Once per rotation (#697 review): a session whose rotated
+    # known_hosts already exists — the first connect wrote it —
+    # says nothing.
+    (tmp_path / "03c31bd241.e1").write_text("")
+    with ssh.staged_session("tree") as (_booted, _served, _h, _u, _pin):
+        pass
+    assert "disks were recreated" not in capsys.readouterr().err
 
 
 def test_run_workspace_ssh_names_a_missing_binary(

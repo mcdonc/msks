@@ -611,6 +611,13 @@ async def run_core_pass(
     )
     root_marker = f"ROOT-{uuid.uuid4().hex[:8]}"
     try:
+        # The pass's app owns its throwaway db, migrated here the
+        # way the daemon's lifespan migrates the real one: the
+        # first boot heals a missing overlay and the heal bumps the
+        # disk epoch (#697), so the workspaces table must exist
+        # before the launch touches it — this pass never enters the
+        # lifespan that would have done it.
+        app.state.model.migrate()
         try:
             await microvm.launch(spec)
         except Exception as exc:

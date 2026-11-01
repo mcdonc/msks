@@ -1208,9 +1208,22 @@ the `cache_dir` key (`MSKSC_CACHE_DIR`) when it is set, else `XDG_CACHE_HOME` or
 `~/.cache/msks`, then `<workspace-id>/known_hosts`. The cache
 keys on the workspace's immutable id, so a workspace recreated
 under the same name starts with a fresh cache and trusts its
-own first-boot keys again. Host keys persist across
+own first-boot keys again. Every invocation pins under that one
+id alias, whichever way the workspace was addressed — `msks ssh
+<name>` and the TUI's shell action record the same known_hosts
+entry, and an operator's own `~/.ssh/config` `Host <name>` block
+no longer matches the session (the id is the hostname msks ssh
+dials; name the id in a matching block instead). Host keys persist across
 stop/start on the workspace's overlay, so the
-first-connection entry keeps matching.
+first-connection entry keeps matching. When the daemon recreates
+the overlay under a live workspace (a healed loss, a factory
+reset), the guest regenerates its host keys: the daemon advances
+the workspace's disk epoch, the cache rotates with it, and the
+next connection pins the fresh keys with a notice naming the
+recreation instead of refusing. A rotation leaves the previous
+epoch's cache behind (the `<id>/` directory, then `<id>.e1/`,
+`<id>.e2/`, … as rotations accumulate); those directories are
+dead — delete them at will.
 The alias block keeps its own known_hosts under
 `~/.cache/msks/msks-<ws>/`; the two paths record the same host
 key independently. Agent forwarding asked for on the command

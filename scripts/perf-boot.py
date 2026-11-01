@@ -40,7 +40,7 @@ from pathlib import Path
 
 from msks.app import build_app
 from msks.microvm import VmSpec, close_console_stream
-from msks.settings import Settings, VmmSettings
+from msks.settings import ServerSettings, Settings, VmmSettings
 
 # The guest-asset loader lives in the test tree (#403); a dev script
 # reaches it by path, the same way pytest puts src/msks/tests on
@@ -190,8 +190,15 @@ async def measure_boot(microvm, spec, result: dict) -> tuple:
 def setup_run(assets) -> tuple:
     """A fresh state dir, driver, and spec per run."""
     state_dir = Path(f"/tmp/msks-perf-{uuid.uuid4().hex[:8]}")
-    settings = Settings(vmm=VmmSettings(state_dir=state_dir))
+    settings = Settings(
+        vmm=VmmSettings(state_dir=state_dir),
+        server=ServerSettings(db_path=state_dir / "perf.db"),
+    )
     app = build_app(settings)
+    # A healed launch bumps the disk epoch (#697): the throwaway db
+    # is migrated here — the driver-direct app never enters the
+    # daemon's lifespan, and the default db path is the operator's.
+    app.state.model.migrate()
     wid = f"perf-{uuid.uuid4().hex[:8]}"
 
     spec = VmSpec(

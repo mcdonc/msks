@@ -484,7 +484,30 @@ class Model:
                 # The workspace's recorded login user (#248); None on
                 # a row created before per-workspace users.
                 "login_user": row.login_user,
+                # The disk set epoch (#697): 0 from create, bumped
+                # whenever the daemon recreated the root overlay
+                # under the live row (a boot's heal, a factory
+                # reset). A bumped epoch means the guest's ssh host
+                # keys regenerated with the fresh overlay, and the
+                # client rotates its host-key cache on the change.
+                "disk_epoch": row.disk_epoch,
             }
+
+    async def bump_disk_epoch(self, workspace_id: str) -> bool:
+        """Advance the workspace's disk epoch by one (#697); False
+        when the row is absent — a heal under a row the daemon
+        does not know (the driver's fixture launches, a boot before
+        the row lands mid-create) has no client cache to rotate,
+        so the bump is simply not theirs to record."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            result = await session.execute(
+                update(Workspace)
+                .where(Workspace.id == workspace_id)
+                .values(disk_epoch=Workspace.disk_epoch + 1)
+            )
+            await session.commit()
+            return result.rowcount > 0
 
     async def delete_workspace(self, workspace_id: str) -> bool:
         """Remove a workspace row and its consent rows; False when
