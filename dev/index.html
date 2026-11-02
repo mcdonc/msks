@@ -796,12 +796,19 @@ used to run AI harnesses securely.</p>
 <p>Each microvm is a cloud-hypervisor VM with its own kernel. It also provides
 services which allow you to avoid keeping secrets and keys within the VM and a
 facility to allow you to approve network egress.</p>
-<p><em>msks</em> runs on Linux hosts, and provides tooling to install its host
-dependencies on Debian-based systems.</p>
+<p><em>msks</em> runs on:</p>
+<ul>
+<li>
+<p>Linux on Intel and ARM systems</p>
+</li>
+<li>
+<p>macOS on M3+ systems</p>
+</li>
+</ul>
 <h2 id="the-reading-order">The reading order<a class="headerlink" href="#the-reading-order" title="Permanent link">&para;</a></h2>
 <ol>
 <li><a href="installation/"><strong>Installation</strong></a>: install the Python wheel, and the one
-   command that prepares a Debian host: the capability wrapper, the routing
+   command that prepares a host: the capability wrapper, the routing
    kernel, <code>/dev/kvm</code>, and the lingered service that keeps the daemon running.</li>
 <li><a href="tui/"><strong>The TUI</strong></a>: the full-screen workspace tree: the
    workspace, secrets, and image pages, the failure panels, the

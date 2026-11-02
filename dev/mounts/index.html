@@ -577,10 +577,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#watchers-poll" class="md-nav__link">
+  <a href="#macos-watchers-poll" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Watchers poll
+        macOS: Watchers poll
       </span>
     </span>
   </a>
@@ -588,10 +588,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#case-and-normalization-follow-the-mac-volume" class="md-nav__link">
+  <a href="#macos-case-and-normalization-follow-the-mac-volume" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Case and normalization follow the Mac volume
+        macOS: Case and normalization follow the Mac volume
       </span>
     </span>
   </a>
@@ -599,10 +599,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#the-rw-single-writer-contract" class="md-nav__link">
+  <a href="#macos-the-rw-single-writer-contract" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The rw single-writer contract
+        macOS: The rw single-writer contract
       </span>
     </span>
   </a>
@@ -610,10 +610,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#external-volumes-stay-busy-while-shared" class="md-nav__link">
+  <a href="#macos-external-volumes-stay-busy-while-shared" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        External volumes stay busy while shared
+        macOS: External volumes stay busy while shared
       </span>
     </span>
   </a>
@@ -923,10 +923,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#watchers-poll" class="md-nav__link">
+  <a href="#macos-watchers-poll" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Watchers poll
+        macOS: Watchers poll
       </span>
     </span>
   </a>
@@ -934,10 +934,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#case-and-normalization-follow-the-mac-volume" class="md-nav__link">
+  <a href="#macos-case-and-normalization-follow-the-mac-volume" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Case and normalization follow the Mac volume
+        macOS: Case and normalization follow the Mac volume
       </span>
     </span>
   </a>
@@ -945,10 +945,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#the-rw-single-writer-contract" class="md-nav__link">
+  <a href="#macos-the-rw-single-writer-contract" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The rw single-writer contract
+        macOS: The rw single-writer contract
       </span>
     </span>
   </a>
@@ -956,10 +956,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#external-volumes-stay-busy-while-shared" class="md-nav__link">
+  <a href="#macos-external-volumes-stay-busy-while-shared" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        External volumes stay busy while shared
+        macOS: External volumes stay busy while shared
       </span>
     </span>
   </a>
@@ -1088,32 +1088,18 @@ its own virtiofsd), and <code>mmap</code> coherence.</p>
 Apple's Virtualization.framework, on an M3-or-newer Mac), and a
 shared Mac folder crosses two hops to reach a workspace: vz
 virtiofs carries it from macOS into the daemon's VM under the
-reserved prefix (the Mac's <code>/Users/name</code> at
-<code>/mnt/msks/Users/name</code>), and one virtiofsd per attached share
-carries it from there into the workspace guest. The client
-speaks Mac paths throughout — <code>--share ~/code:/mnt/code</code> — and
-the daemon's <code>prefix</code> host mode does the translation before
-the <a href="#the-two-gates">two gates</a> run. The Lima template mounts
-the invoking user's home under the prefix at VM creation,
-writable, so the common case needs no edit; a share root
-outside it (another user's home, a <code>/Volumes</code> tree) is a
-template edit plus VM recreation, and the mount gate's refusal
-names that remedy. A symlink stored with an absolute Mac path
-dangles past the Mac — under the prefix the tree lives at
-<code>/mnt/msks/...</code>, so the link's absolute target resolves against
-the daemon VM's own root, and against the workspace's own root
-one hop later — while relative symlinks cross intact.
-Hardlink-heavy workloads run clean on the validated stack:
-<code>git repack</code>, <code>cp -al</code> storms, and Docker's own inode
-reproducer all pass on macOS 27, and the instability the older
-releases carried is no longer reproducible on macOS 15 per the
-upstream report — the releases that had it sit below the macOS
-floor Lima needs anyway (nested virtualization), so the stack
-never runs them.</p>
+reserved prefix and one virtiofsd per attached share
+carries it from there into the workspace guest.</p>
+<p>The client speaks Mac paths throughout — <code>--share ~/code:/mnt/code</code> — and the
+daemon's <code>prefix</code> host mode does the translation before the <a href="#the-two-gates">two
+gates</a> run. The Lima template mounts the invoking user's home
+under the prefix at VM creation, writable, so the common case needs no edit; a
+share root outside it (another user's home, a <code>/Volumes</code> tree) is a template
+edit plus VM recreation, and the mount gate's refusal names that remedy.</p>
 <p>The far end of the share is the Mac's own volume, and its
 behaviors cross with the tree. Four of them are contract, not
 configuration:</p>
-<h3 id="watchers-poll">Watchers poll<a class="headerlink" href="#watchers-poll" title="Permanent link">&para;</a></h3>
+<h3 id="macos-watchers-poll">macOS: Watchers poll<a class="headerlink" href="#macos-watchers-poll" title="Permanent link">&para;</a></h3>
 <p>File events do not cross virtiofs. Changes made on the Mac — an
 editor's save, a build's output — reach every attached
 workspace as data, promptly coherent the way <a href="#coherence-between-guests">coherence
@@ -1127,7 +1113,7 @@ built on the same polling takes one care: a file's existence
 becomes visible before its content does (a writer creates
 empty, then fills), so a poller waits for a completion marker
 the writer emits after the data, never for the file itself.</p>
-<h3 id="case-and-normalization-follow-the-mac-volume">Case and normalization follow the Mac volume<a class="headerlink" href="#case-and-normalization-follow-the-mac-volume" title="Permanent link">&para;</a></h3>
+<h3 id="macos-case-and-normalization-follow-the-mac-volume">macOS: Case and normalization follow the Mac volume<a class="headerlink" href="#macos-case-and-normalization-follow-the-mac-volume" title="Permanent link">&para;</a></h3>
 <p>The tree a workspace mounts is the Mac's volume, and its naming
 rules cross with it: a Mac's default volume matches names
 case-insensitively, storing them as typed (case-preserving),
@@ -1143,7 +1129,7 @@ hashes or compares names byte-for-byte can report a mismatch
 against a Linux-built expectation. A tree that must keep Linux
 naming rules exactly lives in the workspace's own storage (the
 <a href="../storage/">storage chapter</a>) instead.</p>
-<h3 id="the-rw-single-writer-contract">The rw single-writer contract<a class="headerlink" href="#the-rw-single-writer-contract" title="Permanent link">&para;</a></h3>
+<h3 id="macos-the-rw-single-writer-contract">macOS: The rw single-writer contract<a class="headerlink" href="#macos-the-rw-single-writer-contract" title="Permanent link">&para;</a></h3>
 <p>An <code>rw</code> share names the workspace its writer. Locks taken
 inside the workspace hold there and stop there: <code>flock</code> and
 <code>fcntl</code> locks end at the workspace's own virtiofsd, and the Mac
@@ -1159,7 +1145,7 @@ journal on disk — take one writer at a time: the workspace's,
 or the Mac's. A Mac that only reads the share (browsing in
 Finder, opening a file) rides the coherence contract; a
 Mac-side writer into a lock-using tree races the workspace.</p>
-<h3 id="external-volumes-stay-busy-while-shared">External volumes stay busy while shared<a class="headerlink" href="#external-volumes-stay-busy-while-shared" title="Permanent link">&para;</a></h3>
+<h3 id="macos-external-volumes-stay-busy-while-shared">macOS: External volumes stay busy while shared<a class="headerlink" href="#macos-external-volumes-stay-busy-while-shared" title="Permanent link">&para;</a></h3>
 <p>A file the stack holds open keeps its Mac volume mounted, so a
 disk whose tree is shared into a running workspace refuses to
 eject — the Finder reports the volume in use — until the
