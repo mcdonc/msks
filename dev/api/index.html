@@ -1112,15 +1112,14 @@ carries both settings and the socket's tradeoffs.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">"</span><span class="nv">$MSKSC_URL</span><span class="s2">/api/v1/workspaces/ws1/mounts"</span><span class="w"> </span><span class="se">\</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$MSKSC_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"mounts": [{"share": "projects", "guest": "/mnt/projects"}]}'</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"mounts": [{"host": "/srv/projects", "guest": "/mnt/projects"}]}'</span>
 </span></code></pre></div>
-<p>The daemon validates the list against the configured shares (a
-share the config does not carry, and <code>rw</code> on a share narrowed
-to read-only, are named 400s) and answers with the refreshed
-row; every row the daemon serves carries <code>mounts</code> and the
-derived <code>mount_issues</code> — the skip and conflict state <code>msks ls</code>
-and the TUI render. <code>msks mount</code>/<code>umount</code> and the TUI's editor
-ride this route.</p>
+<p>The daemon validates the list against its #667 gates (a host
+path outside the allowed roots, and one that does not resolve
+under them, are named 400s) and answers with the refreshed row;
+every row the daemon serves carries <code>mounts</code> and the derived
+<code>mount_issues</code> — the skip state <code>msks ls</code> and the TUI render.
+<code>msks mount</code>/<code>umount</code> and the TUI's editor ride this route.</p>
 <ul>
 <li><code>GET</code>/<code>PUT …/home</code> export and import the home volume as a
   byte stream — the same stream <code>msks home import</code>/<code>export</code>

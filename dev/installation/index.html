@@ -1239,6 +1239,15 @@ end to end — <code>msks image check</code> passes there too. The VM's
 silicon reads as Apple, so <code>msksd doctor</code> gates its apple-kvm
 row on the NV-mode markers and leaves the row off there
 (<a href="https://github.com/mcdonc/msks/issues/664">#664</a>).</p>
+<p>The msksd VM that <code>msks-setup-macos-host</code> creates from the
+shipped Lima template is the host that shares Mac folders into
+workspaces: the VM mounts them under its reserved
+prefix and forwards each attached share to the workspace that
+asked for it — the <a href="../mounts/#shares-on-a-macos-host">mounts chapter's macOS
+section</a> holds the geometry
+and the contracts that cross with the tree (watchers poll,
+case follows the volume, one writer per lock-using tree,
+volumes eject after the workspace stops).</p>
 <h2 id="the-alternative-paths">The alternative paths<a class="headerlink" href="#the-alternative-paths" title="Permanent link">&para;</a></h2>
 <p><strong>A development host</strong> (this repository's checkout) runs the
 daemon through Nix and devenv; the <a href="../development/">Development

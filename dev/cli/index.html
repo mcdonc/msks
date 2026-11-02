@@ -1777,7 +1777,7 @@ row included.</p>
 <p>The status column speaks the daemon's lifecycle vocabulary:
 <code>created</code> (row exists, never booted), <code>starting</code>, <code>running</code>,
 <code>paused</code>, <code>stopped</code>, <code>unknown</code>, <code>absent</code>. A workspace whose mounts
-skip or conflict carries the count beside its status — <code>running,
+skip carries the count beside its status — <code>running,
 1 mount skipped</code> above — a standing marker that lasts until the
 config and the row agree again; the <a href="../mounts/#the-skip-behavior">mounts
 chapter</a> names every kind of skip
@@ -1929,9 +1929,9 @@ below generate theirs):</p>
 <td>The workspace's login user; default: your username</td>
 </tr>
 <tr>
-<td><code>--mount</code></td>
+<td><code>--share</code></td>
 <td><code>mounts</code></td>
-<td>A host share mounted into the guest: <code>SHARE:GUEST_PATH:MODE</code>, repeatable</td>
+<td>A host directory mounted into the guest: <code>HOST_PATH:GUEST_PATH:MODE</code>, repeatable</td>
 </tr>
 </tbody>
 </table>
@@ -1940,19 +1940,19 @@ its own defaults. An <code>--image</code> reference resolves against the
 daemon's image catalog (<code>docs/images.md</code>); explicit <code>--kernel</code> and
 <code>--rootfs</code> bypass it. Size ranges are enforced server-side; a value
 outside them comes back as a validation error (below).</p>
-<p><code>--mount</code> names a share the daemon's config carries, the absolute
-guest path it lands at, and a mode — <code>ro</code> or <code>rw</code>, defaulting to
-<code>rw</code> when the mode is omitted:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>msks<span class="w"> </span>create<span class="w"> </span>ws1<span class="w"> </span>--mount<span class="w"> </span>projects:/mnt/projects<span class="w"> </span>--mount<span class="w"> </span>refs:/srv/refs:ro
+<p><code>--share</code> names a host directory, the absolute guest path it lands
+at, and a mode — <code>ro</code> or <code>rw</code>, defaulting to <code>rw</code> when the mode is
+omitted:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>msks<span class="w"> </span>create<span class="w"> </span>ws1<span class="w"> </span>--share<span class="w"> </span>/srv/projects:/mnt/projects<span class="w"> </span>--share<span class="w"> </span>/srv/refs:/srv/refs:ro
 </span></code></pre></div>
-<p>The share must be one the operator listed (<code>mount_shares</code>,
-<a href="../config/#host-share-mounts">configuration</a>); <code>rw</code> on a share
-narrowed to read-only refuses with the mismatch named. The mounts
-apply at the workspace's next start — a <code>--start</code> create attaches
-them on its first boot. The <a href="../mounts/">mounts chapter</a> holds the
-behavior: what a share is, the mode bounds, and the coherence
-between guests sharing one tree. <code>msks mount</code> and <code>msks umount</code>
-change the set later.</p>
+<p>The host path must sit under one of the daemon's allowed roots
+(<code>mount_host_roots</code>,
+<a href="../config/#host-share-mounts">configuration</a>), resolved against
+symlink escapes. The mounts apply at the workspace's next start —
+a <code>--start</code> create attaches them on its first boot. The <a href="../mounts/">mounts
+chapter</a> holds the behavior: the two gates, the mode
+bound, and the coherence between guests sharing one tree.
+<code>msks mount</code> and <code>msks umount</code> change the set later.</p>
 <p><code>--user NAME</code> records the workspace's login user, and the
 name rides the row. The guest's first boot seeds the account:
 <code>useradd -m</code>; a home on the persistent <code>/home</code> volume,
@@ -2111,9 +2111,9 @@ holds for a workspace that was never booted; the row records
 <h2 id="msks-mount"><code>msks mount</code><a class="headerlink" href="#msks-mount" title="Permanent link">&para;</a></h2>
 <p>Adds one host share to a workspace's mounts (<code>POST
 /api/v1/workspaces/{id-or-name}/mounts</code>) — the spec is the
-create's own <code>--mount</code> grammar:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>$ msks mount ws1 refs:/srv/refs:ro
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>ws1 mounts projects:/mnt/projects:rw, refs:/srv/refs:ro (next start)
+create's own <code>--share</code> grammar:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>$ msks mount ws1 /srv/refs:/srv/refs:ro
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>ws1 mounts /srv/projects:/mnt/projects:rw, /srv/refs:/srv/refs:ro (next start)
 </span></code></pre></div>
 <p>The outcome line names the resulting set and the next-start
 note: setting mounts never touches a running VM, and the next
@@ -2121,20 +2121,20 @@ note: setting mounts never touches a running VM, and the next
 is</a> states the lifecycle — the seed
 each boot carries bakes the current set, so a restart after a
 change lands it and prunes the dropped mounts). The daemon
-validates the whole list against the configured shares and the
-row rules (a share appears once per workspace, guest paths are
-absolute and mutually disjoint); a refusal names itself on one
-line. A mount the daemon's derived state holds unresolved names
-itself after the set — the <a href="../mounts/#the-skip-behavior">mounts
+validates the whole list against its gates and the row rules (a
+host path appears once per workspace, guest paths are absolute
+and mutually disjoint); a refusal names itself on one line. A
+mount the daemon's derived state holds unresolved names itself
+after the set — the <a href="../mounts/#the-skip-behavior">mounts
 chapter</a> holds every kind and its
 reason.</p>
 <h2 id="msks-umount"><code>msks umount</code><a class="headerlink" href="#msks-umount" title="Permanent link">&para;</a></h2>
-<p>Removes a workspace's mounts of one share — every guest path the
-share occupies:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>$ msks umount ws1 refs
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>ws1 mounts projects:/mnt/projects:rw (next start)
+<p>Removes a workspace's mounts of one host path — every guest path
+the share occupies:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>$ msks umount ws1 /srv/refs
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>ws1 mounts /srv/projects:/mnt/projects:rw (next start)
 </span></code></pre></div>
-<p>A share the workspace does not mount is one local line. The next
+<p>A host path the workspace does not mount is one local line. The next
 start attaches the remainder, and a workspace whose last mount
 leaves this way mounts nothing at its next boot. The <a href="../mounts/#what-a-mount-is">mounts
 chapter</a> states the lifecycle.</p>
@@ -2617,9 +2617,22 @@ the <code>cache_dir</code> key (<code>MSKSC_CACHE_DIR</code>) when it is set, el
 <code>~/.cache/msks</code>, then <code>&lt;workspace-id&gt;/known_hosts</code>. The cache
 keys on the workspace's immutable id, so a workspace recreated
 under the same name starts with a fresh cache and trusts its
-own first-boot keys again. Host keys persist across
+own first-boot keys again. Every invocation pins under that one
+id alias, whichever way the workspace was addressed — <code>msks ssh
+&lt;name&gt;</code> and the TUI's shell action record the same known_hosts
+entry, and an operator's own <code>~/.ssh/config</code> <code>Host &lt;name&gt;</code> block
+no longer matches the session (the id is the hostname msks ssh
+dials; name the id in a matching block instead). Host keys persist across
 stop/start on the workspace's overlay, so the
-first-connection entry keeps matching.
+first-connection entry keeps matching. When the daemon recreates
+the overlay under a live workspace (a healed loss, a factory
+reset), the guest regenerates its host keys: the daemon advances
+the workspace's disk epoch, the cache rotates with it, and the
+next connection pins the fresh keys with a notice naming the
+recreation instead of refusing. A rotation leaves the previous
+epoch's cache behind (the <code>&lt;id&gt;/</code> directory, then <code>&lt;id&gt;.e1/</code>,
+<code>&lt;id&gt;.e2/</code>, … as rotations accumulate); those directories are
+dead — delete them at will.
 The alias block keeps its own known_hosts under
 <code>~/.cache/msks/msks-&lt;ws&gt;/</code>; the two paths record the same host
 key independently. Agent forwarding asked for on the command

@@ -898,7 +898,7 @@ that jumps the focus to the first row whose name starts with what you
 type. Enter opens the workspace's page.</p>
 <p>The list re-reads the daemon every five seconds, so a workspace another surface
 moved (the CLI, another operator) appears without a keypress.</p>
-<p>A workspace whose mounts skip or conflict carries a marker in the
+<p>A workspace whose mounts skip carries a marker in the
 status column — <code>✗1 stopped</code> — the count of mounts the daemon's
 derived state holds unresolved; the marker stands until the
 config and the row agree again, and the <a href="../mounts/#the-skip-behavior">mounts
@@ -965,7 +965,7 @@ so a change made anywhere follows onto the page.</p>
 consent, an edit dialog for the sizes and topology, and the
 mounts editor; and start and stop.</p>
 <p>The <strong>mounts editor</strong> holds the workspace's mounts one row each —
-the CLI's own <code>SHARE:GUEST_PATH:MODE</code> grammar, the mode always
+the CLI's own <code>HOST_PATH:GUEST_PATH:MODE</code> grammar, the mode always
 shown. <code>a</code> adds a row (a single-line input), Enter edits the
 focused row seeded with its spec, <code>r</code> removes it, and Escape
 closes the editor with the last saved set. Every change posts the
@@ -973,9 +973,9 @@ whole list through the daemon's mounts route — the reply repaints
 each row with its derived state (<code>healthy</code>, or the skip's kind
 and reason), and a refusal names itself on the editor's note line
 with the list it refused rolled back. The daemon owns the rules:
-a share the config does not carry, and <code>rw</code> on a read-only
-share, refuse with the remedy named. The <a href="../mounts/">mounts
-chapter</a> and the <a href="../config/#host-share-mounts">configuration
+a host path outside the allowed roots, or one whose root the
+daemon's VM does not mount, refuses with the remedy named. The
+<a href="../mounts/">mounts chapter</a> and the <a href="../config/#host-share-mounts">configuration
 rows</a> hold the behavior; the CLI's
 <a href="../cli/#msks-mount"><code>msks mount</code></a> rides the same route.</p>
 <p><img alt="The image page: the catalog group, then the published channel" src="../screens/image-page.svg" /></p>

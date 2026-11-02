@@ -1604,10 +1604,12 @@ the file itself carries them all at one level.</p>
 </tbody>
 </table>
 <h3 id="host-share-mounts">Host share mounts<a class="headerlink" href="#host-share-mounts" title="Permanent link">&para;</a></h3>
-<p>The named host trees a workspace may mount into its guest (<a href="../mounts/">mounts
-chapter</a> for the behavior). Each entry carries <code>name</code>
-and <code>path</code>, and two bounds: <code>writable</code> (default <code>true</code>) and
-<code>multi</code> (default <code>true</code>).</p>
+<p>Host paths are the one share surface (<a href="../mounts/">mounts
+chapter</a> for the behavior): a workspace names a host
+directory through the daemon's two gates, and this table is the
+second one's config. The named-share list (<code>mount_shares</code>) was
+removed — a config that still names the key fails at load with
+the removal message pointing at these keys.</p>
 <table>
 <thead>
 <tr>
@@ -1620,13 +1622,6 @@ and <code>path</code>, and two bounds: <code>writable</code> (default <code>true
 </thead>
 <tbody>
 <tr>
-<td><code>mount_shares</code></td>
-<td><code>MSKSD_MOUNT_SHARES</code></td>
-<td>list</td>
-<td><em>(unset)</em></td>
-<td>The shares: entries of <code>name</code>, <code>path</code>, <code>writable</code> (default <code>true</code> — a listed share serves read-write), and <code>multi</code> (default <code>true</code> — a share attaches read-write to any number of workspaces; <code>false</code> makes read-write attaches exclusive). The environment form is a JSON array string.</td>
-</tr>
-<tr>
 <td><code>mount_host_mode</code></td>
 <td><code>MSKSD_MOUNT_HOST_MODE</code></td>
 <td>text</td>
@@ -1638,7 +1633,7 @@ and <code>path</code>, and two bounds: <code>writable</code> (default <code>true
 <td><code>MSKSD_MOUNT_HOST_ROOTS</code></td>
 <td>list</td>
 <td><em>(unset)</em></td>
-<td>The allowed host-share roots, as host paths (translated by <code>mount_host_mode</code> at gate time): a host-path mount must resolve under one of them. Unset allows nothing — the host-path surface stays off until the operator lists one. Refusals name this key. The environment form is a JSON array string.</td>
+<td>The allowed host-share roots, as host paths (translated by <code>mount_host_mode</code> at gate time): a host-path mount must resolve under one of them. Unset allows nothing — the host-share surface stays off until the operator lists one. Refusals name this key. The environment form is a JSON array string.</td>
 </tr>
 <tr>
 <td><code>virtiofsd</code></td>
@@ -1731,14 +1726,12 @@ the LLM proxy's loopback guard shape (<code>llm_models</code> gaining or
 losing entries, <code>llm_port</code>, <code>egress_subnet</code>) re-applies the
 table at the next workspace start, masquerade included, from
 the live <code>egress_uplink</code>.</p>
-<p><code>mount_shares</code> reads live after a reload: each workspace's next
-start derives its attachments from the shares the reload left —
-a share the reload removed reads as a skip at start (the
-<a href="../mounts/">mounts chapter</a> names the skip behavior), and a
-share the reload narrowed to read-only refuses the workspace's
-<code>rw</code> mount the same way. Running VMs keep the devices they
-attached. <code>virtiofsd</code> reads live too: the next start spawns the
-binary the reload names.</p>
+<p><code>mount_host_roots</code> reads live after a reload: each workspace's
+next start derives its attachments from the roots the reload
+left — a root the reload removed reads as a skip at start (the
+<a href="../mounts/">mounts chapter</a> names the skip behavior). Running
+VMs keep the devices they attached. <code>virtiofsd</code> reads live too:
+the next start spawns the binary the reload names.</p>
 <p>A config that fails to load or validate is refused: the daemon
 reports the error on stderr and keeps the previous settings. A
 default-path file deleted since startup is likewise refused rather

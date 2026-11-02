@@ -521,17 +521,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#what-a-share-is" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        What a share is
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#what-a-mount-is" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -543,10 +532,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-host-form" class="md-nav__link">
+  <a href="#the-two-gates" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The host form
+        The two gates
       </span>
     </span>
   </a>
@@ -572,6 +561,67 @@
       </span>
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#shares-on-a-macos-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Shares on a macOS host
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Shares on a macOS host">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#watchers-poll" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Watchers poll
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#case-and-normalization-follow-the-mac-volume" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Case and normalization follow the Mac volume
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-rw-single-writer-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The rw single-writer contract
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#external-volumes-stay-busy-while-shared" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        External volumes stay busy while shared
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -817,17 +867,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#what-a-share-is" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        What a share is
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#what-a-mount-is" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -839,10 +878,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-host-form" class="md-nav__link">
+  <a href="#the-two-gates" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The host form
+        The two gates
       </span>
     </span>
   </a>
@@ -868,6 +907,67 @@
       </span>
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#shares-on-a-macos-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Shares on a macOS host
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Shares on a macOS host">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#watchers-poll" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Watchers poll
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#case-and-normalization-follow-the-mac-volume" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Case and normalization follow the Mac volume
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-rw-single-writer-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The rw single-writer contract
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#external-volumes-stay-busy-while-shared" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        External volumes stay busy while shared
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -905,65 +1005,43 @@
 <h1 id="host-share-mounts">Host share mounts<a class="headerlink" href="#host-share-mounts" title="Permanent link">&para;</a></h1>
 <p>A workspace can mount host directory trees into its guest. The
 host side is the operator's decision: the daemon's config names
-the trees a guest may see, as <em>shares</em>. The guest side is the
-requester's: each workspace names a share, the absolute guest
-path it lands at, and a mode — <code>ro</code> or <code>rw</code>, defaulting to <code>rw</code>.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># the operator names the shares (msksd.yaml; reloadable on SIGHUP)</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>mount_shares:
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>-<span class="w"> </span>name:<span class="w"> </span>projects
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span>path:<span class="w"> </span>/srv/projects
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span>-<span class="w"> </span>name:<span class="w"> </span>refs
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">    </span>path:<span class="w"> </span>/srv/refs
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">    </span>writable:<span class="w"> </span><span class="nb">false</span><span class="w">      </span><span class="c1"># read-only in every guest</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span>-<span class="w"> </span>name:<span class="w"> </span>state
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">    </span>path:<span class="w"> </span>/srv/state
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">    </span>multi:<span class="w"> </span><span class="nb">false</span><span class="w">         </span><span class="c1"># rw attaches exclusive, one workspace at a time</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="c1"># a workspace mounts them (applies at its next start)</span>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>msks<span class="w"> </span>create<span class="w"> </span>ws1<span class="w"> </span>--mount<span class="w"> </span>projects:/mnt/projects
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>msks<span class="w"> </span>mount<span class="w"> </span>ws1<span class="w"> </span>refs:/mnt/refs:ro
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>msks<span class="w"> </span>umount<span class="w"> </span>ws1<span class="w"> </span>refs
+the allowed roots a guest's mounts must sit under, and (on a
+VM-hosted daemon) the trees its own VM carries. The guest side is
+the requester's: each workspace names a host path, the absolute
+guest path it lands at, and a mode — <code>ro</code> or <code>rw</code>, defaulting to
+<code>rw</code>.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># the operator allows the roots (msksd.yaml; reloadable on SIGHUP)</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>mount_host_roots:
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>-<span class="w"> </span>/srv/projects
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>-<span class="w"> </span>/srv/refs
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># a workspace mounts host paths (applies at its next start)</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>msks<span class="w"> </span>create<span class="w"> </span>ws1<span class="w"> </span>--share<span class="w"> </span>/srv/projects:/mnt/projects
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>msks<span class="w"> </span>mount<span class="w"> </span>ws1<span class="w"> </span>/srv/refs:/mnt/refs:ro
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>msks<span class="w"> </span>umount<span class="w"> </span>ws1<span class="w"> </span>/srv/refs
 </span></code></pre></div>
-<h2 id="what-a-share-is">What a share is<a class="headerlink" href="#what-a-share-is" title="Permanent link">&para;</a></h2>
-<p>The config's <code>mount_shares</code> list is the complete set of trees any
-guest can see. Listing a share is the trust decision: a listed
-share serves read-write to any number of workspaces by default,
-and the two bounds narrow that. <code>writable: false</code> serves the
-tree read-only in every guest — an <code>rw</code> mount on it is refused
-with the mismatch named, and <code>ro</code> on a writable share is a valid
-self-restriction. <code>multi: false</code> makes read-write attaches
-exclusive: one workspace holds the share at a time, and a second
-read-write attach skips with a conflict that names the holder.
-Read-only attaches are never exclusive — any number sit beside
-one read-write holder.</p>
-<p>Shares reload on <code>SIGHUP</code>: each workspace's next start reads the
-shares the reload left. A share the reload removed reads as a
-skip at start (below), and a share narrowed to read-only refuses
-the workspace's <code>rw</code> mount the same way. Running VMs keep the
-devices they attached.</p>
+<p>Shares by name — a <code>mount_shares</code> config list and mounts that
+referenced one — were removed: host paths are the one surface, and
+a config that still names the key fails at load with the removal
+message.</p>
 <h2 id="what-a-mount-is">What a mount is<a class="headerlink" href="#what-a-mount-is" title="Permanent link">&para;</a></h2>
-<p>A workspace's mount names a share, an absolute guest path, and a
-mode. The guest path becomes a root-owned mount point inside the
+<p>A workspace's mount names a host path, an absolute guest path, and
+a mode. The guest path becomes a root-owned mount point inside the
 VM: absolute, below the filesystem root, outside the
 pseudo-filesystems (<code>/proc</code>, <code>/sys</code>, <code>/dev</code>, <code>/run</code>) and outside
 <code>/home</code> (the home volume owns it — see the <a href="../storage/">storage
 chapter</a>). Two mounts of one workspace never overlap,
-and a share appears once per workspace. Mounts follow next-start
-semantics, like resize: setting them never touches a running VM,
-and the next start attaches the current set — the seed that boot
-carries bakes exactly these mounts, so a restart after a change
-lands the new set and prunes the dropped one. Two mounts set at
-once from two terminals race last-write-wins — the surface sets
-the whole list; a workspace served by one operator at a time
-never sees the race.</p>
-<h2 id="the-host-form">The host form<a class="headerlink" href="#the-host-form" title="Permanent link">&para;</a></h2>
-<p>A mount can name a host path instead of a share —
-<code>{host: /Users/chrism/code, guest: /mnt/code, mode: rw}</code> — an
-absolute host path (the <code>--share</code> flag (#673) expands <code>~</code>
-against the client's home before the request; the daemon takes
-the path as typed), and the daemon
-translates it by its host mode and runs it through two gates,
-each refusing at set time with its remedy:</p>
+and a host path appears once per workspace. Mounts follow
+next-start semantics, like resize: setting them never touches a
+running VM, and the next start attaches the current set — the seed
+that boot carries bakes exactly these mounts, so a restart after a
+change lands the new set and prunes the dropped one. Two mounts set
+at once from two terminals race last-write-wins — the surface sets
+the whole list; a workspace served by one operator at a time never
+sees the race.</p>
+<h2 id="the-two-gates">The two gates<a class="headerlink" href="#the-two-gates" title="Permanent link">&para;</a></h2>
+<p>Each host path runs two gates at set time, each refusing with its
+remedy:</p>
 <ol>
 <li><strong>The mount gate</strong> (VM-hosted daemons, <code>mount_host_mode:
 prefix</code>): the path, translated under <code>/mnt/msks</code>, must sit
@@ -982,35 +1060,117 @@ prefix</code>): the path, translated under <code>/mnt/msks</code>, must sit
 <p>The spec grammar splits its fields on colons, so a host path
 containing one is inexpressible on the wire (<code>--share</code> and the
 TUI editor both refuse it, naming the field the colon broke).</p>
-<p>A host-form mount attaches read-write unless it says <code>ro</code> —
-the same default the named form carries, and for the same
-reason: the trust decision is made before the mode matters (the
-share is listed or the root allowed); a mount that wants less
-names <code>ro</code>. Read-write host mounts hold no exclusivity: any
-number of workspaces may attach the same tree, and the coherence
-contract (below) is their concurrency story.</p>
+<p>A mount attaches read-write unless it says <code>ro</code>: the trust
+decision is made before the mode matters (the root is allowed),
+and a mount that wants less names <code>ro</code>. Read-write mounts hold no
+exclusivity: any number of workspaces may attach the same tree,
+and the coherence contract (below) is their concurrency story.</p>
 <h2 id="the-skip-behavior">The skip behavior<a class="headerlink" href="#the-skip-behavior" title="Permanent link">&para;</a></h2>
 <p>A start proceeds when a mount cannot attach, and the skip is
-state, not a log line. A share gone from the config, an <code>rw</code>
-mount a reload narrowed its share under, an <code>rw</code> attach whose
-exclusive share another workspace holds, or a share path that
-moved since the daemon loaded its config — each publishes an
-event (<code>mount.skipped</code>, <code>mount.denied</code>, <code>mount.conflict</code>,
-<code>mount.drift</code>) naming
-the mount and the reason, and the row carries the standing
-marker (<code>msks ls</code> prints <code>running, 1 mount skipped</code>) until the
-config and the row agree again. The workspace's other mounts
-attach.</p>
+state, not a log line. A root the reload removed from the allowed
+list, a path whose root the daemon's VM no longer mounts, a
+symlink that moved out from under its allowed root, or a path
+that vanished since the set — each publishes an event
+(<code>mount.skipped</code>) naming the mount and the reason, and the row
+carries the standing marker (<code>msks ls</code> prints <code>running, 1 mount
+skipped</code>) until the config and the row agree again. The
+workspace's other mounts attach.</p>
 <h2 id="coherence-between-guests">Coherence between guests<a class="headerlink" href="#coherence-between-guests" title="Permanent link">&para;</a></h2>
-<p>A <code>multi: true</code> share (the default) attaches read-write to any
-number of workspaces at once, and every attach forces
-<code>cache=never</code>: data writes become promptly coherent through the
-one host page cache, and lockfile coordination (<code>O_EXCL</code> creates
-— git, cargo) works because the host kernel serializes it. Two
-things do not coordinate between guests on the same share:
-<code>flock</code>/<code>fcntl</code> locks (each attach is its own virtiofsd), and
-<code>mmap</code> coherence. <code>multi: false</code> sidesteps the class the other
-way — the exclusive holder is the only writer.</p>
+<p>A host tree attaches read-write to any number of workspaces at
+once, and every attach forces <code>cache=never</code>: data writes become
+promptly coherent through the one host page cache, and lockfile
+coordination (<code>O_EXCL</code> creates — git, cargo) works because the
+host kernel serializes it. Two things do not coordinate between
+guests on the same share: <code>flock</code>/<code>fcntl</code> locks (each attach is
+its own virtiofsd), and <code>mmap</code> coherence.</p>
+<h2 id="shares-on-a-macos-host">Shares on a macOS host<a class="headerlink" href="#shares-on-a-macos-host" title="Permanent link">&para;</a></h2>
+<p>On a Mac the daemon runs inside its own Linux VM (Lima over
+Apple's Virtualization.framework, on an M3-or-newer Mac), and a
+shared Mac folder crosses two hops to reach a workspace: vz
+virtiofs carries it from macOS into the daemon's VM under the
+reserved prefix (the Mac's <code>/Users/name</code> at
+<code>/mnt/msks/Users/name</code>), and one virtiofsd per attached share
+carries it from there into the workspace guest. The client
+speaks Mac paths throughout — <code>--share ~/code:/mnt/code</code> — and
+the daemon's <code>prefix</code> host mode does the translation before
+the <a href="#the-two-gates">two gates</a> run. The Lima template mounts
+the invoking user's home under the prefix at VM creation,
+writable, so the common case needs no edit; a share root
+outside it (another user's home, a <code>/Volumes</code> tree) is a
+template edit plus VM recreation, and the mount gate's refusal
+names that remedy. A symlink stored with an absolute Mac path
+dangles past the Mac — under the prefix the tree lives at
+<code>/mnt/msks/...</code>, so the link's absolute target resolves against
+the daemon VM's own root, and against the workspace's own root
+one hop later — while relative symlinks cross intact.
+Hardlink-heavy workloads run clean on the validated stack:
+<code>git repack</code>, <code>cp -al</code> storms, and Docker's own inode
+reproducer all pass on macOS 27, and the instability the older
+releases carried is no longer reproducible on macOS 15 per the
+upstream report — the releases that had it sit below the macOS
+floor Lima needs anyway (nested virtualization), so the stack
+never runs them.</p>
+<p>The far end of the share is the Mac's own volume, and its
+behaviors cross with the tree. Four of them are contract, not
+configuration:</p>
+<h3 id="watchers-poll">Watchers poll<a class="headerlink" href="#watchers-poll" title="Permanent link">&para;</a></h3>
+<p>File events do not cross virtiofs. Changes made on the Mac — an
+editor's save, a build's output — reach every attached
+workspace as data, promptly coherent the way <a href="#coherence-between-guests">coherence
+between guests</a> describes, but no
+inotify event follows them: the share carries data, not
+notifications. Watchers on shared trees run in polling mode —
+Vite's <code>server.watch.usePolling</code> setting, jest's <code>--watchAll</code>,
+or the tool's own poll option — and a tool that can watch
+only through events cannot watch a share at all. Signaling
+built on the same polling takes one care: a file's existence
+becomes visible before its content does (a writer creates
+empty, then fills), so a poller waits for a completion marker
+the writer emits after the data, never for the file itself.</p>
+<h3 id="case-and-normalization-follow-the-mac-volume">Case and normalization follow the Mac volume<a class="headerlink" href="#case-and-normalization-follow-the-mac-volume" title="Permanent link">&para;</a></h3>
+<p>The tree a workspace mounts is the Mac's volume, and its naming
+rules cross with it: a Mac's default volume matches names
+case-insensitively, storing them as typed (case-preserving),
+and compares them
+Unicode-normalization-insensitively — a name typed
+composed (NFC) and the same name decomposed (NFD) are one file.
+Tools inside the workspace that expect Linux naming can trip:
+two names differing only in case cannot coexist in one
+directory (a checkout holding both <code>README</code> and <code>readme</code>
+collapses them), and a tool comparing filename bytes sees NFD
+where the Mac accepted NFC — archive and package tooling that
+hashes or compares names byte-for-byte can report a mismatch
+against a Linux-built expectation. A tree that must keep Linux
+naming rules exactly lives in the workspace's own storage (the
+<a href="../storage/">storage chapter</a>) instead.</p>
+<h3 id="the-rw-single-writer-contract">The rw single-writer contract<a class="headerlink" href="#the-rw-single-writer-contract" title="Permanent link">&para;</a></h3>
+<p>An <code>rw</code> share names the workspace its writer. Locks taken
+inside the workspace hold there and stop there: <code>flock</code> and
+<code>fcntl</code> locks end at the workspace's own virtiofsd, and the Mac
+side honors none of them — Finder, an open editor, or a
+Mac-side build writes past any lock the workspace took.
+Between workspaces, <a href="#coherence-between-guests">coherence between
+guests</a> governs: lockfile creates
+(<code>O_EXCL</code> — git, cargo) serialize through the host kernel and
+work cross-workspace; <code>flock</code>/<code>fcntl</code> do not cross an attach.
+Trees whose tools lock and treat the lock as the whole story —
+a cargo or bazel cache, a SQLite database, anything with a
+journal on disk — take one writer at a time: the workspace's,
+or the Mac's. A Mac that only reads the share (browsing in
+Finder, opening a file) rides the coherence contract; a
+Mac-side writer into a lock-using tree races the workspace.</p>
+<h3 id="external-volumes-stay-busy-while-shared">External volumes stay busy while shared<a class="headerlink" href="#external-volumes-stay-busy-while-shared" title="Permanent link">&para;</a></h3>
+<p>A file the stack holds open keeps its Mac volume mounted, so a
+disk whose tree is shared into a running workspace refuses to
+eject — the Finder reports the volume in use — until the
+workspace stops and its files close. <code>msks stop</code> on the
+workspace, eject the disk, and start again — with the volume
+back on the Mac, the share reattaches at the next start the
+way every mount set does; without it, the start skips the
+mount and carries the marker (<a href="#the-skip-behavior">the skip
+behavior</a>). Sharing the volume at all was
+the template edit above, since a <code>/Volumes/...</code> root sits
+outside the default home mount.</p>
 <h2 id="the-plumbing">The plumbing<a class="headerlink" href="#the-plumbing" title="Permanent link">&para;</a></h2>
 <p>Each attached share is one virtiofsd process (the platform's own
 <code>virtiofsd</code> package; the default binary name resolves on PATH

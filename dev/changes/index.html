@@ -713,6 +713,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Changed
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Removed
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -752,7 +774,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#changed" class="md-nav__link">
+  <a href="#changed_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Changed
@@ -863,7 +885,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#changed_1" class="md-nav__link">
+  <a href="#changed_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Changed
@@ -950,6 +972,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Changed
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Removed
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -989,7 +1033,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#changed" class="md-nav__link">
+  <a href="#changed_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Changed
@@ -1100,7 +1144,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#changed_1" class="md-nav__link">
+  <a href="#changed_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Changed
@@ -1151,8 +1195,64 @@
 <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>; versions are
 tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>msks-setup-macos-host</code> without <code>--port</code> (#699).</strong> The run
+  now talks through the forward the existing msksd VM already
+  carries — the forward is fixed at VM creation, so the VM's own
+  answer is the deployment's port — and finishes the verify
+  pass, the client config, and the preset on it. A VM created
+  with a non-default host port needs no recreation; an explicit
+  <code>--port</code> that disagrees with the existing VM's forward stays a
+  named refusal naming the recreation remedy.</li>
+</ul>
+<h3 id="removed">Removed<a class="headerlink" href="#removed" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>The <code>mount_shares</code> config feature (#685).</strong> Host paths are
+  the one share surface: the <code>mount_shares</code> key and
+  <code>MSKSD_MOUNT_SHARES</code> are removed, <code>msks create --share</code> /
+  <code>msks mount HOST:GUEST[:MODE]</code> are the one grammar, and the
+  TUI's mounts editor takes host paths only. A config that still
+  names the key or the env var fails at load with a message
+  pointing at <code>mount_host_roots</code> and <code>--share</code>; workspaces whose
+  stored rows carry named mounts drop them at read and at the
+  next set (they mount nothing for them at the next start) —
+  recreate those mounts with host paths.</li>
+</ul>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>The macOS share stack documented (#675).</strong> The <a href="../mounts/#shares-on-a-macos-host">mounts
+  chapter</a> gains the macOS
+  share geometry — a Mac folder crosses vz virtiofs into the
+  daemon's VM under <code>/mnt/msks</code>, then virtiofsd into the
+  workspace — with the four contracts that cross with the tree:
+  watchers on shared trees run in polling mode (file events do
+  not cross virtiofs), case and Unicode normalization follow the
+  Mac volume, an <code>rw</code> share names the workspace its single
+  writer (Mac-side writers honor none of its locks), and a
+  volume shared into a running workspace ejects only after the
+  workspace stops.</p>
+</li>
+<li>
+<p><strong>Lima self-install in <code>msks-setup-macos-host</code> (#699).</strong> A Mac
+  without Lima now gets it through <code>brew install lima</code> run by the
+  tool itself, so a stock Mac reaches a working msksd in one
+  run; a Mac without brew names the Homebrew line and stops.</p>
+</li>
+<li>
+<p><strong><code>msks-setup-macos-host</code> writes the client config and a
+  login agent (#689).</strong> The tool now writes <code>msks.yaml</code> itself —
+  the daemon alias pointing a bare <code>msks</code> at the forwarded port
+  with the token file and CA beside it — and a launchd agent
+  runs <code>limactl start msksd</code> immediately on install and at every
+  login, so the daemon answers now and after a reboot with no
+  exports in the shell profile. An operator's own
+  <code>msks.yaml</code> is kept untouched (the printed exports remain the
+  copy-paste fallback); <code>--check</code> reports both the config file
+  and the agent, and <code>--uninstall</code> removes the agent along with
+  the VM.</p>
+</li>
 <li>
 <p><strong><code>msks-preflight</code> prints per-section durations (#690).</strong>
   Every gate section carries a wall-clock column and a total in
@@ -1199,11 +1299,11 @@ tagged <code>vX.Y.Z</code>.</p>
   <code>msks mount</code>/<code>umount</code> (#673).</strong> The client surface for #667's
   host-path shares: a repeatable create flag whose <code>~</code> expands
   against your home before the request, the same spec grammar on
-  <code>msks mount</code> (a path-shaped first field is a host path, a bare
-  name is a configured share), and <code>msks umount</code> names what
-  leaves by share name or host path. A refused share surfaces
+  <code>msks mount</code>, and <code>msks umount</code> names what leaves by host
+  path. A refused
+  share surfaces
   the daemon's gate message verbatim — which gate refused and
-  the remedy. See the <a href="../mounts/#the-host-form">mounts chapter</a>.</p>
+  the remedy. See the <a href="../mounts/#what-a-mount-is">mounts chapter</a>.</p>
 </li>
 <li>
 <p><strong>Host-path workspace shares behind the #667 gates (#672).</strong>
@@ -1221,7 +1321,7 @@ tagged <code>vX.Y.Z</code>.</p>
   allowed) precedes the mode. The virtiofsd
   lifecycle, the cloud-hypervisor <code>--fs</code> wiring, and the guest
   mount units are the #620 machinery, keyed by a tag derived
-  from the path. See the <a href="../mounts/#the-host-form">mounts
+  from the path. See the <a href="../mounts/#the-two-gates">mounts
   chapter</a> for the two gates and their
   refusal remedies.</p>
 </li>
@@ -1242,6 +1342,36 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong><code>msks-setup-macos-host --uninstall</code> names a missing limactl
+  (#701).</strong> On a Mac where <code>limactl</code> is not on PATH, the
+  uninstall arm died with a raw <code>FileNotFoundError</code> traceback;
+  it now prints the install-Lima remedy on stderr and exits 1,
+  the same named-refusal shape the setup and <code>--check</code> paths
+  answer with.</p>
+</li>
+<li>
+<p><strong>ssh re-pins host keys when a workspace's disks are recreated
+  (#697).</strong> The daemon records a disk epoch on each workspace and
+  advances it whenever it recreates the root overlay under a live
+  row (a healed loss, a factory reset) — the guest regenerates its
+  ssh host keys with the fresh overlay. The identity answer
+  carries the epoch, the client rotates its per-workspace
+  host-key cache on a change and prints a notice naming the
+  recreation, and every invocation — <code>msks ssh &lt;name&gt;</code> and the
+  TUI's shell action alike — pins under the workspace's id, so a
+  regenerated key no longer refuses from one entry point while
+  the other silently re-pins.</p>
+</li>
+<li>
+<p><strong><code>msks-preflight</code> goes green on a Mac dev host (#691).</strong> The
+  remaining darwin failures in the gated suite are closed: the
+  Linux-only surfaces skip with their platform reasons named, the
+  host-independent paths they hid run on every host, and the
+  suite's coverage bar adapts off Linux where those surfaces
+  cannot execute. A Mac pre-flight runs the full gate stack green
+  in about a minute; Linux CI is unchanged.</p>
+</li>
+<li>
 <p><strong>The gated suite terminates on a Mac dev host (#690).</strong> The
   microvm driver's VMM and virtiofsd identity checks read the
   process command line through procfs only, so on a Mac every
@@ -1256,6 +1386,18 @@ tagged <code>vX.Y.Z</code>.</p>
   loop cannot schedule) skip with their reasons named. The
   suite drops from a hang to about a minute on an
   Apple-Silicon dev host.</p>
+</li>
+<li>
+<p><strong>Guest images retry the home-volume mount on every boot
+  (#688).</strong> A restarted workspace that lost the udev race — the
+  volume's by-label symlink landing after the mount unit's 30s
+  device timeout — came up with <code>/home</code> unmounted indefinitely
+  (the first-boot retry that rides the identity seed never runs
+  on a later boot). Every guest image now ships a udev rule that
+  asks systemd for the mount when the labeled disk appears, so
+  <code>/home</code> mounts moments after the label lands, on every boot a
+  rebuilt image serves; existing images keep the seed's retry
+  for first boots.</p>
 </li>
 <li>
 <p><strong>The seed retries a dependency-failed home-volume mount
@@ -1323,7 +1465,7 @@ tagged <code>vX.Y.Z</code>.</p>
   publishing.</li>
 </ul>
 <h2 id="v05-2026-10-28">[v0.5] - 2026-10-28<a class="headerlink" href="#v05-2026-10-28" title="Permanent link">&para;</a></h2>
-<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<h3 id="changed_1">Changed<a class="headerlink" href="#changed_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>virtiofsd 1.13.0 floor for host mounts (#655).</strong> Host mounts
   need virtiofsd 1.13.0 or newer: the uid/gid translation and
@@ -1724,7 +1866,7 @@ no</code>, <code>PermitRootLogin prohibit-password</code>) pinned by a config dr
   gitignored. The devenv shell also prunes its own stale one-shot
   wrappers (<code>.devenv/shell-*.sh</code> older than an hour) automatically.</li>
 </ul>
-<h3 id="changed_1">Changed<a class="headerlink" href="#changed_1" title="Permanent link">&para;</a></h3>
+<h3 id="changed_2">Changed<a class="headerlink" href="#changed_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>The NixOS deployment host (#229).</strong> msks ships as a flake
   whose NixOS module runs msksd and cloud-hypervisor directly on a
