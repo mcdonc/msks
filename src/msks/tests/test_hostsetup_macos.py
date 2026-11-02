@@ -372,7 +372,7 @@ def test_the_xtrace_buries_an_unquieted_exit() -> None:
     the last line — the invariant vm_shell's tail extraction
     reads."""
     loud = subprocess.run(
-        ["/bin/bash", "-c", 'set -eux; echo "the refusal" >&2; exit 1'],
+        ["bash", "-c", 'set -eux; echo "the refusal" >&2; exit 1'],
         capture_output=True,
         text=True,
         env={**os.environ, "PS4": "+ "},
@@ -381,7 +381,7 @@ def test_the_xtrace_buries_an_unquieted_exit() -> None:
     assert loud.stderr.splitlines()[-1] == "+ exit 1"
     quiet = subprocess.run(
         [
-            "/bin/bash",
+            "bash",
             "-c",
             'set -eux; true; set +x; echo "the refusal" >&2; exit 1',
         ],
@@ -772,11 +772,17 @@ def test_a_version_skew_refuses_the_check(
     version in the VM — the pair ships from one wheel, and a
     drift otherwise surfaces one feature at a time. A dev tool's
     remedy names the wheel path (#704 review): the plain rerun is
-    exactly what a dev build without a wheel refuses."""
+    exactly what a dev build without a wheel refuses. The dev
+    arms name their own tool word: the tree's ambient word is a
+    dev build between releases and the release's number at a
+    cut, and neither may the test assume."""
     monkeypatch.setattr(
         mac, "verify_daemon", lambda port, timeout_s=15.0: None
     )
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    monkeypatch.setattr(
+        mac, "vm_version", lambda: "0.7.0.dev0"
+    )  # a dev tree's own word
     monkeypatch.setattr(mac, "daemon_version", lambda port: "9.9.9")
     mac.ensure_client_config(mac.PORT)
     # #715: the daemon leads — the plain rerun would downgrade

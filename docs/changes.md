@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.6] - 2026-11-02
+
 ### Changed
 
 - **`devenv processes up` on a macOS host (#707).** The `msksd`

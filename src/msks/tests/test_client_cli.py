@@ -123,14 +123,19 @@ def test_the_key_command_parses_no_private_forms(
     assert "No such option" in capsys.readouterr().err
 
 
-def test_version_skew_notice_names_the_pair() -> None:
+def test_version_skew_notice_names_the_pair(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """#706: a daemon whose /health version differs from the
     client's own names both words and the remedy; equality, an
     unknown side, and a document without the word stay silent.
     #715: the remedy follows the direction — a newer daemon
     names the client's update, a dev-marked daemon names the
     tree, and an older daemon under a dev client names the wheel
-    (the plain rerun is what a dev build refuses)."""
+    (the plain rerun is what a dev build refuses). Each arm
+    names its own client word: the tree's ambient word is a dev
+    build between releases and the release's number at a cut,
+    and neither may the test assume."""
     mine = workspaces.__version__
     assert workspaces.version_skew_notice({"version": mine}) is None
     assert workspaces.version_skew_notice(None) is None
@@ -140,8 +145,10 @@ def test_version_skew_notice_names_the_pair() -> None:
     assert "the daemon runs 9.9.9" in newer
     assert f"this client is {mine}" in newer
     assert "update this client" in newer  # the daemon leads
+    monkeypatch.setattr(
+        workspaces, "__version__", "0.7.0.dev0"
+    )  # a dev tree's own word
     older = workspaces.version_skew_notice({"version": "0.1.0"})
-    assert ".dev" in mine  # the tree's own word is a dev build
     assert "--wheel" in older  # so the older-daemon remedy names it
     dev_daemon = workspaces.version_skew_notice({"version": "9.9.9.dev0"})
     assert "development build" in dev_daemon
