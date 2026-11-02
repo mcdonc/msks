@@ -164,6 +164,14 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **A development-build tool no longer installs a release into
+  the VM (#704).** The tree's version now carries a `.devN`
+  marker between releases, and a `msks-setup-macos-host` run
+  without `--wheel` refuses by name on the marker with the
+  build-a-wheel remedy. Previously a tree whose version number
+  matched a release silently installed that release's daemon,
+  which rejected the config the same run wrote.
+
 - **A failed staging-agent bind reports the real error (#710).**
   The ssh/rsync staging agent's cleanup closed a server a failed
   bind never built, so a bind refusal (a socket path past the

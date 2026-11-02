@@ -654,7 +654,18 @@ systemctl restart msksd.service
 
 def bootstrap_vm(wheel: str | None, home: str) -> None:
     """Copy the wheel in when one is named, then run the
-    bootstrap script inside the VM."""
+    bootstrap script inside the VM. A development build without a
+    wheel refuses by name first (#704): the PyPI path installs
+    `msks==<this version>`, a dev marker never resolves to a
+    release, and falling back to the same-numbered released
+    wheel silently installs a daemon that predates the config
+    this tool writes — the crash-loop shape."""
+    if wheel is None and ".dev" in vm_version():
+        raise MacSetupError(
+            f"this tool is a development build ({vm_version()}); the "
+            "VM installs a release from PyPI or a wheel in hand — "
+            "build one (uv build) and pass --wheel"
+        )
     if wheel is not None:
         say(f"copying {wheel} into the VM")
         run(["limactl", "copy", os.path.abspath(wheel), f"{VM_NAME}:/tmp/"])

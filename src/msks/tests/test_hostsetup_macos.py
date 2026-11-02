@@ -407,6 +407,28 @@ def test_the_bootstrap_copies_a_named_wheel(procs: FakeProcesses) -> None:
     assert copied
 
 
+def test_a_dev_build_without_a_wheel_refuses_by_name(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
+) -> None:
+    """#704's root cause: a dev tree whose version number was the
+    released one silently installed that release from PyPI — a
+    daemon predating the config the same script writes. A dev
+    marker refuses the PyPI path up front with the --wheel
+    remedy, and a wheel rides through the guard."""
+    monkeypatch.setattr(mac, "vm_version", lambda: "9.9.9.dev0")
+    with pytest.raises(
+        mac.MacSetupError, match="build one .uv build. and pass --wheel"
+    ):
+        mac.bootstrap_vm(None, "/Users/p")
+    assert not any(c[:2] == ["limactl", "shell"] for c in procs.calls)
+    mac.bootstrap_vm("/builds/w.whl", "/Users/p")
+    assert any(c[:2] == ["limactl", "shell"] for c in procs.calls)
+    # A release word rides the PyPI path untouched — the guard is
+    # the dev marker's alone.
+    monkeypatch.setattr(mac, "vm_version", lambda: "9.9.9")
+    mac.bootstrap_vm(None, "/Users/p")
+
+
 # --- the verify pass and the preset -----------------------------------
 
 
@@ -1032,7 +1054,9 @@ def test_the_entry_prints_the_preset(
     # read stay in the test tree (a dev Mac's real ~/.lima/msksd
     # would answer the port read and break the run's hermeticity).
     monkeypatch.setattr(mac.Path, "home", lambda: client_tree)
-    assert mac.main(["--port", "8661"]) == 0
+    # The tree's dev marker refuses the PyPI path (#704); a full
+    # run rides a wheel — the dev tool's own contract.
+    assert mac.main(["--wheel", "/builds/w.whl", "--port", "8661"]) == 0
     out = capsys.readouterr().out
     assert "export MSKSC_URL=https://127.0.0.1:8661" in out
     assert "export MSKSC_TOKEN=the-token" in out
@@ -1077,7 +1101,9 @@ def test_a_default_run_reaches_the_client_config_on_the_adopted_port(
     )
     monkeypatch.setattr(mac.Path, "home", lambda: client_tree)
     write_forward(client_tree, 8661)
-    assert mac.main([]) == 0
+    # The dev marker refuses the PyPI path (#704); the run rides
+    # a wheel, the dev tool's own contract.
+    assert mac.main(["--wheel", "/builds/w.whl"]) == 0
     out = capsys.readouterr().out
     assert "export MSKSC_URL=https://127.0.0.1:8661" in out
     # The safety property the issue's title carries: an adopted
