@@ -1365,6 +1365,15 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>A failed staging-agent bind reports the real error (#710).</strong>
+  The ssh/rsync staging agent's cleanup closed a server a failed
+  bind never built, so a bind refusal (a socket path past the
+  AF_UNIX limit, an unwritable temp dir) printed an
+  <code>UnboundLocalError</code> about the cleanup instead of the error
+  itself. The cleanup now runs only for a server that was built,
+  and the original refusal reaches the operator.</p>
+</li>
+<li>
 <p><strong><code>msks-setup-macos-host --uninstall</code> names a missing limactl
   (#701).</strong> On a Mac where <code>limactl</code> is not on PATH, the
   uninstall arm died with a raw <code>FileNotFoundError</code> traceback;
