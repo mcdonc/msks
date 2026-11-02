@@ -652,20 +652,26 @@ systemctl restart msksd.service
 """
 
 
-def bootstrap_vm(wheel: str | None, home: str) -> None:
-    """Copy the wheel in when one is named, then run the
-    bootstrap script inside the VM. A development build without a
-    wheel refuses by name first (#704): the PyPI path installs
-    `msks==<this version>`, a dev marker never resolves to a
-    release, and falling back to the same-numbered released
-    wheel silently installs a daemon that predates the config
-    this tool writes — the crash-loop shape."""
+def refuse_dev_build(wheel: str | None) -> None:
+    """#704: a development build has no release to install — the
+    PyPI path resolves ``msks==<this version>`` to nothing, and
+    falling back to the same-numbered released wheel silently
+    installs a daemon that predates the config this tool writes
+    (the crash-loop shape). The refusal preflights the run, after
+    the platform gate and before the mutating phases — the VM
+    creation that follows would otherwise spend minutes building
+    a machine a rerun cannot finish."""
     if wheel is None and ".dev" in vm_version():
         raise MacSetupError(
             f"this tool is a development build ({vm_version()}); the "
             "VM installs a release from PyPI or a wheel in hand — "
             "build one (uv build) and pass --wheel"
         )
+
+
+def bootstrap_vm(wheel: str | None, home: str) -> None:
+    """Copy the wheel in when one is named, then run the
+    bootstrap script inside the VM."""
     if wheel is not None:
         say(f"copying {wheel} into the VM")
         run(["limactl", "copy", os.path.abspath(wheel), f"{VM_NAME}:/tmp/"])
@@ -1099,12 +1105,19 @@ def skew_row(port: int) -> str:
     """The version-pair row (#706): green naming both words when
     the VM's daemon runs this tool's own version; a drift is the
     named rerun refusal — the pair ships from one wheel, and a
-    skew otherwise surfaces one feature at a time."""
+    skew otherwise surfaces one feature at a time. The remedy
+    names the wheel path for a dev build (#704 review): the
+    plain rerun is exactly what a dev build without a wheel
+    refuses, and each message alone would loop the operator."""
     theirs = daemon_version(port)
     if theirs != vm_version():
+        if ".dev" in vm_version():
+            remedy = f"build a wheel (uv build) and re-run {TOOL} with --wheel"
+        else:
+            remedy = f"re-run {TOOL} to update the VM's daemon"
         raise MacSetupError(
             f"the VM's daemon runs {theirs}, this tool {vm_version()}; "
-            f"re-run {TOOL} to update the VM's daemon"
+            f"{remedy}"
         )
     return f"the VM's daemon and this tool both run {vm_version()}"
 
@@ -1225,8 +1238,11 @@ def run_setup(args: argparse.Namespace) -> str:
     provision — the preset's token and CA are real, and the agent
     earns its login slot. The port the phases share is the one
     ``ensure_vm`` resolves: the explicit ``--port``, or the
-    forward the existing VM already carries (#699)."""
+    forward the existing VM already carries (#699). A dev build
+    without a wheel refuses after the platform gate and before
+    the VM creation (#704) — nothing the run builds is wasted."""
     check_host()
+    refuse_dev_build(args.wheel)
     home = str(Path.home())
     port = ensure_vm(host_port=args.port)
     bootstrap_vm(args.wheel, home)

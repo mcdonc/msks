@@ -414,19 +414,41 @@ def test_a_dev_build_without_a_wheel_refuses_by_name(
     released one silently installed that release from PyPI — a
     daemon predating the config the same script writes. A dev
     marker refuses the PyPI path up front with the --wheel
-    remedy, and a wheel rides through the guard."""
+    remedy; a wheel and a release word ride through."""
     monkeypatch.setattr(mac, "vm_version", lambda: "9.9.9.dev0")
     with pytest.raises(
         mac.MacSetupError, match="build one .uv build. and pass --wheel"
     ):
-        mac.bootstrap_vm(None, "/Users/p")
-    assert not any(c[:2] == ["limactl", "shell"] for c in procs.calls)
-    mac.bootstrap_vm("/builds/w.whl", "/Users/p")
-    assert any(c[:2] == ["limactl", "shell"] for c in procs.calls)
-    # A release word rides the PyPI path untouched — the guard is
-    # the dev marker's alone.
+        mac.refuse_dev_build(None)
+    assert not procs.calls  # nothing touched the host or the VM
+    mac.refuse_dev_build("/builds/w.whl")  # a wheel rides through
     monkeypatch.setattr(mac, "vm_version", lambda: "9.9.9")
-    mac.bootstrap_vm(None, "/Users/p")
+    mac.refuse_dev_build(None)  # a release word rides the PyPI path
+    mac.bootstrap_vm(None, "/Users/p")  # ... and reaches the script
+
+
+def test_a_dev_build_preflights_before_the_mutating_phases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The refusal sits between the platform gate and the VM
+    creation (#704 review): the brew-floor check runs, and the
+    phases that build anything never do."""
+    order = []
+    for phase in (
+        "check_host",
+        "ensure_vm",
+        "bootstrap_vm",
+        "verify_daemon",
+        "client_preset",
+        "ensure_agent",
+    ):
+        monkeypatch.setattr(
+            mac, phase, lambda phase=phase: order.append(phase)
+        )
+    monkeypatch.setattr(mac, "vm_version", lambda: "9.9.9.dev0")
+    with pytest.raises(mac.MacSetupError, match="--wheel"):
+        mac.run_setup(SimpleNamespace(wheel=None, port=None))
+    assert order == ["check_host"]
 
 
 # --- the verify pass and the preset -----------------------------------
@@ -748,7 +770,9 @@ def test_a_version_skew_refuses_the_check(
 ) -> None:
     """#706: the skew row stays red until a rerun lands the tool's
     version in the VM — the pair ships from one wheel, and a
-    drift otherwise surfaces one feature at a time."""
+    drift otherwise surfaces one feature at a time. A dev tool's
+    remedy names the wheel path (#704 review): the plain rerun is
+    exactly what a dev build without a wheel refuses."""
     monkeypatch.setattr(
         mac, "verify_daemon", lambda port, timeout_s=15.0: None
     )
@@ -758,7 +782,10 @@ def test_a_version_skew_refuses_the_check(
     with pytest.raises(
         mac.MacSetupError, match="re-run msks-setup-macos-host"
     ):
-        mac.check_rows(mac.PORT)
+        mac.check_rows(mac.PORT)  # the tool's own word carries .dev
+    monkeypatch.setattr(mac, "vm_version", lambda: "0.5.0")
+    with pytest.raises(mac.MacSetupError, match="update the VM's daemon"):
+        mac.check_rows(mac.PORT)  # a release word names the rerun
 
 
 def test_a_mismatched_chain_refuses_with_the_port_remedy(
