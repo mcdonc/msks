@@ -981,7 +981,10 @@ rows</a> hold the behavior; the CLI's
 <p><img alt="The image page: the catalog group, then the published channel" src="../screens/image-page.svg" /></p>
 <p><code>i</code>: the image page. Its catalog group comes first, the rows carrying the
 default marker and each import's date; then the published channel's rows with
-their descriptions, sizes, and membership markers. <code>[imported]</code> marks a row
+their descriptions, sizes, and membership markers. The published group
+carries the rows this daemon's own machine can boot: a row declaring another
+architecture stays off the page, and a row that declares none shows
+(<code>msks image import</code> names the same rule). <code>[imported]</code> marks a row
 whose archive the catalog holds (an exact hash match); <code>[in catalog, other
 build]</code> marks one whose ref it holds under a different hash. <img alt="The image
 detail: description, hash, the built date" src="../screens/image-detail.svg" /></p>

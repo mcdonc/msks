@@ -1070,7 +1070,9 @@ it — the <a href="../config/#the-api-listener">Configuration chapter</a>
 carries both settings and the socket's tradeoffs.</p>
 <h2 id="health-and-defaults">Health and defaults<a class="headerlink" href="#health-and-defaults" title="Permanent link">&para;</a></h2>
 <ul>
-<li><code>GET /api/v1/health</code> — the daemon's version and the image it
+<li><code>GET /api/v1/health</code> — the daemon's version, its host's
+  machine name (the architecture its workspaces boot; the <a href="../tui/">TUI's
+  published image list</a> filters on it), and the image it
   itself booted from (the <code>msksd.image=</code> command-line fact, for
   drift checking), unauthenticated by design: the route a load
   balancer can probe without a token.</li>
