@@ -121,6 +121,11 @@ def test_ssl_context_unverified_warns(
 ) -> None:
 
     monkeypatch.delenv("MSKSC_CAFILE", raising=False)
+    # The warning is once per process (#706 review); this test
+    # owns its occurrence.
+    from msks.client import env as env_mod
+
+    monkeypatch.setattr(env_mod, "_WARNED_UNVERIFIED", False)
     ctx = console.ssl_context()
     assert ctx.verify_mode == ssl.CERT_NONE
     assert "NOT verified" in capsys.readouterr().err

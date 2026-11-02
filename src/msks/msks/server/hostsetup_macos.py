@@ -520,7 +520,11 @@ def bootstrap_script(wheel: str | None, home: str) -> str:
     the template mounted — and the invoking user's home the
     default allowed root), the unit, and the start. Idempotent:
     the token and the state survive a rerun; the venv reinstall
-    is a no-op at the same version."""
+    is a no-op at the same version. Coherence guards between the
+    steps (#706): the installed daemon's version must equal the
+    tool's, and it must parse the config this same script writes
+    — the #704 crash loop refuses here, with the version pair
+    named, ahead of the unit restart."""
     install = f"/tmp/{Path(wheel).name}" if wheel else f"msks=={vm_version()}"
     return f"""set -eux
 apt-get update -qq
@@ -542,6 +546,20 @@ python3 -m venv /opt/uv-bootstrap
 /opt/uv-bootstrap/bin/uv venv -q --python 3.14 {VM_PREFIX}
 uv_bin=/opt/uv-bootstrap/bin/uv
 $uv_bin pip install -q --python {VM_PREFIX}/bin/python {install}
+# The coherence guard, version half (#706, #704): everything
+# after this line assumes the installed daemon is this tool's
+# own build. A dev tree whose pyproject.toml still names an
+# already-released number installs that release from PyPI under
+# the same word — the version pair here catches a resolution
+# that landed anything else; the same-numbered stale release is
+# the config half's catch below.
+ver_probe="import importlib.metadata as m; print(m.version('msks'))"
+installed=$({VM_PREFIX}/bin/python -c "$ver_probe")
+if [ "$installed" != "{vm_version()}" ]; then
+  echo "the bootstrap installed msks $installed, not this" \
+    "tool's {vm_version()} — pass --wheel with a build of this tree" >&2
+  exit 1
+fi
 mkdir -p {VM_STATE}
 token_file={VM_STATE}/bootstrap-token
 if [ ! -s "$token_file" ]; then
@@ -568,6 +586,20 @@ egress_enabled: true
 mount_host_mode: prefix
 mount_host_roots: ["{home}"]
 CONF
+# The coherence guard, config half (#706, #704): the config
+# this tool writes must parse under the daemon this bootstrap
+# installed — the #704 shape (a same-numbered stale release that
+# rejects keys newer than itself) refused here, with the version
+# pair named, ahead of the unit restart and its crash loop.
+parse_probe="from msks.config import load_settings; "
+parse_probe+="load_settings('{VM_CONF}')"
+if ! {VM_PREFIX}/bin/python -c "$parse_probe" 2>/tmp/msksd-config.err; then
+  echo "the daemon this bootstrap installed ($installed) rejects" \
+    " the config this tool ({vm_version()}) writes (a stale" \
+    " release can carry the same number): pass --wheel with a" \
+    " build of this tree; $(tail -1 /tmp/msksd-config.err)" >&2
+  exit 1
+fi
 cat >{VM_UNIT} <<'UNIT'
 # Written by {TOOL} (#676); re-run the tool to refresh this file.
 [Unit]
@@ -994,13 +1026,59 @@ def fetch_vm_file(path: str, timeout_s: float = 20.0) -> str:
     return last
 
 
+def daemon_version(port: int) -> str:
+    """The VM's daemon version word, from the public ``/health``
+    over the forward (#706) — the same unverified TLS connect
+    the listener row already proved chains to this daemon's CA,
+    so the probe answers or the row refuses naming why. The
+    word rides the skew row beside the tool's own version."""
+    context = ssl._create_unverified_context()
+    try:
+        with urllib.request.urlopen(
+            f"https://127.0.0.1:{port}/api/v1/health",
+            timeout=5,
+            context=context,
+        ) as answer:
+            doc = json.loads(answer.read())
+    except Exception as exc:
+        raise MacSetupError(
+            f"the daemon's /health did not answer through the "
+            f"forward ({exc}); re-run {TOOL} to refresh the VM's "
+            "daemon"
+        ) from None
+    word = doc.get("version") if isinstance(doc, dict) else None
+    if not isinstance(word, str) or not word:
+        raise MacSetupError(
+            "the daemon's /health answer carried no version word"
+        )
+    return word
+
+
+def skew_row(port: int) -> str:
+    """The version-pair row (#706): green naming both words when
+    the VM's daemon runs this tool's own version; a drift is the
+    named rerun refusal — the pair ships from one wheel, and a
+    skew otherwise surfaces one feature at a time."""
+    theirs = daemon_version(port)
+    if theirs != vm_version():
+        raise MacSetupError(
+            f"the VM's daemon runs {theirs}, this tool {vm_version()}; "
+            f"re-run {TOOL} to update the VM's daemon"
+        )
+    return f"the VM's daemon and this tool both run {vm_version()}"
+
+
 def check_rows(port: int, install: bool = True) -> list[str]:
     """The macOS doctor rows: Lima at the floor, the VM running,
     the nested-virtualization marker inside it, virtiofsd
     installed there, and the daemon's listener answering through
     the forward — chained to THIS daemon's CA, so a port
     collision (another VM's forward, a local daemon) refuses
-    instead of reporting another daemon green. virtiofsd's
+    instead of reporting another daemon green — and the VM's
+    daemon at this tool's own version (the skew row, #706: the
+    pair ships from one wheel, and the row stays red until a
+    rerun lands the tool's version in the VM).
+    virtiofsd's
     absence is a refusal, not a degraded pass: shares are this
     VM's headline feature. The Lima row installs through brew on
     the mutating default; the check pass passes install=False —
@@ -1036,6 +1114,7 @@ def check_rows(port: int, install: bool = True) -> list[str]:
         f"the daemon answers https://127.0.0.1:{port}/ through the "
         "forward, chained to the VM's CA"
     )
+    rows.append(skew_row(port))
     rows.extend(client_side_rows(port))
     return rows
 

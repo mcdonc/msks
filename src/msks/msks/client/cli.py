@@ -104,6 +104,7 @@ from .workspaces import (  # noqa: F401
     created_date,
     created_line,
     image_column,
+    notice_daemon_version_skew,
     read_user_data,
     run_create,
     run_resize,
@@ -249,6 +250,16 @@ def root(
     global invoked_conf
     if not help_requested(invocation_tokens):
         invoked_conf = bootstrap(daemon, config)
+        if ctx.obj is None and ctx.invoked_subcommand != "image":
+            # The version-skew notice (#706): one best-effort
+            # /health roundtrip on a real dial — an in-process
+            # transport (the tests' seam) is not a deployment to
+            # compare against, so it skips the probe entirely, and
+            # the image group is exempted for its offline member
+            # (image check runs a child conformance process that
+            # never dials the daemon; the group's dialing members
+            # answer their own skew another invocation).
+            notice_daemon_version_skew()
     if ctx.invoked_subcommand is None:
         # The decorator's edge, same as every command: a Ctrl-C in
         # the tree is one line, not typer's silent 130.

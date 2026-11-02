@@ -42,6 +42,18 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Version skew between the client and the daemon is named
+  (#706).** Every `msks` invocation but the `image` group (whose
+  `check` member runs offline) makes one best-effort
+  `/health` roundtrip and prints a notice naming both versions
+  and the rerun remedy when they differ. The setup tool's check
+  pass grows a row pairing the VM's daemon version with the
+  tool's own, and the bootstrap refuses — with the version pair
+  named, ahead of the unit restart — when the daemon it installs
+  is not the tool's build or rejects the config the same run
+  writes, instead of crash-looping behind the 90s verify timeout
+  (#704's shape).
+
 - **The macOS share stack documented (#675).** The [mounts
   chapter](mounts.md#shares-on-a-macos-host) gains the macOS
   share geometry — a Mac folder crosses vz virtiofs into the

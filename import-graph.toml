@@ -126,7 +126,10 @@ identity = 2
 # #555: the client's connection layer reads the shared local-
 # listener socket vocabulary (env.py's default candidates, the
 # config layer's entry rule, the wsdial/consumer seams).
-spec = 6
+# #706: the version-skew notice reads the client's own version
+# (the module edge beside the name, the same +2 the server's
+# bootstrap import took in #676).
+spec = 8
 
 [snapshot.config]
 configio = 3
