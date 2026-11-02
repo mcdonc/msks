@@ -533,13 +533,27 @@ apt-get install -y -qq {VM_PACKAGES} >/dev/null
 # it at startup and refuses an egress workspace on 0.
 echo net.ipv4.ip_forward=1 >/etc/sysctl.d/99-msksd-egress.conf
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
-# The VMM: pinned, verified, and left alone once present.
+# The VMM: pinned, verified, and left alone once present. Each
+# failure names itself (#712's family): the download's URL, the
+# checksum's mismatch — never a bare trace the refusal tail
+# would bury the reason under.
 ch_url={CH_URL}
 ch_sha={CH_SHA256}
-if ! [ -x /usr/local/bin/cloud-hypervisor ]; then
-  curl -sL -o /usr/local/bin/cloud-hypervisor "$ch_url"
-  echo "$ch_sha  /usr/local/bin/cloud-hypervisor" | sha256sum -c - >/dev/null
-  chmod +x /usr/local/bin/cloud-hypervisor
+ch_bin=/usr/local/bin/cloud-hypervisor
+if ! [ -x "$ch_bin" ]; then
+  if ! curl -sSfL -o "$ch_bin" "$ch_url"; then
+    set +x
+    echo "the cloud-hypervisor download failed" \
+      " ($ch_url); re-run the tool" >&2
+    exit 1
+  fi
+  if ! echo "$ch_sha  $ch_bin" | sha256sum -c - >/dev/null; then
+    set +x
+    echo "the cloud-hypervisor download's checksum did not" \
+      " match ($ch_url); re-run the tool" >&2
+    exit 1
+  fi
+  chmod +x "$ch_bin"
 fi
 python3 -m venv /opt/uv-bootstrap
 /opt/uv-bootstrap/bin/pip install -q uv=={UV_PIN}
@@ -554,7 +568,16 @@ $uv_bin pip install -q --python {VM_PREFIX}/bin/python {install}
 # that landed anything else; the same-numbered stale release is
 # the config half's catch below.
 ver_probe="import importlib.metadata as m; print(m.version('msks'))"
-installed=$({VM_PREFIX}/bin/python -c "$ver_probe")
+probe_err=/tmp/msksd-probe.err
+if ! installed=$({VM_PREFIX}/bin/python -c "$ver_probe" 2>"$probe_err"); then
+  # #712's family: an unquieted failure here leaves the
+  # assignment's own trace as stderr's last line — the probe's
+  # reason reaches the operator instead.
+  set +x
+  echo "the installed-version probe failed:" \
+    " $(tail -1 "$probe_err")" >&2
+  exit 1
+fi
 if [ "$installed" != "{vm_version()}" ]; then
   # set +x first (#712): under the script's xtrace the exit's own
   # trace would land as stderr's last line, and vm_shell's refusal

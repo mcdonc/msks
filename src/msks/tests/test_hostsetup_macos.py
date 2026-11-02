@@ -339,13 +339,21 @@ def test_the_bootstrap_guards_the_installed_pair() -> None:
     assert "$(tail -1 /tmp/msksd-config.err)" in script
     assert f"load_settings('{mac.VM_CONF}')" in script
     assert "config this tool" in script
-    # Each guard silences the xtrace before its refusal (#712):
-    # under `set -x` the exit's own trace is stderr's last line,
-    # and vm_shell's tail would carry "+ exit 1" over the
-    # message — the shape the guards exist to name.
+    # Each refusal silences the xtrace before its echo (#712, and
+    # #712's family — the download, the checksum, the probe): under
+    # `set -x` the exit's own trace is stderr's last line, and
+    # vm_shell's tail would carry "+ exit 1" over the message —
+    # the shape the refusals exist to name.
     lines = script.splitlines()
-    assert sum(1 for line in lines if line.strip() == "set +x") == 2
-    for phrase in ("not this", "config this tool"):
+    assert sum(1 for line in lines if line.strip() == "set +x") == 5
+    phrases = (
+        "not this",
+        "config this tool",
+        "the installed-version probe failed",
+        "download failed",
+        "checksum did not",
+    )
+    for phrase in phrases:
         at = next(i for i, line in enumerate(lines) if phrase in line)
         assert any(
             line.strip() == "set +x" for line in lines[max(at - 4, 0) : at]
