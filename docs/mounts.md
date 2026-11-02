@@ -99,34 +99,21 @@ On a Mac the daemon runs inside its own Linux VM (Lima over
 Apple's Virtualization.framework, on an M3-or-newer Mac), and a
 shared Mac folder crosses two hops to reach a workspace: vz
 virtiofs carries it from macOS into the daemon's VM under the
-reserved prefix (the Mac's `/Users/name` at
-`/mnt/msks/Users/name`), and one virtiofsd per attached share
-carries it from there into the workspace guest. The client
-speaks Mac paths throughout — `--share ~/code:/mnt/code` — and
-the daemon's `prefix` host mode does the translation before
-the [two gates](#the-two-gates) run. The Lima template mounts
-the invoking user's home under the prefix at VM creation,
-writable, so the common case needs no edit; a share root
-outside it (another user's home, a `/Volumes` tree) is a
-template edit plus VM recreation, and the mount gate's refusal
-names that remedy. A symlink stored with an absolute Mac path
-dangles past the Mac — under the prefix the tree lives at
-`/mnt/msks/...`, so the link's absolute target resolves against
-the daemon VM's own root, and against the workspace's own root
-one hop later — while relative symlinks cross intact.
-Hardlink-heavy workloads run clean on the validated stack:
-`git repack`, `cp -al` storms, and Docker's own inode
-reproducer all pass on macOS 27, and the instability the older
-releases carried is no longer reproducible on macOS 15 per the
-upstream report — the releases that had it sit below the macOS
-floor Lima needs anyway (nested virtualization), so the stack
-never runs them.
+reserved prefix and one virtiofsd per attached share
+carries it from there into the workspace guest.
+
+The client speaks Mac paths throughout — `--share ~/code:/mnt/code` — and the
+daemon's `prefix` host mode does the translation before the [two
+gates](#the-two-gates) run. The Lima template mounts the invoking user's home
+under the prefix at VM creation, writable, so the common case needs no edit; a
+share root outside it (another user's home, a `/Volumes` tree) is a template
+edit plus VM recreation, and the mount gate's refusal names that remedy.
 
 The far end of the share is the Mac's own volume, and its
 behaviors cross with the tree. Four of them are contract, not
 configuration:
 
-### Watchers poll
+### macOS: Watchers poll
 
 File events do not cross virtiofs. Changes made on the Mac — an
 editor's save, a build's output — reach every attached
@@ -142,7 +129,7 @@ becomes visible before its content does (a writer creates
 empty, then fills), so a poller waits for a completion marker
 the writer emits after the data, never for the file itself.
 
-### Case and normalization follow the Mac volume
+### macOS: Case and normalization follow the Mac volume
 
 The tree a workspace mounts is the Mac's volume, and its naming
 rules cross with it: a Mac's default volume matches names
@@ -160,7 +147,7 @@ against a Linux-built expectation. A tree that must keep Linux
 naming rules exactly lives in the workspace's own storage (the
 [storage chapter](storage.md)) instead.
 
-### The rw single-writer contract
+### macOS: The rw single-writer contract
 
 An `rw` share names the workspace its writer. Locks taken
 inside the workspace hold there and stop there: `flock` and
@@ -178,7 +165,7 @@ or the Mac's. A Mac that only reads the share (browsing in
 Finder, opening a file) rides the coherence contract; a
 Mac-side writer into a lock-using tree races the workspace.
 
-### External volumes stay busy while shared
+### macOS: External volumes stay busy while shared
 
 A file the stack holds open keeps its Mac volume mounted, so a
 disk whose tree is shared into a running workspace refuses to

@@ -7,13 +7,16 @@ Each microvm is a cloud-hypervisor VM with its own kernel. It also provides
 services which allow you to avoid keeping secrets and keys within the VM and a
 facility to allow you to approve network egress.
 
-_msks_ runs on Linux hosts, and provides tooling to install its host
-dependencies on Debian-based systems.
+_msks_ runs on:
+
+- Linux on Intel and ARM systems
+
+- macOS on M3+ systems
 
 ## The reading order
 
 1. [**Installation**](installation.md): install the Python wheel, and the one
-   command that prepares a Debian host: the capability wrapper, the routing
+   command that prepares a host: the capability wrapper, the routing
    kernel, `/dev/kvm`, and the lingered service that keeps the daemon running.
 2. [**The TUI**](tui.md): the full-screen workspace tree: the
    workspace, secrets, and image pages, the failure panels, the
