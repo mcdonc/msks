@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import os
 import secrets as secrets_mod
 from datetime import UTC
 from pathlib import Path
@@ -162,6 +163,15 @@ async def test_health_is_public(client) -> None:
     response = await http.get("/api/v1/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+async def test_health_reports_the_host_machine(client) -> None:
+    """#717: the daemon names its host's uname machine — the
+    architecture its workspaces boot, the word the published
+    list's arch filter keys on."""
+    http, _app, _stub = client
+    body = (await http.get("/api/v1/health")).json()
+    assert body["machine"] == os.uname().machine
 
 
 async def test_auth_required(client) -> None:

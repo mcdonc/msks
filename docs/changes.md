@@ -6,6 +6,17 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Added
+
+- **The published image list filters foreign-arch rows
+  (#717).** `GET /api/v1/health` grows the daemon host's
+  machine name, and the TUI's published group carries the rows
+  that machine can boot — a row declaring the other
+  architecture stays off the page (the daemon's #638 import
+  refusal stays the boundary), and a row that declares no arch
+  shows everywhere. A daemon predating the field answers
+  without the machine name and the page shows every row.
+
 ## \[v0.6.0] - 2026-11-02
 
 ### Changed

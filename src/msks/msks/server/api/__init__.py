@@ -14,6 +14,7 @@ query is built outside ``msks.model``.
 import asyncio
 import contextlib
 import logging
+import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -170,6 +171,7 @@ def build_api(app) -> FastAPI:
         return {
             "status": "ok",
             "version": __version__,
+            "machine": os.uname().machine,
             "fastapi": fastapi_version,
             "image": cmdline_image(),
         }
