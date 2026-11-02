@@ -1197,6 +1197,16 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong><code>devenv processes up</code> on a macOS host (#707).</strong> The <code>msksd</code>
+  process is registered on Linux hosts only, so on a Mac the
+  command exits at once (<code>No processes defined</code>) instead of
+  supervising the dev daemon's platform refusal into a restart
+  loop. <code>msks-dev</code>'s refusal on a Mac points at the new
+  <a href="https://mcdonc.github.io/msks/development/#developing-on-a-macos-host">Developing on a macOS host</a>
+  chapter, which documents both ways a Mac reaches a live daemon:
+  the client over an ssh tunnel to a Linux dev host, and the
+  product Lima host installed from a built wheel
+  (<code>msks-setup-macos-host --wheel</code>).</li>
 <li><strong><code>msks-setup-macos-host</code> without <code>--port</code> (#699).</strong> The run
   now talks through the forward the existing msksd VM already
   carries — the forward is fixed at VM creation, so the VM's own
