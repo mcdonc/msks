@@ -894,19 +894,21 @@ def test_listed_lines_declines_a_broken_answer() -> None:
         ),  # count 9, no identities behind it
         scripted_reply(b"\x00\x00\x00\x01\x05"),  # FAILURE, not a listing
     ]
-    for index, behave in enumerate(cases):
-        path = str(base / f"broken-{index}.sock")
-        listening = threading.Event()
-        thread = threading.Thread(
-            target=run_scripted_peer,
-            args=(path, behave, listening),
-            daemon=True,
-        )
-        thread.start()
-        assert listening.wait(timeout=5), "the peer never listened"
-        assert agent.listed_lines(path) is None
-        thread.join(timeout=5)
-    shutil.rmtree(base, ignore_errors=True)
+    try:
+        for index, behave in enumerate(cases):
+            path = str(base / f"broken-{index}.sock")
+            listening = threading.Event()
+            thread = threading.Thread(
+                target=run_scripted_peer,
+                args=(path, behave, listening),
+                daemon=True,
+            )
+            thread.start()
+            assert listening.wait(timeout=5), "the peer never listened"
+            assert agent.listed_lines(path) is None
+            thread.join(timeout=5)
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
 
 
 def test_agent_held_matches_on_key_material(
