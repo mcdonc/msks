@@ -779,13 +779,29 @@ def test_a_version_skew_refuses_the_check(
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
     monkeypatch.setattr(mac, "daemon_version", lambda port: "9.9.9")
     mac.ensure_client_config(mac.PORT)
-    with pytest.raises(
-        mac.MacSetupError, match="re-run msks-setup-macos-host"
-    ):
+    # #715: the daemon leads — the plain rerun would downgrade
+    # it, so the remedy names this tool's own update.
+    with pytest.raises(mac.MacSetupError, match="update this tool"):
         mac.check_rows(mac.PORT)  # the tool's own word carries .dev
-    monkeypatch.setattr(mac, "vm_version", lambda: "0.5.0")
+    # A newer dev-marked daemon names the tree no release matches.
+    monkeypatch.setattr(mac, "daemon_version", lambda port: "9.9.9.dev0")
+    with pytest.raises(mac.MacSetupError, match="development build"):
+        mac.check_rows(mac.PORT)
+    # A dev tool behind a release daemon names the wheel path
+    # (#704 review): the plain rerun is what it refuses.
+    monkeypatch.setattr(mac, "daemon_version", lambda port: "0.5.0")
+    with pytest.raises(mac.MacSetupError, match="--wheel"):
+        mac.check_rows(mac.PORT)
+    # A release tool behind a release daemon names the rerun.
+    monkeypatch.setattr(mac, "vm_version", lambda: "0.6.0")
     with pytest.raises(mac.MacSetupError, match="update the VM's daemon"):
-        mac.check_rows(mac.PORT)  # a release word names the rerun
+        mac.check_rows(mac.PORT)
+    # An equal-base dev daemon under a release tool does too
+    # (#715 review): the plain rerun lands the shipped release
+    # over the older dev build.
+    monkeypatch.setattr(mac, "daemon_version", lambda port: "0.6.0.dev0")
+    with pytest.raises(mac.MacSetupError, match="update the VM's daemon"):
+        mac.check_rows(mac.PORT)
 
 
 def test_a_mismatched_chain_refuses_with_the_port_remedy(

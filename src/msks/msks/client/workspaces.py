@@ -16,7 +16,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..spec.version import __version__
+from ..spec.version import __version__, ordering
 from .context import call
 from .create import (
     checked_login_name,
@@ -135,8 +135,38 @@ def stale_image_notice(expected: str, health: object) -> str | None:
     )
 
 
+def skew_remedy(theirs: str) -> str:
+    """The remedy arm for one skewed pair (#715): the notice's
+    old single line sent a newer-daemon operator to rerun the
+    setup tool — a tool old enough to be behind the daemon is
+    old enough to downgrade it, and the refusal that follows
+    leaves the VM wedged. The remedy follows the direction: a
+    daemon that leads names the client's own update (a dev-marked
+    leader names the tree no release matches — an equal-base or
+    older dev build is one the plain rerun upgrades), and a
+    client that leads names the daemon's (the wheel path when
+    the client's own word is a dev build the plain rerun
+    refuses)."""
+    if ".dev" in theirs and ordering(theirs) > ordering(__version__):
+        return (
+            "the daemon runs a development build no release matches — "
+            "update this client from the same tree or wait for the "
+            "release it becomes"
+        )
+    if ordering(theirs) > ordering(__version__):
+        return "update this client (pip install -U msks)"
+    if ".dev" in __version__:
+        return (
+            "build a wheel (uv build) and rerun msks-setup-macos-host --wheel"
+        )
+    return (
+        "rerun msks-setup-macos-host (on the Mac) to update the "
+        "daemon in the VM"
+    )
+
+
 def version_skew_notice(health: dict | None) -> str | None:
-    """The one-line version-skew notice (#706), or None. The
+    """The one-line version-skew notice (#706, #715), or None. The
     daemon's ``/health`` carries its build's version; a client
     and daemon that ship from one wheel drift when one side is
     updated alone (a ``pip install -U msks`` on the Mac, a stale
@@ -145,14 +175,14 @@ def version_skew_notice(health: dict | None) -> str | None:
     one build, so equality is the norm and a refusal would need
     a compat-floor policy this notice does not add. An unknown
     side stays silent (a None health, a document without a
-    version word — a wrong host, a proxy)."""
+    version word — a wrong host, a proxy); a known skew names
+    both words and the remedy its direction asks for."""
     theirs = health.get("version") if health else None
     if not isinstance(theirs, str) or not theirs or theirs == __version__:
         return None
     return (
-        f"msks: the daemon runs {theirs}, this client is {__version__} "
-        "— rerun msks-setup-macos-host (on the Mac) to update the "
-        "daemon in the VM"
+        f"msks: the daemon runs {theirs}, this client is {__version__} — "
+        f"{skew_remedy(theirs)}"
     )
 
 

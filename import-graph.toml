@@ -128,8 +128,9 @@ identity = 2
 # config layer's entry rule, the wsdial/consumer seams).
 # #706: the version-skew notice reads the client's own version
 # (the module edge beside the name, the same +2 the server's
-# bootstrap import took in #676).
-spec = 8
+# bootstrap import took in #676). #715: the notice's remedy
+# orders the pair numerically (ordering joins the statement).
+spec = 9
 
 [snapshot.config]
 configio = 3
@@ -287,8 +288,9 @@ secretcache = 2
 # version string the VM bootstrap installs; the +2 is the module
 # edge beside the name). #685: the named form's removal drops
 # three names (mount_issues, named_only, validate_against_shares
-# never imported again).
-spec = 36
+# never imported again). #715: the skew row's remedy orders the
+# pair numerically (ordering joins the statement).
+spec = 37
 storage = 13
 
 [snapshot.settings]

@@ -82,7 +82,7 @@ from ..client.config import (
     parse_config_doc,
     render_template,
 )
-from ..spec.version import __version__
+from ..spec.version import __version__, ordering
 from .tls import CA_CERT
 
 TOOL = "msks-setup-macos-host"
@@ -1101,23 +1101,38 @@ def daemon_version(port: int) -> str:
     return word
 
 
+def check_skew_remedy(theirs: str) -> str:
+    """The remedy arm for the skew row's refusal (#715): the
+    remedy follows the direction — a daemon newer than this tool
+    would be downgraded by the plain rerun (the wedge the
+    #704/#712 arc kept re-meeting), while an equal-base or older
+    dev build is one the plain rerun upgrades; a dev-marked
+    leader names the tree no release matches, and a dev-marked
+    tool names the wheel path the plain rerun refuses."""
+    if ".dev" in theirs and ordering(theirs) > ordering(vm_version()):
+        return (
+            "the VM's daemon runs a development build no release "
+            "matches — update this tool from the same tree or wait "
+            "for the release it becomes"
+        )
+    if ordering(theirs) > ordering(vm_version()):
+        return "update this tool (pip install -U msks)"
+    if ".dev" in vm_version():
+        return f"build a wheel (uv build) and re-run {TOOL} with --wheel"
+    return f"re-run {TOOL} to update the VM's daemon"
+
+
 def skew_row(port: int) -> str:
     """The version-pair row (#706): green naming both words when
     the VM's daemon runs this tool's own version; a drift is the
-    named rerun refusal — the pair ships from one wheel, and a
-    skew otherwise surfaces one feature at a time. The remedy
-    names the wheel path for a dev build (#704 review): the
-    plain rerun is exactly what a dev build without a wheel
-    refuses, and each message alone would loop the operator."""
+    named refusal — the pair ships from one wheel, and a skew
+    otherwise surfaces one feature at a time. The remedy follows
+    the direction (#715)."""
     theirs = daemon_version(port)
     if theirs != vm_version():
-        if ".dev" in vm_version():
-            remedy = f"build a wheel (uv build) and re-run {TOOL} with --wheel"
-        else:
-            remedy = f"re-run {TOOL} to update the VM's daemon"
         raise MacSetupError(
             f"the VM's daemon runs {theirs}, this tool {vm_version()}; "
-            f"{remedy}"
+            f"{check_skew_remedy(theirs)}"
         )
     return f"the VM's daemon and this tool both run {vm_version()}"
 
