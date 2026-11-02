@@ -1481,6 +1481,14 @@
 surface. It runs from any host that can reach the daemon (a dev box,
 a CI runner), and every command authenticates
 with the same bearer token the REST API uses.</p>
+<p>The client and the daemon ship from one wheel, and every
+invocation (the <code>image</code> group aside, whose <code>check</code> member runs
+offline against a local archive) makes one
+best-effort <code>/health</code> roundtrip: a daemon answering a different
+version than this client prints one stderr line naming both and
+the remedy — rerun <code>msks-setup-macos-host</code> on the Mac to update
+the daemon in the VM. Equal versions and every probe failure
+print nothing.</p>
 <p>The command set covers the operator loop:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>msks<span class="w">                         </span><span class="c1"># the workspace tree TUI</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>msks<span class="w"> </span>ls<span class="w">                      </span><span class="c1"># what exists, and what state is it in</span>
