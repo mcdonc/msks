@@ -347,7 +347,9 @@ def test_the_bootstrap_guards_the_installed_pair() -> None:
     assert sum(1 for line in lines if line.strip() == "set +x") == 2
     for phrase in ("not this", "config this tool"):
         at = next(i for i, line in enumerate(lines) if phrase in line)
-        assert any("set +x" in line for line in lines[max(at - 4, 0) : at])
+        assert any(
+            line.strip() == "set +x" for line in lines[max(at - 4, 0) : at]
+        )
     install = script.index("uv_bin pip install")
     version_guard = script.index(probe)
     config_guard = script.index("load_settings")
@@ -365,6 +367,7 @@ def test_the_xtrace_buries_an_unquieted_exit() -> None:
         ["/bin/bash", "-c", 'set -eux; echo "the refusal" >&2; exit 1'],
         capture_output=True,
         text=True,
+        env={**os.environ, "PS4": "+ "},
     )
     assert loud.returncode == 1
     assert loud.stderr.splitlines()[-1] == "+ exit 1"
@@ -376,6 +379,7 @@ def test_the_xtrace_buries_an_unquieted_exit() -> None:
         ],
         capture_output=True,
         text=True,
+        env={**os.environ, "PS4": "+ "},
     )
     assert quiet.returncode == 1
     assert quiet.stderr.splitlines()[-1] == "the refusal"
