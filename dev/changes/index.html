@@ -1365,6 +1365,15 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>A development-build tool no longer installs a release into
+  the VM (#704).</strong> The tree's version now carries a <code>.devN</code>
+  marker between releases, and a <code>msks-setup-macos-host</code> run
+  without <code>--wheel</code> refuses by name on the marker with the
+  build-a-wheel remedy. Previously a tree whose version number
+  matched a release silently installed that release's daemon,
+  which rejected the config the same run wrote.</p>
+</li>
+<li>
 <p><strong>A failed staging-agent bind reports the real error (#710).</strong>
   The ssh/rsync staging agent's cleanup closed a server a failed
   bind never built, so a bind refusal (a socket path past the
