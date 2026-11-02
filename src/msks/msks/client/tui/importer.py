@@ -10,9 +10,10 @@ import's catalog hash equals the manifest row's hash
 (the pre-channel plain tar, a locally built archive) reads
 ``[in catalog, other build]``. The published group carries the
 rows the daemon's own machine can boot (#717): a row declaring
-another architecture stays off the page — the import guard
-would refuse it (#638), and the page does not offer what the
-guard must refuse. Enter imports a published row
+another architecture stays off the page — the daemon's #638
+import refusal reads the same word in the archive's own
+image.json, and the page does not offer what the guard must
+refuse. Enter imports a published row
 (the daemon downloads, verifies, and floor-checks; the modal
 holds the terminal with an elapsed timer) and opens the detail
 view for a catalog row; ``D`` deletes a catalog row through the
@@ -80,24 +81,29 @@ def built_label(row: dict) -> str:
 
 def daemon_machine(health: dict | None) -> str | None:
     """The daemon host's uname machine (#717) — the architecture
-    its workspaces boot. None when the document carries no such
-    word (a daemon predating the field, a proxy's junk): the
-    filter steps aside, every row shows, and the #638 import
-    refusal stays the boundary."""
+    its workspaces boot. None when the document carries no
+    machine word at all (a daemon predating the field, a
+    non-dict body): the filter steps aside, every row shows, and
+    the #638 import refusal stays the boundary. A word that
+    names a machine no manifest row declares leaves the
+    declared-arch rows hidden — the page trusts the daemon's
+    own answer, the same trust every other field of the
+    document rides on."""
     machine = health.get("machine") if health else None
     return machine if isinstance(machine, str) and machine else None
 
 
 def row_serves_arch(row: dict, machine: str | None) -> bool:
     """Whether one published row belongs on this daemon's page
-    (#717): a row that declares its architecture shows on its
-    match alone, and a row without one declares nothing and
-    shows everywhere — the same rule the #638 import guard
-    applies."""
+    (#717), by the #638 guard's own rule: a row whose arch is
+    falsy — absent, null, empty — declares nothing and shows
+    everywhere, and a row with a truthy arch shows on its match
+    alone. A mistyped arch never reaches this far:
+    :func:`manifest_row` names it as a broken channel first, the
+    same refusal every other mistyped field takes."""
     if machine is None:
         return True
-    arch = row.get("arch")
-    return not isinstance(arch, str) or not arch or arch == machine
+    return not row.get("arch") or row["arch"] == machine
 
 
 def published_label(row: dict, catalog: list[dict]) -> str:
@@ -154,15 +160,15 @@ def check_number(row: dict, field: str) -> None:
 
 def manifest_row(row: object) -> dict:
     """One manifest row, validated: ``ref`` and ``url`` are the
-    str pair the pick needs; ``description``, ``hash``, and
-    ``built_at`` (strs) and ``size`` (a number) may sit absent —
-    their dash renders — but a mistyped value is a broken
-    channel, and it refuses by name instead of crashing the page
-    half-mounted (a hand-written manifest is exactly the
-    fork/self-hosted case the setting exists for)."""
+    str pair the pick needs; ``description``, ``hash``,
+    ``built_at``, and ``arch`` (strs) and ``size`` (a number) may
+    sit absent — their dash renders — but a mistyped value is a
+    broken channel, and it refuses by name instead of crashing
+    the page half-mounted (a hand-written manifest is exactly
+    the fork/self-hosted case the setting exists for)."""
     check_present(row)
     check_str_fields(row, ("ref", "url"))
-    for field in ("description", "hash", "built_at"):
+    for field in ("description", "hash", "built_at", "arch"):
         check_optional(row, field, check_str)
     check_optional(row, "size", check_number)
     return row

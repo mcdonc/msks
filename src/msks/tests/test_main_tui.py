@@ -4823,7 +4823,10 @@ def test_the_arch_filter_helpers() -> None:
     assert row_serves_arch({"arch": "x86_64"}, "x86_64")
     assert row_serves_arch({}, "x86_64")
     assert row_serves_arch({"arch": ""}, "x86_64")
-    assert row_serves_arch({"arch": 3}, "x86_64")
+    # Truthy junk arch hides, the way the #638 guard refuses it
+    # (a mistyped arch is a broken channel — manifest_row names
+    # it before the page mounts).
+    assert row_serves_arch({"arch": 3}, "x86_64") is False
 
 
 async def test_the_published_list_filters_foreign_arch_rows(
@@ -5121,6 +5124,11 @@ async def test_a_mistyped_manifest_field_refuses_by_name() -> None:
     # detonated the pick of the NEXT row.
     with pytest.raises(ValueError, match="hash must be a string"):
         importer_mod.manifest_row({"ref": "x:1", "url": "u", "hash": 123})
+    # The arch the #717 filter reads validates like its siblings
+    # — a mistyped arch is a broken channel, and the page must
+    # not offer a row the #638 guard would refuse on junk.
+    with pytest.raises(ValueError, match="arch must be a string"):
+        importer_mod.manifest_row({"ref": "x:1", "url": "u", "arch": 3})
     # An explicit null reads as absent (a generator's idiom), and
     # a negative size is no size.
     assert importer_mod.manifest_row(

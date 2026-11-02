@@ -92,8 +92,8 @@ carries both settings and the socket's tradeoffs.
 ## Health and defaults
 
 - `GET /api/v1/health` — the daemon's version, its host's
-  machine name (the architecture its workspaces boot; the
-  published list's arch filter keys on it), and the image it
+  machine name (the architecture its workspaces boot; the [TUI's
+  published image list](tui.md) filters on it), and the image it
   itself booted from (the `msksd.image=` command-line fact, for
   drift checking), unauthenticated by design: the route a load
   balancer can probe without a token.
