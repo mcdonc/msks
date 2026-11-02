@@ -83,7 +83,8 @@ def daemon_machine(health: dict | None) -> str | None:
     """The daemon host's uname machine (#717) — the architecture
     its workspaces boot. None when the document carries no
     machine word at all (a daemon predating the field, a
-    non-dict body): the filter steps aside, every row shows, and
+    non-dict body, a mistyped word — a number where the name
+    belongs): the filter steps aside, every row shows, and
     the #638 import refusal stays the boundary. A word that
     names a machine no manifest row declares leaves the
     declared-arch rows hidden — the page trusts the daemon's
