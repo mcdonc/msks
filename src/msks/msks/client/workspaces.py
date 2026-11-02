@@ -173,8 +173,8 @@ def probed_health(transport) -> dict | None:
     typer's silent 130 — the probe's connect window is exactly
     when an impatient operator presses), and anything else the
     probe touches (a broken MSKSC_CAFILE, a context that will
-    not build) is silence the command body's own first failure
-    names better."""
+    not build) is silence — the command body meets the same
+    break itself moments later."""
     try:
         return dialed_health(transport)
     except SystemExit:
