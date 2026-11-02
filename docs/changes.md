@@ -164,6 +164,14 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **A failed staging-agent bind reports the real error (#710).**
+  The ssh/rsync staging agent's cleanup closed a server a failed
+  bind never built, so a bind refusal (a socket path past the
+  AF_UNIX limit, an unwritable temp dir) printed an
+  `UnboundLocalError` about the cleanup instead of the error
+  itself. The cleanup now runs only for a server that was built,
+  and the original refusal reaches the operator.
+
 - **`msks-setup-macos-host --uninstall` names a missing limactl
   (#701).** On a Mac where `limactl` is not on PATH, the
   uninstall arm died with a raw `FileNotFoundError` traceback;

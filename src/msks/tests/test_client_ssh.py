@@ -15,6 +15,7 @@ import shutil
 import socket
 import struct
 import subprocess
+import tempfile
 import threading
 import time
 from contextlib import contextmanager
@@ -300,28 +301,57 @@ def test_agent_refuses_an_unpinned_rsa_digest_over_the_socket() -> None:
 
 
 def test_serve_cleans_up_when_staging_fails(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failure between the bind and the yield (here: the pubkey
-    file's write) takes the socket and tempdir with it."""
-    home = tmp_path / "agent-home"
+    file's write) takes the socket and tempdir with it. The fake
+    mkdtemp's base is a shallow mkdtemp in /tmp (the AF_UNIX-length
+    rule, test_local_driver's env fixture): pytest's per-test tree
+    grows with the session numbering and once pushed the socket
+    path past the limit — a per-machine time bomb (#710)."""
+    base = Path(tempfile.mkdtemp(prefix="msks-agent-test-", dir="/tmp"))
+    home = base / "agent-home"
+    try:
+        real_path = agent.Path
 
-    def fake_mkdtemp(**kwargs) -> str:
-        home.mkdir(parents=True, exist_ok=True)
-        return str(home)
+        class exploding_path(real_path):
+            def write_text(self, *args, **kwargs) -> int:
+                raise OSError("no space")
 
-    real_path = agent.Path
+        def fake_mkdtemp(**kwargs) -> str:
+            home.mkdir(parents=True, exist_ok=True)
+            return str(home)
 
-    class exploding_path(real_path):
-        def write_text(self, *args, **kwargs) -> int:
-            raise OSError("no space")
+        monkeypatch.setattr(agent.tempfile, "mkdtemp", fake_mkdtemp)
+        monkeypatch.setattr(agent, "Path", exploding_path)
+        with pytest.raises(OSError, match="no space"):
+            with agent.serve(agent.load_private(PEM), ""):
+                pass
+        assert not home.exists()
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
 
-    monkeypatch.setattr(agent.tempfile, "mkdtemp", fake_mkdtemp)
-    monkeypatch.setattr(agent, "Path", exploding_path)
-    with pytest.raises(OSError, match="no space"):
-        with agent.serve(agent.load_private(PEM), ""):
-            pass
-    assert not home.exists()
+
+def test_serve_names_a_failed_bind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bind that cannot happen (a socket path past the AF_UNIX
+    limit) raises its own OSError after cleaning the tempdir
+    (#710) — never the UnboundLocalError the cleanup used to
+    raise over the real refusal."""
+    base = Path(tempfile.mkdtemp(prefix="msks-agent-test-", dir="/tmp"))
+    deep = base / ("d" * 100)  # past every platform's sun_path
+    deep.mkdir(parents=True)
+    try:
+        monkeypatch.setattr(
+            agent.tempfile, "mkdtemp", lambda **kwargs: str(deep)
+        )
+        with pytest.raises(OSError, match="AF_UNIX path too long"):
+            with agent.serve(agent.load_private(PEM), ""):
+                pass
+        assert not deep.exists()
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
 
 
 def test_agent_stays_quiet_when_the_peer_resets(
@@ -845,12 +875,15 @@ def scripted_reply(script: bytes):
     return behave
 
 
-def test_listed_lines_declines_a_broken_answer(tmp_path: Path) -> None:
+def test_listed_lines_declines_a_broken_answer() -> None:
     """The listing declines whatever a broken peer does — hangs up
     without answering, promises a length past the message ceiling,
     truncates the body it promised, or answers a kind that is no
     identity listing: no agent answers there, and the rung
-    declines rather than errors (#490)."""
+    declines rather than errors (#490). The peers bind under a
+    shallow mkdtemp in /tmp (the AF_UNIX-length rule,
+    test_local_driver's env fixture; #710)."""
+    base = Path(tempfile.mkdtemp(prefix="msks-agent-test-", dir="/tmp"))
     cases = [
         scripted_reply(b""),  # hangs up with no header
         scripted_reply(b"\xff\xff\xff\xff"),  # a length past the ceiling
@@ -861,18 +894,21 @@ def test_listed_lines_declines_a_broken_answer(tmp_path: Path) -> None:
         ),  # count 9, no identities behind it
         scripted_reply(b"\x00\x00\x00\x01\x05"),  # FAILURE, not a listing
     ]
-    for index, behave in enumerate(cases):
-        path = str(tmp_path / f"broken-{index}.sock")
-        listening = threading.Event()
-        thread = threading.Thread(
-            target=run_scripted_peer,
-            args=(path, behave, listening),
-            daemon=True,
-        )
-        thread.start()
-        assert listening.wait(timeout=5), "the peer never listened"
-        assert agent.listed_lines(path) is None
-        thread.join(timeout=5)
+    try:
+        for index, behave in enumerate(cases):
+            path = str(base / f"broken-{index}.sock")
+            listening = threading.Event()
+            thread = threading.Thread(
+                target=run_scripted_peer,
+                args=(path, behave, listening),
+                daemon=True,
+            )
+            thread.start()
+            assert listening.wait(timeout=5), "the peer never listened"
+            assert agent.listed_lines(path) is None
+            thread.join(timeout=5)
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
 
 
 def test_agent_held_matches_on_key_material(
