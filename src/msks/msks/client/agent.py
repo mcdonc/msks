@@ -293,6 +293,7 @@ def serve(private, comment: str):
     mode-0700 temporary directory that goes away with the socket.
     """
     directory = tempfile.mkdtemp(prefix="msks-agent-")
+    server = None
     try:
         socket_path = str(Path(directory) / "agent.sock")
         server = AgentServer(socket_path, private, comment)
@@ -313,7 +314,13 @@ def serve(private, comment: str):
             + "\n"
         )
     except BaseException:
-        server.server_close()
+        # A failure before the socket exists (a bind past the
+        # AF_UNIX limit, a denied TMPDIR) cleans the tempdir and
+        # raises its own error (#710) — the close only runs for a
+        # server that was built, never as an UnboundLocalError
+        # over the real refusal.
+        if server is not None:
+            server.server_close()
         shutil.rmtree(directory, ignore_errors=True)
         raise
     thread = threading.Thread(target=server.serve_forever, daemon=True)
