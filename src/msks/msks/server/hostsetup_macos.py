@@ -1105,10 +1105,11 @@ def check_skew_remedy(theirs: str) -> str:
     """The remedy arm for the skew row's refusal (#715): the
     remedy follows the direction — a daemon newer than this tool
     would be downgraded by the plain rerun (the wedge the
-    #704/#712 arc kept re-meeting), a dev-marked daemon names
-    the tree no release matches, and a dev-marked tool names the
-    wheel path the plain rerun refuses."""
-    if ".dev" in theirs:
+    #704/#712 arc kept re-meeting), while an equal-base or older
+    dev build is one the plain rerun upgrades; a dev-marked
+    leader names the tree no release matches, and a dev-marked
+    tool names the wheel path the plain rerun refuses."""
+    if ".dev" in theirs and ordering(theirs) > ordering(vm_version()):
         return (
             "the VM's daemon runs a development build no release "
             "matches — update this tool from the same tree or wait "

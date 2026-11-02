@@ -152,11 +152,16 @@ def test_a_release_clients_skew_notice_names_the_rerun(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """#715's fourth direction: a release client behind a release
-    daemon names the setup rerun — the one shape whose remedy is
-    the original #706 line."""
-    monkeypatch.setattr(workspaces, "__version__", "0.5.0")
+    daemon names the setup rerun — and an equal-base dev daemon
+    does too (#715 review): the dev marker names an in-progress
+    release, and the plain rerun lands the shipped release over
+    the older dev build — an upgrade, not the downgrade the tree
+    arm exists to prevent."""
+    monkeypatch.setattr(workspaces, "__version__", "0.6.0")
     notice = workspaces.version_skew_notice({"version": "0.1.0"})
     assert "rerun msks-setup-macos-host" in notice
+    equal_base = workspaces.version_skew_notice({"version": "0.6.0.dev0"})
+    assert "rerun msks-setup-macos-host" in equal_base
 
 
 def test_version_ordering_compares_by_release() -> None:
@@ -171,6 +176,7 @@ def test_version_ordering_compares_by_release() -> None:
     assert ordering("0.6.0.dev0") < ordering("0.6.1")
     assert ordering("0.10.0") > ordering("0.9.0")
     assert ordering("") == ()
+    assert ordering("v0.6.0") == (0, 6, 0)  # the Lima words' v prefix
 
 
 def test_fetch_health_is_best_effort() -> None:

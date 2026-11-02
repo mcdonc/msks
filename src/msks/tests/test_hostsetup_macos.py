@@ -796,6 +796,12 @@ def test_a_version_skew_refuses_the_check(
     monkeypatch.setattr(mac, "vm_version", lambda: "0.6.0")
     with pytest.raises(mac.MacSetupError, match="update the VM's daemon"):
         mac.check_rows(mac.PORT)
+    # An equal-base dev daemon under a release tool does too
+    # (#715 review): the plain rerun lands the shipped release
+    # over the older dev build.
+    monkeypatch.setattr(mac, "daemon_version", lambda port: "0.6.0.dev0")
+    with pytest.raises(mac.MacSetupError, match="update the VM's daemon"):
+        mac.check_rows(mac.PORT)
 
 
 def test_a_mismatched_chain_refuses_with_the_port_remedy(

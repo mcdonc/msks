@@ -46,9 +46,10 @@ tagged `vX.Y.Z`.
   (#706).** Every `msks` invocation but the `image` group (whose
   `check` member runs offline) makes one best-effort
   `/health` roundtrip and prints a notice naming both versions
-  and the remedy the skew's direction asks for — a newer daemon
-  names the client's update (#715), never a rerun that would
-  downgrade it. The setup tool's check
+  and the remedy the skew's direction asks for (#715): a newer
+  release daemon names the client's update, a development build
+  that leads names the tree it came from — never a rerun that
+  would downgrade it. The setup tool's check
   pass grows a row pairing the VM's daemon version with the
   tool's own, and the bootstrap refuses — with the version pair
   named, ahead of the unit restart — when the daemon it installs

@@ -23,5 +23,5 @@ def ordering(word: str) -> tuple:
     orders by the release it is becoming; non-numeric fragments
     drop, and an empty word compares below every release (the
     same rule the Lima floor check applies to its words)."""
-    base = word.split(".dev")[0]
+    base = word.lstrip("v").split(".dev")[0]
     return tuple(int(part) for part in base.split(".") if part.isdigit())

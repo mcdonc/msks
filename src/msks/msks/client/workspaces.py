@@ -140,10 +140,14 @@ def skew_remedy(theirs: str) -> str:
     old single line sent a newer-daemon operator to rerun the
     setup tool — a tool old enough to be behind the daemon is
     old enough to downgrade it, and the refusal that follows
-    leaves the VM wedged. The remedy follows the direction, and
-    a dev-marked daemon word names the tree no release can
-    match."""
-    if ".dev" in theirs:
+    leaves the VM wedged. The remedy follows the direction: a
+    daemon that leads names the client's own update (a dev-marked
+    leader names the tree no release matches — an equal-base or
+    older dev build is one the plain rerun upgrades), and a
+    client that leads names the daemon's (the wheel path when
+    the client's own word is a dev build the plain rerun
+    refuses)."""
+    if ".dev" in theirs and ordering(theirs) > ordering(__version__):
         return (
             "the daemon runs a development build no release matches — "
             "update this client from the same tree or wait for the "
