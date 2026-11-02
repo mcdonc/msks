@@ -339,11 +339,46 @@ def test_the_bootstrap_guards_the_installed_pair() -> None:
     assert "$(tail -1 /tmp/msksd-config.err)" in script
     assert f"load_settings('{mac.VM_CONF}')" in script
     assert "config this tool" in script
+    # Each guard silences the xtrace before its refusal (#712):
+    # under `set -x` the exit's own trace is stderr's last line,
+    # and vm_shell's tail would carry "+ exit 1" over the
+    # message — the shape the guards exist to name.
+    lines = script.splitlines()
+    assert sum(1 for line in lines if line.strip() == "set +x") == 2
+    for phrase in ("not this", "config this tool"):
+        at = next(i for i, line in enumerate(lines) if phrase in line)
+        assert any("set +x" in line for line in lines[max(at - 4, 0) : at])
     install = script.index("uv_bin pip install")
     version_guard = script.index(probe)
     config_guard = script.index("load_settings")
     restart = script.index("systemctl restart msksd.service")
     assert install < version_guard < config_guard < restart
+
+
+def test_the_xtrace_buries_an_unquieted_exit() -> None:
+    """#712's mechanics, pinned in real bash: under `set -x` the
+    exit's own trace is stderr's last line (the burial the guards'
+    `set +x` prevents), and a quieted exit leaves the refusal as
+    the last line — the invariant vm_shell's tail extraction
+    reads."""
+    loud = subprocess.run(
+        ["/bin/bash", "-c", 'set -eux; echo "the refusal" >&2; exit 1'],
+        capture_output=True,
+        text=True,
+    )
+    assert loud.returncode == 1
+    assert loud.stderr.splitlines()[-1] == "+ exit 1"
+    quiet = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            'set -eux; true; set +x; echo "the refusal" >&2; exit 1',
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert quiet.returncode == 1
+    assert quiet.stderr.splitlines()[-1] == "the refusal"
 
 
 def test_a_named_wheel_installs_the_file() -> None:

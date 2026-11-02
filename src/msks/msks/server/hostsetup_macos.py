@@ -556,6 +556,10 @@ $uv_bin pip install -q --python {VM_PREFIX}/bin/python {install}
 ver_probe="import importlib.metadata as m; print(m.version('msks'))"
 installed=$({VM_PREFIX}/bin/python -c "$ver_probe")
 if [ "$installed" != "{vm_version()}" ]; then
+  # set +x first (#712): under the script's xtrace the exit's own
+  # trace would land as stderr's last line, and vm_shell's refusal
+  # tail would carry "+ exit 1" instead of the message above it.
+  set +x
   echo "the bootstrap installed msks $installed, not this" \
     "tool's {vm_version()} — pass --wheel with a build of this tree" >&2
   exit 1
@@ -594,6 +598,9 @@ CONF
 parse_probe="from msks.config import load_settings; "
 parse_probe+="load_settings('{VM_CONF}')"
 if ! {VM_PREFIX}/bin/python -c "$parse_probe" 2>/tmp/msksd-config.err; then
+  # set +x first (#712): same as the version half — the message,
+  # not the exit's trace, is stderr's last line.
+  set +x
   echo "the daemon this bootstrap installed ($installed) rejects" \
     " the config this tool ({vm_version()}) writes (a stale" \
     " release can carry the same number): pass --wheel with a" \
