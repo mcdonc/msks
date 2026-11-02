@@ -369,6 +369,16 @@ silicon reads as Apple, so `msksd doctor` gates its apple-kvm
 row on the NV-mode markers and leaves the row off there
 ([#664](https://github.com/mcdonc/msks/issues/664)).
 
+The msksd VM that `msks-setup-macos-host` creates from the
+shipped Lima template is the host that shares Mac folders into
+workspaces: the VM mounts them under its reserved
+prefix and forwards each attached share to the workspace that
+asked for it — the [mounts chapter's macOS
+section](mounts.md#shares-on-a-macos-host) holds the geometry
+and the contracts that cross with the tree (watchers poll,
+case follows the volume, one writer per lock-using tree,
+volumes eject after the workspace stops).
+
 ## The alternative paths
 
 **A development host** (this repository's checkout) runs the

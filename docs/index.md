@@ -43,9 +43,11 @@ dependencies on Debian-based systems.
    the probe endpoint that proves the chain end to end.
 10. [**Storage**](storage.md): the state disk, the per-workspace
     volumes, and the capacity report that prices them.
-11. [**Host share mounts**](mounts.md): the named shares a
-    workspace mounts into its guest — the operator's shares, the
-    requester's mounts, and the skip a missing share leaves.
+11. [**Host share mounts**](mounts.md): the host trees a
+    workspace mounts into its guest — the two gates that govern
+    them, the coherence contract between guests, and the macOS
+    share stack with its polling, naming, single-writer, and
+    eject contracts.
 12. [**LLM Proxy**](llm.md): how to make use of msksd's built-in
     LLM proxy.
 13. [**Secrets**](secrets.md): placeholders, the swap on the

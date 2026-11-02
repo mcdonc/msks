@@ -32,6 +32,18 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The macOS share stack documented (#675).** The [mounts
+  chapter](mounts.md#shares-on-a-macos-host) gains the macOS
+  share geometry — a Mac folder crosses vz virtiofs into the
+  daemon's VM under `/mnt/msks`, then virtiofsd into the
+  workspace — with the four contracts that cross with the tree:
+  watchers on shared trees run in polling mode (file events do
+  not cross virtiofs), case and Unicode normalization follow the
+  Mac volume, an `rw` share names the workspace its single
+  writer (Mac-side writers honor none of its locks), and a
+  volume shared into a running workspace ejects only after the
+  workspace stops.
+
 - **Lima self-install in `msks-setup-macos-host` (#699).** A Mac
   without Lima now gets it through `brew install lima` run by the
   tool itself, so a stock Mac reaches a working msksd in one
@@ -91,11 +103,11 @@ tagged `vX.Y.Z`.
   `msks mount`/`umount` (#673).** The client surface for #667's
   host-path shares: a repeatable create flag whose `~` expands
   against your home before the request, the same spec grammar on
-  `msks mount` (a path-shaped first field is a host path, a bare
-  name is a configured share), and `msks umount` names what
-  leaves by share name or host path. A refused share surfaces
+  `msks mount`, and `msks umount` names what leaves by host
+  path. A refused
+  share surfaces
   the daemon's gate message verbatim — which gate refused and
-  the remedy. See the [mounts chapter](mounts.md#the-host-form).
+  the remedy. See the [mounts chapter](mounts.md#what-a-mount-is).
 
 - **Host-path workspace shares behind the #667 gates (#672).**
   A workspace's mounts now take a host-path form —
@@ -113,7 +125,7 @@ tagged `vX.Y.Z`.
   lifecycle, the cloud-hypervisor `--fs` wiring, and the guest
   mount units are the #620 machinery, keyed by a tag derived
   from the path. See the [mounts
-  chapter](mounts.md#the-host-form) for the two gates and their
+  chapter](mounts.md#the-two-gates) for the two gates and their
   refusal remedies.
 
 - **Lima template share roots under the reserved prefix
