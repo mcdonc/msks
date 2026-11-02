@@ -8,6 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **`devenv processes up` on a macOS host (#707).** The `msksd`
+  process is registered on Linux hosts only, so on a Mac the
+  command exits at once (`No processes defined`) instead of
+  supervising the dev daemon's platform refusal into a restart
+  loop. `msks-dev`'s refusal on a Mac points at the new
+  [Developing on a macOS host](https://mcdonc.github.io/msks/development/#developing-on-a-macos-host)
+  chapter, which documents both ways a Mac reaches a live daemon:
+  the client over an ssh tunnel to a Linux dev host, and the
+  product Lima host installed from a built wheel
+  (`msks-setup-macos-host --wheel`).
 - **`msks-setup-macos-host` without `--port` (#699).** The run
   now talks through the forward the existing msksd VM already
   carries — the forward is fixed at VM creation, so the VM's own

@@ -31,9 +31,11 @@ talks to any daemon the Mac can reach, and the docs build renders.
 The daemon itself is a Linux program — it drives cloud-hypervisor
 on `/dev/kvm` — so the dev daemon, the `msksd` process, and the
 smoke tests run on a Linux host, and the `msksd` process is
-registered on Linux hosts only: `devenv processes up` on a Mac
-reports no processes, and `msks-dev` refuses with a pointer back
-to this chapter.
+registered on Linux hosts only. On a Mac, `devenv processes up`
+exits at once — `No 'processes' option defined`, then
+`No processes defined` — and `msks-dev` refuses with a pointer
+back to this chapter; both refusals are the platform split
+working as designed, a broken devenv.nix they are not.
 
 Two paths take a Mac to a live daemon.
 
@@ -43,24 +45,42 @@ The daemon runs under this chapter's dev-daemon workflow on a
 Linux host (a dedicated dev machine or the same checkout
 elsewhere), and the Mac's client talks to it through an ssh
 tunnel: the daemon binds 127.0.0.1 and mints its certificate for
-that name, so the tunnel keeps verified TLS end to end. The port,
-token, and CA all come from the remote worktree's dev-daemon
-state dir, `.devenv/state/msksd/` on the Linux host:
+that name, so the tunnel keeps verified TLS end to end.
+
+Copy the remote worktree's dev-daemon state trio — `port`,
+`bootstrap-token`, `msks-ca.pem` — into the Mac worktree's own
+state dir:
 
 ```bash
 mkdir -p .devenv/state/msksd
-ssh -fN -L 8660:127.0.0.1:8660 <linux-host>    # the port from the
-                                               # remote state dir's port file
-scp <linux-host>:<remote-tree>/.devenv/state/msksd/msks-ca.pem .devenv/state/msksd/
-export MSKSC_URL=https://127.0.0.1:8660
-export MSKSC_TOKEN="$(ssh <linux-host> cat <remote-tree>/.devenv/state/msksd/bootstrap-token)"
-export MSKSC_CAFILE=$PWD/.devenv/state/msksd/msks-ca.pem
+scp <linux-host>:<remote-tree>/.devenv/state/msksd/{port,bootstrap-token,msks-ca.pem} \
+    .devenv/state/msksd/
 ```
 
-With that trio exported, every client command works from the Mac —
-the same trio [The client presets](#the-client-presets) presets
-for the local dev daemon. `msks console` reaches a running
-workspace the same way, from any host that can reach the daemon.
+The trio is exactly what [The client presets](#the-client-presets)
+reads: with the three files in place, every fresh devenv shell on
+the Mac exports `MSKSC_URL`, `MSKSC_TOKEN`, and `MSKSC_CAFILE` by
+itself, pointing at 127.0.0.1 and the port the `port` file names.
+The tunnel's local side matches that port, so the preset URL
+lands on the forward:
+
+```bash
+ssh -fN -L 8660:127.0.0.1:8660 <linux-host>   # 8660 = the port file's
+                                               # port, both sides
+```
+
+A different local port works when 127.0.0.1:8660 is already
+spoken for — the Lima path below claims it too — by forwarding
+that port instead and exporting `MSKSC_URL` yourself (a value
+exported before entering the shell survives the preset).
+
+`msks console` reaches a running workspace from the Mac over the
+same trio. `msks ssh` and `msks rsync` additionally authenticate
+with the dev identity that created the workspace — the Linux
+tree's `.devenv/state/msksc/identity`. Copy that file over the
+Mac's own minted one, or point `MSKSC_IDENTITY_FILE` at the same
+personal key on both hosts (see [The dev
+identity](#the-dev-identity)).
 
 ### The product Lima host, from a build in hand
 

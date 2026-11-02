@@ -41,8 +41,9 @@ A macOS checkout runs the whole edit→lint→test loop locally: `msks-preflight
 (every gate, with the suite under the off-Linux coverage floor), the client,
 and the docs build. The dev daemon, the `msksd` process, and the smoke tests
 need Linux — they drive cloud-hypervisor on `/dev/kvm` — so `devenv processes
-up` registers the `msksd` process on Linux hosts only, and `msks-dev` refuses
-on a Mac, naming the development chapter. A Mac reaches a live daemon two
+up` registers the `msksd` process on Linux hosts only (on a Mac it exits at
+once: `No processes defined`), and `msks-dev` refuses on a Mac, naming the
+development chapter. A Mac reaches a live daemon two
 ways: the client pointed at the Linux dev host's daemon over an ssh tunnel,
 or the product Lima host installed from a built wheel
 (`msks-setup-macos-host --wheel`). Both are documented in
