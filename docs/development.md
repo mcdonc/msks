@@ -22,6 +22,88 @@ The same daemon is the default `devenv processes up` process:
 the manager runs `scripts/dev-daemon.sh` in the foreground, and
 Ctrl-C stops it through the daemon's own graceful path.
 
+## Developing on a macOS host
+
+The devenv shell carries the same edit→lint→test loop on a Mac
+that it carries on Linux: `msks-preflight` runs every commit gate
+(with the suite under the off-Linux coverage floor), the client
+talks to any daemon the Mac can reach, and the docs build renders.
+The daemon itself is a Linux program — it drives cloud-hypervisor
+on `/dev/kvm` — so the dev daemon, the `msksd` process, and the
+smoke tests run on a Linux host, and the `msksd` process is
+registered on Linux hosts only. On a Mac, `devenv processes up`
+exits at once — `No 'processes' option defined`, then
+`No processes defined` — and `msks-dev` refuses with a pointer
+back to this chapter; both refusals are the platform split
+working as designed, a broken devenv.nix they are not.
+
+Two paths take a Mac to a live daemon.
+
+### The Linux dev host, from the Mac
+
+The daemon runs under this chapter's dev-daemon workflow on a
+Linux host (a dedicated dev machine or the same checkout
+elsewhere), and the Mac's client talks to it through an ssh
+tunnel: the daemon binds 127.0.0.1 and mints its certificate for
+that name, so the tunnel keeps verified TLS end to end.
+
+Copy the remote worktree's dev-daemon state trio — `port`,
+`bootstrap-token`, `msks-ca.pem` — into the Mac worktree's own
+state dir:
+
+```bash
+mkdir -p .devenv/state/msksd
+scp <linux-host>:<remote-tree>/.devenv/state/msksd/{port,bootstrap-token,msks-ca.pem} \
+    .devenv/state/msksd/
+```
+
+The trio is exactly what [The client presets](#the-client-presets)
+reads: with the three files in place, every fresh devenv shell on
+the Mac exports `MSKSC_URL`, `MSKSC_TOKEN`, and `MSKSC_CAFILE` by
+itself, pointing at 127.0.0.1 and the port the `port` file names.
+The tunnel's local side matches that port, so the preset URL
+lands on the forward:
+
+```bash
+ssh -fN -L 8660:127.0.0.1:8660 <linux-host>   # 8660 = the port file's
+                                               # port, both sides
+```
+
+A different local port works when 127.0.0.1:8660 is already
+spoken for — the Lima path below claims it too — by forwarding
+that port instead and re-pointing `MSKSC_URL` inside the shell:
+the state trio's preset wins over a value exported before entry
+(the `port` file gates it), so unset or override the variable
+after the shell opens.
+
+`msks console` reaches a running workspace from the Mac over the
+same trio. `msks ssh` and `msks rsync` additionally authenticate
+with the dev identity that created the workspace — the Linux
+tree's `.devenv/state/msksc/identity`. Copy that file over the
+Mac's own minted one, or point `MSKSC_IDENTITY_FILE` at the same
+personal key on both hosts (see [The dev
+identity](#the-dev-identity)).
+
+### The product Lima host, from a build in hand
+
+`msks-setup-macos-host` (the [installation chapter's Apple Silicon
+section](installation.md#apple-silicon-hosts)) runs msksd inside
+its own Lima VM on the Mac and writes the client config — an
+end-to-end daemon with no separate Linux host. The tool installs
+the PyPI release matching its own version; `--wheel` installs a
+build from this tree instead:
+
+```bash
+devenv --quiet shell -- uv build                 # dist/msks-<version>-py3-none-any.whl
+devenv --quiet shell -- msks-setup-macos-host --wheel dist/msks-<version>-py3-none-any.whl
+```
+
+The VM runs the built wheel, not the working tree: each iteration
+rebuilds the wheel and re-runs the tool (every phase is idempotent,
+and the daemon restarts through its systemd unit). Use this path to
+verify a change end to end on the Mac itself; the Linux dev host
+above stays the faster inner loop.
+
 ## The daemon's config file
 
 The dev daemon runs bare: `scripts/dev-daemon.sh` points

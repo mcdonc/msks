@@ -35,6 +35,21 @@ devenv --quiet -O dotenv.enable:bool false shell -- python -c "..."
 Inside the shell, `python` and `python3` both resolve to the venv's
 3.14 with the project's dependencies installed.
 
+## macOS dev hosts: what runs where (#707)
+
+A macOS checkout runs the whole edit→lint→test loop locally: `msks-preflight`
+(every gate, with the suite under the off-Linux coverage floor), the client,
+and the docs build. The dev daemon, the `msksd` process, and the smoke tests
+need Linux — they drive cloud-hypervisor on `/dev/kvm` — so `devenv processes
+up` registers the `msksd` process on Linux hosts only (on a Mac it exits at
+once: `No processes defined`), and `msks-dev` refuses on a Mac, naming the
+development chapter. A Mac reaches a live daemon two
+ways: the client pointed at the Linux dev host's daemon over an ssh tunnel,
+or the product Lima host installed from a built wheel
+(`msks-setup-macos-host --wheel`). Both are documented in
+`docs/development.md` → "Developing on a macOS host" — on a Mac, never
+attempt `devenv processes up` as a route to a daemon.
+
 ## Process manager: devenv 2.x native (not process-compose)
 
 `devenv processes up` / `devenv up` use **devenv 2.x's built-in process manager**,
