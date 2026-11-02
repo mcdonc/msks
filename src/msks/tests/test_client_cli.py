@@ -126,16 +126,51 @@ def test_the_key_command_parses_no_private_forms(
 def test_version_skew_notice_names_the_pair() -> None:
     """#706: a daemon whose /health version differs from the
     client's own names both words and the remedy; equality, an
-    unknown side, and a document without the word stay silent."""
+    unknown side, and a document without the word stay silent.
+    #715: the remedy follows the direction — a newer daemon
+    names the client's update, a dev-marked daemon names the
+    tree, and an older daemon under a dev client names the wheel
+    (the plain rerun is what a dev build refuses)."""
     mine = workspaces.__version__
     assert workspaces.version_skew_notice({"version": mine}) is None
     assert workspaces.version_skew_notice(None) is None
     assert workspaces.version_skew_notice({"status": "ok"}) is None
     assert workspaces.version_skew_notice({"version": ""}) is None
-    notice = workspaces.version_skew_notice({"version": "9.9.9"})
-    assert "the daemon runs 9.9.9" in notice
-    assert f"this client is {mine}" in notice
-    assert "msks-setup-macos-host" in notice
+    newer = workspaces.version_skew_notice({"version": "9.9.9"})
+    assert "the daemon runs 9.9.9" in newer
+    assert f"this client is {mine}" in newer
+    assert "update this client" in newer  # the daemon leads
+    older = workspaces.version_skew_notice({"version": "0.1.0"})
+    assert ".dev" in mine  # the tree's own word is a dev build
+    assert "--wheel" in older  # so the older-daemon remedy names it
+    dev_daemon = workspaces.version_skew_notice({"version": "9.9.9.dev0"})
+    assert "development build" in dev_daemon
+    assert "same tree" in dev_daemon
+
+
+def test_a_release_clients_skew_notice_names_the_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#715's fourth direction: a release client behind a release
+    daemon names the setup rerun — the one shape whose remedy is
+    the original #706 line."""
+    monkeypatch.setattr(workspaces, "__version__", "0.5.0")
+    notice = workspaces.version_skew_notice({"version": "0.1.0"})
+    assert "rerun msks-setup-macos-host" in notice
+
+
+def test_version_ordering_compares_by_release() -> None:
+    """#715: the skew remedies order pairs numerically — a dev
+    marker names the release it is becoming, so a dev build of
+    0.7.0 outranks 0.6.9 but not 0.7.1, and string order (which
+    would put 0.10.0 below 0.9.0) never applies."""
+    from msks.spec.version import ordering
+
+    assert ordering("0.6.0.dev0") == (0, 6, 0)
+    assert ordering("0.6.0.dev0") > ordering("0.5.9")
+    assert ordering("0.6.0.dev0") < ordering("0.6.1")
+    assert ordering("0.10.0") > ordering("0.9.0")
+    assert ordering("") == ()
 
 
 def test_fetch_health_is_best_effort() -> None:

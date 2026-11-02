@@ -14,3 +14,14 @@ config the tool writes.
 """
 
 __version__ = "0.6.0.dev0"
+
+
+def ordering(word: str) -> tuple:
+    """The numeric parts of a version word for before/after
+    comparisons (#715): ``0.6.0.dev0`` compares as ``(0, 6, 0)``
+    — a dev marker names an in-progress release, and the pair
+    orders by the release it is becoming; non-numeric fragments
+    drop, and an empty word compares below every release (the
+    same rule the Lima floor check applies to its words)."""
+    base = word.split(".dev")[0]
+    return tuple(int(part) for part in base.split(".") if part.isdigit())
