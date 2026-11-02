@@ -8,7 +8,11 @@ manifest's rows with their descriptions, sizes, and build dates)
 import's catalog hash equals the manifest row's hash
 (``[imported]``), while the same ref under a different hash
 (the pre-channel plain tar, a locally built archive) reads
-``[in catalog, other build]``. Enter imports a published row
+``[in catalog, other build]``. The published group carries the
+rows the daemon's own machine can boot (#717): a row declaring
+another architecture stays off the page — the import guard
+would refuse it (#638), and the page does not offer what the
+guard must refuse. Enter imports a published row
 (the daemon downloads, verifies, and floor-checks; the modal
 holds the terminal with an elapsed timer) and opens the detail
 view for a catalog row; ``D`` deletes a catalog row through the
@@ -72,6 +76,28 @@ def built_label(row: dict) -> str:
     date half) or a dash — v0.1's rows predate the field."""
     built = str(row.get("built_at") or "")[:10]
     return built or "-"
+
+
+def daemon_machine(health: dict | None) -> str | None:
+    """The daemon host's uname machine (#717) — the architecture
+    its workspaces boot. None when the document carries no such
+    word (a daemon predating the field, a proxy's junk): the
+    filter steps aside, every row shows, and the #638 import
+    refusal stays the boundary."""
+    machine = health.get("machine") if health else None
+    return machine if isinstance(machine, str) and machine else None
+
+
+def row_serves_arch(row: dict, machine: str | None) -> bool:
+    """Whether one published row belongs on this daemon's page
+    (#717): a row that declares its architecture shows on its
+    match alone, and a row without one declares nothing and
+    shows everywhere — the same rule the #638 import guard
+    applies."""
+    if machine is None:
+        return True
+    arch = row.get("arch")
+    return not isinstance(arch, str) or not arch or arch == machine
 
 
 def published_label(row: dict, catalog: list[dict]) -> str:
@@ -184,6 +210,23 @@ def description_cell(row: dict) -> str:
     return (row.get("description") or "").strip() or "- (none baked)"
 
 
+async def gathered_rows(data, url: str) -> tuple[list[dict], list[dict]]:
+    """The two groups' source rows (#565, #717): the daemon's
+    catalog and the channel's manifest, the published rows
+    already narrowed to the machine the daemon's /health names —
+    one helper so the screen's fetch stays a straight line
+    (a refusal from any leg lands on the failure panel
+    unchanged)."""
+    catalog = await data.images()
+    machine = daemon_machine(await data.health())
+    published = [
+        row
+        for row in await fetch_manifest(url)
+        if row_serves_arch(manifest_row(row), machine)
+    ]
+    return catalog, published
+
+
 class ImageDetailScreen(ModalScreen):
     """One catalog row's full record (#571): Enter on a catalog
     row opens it; Enter, q, or Escape dismisses."""
@@ -262,10 +305,7 @@ class ImageImportScreen(ModalScreen):
             or DEFAULT_IMAGE_MANIFEST_URL
         )
         try:
-            catalog = await self.app.data.images()
-            published = [
-                manifest_row(row) for row in await fetch_manifest(url)
-            ]
+            catalog, published = await gathered_rows(self.app.data, url)
         except asyncio.CancelledError:
             raise
         except (Exception, SystemExit) as exc:

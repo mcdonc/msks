@@ -124,7 +124,10 @@ rows](config.md#host-share-mounts) hold the behavior; the CLI's
 
 `i`: the image page. Its catalog group comes first, the rows carrying the
 default marker and each import's date; then the published channel's rows with
-their descriptions, sizes, and membership markers. `[imported]` marks a row
+their descriptions, sizes, and membership markers. The published group
+carries the rows this daemon's own machine can boot: a row declaring another
+architecture stays off the page, and a row that declares none shows
+(`msks image import` names the same rule). `[imported]` marks a row
 whose archive the catalog holds (an exact hash match); `[in catalog, other
 build]` marks one whose ref it holds under a different hash. ![The image
 detail: description, hash, the built date](screens/image-detail.svg)

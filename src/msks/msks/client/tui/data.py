@@ -11,7 +11,7 @@ the tests.
 
 from ..create import create_workspace_core, invoking_user
 from ..env import env_token, env_url
-from ..rest import api_call
+from ..rest import api_call, fetch_health
 from .consent_ui import shared_ssl
 
 
@@ -42,6 +42,18 @@ class TuiData:
             "/api/v1/images",
             transport=self.transport,
             ssl_ctx=shared_ssl(),
+        )
+
+    async def health(self) -> dict | None:
+        """GET /health best-effort (#717): the daemon host's
+        machine name keys the published list's arch filter. An
+        answer that will not come — an unreachable daemon, one
+        predating the field, a proxy's junk — is None, and the
+        page shows every row rather than refusing on its
+        filter's behalf (:func:`fetch_health` owns the every-failure-is-
+        None contract)."""
+        return await fetch_health(
+            env_url(), env_token(), self.transport, shared_ssl()
         )
 
     async def create_defaults(self) -> dict:

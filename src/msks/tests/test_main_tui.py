@@ -167,6 +167,10 @@ class FakeData:
         # The mounts editor's refusal (#620, part #624): the
         # scripted one-line error a refused save raises.
         self.mounts_refusal: str | None = None
+        # The published list's arch filter (#717): the scripted
+        # /health document — None is a daemon predating the
+        # machine field, and the filter steps aside.
+        self.health_doc: dict | None = None
 
     async def workspaces(self) -> list[dict]:
         self.fetches += 1
@@ -178,6 +182,12 @@ class FakeData:
         if "images" in self.fail:
             raise RuntimeError(self.refusal)
         return [dict(r) for r in self.images_rows]
+
+    async def health(self) -> dict | None:
+        """The /health document the arch filter keys on (#717) —
+        scripted, never dialed, the data layer's own best-effort
+        contract in miniature."""
+        return self.health_doc
 
     async def remove_image(self, digest: str) -> dict:
         """The image page's delete (#571): recorded, the row gone
@@ -2246,6 +2256,10 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
             return httpx.Response(
                 200, json=[{"name": "debian-13", "version": "2026.01"}]
             )
+        if request.method == "GET" and request.url.path == ("/api/v1/health"):
+            return httpx.Response(
+                200, json={"status": "ok", "machine": "x86_64"}
+            )
         if (
             request.method == "GET"
             and request.url.path == "/api/v1/create-defaults"
@@ -2399,6 +2413,13 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
 
     data = data_mod.TuiData(transport=httpx.MockTransport(handler))
     assert await data.workspaces() == [{"id": "ws1", "name": "n"}]
+    assert await data.health() == {"status": "ok", "machine": "x86_64"}
+
+    def dead(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503)
+
+    silent = data_mod.TuiData(transport=httpx.MockTransport(dead))
+    assert await silent.health() is None
     assert await data.images() == [{"name": "debian-13", "version": "2026.01"}]
     assert await data.create_defaults() == {
         "root_mib": 10240,
@@ -4783,6 +4804,68 @@ def scripted_manifest(monkeypatch, rows=None, refusal=None):
 
     monkeypatch.setattr(importer_mod, "fetch_manifest", fetch)
     return importer_mod
+
+
+def test_the_arch_filter_helpers() -> None:
+    """#717's pair: the daemon's machine is read from /health —
+    an absent, empty, or junk word is None — and a row serves a
+    machine when it declares that arch or declares none at all
+    (the #638 rule)."""
+    from msks.client.tui.importer import daemon_machine, row_serves_arch
+
+    assert daemon_machine(None) is None
+    assert daemon_machine({}) is None
+    assert daemon_machine({"machine": ""}) is None
+    assert daemon_machine({"machine": 7}) is None
+    assert daemon_machine({"machine": "x86_64"}) == "x86_64"
+    assert row_serves_arch({"arch": "aarch64"}, None)
+    assert row_serves_arch({"arch": "aarch64"}, "x86_64") is False
+    assert row_serves_arch({"arch": "x86_64"}, "x86_64")
+    assert row_serves_arch({}, "x86_64")
+    assert row_serves_arch({"arch": ""}, "x86_64")
+    assert row_serves_arch({"arch": 3}, "x86_64")
+
+
+async def test_the_published_list_filters_foreign_arch_rows(
+    monkeypatch,
+) -> None:
+    """#717: the published group carries the rows the daemon's
+    own machine can boot — a row declaring the other
+    architecture stays off the page, and a row that declares
+    none shows everywhere."""
+    rows = [
+        {
+            "ref": "debian:13.6",
+            "url": "https://example.com/amd64.tar.zst",
+            "size": 104_857_600,
+            "arch": "x86_64",
+        },
+        {
+            "ref": "debian-arm:13.6",
+            "url": "https://example.com/arm64.tar.zst",
+            "size": 52_428_800,
+            "arch": "aarch64",
+        },
+        {
+            "ref": "hand-rolled:1",
+            "url": "https://example.com/hand.tar.zst",
+            "size": 1_048_576,
+        },
+    ]
+    scripted_manifest(monkeypatch, rows=rows)
+    data = FakeData([])
+    data.health_doc = {"machine": "x86_64"}
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        labels = [
+            str(option.prompt)
+            for option in app.screen.query_one(OptionList).options
+        ]
+        assert any("(100 MiB)" in label for label in labels)
+        assert any("(1 MiB)" in label for label in labels)
+        assert not any("(50 MiB)" in label for label in labels)
 
 
 async def test_the_import_key_opens_the_channel_picker(monkeypatch) -> None:
