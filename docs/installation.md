@@ -23,6 +23,9 @@ gap, and the workaround is a self-built virtiofsd pointed at with
 currently bridge-out for any other type of Linux host, save for NixOS, which
 remains undocumented now, apologies.
 
+_msks_ also runs on macOS hosts on Mac M3+ machines using a Lima virtual
+machine to run the daemon and macOS to run the client.
+
 ## Setup using `msks-setup-debian-host` console script
 
 The msks daemon runs the workspaces directly on the host using
@@ -344,40 +347,21 @@ that can diagnose installation issues.
 
 ## Apple Silicon hosts
 
-An Apple Silicon host whose kernel runs KVM in NV mode (today
-the Asahi Linux class — Fedora Asahi Remix on an M-series
-machine) runs the daemon, builds and imports guest images, and
-manages the workspace lifecycle, and its kernel's KVM does not
-yet deliver guest interrupts
-([#649](https://github.com/mcdonc/msks/issues/649)): a workspace
-starts and its kernel boots deep into first boot, then stalls
-before ssh answers. Everything short of a guest boot works, so
-such a host serves today as a build and authoring machine — the
-`msks` client can point `MSKSC_URL` at a daemon on any host
-whose KVM is complete, and drives workspaces there. `msksd
-doctor` names the condition on these hosts with a warning row;
-retest after each kernel update with `msks start` and the
-console — the limitation is the kernel's to lift.
-
-A Linux VM under macOS (UTM or Lima over the
-Virtualization.framework, with nested virtualization enabled)
-is a working Apple-silicon host in its own right: the VM's
-kernel runs its own KVM over the EL2 the hypervisor hands it,
-workspaces boot and ssh answers, and the daemon runs in the VM
-end to end — `msks image check` passes there too. The VM's
-silicon reads as Apple, so `msksd doctor` gates its apple-kvm
-row on the NV-mode markers and leaves the row off there
-([#664](https://github.com/mcdonc/msks/issues/664)).
+Running `msks-setup-macos-host` runs the macOS installer, which is expected to
+work on M3+ Macs. It installs the Lima virtual machine system (via Brew), and
+runs msksd within a Lima VM. The msks client runs on the Mac itself.
 
 The msksd VM that `msks-setup-macos-host` creates from the
 shipped Lima template is the host that shares Mac folders into
 workspaces: the VM mounts them under its reserved
 prefix and forwards each attached share to the workspace that
-asked for it — the [mounts chapter's macOS
-section](mounts.md#shares-on-a-macos-host) holds the geometry
-and the contracts that cross with the tree (watchers poll,
-case follows the volume, one writer per lock-using tree,
-volumes eject after the workspace stops).
+asked for it — see the [mounts chapter's macOS
+section](mounts.md#shares-on-a-macos-host).
+
+It doesn't work on Asahi. An Apple Silicon host whose kernel runs KVM in NV
+mode does not yet deliver guest interrupts
+([#649](https://github.com/mcdonc/msks/issues/649)): a workspace starts and its
+kernel boots deep into first boot, then stalls before ssh answers.
 
 ## The alternative paths
 
