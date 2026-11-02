@@ -10,6 +10,7 @@ moved to :mod:`msks.client.env` — a leaf with no transport imports
 """
 
 import asyncio
+import contextlib
 import ssl
 import sys
 import time
@@ -160,6 +161,28 @@ async def api_call(
     """One authenticated REST call on a fresh client."""
     async with api_client(url, token, transport, ssl_ctx) as client:
         return await request(client, method, path, json_body)
+
+
+async def fetch_health(
+    url: str,
+    token: str | None,
+    transport: httpx.AsyncBaseTransport | None = None,
+    ssl_ctx: ssl.SSLContext | None = None,
+) -> dict | None:
+    """The daemon's ``/health`` document, or None (#706): the
+    endpoint is public, and every failure — an unreachable
+    daemon, a wrong host, a proxy's junk — is the caller's
+    silence, never its refusal. The version-skew notice reads it
+    best-effort beside the commands' own calls; a None answer
+    prints nothing (the command's own failure, when there is
+    one, names the daemon better than a probe could)."""
+    with contextlib.suppress(Exception, SystemExit):
+        async with api_client(url, token, transport, ssl_ctx) as client:
+            doc = await client.get("/api/v1/health")
+            doc.raise_for_status()
+            body = doc.json()
+        return body if isinstance(body, dict) else None
+    return None
 
 
 async def download(client: httpx.AsyncClient, path: str, sink) -> int:

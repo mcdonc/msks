@@ -123,6 +123,83 @@ def test_the_key_command_parses_no_private_forms(
     assert "No such option" in capsys.readouterr().err
 
 
+def test_version_skew_notice_names_the_pair() -> None:
+    """#706: a daemon whose /health version differs from the
+    client's own names both words and the remedy; equality, an
+    unknown side, and a document without the word stay silent."""
+    mine = workspaces.__version__
+    assert workspaces.version_skew_notice({"version": mine}) is None
+    assert workspaces.version_skew_notice(None) is None
+    assert workspaces.version_skew_notice({"status": "ok"}) is None
+    assert workspaces.version_skew_notice({"version": ""}) is None
+    notice = workspaces.version_skew_notice({"version": "9.9.9"})
+    assert "the daemon runs 9.9.9" in notice
+    assert f"this client is {mine}" in notice
+    assert "msks-setup-macos-host" in notice
+
+
+def test_fetch_health_is_best_effort() -> None:
+    """#706: the probe's every failure is silence — an unreachable
+    daemon, a wrong host, a proxy's junk — never the command's
+    own refusal."""
+    answered = mock(lambda req: httpx.Response(200, json={"version": "9.9.9"}))
+    assert asyncio.run(
+        rest.fetch_health("https://daemon", "tok", answered)
+    ) == {"version": "9.9.9"}
+    refused = mock(lambda req: httpx.Response(500, text="boom"))
+    assert (
+        asyncio.run(rest.fetch_health("https://daemon", "tok", refused))
+        is None
+    )
+
+    def raising(req):
+        raise OSError("unreachable")
+
+    assert (
+        asyncio.run(rest.fetch_health("https://daemon", "tok", mock(raising)))
+        is None
+    )
+
+
+def test_notice_daemon_version_skew_prints_once(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#706: the notice rides one best-effort roundtrip — a skew
+    prints the pair, an equal daemon prints nothing."""
+    client_env(monkeypatch)
+    mine = workspaces.__version__
+    skewed = mock(lambda req: httpx.Response(200, json={"version": "9.9.9"}))
+    cli.notice_daemon_version_skew(transport=skewed)
+    assert "this client is" in capsys.readouterr().err
+    equal = mock(lambda req: httpx.Response(200, json={"version": mine}))
+    cli.notice_daemon_version_skew(transport=equal)
+    assert "this client is" not in capsys.readouterr().err
+
+
+def test_the_root_callback_probes_only_on_a_real_dial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#706: the probe runs once per invocation on a real dial (no
+    in-process transport); the tests' transport seam is not a
+    deployment to compare against and skips it."""
+    client_env(monkeypatch)
+    probed = []
+    monkeypatch.setattr(
+        cli, "notice_daemon_version_skew", lambda: probed.append(True)
+    )
+    with pytest.raises(SystemExit):
+        # No transport: the unreachable https://daemon answers the
+        # key command's own one-line refusal — after the probe ran.
+        cli.main(["key", "alpha"])
+    assert probed == [True]
+    cli.main(
+        ["key", "alpha"],
+        transport=mock(lambda req: httpx.Response(200, json=KEY_BODY)),
+    )
+    assert probed == [True]
+
+
 def test_cmd_ls_aligns_columns(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

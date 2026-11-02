@@ -14,6 +14,7 @@ one fake at ``subprocess.run`` (the whole tool is subprocesses;
 the fakes answer at that boundary so every real body runs).
 """
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -101,6 +102,11 @@ def procs(monkeypatch: pytest.MonkeyPatch) -> FakeProcesses:
     fake = FakeProcesses()
     fake.install(monkeypatch)
     fake.vm = {
+        # The bootstrap script's version probe (#706): the whole
+        # script answers with the word the probe's $() captures —
+        # first in the map, so the other needles (answers for the
+        # later one-liner probes) keep their own scripts.
+        "importlib.metadata": f"{mac.vm_version()}\n",
         "msks-ca.pem": "-----BEGIN CERTIFICATE-----\nxyz\n"
         "-----END CERTIFICATE-----\n",
         "bootstrap-token": "the-token\n",
@@ -307,6 +313,31 @@ def test_the_bootstrap_writes_the_geometry_and_survives_reruns() -> None:
     assert f"--config {mac.VM_CONF}" in script
 
 
+def test_the_bootstrap_guards_the_installed_pair() -> None:
+    """#706 (and #704's shape): the script refuses, with the
+    version pair named, when the install landed anything but
+    this tool's own version — a dev tree whose pyproject number
+    matches an already-released wheel — and again when the
+    installed daemon rejects the config the same script writes,
+    ahead of the unit restart and its crash loop. Content pins:
+    the fake answers whole scripts, so the guards' bash never
+    runs in tests — the wording and the ordering are the
+    contract."""
+    script = mac.bootstrap_script(None, "/Users/probe")
+    probe = "print(m.version('msks'))"
+    assert probe in script
+    assert f'if [ "$installed" != "{mac.vm_version()}" ]' in script
+    assert "not this" in script
+    assert "pass --wheel with a build of this tree" in script
+    assert f"load_settings('{mac.VM_CONF}')" in script
+    assert "rejects the config this tool" in script
+    install = script.index("uv_bin pip install")
+    version_guard = script.index(probe)
+    config_guard = script.index("load_settings")
+    restart = script.index("systemctl restart msksd.service")
+    assert install < version_guard < config_guard < restart
+
+
 def test_a_named_wheel_installs_the_file() -> None:
     script = mac.bootstrap_script(
         "/builds/msks-0.5.0-py3-none-any.whl", "/Users/p"
@@ -496,6 +527,7 @@ def test_the_check_rows_answer_the_doctor_questions(
         mac, "verify_daemon", lambda port, timeout_s=15.0: None
     )
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    monkeypatch.setattr(mac, "daemon_version", lambda port: mac.vm_version())
     mac.ensure_client_config(mac.PORT)
     rows = mac.check_rows(mac.PORT)
     assert rows[0] == "lima 2.2.1 at the template's floor"
@@ -503,6 +535,11 @@ def test_the_check_rows_answer_the_doctor_questions(
     assert any("nv: 554 coarse" in row for row in rows)
     assert any("virtiofsd present" in row for row in rows)
     assert any("chained to the VM's CA" in row for row in rows)
+    # The skew row (#706): the pair side by side, green on a match.
+    assert any(
+        f"the VM's daemon and this tool both run {mac.vm_version()}" in row
+        for row in rows
+    )
 
 
 def test_m1_and_m2_refuse_at_the_gate(
@@ -557,6 +594,7 @@ def test_the_not_found_nested_row_reports_truthfully(
         mac, "verify_daemon", lambda port, timeout_s=15.0: None
     )
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    monkeypatch.setattr(mac, "daemon_version", lambda port: mac.vm_version())
     mac.ensure_client_config(mac.PORT)
     rows = mac.check_rows(mac.PORT)
     assert any("marker not found" in row for row in rows)
@@ -569,6 +607,80 @@ def test_a_missing_virtiofsd_refuses_the_check(
     shares are this VM's headline feature."""
     procs.vm["dpkg -s virtiofsd"] = "missing\n"
     with pytest.raises(mac.MacSetupError, match="re-run the tool"):
+        mac.check_rows(mac.PORT)
+
+
+class HealthAnswer:
+    """The urlopen answer's shape daemon_version reads: bytes in,
+    a context manager out."""
+
+    def __init__(self, body: dict) -> None:
+        self._body = json.dumps(body).encode()
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return None
+
+
+def test_daemon_version_reads_health(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#706: the skew row's word comes from the public /health
+    over the forward — the same unverified TLS the listener row
+    already proved chains to this daemon's CA."""
+    opened = []
+
+    def fake_urlopen(url, timeout, context=None):
+        opened.append(url)
+        return HealthAnswer({"status": "ok", "version": "0.5.0"})
+
+    monkeypatch.setattr(mac.urllib.request, "urlopen", fake_urlopen)
+    assert mac.daemon_version(mac.PORT) == "0.5.0"
+    assert opened == [f"https://127.0.0.1:{mac.PORT}/api/v1/health"]
+
+
+def test_daemon_version_refuses_a_wordless_or_dead_health(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A /health without a version word, or one that never
+    answers, refuses by name — the row cannot report the pair on
+    a maybe."""
+    monkeypatch.setattr(
+        mac.urllib.request,
+        "urlopen",
+        lambda url, timeout, context=None: HealthAnswer({"status": "ok"}),
+    )
+    with pytest.raises(mac.MacSetupError, match="carried no version"):
+        mac.daemon_version(mac.PORT)
+
+    def dead(url, timeout, context=None):
+        raise OSError("refused")
+
+    monkeypatch.setattr(mac.urllib.request, "urlopen", dead)
+    with pytest.raises(mac.MacSetupError, match="did not answer"):
+        mac.daemon_version(mac.PORT)
+
+
+def test_a_version_skew_refuses_the_check(
+    monkeypatch: pytest.MonkeyPatch,
+    procs: FakeProcesses,
+    client_tree: Path,
+) -> None:
+    """#706: the skew row stays red until a rerun lands the tool's
+    version in the VM — the pair ships from one wheel, and a
+    drift otherwise surfaces one feature at a time."""
+    monkeypatch.setattr(
+        mac, "verify_daemon", lambda port, timeout_s=15.0: None
+    )
+    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    monkeypatch.setattr(mac, "daemon_version", lambda port: "9.9.9")
+    mac.ensure_client_config(mac.PORT)
+    with pytest.raises(
+        mac.MacSetupError, match="re-run msks-setup-macos-host"
+    ):
         mac.check_rows(mac.PORT)
 
 
@@ -736,6 +848,7 @@ def test_the_check_only_entry_prints_rows(
         mac, "verify_daemon", lambda port, timeout_s=15.0: None
     )
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    monkeypatch.setattr(mac, "daemon_version", lambda port: mac.vm_version())
     # Path.home pinned: the check's port resolution reads the
     # VM's forward — a dev Mac's real ~/.lima/msksd must not
     # answer it.
@@ -774,6 +887,7 @@ def test_the_check_adopts_the_forward_too(
         mac, "verify_daemon", lambda port, timeout_s=15.0: None
     )
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    monkeypatch.setattr(mac, "daemon_version", lambda port: mac.vm_version())
     monkeypatch.setattr(mac.Path, "home", lambda: client_tree)
     write_forward(client_tree, 8661)
     mac.ensure_client_config(8661)
@@ -1190,6 +1304,7 @@ def test_the_check_refuses_when_the_agent_is_not_loaded(
         mac, "verify_daemon", lambda port, timeout_s=15.0: None
     )
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    monkeypatch.setattr(mac, "daemon_version", lambda port: mac.vm_version())
     mac.ensure_client_config(mac.PORT)
     procs.fail_output = {"launchctl print": "not loaded"}
     with pytest.raises(mac.MacSetupError, match="re-run"):

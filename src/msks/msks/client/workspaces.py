@@ -16,6 +16,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..spec.version import __version__
 from .context import call
 from .create import (
     checked_login_name,
@@ -26,6 +27,7 @@ from .create import (
 )
 from .env import env_token, env_url, is_unix, ssl_context
 from .resize import display_name, resize_message
+from .rest import fetch_health
 from .rest import fetch_ssh_key as rest_fetch_ssh_key
 from .tabular import listing_text
 from .tui.rows import clip
@@ -131,6 +133,45 @@ def stale_image_notice(expected: str, health: object) -> str | None:
         f"the expected reference is {Path(expected).name}; align "
         "them by restarting the daemon on the expected image"
     )
+
+
+def version_skew_notice(health: dict | None) -> str | None:
+    """The one-line version-skew notice (#706), or None. The
+    daemon's ``/health`` carries its build's version; a client
+    and daemon that ship from one wheel drift when one side is
+    updated alone (a ``pip install -U msks`` on the Mac, a stale
+    release inside the VM), and the skew otherwise surfaces one
+    feature at a time. Warn, never refuse — the pair ships from
+    one build, so equality is the norm and a refusal would need
+    a compat-floor policy this notice does not add. An unknown
+    side stays silent (a None health, a document without a
+    version word — a wrong host, a proxy)."""
+    theirs = health.get("version") if health else None
+    if not isinstance(theirs, str) or not theirs or theirs == __version__:
+        return None
+    return (
+        f"msks: the daemon runs {theirs}, this client is {__version__} "
+        "— rerun msks-setup-macos-host (on the Mac) to update the "
+        "daemon in the VM"
+    )
+
+
+def notice_daemon_version_skew(transport=None) -> None:
+    """Print the version-skew notice when the configured daemon
+    answers one (#706): one best-effort ``/health`` roundtrip per
+    invocation, every failure silent — the command's own call,
+    moments later, names an unreachable daemon better than a
+    probe could. ``transport`` is the tests' in-process seam."""
+    try:
+        url = env_url()
+        token = env_token()
+        ssl_ctx = None if is_unix(url) else ssl_context()
+    except SystemExit:
+        # No daemon configured: the command body names it itself.
+        return
+    health = asyncio.run(fetch_health(url, token, transport, ssl_ctx))
+    if notice := version_skew_notice(health):
+        print(notice, file=sys.stderr)
 
 
 def cmd_ls(as_json: bool = False, transport=None) -> int:
