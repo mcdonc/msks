@@ -71,8 +71,10 @@ ssh -fN -L 8660:127.0.0.1:8660 <linux-host>   # 8660 = the port file's
 
 A different local port works when 127.0.0.1:8660 is already
 spoken for — the Lima path below claims it too — by forwarding
-that port instead and exporting `MSKSC_URL` yourself (a value
-exported before entering the shell survives the preset).
+that port instead and re-pointing `MSKSC_URL` inside the shell:
+the state trio's preset wins over a value exported before entry
+(the `port` file gates it), so unset or override the variable
+after the shell opens.
 
 `msks console` reaches a running workspace from the Mac over the
 same trio. `msks ssh` and `msks rsync` additionally authenticate
