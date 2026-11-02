@@ -367,4 +367,6 @@ kernel boots deep into first boot, then stalls before ssh answers.
 
 **A development host** (this repository's checkout) runs the
 daemon through Nix and devenv; the [Development
-environment](development.md) chapter owns that path.
+environment](development.md) chapter owns that path. A Mac
+developing from a checkout has its own chapter — [Developing on a
+macOS host](development.md#developing-on-a-macos-host).

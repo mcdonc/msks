@@ -32,11 +32,14 @@ set -euo pipefail
 # The dev daemon is Linux-only by nature — it drives cloud-hypervisor
 # on /dev/kvm through the capability wrapper — and its first
 # dependency on a macOS host is an opaque `flock: command not found`.
-# Name the platform requirement instead (#665).
+# Name the platform requirement instead (#665), and point at the
+# macOS chapter that owns the two ways a Mac reaches a live daemon
+# (#707): the client over a tunnel to the Linux dev host, or the
+# product Lima host installed from a built wheel.
 case "$(uname -s)" in
 Linux) ;;
 *)
-  echo "msks-dev: the dev daemon runs on Linux (cloud-hypervisor on /dev/kvm); on macOS, point MSKSC_URL at a remote daemon instead" >&2
+  echo "msks-dev: the dev daemon runs on Linux (cloud-hypervisor on /dev/kvm); on macOS, see docs/development.md 'Developing on a macOS host' — point the client at a remote daemon, or run msks-setup-macos-host --wheel with a build in hand" >&2
   exit 1
   ;;
 esac

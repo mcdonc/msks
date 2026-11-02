@@ -251,7 +251,14 @@ in
   # lock — one daemon per catalog), and the egress subnet derives
   # from the port (a distinct private 10.x/16 each) so concurrent
   # instances allocate disjoint /30 pools.
-  processes = {
+  #
+  # The registration is Linux-only (#707), the same gate the
+  # linuxOnly set above uses: a macOS host cannot run the daemon,
+  # so `devenv processes up` there registers no processes at all
+  # instead of supervising the refusal into a restart loop. The
+  # msks-dev script below stays registered everywhere — its own
+  # uname gate names the development chapter on a Mac.
+  processes = lib.mkIf pkgs.stdenv.isLinux {
     # The dev-mode daemon as a managed foreground process (#231):
     # `devenv processes up` (no -d) runs it attached; the manager
     # supervises restarts and owns the graceful stop (grace below).
