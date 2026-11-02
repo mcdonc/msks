@@ -44,6 +44,20 @@ def test_main_version(capsys: pytest.CaptureFixture) -> None:
     assert __version__ in capsys.readouterr().out
 
 
+def test_the_tree_version_is_one_word() -> None:
+    """#704: the tree's two version spellings (pyproject and the
+    vocabulary leaf) are edited to the same word at release time —
+    a drift makes every release build uninstallable through the
+    setup tool, and the drift is load-bearing (the in-VM coherence
+    guard compares one against the other)."""
+    import tomllib
+    from pathlib import Path
+
+    pyproject = Path(__file__).resolve().parents[3] / "pyproject.toml"
+    version = tomllib.loads(pyproject.read_text())["project"]["version"]
+    assert version == __version__
+
+
 def test_serve_resolves_tls(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     monkeypatch.setattr(main_mod, "run_forever", lambda app: None)
     app = app_with(ServerSettings(db_path=tmp_path / "x.db"))

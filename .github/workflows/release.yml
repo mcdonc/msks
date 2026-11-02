@@ -68,6 +68,25 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: python scripts/release_notes.py "$TAG" > /dev/null
 
+      # The tag↔version gate, beside the changelog's (#704): a tag
+      # whose pyproject version disagrees — or still carries a
+      # .dev marker — would publish a wheel no one can install by
+      # name, so it refuses here, before the build.
+      - name: Refuse a tag whose version disagrees or is a dev build
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+
+          tag = os.environ["TAG"].lstrip("v")
+          with open("pyproject.toml", "rb") as handle:
+              version = tomllib.load(handle)["project"]["version"]
+          assert version == tag, f"tag {tag} != pyproject version {version}"
+          assert ".dev" not in version, f"{version} carries a dev marker"
+          PY
+
       - uses: actions/setup-python@v6
         with:
           python-version: "3.14"
