@@ -328,9 +328,17 @@ def test_the_bootstrap_guards_the_installed_pair() -> None:
     assert probe in script
     assert f'if [ "$installed" != "{mac.vm_version()}" ]' in script
     assert "not this" in script
-    assert "pass --wheel with a build of this tree" in script
+    # Both refusals carry the same remedy (#706 review): the
+    # config half fires in exactly the shape where the version
+    # half reads equal (a stale release under the same number).
+    assert script.count("pass --wheel") == 2
+    assert "can carry the same number" in script
+    # The plumbing the wording rides on (#706 review): the parse
+    # error's tail lands as the refusal's last stderr line.
+    assert "2>/tmp/msksd-config.err" in script
+    assert "$(tail -1 /tmp/msksd-config.err)" in script
     assert f"load_settings('{mac.VM_CONF}')" in script
-    assert "rejects the config this tool" in script
+    assert "config this tool" in script
     install = script.index("uv_bin pip install")
     version_guard = script.index(probe)
     config_guard = script.index("load_settings")
@@ -646,8 +654,8 @@ def test_daemon_version_refuses_a_wordless_or_dead_health(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A /health without a version word, or one that never
-    answers, refuses by name — the row cannot report the pair on
-    a maybe."""
+    answers, refuses by name with the rerun remedy — the row's
+    whole job is stale daemons."""
     monkeypatch.setattr(
         mac.urllib.request,
         "urlopen",
@@ -660,7 +668,7 @@ def test_daemon_version_refuses_a_wordless_or_dead_health(
         raise OSError("refused")
 
     monkeypatch.setattr(mac.urllib.request, "urlopen", dead)
-    with pytest.raises(mac.MacSetupError, match="did not answer"):
+    with pytest.raises(mac.MacSetupError, match="re-run"):
         mac.daemon_version(mac.PORT)
 
 

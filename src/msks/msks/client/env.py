@@ -29,6 +29,12 @@ from urllib.parse import quote, unquote
 
 from ..spec.sockets import find_default_socket, socket_candidates
 
+#: The unverified-mode warning's once-guard (#706 review): a
+#: process that builds two contexts (the skew probe beside a
+#: command body) warns once — the line names a posture, not an
+#: event.
+_WARNED_UNVERIFIED = False
+
 #: The URL scheme that carries a unix socket path (the curl
 #: convention: the path percent-encoded into the host position).
 UNIX_SCHEME = "http+unix://"
@@ -135,19 +141,26 @@ def ssl_context() -> ssl.SSLContext:
 
     The daemon's certificate is self-signed; pinning it with
     MSKSC_CAFILE gives verification, and without it the client
-    proceeds unverified with a warning to stderr. A leading ``~``
-    expands — the variable and the config file's ``cafile`` key
-    carry the same home-relative paths the state roots do. The
-    local listener (#555) never builds a context: the kernel
-    vouches for both ends of a unix socket.
+    proceeds unverified with a warning to stderr — once per
+    process (#706 review: the skew probe and a command body can
+    each build a context in one invocation; the warning names a
+    posture, not an event). A leading ``~`` expands — the
+    variable and the config file's ``cafile`` key carry the same
+    home-relative paths the state roots do. The local listener
+    (#555) never builds a context: the kernel vouches for both
+    ends of a unix socket.
     """
+    global _WARNED_UNVERIFIED
     cafile = os.path.expanduser(os.environ.get("MSKSC_CAFILE", ""))
     if cafile:
         return ssl.create_default_context(cafile=cafile)
-    print(
-        "msks: MSKSC_CAFILE not set; the daemon certificate is NOT verified",
-        file=sys.stderr,
-    )
+    if not _WARNED_UNVERIFIED:
+        print(
+            "msks: MSKSC_CAFILE not set; the daemon certificate "
+            "is NOT verified",
+            file=sys.stderr,
+        )
+        _WARNED_UNVERIFIED = True
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE

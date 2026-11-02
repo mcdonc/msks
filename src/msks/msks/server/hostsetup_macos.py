@@ -594,9 +594,10 @@ CONF
 parse_probe="from msks.config import load_settings; "
 parse_probe+="load_settings('{VM_CONF}')"
 if ! {VM_PREFIX}/bin/python -c "$parse_probe" 2>/tmp/msksd-config.err; then
-  echo "the daemon this bootstrap installed ($installed)" \
-    "rejects the config this tool ({vm_version()}) writes:" \
-    " $(tail -1 /tmp/msksd-config.err)" >&2
+  echo "the daemon this bootstrap installed ($installed) rejects" \
+    " the config this tool ({vm_version()}) writes (a stale" \
+    " release can carry the same number): pass --wheel with a" \
+    " build of this tree; $(tail -1 /tmp/msksd-config.err)" >&2
   exit 1
 fi
 cat >{VM_UNIT} <<'UNIT'
@@ -1042,8 +1043,8 @@ def daemon_version(port: int) -> str:
     except Exception as exc:
         raise MacSetupError(
             f"the daemon's /health did not answer through the "
-            f"forward ({exc}); the VM's journal names the cause "
-            f"(limactl shell {VM_NAME} -- sudo journalctl -u msksd -e)"
+            f"forward ({exc}); re-run {TOOL} to refresh the VM's "
+            "daemon"
         ) from None
     word = doc.get("version") if isinstance(doc, dict) else None
     if not isinstance(word, str) or not word:

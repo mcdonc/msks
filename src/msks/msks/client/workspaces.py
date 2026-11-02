@@ -156,20 +156,42 @@ def version_skew_notice(health: dict | None) -> str | None:
     )
 
 
+def dialed_health(transport) -> dict | None:
+    """The configured daemon's /health document, dialed on the
+    probe's budget — the raw dial whose every failure shape
+    :func:`probed_health` answers."""
+    url = env_url()
+    token = env_token()
+    ssl_ctx = None if is_unix(url) else ssl_context()
+    return asyncio.run(fetch_health(url, token, transport, ssl_ctx))
+
+
+def probed_health(transport) -> dict | None:
+    """One best-effort /health dial (#706): every failure answers
+    its own shape — no daemon configured is silence, a Ctrl-C is
+    the one-line interrupt the command bodies print (never
+    typer's silent 130 — the probe's connect window is exactly
+    when an impatient operator presses), and anything else the
+    probe touches (a broken MSKSC_CAFILE, a context that will
+    not build) is silence the command body's own first failure
+    names better."""
+    try:
+        return dialed_health(transport)
+    except SystemExit:
+        return None
+    except KeyboardInterrupt:
+        print("msks: interrupted", file=sys.stderr)
+        raise SystemExit(130) from None
+    except Exception:
+        return None
+
+
 def notice_daemon_version_skew(transport=None) -> None:
     """Print the version-skew notice when the configured daemon
     answers one (#706): one best-effort ``/health`` roundtrip per
-    invocation, every failure silent — the command's own call,
-    moments later, names an unreachable daemon better than a
-    probe could. ``transport`` is the tests' in-process seam."""
-    try:
-        url = env_url()
-        token = env_token()
-        ssl_ctx = None if is_unix(url) else ssl_context()
-    except SystemExit:
-        # No daemon configured: the command body names it itself.
-        return
-    health = asyncio.run(fetch_health(url, token, transport, ssl_ctx))
+    invocation on a probe-sized budget, every failure silent.
+    ``transport`` is the tests' in-process seam."""
+    health = probed_health(transport)
     if notice := version_skew_notice(health):
         print(notice, file=sys.stderr)
 

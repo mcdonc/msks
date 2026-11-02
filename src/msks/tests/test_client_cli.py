@@ -166,23 +166,90 @@ def test_notice_daemon_version_skew_prints_once(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """#706: the notice rides one best-effort roundtrip — a skew
-    prints the pair, an equal daemon prints nothing."""
+    prints the pair exactly once, an equal daemon prints
+    nothing."""
     client_env(monkeypatch)
     mine = workspaces.__version__
     skewed = mock(lambda req: httpx.Response(200, json={"version": "9.9.9"}))
     cli.notice_daemon_version_skew(transport=skewed)
-    assert "this client is" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert err.count("this client is") == 1
     equal = mock(lambda req: httpx.Response(200, json={"version": mine}))
     cli.notice_daemon_version_skew(transport=equal)
     assert "this client is" not in capsys.readouterr().err
+
+
+def test_the_probe_swallows_a_broken_cafile(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#706 review: a MSKSC_CAFILE naming a missing file made the
+    probe traceback out of the root callback (ssl_context raises
+    FileNotFoundError, not SystemExit) — the probe's every
+    failure is silence, and the command body names the break
+    itself."""
+    client_env(monkeypatch)
+    monkeypatch.setenv("MSKSC_CAFILE", "/no/such/ca.pem")
+    cli.notice_daemon_version_skew()
+    assert capsys.readouterr().err == ""
+
+
+def test_the_probe_answers_a_ctrl_c_with_the_interrupt_line(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#706 review: the probe sits outside every command body's
+    one_line_interrupts wrapper, and typer's own conversion is
+    the silent 130 the codebase refuses — the probe's window
+    answers the interrupt itself."""
+    client_env(monkeypatch)
+
+    async def interrupted(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(workspaces, "fetch_health", interrupted)
+    with pytest.raises(SystemExit) as raised:
+        cli.notice_daemon_version_skew()
+    assert raised.value.code == 130
+    assert "interrupted" in capsys.readouterr().err
+
+
+def test_the_probe_is_silent_without_a_configured_daemon(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unconfigured client (no URL, no socket) probes nothing
+    — the command body names the missing daemon itself."""
+    monkeypatch.delenv("MSKSC_URL", raising=False)
+    monkeypatch.delenv("MSKSC_SOCKET", raising=False)
+    cli.notice_daemon_version_skew()
+    assert capsys.readouterr().err == ""
+
+
+def test_the_unverified_warning_prints_once_per_process(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#706 review: the probe and a command body can each build a
+    context in one invocation — the posture warning names a
+    posture, not an event, so the second build stays quiet."""
+    from msks.client import env as env_mod
+    from msks.client.env import ssl_context
+
+    monkeypatch.delenv("MSKSC_CAFILE", raising=False)
+    monkeypatch.setattr(env_mod, "_WARNED_UNVERIFIED", False)
+    ssl_context()
+    ssl_context()
+    assert capsys.readouterr().err.count("NOT verified") == 1
 
 
 def test_the_root_callback_probes_only_on_a_real_dial(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """#706: the probe runs once per invocation on a real dial (no
-    in-process transport); the tests' transport seam is not a
-    deployment to compare against and skips it."""
+    in-process transport; the offline image group is exempt), and
+    the tests' transport seam is not a deployment to compare
+    against and skips it."""
     client_env(monkeypatch)
     probed = []
     monkeypatch.setattr(
@@ -198,6 +265,12 @@ def test_the_root_callback_probes_only_on_a_real_dial(
         transport=mock(lambda req: httpx.Response(200, json=KEY_BODY)),
     )
     assert probed == [True]
+    # The offline image group never dials for the probe — image
+    # check runs a child conformance process, and a configured
+    # but unreachable daemon must not stall it.
+    monkeypatch.setattr(cli, "cmd_image_ls", lambda *a, **k: 0)
+    rc = cli.main(["image", "ls"])
+    assert rc == 0 and probed == [True]
 
 
 def test_cmd_ls_aligns_columns(

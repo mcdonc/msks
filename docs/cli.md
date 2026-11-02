@@ -5,6 +5,14 @@ surface. It runs from any host that can reach the daemon (a dev box,
 a CI runner), and every command authenticates
 with the same bearer token the REST API uses.
 
+The client and the daemon ship from one wheel, and every
+invocation (the offline `image` group aside) makes one
+best-effort `/health` roundtrip: a daemon answering a different
+version than this client prints one stderr line naming both and
+the remedy — rerun `msks-setup-macos-host` on the Mac to update
+the daemon in the VM. Equal versions and every probe failure
+print nothing.
+
 The command set covers the operator loop:
 
 ```bash

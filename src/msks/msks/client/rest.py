@@ -34,12 +34,19 @@ STREAM_WINDOW_B = 1024 * 1024
 BOOT_WAIT_S = 120.0
 BOOT_POLL_S = 1.0
 
+# The best-effort probe's budget (#706): a probe-sized timeout —
+# connect and read both 5s, the discipline the setup tool's own
+# /health probe keeps — so a blackholed route never doubles a
+# command's failure latency by more than the probe's own window.
+PROBE_TIMEOUT = httpx.Timeout(connect=5.0, read=5.0, write=5.0, pool=5.0)
+
 
 def api_client(
     url: str,
     token: str | None,
     transport: httpx.AsyncBaseTransport | None = None,
     ssl_ctx: ssl.SSLContext | None = None,
+    timeout: httpx.Timeout = TIMEOUT,
 ) -> httpx.AsyncClient:
     """The authenticated client for one command.
 
@@ -61,19 +68,19 @@ def api_client(
             base_url=url,
             transport=transport,
             headers=headers,
-            timeout=TIMEOUT,
+            timeout=timeout,
         )
     if is_unix(url):
         return httpx.AsyncClient(
             base_url="http://unix",
             transport=httpx.AsyncHTTPTransport(uds=unix_path(url)),
             headers=headers,
-            timeout=TIMEOUT,
+            timeout=timeout,
         )
     return httpx.AsyncClient(
         base_url=url,
         headers=headers,
-        timeout=TIMEOUT,
+        timeout=timeout,
         verify=ssl_ctx if ssl_ctx is not None else ssl_context(),
     )
 
@@ -177,7 +184,9 @@ async def fetch_health(
     prints nothing (the command's own failure, when there is
     one, names the daemon better than a probe could)."""
     with contextlib.suppress(Exception, SystemExit):
-        async with api_client(url, token, transport, ssl_ctx) as client:
+        async with api_client(
+            url, token, transport, ssl_ctx, timeout=PROBE_TIMEOUT
+        ) as client:
             doc = await client.get("/api/v1/health")
             doc.raise_for_status()
             body = doc.json()
