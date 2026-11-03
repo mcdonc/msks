@@ -1413,7 +1413,7 @@ def client_side_rows(port: int) -> list[str]:
     return rows
 
 
-# --- phase 6: the client link (#719) ---------------------------------
+# --- phase 6: the client links (#719, #734) ------------------------------
 
 
 #: The client's console commands the link phase lands (#719,
@@ -1449,8 +1449,9 @@ def client_link_path(command: str) -> str:
     prefix = brewed_prefix()
     if not prefix:
         raise MacSetupError(
-            "brew did not answer `brew --prefix`; the client link "
-            "needs Homebrew (the tool installs Lima through it)"
+            f"brew did not answer `brew --prefix`; the {command} "
+            "client link needs Homebrew (the tool installs Lima "
+            "through it)"
         )
     return f"{prefix}/bin/{command}"
 
@@ -1614,7 +1615,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--uninstall",
         action="store_true",
         help="stop and delete the msksd VM, its login agent, and "
-        "the brew-prefix client link (Lima and the client config "
+        "the brew-prefix client links (Lima and the client config "
         "stay, and the summary names them)",
     )
     return parser.parse_args(argv)
