@@ -593,6 +593,33 @@ def test_a_missing_token_errors_before_network_activity(
         env_token()
 
 
+def test_an_unparsable_cafile_is_the_named_refusal(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A CA file that holds no certificate — the torn write the
+    macOS setup tool can leave behind (#732, #733) — refuses with
+    one named line instead of the ssl traceback the TUI's startup
+    raised before."""
+    bad = tmp_path / "ca.pem"
+    bad.write_text("-----BEGIN CERTIFICATE-----x\n")
+    clean_env(monkeypatch)
+    monkeypatch.setenv("MSKSC_CAFILE", str(bad))
+    with pytest.raises(SystemExit, match="holds no parsable"):
+        ssl_context()
+
+
+def test_a_missing_cafile_is_the_named_refusal(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A cafile naming a file that is not there takes the same
+    named refusal — the recovery line names the daemon's CA either
+    way."""
+    clean_env(monkeypatch)
+    monkeypatch.setenv("MSKSC_CAFILE", str(tmp_path / "nope.pem"))
+    with pytest.raises(SystemExit, match="is missing or holds"):
+        ssl_context()
+
+
 def test_the_cafile_expands_a_leading_tilde(
     tmp_path: Path, monkeypatch
 ) -> None:

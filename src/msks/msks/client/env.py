@@ -146,14 +146,27 @@ def ssl_context() -> ssl.SSLContext:
     each build a context in one invocation; the warning names a
     posture, not an event). A leading ``~`` expands — the
     variable and the config file's ``cafile`` key carry the same
-    home-relative paths the state roots do. The local listener
+    home-relative paths the state roots do. A CA file that is
+    missing or holds no parsable certificate (a torn write the
+    macOS setup tool can leave behind, #732) is the named
+    refusal pointing at the daemon's CA — never the ssl
+    traceback. The local listener
     (#555) never builds a context: the kernel vouches for both
     ends of a unix socket.
     """
     global _WARNED_UNVERIFIED
     cafile = os.path.expanduser(os.environ.get("MSKSC_CAFILE", ""))
     if cafile:
-        return ssl.create_default_context(cafile=cafile)
+        try:
+            return ssl.create_default_context(cafile=cafile)
+        except (ssl.SSLError, OSError) as exc:
+            raise SystemExit(
+                f"msks: the CA file {cafile} is missing or holds no "
+                f"parsable certificate ({exc}); point cafile / "
+                "MSKSC_CAFILE at the daemon's CA (msks-ca.pem in "
+                "its state dir; msks-setup-macos-host refreshes it "
+                "on a Mac)"
+            ) from exc
     if not _WARNED_UNVERIFIED:
         print(
             "msks: MSKSC_CAFILE not set; the daemon certificate "
