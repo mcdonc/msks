@@ -40,6 +40,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`msks-setup-macos-host` links `msks-term-popup` beside
+  `msks` (#734).** The brew prefix's bin dir carries both client
+  commands, so a consent-terminal window opened through an
+  `open`-launched terminal (Ghostty on macOS) resolves
+  `msks-term-popup` on the fresh login PATH the window runs
+  with. `--check` reports both links; `--uninstall` removes
+  both.
+
 - **`msks-setup-macos-host --cpus/--memory/--disk` size the msksd VM
   (#721).** The flags set the VM's CPUs, memory (GiB), and disk (GiB)
   at creation and on every re-run: changed values restart the VM

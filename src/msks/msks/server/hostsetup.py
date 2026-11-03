@@ -1122,7 +1122,7 @@ def relink_or_refuse(path: str, link: Path, sibling: str, error) -> str:
     if link_is_live(link):
         raise error(
             f"{path} is a link to {current}, not this tool's "
-            "msks; remove it and re-run"
+            "link; remove it and re-run"
         )
     link.unlink()  # dangling: stale by definition
     return place_link(path, sibling)

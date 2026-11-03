@@ -144,20 +144,21 @@ def client_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
         mac, "AGENT_PLIST", tmp_path / "LaunchAgents" / "agent.plist"
     )
     monkeypatch.setattr(mac, "AGENT_LOG", tmp_path / "Logs" / "agent.log")
-    # The client link's surfaces (#719): the brew-prefix path,
-    # the sibling, and the uninstall sweep's fallback dirs all
-    # relocate under tmp_path — a test run never reaches the
-    # host's brew prefix or /usr/local, and the link stands
-    # already-made so the check rows answer green.
+    # The client links' surfaces (#719, #734): the brew-prefix
+    # paths, the siblings, and the uninstall sweep's fallback
+    # dirs all relocate under tmp_path — a test run never
+    # reaches the host's brew prefix or /usr/local, and both
+    # links stand already-made so the check rows answer green.
     brew_bin = tmp_path / "brewbin"
     brew_bin.mkdir()
     sibling = brew_bin / "msks-sibling"
     sibling.write_text("#!/bin/sh\n")
-    (brew_bin / "msks").symlink_to(sibling)
+    for command in mac.CLIENT_COMMANDS:
+        (brew_bin / command).symlink_to(sibling)
     monkeypatch.setattr(
-        mac, "client_link_path", lambda: str(brew_bin / "msks")
+        mac, "client_link_path", lambda command: str(brew_bin / command)
     )
-    monkeypatch.setattr(mac, "client_sibling", lambda: str(sibling))
+    monkeypatch.setattr(mac, "client_sibling", lambda command: str(sibling))
     monkeypatch.setattr(
         mac,
         "FALLBACK_BREW_BINS",
@@ -1758,25 +1759,42 @@ def test_the_check_refuses_when_the_agent_is_not_loaded(
 def test_the_client_link_lands_idempotently(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """#719: the phase links msks into the brew prefix's bin —
-    fresh, then already-linked on the re-run; the dangling link
-    of a moved venv re-points instead of refusing."""
+    """#719/#734: the phase links every client command into the
+    brew prefix's bin — fresh, then already-linked on the
+    re-run; the dangling link of a moved venv re-points instead
+    of refusing."""
     brew_bin = tmp_path / "brew"
     brew_bin.mkdir()
-    sibling = tmp_path / "venv" / "msks"
-    sibling.parent.mkdir()
-    sibling.write_text("#!/bin/sh\n")
+    sibling = tmp_path / "venv" / "scripts"
+    sibling.mkdir(parents=True)
+    paths = {}
+    for command in mac.CLIENT_COMMANDS:
+        (sibling / command).write_text("#!/bin/sh\n")
+        paths[command] = brew_bin / command
     monkeypatch.setattr(
-        mac, "client_link_path", lambda: str(brew_bin / "msks")
+        mac, "client_link_path", lambda command: str(brew_bin / command)
     )
-    monkeypatch.setattr(mac, "client_sibling", lambda: str(sibling))
-    assert mac.link_client_mac() == f"{brew_bin / 'msks'} -> {sibling}"
-    assert (brew_bin / "msks").is_symlink()
-    assert mac.link_client_mac().endswith("(already linked)")
+    monkeypatch.setattr(
+        mac, "client_sibling", lambda command: str(sibling / command)
+    )
+    fresh = "; ".join(
+        f"{path} -> {sibling / command}" for command, path in paths.items()
+    )
+    assert mac.link_client_mac() == fresh
+    assert all(path.is_symlink() for path in paths.values())
+    assert mac.link_client_mac() == "; ".join(
+        f"{path} -> {sibling / command} (already linked)"
+        for command, path in paths.items()
+    )
     stale = tmp_path / "gone" / "msks"
-    (brew_bin / "msks").unlink()
-    (brew_bin / "msks").symlink_to(stale)
-    assert mac.link_client_mac() == f"{brew_bin / 'msks'} -> {sibling}"
+    (brew_bin / "msks-term-popup").unlink()
+    (brew_bin / "msks-term-popup").symlink_to(stale)
+    assert mac.link_client_mac() == "; ".join(
+        [
+            f"{paths['msks']} -> {sibling / 'msks'} (already linked)",
+            f"{paths['msks-term-popup']} -> {sibling / 'msks-term-popup'}",
+        ]
+    )
 
 
 def test_a_foreign_thing_at_the_client_link_refuses(
@@ -1784,16 +1802,19 @@ def test_a_foreign_thing_at_the_client_link_refuses(
 ) -> None:
     """A live link to another target and a regular file at the
     path both refuse by name — the run never clobbers what it did
-    not land."""
+    not land — for either command (#734)."""
     brew_bin = tmp_path / "brew"
     brew_bin.mkdir()
-    sibling = tmp_path / "venv" / "msks"
-    sibling.parent.mkdir()
-    sibling.write_text("#!/bin/sh\n")
+    sibling = tmp_path / "venv" / "scripts"
+    sibling.mkdir(parents=True)
+    for command in mac.CLIENT_COMMANDS:
+        (sibling / command).write_text("#!/bin/sh\n")
     monkeypatch.setattr(
-        mac, "client_link_path", lambda: str(brew_bin / "msks")
+        mac, "client_link_path", lambda command: str(brew_bin / command)
     )
-    monkeypatch.setattr(mac, "client_sibling", lambda: str(sibling))
+    monkeypatch.setattr(
+        mac, "client_sibling", lambda command: str(sibling / command)
+    )
     other = brew_bin / "my-own-msks"
     other.write_text("#!/bin/sh\n")
     (brew_bin / "msks").symlink_to(other)
@@ -1803,15 +1824,26 @@ def test_a_foreign_thing_at_the_client_link_refuses(
     (brew_bin / "msks").write_text("an operator's script\n")
     with pytest.raises(mac.MacSetupError, match="not this tool's link"):
         mac.link_client_mac()
+    # The popup command takes the same arms on its own path
+    # (#734): a regular file there refuses by name too.
+    (brew_bin / "msks").unlink()
+    (brew_bin / "msks").symlink_to(sibling / "msks")
+    (brew_bin / "msks-term-popup").write_text("an operator's script\n")
+    with pytest.raises(mac.MacSetupError, match="not this tool's link"):
+        mac.link_client_mac()
 
 
 def test_the_client_link_without_a_sibling_stands_down(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A deployment whose bin dir ships no msks beside the tool
-    skips the phase with the note."""
-    monkeypatch.setattr(mac, "client_sibling", lambda: None)
-    assert "skipped, no msks beside the tool" in mac.link_client_mac()
+    """A deployment whose bin dir ships a command's console
+    script nowhere beside the tool skips that command with the
+    note (#734: one command can stand down while its sibling
+    links)."""
+    monkeypatch.setattr(mac, "client_sibling", lambda command: None)
+    note = mac.link_client_mac()
+    for command in mac.CLIENT_COMMANDS:
+        assert f"skipped, no {command} beside the tool" in note
 
 
 def test_the_client_link_row_answers_green_and_refuses(
@@ -1819,32 +1851,42 @@ def test_the_client_link_row_answers_green_and_refuses(
     procs: FakeProcesses,
     tmp_path: Path,
 ) -> None:
-    """The --check row: green naming the path and its target, and
-    a missing link refuses with the re-run remedy. A brew that
-    will not answer names the Homebrew line."""
+    """The --check row: green naming each command's path and
+    target, a missing link refuses with the re-run remedy, and a
+    brew that will not answer names the Homebrew line. A
+    RELATIVE target — the shape brew's own bin links carry —
+    pins the liveness rule: the target resolves from the link's
+    directory, and a rule that resolves it against the process
+    CWD reads the live link missing (#720 review)."""
     brew_bin = tmp_path / "brew"
     brew_bin.mkdir()
     real_path = mac.client_link_path
-    target = brew_bin / "msks-sibling"
+    target = brew_bin / "sibling"
     target.write_text("#!/bin/sh\n")
-    (brew_bin / "msks").symlink_to(target)
-    # A RELATIVE target — the shape brew's own bin links carry —
-    # pins the liveness rule: the target resolves from the
-    # link's directory, and a rule that resolves it against the
-    # process CWD reads the live link missing (#720 review).
+    for command in mac.CLIENT_COMMANDS:
+        (brew_bin / command).symlink_to(target)
+    monkeypatch.setattr(
+        mac, "client_link_path", lambda command: str(brew_bin / command)
+    )
+    row = mac.client_link_row()
+    assert str(brew_bin / "msks") in row and "sibling" in row
+    assert str(brew_bin / "msks-term-popup") in row
     rel_dir = tmp_path / "rel"
     rel_dir.mkdir()
     (rel_dir / "sib").write_text("#!/bin/sh\n")
     (rel_dir / "msks").symlink_to("sib")
+    (rel_dir / "msks-term-popup").symlink_to("sib")
     monkeypatch.setattr(
-        mac, "client_link_path", lambda: str(brew_bin / "msks")
+        mac, "client_link_path", lambda command: str(rel_dir / command)
     )
     row = mac.client_link_row()
-    assert str(brew_bin / "msks") in row and "msks-sibling" in row
-    monkeypatch.setattr(mac, "client_link_path", lambda: str(rel_dir / "msks"))
-    assert "msks answers at" in mac.client_link_row()
+    assert "msks answers at" in row
+    assert "msks-term-popup answers at" in row
+    (rel_dir / "msks-term-popup").unlink()
+    with pytest.raises(mac.MacSetupError, match="re-run"):
+        mac.client_link_row()
     monkeypatch.setattr(
-        mac, "client_link_path", lambda: str(brew_bin / "msks")
+        mac, "client_link_path", lambda command: str(brew_bin / command)
     )
     (brew_bin / "msks").unlink()
     with pytest.raises(mac.MacSetupError, match="re-run"):
@@ -1860,20 +1902,26 @@ def test_the_uninstall_sweep_takes_the_link_without_brew(
 ) -> None:
     """The uninstall arm never requires brew (#701's lesson): a
     silent brew sweeps the fallback prefixes, an absent brew the
-    same, and a foreign regular file at the path stays."""
+    same, and a foreign regular file at a path stays. Both
+    links go in one sweep (#734); an install that landed only
+    one names it singular."""
     fb1 = tmp_path / "fb1"
     fb1.mkdir()
-    gone = tmp_path / "swept" / "msks"
-    (fb1 / "msks").symlink_to(gone)
+    gone = tmp_path / "swept" / "scripts"
+    for command in mac.CLIENT_COMMANDS:
+        (fb1 / command).symlink_to(gone / command)
     monkeypatch.setattr(mac, "FALLBACK_BREW_BINS", (str(fb1),))
+    assert mac.remove_client_link() == (
+        f"the client links {fb1 / 'msks'} and "
+        f"{fb1 / 'msks-term-popup'} are gone"
+    )
+    assert all(not (fb1 / command).exists() for command in mac.CLIENT_COMMANDS)
+    assert mac.remove_client_link() == "no client link found"
+    procs.absent.append("brew")
+    (fb1 / "msks").symlink_to(gone / "msks")
     assert (
         mac.remove_client_link() == f"the client link {fb1 / 'msks'} is gone"
     )
-    assert not (fb1 / "msks").exists()
-    assert mac.remove_client_link() == "no client link found"
-    procs.absent.append("brew")
-    (fb1 / "msks").symlink_to(gone)
-    assert "is gone" in mac.remove_client_link()
     (fb1 / "msks").write_text("an operator's script\n")
     assert mac.remove_client_link() == "no client link found"
     assert (fb1 / "msks").read_text() == "an operator's script\n"
@@ -1895,7 +1943,9 @@ def test_the_brewed_prefix_answers_and_falls_silent(
         mac, "run", lambda command, *, capture=False: f"{brewed}\n"
     )
     assert mac.brewed_prefix() == str(brewed)
-    assert mac.client_link_path() == f"{brewed}/bin/msks"
+    assert mac.client_link_path("msks-term-popup") == (
+        f"{brewed}/bin/msks-term-popup"
+    )
     assert (
         mac.remove_client_link()
         == f"the client link {bin_dir / 'msks'} is gone"
@@ -1908,28 +1958,36 @@ def test_the_brewed_prefix_answers_and_falls_silent(
 def test_the_client_sibling_reads_the_tool_s_bin(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The sibling is the msks beside the tool's own console
-    script; a bin dir without one answers None."""
+    """The sibling is the command's console script beside the
+    tool's own; a bin dir without one answers None, per command
+    (#734)."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "msks").write_text("#!/bin/sh\n")
     monkeypatch.setattr(mac.sys, "argv", [str(bin_dir / "the-tool")])
-    assert mac.client_sibling() == str(bin_dir / "msks")
+    assert mac.client_sibling("msks") == str(bin_dir / "msks")
+    assert mac.client_sibling("msks-term-popup") is None
     monkeypatch.setattr(
         mac.sys, "argv", [str(tmp_path / "elsewhere" / "the-tool")]
     )
-    assert mac.client_sibling() is None
+    assert mac.client_sibling("msks") is None
 
 
 def test_the_uninstall_closing_line_gates_on_the_note() -> None:
-    """Both arms of the closing print (#720 review): a sweep that
-    removed the link claims it gone, and a sweep that found
-    nothing names that in the parenthetical instead of claiming
-    a removal that did not happen."""
+    """Both arms of the closing print (#720 review): a sweep
+    that removed a link claims them gone — singular or plural
+    (#734) — and a sweep that found nothing names that in the
+    parenthetical instead of claiming a removal that did not
+    happen."""
     gone = mac.uninstall_closing_line("the client link /opt/brew/msks is gone")
-    assert "and the brew-prefix client link are gone" in gone
+    assert "and the brew-prefix client links are gone" in gone
     assert "no client link" not in gone
+    plural = mac.uninstall_closing_line(
+        "the client links /opt/brew/msks and /opt/brew/msks-term-popup "
+        "are gone"
+    )
+    assert "and the brew-prefix client links are gone" in plural
     found_none = mac.uninstall_closing_line("no client link found")
     assert "and its login agent are gone" in found_none
-    assert "brew-prefix client link are gone" not in found_none
+    assert "brew-prefix client links are gone" not in found_none
     assert "(no client link found)" in found_none
