@@ -23,6 +23,13 @@ from msks import persist
 
 WID = "ws-persist"
 
+#: The portable size probe the qemu-img stubs share: GNU stat's
+#: -c spelling first (the devenv shell and every Linux host), BSD
+#: stat's -f %z as the fallback (a stock macOS host — the macOS
+#: CI runner ships BSD stat, and an empty size would leave the
+#: info JSON unparsable).
+STAT_SIZE = '    size=$(stat -c %s "$img" 2>/dev/null || stat -f %z "$img")\n'
+
 
 def write_qemu_stub(directory: Path, record: Path) -> Path:
     """A recording qemu-img stand-in; answers info, fakes create.
@@ -38,8 +45,8 @@ def write_qemu_stub(directory: Path, record: Path) -> Path:
         'case "$1" in\n'
         "  info)\n"
         "    for img do :; done\n"
-        '    size=$(stat -c %s "$img")\n'
-        '    printf \'{"format":"raw","virtual-size":%s}\\n\' "$size"\n'
+        + STAT_SIZE
+        + '    printf \'{"format":"raw","virtual-size":%s}\\n\' "$size"\n'
         "    ;;\n"
         "  create)\n"
         "    shift\n"
@@ -226,8 +233,8 @@ async def test_failed_overlay_create_leaves_no_artifact(tools) -> None:
         'case "$1" in\n'
         "  info)\n"
         "    for img do :; done\n"
-        '    size=$(stat -c %s "$img")\n'
-        '    printf \'{"format":"raw","virtual-size":%s}\\n\' "$size"\n'
+        + STAT_SIZE
+        + '    printf \'{"format":"raw","virtual-size":%s}\\n\' "$size"\n'
         "    ;;\n"
         "  create)\n"
         "    shift\n"
