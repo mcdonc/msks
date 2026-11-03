@@ -163,8 +163,14 @@ async def write_draining(buffered, message: bytes) -> None:
     re-writing the message through the buffer would duplicate
     that prefix. A raising buffered flush keeps its bytes, so the
     drain of anything the buffer already holds is safe to retry.
-    A buffer with no fd behind it (the test doubles) cannot sit
-    in non-blocking mode; the plain path serves it."""
+    A buffer with no fd behind it cannot sit in non-blocking
+    mode; the plain path serves it. One conscious trade: a
+    consumer that opens and then never drains parks this write —
+    and the pump's detach (Ctrl-]) cannot fire mid-park, because
+    the write is awaited inline. That is exactly the hang a
+    blocking stdout would give the same wedged consumer, and the
+    alternative was the crash; a live terminal's burst parks for
+    milliseconds and the detach lands one round later."""
     loop = asyncio.get_running_loop()
     try:
         fd = buffered.fileno()
@@ -172,11 +178,11 @@ async def write_draining(buffered, message: bytes) -> None:
         buffered.write(message)
         buffered.flush()
         return
-    await flush_draining(buffered, loop, fd)
+    await flush_draining(buffered, fd, loop)
     await write_raw(fd, message, loop)
 
 
-async def flush_draining(buffered, loop, fd: int) -> None:
+async def flush_draining(buffered, fd: int, loop) -> None:
     """The buffer's own held bytes out first: a raising flush
     keeps them, so the retry lands them whole."""
     while True:

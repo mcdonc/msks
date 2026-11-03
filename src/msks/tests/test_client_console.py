@@ -259,8 +259,6 @@ async def test_write_draining_flushes_a_held_buffer_first() -> None:
     when EAGAIN arrives keeps them, and the retry lands them
     whole before the message's own raw write — verified against
     the same non-blocking pipe, held full by a stalled drainer."""
-    from msks.client.console import write_draining
-
     r, w = os.pipe()
     os.set_blocking(w, False)
     buffered = open(w, "wb", buffering=100)
@@ -283,7 +281,9 @@ async def test_write_draining_flushes_a_held_buffer_first() -> None:
     drainer = threading.Thread(target=drain)
     drainer.start()
     try:
-        await asyncio.wait_for(write_draining(buffered, b"msg"), timeout=30)
+        await asyncio.wait_for(
+            console.write_draining(buffered, b"msg"), timeout=30
+        )
     finally:
         buffered.close()  # closes the write end: the drainer exits
         drainer.join(timeout=30)
