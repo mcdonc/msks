@@ -1611,7 +1611,11 @@ def test_read_cmdline_reads_ps_argv_off_procfs(
         cmdline = local_mod.read_cmdline(child.pid)
         assert cmdline is not None
         fields = [f for f in cmdline.split(b"\0") if f]
-        assert fields[0].endswith(b"python3") or fields[0].endswith(b"python")
+        # ps reports the interpreter it sees: a plain build's
+        # python, or the python.org framework build's app-bundle
+        # executable (MacOS/Python — the shape the macOS CI
+        # runner's setup-python delivers; capital P, no suffix).
+        assert fields[0].endswith((b"python3", b"python", b"Python"))
         assert b"-c" in fields
         # ps joined the argv with spaces before the NUL re-join,
         # so the spaced argument arrives as fragments — the shape
