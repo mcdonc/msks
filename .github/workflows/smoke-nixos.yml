@@ -108,6 +108,17 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Free runner disk for the guest build
+        # The guest build peaks past 12 GB on / (the nix closure,
+        # the packed rootfs and archive, and their copies into
+        # the guest dir), and the stock runner image ships with
+        # toolchains this lane never runs. A first run after a
+        # guest-input change builds without a cache to restore —
+        # that is the run the stock disk could not hold (#723).
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          df -h /
+
       - name: Restore the built guest
         id: guest
         uses: actions/cache@v4
@@ -203,6 +214,13 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+
+      - name: Free runner disk for the guest build
+        # Same reclaim as the core job: a cache-miss run pays the
+        # full build here too.
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          df -h /
 
       - name: Restore the built guest
         id: guest
