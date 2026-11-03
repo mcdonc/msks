@@ -11,6 +11,8 @@ import os
 import ssl
 import sys
 import termios
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -190,6 +192,104 @@ async def test_pump_sends_input_and_detaches() -> None:
         await _cancel_orphans()
     assert ws.sent == [b"l"]
     assert stdout.buffer.getvalue() == b"prompt> "
+
+
+async def test_pump_waits_out_a_nonblocking_burst() -> None:
+    """The #725 shape, live pipes: the fallback console's stdout
+    fd sits in non-blocking mode when the boot log's burst
+    arrives, and the tty buffer fills mid-burst — the write and
+    its flush answer EAGAIN until a reader drains the pipe. The
+    pump waits for writability and retries; the session completes
+    with every byte landed, in order, none duplicated."""
+    r, w = os.pipe()
+    os.set_blocking(w, False)
+    buffered = open(w, "wb", buffering=4096)
+    stdout = io.TextIOWrapper(buffered)
+    # One chunk bigger than any pipe buffer: os.write takes it in
+    # pieces across EAGAIN waits, and the exact-content assertion
+    # pins the prefix-duplication trap (a buffered write that
+    # raises may already have taken a prefix — the raw path
+    # cannot).
+    chunks = [bytes([65 + i % 26]) * 4096 for i in range(64)] + [
+        bytes([90]) * 262144
+    ]
+    expected = b"".join(chunks)
+    assert len(expected) > 1 << 18  # outruns any pipe buffer
+    received = bytearray()
+
+    def drain() -> None:
+        # Hold the pipe full first: the writer provably meets
+        # EAGAIN and parks in wait-for-writability; the drain then
+        # releases it and the rest of the burst flows through.
+        time.sleep(0.3)
+        while True:
+            data = os.read(r, 65536)
+            if not data:  # the write end closed: the burst is whole
+                return
+            received.extend(data)
+
+    stdin = asyncio.StreamReader()
+
+    class LastThenEof(FakeWs):
+        """The queue empties exactly when the burst is written:
+        stdin's EOF detaches the pump then, deterministically —
+        never before the last message lands."""
+
+        async def recv(self):
+            if self._incoming:
+                return self._incoming.pop(0)
+            stdin.feed_eof()
+            await asyncio.sleep(3600)
+
+    drainer = threading.Thread(target=drain)
+    drainer.start()
+    ws = LastThenEof(incoming=chunks)
+    try:
+        await asyncio.wait_for(pump(stdin, ws, stdout), timeout=30)
+    finally:
+        await _cancel_orphans()
+        stdout.close()  # closes the write end: the drainer exits
+        drainer.join(timeout=30)
+        os.close(r)
+    assert bytes(received) == expected
+
+
+async def test_write_draining_flushes_a_held_buffer_first() -> None:
+    """The drain's first half: a buffer that already holds bytes
+    when EAGAIN arrives keeps them, and the retry lands them
+    whole before the message's own raw write — verified against
+    the same non-blocking pipe, held full by a stalled drainer."""
+    from msks.client.console import write_draining
+
+    r, w = os.pipe()
+    os.set_blocking(w, False)
+    buffered = open(w, "wb", buffering=100)
+    buffered.write(b"held")  # buffered, not yet flushed
+    try:
+        while True:
+            os.write(w, b"x" * 4096)
+    except BlockingIOError:
+        pass
+    received = bytearray()
+
+    def drain() -> None:
+        time.sleep(0.3)  # hold the pipe full: the flush meets EAGAIN
+        while True:
+            data = os.read(r, 65536)
+            if not data:
+                return
+            received.extend(data)
+
+    drainer = threading.Thread(target=drain)
+    drainer.start()
+    try:
+        await asyncio.wait_for(write_draining(buffered, b"msg"), timeout=30)
+    finally:
+        buffered.close()  # closes the write end: the drainer exits
+        drainer.join(timeout=30)
+        os.close(r)
+    payload = bytes(received).replace(b"x", b"")
+    assert payload == b"heldmsg"
 
 
 async def test_pump_coalesces_a_paste() -> None:
