@@ -489,7 +489,7 @@ def planned_changes(
     if current is None:
         config = Path.home() / ".lima" / name / "lima.yaml"
         raise MacSetupError(
-            f"the {VM_NAME} VM's current sizing could not be read "
+            f"the {name} VM's current sizing could not be read "
             f"({config}); the sizing flags need it — re-run without "
             "them, or inspect the file"
         )
