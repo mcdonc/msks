@@ -43,7 +43,9 @@ the other tools never see:
    starts msksd at boot.
 4. **The verify pass** — the daemon's TLS listener answers
    through the forward; the CA and the bootstrap token come back
-   out, the CA written under ``~/.config/msks/``.
+   out, the chain proven against the fetched CA before anything
+   is written (#733), and the CA written under
+   ``~/.config/msks/``.
 5. **The client config and the login agent** — ``msks.yaml`` itself
    (the client's own config tree): a daemon alias pointing a bare
    ``msks`` at the forward (``url``, ``token_file``, ``cafile`` —
@@ -910,16 +912,19 @@ def client_preset(port: int) -> str:
     shell can paste when it prefers them to the config. The CA
     fetch retries briefly: the restart this run's bootstrap just
     issued returns before the daemon's first startup writes the
-    file."""
+    file. The chain is proven against the in-memory CA before
+    any file lands (#733): a refusing run leaves the previous
+    CA, token, and config untouched, so client runs between the
+    refused setup and the re-run keep working."""
     ca = fetch_vm_file(f"{VM_STATE}/{CA_CERT}").strip()
     if not ca.startswith("-----BEGIN CERTIFICATE-----"):
         raise MacSetupError(
             "the daemon's CA did not come back from the VM (the "
             "daemon may still be generating it; re-run)"
         )
+    verify_chain(port, ca)
     MAC_CA.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     write_private(MAC_CA, ca + "\n")
-    verify_chain(port, ca)
     token = fetch_vm_file(f"{VM_STATE}/bootstrap-token").strip()
     write_private(MAC_TOKEN, token + "\n")
     status = ensure_client_config(port)

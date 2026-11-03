@@ -881,6 +881,25 @@ def test_a_missing_ca_retries_then_refuses(
         mac.client_preset(mac.PORT)
 
 
+def test_a_torn_ca_refuses_before_any_file_lands(
+    procs: FakeProcesses, client_tree: Path
+) -> None:
+    """#733: a torn read inside the daemon's write window — text
+    that parses far enough to pass the BEGIN guard but holds no
+    certificate — refuses before any file lands: the CA a
+    working client reads stays byte-for-byte, the token is never
+    written, and client runs keep working between the refused
+    setup and the re-run (the 29-byte shape observed live)."""
+    procs.vm = {"msks-ca.pem": "-----BEGIN CERTIFICATE-----x"}
+    mac.MAC_CA.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    mac.MAC_CA.write_text("the previous CA\n")
+    with pytest.raises(mac.MacSetupError, match="did not parse"):
+        mac.client_preset(mac.PORT)
+    assert mac.MAC_CA.read_text() == "the previous CA\n"
+    assert not mac.MAC_TOKEN.exists()
+    assert not Path(mac.default_config_path()).exists()
+
+
 # --- the check rows ---------------------------------------------------
 
 
