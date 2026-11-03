@@ -148,8 +148,8 @@ def ssl_context() -> ssl.SSLContext:
     variable and the config file's ``cafile`` key carry the same
     home-relative paths the state roots do. A CA file that is
     missing or holds no parsable certificate (a torn write the
-    macOS setup tool can leave behind, #732) is the named
-    refusal pointing at the daemon's CA — never the ssl
+    macOS setup tool can leave behind, #733) is the named
+    refusal pointing at the daemon's CA (#732) — never the ssl
     traceback. The local listener
     (#555) never builds a context: the kernel vouches for both
     ends of a unix socket.
