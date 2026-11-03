@@ -1,0 +1,138 @@
+# CI: the macOS release surface (#740).
+#
+# The client and msks-setup-macos-host ship to Mac users, and no
+# maintainer hand-verifies them between releases — this workflow
+# is that verification. The acceptance harness
+# (src/msks/tests/test_hostsetup_macos_acceptance.py) runs the
+# tool's phases for real on a disposable macOS runner: real TLS
+# against a local fake msksd, real launchd, the real brew
+# prefix, the real client config tree — faking exactly one seam,
+# vm_shell (limactl shell), the tool's only VM coupling.
+#
+# verify runs per-PR (path-filtered to the Mac surface) and on
+# main. drift is weekly plus manual: brew installs the current
+# Lima and the parsing expectations run against the real binary,
+# so upstream changes surface here instead of in a user's
+# terminal. The tag run lives in release.yml (macos-acceptance)
+# and installs the wheel the release just staged — the artifact
+# users install.
+#
+# What no GitHub runner can cover: the Lima VM itself. Apple's
+# VZ framework does not nest, and the arm64 runners are M1-class
+# chips — the tool's own nested-virtualization gate (#676)
+# refuses them by design. The first VM boot after a release
+# stays on the first real M3 Mac.
+name: macOS
+
+on:
+  pull_request:
+    paths:
+      - "src/msks/msks/client/**"
+      - "src/msks/msks/server/hostsetup_macos.py"
+      - "src/msks/msks/server/hostsetup.py"
+      - "src/msks/msks/server/tls.py"
+      - "src/msks/tests/test_hostsetup_macos*.py"
+      - ".github/workflows/macos.yml"
+      - "pyproject.toml"
+  push:
+    branches: [main]
+    paths:
+      - "src/msks/msks/client/**"
+      - "src/msks/msks/server/hostsetup_macos.py"
+      - "src/msks/msks/server/hostsetup.py"
+      - "src/msks/msks/server/tls.py"
+      - "src/msks/tests/test_hostsetup_macos*.py"
+      - ".github/workflows/macos.yml"
+      - "pyproject.toml"
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      # The probe (#740): every run records the runner's answers
+      # — the chip class (whether the #676 gate fires on the
+      # runner itself), the OS, the brew prefix, launchd's gui
+      # domain, limactl's presence — so a change in GitHub's
+      # runner image shows in the log before it shows in a test
+      # failure.
+      - name: Record the runner
+        run: |
+          sysctl -n machdep.cpu.brand_string
+          sw_vers
+          brew --prefix
+          if launchctl print "gui/$(id -u)" >/dev/null 2>&1; then
+            echo "launchd gui domain answers"
+          else
+            echo "launchd gui domain did not answer"
+          fi
+          command -v limactl || echo "limactl absent (the stock-runner shape)"
+
+      - name: Install
+        run: |
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet -e .
+          python -m pip install --quiet --group dev
+
+      # Plain pytest, no coverage gate: on darwin the suite runs
+      # under the platform skips (#691) — the same posture as a
+      # local Mac run.
+      - name: Unit tests
+        run: python -m pytest src/msks/tests --no-cov -n auto -q
+
+      - name: Acceptance harness
+        env:
+          MSKS_MACOS_ACCEPTANCE: "1"
+        run: >-
+          python -m pytest
+          src/msks/tests/test_hostsetup_macos_acceptance.py
+          --no-cov -v
+
+  drift:
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install
+        run: |
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet -e .
+          python -m pip install --quiet --group dev
+
+      # The current Lima release from brew: the parsing
+      # expectations (version word, floor, listing schema) then
+      # run against the real binary — the weekly drift answer.
+      - name: Install the current Lima
+        run: brew install lima
+
+      - name: Parsing against the real limactl
+        env:
+          MSKS_MACOS_ACCEPTANCE: "1"
+        run: >-
+          python -m pytest
+          src/msks/tests/test_hostsetup_macos_acceptance.py
+          --no-cov -v -k lima

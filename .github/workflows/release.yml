@@ -38,6 +38,11 @@
 #              built_from for every flavor — to the version
 #              release, so `msks image import <url>` pulls straight
 #              from the channel with no manual download.
+# 5. macos-acceptance — the release gate on the artifact Mac
+#              users install (#740): the wheel the wheel job just
+#              staged, installed on a real macOS runner, driving
+#              the acceptance harness. The tag's checkout supplies
+#              the tests; the wheel supplies the code.
 name: Release
 
 on:
@@ -184,6 +189,47 @@ jobs:
             --verify-tag \
             dist/* images.json \
             || gh release upload "$TAG" dist/* images.json --clobber
+
+  macos-acceptance:
+    # The release gate on the artifact users install (#740): the
+    # staged wheel, installed on a real macOS runner, driving the
+    # acceptance harness — the same one macos.yml runs per-PR,
+    # against the shipped code instead of the tree. The module
+    # runs from a copy outside the checkout: pytest would
+    # otherwise put the checkout's src/ first on sys.path, and the
+    # tree's code would shadow the wheel under test.
+    runs-on: macos-15
+    timeout-minutes: 30
+    needs: wheel
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Download the wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist/
+
+      - name: Install the wheel and the test runner
+        run: |
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet dist/*.whl pytest
+
+      # /tmp carries no pyproject: pytest runs with no addopts —
+      # no coverage flags ride along (the harness needs none).
+      - name: Acceptance harness against the installed wheel
+        env:
+          MSKS_MACOS_ACCEPTANCE: "1"
+        run: |
+          mkdir -p /tmp/acceptance
+          cp src/msks/tests/test_hostsetup_macos_acceptance.py \
+            /tmp/acceptance/
+          cd /tmp
+          python -m pytest acceptance/test_hostsetup_macos_acceptance.py -v
 
   images:
     strategy:
