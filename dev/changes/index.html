@@ -1297,13 +1297,25 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>The console session survives a burst on a non-blocking
+<li>
+<p><strong><code>msks-setup-macos-host</code> proves the daemon's CA before any
+  client file lands (#733).</strong> The verify pass checks the TLS
+  chain against the fetched CA before writing the CA, the
+  token, or the client config. A torn read of the daemon's CA
+  file (text that starts the PEM block but holds no
+  certificate) now refuses with the previous files untouched,
+  so client runs keep working between the refused setup and the
+  re-run.</p>
+</li>
+<li>
+<p><strong>The console session survives a burst on a non-blocking
   stdout (#725).</strong> The TUI's shell fallback streams the guest's
   boot console through stdout, and when the tty's fd sits in
   non-blocking mode the boot log's burst crashed the session on
   a flush that answered EAGAIN. The console's write path now
   waits for the tty to become writable and retries; the session
-  lands in the shell with every byte intact.</li>
+  lands in the shell with every byte intact.</p>
+</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
