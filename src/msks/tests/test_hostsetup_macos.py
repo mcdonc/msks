@@ -1535,7 +1535,13 @@ def test_the_config_write_policies(
         "daemons:\n" + entry + f"active_daemon: {mac.MANAGED_ALIAS}\n"
     )
     path.write_text(past_release)
-    assert "already points" in mac.ensure_client_config(mac.PORT)
+    status = mac.ensure_client_config(mac.PORT)
+    assert "already points" in status
+    # The preset's paste hint rides the "kept" prefix alone — an
+    # already-pointing file must not carry a hand-edit hint, so a
+    # future reword that reaches for "kept …" fails here (#730
+    # delta review).
+    assert not status.startswith("kept")
     assert path.read_text() == past_release
     # A file that will not load takes the kept arm's hand path —
     # the pointing check answers False, never a refusal.
