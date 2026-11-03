@@ -22,9 +22,10 @@ tagged `vX.Y.Z`.
   (#730).** The tool writes `~/.config/msks/msks.yaml` only when
   the file is missing; an existing file stays byte-for-byte,
   whatever wrote it, so operator edits survive every rerun. A
-  run whose config differs from what it would write (a changed
-  forwarded port, say) keeps the file and prints the alias entry
-  to paste; `--check`'s remedy names the same hand-edit path.
+  kept file whose active daemon still points at this daemon is
+  named as such; any other kept file gets the alias entry to
+  paste or update, and `--check`'s remedy names the same
+  hand-edit path.
 
 - **The forward stdio bridge and `home export -` write stdout
   through the EAGAIN-draining path (#728).** Both sinks now
