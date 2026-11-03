@@ -251,6 +251,12 @@ def test_the_probe_swallows_a_dial_failure(
     (#732: the broken-cafile silence moved to the SystemExit arm,
     so this pins the arm that stays)."""
     client_env(monkeypatch)
+    from msks.client import env as env_module
+
+    # The posture warning is ssl_context's own (#706), not the
+    # probe's — a fresh worker prints it once and this test pins
+    # the probe's silence alone.
+    monkeypatch.setattr(env_module, "_WARNED_UNVERIFIED", True)
 
     async def refused(*args, **kwargs):
         raise RuntimeError("dial refused")
