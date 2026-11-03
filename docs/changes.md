@@ -17,6 +17,11 @@ tagged `vX.Y.Z`.
   so client runs keep working between the refused setup and the
   re-run.
 
+- **A CA file that cannot load is a named refusal (#732).** A
+  `cafile` / `MSKSC_CAFILE` that points at a missing file or one
+  with no parsable certificate now prints one line naming the
+  daemon's CA file and where to copy it from. Previously the
+  client raised a raw `ssl.SSLError` traceback at startup.
 - **The console session survives a burst on a non-blocking
   stdout (#725).** The TUI's shell fallback streams the guest's
   boot console through stdout, and when the tty's fd sits in

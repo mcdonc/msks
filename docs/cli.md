@@ -108,7 +108,9 @@ well-known port could belong to any daemon.
 
 The daemon serves TLS with a self-signed certificate. Point
 `MSKSC_CAFILE` at the daemon's CA (`msks-ca.pem` under its state
-directory) and the client verifies the certificate chain. Without
+directory) and the client verifies the certificate chain. A
+`cafile` that is missing or holds no parsable certificate is a
+one-line refusal naming the daemon's CA file. Without
 `MSKSC_CAFILE` the client proceeds unverified and prints a warning to stderr on every invocation, the same
 trust-on-first-use posture as `msks console``, fine for a lab network and worth closing before
 anything real.

@@ -138,8 +138,9 @@ def test_ssl_context_cafile(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     cafile = tmp_path / "ca.pem"
     cafile.write_bytes(b"")
     monkeypatch.setenv("MSKSC_CAFILE", str(cafile))
-    with pytest.raises(ssl.SSLError):
-        # An empty pem fails to load: proof the file was used.
+    with pytest.raises(SystemExit, match="holds no parsable"):
+        # An empty pem fails to load — proof the file was used — and
+        # the refusal names it (#732) instead of the ssl traceback.
         console.ssl_context()
 
 

@@ -231,13 +231,37 @@ def test_the_probe_swallows_a_broken_cafile(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """#706 review: a MSKSC_CAFILE naming a missing file made the
-    probe traceback out of the root callback (ssl_context raises
-    FileNotFoundError, not SystemExit) — the probe's every
-    failure is silence, and the command body names the break
-    itself."""
+    """#706 review, #732: a MSKSC_CAFILE naming a missing file is
+    the named refusal ssl_context raises — the probe answers it
+    with the same silence as every failure, and the command body
+    names the break itself."""
     client_env(monkeypatch)
     monkeypatch.setenv("MSKSC_CAFILE", "/no/such/ca.pem")
+    cli.notice_daemon_version_skew()
+    assert capsys.readouterr().err == ""
+
+
+def test_the_probe_swallows_a_dial_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The probe's generic arm answers every failure the dial
+    itself raises (a transport error, an unparsable reply) with
+    silence — the command body meets the same break and names it
+    (#732: the broken-cafile silence moved to the SystemExit arm,
+    so this pins the arm that stays)."""
+    client_env(monkeypatch)
+    from msks.client import env as env_module
+
+    # The posture warning is ssl_context's own (#706), not the
+    # probe's — a fresh worker prints it once and this test pins
+    # the probe's silence alone.
+    monkeypatch.setattr(env_module, "_WARNED_UNVERIFIED", True)
+
+    async def refused(*args, **kwargs):
+        raise RuntimeError("dial refused")
+
+    monkeypatch.setattr(workspaces, "fetch_health", refused)
     cli.notice_daemon_version_skew()
     assert capsys.readouterr().err == ""
 
