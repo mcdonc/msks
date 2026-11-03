@@ -1212,7 +1212,7 @@ def test_the_check_pass_refuses_when_the_ca_never_lands(
     )
     procs.vm["msks-ca.pem"] = ""
     with pytest.raises(mac.MacSetupError, match="CA did not come back"):
-        mac.check_rows(mac.PORT)
+        mac.check_rows(mac.PORT, install=False)
 
 
 # --- the entry ---------------------------------------------------------
