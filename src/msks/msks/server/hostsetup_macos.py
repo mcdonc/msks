@@ -1373,15 +1373,19 @@ def run_setup(args: argparse.Namespace) -> str:
 def uninstall_closing_line(link_note: str) -> str:
     """The uninstall arm's closing print: the removal sentence
     gates on the link's note (#719 review) — a sweep that found
-    no link must not claim one gone."""
-    gone = (
-        f"the {VM_NAME} VM, its login agent, and the "
-        "brew-prefix client link are gone"
-        if "is gone" in link_note
-        else f"the {VM_NAME} VM and its login agent are gone"
-    )
+    no link says so in the parenthetical instead of claiming
+    one gone."""
+    if "is gone" in link_note:
+        return (
+            f"{TOOL}: the {VM_NAME} VM, its login agent, and the "
+            f"brew-prefix client link are gone. "
+            "Lima itself, the client config, and the CA and token "
+            "under ~/.config/msks/ stay; remove them by hand when "
+            "you want them gone."
+        )
     return (
-        f"{TOOL}: {gone} ({link_note}). "
+        f"{TOOL}: the {VM_NAME} VM and its login agent are gone "
+        f"({link_note}). "
         "Lima itself, the client config, and the CA and token "
         "under ~/.config/msks/ stay; remove them by hand when "
         "you want them gone."

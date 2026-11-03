@@ -1529,15 +1529,28 @@ def test_the_client_link_row_answers_green_and_refuses(
     will not answer names the Homebrew line."""
     brew_bin = tmp_path / "brew"
     brew_bin.mkdir()
+    real_path = mac.client_link_path
     target = brew_bin / "msks-sibling"
     target.write_text("#!/bin/sh\n")
     (brew_bin / "msks").symlink_to(target)
-    real_path = mac.client_link_path
+    # A RELATIVE target — the shape brew's own bin links carry —
+    # pins the liveness rule: the target resolves from the
+    # link's directory, and a rule that resolves it against the
+    # process CWD reads the live link missing (#720 review).
+    rel_dir = tmp_path / "rel"
+    rel_dir.mkdir()
+    (rel_dir / "sib").write_text("#!/bin/sh\n")
+    (rel_dir / "msks").symlink_to("sib")
     monkeypatch.setattr(
         mac, "client_link_path", lambda: str(brew_bin / "msks")
     )
     row = mac.client_link_row()
     assert str(brew_bin / "msks") in row and "msks-sibling" in row
+    monkeypatch.setattr(mac, "client_link_path", lambda: str(rel_dir / "msks"))
+    assert "msks answers at" in mac.client_link_row()
+    monkeypatch.setattr(
+        mac, "client_link_path", lambda: str(brew_bin / "msks")
+    )
     (brew_bin / "msks").unlink()
     with pytest.raises(mac.MacSetupError, match="re-run"):
         mac.client_link_row()
@@ -1611,3 +1624,17 @@ def test_the_client_sibling_reads_the_tool_s_bin(
         mac.sys, "argv", [str(tmp_path / "elsewhere" / "the-tool")]
     )
     assert mac.client_sibling() is None
+
+
+def test_the_uninstall_closing_line_gates_on_the_note() -> None:
+    """Both arms of the closing print (#720 review): a sweep that
+    removed the link claims it gone, and a sweep that found
+    nothing names that in the parenthetical instead of claiming
+    a removal that did not happen."""
+    gone = mac.uninstall_closing_line("the client link /opt/brew/msks is gone")
+    assert "and the brew-prefix client link are gone" in gone
+    assert "no client link" not in gone
+    found_none = mac.uninstall_closing_line("no client link found")
+    assert "and its login agent are gone" in found_none
+    assert "brew-prefix client link are gone" not in found_none
+    assert "(no client link found)" in found_none

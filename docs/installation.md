@@ -172,8 +172,8 @@ removes it.
 binaries can be found.
 
 The run ends with a summary: the wrapper and its caps, the sysctl, the modules
-file and the consent verdict, the tools' paths, `/dev/kvm`, the detected
-uplink, the client link, and the service line.
+file, the tools' paths, `/dev/kvm`, the login PATH block, the client link, the
+consent verdict, the detected uplink, and the service line.
 
 You will need to log out and back in for `msksd doctor` to return clean after
 using the host installer.
