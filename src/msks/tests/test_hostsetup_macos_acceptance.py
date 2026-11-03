@@ -21,7 +21,8 @@ The LaunchAgent test runs under its own label, never the real
 tool's: a disposable host cannot have a real agent under
 ``com.msks.msksd-vm``, and a developer machine that does stays
 untouched. The brew-prefix link test stands down the same way
-when any file already holds the path.
+when any file already holds a path the claim or the uninstall
+sweep would touch.
 """
 
 import http.server
@@ -247,7 +248,6 @@ def test_the_verify_pass_holds_against_a_real_listener(
 
 def test_a_mismatched_vm_ca_refuses_before_any_file_lands(
     daemon: FakeDaemon,
-    vm_seam: FakeDaemon,
     client_tree: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -300,9 +300,10 @@ def test_client_preset_lands_the_real_client_files(
     assert entry["token_file"] == str(mac.MAC_TOKEN)
     assert entry["cafile"] == str(mac.MAC_CA)
     assert doc["active_daemon"] == mac.MANAGED_ALIAS
-    # The rerun is the idempotent no-op: every file stands with
-    # its bytes and its mode exactly as the first run left
-    # them.
+    # The rerun leaves every client file unchanged — bytes and
+    # mode exactly as the first run left them (the
+    # operator-visible contract; whether the writes happened
+    # again underneath is not observable and not asserted).
     ca_bytes = mac.MAC_CA.read_bytes()
     token_bytes = mac.MAC_TOKEN.read_bytes()
     config_bytes = config.read_bytes()

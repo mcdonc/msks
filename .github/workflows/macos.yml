@@ -151,9 +151,9 @@ jobs:
       # carries at least one instance (a dev Mac); the weekly
       # runner carries none, and standing up a throwaway VM just
       # to populate the listing would cost a full image download
-      # every week — the version-word and CLI-behavior arms are
-      # the weekly surface, the schema arm rides every dev Mac
-      # run of the harness.
+      # every week — the version word and the floor are the
+      # weekly surface, the schema arm rides every dev Mac run
+      # of the harness.
       - name: Install the current Lima
         run: brew install lima
 
