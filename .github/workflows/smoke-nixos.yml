@@ -108,17 +108,6 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Free runner disk for the guest build
-        # The guest build peaks past 12 GB on / (the nix closure,
-        # the packed rootfs and archive, and their copies into
-        # the guest dir), and the stock runner image ships with
-        # toolchains this lane never runs. A first run after a
-        # guest-input change builds without a cache to restore —
-        # that is the run the stock disk could not hold (#723).
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
-          df -h /
-
       - name: Restore the built guest
         id: guest
         uses: actions/cache@v4
@@ -131,6 +120,19 @@ jobs:
           # hashFiles call lives here, at step level, because a
           # workflow-level env evaluates before checkout.
           key: smoke-nixos-guest-${{ runner.arch }}-${{ hashFiles('devenv.lock', 'scripts/build-guest.sh', 'nix/guest.nix', 'nix/guest-nixos.nix', 'nix/guest-nixos-configuration.nix', 'nix/image-archive.nix', 'nix/agent-toolchain.nix', 'nix/guest-pi-extension.ts', 'nix/guest-pi-settings.json', 'nix/pi-shrinkwrap-patch.py', 'nix/pi-shrinkwrap-integrity.json', 'pyproject.toml', 'README.md', 'src/msks/msks/**') }}
+
+      - name: Free runner disk for the guest build
+        # The guest build peaks past 12 GB on / (the nix closure,
+        # the packed rootfs and archive, and their copies into
+        # the guest dir), and the stock runner image ships with
+        # toolchains this lane never runs — a cache-miss run pays
+        # the full build, and that is the run the stock disk
+        # could not hold (#723). A restored cache skips the
+        # build, so the reclaim stays behind the same guard.
+        if: steps.guest.outputs.cache-hit != 'true'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          df -h /
 
       - name: Build the NixOS guest assets
         if: steps.guest.outputs.cache-hit != 'true'
@@ -215,13 +217,6 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Free runner disk for the guest build
-        # Same reclaim as the core job: a cache-miss run pays the
-        # full build here too.
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
-          df -h /
-
       - name: Restore the built guest
         id: guest
         uses: actions/cache@v4
@@ -230,6 +225,19 @@ jobs:
           # The same key the core job hashes: one guest build per
           # input set, restored by whichever job lands on it.
           key: smoke-nixos-guest-${{ runner.arch }}-${{ hashFiles('devenv.lock', 'scripts/build-guest.sh', 'nix/guest.nix', 'nix/guest-nixos.nix', 'nix/guest-nixos-configuration.nix', 'nix/image-archive.nix', 'nix/agent-toolchain.nix', 'nix/guest-pi-extension.ts', 'nix/guest-pi-settings.json', 'nix/pi-shrinkwrap-patch.py', 'nix/pi-shrinkwrap-integrity.json', 'pyproject.toml', 'README.md', 'src/msks/msks/**') }}
+
+      - name: Free runner disk for the guest build
+        # The guest build peaks past 12 GB on / (the nix closure,
+        # the packed rootfs and archive, and their copies into
+        # the guest dir), and the stock runner image ships with
+        # toolchains this lane never runs — a cache-miss run pays
+        # the full build, and that is the run the stock disk
+        # could not hold (#723). A restored cache skips the
+        # build, so the reclaim stays behind the same guard.
+        if: steps.guest.outputs.cache-hit != 'true'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          df -h /
 
       - name: Build the NixOS guest assets
         if: steps.guest.outputs.cache-hit != 'true'
