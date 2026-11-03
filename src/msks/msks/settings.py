@@ -28,7 +28,12 @@ from ipaddress import IPv4Network
 from pathlib import Path
 
 from .spec.egress import EGRESS_MODES, MODE_ALLOW
-from .spec.mounts import HOST_MODE_IDENTITY, HOST_MODES, canonical_host_path
+from .spec.mounts import (
+    HOST_MODE_IDENTITY,
+    HOST_MODE_PREFIX,
+    HOST_MODES,
+    canonical_host_path,
+)
 from .spec.tokens import validate_token_plaintext
 
 VALID_DRIVERS = ("local",)
@@ -388,6 +393,23 @@ class MountSettings:
 
     host_mode: str = HOST_MODE_IDENTITY
     host_roots: tuple[str, ...] = ()
+
+    @property
+    def disk_grow_hint(self) -> str:
+        """The low-disk messages' Mac lever (#721): the grow
+        command a prefix-mode daemon answers its storage warning
+        and floor refusal with — the host that mounted the
+        reserved prefix is the Mac the setup tool runs on. A
+        bare-Linux daemon (identity mode) answers the empty
+        hint: its state disk grows by the host's own means, a
+        bigger mount under the state dir."""
+        if self.host_mode != HOST_MODE_PREFIX:
+            return ""
+        return (
+            "; grow the VM's disk on the Mac instead "
+            "(msks-setup-macos-host --disk 200 — the disk only "
+            "grows, and the VM restarts)"
+        )
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> MountSettings:

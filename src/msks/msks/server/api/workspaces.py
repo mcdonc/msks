@@ -89,8 +89,13 @@ def router(app) -> APIRouter:
         workspace_id = await mint_workspace_id(app.state.model)
         # The state-disk floor (#184): a create below it is the #180
         # failure mode in the making, so it answers a named 507 with
-        # the reclaim path spelled out instead of wedging later.
-        refusal = create_refusal(app.state.settings.vmm)
+        # the reclaim path spelled out instead of wedging later —
+        # and, on a VM-hosted daemon, the Mac's grow command beside
+        # it (#721).
+        mounts = app.state.settings.mounts
+        refusal = create_refusal(
+            app.state.settings.vmm, grow_hint=mounts.disk_grow_hint
+        )
         if refusal is not None:
             raise HTTPException(status_code=507, detail=refusal)
         boot = resolve_boot(app, body, workspace_id)

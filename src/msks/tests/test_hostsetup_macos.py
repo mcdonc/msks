@@ -97,6 +97,20 @@ def write_forward(home: Path, host_port: int) -> None:
     )
 
 
+def write_sizing(home: Path, host_port: int, sizing: str = "") -> None:
+    """The instance config with the sizing lines beside the
+    forward — the file ``instance_shape`` reads (#721); the
+    defaults mirror the shipped template's own three lines."""
+    body = sizing or "cpus: 4\nmemory: 8GiB\ndisk: 60GiB\n"
+    lima = home / ".lima" / mac.VM_NAME
+    lima.mkdir(parents=True, exist_ok=True)
+    (lima / "lima.yaml").write_text(
+        body + f"portForwards:\n- guestPort: {mac.VM_PORT}\n"
+        '  guestIP: "127.0.0.1"'
+        f"\n  hostPort: {host_port}\n"
+    )
+
+
 @pytest.fixture
 def procs(monkeypatch: pytest.MonkeyPatch) -> FakeProcesses:
     fake = FakeProcesses()
@@ -302,6 +316,184 @@ def test_the_vm_is_created_started_or_left_alone(
             assert not starts
         else:
             assert starts
+
+
+# --- the sizing flags (#721) -----------------------------------------
+
+
+def test_the_instance_config_renders_the_flagged_sizing() -> None:
+    """The flags render over the template's own three lines at
+    creation — the forward still appends after them."""
+    document = mac.instance_yaml(
+        mac.PORT, {"cpus": 8, "memory": 16, "disk": 200}
+    )
+    assert "cpus: 8" in document
+    assert "memory: 16GiB" in document
+    assert "disk: 200GiB" in document
+    assert "cpus: 4" not in document
+    assert "disk: 60GiB" not in document
+    assert f"guestPort: {mac.VM_PORT}" in document
+
+
+def test_creation_carries_the_flagged_sizing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The create branch renders the flagged sizing into the
+    instance config limactl starts from."""
+
+    class Reading(FakeProcesses):
+        def __init__(self):
+            super().__init__()
+            self.rendered = ""
+
+        def _run(self, command, **kwargs):
+            out = super()._run(command, **kwargs)
+            if command[:2] == ["limactl", "start"] and len(command) == 5:
+                self.rendered = Path(command[4]).read_text()
+            return out
+
+    reading = Reading().install(monkeypatch)
+    monkeypatch.setattr(mac, "say", lambda _message: None)
+    monkeypatch.setattr(mac.Path, "home", lambda: tmp_path)
+    reading.listing = ""
+    assert mac.ensure_vm(shape={"disk": 200}) == mac.PORT
+    assert "disk: 200GiB" in reading.rendered
+
+
+@pytest.mark.parametrize(
+    "flag,value,floor",
+    [("--cpus", 1, 2), ("--memory", 3, 4), ("--disk", 19, 20)],
+)
+def test_below_floor_flags_refuse_by_name(
+    flag: str, value: int, floor: int
+) -> None:
+    """The floors refuse at validation time — before the host
+    check, the install, or the VM — naming the floor and the
+    flag's own value."""
+    args = mac.parse_args([flag, str(value)])
+    with pytest.raises(mac.MacSetupError) as raised:
+        mac.validate_shape(mac.shape_from_args(args))
+    assert str(floor) in str(raised.value)
+    assert str(value) in str(raised.value)
+
+
+def test_the_floors_check_every_flag_in_one_run() -> None:
+    """A run carrying several flags checks them all: the passing
+    ones fall through, and the first one below its floor refuses
+    with that flag's own floor."""
+    args = mac.parse_args(["--cpus", "8", "--memory", "3"])
+    with pytest.raises(mac.MacSetupError, match="--memory 3"):
+        mac.validate_shape(mac.shape_from_args(args))
+
+
+def test_a_rerun_with_equal_values_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, tmp_path: Path
+) -> None:
+    """The no-op: flags equal to the instance's own sizing run no
+    stop, edit, or start — safe in scripts and in cron."""
+    says = []
+    monkeypatch.setattr(mac, "say", says.append)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(mac.Path, "home", lambda: home)
+    write_sizing(home, 8661)
+    procs.listing = '[{"name":"msksd","status":"Running"}]'
+    assert mac.ensure_vm() == 8661
+    assert mac.ensure_vm(shape={"cpus": 4, "memory": 8, "disk": 60}) == 8661
+    assert not [c for c in procs.calls if c[1] in ("stop", "edit", "start")]
+
+
+def test_a_changed_value_stops_edits_and_starts(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, tmp_path: Path
+) -> None:
+    """A changed value stops the running VM, edits the instance
+    with only the changed flags, and starts it again — the say
+    line names the restart's workspace consequence."""
+    says = []
+    monkeypatch.setattr(mac, "say", says.append)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(mac.Path, "home", lambda: home)
+    write_sizing(home, 8661)
+    procs.listing = '[{"name":"msksd","status":"Running"}]'
+    assert mac.ensure_vm(shape={"cpus": 8, "memory": 8, "disk": 200}) == 8661
+    assert [c for c in procs.calls if c[:2] == ["limactl", "edit"]] == [
+        ["limactl", "edit", "msksd", "--cpus", "8", "--disk", "200"]
+    ]
+    verbs = [c[1] for c in procs.calls if c[0] == "limactl"]
+    assert verbs.index("stop") < verbs.index("edit") < verbs.index("start")
+    assert any("restarts" in message for message in says)
+
+
+def test_a_stopped_vm_skips_the_stop(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, tmp_path: Path
+) -> None:
+    """A stopped VM takes the edit and the start without the
+    stop — there is nothing to stop."""
+    monkeypatch.setattr(mac, "say", lambda _message: None)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(mac.Path, "home", lambda: home)
+    write_sizing(home, 8661)
+    procs.listing = '[{"name":"msksd","status":"Stopped"}]'
+    assert mac.ensure_vm(shape={"disk": 200}) == 8661
+    assert not [c for c in procs.calls if c[1] == "stop"]
+    assert [c for c in procs.calls if c[1] == "edit"]
+    assert [c for c in procs.calls if c[1] == "start"]
+
+
+def test_a_disk_shrink_refuses_naming_both_sizes(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, tmp_path: Path
+) -> None:
+    """The disk only grows: a smaller value refuses naming the
+    current and the requested sizes, with the reclaim remedy —
+    never a stop or an edit."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(mac.Path, "home", lambda: home)
+    write_sizing(home, 8661)
+    procs.listing = '[{"name":"msksd","status":"Running"}]'
+    with pytest.raises(mac.MacSetupError, match="60 GiB") as raised:
+        mac.ensure_vm(shape={"disk": 40})
+    assert "40" in str(raised.value)
+    assert "msks storage" in str(raised.value)
+    assert not [c for c in procs.calls if c[1] in ("stop", "edit")]
+
+
+def test_shape_flags_without_a_readable_sizing_refuse(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, tmp_path: Path
+) -> None:
+    """A rerun's flags need the instance's own sizing (the
+    grow-only rule reads it); a config without the sizing lines
+    refuses naming the file instead of guessing."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(mac.Path, "home", lambda: home)
+    write_forward(home, 8661)  # the forward, none of the sizing lines
+    procs.listing = '[{"name":"msksd","status":"Running"}]'
+    with pytest.raises(mac.MacSetupError, match="lima.yaml"):
+        mac.ensure_vm(shape={"cpus": 8})
+
+
+def test_shape_flags_without_an_instance_config_refuse(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, tmp_path: Path
+) -> None:
+    """A home without the instance config at all — the unreadable
+    read — refuses the same way, never a traceback."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(mac.Path, "home", lambda: home)  # no .lima tree
+    procs.listing = '[{"name":"msksd","status":"Running"}]'
+    with pytest.raises(mac.MacSetupError, match="could not be read"):
+        mac.ensure_vm(shape={"memory": 16})
+
+
+def test_the_read_only_passes_refuse_the_sizing_flags(capsys) -> None:
+    """--check and --uninstall mutate nothing; a sizing flag on
+    either is the named refusal, before any phase runs."""
+    assert mac.main(["--check", "--disk", "200"]) == 1
+    assert mac.main(["--uninstall", "--memory", "16"]) == 1
+    assert "sizing flags" in capsys.readouterr().err
 
 
 # --- the bootstrap ----------------------------------------------------

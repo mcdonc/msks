@@ -533,3 +533,16 @@ def test_vmm_from_env_routes_virtiofsd_through_the_resolver(
     explicit = VmmSettings.from_env({"MSKSD_VIRTIOFSD": "/opt/mine"})
     assert explicit.virtiofsd == "/resolved/virtiofsd"
     assert seen == ["virtiofsd", "/opt/mine"]
+
+
+def test_disk_grow_hint_follows_the_host_mode() -> None:
+    """#721: the prefix mode (the Lima/macOS host) carries the
+    Mac's grow command for the low-disk messages; the bare-Linux
+    identity mode carries the empty hint — its state disk grows
+    by the host's own means."""
+    from msks.settings import MountSettings
+    from msks.spec.mounts import HOST_MODE_PREFIX
+
+    hinted = MountSettings(host_mode=HOST_MODE_PREFIX).disk_grow_hint
+    assert "msks-setup-macos-host --disk" in hinted
+    assert MountSettings().disk_grow_hint == ""

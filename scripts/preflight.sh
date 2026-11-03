@@ -146,13 +146,16 @@ changed_all=$(
 # Alembic loads the migration tree (env.py and the version files)
 # by exec, outside the import system, so the suite's coverage never
 # measures them — the same blindness CI's fail-under gate has. They
-# stay out of the covgaps list instead of failing as "never measured".
+# stay out of the covgaps list instead of failing as "never measured",
+# and so do non-Python assets (the Lima template, #721): coverage
+# records .py files only, so an asset can never appear as measured.
 backend=()
 while IFS= read -r f; do
   backend+=("$f")
 done < <(
   printf '%s\n' "$changed_all" |
     grep '^src/msks/msks/' |
+    grep '\.py$' |
     grep -v '^src/msks/msks/migrations/' || true
 )
 

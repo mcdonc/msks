@@ -138,15 +138,23 @@ async def publish_pressure(
     return True
 
 
-def pressure_warning(pressure: str, usage: dict | None, vmm) -> str | None:
-    """The named log line for a disk past its thresholds, or None."""
+def pressure_warning(
+    pressure: str, usage: dict | None, vmm, grow_hint: str = ""
+) -> str | None:
+    """The named log line for a disk past its thresholds, or None.
+
+    ``grow_hint`` (#721) appends the VM-hosted daemon's own lever
+    — the Mac's grow command, from the mount settings' ``
+    disk_grow_hint``; a bare-Linux daemon passes the empty string.
+    """
     if pressure not in ("warn", "critical"):
         return None
     free_mib = max((usage or {}).get("free", 0) // MIB, 0)
     return (
         f"state disk pressure is {pressure}: {free_mib} MiB free "
         f"(warn past {vmm.storage_warn_pct}% used, floor "
-        f"{vmm.storage_floor_mib} MiB); msks storage names the consumers"
+        f"{vmm.storage_floor_mib} MiB); msks storage names the "
+        f"consumers{grow_hint}"
     )
 
 
@@ -165,7 +173,9 @@ async def scan_storage(app, hub: EventHub) -> bool:
         return False
     app.state.storage_pressure = pressure
     announced = await publish_pressure(hub, previous, pressure, usage)
-    if notice := pressure_warning(pressure, usage, vmm):
+    if notice := pressure_warning(
+        pressure, usage, vmm, app.state.settings.mounts.disk_grow_hint
+    ):
         LOG.warning("%s", notice)
     return announced
 

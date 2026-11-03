@@ -369,6 +369,28 @@ prefix and forwards each attached share to the workspace that
 asked for it — see the [mounts chapter's macOS
 section](mounts.md#shares-on-a-macos-host).
 
+### Sizing the msksd VM
+
+The VM starts at the template's sizing — 4 CPUs, 8 GiB of memory, a
+60 GiB disk — and the sizing flags change it at creation and on every
+re-run:
+
+```sh
+msks-setup-macos-host --cpus 8 --memory 16 --disk 200
+```
+
+A changed value stops the VM, edits its instance, and starts it again:
+running workspaces stop through their normal shutdown cycle and come
+back on the next start. Equal values change nothing, so the command is
+safe to re-run in scripts. The disk only grows: a smaller value refuses,
+naming both sizes — reclaim space with `msks storage` instead. The disk
+is sparse, so it fills on demand up to the size you set. The floors are
+2 CPUs, 4 GiB of memory, and 20 GiB of disk: the VM must hold the daemon
+and a workspace.
+
+When the VM's disk runs low, the daemon's storage warning and the 507
+refusal name the same grow command, so the fix is one re-run away.
+
 It doesn't work on Asahi. An Apple Silicon host whose kernel runs KVM in NV
 mode does not yet deliver guest interrupts
 ([#649](https://github.com/mcdonc/msks/issues/649)): a workspace starts and its

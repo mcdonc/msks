@@ -191,7 +191,11 @@ def router(app, catalog_lock) -> APIRouter:
                         # The disk sits at or below the floor: the
                         # same named 507 a path import answers,
                         # before any bytes are fetched.
-                        refusal = floor_refusal(vmm, "importing images")
+                        refusal = floor_refusal(
+                            vmm,
+                            "importing images",
+                            grow_hint=app.state.settings.mounts.disk_grow_hint,
+                        )
                         raise HTTPException(
                             status_code=507,
                             detail=refusal
@@ -215,7 +219,12 @@ def router(app, catalog_lock) -> APIRouter:
                 incoming_b = 0
                 with contextlib.suppress(OSError):
                     incoming_b = 2 * source.stat().st_size
-                refusal = floor_refusal(vmm, "importing images", incoming_b)
+                refusal = floor_refusal(
+                    vmm,
+                    "importing images",
+                    incoming_b,
+                    grow_hint=app.state.settings.mounts.disk_grow_hint,
+                )
                 if refusal is not None:
                     raise HTTPException(status_code=507, detail=refusal)
                 record = await asyncio.to_thread(
