@@ -20,7 +20,6 @@ failsafe path; ``msks ssh`` is the interactive one.
 
 import asyncio
 import contextlib
-import os
 import ssl
 import sys
 import termios
@@ -29,7 +28,7 @@ from urllib.parse import quote
 
 import websockets
 
-from . import wsauth, wsdial
+from . import stdio, wsauth, wsdial
 from .env import (
     env_token,
     env_url,
@@ -143,77 +142,8 @@ async def _ws_step(message, ws, stdout):
     """Write one daemon message out; the next receive task."""
     if isinstance(message, str):
         message = message.encode()
-    await write_draining(stdout.buffer, message)
+    await stdio.write_draining(stdout.buffer, message)
     return asyncio.create_task(ws.recv())
-
-
-async def write_draining(buffered, message: bytes) -> None:
-    """Write one console message through a stream whose fd may
-    sit in non-blocking mode (#725): a tty the terminal plumbing
-    left that way between the TUI's exit and the console
-    fallback, plus a boot log's burst that outruns the tty's
-    output buffer, makes the write or its flush answer EAGAIN —
-    the pump waits for writability and retries instead of
-    crashing the session. The message itself goes out through
-    the raw fd: ``os.write`` reports exactly how much it took, so
-    a retry resumes where it stopped — a buffered write that
-    raises may already have taken a prefix of the caller's bytes
-    (verified empirically: a 100-byte buffer holding 50, asked
-    for 60, raises with 50 of the new bytes buffered), so
-    re-writing the message through the buffer would duplicate
-    that prefix. A raising buffered flush keeps its bytes, so the
-    drain of anything the buffer already holds is safe to retry.
-    A buffer with no fd behind it cannot sit in non-blocking
-    mode; the plain path serves it. One conscious trade: a
-    consumer that opens and then never drains parks this write —
-    and the pump's detach (Ctrl-]) cannot fire mid-park, because
-    the write is awaited inline. That is exactly the hang a
-    blocking stdout would give the same wedged consumer, and the
-    alternative was the crash; a live terminal's burst parks for
-    milliseconds and the detach lands one round later."""
-    loop = asyncio.get_running_loop()
-    try:
-        fd = buffered.fileno()
-    except OSError, ValueError:
-        buffered.write(message)
-        buffered.flush()
-        return
-    await flush_draining(buffered, fd, loop)
-    await write_raw(fd, message, loop)
-
-
-async def flush_draining(buffered, fd: int, loop) -> None:
-    """The buffer's own held bytes out first: a raising flush
-    keeps them, so the retry lands them whole."""
-    while True:
-        try:
-            buffered.flush()
-            return
-        except BlockingIOError:
-            await await_writable(loop, fd)
-
-
-async def write_raw(fd: int, message: bytes, loop) -> None:
-    """The message through the raw fd: ``os.write`` reports
-    exactly how much it took, so a retry resumes where it
-    stopped — the buffered layer is never re-fed."""
-    view = memoryview(message)
-    while view:
-        try:
-            view = view[os.write(fd, view) :]
-        except BlockingIOError:
-            await await_writable(loop, fd)
-
-
-async def await_writable(loop, fd: int) -> None:
-    """One EAGAIN's worth of patience: park until the fd can take
-    more, then let the caller's retry run."""
-    writable = asyncio.Event()
-    loop.add_writer(fd, writable.set)
-    try:
-        await writable.wait()
-    finally:
-        loop.remove_writer(fd)
 
 
 def _connect(address: str, token: str, ssl_ctx):

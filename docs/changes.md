@@ -16,6 +16,17 @@ tagged `vX.Y.Z`.
   waits for the tty to become writable and retries; the session
   lands in the shell with every byte intact.
 
+### Changed
+
+- **The forward stdio bridge and `home export -` write stdout
+  through the EAGAIN-draining path (#728).** Both sinks now
+  share the console's wait-for-writability write shape (#725): a
+  stdout fd left in non-blocking mode under a burst waits for
+  writability instead of crashing the session mid-stream.
+  `rest.download` awaits a sink-provided `drain()` (the asyncio
+  StreamWriter shape) after every chunk; plain file sinks are
+  untouched.
+
 ### Added
 
 - **`msks-setup-macos-host --cpus/--memory/--disk` size the msksd VM
@@ -48,8 +59,6 @@ tagged `vX.Y.Z`.
   without the machine name and the page shows every row.
 
 ## \[v0.6.0] - 2026-11-02
-
-### Changed
 
 - **`devenv processes up` on a macOS host (#707).** The `msksd`
   process is registered on Linux hosts only, so on a Mac the
