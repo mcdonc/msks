@@ -845,7 +845,24 @@ def test_a_chain_mismatch_names_the_collision(
 
     monkeypatch.setattr(mac.socket, "create_connection", fake_connect)
     with pytest.raises(mac.MacSetupError, match="--port"):
-        mac.verify_chain(8660, "whatever")
+        mac.verify_chain(8660, "-----BEGIN CERTIFICATE-----\nMIIabc\n")
+
+
+def test_an_empty_ca_refuses_before_the_context_is_built(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#738: a CA fetch that came back empty (the daemon still
+    writing the file) refuses by name before any context is
+    built — ``cadata=""`` silently loads the system trust store,
+    and the chain would hold for any publicly-trusted listener
+    on the port, so a port-colliding imposter reads green."""
+
+    def boomed(**_kwargs):
+        raise AssertionError("the context was built")
+
+    monkeypatch.setattr(mac.ssl, "create_default_context", boomed)
+    with pytest.raises(mac.MacSetupError, match="CA did not come back"):
+        mac.verify_chain(8660, "")
 
 
 def test_the_preset_carries_the_three_exports(
@@ -876,6 +893,11 @@ def test_the_preset_carries_the_three_exports(
 def test_a_missing_ca_retries_then_refuses(
     monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
 ) -> None:
+    clock = [0.0]
+    monkeypatch.setattr(mac.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        mac.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s)
+    )
     procs.vm = {"msks-ca.pem": ""}
     monkeypatch.setattr(mac, "MAC_CA", mac.MAC_CA)
     with pytest.raises(mac.MacSetupError, match="CA did not come back"):
@@ -1139,7 +1161,7 @@ def test_a_mismatched_chain_refuses_with_the_port_remedy(
         mac.socket, "create_connection", lambda a, timeout=None: Connect()
     )
     with pytest.raises(mac.MacSetupError, match="--port"):
-        mac.verify_chain(8660, "whatever")
+        mac.verify_chain(8660, "-----BEGIN CERTIFICATE-----\nMIIabc\n")
 
 
 def test_the_nested_marker_skips_blank_lines(
@@ -1168,6 +1190,29 @@ def test_a_stopped_vm_names_the_start(procs: FakeProcesses) -> None:
     procs.listing = '[{"name":"msksd","status":"Stopped"}]'
     with pytest.raises(mac.MacSetupError, match="limactl start msksd"):
         mac.check_rows(mac.PORT)
+
+
+def test_the_check_pass_refuses_when_the_ca_never_lands(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
+) -> None:
+    """#738: the check pass against a daemon that has not
+    written its CA yet — the fetch retries through its window,
+    comes back empty, and the row refuses with the re-run
+    remedy instead of verifying against the system trust store
+    (which would report another listener's publicly-trusted
+    certificate green). The clock fakes the fetch window so the
+    retry deadline passes without wall-clock sleeps."""
+    clock = [0.0]
+    monkeypatch.setattr(mac.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        mac.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s)
+    )
+    monkeypatch.setattr(
+        mac, "verify_daemon", lambda port, timeout_s=15.0: None
+    )
+    procs.vm["msks-ca.pem"] = ""
+    with pytest.raises(mac.MacSetupError, match="CA did not come back"):
+        mac.check_rows(mac.PORT, install=False)
 
 
 # --- the entry ---------------------------------------------------------

@@ -883,7 +883,17 @@ def verify_chain(port: int, ca_pem: str) -> None:
     port (another VM's forward, a local daemon), and the remedy
     is another ``--port``. A CA that will not parse (a torn read
     inside the daemon's write window) refuses with the re-run
-    remedy, never a raw traceback."""
+    remedy, never a raw traceback. A CA that never came back
+    (a fetch before the daemon wrote the file) refuses before
+    the context is built (#738): empty ``cadata`` silently
+    loads the system trust store, and the chain would hold for
+    any publicly-trusted listener on the port, not this
+    daemon's alone."""
+    if not ca_pem.startswith("-----BEGIN CERTIFICATE-----"):
+        raise MacSetupError(
+            "the daemon's CA did not come back from the VM (the "
+            "daemon may still be generating it; re-run)"
+        )
     try:
         context = ssl.create_default_context(cadata=ca_pem)
         with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
@@ -921,11 +931,6 @@ def client_preset(port: int) -> str:
     CA, token, and config untouched, so client runs between the
     refused setup and the re-run keep working."""
     ca = fetch_vm_file(f"{VM_STATE}/{CA_CERT}").strip()
-    if not ca.startswith("-----BEGIN CERTIFICATE-----"):
-        raise MacSetupError(
-            "the daemon's CA did not come back from the VM (the "
-            "daemon may still be generating it; re-run)"
-        )
     verify_chain(port, ca)
     MAC_CA.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     write_private(MAC_CA, ca + "\n")
