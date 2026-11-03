@@ -299,4 +299,6 @@ storage = 13
 # modes' pair and the canonical host path for the host-share
 # gates' settings. #685: the named form's removal drops the
 # shares parser whole — the host gates' three names remain.
-spec = 9
+# #721: disk_grow_hint reads HOST_MODE_PREFIX too — the low-disk
+# messages' Mac lever follows the host mode.
+spec = 10

@@ -285,3 +285,29 @@ def test_create_refusal_wording_pins_the_escape(
     assert "100 MiB free" in refusal
     assert "lower the floor" in refusal
     assert "raise the floor" not in refusal
+
+
+def test_the_refusal_carries_the_grow_hint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#721: a VM-hosted daemon's refusal names the Mac lever its
+    settings build; the bare-Linux default (the empty hint) keeps
+    the message as it was."""
+    monkeypatch.setattr(
+        storage,
+        "state_usage",
+        lambda path: {
+            "total": 40 * 1024 * storage.MIB,
+            "used": int(39.9 * 1024 * storage.MIB),
+            "free": 100 * storage.MIB,
+        },
+    )
+    vmm = VmmSettings(state_dir=tmp_path, storage_floor_mib=512)
+    refusal = storage.create_refusal(
+        vmm, grow_hint="; grow the VM's disk on the Mac instead"
+    )
+    assert refusal is not None
+    assert refusal.endswith("; grow the VM's disk on the Mac instead")
+    bare = storage.create_refusal(vmm)
+    assert bare is not None
+    assert "grow the VM's disk" not in bare

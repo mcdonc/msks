@@ -356,6 +356,44 @@ async def test_scan_storage_publishes_a_baseline(tmp_path: Path) -> None:
     assert message["data"]["pressure"] in ("ok", "warn")
 
 
+async def test_pressure_warning_carries_the_grow_hint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#721: a prefix-mode daemon (the Lima/macOS host) logs the
+    pressure line with the Mac's grow command in it — the watcher
+    reads the hint from the mount settings, so the log names the
+    lever the operator can actually pull."""
+    import logging
+
+    from msks.server.watcher import scan_storage
+    from msks.settings import MountSettings
+    from msks.spec.mounts import HOST_MODE_PREFIX
+
+    settings = Settings(
+        vmm=VmmSettings(state_dir=tmp_path),
+        net=NetSettings(enabled=False),
+        server=ServerSettings(
+            db_path=tmp_path / "lever.db",
+            bootstrap_token=TOKEN,
+            event_poll_s=10.0,
+        ),
+        mounts=MountSettings(host_mode=HOST_MODE_PREFIX),
+    )
+    app = build_app(settings)
+    total, used = 100 * MIB, 95 * MIB
+    monkeypatch.setattr(
+        watcher_mod,
+        "state_usage",
+        lambda state_dir: {"total": total, "used": used, "free": total - used},
+    )
+    app.state.settings.vmm.storage_warn_pct = 50
+    with caplog.at_level(logging.WARNING):
+        assert await scan_storage(app, EventHub()) is True
+    assert "msks-setup-macos-host --disk" in caplog.text
+
+
 @realtools
 async def test_resize_publishes_the_event(tmp_path: Path) -> None:
     """A completed resize announces workspace.resized with the new

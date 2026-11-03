@@ -72,7 +72,9 @@ def pressure_for(usage: dict | None, warn_pct: int, floor_mib: int) -> str:
     return "ok"
 
 
-def floor_refusal(vmm, action: str, incoming_b: int = 0) -> str | None:
+def floor_refusal(
+    vmm, action: str, incoming_b: int = 0, grow_hint: str = ""
+) -> str | None:
     """The named refusal when a write cannot fit: the floor plus
     the write's own incoming bytes.
 
@@ -83,6 +85,10 @@ def floor_refusal(vmm, action: str, incoming_b: int = 0) -> str | None:
     (its blank artifacts are sparse — the floor alone is the guard).
     None means proceed. The escape hatches are honest ones: reclaim
     space, or **lower** the floor — raising it only refuses more.
+    ``grow_hint`` (#721) appends the VM-hosted daemon's own lever
+    — the Mac's grow command, from the mount settings' ``
+    disk_grow_hint`` — while a bare-Linux daemon passes the empty
+    string and the message stands as it was.
     """
     usage = state_usage(vmm.state_dir)
     if usage is None:
@@ -104,18 +110,22 @@ def floor_refusal(vmm, action: str, incoming_b: int = 0) -> str | None:
         f"the state disk has {free_mib} MiB free, below the {need_mib} "
         f"MiB this write needs ({why}); reclaim space (msks storage "
         "names the consumers; msks rm and msks image rm remove them) "
-        f"or lower the floor if you accept less headroom before {action}"
+        f"or lower the floor if you accept less headroom before "
+        f"{action}{grow_hint}"
     )
 
 
 def create_refusal(
-    vmm, action: str = "creating workspaces", incoming_b: int = 0
+    vmm,
+    action: str = "creating workspaces",
+    incoming_b: int = 0,
+    grow_hint: str = "",
 ) -> str | None:
     """The floor refusal for writes whose artifacts land on this
     daemon's state disk (#184). The image catalog lives there too,
     and its import route checks :func:`floor_refusal` directly.
     """
-    return floor_refusal(vmm, action, incoming_b)
+    return floor_refusal(vmm, action, incoming_b, grow_hint)
 
 
 def file_cost(path: Path) -> int:

@@ -454,7 +454,10 @@ def router(app, hub) -> APIRouter:
         if length.isdigit():
             incoming_b = int(length)
         refusal = create_refusal(
-            app.state.settings.vmm, "importing a home volume", incoming_b
+            app.state.settings.vmm,
+            "importing a home volume",
+            incoming_b,
+            grow_hint=app.state.settings.mounts.disk_grow_hint,
         )
         if refusal is not None:
             raise HTTPException(status_code=507, detail=refusal)

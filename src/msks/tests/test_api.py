@@ -22,6 +22,7 @@ from msks.settings import (
     Settings,
     VmmSettings,
 )
+from msks.spec.mounts import HOST_MODE_PREFIX
 from msks.spec.vm import VmInfo, VmSpec, VmStatus
 from sqlalchemy.exc import IntegrityError, OperationalError
 
@@ -1684,6 +1685,31 @@ async def test_create_refused_below_the_storage_floor(
     # Nothing was created and nothing was left behind.
     listed = await http.get("/api/v1/workspaces", headers=auth())
     assert listed.json() == []
+
+
+async def test_a_vm_hosted_daemon_names_the_grow_command(
+    client, monkeypatch
+) -> None:
+    """#721: the same 507 on a prefix-mode daemon (the Lima/macOS
+    host) carries the Mac's grow command — the daemon knows its
+    host shape through the mount settings."""
+    http, app, _stub = client
+    app.state.settings.vmm.state_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        app.state.settings.mounts, "host_mode", HOST_MODE_PREFIX
+    )
+    monkeypatch.setattr(
+        app.state.settings.vmm,
+        "storage_floor_mib",
+        (1 << 50) // (1024 * 1024),
+    )
+    refused = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-full", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    assert refused.status_code == 507
+    assert "msks-setup-macos-host --disk" in refused.json()["detail"]
 
 
 async def test_image_import_refused_below_the_storage_floor(

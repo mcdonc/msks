@@ -30,6 +30,12 @@ arch: aarch64
 nestedVirtualization: true
 minimumLimaVersion: 2.2.1
 
+# The VM's sizing (#721): msks-setup-macos-host's --cpus, --memory,
+# and --disk flags render over these three lines at creation and
+# edit them on reruns — the disk only grows (Lima resizes the data
+# disk at the next start, and cloud-init grows the guest's
+# filesystem with it); the disk is sparse, so it grows on demand
+# up to this size.
 cpus: 4
 memory: 8GiB
 disk: 60GiB
