@@ -2753,6 +2753,11 @@ def test_home_export_broken_pipe_is_one_line(
         def write(self, data):
             raise BrokenPipeError
 
+        def fileno(self):
+            # A buffer-like with no fd: the same refusal shape a
+            # real fd-less buffer gives (io.UnsupportedOperation).
+            raise io.UnsupportedOperation
+
     # A spare fd stands in for the real stdout: broken_pipe_line's
     # dup2-to-devnull must not clobber the test session's captured fd 1.
     spare = os.open(os.devnull, os.O_WRONLY)

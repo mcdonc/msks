@@ -44,20 +44,6 @@ async def write_draining(buffered, message: bytes) -> None:
     await write_raw(fd, message, loop)
 
 
-async def drain_buffered(buffered) -> None:
-    """Land the bytes a buffer already holds, waiting out EAGAIN
-    the way ``write_draining`` does — for sinks whose protocol
-    buffers in ``write()`` and flushes in an awaited ``drain()``
-    (#728): the held bytes go out whole, and a buffer with no fd
-    takes the plain flush."""
-    loop = asyncio.get_running_loop()
-    fd = resolve_fd(buffered)
-    if fd is None:
-        buffered.flush()
-        return
-    await flush_draining(buffered, fd, loop)
-
-
 def resolve_fd(buffered) -> int | None:
     """The fd behind the buffer, or None for a buffer with no fd
     — one that cannot sit in non-blocking mode and needs no
@@ -103,26 +89,35 @@ async def await_writable(loop, fd: int) -> None:
 
 
 class DrainSink:
-    """A sink whose ``write()`` buffers and whose awaited
-    ``drain()`` lands the bytes through the EAGAIN-safe shape:
-    stdout used as a data sink — ssh's ProxyCommand bridge,
-    ``home export -`` — where the fd's blocking mode is not an
-    invariant this client owns (#725 falsified it once, #728
-    spread the fix). Shaped like asyncio's StreamWriter, with
-    the no-op ``close``/``wait_closed`` a pipe pair's cleanup
-    asks for."""
+    """A sink whose ``write()`` holds the chunk in memory and
+    whose awaited ``drain()`` lands it through the EAGAIN-safe
+    shape: stdout used as a data sink — ssh's ProxyCommand
+    bridge, ``home export -`` — where the fd's blocking mode is
+    not an invariant this client owns (#725 falsified it once,
+    #728 spread the fix). ``write()`` never touches the buffered
+    layer, so no chunk size can meet its capacity and raise
+    (#729's review demonstrated that failure on a chunk above
+    the buffer's size); ``drain()`` lands what is held raw, in
+    order, and empty-handed against a stalled consumer it parks
+    — a parked drain the caller cancels drops the held chunk,
+    strictly better than the crash the same fd state produced
+    before (#725)."""
 
     def __init__(self, buffered) -> None:
         self._buffer = buffered
+        self._held = bytearray()
 
     def write(self, data) -> None:
-        self._buffer.write(data)
+        self._held += data
 
     async def drain(self) -> None:
-        await drain_buffered(self._buffer)
-
-    def close(self) -> None:
-        pass
-
-    async def wait_closed(self) -> None:
-        return
+        if not self._held:
+            return
+        loop = asyncio.get_running_loop()
+        fd = resolve_fd(self._buffer)
+        if fd is None:
+            self._buffer.write(self._held)
+            self._buffer.flush()
+        else:
+            await write_raw(fd, self._held, loop)
+        self._held.clear()

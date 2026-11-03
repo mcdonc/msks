@@ -201,8 +201,9 @@ async def download(client: httpx.AsyncClient, path: str, sink) -> int:
     (#80). A sink that provides ``drain`` (the asyncio
     StreamWriter shape, as the stdout export sink does) has it
     awaited after every chunk, so a non-blocking fd waits for
-    writability instead of crashing mid-download (#728); a plain
-    file sink has none and streams as before.
+    writability instead of crashing mid-download (#728) — the
+    sink holds at most one chunk at a time; a plain file sink
+    has no ``drain`` and streams as before.
     """
     total = 0
     drain = getattr(sink, "drain", None)

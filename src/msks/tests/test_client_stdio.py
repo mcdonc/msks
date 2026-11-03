@@ -65,20 +65,31 @@ async def test_write_draining_plain_path_for_an_fdless_buffer() -> None:
 
 async def test_drain_sink_lands_a_burst_on_a_nonblocking_pipe() -> None:
     """The ProxyCommand shape (#728), live pipes: ``write()``
-    buffers, the awaited ``drain()`` lands the bytes, and a burst
+    holds, the awaited ``drain()`` lands the bytes, and a burst
     that outruns the pipe waits for writability instead of
-    crashing — every byte once, in order."""
+    crashing — every byte once, in order. One chunk is bigger
+    than a buffered writer's whole capacity: the sink never
+    routes a chunk through the buffered layer, so no capacity
+    can raise mid-download (#729's review demonstrated the
+    raise on exactly that size)."""
     r, w = os.pipe()
     os.set_blocking(w, False)
     buffered = open(w, "wb", buffering=4096)
     sink = stdio.DrainSink(buffered)
-    chunks = [bytes([65 + i % 26]) * 4096 for i in range(64)]
+    chunks = [bytes([90]) * 262144] + [
+        bytes([65 + i % 26]) * 4096 for i in range(64)
+    ]
     expected = b"".join(chunks)
     received = bytearray()
+    try:
+        while True:  # fill the pipe to EAGAIN before any drain
+            os.write(w, b"x" * 4096)
+    except BlockingIOError:
+        pass
 
     def drain_pipe() -> None:
-        # Hold the pipe full first: the drain provably meets EAGAIN
-        # and parks in wait-for-writability; the release then lets
+        # Hold the pipe full first: the drains provably meet EAGAIN
+        # and park in wait-for-writability; the release then lets
         # the rest of the burst flow through.
         time.sleep(0.3)
         while True:
@@ -97,19 +108,20 @@ async def test_drain_sink_lands_a_burst_on_a_nonblocking_pipe() -> None:
         buffered.close()  # closes the write end: the drainer exits
         drainer.join(timeout=30)
         os.close(r)
-    assert bytes(received) == expected
+    payload = bytes(received).replace(b"x", b"")
+    assert payload == expected
 
 
-async def test_drain_sink_plain_path_and_noop_close() -> None:
-    """An fd-less sink drains through the plain flush, and the
-    StreamWriter-shaped no-ops (``close``, ``wait_closed``) stay
-    no-ops — the pipe pair's cleanup can call them freely."""
+async def test_drain_sink_plain_path_for_an_fdless_buffer() -> None:
+    """An fd-less sink lands its held bytes through the plain
+    write-and-flush — and an empty drain (nothing held) returns
+    without touching the buffer."""
     buffered = io.BytesIO()
     sink = stdio.DrainSink(buffered)
+    await sink.drain()  # nothing held yet: a no-op
+    assert buffered.getvalue() == b""
     sink.write(b"bytes")
     await sink.drain()
-    sink.close()
-    await sink.wait_closed()
     assert buffered.getvalue() == b"bytes"
 
 

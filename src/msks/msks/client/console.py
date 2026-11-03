@@ -139,7 +139,12 @@ async def doubling_byte(stdin) -> bytes | None:
 
 
 async def _ws_step(message, ws, stdout):
-    """Write one daemon message out; the next receive task."""
+    """Write one daemon message out; the next receive task.
+
+    The write is awaited inline, so a consumer that opens and
+    never drains parks the pump with the detach (Ctrl-])
+    unresponsive mid-park — the detach lands one round later,
+    once the tty takes the burst."""
     if isinstance(message, str):
         message = message.encode()
     await stdio.write_draining(stdout.buffer, message)

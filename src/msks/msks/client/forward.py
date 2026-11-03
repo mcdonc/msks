@@ -294,7 +294,7 @@ class _StdinPipe:
 
 
 class _StdoutWriter(stdio.DrainSink):
-    """The stream side of the stdio bridge: writes buffer and the
+    """The stream side of the stdio bridge: writes hold and the
     awaited ``drain()`` lands them through the EAGAIN-safe shape
     — ssh's ProxyCommand reads its stdout promptly, but the fd's
     blocking mode is not an invariant this client owns, and a

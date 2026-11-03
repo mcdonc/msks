@@ -60,6 +60,8 @@ tagged `vX.Y.Z`.
 
 ## \[v0.6.0] - 2026-11-02
 
+### Changed
+
 - **`devenv processes up` on a macOS host (#707).** The `msksd`
   process is registered on Linux hosts only, so on a Mac the
   command exits at once (`No processes defined`) instead of
