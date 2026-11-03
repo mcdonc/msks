@@ -309,6 +309,49 @@ issue/PR bodies and comments alike. Docs-chapter diffs and PR
 descriptions that introduce a run of "No …" bullets are a review
 flag — rewrite before merging.
 
+## Docs prose: plain sentences
+
+`docs/` chapters read as machine-written when every sentence carries
+three facts, two em-dash asides, and a verb no human picks. Operator
+docs are instructions: write the simple sentence, and add complexity
+only when the simple sentence is wrong. Docstrings keep their own
+voice; this rule is for `docs/` prose.
+
+- **One fact per sentence.** A sentence that states the behavior, its
+  reason, and its exception wants to be three sentences. Break it.
+- **No em-dash interjections.** "A bare `msks` — no arguments at all —
+  launches the tree" is two facts jammed into one slot. Use a
+  parenthesis, a comma, or a new sentence. Literal values (`msks —
+{workspace}`) are exempt: they are content, not prose.
+- **Unstack the relative clauses.** "the count of mounts the daemon's
+  derived state holds unresolved" makes the reader hold three nouns
+  in the air. Write "how many of the workspace's mounts are
+  unresolved."
+- **Plain verbs.** Files, settings, and commands _are_, _show_,
+  _use_, _run_, _fail_, _report_. Nothing "names" a path, no option
+  "rides" a command, no value "lands" in a cache, no key "sits" on a
+  binding. "Names" is the strongest single tell: the tui.md rewrite
+  removed 23 uses of it.
+- **Cut the filler.** "simply", "just", "note that", "it is worth
+  noting" add nothing. Delete them.
+
+```markdown
+Wrong: A workspace whose mounts skip carries a marker in the status
+column — `✗1 stopped` — the count of mounts the daemon's derived state
+holds unresolved; the marker stands until the config and the row agree
+again, and the mounts chapter names every kind of skip and its reason.
+
+Right: A workspace with unresolved mounts shows a marker in the status
+column: `✗1 stopped` is how many of the workspace's mounts are
+unresolved. The marker clears when the config and the workspace agree
+again. The mounts chapter lists every kind of skip and its reason.
+```
+
+The wrong/right pair is the actual before and after of a tui.md
+sentence. A docs sentence over roughly 30 words, or carrying more
+than one aside, is a rewrite signal: re-read it as a reader and split
+it.
+
 ## Changelog (`docs/changes.md`)
 
 `docs/changes.md` is the single source of truth for human-authored release notes,
