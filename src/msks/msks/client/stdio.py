@@ -99,9 +99,17 @@ class DrainSink:
     (#729's review demonstrated that failure on a chunk above
     the buffer's size); ``drain()`` lands what is held raw, in
     order, and empty-handed against a stalled consumer it parks
-    — a parked drain the caller cancels drops the held chunk,
+    — a parked drain the caller cancels abandons the sink,
     strictly better than the crash the same fd state produced
-    before (#725)."""
+    before (#725). Abandon means abandon: a drain interrupted by
+    exception or cancellation may have landed a prefix of its
+    chunk already, and nothing may write into or re-drain the
+    sink afterwards — the shipped callers (the bridge's pump and
+    the export download) end the session on any interruption.
+    The sink owns its wrapped buffer exclusively: bytes another
+    writer left in the buffered layer would land after the held
+    chunk, so the wrapped buffer is never written through
+    elsewhere (every shipped notice goes to stderr)."""
 
     def __init__(self, buffered) -> None:
         self._buffer = buffered
