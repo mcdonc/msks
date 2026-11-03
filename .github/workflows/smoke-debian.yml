@@ -87,7 +87,11 @@ concurrency:
 jobs:
   smoke-debian:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The cold path (reclaim + build + suite + the post-job
+    # cache save of the ~3GB guest dir) measured 7m50 on this
+    # lane's first run; 20 holds it and the warm path's ~5m
+    # with room (#723's budget resize, mirrored).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 

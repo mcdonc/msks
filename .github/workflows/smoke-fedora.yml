@@ -88,7 +88,11 @@ concurrency:
 jobs:
   smoke-fedora:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The cold path (reclaim + build + suite + the post-job
+    # cache save of the ~3GB guest dir) measured 11m46 on this
+    # lane's first run — the tightest of the three; 20 holds it
+    # with runner-variance room (#723's budget resize, mirrored).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
