@@ -1504,6 +1504,10 @@ def test_the_config_write_policies(
     body = mac.client_config_body(mac.PORT)
     assert mac.ensure_client_config(mac.PORT).startswith("wrote")
     assert path.read_text() == body
+    # The identity pair rides commented (#730): present to
+    # uncomment, setting nothing until an operator does.
+    assert "# identity_file: ~/.ssh/id_ed25519" in body
+    assert "# pubkey_file: ~/.ssh/id_ed25519.pub" in body
     assert "is current" in mac.ensure_client_config(mac.PORT)
     # This tool's own file, from an earlier run on another port:
     # kept exactly as it stands — the run prints what to paste.

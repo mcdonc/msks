@@ -25,7 +25,9 @@ tagged `vX.Y.Z`.
   kept file whose active daemon still points at this daemon is
   named as such; any other kept file gets the alias entry to
   paste or update, and `--check`'s remedy names the same
-  hand-edit path.
+  hand-edit path. The generated file carries the commented
+  `identity_file`/`pubkey_file` pair — the keys a `msks create`
+  reads — one uncomment away.
 
 - **The forward stdio bridge and `home export -` write stdout
   through the EAGAIN-draining path (#728).** Both sinks now

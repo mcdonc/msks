@@ -978,11 +978,40 @@ def client_config_body(port: int) -> str:
     """The managed client config: the daemon alias a bare ``msks``
     addresses — the forwarded port, the token file, the CA — with
     ``active_daemon`` naming it, so every CLI invocation reaches
-    the daemon with no exports in the shell profile."""
+    the daemon with no exports in the shell profile. The identity
+    settings ride as commented examples (#730), the client's own
+    first-run template's shape: the file a fresh install lands
+    with names the two keys a ``msks create`` reads, one uncomment
+    away."""
     return (
         f"{MANAGED_HEADER} (#689); this tool writes the file only\n"
         "# when it is missing (#730) — edit it freely; a rerun\n"
-        "# keeps an existing file exactly as it is.\n" + alias_stanza(port)
+        "# keeps an existing file exactly as it is.\n"
+        + alias_stanza(port)
+        + identity_examples()
+    )
+
+
+def identity_examples() -> str:
+    """The commented identity pair under the alias stanza: the
+    ssh identity a ``msks create`` plants into every workspace,
+    and its public half for a key the operator keeps encrypted.
+    Commented, so the file sets nothing until the operator
+    uncomments a line — the client reads both keys as global-
+    only settings, exactly where they sit here."""
+    return (
+        "\n"
+        "# identity_file: ~/.ssh/id_ed25519  # your own private "
+        "key — the ssh\n"
+        "#                                 # identity msks create "
+        "plants into\n"
+        "#                                 # every workspace\n"
+        "# pubkey_file: ~/.ssh/id_ed25519.pub  # your key's public "
+        "half, for a\n"
+        "#                                 # key you keep encrypted "
+        "(your agent\n"
+        "#                                 # holds it; msks reads no "
+        "private half)\n"
     )
 
 
