@@ -16,6 +16,22 @@
 # toolchain pins, the Debian guest build and the shared pieces,
 # everything under the server package the boots exercise, and the
 # suite itself.
+#
+# #723's cache pattern, carried to the Debian lane: the guest is
+# a pure function of its inputs — the guest chain's nix files
+# (guest.nix, guest-debian.nix, image-archive.nix,
+# agent-toolchain.nix, the pi extension and settings, the
+# shrinkwrap pair), the devenv.lock nixpkgs pin (and devenv.nix,
+# whose GUEST_NIXPKGS line carries it), and scripts/build-guest.sh
+# itself — so actions/cache keys the built guest dir on exactly
+# those; a run whose inputs did not change restores
+# .devenv/state/guest and skips the build, and any input change
+# rebuilds. No restore-keys fallback exists on purpose: a partial
+# hit pairing a new kernel with an old rootfs would test an image
+# no input set ever produced. The lane runs one suite, so there is
+# no sibling job to split the way smoke-nixos did — the cache is
+# the whole win. The Debian egress lane (smoke-egress.yml) hashes
+# the byte-identical key, so one saved build serves both lanes.
 name: Smoke (Debian)
 
 on:
@@ -33,6 +49,7 @@ on:
       - nix/guest-debian.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
+      - nix/guest-pi-settings.json
       - scripts/build-guest.sh
       - src/msks/msks/**
       - src/msks/tests/conftest.py
@@ -52,6 +69,7 @@ on:
       - nix/guest-debian.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
+      - nix/guest-pi-settings.json
       - scripts/build-guest.sh
       - src/msks/msks/**
       - src/msks/tests/conftest.py
@@ -99,7 +117,34 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Restore the built guest
+        id: guest
+        uses: actions/cache@v4
+        with:
+          path: .devenv/state/guest
+          # Every input the guest build reads (see the header):
+          # the key changes on any of them and only on them, and
+          # runner.arch names the building machine — the same way
+          # the bare `debian` flavor follows the host's uname. The
+          # hashFiles call lives here, at step level, because a
+          # workflow-level env evaluates before checkout. The
+          # Debian egress lane hashes this key byte-identically.
+          key: smoke-debian-guest-${{ runner.arch }}-${{ hashFiles('devenv.lock', 'devenv.nix', 'scripts/build-guest.sh', 'nix/guest.nix', 'nix/guest-debian.nix', 'nix/image-archive.nix', 'nix/agent-toolchain.nix', 'nix/guest-pi-extension.ts', 'nix/guest-pi-settings.json', 'nix/pi-shrinkwrap-patch.py', 'nix/pi-shrinkwrap-integrity.json') }}
+
+      - name: Free runner disk for the guest build
+        # The same reclaim the NixOS lane took (#723): the guest
+        # build's nix closure, packed rootfs and archive, and
+        # their copies into the guest dir are the same
+        # gigabyte-scale shape, and the stock runner image ships
+        # toolchains this lane never runs. A restored cache skips
+        # the build, so the reclaim stays behind the same guard.
+        if: steps.guest.outputs.cache-hit != 'true'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          df -h /
+
       - name: Build guest assets
+        if: steps.guest.outputs.cache-hit != 'true'
         run: >-
           devenv --quiet -O dotenv.enable:bool false shell --
           msks-build-guest
