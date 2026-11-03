@@ -1490,10 +1490,10 @@ def test_the_config_write_policies(
     monkeypatch: pytest.MonkeyPatch, client_tree: Path
 ) -> None:
     """One policy per prior state: a missing file is written, the
-    current body is a no-op, the client's own empty template is
-    replaced (nothing was set; the client regenerates it on
-    demand), this tool's file is refreshed, and an operator's own
-    file is kept byte-for-byte — the run names the choice."""
+    current body is a no-op — and any other existing file stays
+    byte-for-byte (#730): the client's own empty template, a file
+    this tool wrote on an earlier run, an operator's own config.
+    The run names the choice."""
     from msks.client.config import render_template
 
     path = Path(mac.default_config_path())
@@ -1501,12 +1501,17 @@ def test_the_config_write_policies(
     assert mac.ensure_client_config(mac.PORT).startswith("wrote")
     assert path.read_text() == body
     assert "is current" in mac.ensure_client_config(mac.PORT)
+    # This tool's own file, from an earlier run on another port:
+    # kept exactly as it stands — the run prints what to paste.
+    stale = mac.client_config_body(8661)
+    path.write_text(stale)
+    assert mac.ensure_client_config(mac.PORT).startswith("kept")
+    assert path.read_text() == stale
+    # The client's own first-run template is kept too: the file
+    # exists, and the policy keeps no exception for comments-only.
     path.write_text(render_template())
-    assert mac.ensure_client_config(mac.PORT).startswith("wrote")
-    assert path.read_text() == body
-    path.write_text(mac.client_config_body(8661))  # this tool's, stale
-    assert mac.ensure_client_config(mac.PORT).startswith("refreshed")
-    assert path.read_text() == body
+    assert mac.ensure_client_config(mac.PORT).startswith("kept")
+    assert path.read_text() == render_template()
     path.write_text("# the operator's own config\nurl: https://elsewhere\n")
     assert mac.ensure_client_config(mac.PORT).startswith("kept")
     assert "elsewhere" in path.read_text()
@@ -1535,6 +1540,9 @@ def test_the_config_row_refusals(
         mac.client_config_row(mac.PORT)
     # An operator file whose active daemon names this forward with
     # the VM's token and CA passes — the alias name is theirs.
+    # (The config is removed first: a rerun keeps an existing
+    # file #730, so the re-pointed file comes from the write arm.)
+    path.unlink()
     mac.ensure_client_config(mac.PORT)
     body = (
         path.read_text()
@@ -1599,7 +1607,7 @@ def test_a_kept_config_rides_the_entry_beside_the_exports(
     )
     preset = mac.client_preset(mac.PORT)
     assert "export MSKSC_URL=https://127.0.0.1:8660" in preset
-    assert "add this entry under the daemons: mapping" in preset
+    assert "update this entry under the daemons: mapping" in preset
     assert "set active_daemon: " + mac.MANAGED_ALIAS in preset
     assert mac.alias_entry(mac.PORT) in preset
     # No top-level key rides the print: a verbatim paste cannot

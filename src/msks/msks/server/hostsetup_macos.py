@@ -53,10 +53,10 @@ the other tools never see:
    kickstarted when installed, so the VM starts through the
    agent immediately too — so the daemon answers after a reboot.
    The printed exports remain
-   as a copy-paste fallback, and a config this tool never wrote is
-   kept untouched — the run names the file and prints the alias
-   block to paste into it; a file this tool wrote is refreshed on
-   re-run (its header says so, operator edits included).
+   as a copy-paste fallback, and an existing config file is kept
+   exactly as it is, whatever wrote it (#730) — the run names the
+   file and prints the alias block to paste into it, and the
+   config is written only when the file is missing.
 6. **The client link (#719)** — ``msks`` linked into the brew
    prefix's bin dir (``$(brew --prefix)/bin/msks`` — the
    Homebrew the tool already requires for Lima): user-owned, on
@@ -95,7 +95,6 @@ from pathlib import Path
 from ..client.config import (
     default_config_path,
     parse_config_doc,
-    render_template,
 )
 from ..spec.version import __version__, ordering
 from .hostsetup import claim_link
@@ -930,17 +929,18 @@ def client_preset(port: int) -> str:
         f"export MSKSC_CAFILE={MAC_CA}"
     )
     if status.startswith("kept"):
-        # The file this tool never wrote: the paste-able half rides
-        # beside the exports — the entry block for the config (no
-        # top-level key, so a verbatim paste cannot duplicate one
-        # and corrupt the file), where the exports are the shell's
-        # fallback.
+        # Any existing file the run kept (#730): the paste-able
+        # half rides beside the exports — the entry block for the
+        # config (no top-level key, so a verbatim paste cannot
+        # duplicate one and corrupt the file), where the exports
+        # are the shell's fallback. A file already carrying the
+        # alias updates the block in place; the wording says so.
         return (
             exports
-            + "\n\n# add this entry under the daemons: mapping in "
+            + "\n\n# update this entry under the daemons: mapping in "
             + str(Path(default_config_path()))
-            + "\n# (write the daemons: line too if the file carries "
-            "none), then\n# set active_daemon: "
+            + "\n# (add it, and the daemons: line, when the file "
+            "carries none),\n# then set active_daemon: "
             + MANAGED_ALIAS
             + " there:\n"
             + alias_entry(port)
@@ -975,9 +975,9 @@ def client_config_body(port: int) -> str:
     ``active_daemon`` naming it, so every CLI invocation reaches
     the daemon with no exports in the shell profile."""
     return (
-        f"{MANAGED_HEADER} (#689); re-run the tool\n"
-        "# to refresh this file — a rerun rewrites what this tool\n"
-        "# wrote, edits included.\n" + alias_stanza(port)
+        f"{MANAGED_HEADER} (#689); this tool writes the file only\n"
+        "# when it is missing (#730) — edit it freely; a rerun\n"
+        "# keeps an existing file exactly as it is.\n" + alias_stanza(port)
     )
 
 
@@ -1005,12 +1005,13 @@ def alias_entry(port: int) -> str:
 
 
 def ensure_client_config(port: int) -> str:
-    """Write or refresh the managed client config, idempotently.
+    """Write or report the client config, idempotently.
 
     A missing file is written; a file the read cannot reach is a
     named refusal (never the missing arm's overwrite); an
-    existing file takes :func:`refresh_managed_config`'s policy,
-    whose status this returns for the caller to say."""
+    existing file stays exactly as it is (#730), and the status
+    :func:`existing_config_status` builds names that choice for
+    the caller to say."""
     path = Path(default_config_path())
     body = client_config_body(port)
     try:
@@ -1023,31 +1024,23 @@ def ensure_client_config(port: int) -> str:
             f"the client config ({path}) cannot be read ({exc}); fix "
             "the file or remove it, then re-run"
         ) from None
-    return refresh_managed_config(text, body, path)
+    return existing_config_status(text, body, path)
 
 
-def refresh_managed_config(text: str, body: str, path: Path) -> str:
-    """The four-way policy over an existing config file's text:
-    the current body is a no-op; the client's own first-run
-    template (all comments, nothing set) is replaced without
-    ceremony — the client regenerates it on demand any time; a
-    file this tool wrote (its header says so) is refreshed —
-    re-running rewrites what the tool wrote, operator edits to it
-    included; a file it never wrote is kept untouched, and the
-    status names that choice — the preset this run prints carries
-    the alias block to paste into such a file."""
+def existing_config_status(text: str, body: str, path: Path) -> str:
+    """The two-way report over an existing config file's text:
+    the current body is a no-op, and anything else — the client's
+    own first-run template, a file this tool wrote on an earlier
+    run (its header says so), an operator's own file — stays
+    byte-for-byte (#730). The status names the hand path, and
+    the preset this run prints carries the alias block to update
+    or paste into such a file."""
     if text == body:
         return f"the client config is current ({path})"
-    if text == render_template():
-        write_private(path, body)
-        return f"wrote the client config over the empty template ({path})"
-    if text.startswith(MANAGED_HEADER):
-        write_private(path, body)
-        return f"refreshed the client config ({path})"
     return (
-        f"kept the config at {path} (this tool never wrote it) — add "
-        f"the {MANAGED_ALIAS} daemon entry to it by hand, or remove "
-        "the file and re-run"
+        f"kept the config at {path} — a rerun writes it only when "
+        "it is missing; edit the file by hand or remove it and "
+        "re-run"
     )
 
 
@@ -1075,7 +1068,8 @@ def client_config_row(port: int) -> str:
         raise MacSetupError(
             f"the client config's active daemon does not point a bare "
             f"msks at this daemon (https://127.0.0.1:{port} with the "
-            f"VM's token and CA); re-run {TOOL} or edit {path} by hand"
+            f"VM's token and CA); edit {path} by hand or remove it "
+            f"and re-run {TOOL}"
         )
     return f"a bare msks reaches the daemon ({path})"
 
