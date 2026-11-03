@@ -615,35 +615,27 @@ cleanly when either side closes.
 Detaching leaves the workspace running; the shell process inside the
 guest exits when the stream closes.
 
-Transport (#21), in the preferred vsock-first shape:
+Transport (#21, #481) — a plain virtio-console byte stream, with
+no in-band protocol:
 
-- The workspace VM boots with a virtio-vsock device whose host side
-  is a unix socket cloud-hypervisor **listens** on
-  (`<state>/vms/<id>/vsock.sock`). The daemon's proxy connects, sends
-  `CONNECT 1023\n`, reads the `OK <port>\n` reply, then pumps raw
-  bytes both ways — no framing, backpressure is websocket/TCP flow
-  control.
-- The guest loads `vmw_vsock_virtio_transport` (systemd-modules-load)
-  and runs `msks-console.service`: the msks console helper
-  (`/usr/bin/msks-console-helper`, a static binary the image builds
-  from `src/console-helper`), restarted by systemd if it dies. The
-  helper owns the vsock listener, accepts host-originated connections
-  only, and each connection negotiates the identity prelude (#63):
-  the daemon sends the requested user, the client terminal's size
-  and TERM, and the helper answers `MSKS OK <user>` (or a named
-  refusal) before exec'ing that user's login shell on a fresh pty.
-  The pty is a plain canonical terminal — ISIG, ONLCR, ECHO, and
-  ICANON all on: Ctrl-C generates SIGINT in the guest, output
-  arrives CRLF-terminated, and the line discipline echoes and edits
-  input for programs that read stdin directly. The shell's TERM
-  comes from the client's terminal, so readline engages and provides
-  line editing and history while it is active (#61); a TERM=dumb
-  client gets readline off. The session's user is **root** by
-  default; `msks console --user <name>` requests the image's workspace
-  user (users the image does not serve are refused by name).
-- The guest pty is created at the client terminal's size (#61's
-  0x0 fixed): the console request carries the geometry at connect,
-  and the pty keeps that size for the session's life. The console
+- The workspace VM boots with a virtio-console device whose host
+  side is `console.sock`, the serial device's unix socket
+  cloud-hypervisor serves beside the VM
+  (`<state>/vms/<id>/console.sock`). The daemon's bridge connects
+  and pumps raw bytes both ways — backpressure is websocket/TCP
+  flow control.
+- The guest side is the autologin **root** getty on the console
+  device (ttyS0; the NixOS guest instantiates the nixpkgs getty
+  template, with the per-instance drop-in from
+  `nix/guest-nixos-configuration.nix` pinning TERM for readline,
+  #61), restarted by systemd if it dies. The getty's tty is a
+  plain canonical terminal — ISIG, ONLCR, ECHO, and ICANON all on:
+  Ctrl-C generates SIGINT in the guest, output arrives
+  CRLF-terminated, and the line discipline echoes and edits input
+  for programs that read stdin directly. A session is always the
+  root shell; other users log in through ssh.
+- The serial tty's geometry is fixed — the raw stream carries no
+  window-size channel. The console
   stream is a raw byte pipe by design (#108's terminal-layer
   decision), so a window resized mid-session does not reach it:
   reconnect for a new size, or use an ssh session through the
