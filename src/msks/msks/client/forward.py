@@ -294,8 +294,11 @@ class _StdinPipe:
 
 
 class _StdoutWriter:
-    """The stream side of the stdio bridge: blocking writes to
-    stdout's buffer — the ProxyCommand caller reads promptly."""
+    """The stream side of the stdio bridge: writes to stdout's
+    buffer, which the ProxyCommand caller (ssh) drains promptly —
+    the blocking assumption #725 falsified for the console's tty
+    does not hold as an invariant everywhere; #728 tracks the
+    shared write path."""
 
     def __init__(self) -> None:
         self._buffer = sys.stdout.buffer

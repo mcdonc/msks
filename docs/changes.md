@@ -6,6 +6,16 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Fixed
+
+- **The console session survives a burst on a non-blocking
+  stdout (#725).** The TUI's shell fallback streams the guest's
+  boot console through stdout, and when the tty's fd sits in
+  non-blocking mode the boot log's burst crashed the session on
+  a flush that answered EAGAIN. The console's write path now
+  waits for the tty to become writable and retries; the session
+  lands in the shell with every byte intact.
+
 ### Added
 
 - **`msks-setup-macos-host --cpus/--memory/--disk` size the msksd VM
