@@ -36,6 +36,7 @@ on:
       - nix/guest-nixos-configuration.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
+      - nix/guest-pi-settings.json
       - scripts/build-guest.sh
   pull_request:
     paths:
@@ -53,6 +54,7 @@ on:
       - nix/guest-nixos-configuration.nix
       - nix/image-archive.nix
       - nix/guest-pi-extension.ts
+      - nix/guest-pi-settings.json
       - scripts/build-guest.sh
 
 permissions:
