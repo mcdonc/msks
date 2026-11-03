@@ -11,8 +11,8 @@ tagged `vX.Y.Z`.
 - **`msks-setup-macos-host --cpus/--memory/--disk` size the msksd VM
   (#721).** The flags set the VM's CPUs, memory (GiB), and disk (GiB)
   at creation and on every re-run: changed values restart the VM
-  (running workspaces stop through their normal shutdown cycle and
-  return on the next start), equal values change nothing, and the
+  (running workspaces stop with it; each starts again with
+  `msks start`), equal values change nothing, and the
   disk only grows. The floors are 2 CPUs, 4 GiB, and 20 GiB. When
   the VM's disk runs low, the storage warning and the 507 refusal
   name the grow command. See

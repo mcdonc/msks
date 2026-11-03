@@ -429,7 +429,8 @@ def test_a_stopped_vm_skips_the_stop(
     monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, tmp_path: Path
 ) -> None:
     """A stopped VM takes the edit and the start without the
-    stop — there is nothing to stop."""
+    stop — there is nothing to stop — and exactly one start: the
+    apply's own, with the ensure pass standing down after it."""
     monkeypatch.setattr(mac, "say", lambda _message: None)
     home = tmp_path / "home"
     home.mkdir()
@@ -437,9 +438,12 @@ def test_a_stopped_vm_skips_the_stop(
     write_sizing(home, 8661)
     procs.listing = '[{"name":"msksd","status":"Stopped"}]'
     assert mac.ensure_vm(shape={"disk": 200}) == 8661
-    assert not [c for c in procs.calls if c[1] == "stop"]
-    assert [c for c in procs.calls if c[1] == "edit"]
-    assert [c for c in procs.calls if c[1] == "start"]
+    assert [
+        c[1:] for c in procs.calls if c[0] == "limactl" and c[1] != "list"
+    ] == [
+        ["edit", "msksd", "--disk", "200"],
+        ["start", "msksd"],
+    ]
 
 
 def test_a_disk_shrink_refuses_naming_both_sizes(
@@ -486,6 +490,54 @@ def test_shape_flags_without_an_instance_config_refuse(
     procs.listing = '[{"name":"msksd","status":"Running"}]'
     with pytest.raises(mac.MacSetupError, match="could not be read"):
         mac.ensure_vm(shape={"memory": 16})
+
+
+def test_a_port_mismatch_refuses_before_the_resize(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, tmp_path: Path
+) -> None:
+    """The port policy is a pure read, so its recreation refusal
+    lands before the sizing's stop/edit/start — a mismatched
+    --port costs no restart (#721 review)."""
+    monkeypatch.setattr(mac, "say", lambda _message: None)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(mac.Path, "home", lambda: home)
+    write_sizing(home, 8661)
+    procs.listing = '[{"name":"msksd","status":"Running"}]'
+    with pytest.raises(mac.MacSetupError, match="limactl delete -f"):
+        mac.ensure_vm(host_port=8662, shape={"disk": 200})
+    assert not [c for c in procs.calls if c[1] in ("stop", "edit", "start")]
+
+
+def test_the_floors_refuse_before_the_host_check(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses
+) -> None:
+    """A below-floor flag refuses before any phase runs — the
+    host check included, so a mistyped flag never spends a brew
+    install first (#721 review)."""
+    checked = []
+    monkeypatch.setattr(mac, "check_host", lambda: checked.append("host"))
+    args = mac.parse_args(["--disk", "5"])
+    with pytest.raises(mac.MacSetupError, match="below the floor"):
+        mac.run_setup(args)
+    assert checked == []
+
+
+def test_a_failed_edit_names_the_recovery(
+    monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, tmp_path: Path
+) -> None:
+    """A limactl edit that fails mid-resize leaves the VM
+    stopped; the refusal names both the failure and the way back
+    (#721 review)."""
+    monkeypatch.setattr(mac, "say", lambda _message: None)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(mac.Path, "home", lambda: home)
+    write_sizing(home, 8661)
+    procs.listing = '[{"name":"msksd","status":"Running"}]'
+    procs.fail_output = {"limactl edit": "the edit said no"}
+    with pytest.raises(mac.MacSetupError, match="limactl start msksd"):
+        mac.ensure_vm(shape={"disk": 200})
 
 
 def test_the_read_only_passes_refuse_the_sizing_flags(capsys) -> None:
@@ -658,7 +710,11 @@ def test_a_dev_build_preflights_before_the_mutating_phases(
         )
     monkeypatch.setattr(mac, "vm_version", lambda: "9.9.9.dev0")
     with pytest.raises(mac.MacSetupError, match="--wheel"):
-        mac.run_setup(SimpleNamespace(wheel=None, port=None))
+        mac.run_setup(
+            SimpleNamespace(
+                wheel=None, port=None, cpus=None, memory=None, disk=None
+            )
+        )
     assert order == ["check_host"]
 
 

@@ -407,8 +407,8 @@ class MountSettings:
             return ""
         return (
             "; grow the VM's disk on the Mac instead "
-            "(msks-setup-macos-host --disk 200 — the disk only "
-            "grows, and the VM restarts)"
+            "(msks-setup-macos-host --disk <larger-GiB> — the disk "
+            "only grows, and the VM restarts)"
         )
 
     @classmethod

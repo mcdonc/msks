@@ -22,8 +22,8 @@ the other tools never see:
    (``--cpus``, ``--memory``, ``--disk``, #721) render over the
    template's own three lines at creation and re-apply on every
    rerun: a changed value stops the VM, edits its instance, and
-   starts it again — running workspaces stop through their normal
-   shutdown cycle and return on the next start — while equal
+   starts it again — running workspaces stop with the VM, and
+   each starts again with ``msks start`` — while equal
    values change nothing, and the disk only grows (Lima resizes
    the data disk at the next start, and cloud-init grows the
    guest's filesystem with it). A run without
@@ -477,7 +477,9 @@ def instance_shape(name: str) -> dict | None:
     return shape
 
 
-def planned_changes(shape: dict, current: dict | None) -> dict:
+def planned_changes(
+    shape: dict, current: dict | None, name: str = VM_NAME
+) -> dict:
     """The flagged values that differ from the VM's current sizing
     (#721): equal values drop — the rerun's no-op — and the disk
     only grows (:func:`refuse_disk_shrink` names both sizes; Lima
@@ -485,7 +487,7 @@ def planned_changes(shape: dict, current: dict | None) -> dict:
     would refuse inside Lima with less to say). The caller stands
     down before the read when the run carries no flags."""
     if current is None:
-        config = Path.home() / ".lima" / VM_NAME / "lima.yaml"
+        config = Path.home() / ".lima" / name / "lima.yaml"
         raise MacSetupError(
             f"the {VM_NAME} VM's current sizing could not be read "
             f"({config}); the sizing flags need it — re-run without "
@@ -513,16 +515,17 @@ def refuse_disk_shrink(key: str, value: int, current: dict) -> None:
 
 def say_shape(name: str, changes: dict) -> None:
     """The restart's own line: what changes, and what the restart
-    does to running workspaces — the operator hears the
-    consequence before the VM moves (#721)."""
+    does to running workspaces — they stop with the VM, and each
+    starts again through the client (#721 review: nothing
+    auto-returns a workspace; the line says so)."""
     words = ", ".join(
         f"{key} {value}" + ("" if key == "cpus" else " GiB")
         for key, value in changes.items()
     )
     say(
         f"applying {words} to the {name} VM; the VM restarts — "
-        "running workspaces stop through their normal shutdown "
-        "cycle and return on the next start"
+        "running workspaces stop with it, and each starts again "
+        "with `msks start`"
     )
 
 
@@ -538,20 +541,27 @@ def edit_command(name: str, changes: dict) -> list[str]:
 def apply_shape(name: str, shape: dict | None, running: bool) -> bool:
     """Bring an existing VM to the flagged sizing (#721): changed
     values stop the VM (a stopped one skips the stop), edit the
-    instance, and start it again — the restart carries the
-    daemon's graceful shutdown with it. Equal values change
-    nothing (the rerun no-op), and no flags at all stand down
-    before the instance config is even read."""
+    instance, and start it again. A failure between the stop and
+    the start names the recovery. Equal values change nothing (the
+    rerun no-op), and no flags at all stand down before the
+    instance config is even read."""
     if not shape:
         return False
-    changes = planned_changes(shape, instance_shape(name))
+    changes = planned_changes(shape, instance_shape(name), name)
     if not changes:
         return False
     say_shape(name, changes)
     if running:
         run(["limactl", "stop", name])
-    run(edit_command(name, changes))
-    run(["limactl", "start", name])
+    try:
+        run(edit_command(name, changes))
+        run(["limactl", "start", name])
+    except MacSetupError as exc:
+        raise MacSetupError(
+            f"{exc}; the {name} VM sits stopped mid-resize — "
+            f"limactl start {name} brings it back, or re-run the "
+            "tool without the sizing flags"
+        ) from None
     return True
 
 
@@ -612,7 +622,9 @@ def ensure_vm(
     brought to the flagged sizing when the values differ (#721 —
     a changed value restarts the VM with them), started when
     stopped, left alone when running. The port for
-    an existing VM is :func:`adopted_port`'s policy: an explicit
+    an existing VM resolves before the sizing touches anything
+    (#721 review: :func:`adopted_port` is a pure read, and its
+    recreation refusal costs no restart) — an explicit
     ``--port`` that disagrees with the forward (fixed at creation)
     refuses naming the recreation remedy; with no ``--port``, the
     run adopts the forward the VM carries — the deployment
@@ -620,12 +632,13 @@ def ensure_vm(
     entry = vm_entry(name)
     if entry is None:
         return create_vm(name, resolved_port(host_port, None), shape)
+    port = adopted_port(name, host_port)
     running = entry.get("status") == "Running"
     changed = apply_shape(name, shape, running)
     if not changed and not running:
         say(f"starting the stopped {name} VM")
         run(["limactl", "start", name])
-    return adopted_port(name, host_port)
+    return port
 
 
 def delete_vm(name: str) -> None:
@@ -1476,8 +1489,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         type=int,
         default=None,
         metavar="N",
-        help="the VM's CPUs, at creation and on reruns (the "
-        f"template default is 4; the floor is {SHAPE_FLOORS['cpus']})",
+        help="the VM's CPUs, at creation and on reruns (the floor "
+        f"is {SHAPE_FLOORS['cpus']}; without the flag the "
+        "template's own value stands)",
     )
     parser.add_argument(
         "--memory",
@@ -1485,8 +1499,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         default=None,
         metavar="GIB",
         help="the VM's memory in GiB, at creation and on reruns "
-        f"(the template default is 8; the floor is "
-        f"{SHAPE_FLOORS['memory']})",
+        f"(the floor is {SHAPE_FLOORS['memory']}; without the "
+        "flag the template's own value stands)",
     )
     parser.add_argument(
         "--disk",
@@ -1495,8 +1509,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         metavar="GIB",
         help="the VM's disk in GiB — it only grows: a larger value "
         "resizes the VM's disk, a smaller one refuses; at creation "
-        f"and on reruns (the template default is 60; the floor is "
-        f"{SHAPE_FLOORS['disk']}; changed values restart the VM)",
+        f"and on reruns (the floor is {SHAPE_FLOORS['disk']}; "
+        "changed values restart the VM)",
     )
     parser.add_argument(
         "--check",
@@ -1552,10 +1566,13 @@ def run_setup(args: argparse.Namespace) -> str:
     flags (#721) apply inside it — a changed value restarts the
     VM, equal values change nothing. A dev build
     without a wheel refuses after the platform gate and before
-    the VM creation (#704) — nothing the run builds is wasted."""
+    the VM creation (#704) — nothing the run builds is wasted —
+    and the sizing floors refuse before every phase, the host
+    check included (#721 review: a mistyped flag never spends a
+    brew install first)."""
+    shape = validate_shape(shape_from_args(args))
     check_host()
     refuse_dev_build(args.wheel)
-    shape = validate_shape(shape_from_args(args))
     home = str(Path.home())
     port = ensure_vm(host_port=args.port, shape=shape)
     bootstrap_vm(args.wheel, home)

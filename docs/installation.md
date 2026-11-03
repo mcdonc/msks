@@ -380,8 +380,8 @@ msks-setup-macos-host --cpus 8 --memory 16 --disk 200
 ```
 
 A changed value stops the VM, edits its instance, and starts it again:
-running workspaces stop through their normal shutdown cycle and come
-back on the next start. Equal values change nothing, so the command is
+running workspaces stop with the VM, and each starts again with
+`msks start`. Equal values change nothing, so the command is
 safe to re-run in scripts. The disk only grows: a smaller value refuses,
 naming both sizes — reclaim space with `msks storage` instead. The disk
 is sparse, so it fills on demand up to the size you set. The floors are
