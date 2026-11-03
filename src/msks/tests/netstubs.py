@@ -35,7 +35,13 @@ printf '%s\n' "$*" >> {log}
 if [ "$1" = "-f" ] && [ "$2" != "-" ] && [ -f "$2" ]; then
   printf '%s\n' "--- -f -" >> {log}.stdin
   cat "$2" >> {log}.stdin
-  stat -c '%a' "$2" >> {log}.mode
+  # The permission bits, one line per apply: GNU stat's -c
+  # spelling first (the devenv shell and every Linux host), BSD
+  # stat's -f '%Lp' as the fallback (a stock macOS host — the
+  # macOS CI runner ships BSD stat).
+  if ! stat -c '%a' "$2" >>{log}.mode 2>/dev/null; then
+    stat -f '%Lp' "$2" >>{log}.mode
+  fi
 else
   printf '%s\n' "--- $*" >> {log}.stdin
   cat >> {log}.stdin

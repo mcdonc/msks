@@ -59,6 +59,12 @@ jobs:
   verify:
     runs-on: macos-15
     timeout-minutes: 30
+    # The runner's default TMPDIR nests deep under
+    # /private/var/folders, pushing AF_UNIX socket paths past
+    # the limit — the same fix ci.yml pins for its Linux runner
+    # (pytest's basetemp belongs under /tmp).
+    env:
+      TMPDIR: /tmp
     steps:
       - uses: actions/checkout@v5
 
@@ -86,6 +92,12 @@ jobs:
 
       - name: Install
         run: |
+          # The dev-Mac tool set the suite assumes: qemu-img for
+          # the persist/resize suites' real overlays, and GNU
+          # rsync (macOS ships openrsync at /usr/bin/rsync, whose
+          # remote-shell argv shaping differs — the rsync suite
+          # pins the GNU shape).
+          brew install --quiet qemu rsync
           python -m pip install --quiet --upgrade pip
           python -m pip install --quiet -e .
           python -m pip install --quiet --group dev
@@ -110,6 +122,8 @@ jobs:
       github.event_name == 'workflow_dispatch'
     runs-on: macos-15
     timeout-minutes: 30
+    env:
+      TMPDIR: /tmp
     steps:
       - uses: actions/checkout@v5
 
