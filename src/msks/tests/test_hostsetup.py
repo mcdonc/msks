@@ -10,6 +10,7 @@ did; CI has no consumer of the retired script.
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -145,6 +146,7 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "msksd").write_text("#!/bin/sh\n")
+    (bin_dir / "msks").write_text("#!/bin/sh\n")
     monkeypatch.setattr(
         hostsetup.sys, "argv", [str(bin_dir / "msks-setup-debian-host")]
     )
@@ -188,6 +190,13 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(
         hostsetup, "CLOUD_HYPERVISOR_BIN", str(tmp_path / "cloud-hypervisor")
     )
+    # The client link's path (#719): under tmp_path, like the
+    # VMM's — the phase's real symlink never reaches the host's
+    # /usr/local/bin.
+    monkeypatch.setattr(
+        hostsetup, "CLIENT_LINK", str(tmp_path / "client" / "msks")
+    )
+    (tmp_path / "client").mkdir()
     monkeypatch.setattr(hostsetup, "OS_RELEASE", str(release))
     monkeypatch.setattr(hostsetup.os, "geteuid", lambda: 0)
     monkeypatch.setattr(hostsetup, "which", lambda tool: f"/usr/bin/{tool}")
@@ -2244,3 +2253,89 @@ def test_uninstall_sweeps_the_part_sibling(
     assert main(["--uninstall"]) == 0
     assert not partial.exists()
     assert hostsetup.CLOUD_HYPERVISOR_BIN in host.removals
+
+
+def test_the_client_link_lands_idempotently(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """#719: the run links the client's console script into
+    /usr/local/bin — fresh, then already-linked on the re-run —
+    and the summary carries the line."""
+    assert main() == 0
+    link = Path(hostsetup.CLIENT_LINK)
+    assert link.is_symlink()
+    assert link.resolve() == Path(sys.argv[0]).resolve().parent / "msks"
+    out = capsys.readouterr().out
+    assert "client:    " in out and "-> " in out
+    assert main() == 0
+    assert "already linked" in capsys.readouterr().out
+    # The uninstall mirror removes it, and a second sweep names
+    # its absence.
+    assert main(["--uninstall"]) == 0
+    assert not link.exists()
+    assert "already absent" in capsys.readouterr().out
+
+
+def test_the_client_link_repoints_a_dangling_link(
+    debian_host: Host,
+) -> None:
+    """A link whose target vanished is stale by definition: the
+    re-run re-points it instead of refusing (the venv moved; the
+    name should follow)."""
+    link = Path(hostsetup.CLIENT_LINK)
+    link.symlink_to("/no/such/venv/bin/msks")
+    assert main() == 0
+    assert link.resolve() == Path(sys.argv[0]).resolve().parent / "msks"
+
+
+def test_a_foreign_thing_at_the_link_path_refuses(
+    debian_host: Host, capsys: pytest.CaptureFixture
+) -> None:
+    """A live link to another target and a regular file at the
+    path both refuse by name — the run never clobbers what it
+    did not land."""
+    link = Path(hostsetup.CLIENT_LINK)
+    other = link.parent / "my-own-msks"
+    other.write_text("#!/bin/sh\n")
+    link.symlink_to(other)
+    assert main() == 1
+    assert "is a link to" in capsys.readouterr().err
+    link.unlink()
+    link.write_text("an operator's script\n")
+    assert main() == 1
+    assert "already exists and is not this tool's link" in (
+        capsys.readouterr().err
+    )
+    # The uninstall mirror leaves the operator's file alone.
+    assert main(["--uninstall"]) == 0
+    assert link.read_text() == "an operator's script\n"
+    assert "left as-is" in capsys.readouterr().out
+
+
+def test_no_client_sibling_stands_the_phase_down(
+    monkeypatch: pytest.MonkeyPatch,
+    debian_host: Host,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A deployment whose bin dir ships no msks beside the tool
+    skips the phase with the note — the service phase's
+    invoked_as reasoning, the client's shape."""
+    monkeypatch.setattr(hostsetup, "bin_sibling", lambda name: None)
+    assert main() == 0
+    assert "no msks beside the tool" in capsys.readouterr().out
+
+
+def test_an_unstatable_link_reads_live(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A link whose target cannot be stat'd is not provably
+    stale — it reads live, so the re-point refuses instead of
+    taking the name (#719 review)."""
+    link = tmp_path / "msks"
+    link.symlink_to(tmp_path / "elsewhere")
+
+    def denied(self) -> None:
+        raise PermissionError("no stat for you")
+
+    monkeypatch.setattr(hostsetup.Path, "stat", denied)
+    assert hostsetup.link_is_live(link) is True

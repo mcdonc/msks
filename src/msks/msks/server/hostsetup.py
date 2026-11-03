@@ -54,7 +54,11 @@ host's own architecture, and the landed binary answers
 ``--version`` before the run calls it landed; a present binary
 stays untouched. The phase runs last, so a host whose egress
 passes the Debian mirror but not github.com still finishes
-every other piece. /dev/kvm access arrives through the kvm
+every other piece. The client's console script links at
+``/usr/local/bin/msks`` — the bin sibling this tool's own venv
+ships, on every login PATH (#719); a path already holding a
+live link or a regular file refuses by name, and a dangling
+link re-points. /dev/kvm access arrives through the kvm
 group on the daemon's user, the same supplementary-group grant the
 NixOS unit makes — the tool adds the executing user to the group
 when missing (#560; bare runs and new logins need it on the
@@ -72,9 +76,10 @@ all, because no manager means no daemon), then the unit file
 and its enablement symlink, the sysctl and
 modules files leave (``sysctl --system`` re-applies every
 remaining sysctl.d file, so a second owner's setting survives),
-the wrapper, the kvm membership (the tool keeps no state, so
-any member leaves — the line names the restore), the
-``~/.profile`` block, and the cloud-hypervisor binary — while
+the wrapper, the client link, the kvm membership (the tool
+keeps no state, so any member leaves — the line names the
+restore), the ``~/.profile`` block, and the cloud-hypervisor
+binary — while
 the apt packages stay (they are shared Debian packages; the
 summary names the ones present with the ``apt-get`` line that
 removes them). Idempotent the same way: re-run any time; a
@@ -124,6 +129,12 @@ SYSTEMD_MANAGER = "/run/systemd/system"
 DEBIAN_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 WRAPPER = "/usr/local/bin/msks-caps"
+
+#: Where the client's console script links (#719): the
+#: /usr/local/bin real estate the wrapper and the VMM already
+#: occupy — on every login PATH, so the link needs no profile
+#: edits and no login-shell gamble over ~/.local/bin.
+CLIENT_LINK = "/usr/local/bin/msks"
 CAPS = "cap_net_admin,cap_net_bind_service"
 SYSCTL_FILE = "/etc/sysctl.d/msks-egress.conf"
 MODULES_FILE = "/etc/modules-load.d/msks.conf"
@@ -1061,15 +1072,111 @@ def pwd_getpwuid(uid: int):
     return pwd.getpwuid(uid)
 
 
+def bin_sibling(name: str) -> str | None:
+    """A console script beside this tool's own, when the venv
+    that shipped the tool shipped it, or None — the
+    deployment's bin dir is the one path that locates the
+    install (invoked_as()'s reasoning)."""
+    sibling = Path(sys.argv[0]).resolve().parent / name
+    return str(sibling) if sibling.exists() else None
+
+
 def msksd_sibling() -> str | None:
     """The msksd the deployment brought, as this tool's own bin
-    sibling (the venv that shipped the tool ships the daemon), or
-    None when no sibling exists — the deployment runs its daemon
-    from elsewhere and the service phase names that and stands
-    down (invoked_as()'s reasoning: an install root's bin dir is
-    the one path that locates the deployment)."""
-    sibling = Path(sys.argv[0]).resolve().parent / "msksd"
-    return str(sibling) if sibling.exists() else None
+    sibling (the venv that shipped the tool ships the daemon),
+    or None when no sibling exists — the deployment runs its
+    daemon from elsewhere and the service phase names that and
+    stands down."""
+    return bin_sibling("msksd")
+
+
+def place_link(path: str, sibling: str) -> str:
+    """The symlink lands, and the note names the pair."""
+    os.symlink(sibling, path)
+    return f"{path} -> {sibling}"
+
+
+def link_is_live(link: Path) -> bool:
+    """Whether a symlink's target answers. A link whose target
+    cannot even be stat'd (a permission error on the target's
+    directory) reads live: stale must be provable before a
+    re-point takes the name — ``Path.exists`` alone would read
+    the unstatable link dangling and swallow the difference."""
+    try:
+        link.stat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True  # unstatable is not provably stale
+    return True
+
+
+def relink_or_refuse(path: str, link: Path, sibling: str, error) -> str:
+    """The arms for a path that already holds a link: ours
+    answers already-linked, a live link to another target
+    refuses through *error* by name, and a dangling link is
+    stale by definition and re-points."""
+    current = os.readlink(path)
+    if current == sibling:
+        return f"{path} -> {sibling} (already linked)"
+    if link_is_live(link):
+        raise error(
+            f"{path} is a link to {current}, not this tool's "
+            "msks; remove it and re-run"
+        )
+    link.unlink()  # dangling: stale by definition
+    return place_link(path, sibling)
+
+
+def claim_link(path: str, sibling: str, error) -> str:
+    """Place the client's symlink at *path* pointing at
+    *sibling* (#719): a regular file at the path refuses through
+    *error* by name — the run never clobbers what it did not
+    land — a path already holding a link takes
+    :func:`relink_or_refuse`'s arms, and a bare path links. The
+    note names the pair either way."""
+    link = Path(path)
+    if link.is_symlink():
+        return relink_or_refuse(path, link, sibling, error)
+    if link.exists():
+        raise error(
+            f"{path} already exists and is not this tool's link; "
+            "remove it (or move your own command) and re-run"
+        )
+    return place_link(path, sibling)
+
+
+def link_client() -> str:
+    """The client's console script onto every login PATH (#719):
+    a symlink at /usr/local/bin/msks — the real estate the
+    wrapper and the VMM already occupy, so no profile edits and
+    no login-shell gamble — pointing at the bin sibling this
+    tool's own venv ships. No sibling stands the phase down
+    with a note (the deployment runs its client from elsewhere —
+    invoked_as()'s reasoning again); the arms at the path are
+    :func:`claim_link`'s."""
+    sibling = bin_sibling("msks")
+    if sibling is None:
+        return (
+            "skipped: no msks beside the tool (the deployment's "
+            "client lives elsewhere)"
+        )
+    return claim_link(CLIENT_LINK, sibling, HostSetupError)
+
+
+def drop_client_link() -> str:
+    """The client link's mirror (#719): the symlink goes
+    whatever it pointed at (the tool proves no run's own link),
+    and a regular file at the path stays — the uninstall never
+    removes an operator's own file."""
+    link = Path(CLIENT_LINK)
+    if link.is_symlink():
+        target = os.readlink(CLIENT_LINK)
+        link.unlink()
+        return f"{CLIENT_LINK} removed (pointed at {target})"
+    if link.exists():
+        return f"{CLIENT_LINK} is a file the tool did not land (left as-is)"
+    return f"{CLIENT_LINK} already absent"
 
 
 def systemd_manages() -> bool:
@@ -1377,6 +1484,7 @@ def summary(
     service: str,
     uplink_name: str,
     login_path: str = "",
+    client_link: str = "",
     profile: HostProfile = DEBIAN_PROFILE,
 ) -> None:
     say(profile.tool, "done —")
@@ -1390,6 +1498,7 @@ def summary(
     )
     print(f"  /dev/kvm:   {kvm}")
     print(f"  login PATH: {login_path}")
+    print(f"  client:     {client_link}")
     print(f"  consent:    {consent_line(states)}")
     print(
         "  uplink:     point the daemon at this host's default-route "
@@ -1438,6 +1547,7 @@ def run_setup(
             if service
             else "skipped (--no-service)"
         )
+        client_link = link_client()
         summary(
             ambient,
             states,
@@ -1445,6 +1555,7 @@ def run_setup(
             service_note,
             the_uplink,
             login_path=path_note,
+            client_link=client_link,
             profile=profile,
         )
         # The VMM lands last and after the summary: it is the one
@@ -1684,6 +1795,7 @@ def uninstall_summary(
     login_path: str,
     vmm: str,
     packages: list[str],
+    client_link: str = "",
     profile: HostProfile = DEBIAN_PROFILE,
 ) -> None:
     """The uninstall summary: every piece the run removed, in the
@@ -1697,6 +1809,7 @@ def uninstall_summary(
     print(f"  wrapper:    {wrapper}")
     print(f"  /dev/kvm:   {kvm}")
     print(f"  login PATH: {login_path}")
+    print(f"  client:     {client_link}")
     print(f"  VMM:        {vmm}")
     if not packages:
         print("  packages:   none of the msks dependency packages are present")
@@ -1731,6 +1844,7 @@ def run_uninstall(
         wrapper = drop_wrapper()
         kvm = remove_kvm_membership(user, profile)
         login_path = drop_user_path(home, uid, gid, profile)
+        client_link = drop_client_link()
         vmm = drop_cloud_hypervisor()
         uninstall_summary(
             service_note,
@@ -1741,6 +1855,7 @@ def run_uninstall(
             login_path,
             vmm,
             present_packages(profile),
+            client_link=client_link,
             profile=profile,
         )
     finally:
@@ -1765,7 +1880,8 @@ def parse_args(
         "--uninstall",
         action="store_true",
         help="undo the setup (#604): stop and remove the msksd "
-        "service, remove the wrapper, the routing kernel files, "
+        "service, remove the wrapper, the client link, the routing "
+        "kernel files, "
         "the cloud-hypervisor binary, the kvm membership, and the "
         "profile block — the apt packages stay, and the summary "
         "names them",

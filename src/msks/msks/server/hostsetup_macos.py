@@ -49,14 +49,21 @@ the other tools never see:
    kept untouched — the run names the file and prints the alias
    block to paste into it; a file this tool wrote is refreshed on
    re-run (its header says so, operator edits included).
+6. **The client link (#719)** — ``msks`` linked into the brew
+   prefix's bin dir (``$(brew --prefix)/bin/msks`` — the
+   Homebrew the tool already requires for Lima): user-owned, on
+   PATH for every brew user, and the tool never runs sudo. A
+   foreign file at the path refuses by name; a dangling link
+   re-points (stale by definition); ``--uninstall`` removes it.
 
 ``--check`` runs the verify pass alone — the macOS doctor row
 set: Lima, the VM, the nested-virtualization marker, virtiofsd
 inside the VM, the listener, the client config, the login agent
 — and mutates nothing: a missing Lima refuses with the
 run-the-tool remedy, never an install.
-``--uninstall`` stops and deletes the VM and its login agent
-(Lima and the client config stay, and the summary names
+``--uninstall`` stops and deletes the VM, its login agent, and
+the brew-prefix client link (Lima and the client config stay,
+and the summary names
 them). Every phase is idempotent: re-run any time; a rerun
 preserves the token, the CA, and the daemon's state.
 """
@@ -83,6 +90,7 @@ from ..client.config import (
     render_template,
 )
 from ..spec.version import __version__, ordering
+from .hostsetup import claim_link
 from .tls import CA_CERT
 
 TOOL = "msks-setup-macos-host"
@@ -1200,7 +1208,101 @@ def client_side_rows(port: int) -> list[str]:
     rows.append(
         f"the login agent brings the {VM_NAME} VM up at login ({AGENT_LABEL})"
     )
+    rows.append(client_link_row())
     return rows
+
+
+# --- phase 6: the client link (#719) ---------------------------------
+
+
+#: The brew prefixes the uninstall arm sweeps in brew's absence
+#: (#701's lesson: the uninstall never requires a tool the
+#: install needed) — the arm tries brew first for the truth.
+FALLBACK_BREW_BINS = ("/opt/homebrew/bin", "/usr/local/bin")
+
+
+def brewed_prefix() -> str:
+    """The brew prefix when brew answers, empty when it does
+    not (a missing binary, a failing call — the uninstall never
+    requires brew, #701's lesson)."""
+    try:
+        return run(["brew", "--prefix"], capture=True).strip()
+    except FileNotFoundError, MacSetupError:
+        return ""
+
+
+def client_link_path() -> str:
+    """The link's path: the brew prefix's bin dir. The tool
+    already requires Homebrew for Lima (#699), the prefix is
+    user-owned (the tool never runs sudo), and its bin dir is on
+    PATH for every brew user. A brew that will not answer
+    refuses by name — the install's own remedy is the same
+    brew line #699 prints."""
+    prefix = brewed_prefix()
+    if not prefix:
+        raise MacSetupError(
+            "brew did not answer `brew --prefix`; the client link "
+            "needs Homebrew (the tool installs Lima through it)"
+        )
+    return f"{prefix}/bin/msks"
+
+
+def client_sibling() -> str | None:
+    """The client's console script beside this tool's own — the
+    Python environment that shipped this tool shipped ``msks``
+    with it — or None when no sibling exists: the deployment
+    runs its client from elsewhere, and the phase stands down
+    with a note."""
+    sibling = Path(sys.argv[0]).resolve().parent / "msks"
+    return str(sibling) if sibling.exists() else None
+
+
+def link_client_mac() -> str:
+    """The client onto every Mac PATH (#719): a symlink at the
+    brew prefix's bin dir pointing at this tool's bin sibling.
+    No sibling stands the phase down with a note; the arms at
+    the path are the shared :func:`claim_link`'s — the Linux
+    tools' own phase, the same arms."""
+    sibling = client_sibling()
+    if sibling is None:
+        return (
+            "the client link: skipped, no msks beside the tool "
+            "(the deployment's client lives elsewhere)"
+        )
+    return claim_link(client_link_path(), sibling, MacSetupError)
+
+
+def client_link_row() -> str:
+    """The link's --check row (#719): where a bare ``msks``
+    answers from, green when the link stands and its target
+    answers (``Path.exists`` resolves the target from the
+    link's own directory — a relative brew-style target reads
+    correctly); anything else refuses with the re-run remedy."""
+    path = client_link_path()
+    link = Path(path)
+    if link.is_symlink() and link.exists():
+        return f"msks answers at {path} (-> {os.readlink(path)})"
+    raise MacSetupError(f"the client link at {path} is missing; re-run {TOOL}")
+
+
+def remove_client_link() -> str:
+    """The uninstall arm's mirror: the symlink goes whatever it
+    pointed at, and a regular file at the path stays — the
+    uninstall never removes an operator's own file. The arm
+    never requires brew (#701's lesson): it asks brew for the
+    prefix first and sweeps the two brew uses when brew is
+    gone."""
+    paths: list[str] = []
+    prefix = brewed_prefix()
+    if prefix:
+        paths.append(f"{prefix}/bin/msks")
+    paths.extend(f"{bin_}/msks" for bin_ in FALLBACK_BREW_BINS)
+    for path in dict.fromkeys(paths):
+        link = Path(path)
+        if link.is_symlink():
+            link.unlink()
+            return f"the client link {path} is gone"
+    return "no client link found"
 
 
 # --- the entry --------------------------------------------------------
@@ -1239,9 +1341,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--uninstall",
         action="store_true",
-        help="stop and delete the msksd VM and its login agent "
-        "(Lima and the client config stay, and the summary "
-        "names them)",
+        help="stop and delete the msksd VM, its login agent, and "
+        "the brew-prefix client link (Lima and the client config "
+        "stay, and the summary names them)",
     )
     return parser.parse_args(argv)
 
@@ -1264,7 +1366,30 @@ def run_setup(args: argparse.Namespace) -> str:
     verify_daemon(port)
     preset = client_preset(port)
     ensure_agent()
+    say(link_client_mac())
     return preset
+
+
+def uninstall_closing_line(link_note: str) -> str:
+    """The uninstall arm's closing print: the removal sentence
+    gates on the link's note (#719 review) — a sweep that found
+    no link says so in the parenthetical instead of claiming
+    one gone."""
+    if "is gone" in link_note:
+        return (
+            f"{TOOL}: the {VM_NAME} VM, its login agent, and the "
+            f"brew-prefix client link are gone. "
+            "Lima itself, the client config, and the CA and token "
+            "under ~/.config/msks/ stay; remove them by hand when "
+            "you want them gone."
+        )
+    return (
+        f"{TOOL}: the {VM_NAME} VM and its login agent are gone "
+        f"({link_note}). "
+        "Lima itself, the client config, and the CA and token "
+        "under ~/.config/msks/ stay; remove them by hand when "
+        "you want them gone."
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1277,12 +1402,7 @@ def main(argv: list[str] | None = None) -> int:
             say(f"removing the login agent and the {VM_NAME} VM")
             remove_agent()
             delete_vm(VM_NAME)
-            print(
-                f"{TOOL}: the {VM_NAME} VM and its login agent are gone. "
-                "Lima itself, the client config, and the CA and token "
-                "under ~/.config/msks/ stay; remove them by hand when "
-                "you want them gone."
-            )
+            print(uninstall_closing_line(remove_client_link()))
             return 0
         if args.check:
             check_host(install=False)
