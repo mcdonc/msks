@@ -8,6 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`msks` lands on the host PATH after setup (#719).** The
+  Debian and Fedora setup tools link `/usr/local/bin/msks` to
+  the console script beside the tool (the real estate the
+  wrapper and the VMM already occupy), and the macOS tool
+  links `$(brew --prefix)/bin/msks` (user-owned, on PATH for
+  every brew user, no sudo). A foreign file at the path refuses
+  by name, the tool's own stale link re-points, `--uninstall`
+  removes the link, and the macOS `--check` carries the row.
+
 - **The published image list filters foreign-arch rows
   (#717).** `GET /api/v1/health` grows the daemon host's
   machine name, and the TUI's published group carries the rows

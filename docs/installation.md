@@ -157,6 +157,16 @@ the unit changed.
 
 **Cloud Hypervisor's static release binary**. So guest VMs can be started.
 
+**The client link.** `/usr/local/bin/msks` — a symlink to the
+`msks` console script that shipped beside the setup tool,
+landing in the same directory the wrapper and the VMM binary
+occupy. Every login shell carries `/usr/local/bin`, so a bare
+`msks` answers for every user on the host with no profile
+edits. A regular file or a live link to another target at the
+path refuses by name (the run never clobbers what it did not
+land); the tool's own stale link re-points; `--uninstall`
+removes it.
+
 **PATH manipulation.** Adds `/usr/sbin` to the sudoing user's `PATH` so various
 binaries can be found.
 
