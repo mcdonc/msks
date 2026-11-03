@@ -93,7 +93,11 @@ def write_mkisofs_stub(directory: Path, record: Path) -> Path:
         "done\n"
         "{\n"
         '  printf "mkisofs $*\\n"\n'
-        '  printf "staging-mode %s" "$(stat -c %a .)"\n'
+        # The staging dir's mode, GNU stat first, BSD stat's
+        # %Lp as the fallback (a stock macOS host — the macOS CI
+        # runner ships BSD stat).
+        "  mode=$(stat -c %a . 2>/dev/null || stat -f %Lp .)\n"
+        '  printf "staging-mode %s\\n" "$mode"\n'
         '  printf -- "--- user-data ---\\n"\n'
         "  cat user-data\n"
         '  printf "\\n--- meta-data ---\\n"\n'
