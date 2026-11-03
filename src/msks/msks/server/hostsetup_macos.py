@@ -913,7 +913,7 @@ def client_preset(port: int) -> str:
     fetch retries briefly: the restart this run's bootstrap just
     issued returns before the daemon's first startup writes the
     file. The chain is proven against the in-memory CA before
-    any file lands (#733): a refusing run leaves the previous
+    any file lands (#733): a verify refusal leaves the previous
     CA, token, and config untouched, so client runs between the
     refused setup and the re-run keep working."""
     ca = fetch_vm_file(f"{VM_STATE}/{CA_CERT}").strip()
