@@ -387,6 +387,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Apple Silicon hosts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sizing-the-msksd-vm" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sizing the msksd VM
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -913,6 +930,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Apple Silicon hosts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sizing-the-msksd-vm" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Sizing the msksd VM
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1237,6 +1271,22 @@ workspaces: the VM mounts them under its reserved
 prefix and forwards each attached share to the workspace that
 asked for it — see the <a href="../mounts/#shares-on-a-macos-host">mounts chapter's macOS
 section</a>.</p>
+<h3 id="sizing-the-msksd-vm">Sizing the msksd VM<a class="headerlink" href="#sizing-the-msksd-vm" title="Permanent link">&para;</a></h3>
+<p>The VM starts at the template's sizing — 4 CPUs, 8 GiB of memory, a
+60 GiB disk — and the sizing flags change it at creation and on every
+re-run:</p>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>msks-setup-macos-host<span class="w"> </span>--cpus<span class="w"> </span><span class="m">8</span><span class="w"> </span>--memory<span class="w"> </span><span class="m">16</span><span class="w"> </span>--disk<span class="w"> </span><span class="m">200</span>
+</span></code></pre></div>
+<p>A changed value stops the VM, edits its instance, and starts it again:
+running workspaces stop with the VM, and each starts again with
+<code>msks start</code>. Equal values change nothing, so the command is
+safe to re-run in scripts. The disk only grows: a smaller value refuses,
+naming both sizes — reclaim space with <code>msks storage</code> instead. The disk
+is sparse, so it fills on demand up to the size you set. The floors are
+2 CPUs, 4 GiB of memory, and 20 GiB of disk: the VM must hold the daemon
+and a workspace.</p>
+<p>When the VM's disk runs low, the daemon's storage warning and the 507
+refusal name the same grow command, so the fix is one re-run away.</p>
 <p>It doesn't work on Asahi. An Apple Silicon host whose kernel runs KVM in NV
 mode does not yet deliver guest interrupts
 (<a href="https://github.com/mcdonc/msks/issues/649">#649</a>): a workspace starts and its
