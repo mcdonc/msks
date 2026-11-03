@@ -1167,8 +1167,13 @@ terminal and its command flag in <code>terminal_open_cmd</code>, and
 <code>msks-term-popup</code> right after it (tmux 3.2 or newer must be on PATH):</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">konsole -e msks-term-popup</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">xterm -e msks-term-popup</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghostty +wait -e msks-term-popup</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghostty +wait -e msks-term-popup</span><span class="w">       </span><span class="c1"># Linux</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">open -na Ghostty.app --args -e msks-term-popup</span><span class="w">  </span><span class="c1"># macOS</span>
 </span></code></pre></div>
+<p>The macOS form needs the brew-prefix links. An <code>open</code>-opened
+window resolves commands on a fresh login PATH, and
+<code>msks-setup-macos-host</code> links both client commands there
+(#734). tmux comes from that PATH the same way.</p>
 <p>The popup viewer keeps its own attach to the hidden session, so a hold
 that arrives while it is open is already in the list. Verdicts posted
 from it go through the same REST contract as the consent page. A post

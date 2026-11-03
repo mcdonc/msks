@@ -1333,6 +1333,15 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong><code>msks-setup-macos-host</code> links <code>msks-term-popup</code> beside
+  <code>msks</code> (#734).</strong> The brew prefix's bin dir carries both client
+  commands, so a consent-terminal window opened through an
+  <code>open</code>-launched terminal (Ghostty on macOS) resolves
+  <code>msks-term-popup</code> on the fresh login PATH the window runs
+  with. <code>--check</code> reports both links; <code>--uninstall</code> removes
+  both.</p>
+</li>
+<li>
 <p><strong><code>msks-setup-macos-host --cpus/--memory/--disk</code> size the msksd VM
   (#721).</strong> The flags set the VM's CPUs, memory (GiB), and disk (GiB)
   at creation and on every re-run: changed values restart the VM
