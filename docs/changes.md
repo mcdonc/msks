@@ -8,6 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **`msks-setup-macos-host` proves the daemon's CA before any
+  client file lands (#733).** The verify pass checks the TLS
+  chain against the fetched CA before writing the CA, the
+  token, or the client config. A torn read of the daemon's CA
+  file (text that starts the PEM block but holds no
+  certificate) now refuses with the previous files untouched,
+  so client runs keep working between the refused setup and the
+  re-run.
+
 - **The console session survives a burst on a non-blocking
   stdout (#725).** The TUI's shell fallback streams the guest's
   boot console through stdout, and when the tty's fd sits in
