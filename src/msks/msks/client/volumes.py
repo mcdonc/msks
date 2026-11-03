@@ -17,6 +17,7 @@ from .context import call, env_token, env_url
 from .images import imported_cell
 from .resize import display_name
 from .rest import STREAM_WINDOW_B, api_client, download, upload
+from .stdio import DrainSink
 from .tabular import framed_text
 
 #: One mebibyte, the unit the API's MiB-denominated sizes render in
@@ -150,7 +151,7 @@ async def run_home_export(
     async with api_client(url, token, transport) as client:
         if out == "-":
             return await download(
-                client, home_path(workspace_id), sys.stdout.buffer
+                client, home_path(workspace_id), DrainSink(sys.stdout.buffer)
             )
         try:
             with open(out, "wb") as sink:

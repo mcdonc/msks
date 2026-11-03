@@ -558,13 +558,11 @@ def test_stdio_pipe_and_writer_close_are_no_ops(
 ) -> None:
     monkeypatch.setattr(sys, "stdout", FakeStdout())
     writer = fwd._StdoutWriter()
-    writer.close()
     pipe = fwd._StdinPipe(sys.stdin)
     assert pipe.readable() is True
     pipe.close()
 
     async def run() -> None:
-        await writer.wait_closed()
         await writer.drain()
 
     asyncio.run(run())

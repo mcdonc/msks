@@ -21,7 +21,7 @@ from urllib.parse import quote
 
 import websockets
 
-from . import wsauth, wsdial
+from . import stdio, wsauth, wsdial
 from .env import (
     env_token,
     env_url,
@@ -293,28 +293,16 @@ class _StdinPipe:
         pass
 
 
-class _StdoutWriter:
-    """The stream side of the stdio bridge: writes to stdout's
-    buffer, which the ProxyCommand caller (ssh) drains promptly —
-    the blocking assumption #725 falsified for the console's tty
-    does not hold as an invariant everywhere; #728 tracks the
-    shared write path."""
+class _StdoutWriter(stdio.DrainSink):
+    """The stream side of the stdio bridge: writes hold and the
+    awaited ``drain()`` lands them through the EAGAIN-safe shape
+    — ssh's ProxyCommand reads its stdout promptly, but the fd's
+    blocking mode is not an invariant this client owns, and a
+    burst on a non-blocking fd must wait for writability, not
+    crash the session (#725, #728)."""
 
     def __init__(self) -> None:
-        self._buffer = sys.stdout.buffer
-
-    def write(self, data) -> None:
-        self._buffer.write(data)
-        self._buffer.flush()
-
-    async def drain(self) -> None:
-        return
-
-    def close(self) -> None:
-        pass
-
-    async def wait_closed(self) -> None:
-        return
+        super().__init__(sys.stdout.buffer)
 
 
 async def local_listener(address: str, token: str, ssl_ctx, local_port: int):

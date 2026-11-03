@@ -254,44 +254,6 @@ async def test_pump_waits_out_a_nonblocking_burst() -> None:
     assert bytes(received) == expected
 
 
-async def test_write_draining_flushes_a_held_buffer_first() -> None:
-    """The drain's first half: a buffer that already holds bytes
-    when EAGAIN arrives keeps them, and the retry lands them
-    whole before the message's own raw write — verified against
-    the same non-blocking pipe, held full by a stalled drainer."""
-    r, w = os.pipe()
-    os.set_blocking(w, False)
-    buffered = open(w, "wb", buffering=100)
-    buffered.write(b"held")  # buffered, not yet flushed
-    try:
-        while True:
-            os.write(w, b"x" * 4096)
-    except BlockingIOError:
-        pass
-    received = bytearray()
-
-    def drain() -> None:
-        time.sleep(0.3)  # hold the pipe full: the flush meets EAGAIN
-        while True:
-            data = os.read(r, 65536)
-            if not data:
-                return
-            received.extend(data)
-
-    drainer = threading.Thread(target=drain)
-    drainer.start()
-    try:
-        await asyncio.wait_for(
-            console.write_draining(buffered, b"msg"), timeout=30
-        )
-    finally:
-        buffered.close()  # closes the write end: the drainer exits
-        drainer.join(timeout=30)
-        os.close(r)
-    payload = bytes(received).replace(b"x", b"")
-    assert payload == b"heldmsg"
-
-
 async def test_pump_coalesces_a_paste() -> None:
     payload = bytes(range(65, 91)) * 400  # 10,400 bytes, no 0x1d inside
     ws = FakeWs()

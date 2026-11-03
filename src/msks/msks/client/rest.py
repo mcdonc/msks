@@ -198,9 +198,15 @@ async def download(client: httpx.AsyncClient, path: str, sink) -> int:
     """Stream one GET body to ``sink.write``; returns the byte count.
 
     The body never buffers whole — a home volume runs to gigabytes
-    (#80).
+    (#80). A sink that provides ``drain`` (the asyncio
+    StreamWriter shape, as the stdout export sink does) has it
+    awaited after every chunk, so a non-blocking fd waits for
+    writability instead of crashing mid-download (#728) — the
+    sink holds at most one chunk at a time; a plain file sink
+    has no ``drain`` and streams as before.
     """
     total = 0
+    drain = getattr(sink, "drain", None)
 
     async def exchange():
         nonlocal total
@@ -213,6 +219,8 @@ async def download(client: httpx.AsyncClient, path: str, sink) -> int:
             async for chunk in response.aiter_bytes():
                 total += len(chunk)
                 sink.write(chunk)
+                if drain is not None:
+                    await drain()
         return total
 
     return await guarded(client, exchange)
