@@ -4,10 +4,28 @@
 # Debian defaults. Its own workflow so the image's lane reports
 # separately and runs in parallel with the Debian lane.
 #
-# The cold build is the long pole (the closure is all
-# cache.nixos.org downloads plus msks's own pack steps); the suite
-# itself matches the Debian lane's shape — serial, verbose, guarded
-# against a run that quietly skipped everything.
+# #723: the lane runs as two parallel jobs over one cached guest
+# build. The cold build is the long pole (the closure is all
+# cache.nixos.org downloads plus msks's own pack steps of
+# gigabyte-scale artifacts), and the guest is a pure function of
+# its inputs — every nix file the guest chain reads (guest.nix,
+# guest-nixos.nix, guest-nixos-configuration.nix,
+# image-archive.nix, agent-toolchain.nix, the pi extension and
+# settings, the shrinkwrap pair), the devenv.lock nixpkgs pin
+# (and devenv.nix, whose GUEST_NIXPKGS line carries it), and
+# scripts/build-guest.sh itself — so actions/cache keys the built
+# guest dir on exactly those. The guest chain reads nothing under
+# src/ (the host module's source.nix tree is not an image input;
+# the old "console helper sources" comments in the nix files are
+# stale), which is why source-only changes warm-restore the same
+# guest. Any file the guest chain comes to read joins this key. Caches saved by
+# one job are invisible to its sibling jobs in the same run, so
+# a first run after a change builds in both jobs (in parallel);
+# every later run restores. No restore-keys fallback exists on
+# purpose: a partial hit that pairs a new kernel with an old
+# rootfs would test an image no input set ever produced. The
+# suite itself matches the Debian lane's shape — serial, verbose,
+# guarded against a run that quietly skipped everything.
 name: Smoke (NixOS)
 
 on:
@@ -20,6 +38,7 @@ on:
       - devenv.lock
       - nix/guest.nix
       - nix/guest-pi-extension.ts
+      - nix/guest-pi-settings.json
       - nix/agent-toolchain.nix
       - nix/pi-shrinkwrap-patch.py
       - nix/pi-shrinkwrap-integrity.json
@@ -43,6 +62,7 @@ on:
       - devenv.lock
       - nix/guest.nix
       - nix/guest-pi-extension.ts
+      - nix/guest-pi-settings.json
       - nix/agent-toolchain.nix
       - nix/pi-shrinkwrap-patch.py
       - nix/pi-shrinkwrap-integrity.json
@@ -67,12 +87,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  smoke-nixos:
+  core:
     runs-on: ubuntu-latest
-    # 25 held the core lane alone; the probe e2e boots a daemon
-    # and a guest beside it; the fold e2e waits out an in-guest
-    # rebuild (up to ~8 min) on top.
-    timeout-minutes: 50
+    # 25 held the core lane alone when it ran serially behind the
+    # build; this job runs the build-or-restore and the core
+    # suite only.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
@@ -93,7 +113,34 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      - name: Restore the built guest
+        id: guest
+        uses: actions/cache@v4
+        with:
+          path: .devenv/state/guest-nixos
+          # Every input the guest build reads (see the header): the
+          # key changes on any of them and only on them, and
+          # runner.arch names the building machine — the same way
+          # the bare `nixos` flavor follows the host's uname. The
+          # hashFiles call lives here, at step level, because a
+          # workflow-level env evaluates before checkout.
+          key: smoke-nixos-guest-${{ runner.arch }}-${{ hashFiles('devenv.lock', 'devenv.nix', 'scripts/build-guest.sh', 'nix/guest.nix', 'nix/guest-nixos.nix', 'nix/guest-nixos-configuration.nix', 'nix/image-archive.nix', 'nix/agent-toolchain.nix', 'nix/guest-pi-extension.ts', 'nix/guest-pi-settings.json', 'nix/pi-shrinkwrap-patch.py', 'nix/pi-shrinkwrap-integrity.json') }}
+
+      - name: Free runner disk for the guest build
+        # The guest build peaks past 12 GB on / (the nix closure,
+        # the packed rootfs and archive, and their copies into
+        # the guest dir), and the stock runner image ships with
+        # toolchains this lane never runs — a cache-miss run pays
+        # the full build, and that is the run the stock disk
+        # could not hold (#723). A restored cache skips the
+        # build, so the reclaim stays behind the same guard.
+        if: steps.guest.outputs.cache-hit != 'true'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          df -h /
+
       - name: Build the NixOS guest assets
+        if: steps.guest.outputs.cache-hit != 'true'
         run: >-
           devenv --quiet -O dotenv.enable:bool false shell --
           msks-build-guest nixos
@@ -126,21 +173,83 @@ jobs:
               exit 1
             }
 
-      # The probe e2e against the NixOS image (#424): the same
-      # root+egress shape the Debian egress lane runs, against the
-      # NixOS guest — the daemon boots that image unchanged, the
-      # seed's CA staging rides the NixOS paths (the staged bundle
-      # and the profile.local exports), and curl (an image package
-      # here) verifies against the seed's bundle. The fold e2e
-      # (#427) then waits out the background nixos-rebuild that
-      # folds the CA into the system bundle and proves it with a
-      # curl under `env -i`. The user-nix e2e (#433) proves nix
-      # from the console as the unprivileged workspace user and
-      # the shipped /etc/nixos chain. The pipeline runs INSIDE the
-      # bash -c, which starts with default shell options — the
-      # `set -eo pipefail` there is what carries a pytest failure
-      # to the step's exit; the guarded grep below only catches a
-      # quietly skipped run, never a failed one.
+      - name: Collect smoke state on failure
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-nixos-core-evidence
+          path: /tmp/msks-smoke-failed/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The probe e2e against the NixOS image (#424): the same
+  # root+egress shape the Debian egress lane runs, against the
+  # NixOS guest — the daemon boots that image unchanged, the
+  # seed's CA staging rides the NixOS paths (the staged bundle
+  # and the profile.local exports), and curl (an image package
+  # here) verifies against the seed's bundle. The fold e2e
+  # (#427) then waits out the background nixos-rebuild that
+  # folds the CA into the system bundle and proves it with a
+  # curl under `env -i`. The user-nix e2e (#433) proves nix
+  # from the console as the unprivileged workspace user and
+  # the shipped /etc/nixos chain. The pipeline runs INSIDE the
+  # bash -c, which starts with default shell options — the
+  # `set -eo pipefail` there is what carries a pytest failure
+  # to the step's exit; the guarded grep below only catches a
+  # quietly skipped run, never a failed one.
+  e2e:
+    runs-on: ubuntu-latest
+    # The fold e2e waits out an in-guest rebuild (up to ~8 min)
+    # on top of the daemon and guest boots.
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: cachix/cachix-action@v17
+        with:
+          name: devenv
+
+      - name: Install devenv.sh
+        run: nix profile add github:cachix/devenv/v2.3.1
+
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Restore the built guest
+        id: guest
+        uses: actions/cache@v4
+        with:
+          path: .devenv/state/guest-nixos
+          # The same key the core job hashes — byte-identical, so
+          # both jobs restore one guest build per input set.
+          key: smoke-nixos-guest-${{ runner.arch }}-${{ hashFiles('devenv.lock', 'devenv.nix', 'scripts/build-guest.sh', 'nix/guest.nix', 'nix/guest-nixos.nix', 'nix/guest-nixos-configuration.nix', 'nix/image-archive.nix', 'nix/agent-toolchain.nix', 'nix/guest-pi-extension.ts', 'nix/guest-pi-settings.json', 'nix/pi-shrinkwrap-patch.py', 'nix/pi-shrinkwrap-integrity.json') }}
+
+      - name: Free runner disk for the guest build
+        # The guest build peaks past 12 GB on / (the nix closure,
+        # the packed rootfs and archive, and their copies into
+        # the guest dir), and the stock runner image ships with
+        # toolchains this lane never runs — a cache-miss run pays
+        # the full build, and that is the run the stock disk
+        # could not hold (#723). A restored cache skips the
+        # build, so the reclaim stays behind the same guard.
+        if: steps.guest.outputs.cache-hit != 'true'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          df -h /
+
+      - name: Build the NixOS guest assets
+        if: steps.guest.outputs.cache-hit != 'true'
+        run: >-
+          devenv --quiet -O dotenv.enable:bool false shell --
+          msks-build-guest nixos
+
       - name: Probe e2e (root)
         run: |
           set -eo pipefail
@@ -172,7 +281,7 @@ jobs:
         if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-nixos-evidence
+          name: smoke-nixos-e2e-evidence
           path: /tmp/msks-smoke-failed/
           if-no-files-found: ignore
           retention-days: 7
