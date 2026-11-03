@@ -294,10 +294,9 @@ let
           "$root"/root/.nix-defexpr/channels
 
         # /etc/nixos (#274): configuration.nix plus the import
-        # chain it pulls — the module, its package files, the
-        # shrinkwrap pair the toolchain build reads, and the
-        # console helper's sources at the ../src path the helper
-        # package expects to find beside ../nix. The repo layout
+        # chain it pulls — the module, its package files, and the
+        # shrinkwrap pair the toolchain build reads — every file
+        # from nix/, none from src/. The repo layout
         # under /etc/nixos is what keeps the module's relative
         # imports resolving identically at image build and inside
         # a rebuilt workspace. Store inputs carry their hash

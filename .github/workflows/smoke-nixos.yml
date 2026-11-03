@@ -8,12 +8,17 @@
 # build. The cold build is the long pole (the closure is all
 # cache.nixos.org downloads plus msks's own pack steps of
 # gigabyte-scale artifacts), and the guest is a pure function of
-# its inputs — every nix file the build reads, the devenv.lock
-# nixpkgs pin, the baked console-helper sources under
-# src/msks/msks, and scripts/build-guest.sh itself — so
-# actions/cache keys the built guest dir on exactly those. A run
-# whose inputs did not change restores the dir and skips the
-# build; a run after any input change rebuilds. Caches saved by
+# its inputs — every nix file the guest chain reads (guest.nix,
+# guest-nixos.nix, guest-nixos-configuration.nix,
+# image-archive.nix, agent-toolchain.nix, the pi extension and
+# settings, the shrinkwrap pair), the devenv.lock nixpkgs pin
+# (and devenv.nix, whose GUEST_NIXPKGS line carries it), and
+# scripts/build-guest.sh itself — so actions/cache keys the built
+# guest dir on exactly those. The guest chain reads nothing under
+# src/ (the host module's source.nix tree is not an image input;
+# the old "console helper sources" comments in the nix files are
+# stale), which is why source-only changes warm-restore the same
+# guest. Any file the guest chain comes to read joins this key. Caches saved by
 # one job are invisible to its sibling jobs in the same run, so
 # a first run after a change builds in both jobs (in parallel);
 # every later run restores. No restore-keys fallback exists on
@@ -119,7 +124,7 @@ jobs:
           # the bare `nixos` flavor follows the host's uname. The
           # hashFiles call lives here, at step level, because a
           # workflow-level env evaluates before checkout.
-          key: smoke-nixos-guest-${{ runner.arch }}-${{ hashFiles('devenv.lock', 'scripts/build-guest.sh', 'nix/guest.nix', 'nix/guest-nixos.nix', 'nix/guest-nixos-configuration.nix', 'nix/image-archive.nix', 'nix/agent-toolchain.nix', 'nix/guest-pi-extension.ts', 'nix/guest-pi-settings.json', 'nix/pi-shrinkwrap-patch.py', 'nix/pi-shrinkwrap-integrity.json', 'pyproject.toml', 'README.md', 'src/msks/msks/**') }}
+          key: smoke-nixos-guest-${{ runner.arch }}-${{ hashFiles('devenv.lock', 'devenv.nix', 'scripts/build-guest.sh', 'nix/guest.nix', 'nix/guest-nixos.nix', 'nix/guest-nixos-configuration.nix', 'nix/image-archive.nix', 'nix/agent-toolchain.nix', 'nix/guest-pi-extension.ts', 'nix/guest-pi-settings.json', 'nix/pi-shrinkwrap-patch.py', 'nix/pi-shrinkwrap-integrity.json') }}
 
       - name: Free runner disk for the guest build
         # The guest build peaks past 12 GB on / (the nix closure,
@@ -222,9 +227,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .devenv/state/guest-nixos
-          # The same key the core job hashes: one guest build per
-          # input set, restored by whichever job lands on it.
-          key: smoke-nixos-guest-${{ runner.arch }}-${{ hashFiles('devenv.lock', 'scripts/build-guest.sh', 'nix/guest.nix', 'nix/guest-nixos.nix', 'nix/guest-nixos-configuration.nix', 'nix/image-archive.nix', 'nix/agent-toolchain.nix', 'nix/guest-pi-extension.ts', 'nix/guest-pi-settings.json', 'nix/pi-shrinkwrap-patch.py', 'nix/pi-shrinkwrap-integrity.json', 'pyproject.toml', 'README.md', 'src/msks/msks/**') }}
+          # The same key the core job hashes — byte-identical, so
+          # both jobs restore one guest build per input set.
+          key: smoke-nixos-guest-${{ runner.arch }}-${{ hashFiles('devenv.lock', 'devenv.nix', 'scripts/build-guest.sh', 'nix/guest.nix', 'nix/guest-nixos.nix', 'nix/guest-nixos-configuration.nix', 'nix/image-archive.nix', 'nix/agent-toolchain.nix', 'nix/guest-pi-extension.ts', 'nix/guest-pi-settings.json', 'nix/pi-shrinkwrap-patch.py', 'nix/pi-shrinkwrap-integrity.json') }}
 
       - name: Free runner disk for the guest build
         # The guest build peaks past 12 GB on / (the nix closure,

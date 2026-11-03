@@ -12,9 +12,9 @@
 # The module must stay guest-evaluable: it references only nix/
 # files that ship beside it (./agent-toolchain.nix,
 # ./guest-pi-extension.ts and the shrinkwrap
-# pair the toolchain build reads) and sources under ../src that
-# ship the same way — the image bakes the whole import chain into
-# /etc/nixos.
+# pair the toolchain build reads) — every one of them from
+# nix/, none from src/ — the image bakes the whole import chain
+# into /etc/nixos.
 #
 # The file is imported TWICE with two different nixpkgs: the image
 # build's pinned revision, and — inside a rebuilt workspace — the
