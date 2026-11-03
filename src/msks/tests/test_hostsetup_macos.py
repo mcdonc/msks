@@ -1376,6 +1376,10 @@ def test_the_entry_prints_the_preset(
     out = capsys.readouterr().out
     assert "export MSKSC_URL=https://127.0.0.1:8661" in out
     assert "export MSKSC_TOKEN=the-token" in out
+    # The wrote arm prints the exports alone: the paste hint is
+    # the kept arm's, and a reworded status must not leak it
+    # onto a run that wrote the file (#730 review).
+    assert "daemons: mapping" not in out
     # The config and the login agent the run installed beside the
     # preset: the file a bare msks reads, and the plist launchd
     # loads (both under the relocated tree, never the real home).
@@ -1490,26 +1494,63 @@ def test_the_config_write_policies(
     monkeypatch: pytest.MonkeyPatch, client_tree: Path
 ) -> None:
     """One policy per prior state: a missing file is written, the
-    current body is a no-op, the client's own empty template is
-    replaced (nothing was set; the client regenerates it on
-    demand), this tool's file is refreshed, and an operator's own
-    file is kept byte-for-byte — the run names the choice."""
+    current body is a no-op — and any other existing file stays
+    byte-for-byte (#730): the client's own empty template, a file
+    this tool wrote on an earlier run, an operator's own config.
+    The run names the choice."""
     from msks.client.config import render_template
 
     path = Path(mac.default_config_path())
     body = mac.client_config_body(mac.PORT)
     assert mac.ensure_client_config(mac.PORT).startswith("wrote")
     assert path.read_text() == body
+    # The identity pair rides commented (#730): present to
+    # uncomment, setting nothing until an operator does.
+    assert "# identity_file: ~/.ssh/id_ed25519" in body
+    assert "# pubkey_file: ~/.ssh/id_ed25519.pub" in body
     assert "is current" in mac.ensure_client_config(mac.PORT)
+    # This tool's own file, from an earlier run on another port:
+    # kept exactly as it stands — the run prints what to paste.
+    stale = mac.client_config_body(8661)
+    path.write_text(stale)
+    assert mac.ensure_client_config(mac.PORT).startswith("kept")
+    assert path.read_text() == stale
+    # The client's own first-run template is kept too: the file
+    # exists, and the policy keeps no exception for comments-only.
     path.write_text(render_template())
-    assert mac.ensure_client_config(mac.PORT).startswith("wrote")
-    assert path.read_text() == body
-    path.write_text(mac.client_config_body(8661))  # this tool's, stale
-    assert mac.ensure_client_config(mac.PORT).startswith("refreshed")
-    assert path.read_text() == body
+    assert mac.ensure_client_config(mac.PORT).startswith("kept")
+    assert path.read_text() == render_template()
     path.write_text("# the operator's own config\nurl: https://elsewhere\n")
     assert mac.ensure_client_config(mac.PORT).startswith("kept")
     assert "elsewhere" in path.read_text()
+    # A config a past release wrote — its header prose predates
+    # #730 — whose entry already dials this run's port: named as
+    # already pointing, byte-for-byte kept, no hand edit asked.
+    entry = (
+        f"  {mac.MANAGED_ALIAS}:\n"
+        f"    url: https://127.0.0.1:{mac.PORT}\n"
+        f"    token_file: {mac.MAC_TOKEN}\n"
+        f"    cafile: {mac.MAC_CA}\n"
+    )
+    past_release = (
+        f"{mac.MANAGED_HEADER} (#689); re-run the tool\n"
+        "# to refresh this file — a rerun rewrites what this tool\n"
+        "# wrote, edits included.\n"
+        "daemons:\n" + entry + f"active_daemon: {mac.MANAGED_ALIAS}\n"
+    )
+    path.write_text(past_release)
+    status = mac.ensure_client_config(mac.PORT)
+    assert "already points" in status
+    # The preset's paste hint rides the "kept" prefix alone — an
+    # already-pointing file must not carry a hand-edit hint, so a
+    # future reword that reaches for "kept …" fails here (#730
+    # delta review).
+    assert not status.startswith("kept")
+    assert path.read_text() == past_release
+    # A file that will not load takes the kept arm's hand path —
+    # the pointing check answers False, never a refusal.
+    path.write_text("daemons: [not, a, mapping]\n")
+    assert mac.ensure_client_config(mac.PORT).startswith("kept")
 
 
 def test_the_config_file_is_private(client_tree: Path) -> None:
@@ -1535,6 +1576,9 @@ def test_the_config_row_refusals(
         mac.client_config_row(mac.PORT)
     # An operator file whose active daemon names this forward with
     # the VM's token and CA passes — the alias name is theirs.
+    # (The config is removed first: a rerun keeps an existing
+    # file #730, so the re-pointed file comes from the write arm.)
+    path.unlink()
     mac.ensure_client_config(mac.PORT)
     body = (
         path.read_text()
@@ -1582,11 +1626,12 @@ def test_a_kept_config_rides_the_entry_beside_the_exports(
     procs: FakeProcesses,
     client_tree: Path,
 ) -> None:
-    """The file this tool never wrote: the preset prints the
-    paste-able entry (indented, no top-level key — the loader
-    refuses duplicates, so a verbatim paste cannot corrupt a file
-    that already carries a daemons: mapping) beside the shell
-    exports, and the file stands untouched."""
+    """Any existing file the run keeps and cannot vouch for: the
+    preset prints the paste-able entry (indented, no top-level
+    key — the loader refuses duplicates, so a verbatim paste
+    cannot corrupt a file that already carries a daemons:
+    mapping) beside the shell exports, and the file stands
+    untouched."""
     monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
     path = Path(mac.default_config_path())
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1599,12 +1644,14 @@ def test_a_kept_config_rides_the_entry_beside_the_exports(
     )
     preset = mac.client_preset(mac.PORT)
     assert "export MSKSC_URL=https://127.0.0.1:8660" in preset
-    assert "add this entry under the daemons: mapping" in preset
+    assert "update this entry under the daemons: mapping" in preset
+    assert "when the file carries none" in preset
+    assert "once the edit lands" in preset
     assert "set active_daemon: " + mac.MANAGED_ALIAS in preset
     assert mac.alias_entry(mac.PORT) in preset
     # No top-level key rides the print: a verbatim paste cannot
-    # duplicate one, and the managed header stays out (it would
-    # hand this tool the operator's file on the next rerun).
+    # duplicate one, and the managed header stays out (the entry
+    # names no author; the operator's file stays theirs).
     assert "\ndaemons:\n" not in preset
     assert "\nactive_daemon:" not in preset
     assert mac.MANAGED_HEADER not in preset

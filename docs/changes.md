@@ -18,6 +18,17 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **`msks-setup-macos-host` keeps an existing client config
+  (#730).** The tool writes `~/.config/msks/msks.yaml` only when
+  the file is missing; an existing file stays byte-for-byte,
+  whatever wrote it, so operator edits survive every rerun. A
+  kept file whose active daemon still points at this daemon is
+  named as such; any other kept file gets the alias entry to
+  paste or update, and `--check`'s remedy names the same
+  hand-edit path. The generated file carries the commented
+  `identity_file`/`pubkey_file` pair — the keys a `msks create`
+  reads — one uncomment away.
+
 - **The forward stdio bridge and `home export -` write stdout
   through the EAGAIN-draining path (#728).** Both sinks now
   share the console's wait-for-writability write shape (#725): a
