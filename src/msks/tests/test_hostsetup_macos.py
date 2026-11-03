@@ -1581,6 +1581,7 @@ def test_the_brewed_prefix_answers_and_falls_silent(
     bin_dir = brewed / "bin"
     bin_dir.mkdir(parents=True)
     (bin_dir / "msks").symlink_to(tmp_path / "gone")
+    monkeypatch.setattr(mac, "FALLBACK_BREW_BINS", (str(tmp_path / "fb1"),))
 
     monkeypatch.setattr(
         mac, "run", lambda command, *, capture=False: f"{brewed}\n"

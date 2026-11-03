@@ -54,7 +54,11 @@ host's own architecture, and the landed binary answers
 ``--version`` before the run calls it landed; a present binary
 stays untouched. The phase runs last, so a host whose egress
 passes the Debian mirror but not github.com still finishes
-every other piece. /dev/kvm access arrives through the kvm
+every other piece. The client's console script links at
+``/usr/local/bin/msks`` — the bin sibling this tool's own venv
+ships, on every login PATH (#719); a path already holding a
+live link or a regular file refuses by name, and a dangling
+link re-points. /dev/kvm access arrives through the kvm
 group on the daemon's user, the same supplementary-group grant the
 NixOS unit makes — the tool adds the executing user to the group
 when missing (#560; bare runs and new logins need it on the
@@ -1092,6 +1096,21 @@ def place_link(path: str, sibling: str) -> str:
     return f"{path} -> {sibling}"
 
 
+def link_is_live(link: Path) -> bool:
+    """Whether a symlink's target answers. A link whose target
+    cannot even be stat'd (a permission error on the target's
+    directory) reads live: stale must be provable before a
+    re-point takes the name — ``Path.exists`` alone would read
+    the unstatable link dangling and swallow the difference."""
+    try:
+        link.stat()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True  # unstatable is not provably stale
+    return True
+
+
 def relink_or_refuse(path: str, link: Path, sibling: str, error) -> str:
     """The arms for a path that already holds a link: ours
     answers already-linked, a live link to another target
@@ -1100,7 +1119,7 @@ def relink_or_refuse(path: str, link: Path, sibling: str, error) -> str:
     current = os.readlink(path)
     if current == sibling:
         return f"{path} -> {sibling} (already linked)"
-    if link.exists():
+    if link_is_live(link):
         raise error(
             f"{path} is a link to {current}, not this tool's "
             "msks; remove it and re-run"
@@ -1127,7 +1146,7 @@ def claim_link(path: str, sibling: str, error) -> str:
     return place_link(path, sibling)
 
 
-def link_client(profile: HostProfile = DEBIAN_PROFILE) -> str:
+def link_client() -> str:
     """The client's console script onto every login PATH (#719):
     a symlink at /usr/local/bin/msks — the real estate the
     wrapper and the VMM already occupy, so no profile edits and
@@ -1528,7 +1547,7 @@ def run_setup(
             if service
             else "skipped (--no-service)"
         )
-        client_link = link_client(profile)
+        client_link = link_client()
         summary(
             ambient,
             states,

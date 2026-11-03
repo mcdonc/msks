@@ -2323,3 +2323,19 @@ def test_no_client_sibling_stands_the_phase_down(
     monkeypatch.setattr(hostsetup, "bin_sibling", lambda name: None)
     assert main() == 0
     assert "no msks beside the tool" in capsys.readouterr().out
+
+
+def test_an_unstatable_link_reads_live(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A link whose target cannot be stat'd is not provably
+    stale — it reads live, so the re-point refuses instead of
+    taking the name (#719 review)."""
+    link = tmp_path / "msks"
+    link.symlink_to(tmp_path / "elsewhere")
+
+    def denied(self) -> None:
+        raise PermissionError("no stat for you")
+
+    monkeypatch.setattr(hostsetup.Path, "stat", denied)
+    assert hostsetup.link_is_live(link) is True

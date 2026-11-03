@@ -14,7 +14,8 @@ tagged `vX.Y.Z`.
   wrapper and the VMM already occupy), and the macOS tool
   links `$(brew --prefix)/bin/msks` (user-owned, on PATH for
   every brew user, no sudo). A foreign file at the path refuses
-  by name, the tool's own stale link re-points, `--uninstall`
+  by name, a dangling link re-points (stale by definition),
+  `--uninstall`
   removes the link, and the macOS `--check` carries the row.
 
 - **The published image list filters foreign-arch rows
