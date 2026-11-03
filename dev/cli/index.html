@@ -1631,7 +1631,9 @@ that name a daemon outright. The client never dials a TCP address implicitly: a
 well-known port could belong to any daemon.</p>
 <p>The daemon serves TLS with a self-signed certificate. Point
 <code>MSKSC_CAFILE</code> at the daemon's CA (<code>msks-ca.pem</code> under its state
-directory) and the client verifies the certificate chain. Without
+directory) and the client verifies the certificate chain. A
+<code>cafile</code> that is missing or holds no parsable certificate is a
+one-line refusal naming the daemon's CA file. Without
 <code>MSKSC_CAFILE</code> the client proceeds unverified and prints a warning to stderr on every invocation, the same
 trust-on-first-use posture as <code>sks console</code>, fine for a lab network and worth closing before
 anything real.</p>

@@ -1308,14 +1308,19 @@ tagged <code>vX.Y.Z</code>.</p>
   re-run.</p>
 </li>
 <li>
-<p><strong>The console session survives a burst on a non-blocking
+<p><strong>A CA file that cannot load is a named refusal (#732).</strong> A
+  <code>cafile</code> / <code>MSKSC_CAFILE</code> that points at a missing file or one
+  with no parsable certificate now prints one line naming the
+  daemon's CA file and where to copy it from. Previously the
+  client raised a raw <code>ssl.SSLError</code> traceback at startup.</p>
+</li>
+<li><strong>The console session survives a burst on a non-blocking
   stdout (#725).</strong> The TUI's shell fallback streams the guest's
   boot console through stdout, and when the tty's fd sits in
   non-blocking mode the boot log's burst crashed the session on
   a flush that answered EAGAIN. The console's write path now
   waits for the tty to become writable and retries; the session
-  lands in the shell with every byte intact.</p>
-</li>
+  lands in the shell with every byte intact.</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
