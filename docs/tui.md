@@ -249,12 +249,27 @@ command after `-e` / `--`:
 
 ```yaml
 terminal_open_cmd: konsole -e          # string form (shell-split)
-terminal_open_cmd:                     # list form (no shell quoting)
-  - alacritty
-  - -T
-  - msks ssh
+terminal_open_cmd:                     # Linux (list form, no shell quoting)
+  - ghostty
+  - +wait
+  - -e
+terminal_open_cmd:                     # macOS (open launches Ghostty.app)
+  - open
+  - -na
+  - Ghostty.app
+  - --args
   - -e
 ```
+
+On Linux, Ghostty's `-e` takes the appended invocation as the
+window's command, and `+wait` holds the ghostty process until the
+window closes — the same hold `konsole -e` gives. On macOS the
+`ghostty` CLI is a helper tool; `open -n` starts a new Ghostty.app
+instance and `--args` hands it the `-e`. A window opened through
+`open` runs with a fresh login environment — nothing from the shell
+the TUI runs in passes through — so the appended client locates its
+packages and its daemon on its own: a venv-installed client is
+self-locating, and the config file names the daemon.
 
 `terminal_open_cmd`'s environment form (`MSKSC_TERMINAL_OPEN_CMD`)
 overrides the file value with the string form. Unset (the default), the
@@ -333,12 +348,7 @@ terminal and its command flag in `terminal_open_cmd`, and
 ```yaml
 terminal_open_cmd: konsole -e msks-term-popup
 terminal_open_cmd: xterm -e msks-term-popup
-terminal_open_cmd:                     # list form (no shell quoting)
-  - alacritty
-  - -T
-  - msks ssh
-  - -e
-  - msks-term-popup
+terminal_open_cmd: ghostty +wait -e msks-term-popup
 ```
 
 The popup viewer keeps its own attach to the hidden session, so a hold
