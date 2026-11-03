@@ -348,8 +348,14 @@ terminal and its command flag in `terminal_open_cmd`, and
 ```yaml
 terminal_open_cmd: konsole -e msks-term-popup
 terminal_open_cmd: xterm -e msks-term-popup
-terminal_open_cmd: ghostty +wait -e msks-term-popup
+terminal_open_cmd: ghostty +wait -e msks-term-popup       # Linux
+terminal_open_cmd: open -na Ghostty.app --args -e msks-term-popup  # macOS
 ```
+
+The macOS form rides the setup tool's brew-prefix links: an
+`open`-opened window resolves `msks-term-popup` (and tmux) on
+its fresh login PATH, where `msks-setup-macos-host` placed
+both client commands (#734).
 
 The popup viewer keeps its own attach to the hidden session, so a hold
 that arrives while it is open is already in the list. Verdicts posted
