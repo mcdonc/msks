@@ -104,18 +104,33 @@ class FakeDaemon:
         self.thread = threading.Thread(
             target=self.server.serve_forever, daemon=True
         )
+        self.serving = False
+
+    def start(self) -> None:
+        """Serve — the fixture's daemon; the negative arms' second
+        daemons stay unstarted (a listener that answers TCP but
+        never completes a handshake is exactly their shape)."""
+        self.thread.start()
+        self.serving = True
+
+    def close(self) -> None:
+        """Stop the listener. shutdown() waits on an event only a
+        running serve loop raises, so a daemon that never started
+        skips straight to closing the socket."""
+        if self.serving:
+            self.server.shutdown()
+        self.server.server_close()
 
 
 @pytest.fixture
 def daemon(tmp_path: Path) -> FakeDaemon:
     """One fake msksd per test, started and stopped around it."""
     fake = FakeDaemon(tmp_path / "daemon-state")
-    fake.thread.start()
+    fake.start()
     try:
         yield fake
     finally:
-        fake.server.shutdown()
-        fake.server.server_close()
+        fake.close()
 
 
 @pytest.fixture
@@ -187,18 +202,23 @@ def test_a_stock_host_names_the_install_remedy() -> None:
     reason="brew install lima first (the weekly drift job)",
 )
 def test_lima_parsing_against_the_real_binary() -> None:
-    """The drift probe (#740): the version word, the floor, and
-    the listing schema read from the real limactl the drift job
-    just installed — an upstream rename of the fields this tool
-    reads (name, status) surfaces here, weekly, instead of in a
-    user's terminal. A host with a real msksd VM (a dev machine)
-    reads its entry back; a stock runner reads absence."""
+    """The drift probe (#740): the version word and the floor,
+    read from the real limactl the drift job just installed —
+    an upstream change in the CLI's answers or exit codes
+    surfaces here, weekly, instead of in a user's terminal. The
+    listing-schema arm (the name/status fields every entry
+    carries) runs wherever the host's limactl lists at least
+    one instance — a dev Mac with a real VM; a stock runner's
+    empty listing keeps that arm vacuous, and standing up a
+    throwaway VM weekly would cost a full image download."""
     word = mac.lima_version_output()
     assert word
     assert mac.lima_version_tuple(word) >= mac.LIMA_FLOOR
     listing = mac.run(["limactl", "list", "--json"], capture=True)
     entries = mac.listing_entries(listing)
     assert all("name" in entry and "status" in entry for entry in entries)
+    # A host with a real msksd VM (a dev machine) reads its
+    # entry back; a stock runner reads absence.
     entry = mac.vm_entry(mac.VM_NAME)
     if entry is not None:
         assert entry["status"]
@@ -218,8 +238,43 @@ def test_the_verify_pass_holds_against_a_real_listener(
     mac.verify_chain(daemon.port, daemon.ca_pem)
     assert mac.daemon_version(daemon.port) == mac.vm_version()
     other = FakeDaemon(tmp_path / "other-state")
-    with pytest.raises(mac.MacSetupError, match="--port"):
-        mac.verify_chain(daemon.port, other.ca_pem)
+    try:
+        with pytest.raises(mac.MacSetupError, match="--port"):
+            mac.verify_chain(daemon.port, other.ca_pem)
+    finally:
+        other.close()
+
+
+def test_a_mismatched_vm_ca_refuses_before_any_file_lands(
+    daemon: FakeDaemon,
+    vm_seam: FakeDaemon,
+    client_tree: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#733's ordering against real TLS: when the VM seam serves
+    a CA from another daemon (the fetch and the listener
+    disagreeing), client_preset refuses at the chain proof and
+    no client file lands — the CA, the token, and the config a
+    working client reads all stay absent."""
+    other = FakeDaemon(tmp_path / "other-state")
+
+    def other_ca_vm_shell(script: str) -> str:
+        if "msks-ca.pem" in script:
+            return (other.state_dir / "msks-ca.pem").read_text()
+        if "bootstrap-token" in script:
+            return "acceptance-token\n"
+        return ""
+
+    monkeypatch.setattr(mac, "vm_shell", other_ca_vm_shell)
+    try:
+        with pytest.raises(mac.MacSetupError, match="--port"):
+            mac.client_preset(daemon.port)
+    finally:
+        other.close()
+    assert not mac.MAC_CA.exists()
+    assert not mac.MAC_TOKEN.exists()
+    assert not Path(mac.default_config_path()).exists()
 
 
 def test_client_preset_lands_the_real_client_files(
@@ -245,7 +300,17 @@ def test_client_preset_lands_the_real_client_files(
     assert entry["token_file"] == str(mac.MAC_TOKEN)
     assert entry["cafile"] == str(mac.MAC_CA)
     assert doc["active_daemon"] == mac.MANAGED_ALIAS
-    mac.client_preset(daemon.port)  # the rerun keeps every file
+    # The rerun is the idempotent no-op: every file stands with
+    # its bytes and its mode exactly as the first run left
+    # them.
+    ca_bytes = mac.MAC_CA.read_bytes()
+    token_bytes = mac.MAC_TOKEN.read_bytes()
+    config_bytes = config.read_bytes()
+    mac.client_preset(daemon.port)
+    assert mac.MAC_CA.read_bytes() == ca_bytes
+    assert mac.MAC_CA.stat().st_mode & 0o777 == 0o600
+    assert mac.MAC_TOKEN.read_bytes() == token_bytes
+    assert config.read_bytes() == config_bytes
 
 
 # --- the login agent and the client link -------------------------------
@@ -287,9 +352,12 @@ def test_the_client_links_claim_the_brew_prefix(
 ) -> None:
     """The link pass against the real brew prefix (#719, #734):
     both client commands claim their path, the check row reads
-    them back green, and the uninstall sweep removes them — and
-    the harness stands down when any file already holds a path
-    (a real deployment's links are never touched)."""
+    them back green, and the uninstall sweep removes them. The
+    harness stands down when any file already holds a link path
+    or any sweep path already holds a symlink — the sweep's
+    fallback dirs (/usr/local/bin on an arm64 Mac migrated from
+    Intel) can carry a real deployment's stale links, and a real
+    deployment's links are never touched."""
     for command in mac.CLIENT_COMMANDS:
         (tmp_path / command).write_text("#!/bin/sh\n")
     monkeypatch.setattr(
@@ -297,24 +365,32 @@ def test_the_client_links_claim_the_brew_prefix(
         "client_sibling",
         lambda command: str(tmp_path / command),
     )
-    paths = {mac.client_link_path(c) for c in mac.CLIENT_COMMANDS}
-    held = [p for p in paths if Path(p).exists()]
+    prefix = mac.brewed_prefix()
+    sweep = {
+        path
+        for command in mac.CLIENT_COMMANDS
+        for path in ([f"{prefix}/bin/{command}"] if prefix else [])
+        + [f"{bin_}/{command}" for bin_ in mac.FALLBACK_BREW_BINS]
+    }
+    held = [p for p in sweep if Path(p).is_symlink()]
+    held += [p for p in sweep if Path(p).exists()]
     if held:
         pytest.skip(
-            f"{held} already exist — the harness never touches "
-            "files that hold the link paths"
+            f"{sorted(set(held))} already hold paths — the "
+            "harness never touches a file it did not place"
         )
+    sweep_note = ""
     try:
         note = mac.link_client_mac()
-        for path in paths:
-            assert path in note
+        for command in mac.CLIENT_COMMANDS:
+            assert f"{prefix}/bin/{command}" in note
         row = mac.client_link_row()
         for command in mac.CLIENT_COMMANDS:
             assert f"{command} answers at " in row
-        for path in paths:
-            link = Path(path)
+            link = Path(f"{prefix}/bin/{command}")
             assert link.is_symlink() and link.exists()
     finally:
-        assert "are gone" in mac.remove_client_link()
-    for path in paths:
-        assert not Path(path).exists()
+        sweep_note = mac.remove_client_link()
+    assert "are gone" in sweep_note
+    for command in mac.CLIENT_COMMANDS:
+        assert not Path(f"{prefix}/bin/{command}").exists()

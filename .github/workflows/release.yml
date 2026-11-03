@@ -2,7 +2,7 @@
 # publish to a hash-keyed channel, and the version release carries
 # the small manifest that ties them together.
 #
-# Three jobs, ordered so each has what it needs:
+# Jobs, ordered so each has what it needs:
 #
 # 1. wheel   — build the wheel, publish to PyPI through the
 #              registered trusted publisher (the pending publisher
@@ -38,11 +38,16 @@
 #              built_from for every flavor — to the version
 #              release, so `msks image import <url>` pulls straight
 #              from the channel with no manual download.
-# 5. macos-acceptance — the release gate on the artifact Mac
-#              users install (#740): the wheel the wheel job just
-#              staged, installed on a real macOS runner, driving
-#              the acceptance harness. The tag's checkout supplies
-#              the tests; the wheel supplies the code.
+# 5. macos-acceptance — post-publish verification on the
+#              artifact Mac users install (#740): the wheel the
+#              wheel job just staged, installed on a real macOS
+#              runner, driving the acceptance harness. It runs
+#              beside the release job (both need only the wheel)
+#              and gates nothing — the publish already happened;
+#              its red is the operator's signal to react, minutes
+#              after the tag instead of at a user's terminal.
+#              The tag's checkout supplies the tests; the wheel
+#              supplies the code.
 name: Release
 
 on:
@@ -191,13 +196,16 @@ jobs:
             || gh release upload "$TAG" dist/* images.json --clobber
 
   macos-acceptance:
-    # The release gate on the artifact users install (#740): the
-    # staged wheel, installed on a real macOS runner, driving the
-    # acceptance harness — the same one macos.yml runs per-PR,
-    # against the shipped code instead of the tree. The module
-    # runs from a copy outside the checkout: pytest would
-    # otherwise put the checkout's src/ first on sys.path, and the
-    # tree's code would shadow the wheel under test.
+    # Post-publish verification on the artifact users install
+    # (#740): the staged wheel, installed on a real macOS
+    # runner, driving the acceptance harness — the same one
+    # macos.yml runs per-PR, against the shipped code instead
+    # of the tree. It runs beside the release job (both need
+    # only the wheel) and gates nothing — the publish already
+    # happened. The module runs from a copy outside the
+    # checkout: pytest would otherwise put the checkout's src/
+    # first on sys.path, and the tree's code would shadow the
+    # wheel under test.
     runs-on: macos-15
     timeout-minutes: 30
     needs: wheel

@@ -9,10 +9,13 @@
 # prefix, the real client config tree — faking exactly one seam,
 # vm_shell (limactl shell), the tool's only VM coupling.
 #
-# verify runs per-PR (path-filtered to the Mac surface) and on
-# main. drift is weekly plus manual: brew installs the current
-# Lima and the parsing expectations run against the real binary,
-# so upstream changes surface here instead of in a user's
+# verify runs per-PR (path-filtered to the Mac surface), on
+# main, and on manual dispatch — never on the schedule (drift
+# is the weekly leg; the two never share a concurrency group,
+# so a merge landing mid-run cannot cancel the weekly probe).
+# drift is weekly plus manual: brew installs the current Lima
+# and the parsing expectations run against the real binary, so
+# upstream changes surface here instead of in a user's
 # terminal. The tag run lives in release.yml (macos-acceptance)
 # and installs the wheel the release just staged — the artifact
 # users install.
@@ -52,11 +55,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: macos-${{ github.ref }}
-  cancel-in-progress: true
+  # The event names the group: a scheduled or manual run never
+  # shares a group with a push (cancel-in-progress is the PR
+  # leg's economy — a stale PR run dies for its fresh push; the
+  # weekly drift run must survive a merge landing mid-brew).
+  group: macos-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:
+    if: github.event_name != 'schedule'
     runs-on: macos-15
     timeout-minutes: 30
     # The runner's default TMPDIR nests deep under
@@ -137,9 +145,15 @@ jobs:
           python -m pip install --quiet -e .
           python -m pip install --quiet --group dev
 
-      # The current Lima release from brew: the parsing
-      # expectations (version word, floor, listing schema) then
-      # run against the real binary — the weekly drift answer.
+      # The current Lima release from brew: the version word and
+      # the floor run against the real binary — the weekly drift
+      # answer. The listing-schema arm runs wherever a limactl
+      # carries at least one instance (a dev Mac); the weekly
+      # runner carries none, and standing up a throwaway VM just
+      # to populate the listing would cost a full image download
+      # every week — the version-word and CLI-behavior arms are
+      # the weekly surface, the schema arm rides every dev Mac
+      # run of the harness.
       - name: Install the current Lima
         run: brew install lima
 
