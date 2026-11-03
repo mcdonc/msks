@@ -1298,6 +1298,15 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong><code>msks-setup-macos-host --check</code> refuses an empty CA fetch
+  (#738).</strong> The check pass now refuses with the re-run remedy
+  when the daemon's CA has not come back from the VM. The
+  chain check previously verified against the system trust
+  store in that case, so a port-colliding listener serving a
+  publicly-trusted certificate read green for the wrong
+  daemon.</p>
+</li>
+<li>
 <p><strong><code>msks-setup-macos-host</code> proves the daemon's CA before any
   client file lands (#733).</strong> The verify pass checks the TLS
   chain against the fetched CA before writing the CA, the
