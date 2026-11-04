@@ -118,7 +118,11 @@ def bind(path: Path) -> socket.socket:
     review); anything else that occupies the name is refused (a
     regular file there is an operator mistake to surface, not a
     silent clobber). The mode gives the daemon user and the
-    socket's group connect rights and denies the rest; an
+    socket's group connect rights and denies the rest, and the
+    file is born with it (#742): the umask the bind runs under
+    makes creation itself land 0660 — no window sits between the
+    file's appearance and its mode — and the chmod pins the mode
+    on a platform whose socket creation ignores umask. An
     operator widening access to a group chgrps the file, and the
     credential policy below agrees with whatever group it holds.
     """
@@ -126,7 +130,16 @@ def bind(path: Path) -> socket.socket:
     refuse_taken_path(path)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        sock.bind(str(path))
+        # 0777 & ~0o117 = 0o660: the bind creates the file with
+        # its final mode in one step. A bare bind creates it
+        # 0777 & ~umask — world-connectible under a permissive
+        # umask until the chmod below landed, and a peer through
+        # that window took the bearer-token path (#742).
+        was = os.umask(0o117)
+        try:
+            sock.bind(str(path))
+        finally:
+            os.umask(was)
         os.chmod(path, 0o660)
         sock.listen(128)
     except OSError:
@@ -141,7 +154,10 @@ def refuse_taken_path(path: Path) -> None:
     someone still answers is a live listener to leave alone
     (a second daemon must not steal the first's clients, #555
     review); a socket nobody answers is stale — a daemon that
-    died without unlinking — and is replaced."""
+    died without unlinking — and is replaced. The probe reads
+    the kernel's own verdict, Linux's here (#742): a live
+    listener whose accept backlog is momentarily full reads
+    live, never stale."""
     if path.exists() and not path.is_socket():
         raise OSError(f"{path} exists and is not a socket file")
     if path.is_socket():
@@ -153,14 +169,40 @@ def refuse_taken_path(path: Path) -> None:
         path.unlink()
 
 
+#: How long the liveness probe waits before a held connect reads
+#: as one. A stale socket answers ``ECONNREFUSED`` at once and a
+#: backlog-full listener ``EAGAIN`` at once on Linux, so the
+#: budget guards a kernel that holds the connect instead.
+_PROBE_TIMEOUT = 1.0
+
+
 def answers(path: Path) -> bool:
-    """True when something accepts connections at *path*."""
+    """True when something accepts connections at *path*.
+
+    Only an outright refusal answers False: on Linux, where the
+    listener runs, ``ECONNREFUSED`` — and only that — names a
+    socket nobody serves, a daemon that died without unlinking.
+    A live listener whose accept backlog is momentarily full
+    answers differently — ``EAGAIN`` (the kernel's answer to a
+    probe that cannot squeeze into the queue) or a connect held
+    past the probe's budget — and both mean someone may be
+    listening (#742): the probe answers True, and the caller
+    must refuse to unbind. Any other refusal raises, named,
+    rather than guess a live listener stale and steal its
+    clients.
+    """
     probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        probe.settimeout(1.0)
+        probe.settimeout(_PROBE_TIMEOUT)
         probe.connect(str(path))
-    except OSError:
+    except ConnectionRefusedError:
         return False
+    except BlockingIOError, TimeoutError:
+        return True
+    except OSError as exc:
+        raise OSError(
+            f"{path}: cannot tell a live listener from a stale socket ({exc})"
+        ) from exc
     finally:
         probe.close()
     return True
