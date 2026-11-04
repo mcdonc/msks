@@ -15,7 +15,7 @@ prose here owns the behavior; the schema owns the shapes.
 
 ## Authentication
 
-Two listeners, one API.
+There are two listeners for the API.
 
 **The TCP listener** serves HTTPS and WSS on the `host`/`port`
 settings (`MSKSD_HOST`/`MSKSD_PORT`, default
