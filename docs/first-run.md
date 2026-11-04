@@ -85,7 +85,7 @@ tree opens, and the answer unlocks every locked row for the session. Escape or
 Cancel leaves the rows locked; they stay named on the secrets page and
 re-askable there.
 
-### `pubkey_file`: the public half alone
+### `pubkey_file`: the public half
 
 `pubkey_file` names a `.pub` file, and a create with it set plants that one
 line as the workspace's identity and reads no private material at all. This is
