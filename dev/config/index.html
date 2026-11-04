@@ -1089,9 +1089,9 @@ environment variables stay available as per-invocation overrides.</p>
 <h2 id="precedence">Precedence<a class="headerlink" href="#precedence" title="Permanent link">&para;</a></h2>
 <p>Values resolve in this order (highest first):</p>
 <ol>
-<li><strong>Environment variables</strong> (<code>MSKSD_*</code>) — override the file</li>
-<li><strong>The config file</strong> — the YAML file <code>msksd</code> resolves at startup</li>
-<li><strong>Built-in defaults</strong> — the settings dataclass defaults</li>
+<li><strong>Environment variables</strong> (<code>MSKSD_*</code>): override the file</li>
+<li><strong>The config file</strong>: the YAML file <code>msksd</code> resolves at startup</li>
+<li><strong>Built-in defaults</strong>: the settings dataclass defaults</li>
 </ol>
 <p>A variable set in the process wins over the same key in the file; a
 key set nowhere uses the default. An environment variable set to an
@@ -1108,15 +1108,15 @@ empty string is the unset form: the file value applies.</p>
 <tbody>
 <tr>
 <td><code>msksd</code></td>
-<td>Reads <code>$MSKSD_CONFIG_DIR/msksd.yaml</code> (default <code>~/.config/msksd/msksd.yaml</code>, honoring <code>$XDG_CONFIG_HOME</code>). A missing file is <strong>generated</strong> as a commented template pointing at this chapter — the first run writes the file so its location is discoverable, and the daemon then runs on environment variables and defaults.</td>
+<td>Reads <code>$MSKSD_CONFIG_DIR/msksd.yaml</code> (default <code>~/.config/msksd/msksd.yaml</code>, honoring <code>$XDG_CONFIG_HOME</code>). A missing file is <strong>generated</strong> as a commented template pointing at this chapter: the first run writes the file so its location is discoverable, and the daemon then runs on environment variables and defaults.</td>
 </tr>
 <tr>
 <td><code>msksd --config /path/to/msksd.yaml</code></td>
-<td>Reads exactly that file. A missing file is a startup error naming the path. Explicit paths are never auto-generated.</td>
+<td>Reads exactly that file. A missing file is a startup error giving the path. Explicit paths are never auto-generated.</td>
 </tr>
 <tr>
 <td><code>msksd --config=none</code></td>
-<td>Reads environment variables and built-in defaults only — the in-tree user is the smoke-test daemon; the deployment-host module passes an explicit <code>--config</code> path.</td>
+<td>Reads environment variables and built-in defaults only; the in-tree user is the smoke-test daemon, and the deployment-host module passes an explicit <code>--config</code> path.</td>
 </tr>
 </tbody>
 </table>
@@ -1126,8 +1126,8 @@ directory it lives in, so the tree root must be resolvable before
 the file is located.</p>
 <h2 id="msksd-doctor"><code>msksd doctor</code><a class="headerlink" href="#msksd-doctor" title="Permanent link">&para;</a></h2>
 <p><code>msksd doctor</code> checks the host for the tools the daemon and the
-client exec, reading the config the same way the daemon does —
-the <code>--config</code> flag, the environment, and the file, under the
+client exec, reading the config the same way the daemon does: the
+<code>--config</code> flag, the environment, and the file, under the
 precedence above. The <a href="../doctor/">host doctor chapter</a> owns the
 check rows, the report's markers and hints, and the exit codes.</p>
 <h2 id="key-mapping">Key mapping<a class="headerlink" href="#key-mapping" title="Permanent link">&para;</a></h2>
@@ -1169,9 +1169,9 @@ drift apart.</p>
 written for it: <code>egress-dns-upstream</code> and <code>egress_dns_upstream</code>
 are one key spelled two ways. The <code>llm_models</code> entries' keys
 follow the same rule, so an operator used to kebab-case YAML
-can write it naturally. Both spellings of one key in the same file is a startup
-error naming the two spellings, and the valid-keys list an unknown
-key reports is the snake_case one.</p>
+can write it naturally. Both spellings of one key in the same
+file is a startup error giving the two spellings, and the
+valid-keys list an unknown key reports is the snake_case one.</p>
 <p>One mapping detail worth knowing: <strong><code>state_dir</code> places the database
 too.</strong> <code>state_dir</code> feeds both the local driver's workspace
 artifacts and the server's sqlite database (<code>&lt;state_dir&gt;/msks.db</code>);
@@ -1182,32 +1182,29 @@ variable, which also drives both.</p>
 scalars: <code>port: 8660</code>, <code>access_log: true</code>,
 <code>socket_wait_timeout_s: 12.5</code>. Quoted strings (<code>port: "8660"</code>) work
 everywhere and parse identically. A key with no value
-(<code>bootstrap_token:</code>) is the unset form; the environment (for
-its
-variable) and then the default apply. Values must be scalars: a list
-or mapping where a number, boolean, or string belongs is a startup
-error, and so is a duplicate key: a second <code>port:</code> does not
-silently
-win. Merge keys (<code>&lt;&lt;: *anchor</code>) are refused with their own message: the
-file is flat and every key is spelled out.</p>
-<p>Booleans deserve care. <code>true</code> and <code>false</code> are the spellings to use;
-PyYAML also parses the YAML 1.1 forms <code>yes</code>/<code>no</code>/<code>on</code>/<code>off</code> as
-booleans, so those work too. The single letters <code>y</code> and <code>n</code> are plain strings to YAML 1.1,
-so a boolean key set to either reads as <strong>false</strong>; the
-environment variable follows the same string rule. A bare <code>1</code>
-or <code>0</code> is an integer, which also reads as false.
-Write <code>true</code> or <code>false</code>.</p>
+(<code>bootstrap_token:</code>) is the unset form; the environment (for its
+variable) and then the default apply. Values must be scalars: a
+list or mapping where a number, boolean, or string belongs is a
+startup error, and so is a duplicate key (a second <code>port:</code> does
+not silently win). Merge keys (<code>&lt;&lt;: *anchor</code>) are refused with
+their own message: the file is flat and every key is spelled
+out.</p>
+<p>Booleans deserve care. <code>true</code> and <code>false</code> are the spellings to
+use; PyYAML also parses the YAML 1.1 forms <code>yes</code>/<code>no</code>/<code>on</code>/<code>off</code>
+as booleans, so those work too. The single letters <code>y</code> and <code>n</code>
+are plain strings to YAML 1.1, so a boolean key set to either
+reads as <strong>false</strong>; the environment variable follows the same
+string rule. A bare <code>1</code> or <code>0</code> is an integer, which also reads
+as false. Write <code>true</code> or <code>false</code>.</p>
 <h3 id="unknown-keys-fail-fast">Unknown keys fail fast<a class="headerlink" href="#unknown-keys-fail-fast" title="Permanent link">&para;</a></h3>
-<p>A key the daemon does not know is a startup error naming the key and
-the valid ones, so a typo'd <code>prot</code> fails at boot instead of
-being
-silently ignored. The environment has no such guard: a typo'd variable name is
-simply never read. Invalid values fail the same way whichever
-source they came from, and the error message names the
-<code>MSKSD_*</code> variable —
-<code>vmm_driver: firecracker</code> reports <code>MSKSD_VMM_DRIVER must be one of
-('local',)</code>. Non-finite numbers (<code>.nan</code>, <code>.inf</code>) are rejected
-from either source.</p>
+<p>A key the daemon does not know is a startup error giving the key
+and the valid ones, so a typo'd <code>prot</code> fails at boot instead of
+being silently ignored. The environment has no such guard: a
+typo'd variable name is simply never read. Invalid values fail
+the same way whichever source they came from, and the error
+message gives the <code>MSKSD_*</code> variable: <code>vmm_driver: firecracker</code>
+reports <code>MSKSD_VMM_DRIVER must be one of ('local',)</code>. Non-finite
+numbers (<code>.nan</code>, <code>.inf</code>) are rejected from either source.</p>
 <h2 id="key-reference">Key reference<a class="headerlink" href="#key-reference" title="Permanent link">&para;</a></h2>
 <p>The tables below group the keys by the subsystem that reads them;
 the file itself carries them all at one level.</p>
@@ -1242,7 +1239,7 @@ the file itself carries them all at one level.</p>
 <td><code>MSKSD_SOCKET</code></td>
 <td>string</td>
 <td><em>(unset)</em></td>
-<td>Binds a second, local listener at this unix socket path: same-host clients connect through it with peer-credential authentication — no token, no TLS. Unset binds the default path, <code>$XDG_RUNTIME_DIR/msks/msksd.sock</code>; a daemon without a runtime dir (a container, a hand-written system unit pointing <code>MSKSD_SOCKET</code> at a path its <code>RuntimeDirectory</code> creates) serves TCP alone until this setting names a path; the empty string always serves TCP alone. The socket file is mode 0660 — chgrp it to a shared group to admit that group's members; membership counts every supplementary group the account database holds for the user (including the nesting a directory backend expands itself), and the daemon keeps no membership cache, so a removal takes effect at the next request once the account database serves the change. The systemd <strong>user</strong> unit the setup tools generate creates <code>$XDG_RUNTIME_DIR/msks</code> for this listener through its <code>RuntimeDirectory</code> — the client's own default candidate path. Read at startup; a reload applies a change at restart.</td>
+<td>Binds a second, local listener at this unix socket path: same-host clients connect through it with peer-credential authentication, with no token and no TLS. Unset binds the default path, <code>$XDG_RUNTIME_DIR/msks/msksd.sock</code>. A daemon without a runtime dir (a container, a hand-written system unit pointing <code>MSKSD_SOCKET</code> at a path its <code>RuntimeDirectory</code> creates) serves TCP alone until this setting gives a path; the empty string always serves TCP alone. The socket file is mode 0660: <code>chgrp</code> it to a shared group to admit that group's members. Membership counts every supplementary group the account database holds for the user (including the nesting a directory backend expands itself), and the daemon keeps no membership cache, so a removal takes effect at the next request once the account database serves the change. The systemd <strong>user</strong> unit the setup tools generate creates <code>$XDG_RUNTIME_DIR/msks</code> for this listener through its <code>RuntimeDirectory</code>, the client's own default candidate path. Read at startup; a reload applies a change at restart.</td>
 </tr>
 <tr>
 <td><code>tls_cert</code></td>
@@ -1263,21 +1260,21 @@ the file itself carries them all at one level.</p>
 <td><code>MSKSD_EVENT_POLL_S</code></td>
 <td>float</td>
 <td><code>1.0</code></td>
-<td>Seconds between watcher scans — workspace status reconciles and the state-disk pressure probe — read at loop start; a running daemon applies a change at restart.</td>
+<td>Seconds between watcher scans (workspace status reconciles and the state-disk pressure probe), read at loop start; a running daemon applies a change at restart.</td>
 </tr>
 <tr>
 <td><code>bootstrap_token</code></td>
 <td><code>MSKSD_BOOTSTRAP_TOKEN</code></td>
 <td>string</td>
 <td><em>(unset)</em></td>
-<td>Seeds the first bearer token at first boot. The plaintext must fit the HTTP <code>token</code> grammar (letters, digits, and the separator characters RFC 9110 allows): the token rides the <code>Authorization</code> header on the REST surface and the websocket handshake alike, whose value grammar rejects the rest.</td>
+<td>Seeds the first bearer token at first boot. The plaintext must fit the HTTP <code>token</code> grammar (letters, digits, and the separator characters RFC 9110 allows): the token travels the <code>Authorization</code> header on the REST surface and the websocket handshake alike, whose value grammar rejects the rest.</td>
 </tr>
 <tr>
 <td><code>access_log</code></td>
 <td><code>MSKSD_ACCESS_LOG</code></td>
 <td>bool</td>
 <td><code>false</code></td>
-<td>Writes uvicorn's access log — request lines (method, path, query), never headers. Websocket tokens ride the <code>Authorization</code> header, not the URL, so the log holds no credentials.</td>
+<td>Writes uvicorn's access log: request lines (method, path, query), never headers. Websocket tokens travel the <code>Authorization</code> header, not the URL, so the log holds no credentials.</td>
 </tr>
 </tbody>
 </table>
@@ -1347,7 +1344,7 @@ the file itself carries them all at one level.</p>
 <td><code>MSKSD_FORWARD_WAIT_TIMEOUT_S</code></td>
 <td>float</td>
 <td><code>15.0</code></td>
-<td>Seconds a forward websocket retries its guest dial at boot (a freshly booted guest races DHCP against its services); past the deadline the refusal names the cause.</td>
+<td>Seconds a forward websocket retries its guest dial at boot (a freshly booted guest races DHCP against its services); past the deadline the refusal gives the cause.</td>
 </tr>
 <tr>
 <td><code>console_stall_timeout_s</code></td>
@@ -1536,7 +1533,7 @@ the file itself carries them all at one level.</p>
 <td><code>MSKSD_EGRESS_MODE</code></td>
 <td>string</td>
 <td><code>allow</code></td>
-<td>The consent mode workspaces get at create when the request names none: <code>allow</code>, <code>static</code>, or <code>interactive</code>.</td>
+<td>The consent mode workspaces get at create when the request gives none: <code>allow</code>, <code>static</code>, or <code>interactive</code>.</td>
 </tr>
 <tr>
 <td><code>egress_consent_timeout_s</code></td>
@@ -1605,10 +1602,10 @@ the file itself carries them all at one level.</p>
 </table>
 <h3 id="host-share-mounts">Host share mounts<a class="headerlink" href="#host-share-mounts" title="Permanent link">&para;</a></h3>
 <p>Host paths are the one share surface (<a href="../mounts/">mounts
-chapter</a> for the behavior): a workspace names a host
+chapter</a> for the behavior): a workspace gives a host
 directory through the daemon's two gates, and this table is the
 second one's config. The named-share list (<code>mount_shares</code>) was
-removed — a config that still names the key fails at load with
+removed; a config that still carries the key fails at load with
 the removal message pointing at these keys.</p>
 <table>
 <thead>
@@ -1626,30 +1623,29 @@ the removal message pointing at these keys.</p>
 <td><code>MSKSD_MOUNT_HOST_MODE</code></td>
 <td>text</td>
 <td><code>identity</code></td>
-<td>How a host-path mount's path reaches the daemon's filesystem: <code>identity</code> — the daemon runs on bare Linux and the path is its own; <code>prefix</code> — the daemon runs in its own VM (the macOS host), and share roots mount under the reserved <code>/mnt/msks</code>, so the path composes onto that prefix (the WSL <code>/mnt/c</code> shape).</td>
+<td>How a host-path mount's path reaches the daemon's filesystem: <code>identity</code> (the daemon runs on bare Linux and the path is its own) or <code>prefix</code> (the daemon runs in its own VM, the macOS host, and share roots mount under the reserved <code>/mnt/msks</code>, so the path composes onto that prefix, the WSL <code>/mnt/c</code> shape).</td>
 </tr>
 <tr>
 <td><code>mount_host_roots</code></td>
 <td><code>MSKSD_MOUNT_HOST_ROOTS</code></td>
 <td>list</td>
 <td><em>(unset)</em></td>
-<td>The allowed host-share roots, as host paths (translated by <code>mount_host_mode</code> at gate time): a host-path mount must resolve under one of them. Unset allows nothing — the host-share surface stays off until the operator lists one. Refusals name this key. The environment form is a JSON array string.</td>
+<td>The allowed host-share roots, as host paths (translated by <code>mount_host_mode</code> at gate time): a host-path mount must resolve under one of them. Unset allows nothing: the host-share surface stays off until the operator lists one. Refusals give this key. The environment form is a JSON array string.</td>
 </tr>
 <tr>
 <td><code>virtiofsd</code></td>
 <td><code>MSKSD_VIRTIOFSD</code></td>
 <td>string</td>
 <td><code>virtiofsd</code></td>
-<td>Path to the virtiofsd binary each attached share spawns. A value with a slash is used exactly as named; a bare name resolves on PATH first, then the locations the distro packages install the binary at (<code>/usr/libexec/virtiofsd</code>, <code>/usr/lib/qemu/virtiofsd</code> — Debian's and Ubuntu's <code>virtiofsd</code> packages install it off PATH). The resolution runs at settings load and again on SIGHUP: a binary installed after the daemon started is one reload away.</td>
+<td>Path to the virtiofsd binary each attached share spawns. A value with a slash is used exactly as given; a bare name resolves on PATH first, then the locations the distro packages install the binary at (<code>/usr/libexec/virtiofsd</code>, <code>/usr/lib/qemu/virtiofsd</code>; Debian's and Ubuntu's <code>virtiofsd</code> packages install it off PATH). The resolution runs at settings load and again on SIGHUP: a binary installed after the daemon started is one reload away.</td>
 </tr>
 </tbody>
 </table>
 <h3 id="the-placeholder-secret-store">The placeholder secret store<a class="headerlink" href="#the-placeholder-secret-store" title="Permanent link">&para;</a></h3>
 <p>Where the real secrets behind placeholder tokens live (<a href="../secrets/">secrets
-chapter</a> for the flow). The store is one
-per-recipient ciphertext blobs; plaintext returns only through an
-operator's unlock
-when the first store operation finds it absent.</p>
+chapter</a> for the flow). The store is per-recipient
+ciphertext blobs; plaintext returns only through an operator's
+unlock when the first store operation finds it absent.</p>
 <table>
 <thead>
 <tr>
@@ -1666,7 +1662,7 @@ when the first store operation finds it absent.</p>
 <td><code>MSKSD_SECRET_STORE_UNLOCK_TIMEOUT_S</code></td>
 <td>float</td>
 <td><code>86400.0</code></td>
-<td>How long unlocked plaintext lives in the daemon's cache after the unlock POST that supplied it; the timer resets on an unlock itself — websocket traffic and keepalives never extend it. Zero holds plaintext only while at least one operator websocket stays connected — the last disconnect drops it, and an unlock over HTTP alone holds nothing past the reply.</td>
+<td>How long unlocked plaintext lives in the daemon's cache after the unlock POST that supplied it; the timer resets on an unlock itself: websocket traffic and keepalives never extend it. Zero holds plaintext only while at least one operator websocket stays connected: the last disconnect drops it, and an unlock over HTTP alone holds nothing past the reply.</td>
 </tr>
 <tr>
 <td><code>llm_port</code></td>
@@ -1680,14 +1676,14 @@ when the first store operation finds it absent.</p>
 <td><code>MSKSD_LLM_MODELS</code></td>
 <td>string/list</td>
 <td><code>""</code></td>
-<td>The model list: <code>provider/model:api_base:api_key</code> entries — comma-separated strings, or the file's list of strings and LiteLLM-native dicts; see <code>docs/llm.md</code>.</td>
+<td>The model list: <code>provider/model:api_base:api_key</code> entries, comma-separated strings, or the file's list of strings and LiteLLM-native dicts; see <code>docs/llm.md</code>.</td>
 </tr>
 <tr>
 <td><code>llm_api_key</code></td>
 <td><code>MSKSD_LLM_API_KEY</code></td>
 <td>string</td>
 <td><code>""</code></td>
-<td>A default key for entries that name none; <code>file:</code>/<code>cmd:</code> indirection works.</td>
+<td>A default key for entries that give none; <code>file:</code>/<code>cmd:</code> indirection works.</td>
 </tr>
 </tbody>
 </table>
@@ -1695,11 +1691,10 @@ when the first store operation finds it absent.</p>
 <p>Send <code>SIGHUP</code> to a running <code>msksd</code> and it re-reads the config file
 (and the environment) into its live settings. Subsystems read
 settings off the app's state at call time, so the swap propagates
-with no per-module reconfiguration: a changed <code>egress_subnet</code>
-or
+with no per-module reconfiguration: a changed <code>egress_subnet</code> or
 <code>host_name</code> applies to the next request that reads it.</p>
 <p>Several things keep their startup values until a restart. A
-reload naming a new one changes nothing:</p>
+reload that gives a new one changes nothing:</p>
 <ul>
 <li>the listener's address, port, TLS material, and access
   logging, all bound at startup; the access log is also
@@ -1710,9 +1705,9 @@ reload naming a new one changes nothing:</p>
   startup value (moving it mid-run would orphan running
   workspaces)</li>
 <li><code>default_image</code> (imported into the catalog once, at first boot)</li>
-<li>the watcher scan's <code>event_poll_s</code> (sampled at loop start): both the
-  workspace status reconcile and the state-disk pressure probe
-  ride it</li>
+<li>the watcher scan's <code>event_poll_s</code> (sampled at loop start): both
+  the workspace status reconcile and the state-disk pressure probe
+  use it</li>
 <li>the egress machinery's startup inputs. <code>egress_enabled</code>
   latches the subsystem's state when the daemon boots. The base
   NAT masquerade's <code>egress_uplink</code> also latches: per-workspace
@@ -1728,16 +1723,16 @@ table at the next workspace start, masquerade included, from
 the live <code>egress_uplink</code>.</p>
 <p><code>mount_host_roots</code> reads live after a reload: each workspace's
 next start derives its attachments from the roots the reload
-left — a root the reload removed reads as a skip at start (the
-<a href="../mounts/">mounts chapter</a> names the skip behavior). Running
+left. A root the reload removed reads as a skip at start (the
+<a href="../mounts/">mounts chapter</a> gives the skip behavior); running
 VMs keep the devices they attached. <code>virtiofsd</code> reads live too:
-the next start spawns the binary the reload names.</p>
+the next start spawns the binary the reload gives.</p>
 <p>A config that fails to load or validate is refused: the daemon
 reports the error on stderr and keeps the previous settings. A
 default-path file deleted since startup is likewise refused rather
 than regenerated, because a reload is not a first run and
-regenerating the
-template would silently revert every file-set value to its default.</p>
+regenerating the template would silently revert every file-set
+value to its default.</p>
 
 
 
