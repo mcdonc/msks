@@ -157,8 +157,9 @@ def refuse_taken_path(path: Path) -> None:
     (a second daemon must not steal the first's clients, #555
     review); a socket nobody answers is stale — a daemon that
     died without unlinking — and is replaced. The probe reads
-    the kernel's own verdict (#742): a live listener whose
-    accept backlog is momentarily full reads live, never stale."""
+    the kernel's own verdict, Linux's here (#742): a live
+    listener whose accept backlog is momentarily full reads
+    live, never stale."""
     if path.exists() and not path.is_socket():
         raise OSError(f"{path} exists and is not a socket file")
     if path.is_socket():
@@ -180,16 +181,17 @@ _PROBE_TIMEOUT = 1.0
 def answers(path: Path) -> bool:
     """True when something accepts connections at *path*.
 
-    Only an outright refusal answers False: ``ECONNREFUSED``,
-    and only that, names a socket nobody serves — a daemon that
-    died without unlinking. A live listener whose accept backlog
-    is momentarily full answers differently — ``EAGAIN`` (the
-    kernel's answer to a probe that cannot squeeze into the
-    queue) or a connect held past the probe's budget — and both
-    mean someone may be listening (#742): the probe answers
-    True, and the caller must refuse to unbind. Any other
-    refusal raises, named, rather than guess a live listener
-    stale and steal its clients.
+    Only an outright refusal answers False: on Linux, where the
+    listener runs, ``ECONNREFUSED`` — and only that — names a
+    socket nobody serves, a daemon that died without unlinking.
+    A live listener whose accept backlog is momentarily full
+    answers differently — ``EAGAIN`` (the kernel's answer to a
+    probe that cannot squeeze into the queue) or a connect held
+    past the probe's budget — and both mean someone may be
+    listening (#742): the probe answers True, and the caller
+    must refuse to unbind. Any other refusal raises, named,
+    rather than guess a live listener stale and steal its
+    clients.
     """
     probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:

@@ -840,14 +840,15 @@ def test_bind_leaves_a_backlog_full_daemons_socket_alone(
 
 class HeldProbe:
     """A probe socket whose connect the kernel holds: the named
-    exception is the hold, and settimeout/close record nothing
-    to assert on."""
+    exception is the hold, and settimeout records the budget so
+    the test can pin that the probe carries one."""
 
     def __init__(self, hold: type[BaseException]) -> None:
         self.hold = hold
+        self.budget: float | None = None
 
     def settimeout(self, seconds: float) -> None:
-        pass
+        self.budget = seconds
 
     def connect(self, path: str) -> None:
         raise self.hold("held")
@@ -864,10 +865,26 @@ def test_answers_reads_a_held_connect_as_live(
     probe — EAGAIN (Linux answers it at once) and a connect that
     outlasts the probe's budget — both answer True: someone may
     be listening, and the caller must refuse to unbind (#742)."""
+    made: list[HeldProbe] = []
+
+    def make_probe(*_args, **_kwargs) -> HeldProbe:
+        probe = HeldProbe(held)
+        made.append(probe)
+        return probe
+
+    # A namespace in place of the stdlib module: the swap stays
+    # scoped to localsocket's own attribute, not the real one.
     monkeypatch.setattr(
-        localsocket.socket, "socket", lambda *a, **k: HeldProbe(held)
+        localsocket,
+        "socket",
+        SimpleNamespace(
+            socket=make_probe,
+            AF_UNIX=socketlib.AF_UNIX,
+            SOCK_STREAM=socketlib.SOCK_STREAM,
+        ),
     )
     assert localsocket.answers(tmp_path / "msksd.sock") is True
+    assert made[0].budget == localsocket._PROBE_TIMEOUT
 
 
 def test_answers_raises_when_it_cannot_tell(tmp_path: Path) -> None:
@@ -880,14 +897,16 @@ def test_answers_raises_when_it_cannot_tell(tmp_path: Path) -> None:
 
 
 def test_bind_borns_the_socket_with_its_final_mode(
-    shallow_socket_dir: Path,
+    shallow_socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The socket file is created 0660, not created open and
     tightened after (#742): under the permissive extreme of
     umask 0 a bare bind lands the file 0777 and every peer could
     connect until a later chmod — the mode now rides creation
-    itself."""
+    itself, so the mode read with the chmod switched off is the
+    mode creation alone produced."""
     path = shallow_socket_dir / "msksd.sock"
+    monkeypatch.setattr(localsocket.os, "chmod", lambda *a, **k: None)
     was = os.umask(0)
     try:
         sock = localsocket.bind(path)
