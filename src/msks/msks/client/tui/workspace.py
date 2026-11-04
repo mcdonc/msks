@@ -733,9 +733,9 @@ class WorkspaceScreen(Screen):
         tree restarts when the session hands the terminal back; a
         forward the flow's probe names unreachable — or an ssh
         that fails to connect — opens nothing in the session's
-        place (#748): the refusal's reason rides the restart's
-        flash beside the ``msks console`` suggestion, and the full
-        refusal is logged. A configured terminal
+        place (#748): the restart's flash leads with the
+        ``msks console`` suggestion and follows with the refusal's
+        first line, and the full refusal is logged. A configured terminal
         launcher (``terminal_open_cmd``) opens windows beside the
         running tree instead: the launcher runs the ssh invocation
         as its child, which inherits the tree's materialized

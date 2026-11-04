@@ -4558,8 +4558,9 @@ def test_the_ssh_flow_reports_a_refusal_without_a_console(
     probe lands the daemon's named refusal in this process — the
     child ssh spawns never surfaces it — and the flow opens
     nothing in the session's place: the note the restarted tree
-    flashes carries the refusal's first line beside the ``msks
-    console`` suggestion, and the log keeps the full refusal."""
+    flashes leads with the ``msks console`` suggestion and follows
+    with the refusal's first line, and the log keeps the full
+    refusal."""
 
     def refused_forward(workspace_id):
         raise SystemExit("msks: forward unavailable — workspace w1 has no NIC")
@@ -4575,8 +4576,8 @@ def test_the_ssh_flow_reports_a_refusal_without_a_console(
     monkeypatch.setattr(follow_mod, "run_workspace_shell", console)
     with caplog.at_level("WARNING", logger="msks.client.tui.follow"):
         assert follow_mod.run_ssh_flow("w1") == (
-            "ssh refused (msks: forward unavailable — workspace w1 has no NIC)"
-            " — run msks console for the failsafe shell"
+            "ssh refused — try msks console"
+            " (msks: forward unavailable — workspace w1 has no NIC)"
         )
     assert "no NIC" in caplog.text
 
@@ -4593,20 +4594,48 @@ def test_the_ssh_flow_keeps_a_refusal_to_its_first_line(
             "msks: no identity configured\nssh-add the key\nthen retry"
         )
 
+    def never(workspace_id, passthrough, transport=None):
+        raise AssertionError("ssh must not run past the probe")
+
     ran: list[str] = []
+
+    monkeypatch.setattr(follow_mod, "ensure_forward", refused_forward)
+    monkeypatch.setattr(follow_mod, "run_workspace_ssh", never)
+    monkeypatch.setattr(follow_mod, "run_workspace_shell", ran.append)
+    with caplog.at_level("WARNING", logger="msks.client.tui.follow"):
+        assert follow_mod.run_ssh_flow("w1") == (
+            "ssh refused — try msks console (msks: no identity configured)"
+        )
+    assert "then retry" in caplog.text
+    assert ran == []
+
+
+def test_the_flash_note_leads_with_the_console_suggestion(
+    monkeypatch, caplog
+) -> None:
+    """The flash's one row ellipsizes at its end (#748): a
+    refusal whose first line is long (the unheld-identity
+    recovery line) must not push the suggestion off the row — the
+    note puts the suggestion first and lets the reason take the
+    ellipsized tail, while the log keeps the refusal whole."""
+
+    long_line = (
+        "msks: this client holds no private half for w1 "
+        "— the agent lists none (ssh-add the key)"
+    )
+
+    def refused_forward(workspace_id):
+        raise SystemExit(long_line)
 
     monkeypatch.setattr(follow_mod, "ensure_forward", refused_forward)
     monkeypatch.setattr(
         follow_mod, "run_workspace_ssh", lambda wid, p, transport=None: 0
     )
-    monkeypatch.setattr(follow_mod, "run_workspace_shell", ran.append)
+    monkeypatch.setattr(follow_mod, "run_workspace_shell", list.append)
     with caplog.at_level("WARNING", logger="msks.client.tui.follow"):
-        assert follow_mod.run_ssh_flow("w1") == (
-            "ssh refused (msks: no identity configured)"
-            " — run msks console for the failsafe shell"
-        )
-    assert "then retry" in caplog.text
-    assert ran == []
+        note = follow_mod.run_ssh_flow("w1")
+    assert note.startswith("ssh refused — try msks console (")
+    assert long_line in caplog.text
 
 
 def test_a_255_exit_reports_only_the_code(monkeypatch) -> None:
@@ -4703,8 +4732,7 @@ def test_the_ssh_flow_reports_a_refusal_the_ssh_run_raises(
     monkeypatch.setattr(follow_mod, "run_workspace_shell", ran.append)
     with caplog.at_level("WARNING", logger="msks.client.tui.follow"):
         assert follow_mod.run_ssh_flow("w1") == (
-            "ssh refused (msks ssh: ssh not found on PATH)"
-            " — run msks console for the failsafe shell"
+            "ssh refused — try msks console (msks ssh: ssh not found on PATH)"
         )
     assert "ssh not found on PATH" in caplog.text
     assert ran == []

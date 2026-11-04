@@ -90,15 +90,17 @@ def run_ssh_flow(workspace_id: str) -> str | None:
     """An ssh session in the TUI's own terminal (#562): the tree
     exited for this flow, ssh runs where it stood, and the tree
     restarts when the session hands the terminal back. A refusal
-    the probe names — no NIC, not running, the service not
-    listening, an identity the daemon rejected — opens nothing in
-    the session's place (#748): the full refusal is logged, and
-    the note the restarted tree flashes carries its first line
-    (the flash's one row) with the ``msks console`` suggestion —
-    the failsafe shell stays a deliberate choice, not a
-    substitution. An ssh that ran reports only its exit code —
-    255 included, since ssh hands a session's own exit through
-    unchanged."""
+    — the probe's (no NIC, not running, the service not
+    listening, an identity the daemon rejected), or one the ssh
+    run raises itself (ssh missing from PATH, an identity
+    setting that points nowhere) — opens nothing in the
+    session's place (#748): the full refusal is logged, and the
+    note the restarted tree flashes puts the ``msks console``
+    suggestion first and the refusal's first line after it (the
+    flash's one row ellipsizes at its end, and the suggestion is
+    the part the operator acts on). An ssh that ran reports only
+    its exit code — 255 included, since ssh hands a session's
+    own exit through unchanged."""
     try:
         ensure_forward(workspace_id)
         code = run_workspace_ssh(workspace_id, [])
@@ -111,10 +113,7 @@ def run_ssh_flow(workspace_id: str) -> str | None:
             workspace_id,
             str(exc).strip() or "refused",
         )
-        return (
-            f"ssh refused ({first_line(str(exc))})"
-            " — run msks console for the failsafe shell"
-        )
+        return f"ssh refused — try msks console ({first_line(str(exc))})"
 
 
 def ssh_child_argv(workspace_id: str) -> list[str]:
