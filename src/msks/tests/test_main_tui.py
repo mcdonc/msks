@@ -55,6 +55,7 @@ from msks.client.tui.workspace import (
     granted_line,
 )
 from msks.server.api.rows import HOME_FREE_STATUSES
+from msks.spec.mounts import parse_mounts
 from rich.cells import cell_len
 from test_consent_page import FakeFactory, FakeWS, press_until, wait_for
 from test_consent_tui import frame
@@ -169,6 +170,12 @@ class FakeData:
         # The mounts editor's refusal (#620, part #624): the
         # scripted one-line error a refused save raises.
         self.mounts_refusal: str | None = None
+        # The attached-mounts record (#756, #759): the set each
+        # row's last start attached, the fake's model of the
+        # daemon's attached_mounts column — empty until a start
+        # writes it, and the pair with the row's mounts is the
+        # pending story the reply's flag derives from.
+        self.attached_mounts: dict[str, list[dict]] = {}
         # The published list's arch filter (#717): the scripted
         # /health document — None is a daemon predating the
         # machine field, and the filter steps aside.
@@ -258,22 +265,34 @@ class FakeData:
         reply = {k: v for k, v in fresh.items() if k not in self.resize_omit}
         return {**reply, "changes": changes}
 
+    def pending_mounts(self, row: dict) -> bool:
+        """The row's pending flag (#756, #759), derived the way
+        ``workspace_dict`` derives it: the configured set against
+        the set the row's last start attached, compared as sets
+        through the daemon's own parser — order-insensitive, so
+        a reorder-only save keeps the flag and a save that
+        returns the attached shape clears it."""
+        attached = self.attached_mounts.get(row["id"], [])
+        return set(parse_mounts(row.get("mounts"))) != set(
+            parse_mounts(attached)
+        )
+
     async def set_mounts(self, workspace_id: str, mounts: list) -> dict:
         """The mounts exchange (#620, part #624): recorded, the
         row's mounts replaced; a refusal a test armed raises the
         way the daemon's would. The reply carries the pending
-        flag the daemon derives (#756): a list that changed the
-        row's set differs from what the last start attached, and
-        an unchanged list keeps the flag the row walked in
-        with."""
+        flag the daemon derives (#756, #759): the configured set
+        against the set the last start attached — never the list
+        the row walked in with, so a re-add that returns the
+        attached shape answers not pending and a reorder-only
+        save keeps the flag where it stood."""
         self.calls.append(("set-mounts", workspace_id, mounts))
         if self.mounts_refusal is not None:
             raise SystemExit(self.mounts_refusal)
         for row in self.rows:
             if row["id"] == workspace_id:
-                if [dict(m) for m in mounts] != row.get("mounts"):
-                    row["mounts_pending"] = True
                 row["mounts"] = [dict(m) for m in mounts]
+                row["mounts_pending"] = self.pending_mounts(row)
                 return dict(row)
         raise KeyError(workspace_id)
 
@@ -282,6 +301,23 @@ class FakeData:
         result = self.reply("start", {"id": workspace_id, "status": "running"})
         fresh = next(r for r in self.rows if r["id"] == workspace_id)
         fresh["status"] = "running"  # the daemon's row follows the boot
+        # The attached snapshot lands with the running status
+        # (#756, #759): the set this launch took — the configured
+        # set minus the mounts the row's scripted issues name, the
+        # daemon's healthy subset — and the served row carries the
+        # flag the pair derives (a skipped mount stays pending
+        # until the config and the row agree again).
+        issues = fresh.get("mount_issues") or []
+        self.attached_mounts[workspace_id] = [
+            dict(mount)
+            for mount in fresh.get("mounts") or []
+            if not any(
+                issue.get("host") == mount.get("host")
+                and issue.get("guest") == mount.get("guest")
+                for issue in issues
+            )
+        ]
+        fresh["mounts_pending"] = self.pending_mounts(fresh)
         return result
 
     async def stop(self, workspace_id: str) -> dict:
@@ -294,6 +330,10 @@ class FakeData:
     async def remove(self, workspace_id: str) -> dict:
         self.calls.append(("remove", workspace_id))
         self.rows = [r for r in self.rows if r["id"] != workspace_id]
+        # The row is gone; its attached snapshot goes with it, the
+        # way the daemon's column dies with the row (#759) — a
+        # later create of the same id starts unattached.
+        self.attached_mounts.pop(workspace_id, None)
         return self.reply("remove", {})
 
     async def set_egress_mode(
@@ -6069,6 +6109,56 @@ def test_the_mounts_line_names_each_state() -> None:
     settled_plain = mounts_line(settled).plain
     assert "/srv/proj:/mnt/proj:rw" in settled_plain
     assert "applies at next start" not in settled_plain
+
+
+async def test_the_fake_derives_mounts_pending_like_the_daemon() -> None:
+    """The fake's mounts scripting (#759): the reply's flag comes
+    from the configured set against the attached set — the same
+    derivation ``workspace_dict`` serves — never from a
+    list-inequality check against the row's previous list. A
+    reorder-only save keeps the flag, a save that drops a mount
+    sets it, and a re-add that returns the attached shape clears
+    it."""
+    mounts = [
+        {"host": "/srv/proj", "guest": "/mnt/proj", "mode": "rw"},
+        {"host": "/srv/refs", "guest": "/srv/refs", "mode": "ro"},
+    ]
+    data = FakeData([{**row(), "mounts": [dict(m) for m in mounts]}])
+    # A never-started row has nothing attached: any configured
+    # set is pending, and the mountless save is not.
+    emptied = await data.set_mounts(WS, [])
+    assert emptied["mounts_pending"] is False
+    filled = await data.set_mounts(WS, mounts)
+    assert filled["mounts_pending"] is True
+    # A start attaches the configured set (no issues scripted),
+    # and the saves read the pair: the reorder keeps the flag,
+    # the remove splits it, the re-add returns it.
+    await data.start(WS)
+    assert data.rows[0]["mounts_pending"] is False
+    reordered = await data.set_mounts(WS, [mounts[1], mounts[0]])
+    assert reordered["mounts_pending"] is False
+    trimmed = await data.set_mounts(WS, [mounts[0]])
+    assert trimmed["mounts_pending"] is True
+    readded = await data.set_mounts(WS, mounts)
+    assert readded["mounts_pending"] is False
+
+
+async def test_the_fakes_start_snapshot_skips_issued_mounts() -> None:
+    """The fake's start (#759) writes the attached set the
+    daemon's launch writes — the configured set minus the mounts
+    the row's issues name — so a skipped mount keeps its row
+    pending past the start, and dropping the skipped mount from
+    the config settles it."""
+    data = FakeData([mounted_row()])
+    await data.start(WS)
+    assert data.attached_mounts[WS] == [
+        {"host": "/srv/proj", "guest": "/mnt/proj", "mode": "rw"}
+    ]
+    assert data.rows[0]["mounts_pending"] is True
+    settled = await data.set_mounts(
+        WS, [{"host": "/srv/proj", "guest": "/mnt/proj", "mode": "rw"}]
+    )
+    assert settled["mounts_pending"] is False
 
 
 def mounts_text(app) -> str:
