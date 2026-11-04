@@ -724,6 +724,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#security" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Security
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1033,6 +1044,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#security" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Security
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1330,6 +1352,16 @@ tagged <code>vX.Y.Z</code>.</p>
   a flush that answered EAGAIN. The console's write path now
   waits for the tty to become writable and retries; the session
   lands in the shell with every byte intact.</li>
+</ul>
+<h3 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Local socket group admission (#743).</strong> The token-less local
+  listener resolves peer group membership the way login does:
+  every supplementary group the account database holds for the
+  user counts, including the nesting a directory backend (SSSD
+  with AD) expands itself. A member removed from the socket's
+  group loses token-less access at the next request instead of
+  at the next daemon restart.</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
