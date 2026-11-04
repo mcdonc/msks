@@ -8,6 +8,18 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **The local socket's liveness probe reads a busy listener as
+  live (#742).** A second daemon starting beside a live one no
+  longer unlinks the live daemon's socket file when a burst of
+  local clients fills the listener's accept backlog: the probe
+  now unlinks only a socket the kernel refuses outright
+  (`ECONNREFUSED`), treats a backlog-full hold (`EAGAIN`, a
+  timed-out connect) as "someone may be listening", and raises a
+  named error when it cannot tell. The socket file is also
+  created directly with its final `0660` mode, closing the brief
+  window in which a permissive umask left it connectible before
+  the mode change landed.
+
 - **`msks-setup-macos-host --check` refuses an empty CA fetch
   (#738).** The check pass now refuses with the re-run remedy
   when the daemon's CA has not come back from the VM. The

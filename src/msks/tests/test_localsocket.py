@@ -758,3 +758,164 @@ async def test_a_forged_forwarded_header_cannot_mark_a_tcp_peer(
         server.should_exit = True
         with contextlib.suppress(BaseException):
             await asyncio.wait_for(task, timeout=10)
+
+
+# --- review round: the live socket under load (#742) ---------------------
+
+
+needs_backlog_eagain = pytest.mark.skipif(
+    sys.platform != "linux",
+    reason="Linux's connect answers EAGAIN on a unix listener "
+    "whose accept backlog is full (#742); BSD answers "
+    "ECONNREFUSED there",
+)
+
+
+def fill_the_backlog(path: Path) -> list[socketlib.socket]:
+    """Connect clients until the listener stops taking them.
+
+    Each connected client holds a queue slot the listener never
+    accepts, so the backlog fills; the first refusal names a
+    full queue (EAGAIN on Linux, ECONNREFUSED on BSD) and ends
+    the fill.
+    """
+    fillers: list[socketlib.socket] = []
+    for _ in range(200):
+        filler = socketlib.socket(socketlib.AF_UNIX, socketlib.SOCK_STREAM)
+        filler.settimeout(0.2)
+        try:
+            filler.connect(str(path))
+            fillers.append(filler)
+        except OSError:
+            filler.close()
+            return fillers
+    return fillers
+
+
+def close_fillers(fillers: list[socketlib.socket]) -> None:
+    for filler in fillers:
+        filler.close()
+
+
+@needs_backlog_eagain
+def test_answers_reads_a_backlog_full_listener_as_live(
+    tmp_path: Path,
+) -> None:
+    """A live daemon under a burst of local connections — the
+    accept backlog momentarily full — reads live (#742): the
+    kernel's EAGAIN there is a busy listener, not a stale
+    socket."""
+    path = tmp_path / "msksd.sock"
+    live = localsocket.bind(path)
+    fillers = fill_the_backlog(path)
+    try:
+        assert fillers  # the backlog really filled
+        assert localsocket.answers(path) is True
+    finally:
+        close_fillers(fillers)
+        live.close()
+        localsocket.unlink(path)
+
+
+@needs_backlog_eagain
+def test_bind_leaves_a_backlog_full_daemons_socket_alone(
+    tmp_path: Path,
+) -> None:
+    """The #742 regression: a second daemon starting while the
+    first's backlog is full refuses — it must not unlink the
+    live socket, bind the path, and steal the first's local
+    clients."""
+    path = tmp_path / "msksd.sock"
+    live = localsocket.bind(path)
+    fillers = fill_the_backlog(path)
+    try:
+        with pytest.raises(OSError, match="already listening"):
+            localsocket.bind(path)
+        assert path.is_socket()  # never unlinked
+    finally:
+        close_fillers(fillers)
+        live.close()
+        localsocket.unlink(path)
+
+
+class HeldProbe:
+    """A probe socket whose connect the kernel holds: the named
+    exception is the hold, and settimeout/close record nothing
+    to assert on."""
+
+    def __init__(self, hold: type[BaseException]) -> None:
+        self.hold = hold
+
+    def settimeout(self, seconds: float) -> None:
+        pass
+
+    def connect(self, path: str) -> None:
+        raise self.hold("held")
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.mark.parametrize("held", [BlockingIOError, TimeoutError])
+def test_answers_reads_a_held_connect_as_live(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, held: type[BaseException]
+) -> None:
+    """The two holds a live, backlog-full listener puts on a
+    probe — EAGAIN (Linux answers it at once) and a connect that
+    outlasts the probe's budget — both answer True: someone may
+    be listening, and the caller must refuse to unbind (#742)."""
+    monkeypatch.setattr(
+        localsocket.socket, "socket", lambda *a, **k: HeldProbe(held)
+    )
+    assert localsocket.answers(tmp_path / "msksd.sock") is True
+
+
+def test_answers_raises_when_it_cannot_tell(tmp_path: Path) -> None:
+    """A refusal that discriminates nothing — here a socket file
+    that vanished before the probe connected — raises instead of
+    guessing: a verdict the probe cannot read never unlinks a
+    live daemon's socket (#742)."""
+    with pytest.raises(OSError, match="cannot tell"):
+        localsocket.answers(tmp_path / "vanished.sock")
+
+
+def test_bind_borns_the_socket_with_its_final_mode(
+    shallow_socket_dir: Path,
+) -> None:
+    """The socket file is created 0660, not created open and
+    tightened after (#742): under the permissive extreme of
+    umask 0 a bare bind lands the file 0777 and every peer could
+    connect until a later chmod — the mode now rides creation
+    itself."""
+    path = shallow_socket_dir / "msksd.sock"
+    was = os.umask(0)
+    try:
+        sock = localsocket.bind(path)
+        mode = stat.S_IMODE(path.stat().st_mode)
+    finally:
+        os.umask(was)
+    try:
+        assert mode == 0o660
+    finally:
+        sock.close()
+        localsocket.unlink(path)
+
+
+def test_bind_leaves_the_callers_umask_alone(
+    shallow_socket_dir: Path,
+) -> None:
+    """The umask window-closer restores the caller's mask: the
+    daemon's other file creations keep the operator's umask
+    (#742)."""
+    path = shallow_socket_dir / "msksd.sock"
+    was = os.umask(0o027)
+    try:
+        sock = localsocket.bind(path)
+        read = os.umask(0o027)  # reads the mask, puts it back
+        try:
+            assert read == 0o027
+        finally:
+            sock.close()
+            localsocket.unlink(path)
+    finally:
+        os.umask(was)
