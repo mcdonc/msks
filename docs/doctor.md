@@ -53,8 +53,7 @@ names: `genisoimage` serves `mkisofs`, and `qemu-utils` ships
 
 Some fixes are not distro packages. Where that is so, the hint
 gives the real source: cloud-hypervisor installs from the
-upstream static release. Debian's archive carries it in none of
-its suites.
+upstream static release.
 
 The run ends with a tally (`14 passed`, or `12 passed, 1
 error, 1 warning`). When anything failed, a closing block
