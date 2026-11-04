@@ -1417,6 +1417,15 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>The listings' columns widen with the terminal (#749).</strong> The
+  workspaces list and the secrets page now grow their columns when the
+  terminal runs wider than 80 columns: the name and image columns (the
+  workspaces list) and the coverage, name, and destinations columns
+  (the secrets page) take the extra cells, so long names and image
+  references read whole instead of clipping. At 80 columns or
+  narrower, the layout stays fixed as before.</p>
+</li>
+<li>
 <p><strong><code>msks-setup-macos-host</code> links <code>msks-term-popup</code> beside
   <code>msks</code> (#734).</strong> The brew prefix's bin dir carries both client
   commands, so a consent-terminal window opened through an

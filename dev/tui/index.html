@@ -892,6 +892,10 @@ that workspace's page directly.</p>
 <p><img alt="The workspaces list: two rows, the status bar's count and daemon URL" src="../screens/workspaces-list.svg" /></p>
 <p>The tree is rooted at the <strong>workspaces list</strong>: one row per workspace,
 newest first. The CREATED column's arrow shows the sort direction. The
+columns follow the terminal's width: on a wide terminal, the name and
+image columns take the extra cells, so long names and image references
+read whole instead of clipping. At 80 columns or narrower the layout is
+fixed. The
 list's keys: <code>c</code> creates a workspace, <code>s</code> starts it, <code>S</code> stops it, <code>D</code>
 removes it (after a confirmation), <code>e</code> opens the secrets page, and <code>r</code>
 refreshes. <code>/</code> jumps to the first workspace whose name starts with what
@@ -908,7 +912,9 @@ reason. The workspace's page shows each unresolved mount and its kind.</p>
 <p><img alt="The create form over the list" src="../screens/create-form.svg" /></p>
 <p>The <strong>secrets page</strong> lists every placeholder the daemon holds, in five
 columns: coverage (<code>*</code> for the daemon-wide row, otherwise its workspace
-ids), name, destinations, remaining lifetime, and created date.</p>
+ids), name, destinations, remaining lifetime, and created date. Its
+columns widen with the terminal the same way: the coverage, name, and
+destinations columns take the extra cells.</p>
 <p><img alt="The secrets page: the placeholder list" src="../screens/secrets-page.svg" /></p>
 <p>You can register secret placeholders for your workspace to use instead of
 putting actual secrets into VMs.</p>
