@@ -74,6 +74,14 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **The TUI's shell action reports an ssh refusal instead of
+  opening a console (#748).** The "Open a shell" action used to
+  fall back to a `msks console` session when the ssh attempt was
+  refused. It now opens nothing in the session's place: the
+  tree's first flash carries the refusal's first line and
+  suggests `msks console`, and the full refusal is logged. The
+  action's hint reads "ssh in this terminal".
+
 - **`msks-setup-macos-host` keeps an existing client config
   (#730).** The tool writes `~/.config/msks/msks.yaml` only when
   the file is missing; an existing file stays byte-for-byte,

@@ -1929,7 +1929,7 @@ async def test_the_new_terminal_action_spawns_an_ssh_child(
     async with app.run_test() as pilot:
         await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 6)
-        assert "console as fallback" in action_text(app, 0)
+        assert "ssh in this terminal" in action_text(app, 0)
         await press_until(pilot, "enter", lambda: len(spawned) == 1)
         assert spawned[0] == [
             "kitty",
@@ -3702,18 +3702,16 @@ def test_action_rows_paint_two_tones() -> None:
     mutes the whole row behind its reason."""
     muted = rows_mod.muted_style({})
     shell = action_content(PAGE_ACTIONS[0], "running", {}, focused=True)
-    assert str(shell).startswith("▸ Open a shell — ssh; console as fallback")
+    assert str(shell).startswith("▸ Open a shell — ssh in this terminal")
     assert Span(2, 14, "$text bold") in shell.spans
-    assert Span(17, 41, muted) in shell.spans
+    assert Span(17, 37, muted) in shell.spans
     # Stopped, the shell stays live (#479 — the session boots the
     # workspace itself) and both power rows carry their
     # descriptions (#470 W2); Start keeps its bold beside it.
     shell_off = action_content(PAGE_ACTIONS[0], "stopped", {}, False)
-    assert str(shell_off).startswith(
-        "  Open a shell — ssh; console as fallback"
-    )
+    assert str(shell_off).startswith("  Open a shell — ssh in this terminal")
     assert Span(2, 14, "$text bold") in shell_off.spans
-    assert Span(17, 41, muted) in shell_off.spans
+    assert Span(17, 37, muted) in shell_off.spans
     start = action_content(PAGE_ACTIONS[4], "stopped", {}, focused=False)
     assert str(start).startswith("  Start — boot the workspace")
     assert Span(2, 7, "$text bold") in start.spans
@@ -4553,38 +4551,42 @@ async def test_the_data_seam_serves_the_unlock_pair(
     assert ("POST", "/api/v1/secrets/unlock") in asked
 
 
-def test_the_ssh_flow_falls_back_on_the_probes_refusal(monkeypatch) -> None:
-    """The real refusal chain (#562 review): the forward probe
-    lands the daemon's named refusal in this process — the child
-    ssh spawns never surfaces it — and the console runs one step
-    later with the flash note; a console that refuses too raises
-    on (the outer loop flashes that reason)."""
+def test_the_ssh_flow_reports_a_refusal_without_a_console(
+    monkeypatch, caplog
+) -> None:
+    """The real refusal chain (#562 review, #748): the forward
+    probe lands the daemon's named refusal in this process — the
+    child ssh spawns never surfaces it — and the flow opens
+    nothing in the session's place: the note the restarted tree
+    flashes carries the refusal's first line beside the ``msks
+    console`` suggestion, and the log keeps the full refusal."""
 
     def refused_forward(workspace_id):
         raise SystemExit("msks: forward unavailable — workspace w1 has no NIC")
 
-    ran: list[str] = []
-
-    def console(workspace_id):
-        ran.append(workspace_id)
-
     def never(workspace_id, passthrough, transport=None):
         raise AssertionError("ssh must not run past the probe")
+
+    def console(workspace_id):
+        raise AssertionError("a refused ssh opens no console (#748)")
 
     monkeypatch.setattr(follow_mod, "ensure_forward", refused_forward)
     monkeypatch.setattr(follow_mod, "run_workspace_ssh", never)
     monkeypatch.setattr(follow_mod, "run_workspace_shell", console)
-    assert follow_mod.run_ssh_flow("w1") == (
-        "ssh refused (msks: forward unavailable — workspace w1 has no NIC)"
-        " — the console session ran instead"
-    )
-    assert ran == ["w1"]
+    with caplog.at_level("WARNING", logger="msks.client.tui.follow"):
+        assert follow_mod.run_ssh_flow("w1") == (
+            "ssh refused (msks: forward unavailable — workspace w1 has no NIC)"
+            " — run msks console for the failsafe shell"
+        )
+    assert "no NIC" in caplog.text
 
 
-def test_the_ssh_flow_keeps_a_refusal_to_its_first_line(monkeypatch) -> None:
+def test_the_ssh_flow_keeps_a_refusal_to_its_first_line(
+    monkeypatch, caplog
+) -> None:
     """A refusal's recovery paragraph would ellipsize off the
     flash's one row: the note carries the first line, the part
-    the operator acts on."""
+    the operator acts on, and the log keeps every line."""
 
     def refused_forward(workspace_id):
         raise SystemExit(
@@ -4593,19 +4595,18 @@ def test_the_ssh_flow_keeps_a_refusal_to_its_first_line(monkeypatch) -> None:
 
     ran: list[str] = []
 
-    def console(workspace_id):
-        ran.append(workspace_id)
-
     monkeypatch.setattr(follow_mod, "ensure_forward", refused_forward)
     monkeypatch.setattr(
         follow_mod, "run_workspace_ssh", lambda wid, p, transport=None: 0
     )
-    monkeypatch.setattr(follow_mod, "run_workspace_shell", console)
-    assert follow_mod.run_ssh_flow("w1") == (
-        "ssh refused (msks: no identity configured)"
-        " — the console session ran instead"
-    )
-    assert ran == ["w1"]
+    monkeypatch.setattr(follow_mod, "run_workspace_shell", ran.append)
+    with caplog.at_level("WARNING", logger="msks.client.tui.follow"):
+        assert follow_mod.run_ssh_flow("w1") == (
+            "ssh refused (msks: no identity configured)"
+            " — run msks console for the failsafe shell"
+        )
+    assert "then retry" in caplog.text
+    assert ran == []
 
 
 def test_a_255_exit_reports_only_the_code(monkeypatch) -> None:
@@ -4685,24 +4686,28 @@ def test_land_flow_carries_notes_and_refusals(monkeypatch) -> None:
     assert follow.seed == "interrupted — the tree reopened"
 
 
-def test_the_ssh_flow_lets_a_console_refusal_raise(monkeypatch) -> None:
-    """The probe's refusal falls back to the console; a console
-    that refuses too raises on — the outer loop flashes that
-    reason instead of a silently swallowed one."""
+def test_the_ssh_flow_reports_a_refusal_the_ssh_run_raises(
+    monkeypatch, caplog
+) -> None:
+    """A SystemExit the ssh run itself raises — ssh missing from
+    PATH, an identity this client holds nowhere — reports the
+    same way as a probe refusal (#748): the note and the log, no
+    console in its place."""
 
-    def refused_forward(workspace_id):
-        raise SystemExit("no NIC")
+    def refused_ssh(workspace_id, passthrough, transport=None):
+        raise SystemExit("msks ssh: ssh not found on PATH")
 
-    def refused_console(workspace_id):
-        raise SystemExit("no daemon")
-
-    monkeypatch.setattr(follow_mod, "ensure_forward", refused_forward)
-    monkeypatch.setattr(
-        follow_mod, "run_workspace_ssh", lambda wid, p, transport=None: 0
-    )
-    monkeypatch.setattr(follow_mod, "run_workspace_shell", refused_console)
-    with pytest.raises(SystemExit, match="no daemon"):
-        follow_mod.run_ssh_flow("w1")
+    ran: list[str] = []
+    monkeypatch.setattr(follow_mod, "ensure_forward", lambda wid: None)
+    monkeypatch.setattr(follow_mod, "run_workspace_ssh", refused_ssh)
+    monkeypatch.setattr(follow_mod, "run_workspace_shell", ran.append)
+    with caplog.at_level("WARNING", logger="msks.client.tui.follow"):
+        assert follow_mod.run_ssh_flow("w1") == (
+            "ssh refused (msks ssh: ssh not found on PATH)"
+            " — run msks console for the failsafe shell"
+        )
+    assert "ssh not found on PATH" in caplog.text
+    assert ran == []
 
 
 async def _record_probe(seen, address, token, ssl_ctx):
