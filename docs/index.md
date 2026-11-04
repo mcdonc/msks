@@ -4,8 +4,9 @@ _msks_ is a tool that easily allows you to create microvm workspaces. It can be
 used to run AI harnesses securely.
 
 Each microvm is a cloud-hypervisor VM with its own kernel. It also provides
-services which allow you to avoid keeping secrets and keys within the VM and a
-facility to allow you to approve network egress.
+services which allow you to avoid keeping secrets and keys within the VM, a
+facility to allow you to approve network egress, and a system that allows
+you to proxy LLM requests without keeping your API keys on the agent host.
 
 _msks_ runs on:
 
