@@ -15,6 +15,10 @@ that workspace's page directly.
 
 The tree is rooted at the **workspaces list**: one row per workspace,
 newest first. The CREATED column's arrow shows the sort direction. The
+columns follow the terminal's width: on a wide terminal, the name and
+image columns take the extra cells, so long names and image references
+read whole instead of clipping. At 80 columns or narrower the layout is
+fixed. The
 list's keys: `c` creates a workspace, `s` starts it, `S` stops it, `D`
 removes it (after a confirmation), `e` opens the secrets page, and `r`
 refreshes. `/` jumps to the first workspace whose name starts with what
@@ -36,7 +40,9 @@ When you create a workspace, it looks like this:
 
 The **secrets page** lists every placeholder the daemon holds, in five
 columns: coverage (`*` for the daemon-wide row, otherwise its workspace
-ids), name, destinations, remaining lifetime, and created date.
+ids), name, destinations, remaining lifetime, and created date. Its
+columns widen with the terminal the same way: the coverage, name, and
+destinations columns take the extra cells.
 
 ![The secrets page: the placeholder list](screens/secrets-page.svg)
 

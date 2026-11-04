@@ -21,6 +21,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
+from textual.events import Resize
 from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
@@ -53,16 +54,18 @@ from .consent_ui import (
 )
 from .forms import FormSelect, FormWalk
 from .link import AuditLink
-from .rows import clip as clip_cell
 from .rows import (
+    LIST_FRAME_CELLS,
     clock_now,
     created_label,
+    expanded_columns,
     list_header,
     padded_cells,
     parse_stamp,
     status_content,
     workspace_label,
 )
+from .rows import clip as clip_cell
 from .unlock import PassphraseScreen, unlock_flash, unlock_flow
 
 #: The secrets page's columns (#390, #515): the header's label
@@ -71,9 +74,12 @@ from .unlock import PassphraseScreen, unlock_flash, unlock_flow
 #: daemon-wide row, the scoped id list), name, destination
 #: allowlist, the remaining lifetime, the created date, and the
 #: store's lock state (#515: ``locked`` when the daemon's cache
-#: holds no plaintext — the row an unlock is for). At 80 columns
-#: the frame's edges and the scrollbar leave 74 cells; the columns
-#: and their gaps together are exactly that wide.
+#: holds no plaintext — the row an unlock is for). The widths are
+#: the fixed minimums the 80-column frame budgets: at that width
+#: the frame's edges and the scrollbar leave 74 cells, and the
+#: columns and their gaps together are exactly that wide; a wider
+#: terminal widens the growing columns past them
+#: (:func:`msks.client.tui.rows.expanded_columns`).
 SECRET_COLUMNS = (
     ("COVERAGE", 13),
     ("NAME", 14),
@@ -83,15 +89,12 @@ SECRET_COLUMNS = (
     ("STATE", 6),
 )
 
-#: The secrets page's column widths, in row order.
-(
-    SECRET_COVERAGE_W,
-    SECRET_NAME_W,
-    SECRET_DESTS_W,
-    SECRET_EXPIRES_W,
-    SECRET_CREATED_W,
-    SECRET_STATE_W,
-) = (width for _label, width in SECRET_COLUMNS)
+#: The columns the secrets page's spare width flows into when the
+#: terminal runs wider than the fixed columns' span: coverage,
+#: name, and destinations — the columns whose content runs long
+#: (id lists, names, hostname allowlists) — while the countdown,
+#: created, and state columns hold their vocabulary-sized shape.
+SECRET_GROWING_LABELS = frozenset({"COVERAGE", "NAME", "DESTS"})
 
 #: The renew picker's TTL choices (#390): the duration picker over
 #: TTL-appropriate labels — the hours-to-a-month span a shared
@@ -133,27 +136,36 @@ def ttl_text(row: dict, now: datetime | None = None) -> str:
     return fmt_duration(remaining) if remaining > 0 else "expired"
 
 
+def dests_cell(row: dict) -> str:
+    """The DESTS cell (#390): the row's destinations joined with
+    commas — the honest absence for a row that holds none."""
+    return ", ".join(row.get("dests") or []) or "-"
+
+
 def secret_row_cells(
-    row: dict, now: datetime | None = None
+    row: dict, now: datetime | None = None, columns=SECRET_COLUMNS
 ) -> tuple[str, ...]:
-    """The placeholder row's column cells (#390), each clipped to
-    its column's width; the created cell reads the listing's own
-    relative label (#350)."""
+    """The placeholder row's column cells (#390) at the given
+    columns' widths, each clipped to its column's width; the
+    created cell reads the listing's own relative label (#350)."""
+    widths = [width for _label, width in columns]
     return (
-        clip_cell(coverage_text(row), SECRET_COVERAGE_W),
-        clip_cell(row.get("name") or "-", SECRET_NAME_W),
-        clip_cell(", ".join(row.get("dests") or []) or "-", SECRET_DESTS_W),
-        clip_cell(ttl_text(row, now), SECRET_EXPIRES_W),
-        clip_cell(created_label(row.get("created_at")), SECRET_CREATED_W),
-        clip_cell("locked" if row.get("locked") else "open", SECRET_STATE_W),
+        clip_cell(coverage_text(row), widths[0]),
+        clip_cell(row.get("name") or "-", widths[1]),
+        clip_cell(dests_cell(row), widths[2]),
+        clip_cell(ttl_text(row, now), widths[3]),
+        clip_cell(created_label(row.get("created_at")), widths[4]),
+        clip_cell("locked" if row.get("locked") else "open", widths[5]),
     )
 
 
-def secret_row_text(row: dict, now: datetime | None = None) -> str:
-    """One placeholder listing row's text (#390): the padded cells
-    — plain text, never markup, so a markup-carrying name cannot
-    shift the columns."""
-    return padded_cells(secret_row_cells(row, now), SECRET_COLUMNS).rstrip()
+def secret_row_text(
+    row: dict, now: datetime | None = None, columns=SECRET_COLUMNS
+) -> str:
+    """One placeholder listing row's text (#390) at the given
+    columns' widths: the padded cells — plain text, never markup,
+    so a markup-carrying name cannot shift the columns."""
+    return padded_cells(secret_row_cells(row, now, columns), columns).rstrip()
 
 
 def ttl_default(row: dict) -> str:
@@ -330,13 +342,19 @@ class SecretsScreen(Screen):
     def __init__(self) -> None:
         super().__init__()
         self.rows: list[dict] = []
+        # The page's columns at the terminal's width: the fixed
+        # minimums until the first resize event lands, then the
+        # widened shape (#347's rule) — the header and every row
+        # render through this one tuple, so their offsets stay
+        # shared.
+        self.columns = SECRET_COLUMNS
         self.flash_line = FlashLine()
         self.shown_once = False
 
     def compose(self) -> ComposeResult:
         yield Static(id="status")
         with Vertical(id="secrets-listing"):
-            yield Static(list_header(SECRET_COLUMNS), id="secret-columns")
+            yield Static(list_header(self.columns), id="secret-columns")
             yield Static(id="secret-empty")
         yield Footer()
 
@@ -354,6 +372,32 @@ class SecretsScreen(Screen):
         if self.shown_once:
             self.refresh_rows()
         self.shown_once = True
+
+    def on_resize(self, event: Resize) -> None:
+        """The terminal's width moved: the page's columns re-width
+        to the frame (#347's rule over #390's columns) — the
+        coverage, name, and destinations columns share the cells a
+        wider terminal brings, and the header and rows repaint
+        together so their offsets stay shared. A resize that
+        leaves the widths where they were (a height-only move, a
+        terminal under the fixed span) repaints nothing."""
+        columns = expanded_columns(
+            event.size.width - LIST_FRAME_CELLS,
+            base=SECRET_COLUMNS,
+            grow=SECRET_GROWING_LABELS,
+        )
+        if columns == self.columns:
+            return
+        self.columns = columns
+        try:
+            self.query_one("#secret-columns", Static).update(
+                list_header(columns)
+            )
+        except NoMatches:
+            # Compose has not built the page yet: the first rows
+            # build at these widths when they land.
+            return
+        self.sync_rows()
 
     def tick(self) -> None:
         """The per-second repaint: the TTL cells' live countdown and
@@ -397,8 +441,9 @@ class SecretsScreen(Screen):
         self.sync_status()
 
     def row_item(self, row: dict) -> ListItem:
-        """One placeholder row, tagged with the row's id."""
-        item = ListItem(Static(secret_row_text(row)))
+        """One placeholder row at the terminal's column widths,
+        tagged with the row's id."""
+        item = ListItem(Static(secret_row_text(row, columns=self.columns)))
         item.secret_id = row["id"]
         return item
 
@@ -419,7 +464,9 @@ class SecretsScreen(Screen):
         now = clock_now()
         for child, row in zip(rows.children, self.rows):
             try:
-                child.query_one(Static).update(secret_row_text(row, now))
+                child.query_one(Static).update(
+                    secret_row_text(row, now, columns=self.columns)
+                )
             except NoMatches:
                 pass  # teardown unmounted this row's Static
 

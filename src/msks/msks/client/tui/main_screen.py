@@ -14,6 +14,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.css.query import NoMatches
+from textual.events import Resize
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, Input, ListItem, ListView, Static
 
@@ -27,6 +28,9 @@ from .consent_ui import (
 from .forms import CreateScreen
 from .importer import ImageImportScreen
 from .rows import (
+    LIST_COLUMNS,
+    LIST_FRAME_CELLS,
+    expanded_columns,
     list_header,
     newest_first,
     row_content,
@@ -131,12 +135,17 @@ class MainScreen(Screen):
     def __init__(self) -> None:
         super().__init__()
         self.rows: list[dict] = []
+        # The listing's columns at the terminal's width: the fixed
+        # minimums until the first resize event lands, then the
+        # widened shape (#347) — the header and every row render
+        # through this one tuple, so their offsets stay shared.
+        self.columns = LIST_COLUMNS
         self.shown_once = False
 
     def compose(self) -> ComposeResult:
         yield Static(id="status")
         with Vertical(id="listing"):
-            yield Static(list_header(), id="columns")
+            yield Static(list_header(self.columns), id="columns")
             yield Static(id="empty")
         yield Footer()
 
@@ -160,6 +169,25 @@ class MainScreen(Screen):
         if self.shown_once:
             self.refresh_rows()
         self.shown_once = True
+
+    def on_resize(self, event: Resize) -> None:
+        """The terminal's width moved (#347): the listing's columns
+        re-width to the frame — the name and image columns share the
+        cells a wider terminal brings, and the header and rows
+        repaint together so their offsets stay shared. A resize
+        that leaves the widths where they were (a height-only move,
+        a terminal under the fixed span) repaints nothing."""
+        columns = expanded_columns(event.size.width - LIST_FRAME_CELLS)
+        if columns == self.columns:
+            return
+        self.columns = columns
+        try:
+            self.query_one("#columns", Static).update(list_header(columns))
+        except NoMatches:
+            # Compose has not built the listing yet: the first rows
+            # build at these widths when they land.
+            return
+        self.paint_rows()
 
     # -- the listing -------------------------------------------------------
 
@@ -205,9 +233,16 @@ class MainScreen(Screen):
         self.sync_status()
 
     def row_item(self, row: dict) -> ListItem:
-        """One listing row, tagged with the workspace's id and a
-        class from its status (#348)."""
-        item = ListItem(Static(row_content(row, self.app.theme_variables)))
+        """One listing row at the terminal's column widths, tagged
+        with the workspace's id and a class from its status
+        (#348)."""
+        item = ListItem(
+            Static(
+                row_content(
+                    row, self.app.theme_variables, columns=self.columns
+                )
+            )
+        )
         item.workspace_id = row["id"]
         item.row_key = ("workspace", row["id"])
         item.add_class(status_class(row["status"]))
@@ -237,6 +272,7 @@ class MainScreen(Screen):
                     row,
                     self.app.theme_variables,
                     focused=focused,
+                    columns=self.columns,
                 )
             )
         except NoMatches:
