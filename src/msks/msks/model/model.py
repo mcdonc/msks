@@ -974,6 +974,7 @@ def workspace_dict(row: Workspace) -> dict:
     the set the last start attached: True while the two disagree
     (an edit the next start takes, a mount never yet attached),
     False once they agree again."""
+    configured = parse_mounts(row.mounts)
     return {
         "id": row.id,
         "name": row.name,
@@ -994,8 +995,8 @@ def workspace_dict(row: Workspace) -> dict:
         "egress_allowlist": json.loads(row.egress_allowlist)
         if row.egress_allowlist
         else [],
-        "mounts": [mount.as_dict() for mount in parse_mounts(row.mounts)],
-        "mounts_pending": set(parse_mounts(row.mounts))
+        "mounts": [mount.as_dict() for mount in configured],
+        "mounts_pending": set(configured)
         != set(parse_mounts(row.attached_mounts)),
         "user_data": row.user_data,
         "ssh_pubkey": row.ssh_pubkey,

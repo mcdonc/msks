@@ -5544,18 +5544,34 @@ def test_cmd_umount_removes_the_mount(
 def test_cmd_mount_without_a_pending_change_drops_the_suffix(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """``msks mount`` (#756): a reply whose set agrees with what
-    the last start attached carries no pending flag, and the
+    """``msks mount`` (#756): the re-add story. The row walked in
+    with one mount pending (an earlier umount split it from the
+    attached pair); the re-add returns the list to the attached
+    shape, the daemon's reply carries no pending flag, and the
     outcome line names the set without the next-start suffix —
-    the re-add that returns the row to its attached shape
-    changes nothing a start must take."""
+    nothing changed that a start must take."""
 
     def handler(req: httpx.Request) -> httpx.Response:
         if req.method == "GET":
             return httpx.Response(200, json=mounted_row())
         return httpx.Response(
             200,
-            json={**mounted_row(), "mounts_pending": False},
+            json={
+                **mounted_row(),
+                "mounts": [
+                    {
+                        "host": "/srv/proj",
+                        "guest": "/mnt/proj",
+                        "mode": "rw",
+                    },
+                    {
+                        "host": "/srv/refs",
+                        "guest": "/srv/refs",
+                        "mode": "ro",
+                    },
+                ],
+                "mounts_pending": False,
+            },
         )
 
     client_env(monkeypatch)

@@ -151,8 +151,10 @@ curl -X POST "$MSKSC_URL/api/v1/workspaces/ws1/mounts" \
 The daemon validates the list against its #667 gates (a host
 path outside the allowed roots, and one that does not resolve
 under them, are named 400s) and answers with the refreshed row;
-every row the daemon serves carries `mounts` and the derived
-`mount_issues` — the skip state `msks ls` and the TUI render.
+every row the daemon serves carries `mounts`, the derived
+`mount_issues` (the skip state `msks ls` and the TUI render), and
+`mounts_pending` (whether the configured set differs from the
+set the last start attached — the next-start note's key).
 `msks mount`/`umount` and the TUI's editor ride this route.
 
 - `GET`/`PUT …/home` export and import the home volume as a

@@ -622,12 +622,16 @@ $ msks mount ws1 /srv/refs:/srv/refs:ro
 ws1 mounts /srv/projects:/mnt/projects:rw, /srv/refs:/srv/refs:ro (next start)
 ```
 
-The outcome line names the resulting set and the next-start
-note: setting mounts never touches a running VM, and the next
-`msks start` attaches exactly this set ([what a mount
-is](mounts.md#what-a-mount-is) states the lifecycle — the seed
-each boot carries bakes the current set, so a restart after a
-change lands it and prunes the dropped mounts). The daemon
+The outcome line names the resulting set, and the next-start
+note rides it while the change is pending: setting mounts never
+touches a running VM, and the next `msks start` attaches exactly
+this set. The row carries `mounts_pending` — the daemon compares
+the configured set with the set the last start attached — so the
+note rests once a start has taken the set (an edit that returns
+the list to its attached shape shows the set alone). ([what a
+mount is](mounts.md#what-a-mount-is) states the lifecycle — the
+seed each boot carries bakes the current set, so a restart after
+a change lands it and prunes the dropped mounts.) The daemon
 validates the whole list against its gates and the row rules (a
 host path appears once per workspace, guest paths are absolute
 and mutually disjoint); a refusal names itself on one line. A
@@ -643,11 +647,14 @@ the share occupies:
 
 ```text
 $ msks umount ws1 /srv/refs
-ws1 mounts /srv/projects:/mnt/projects:rw (next start)
+ws1 mounts /srv/projects:/mnt/projects:rw
 ```
 
-A host path the workspace does not mount is one local line. The next
-start attaches the remainder, and a workspace whose last mount
+A host path the workspace does not mount is one local line. The
+example returns the list to the shape the last start attached, so
+the outcome rests the next-start note; a removal that leaves the
+set apart from the attached shape keeps it. The next start
+attaches the remainder, and a workspace whose last mount
 leaves this way mounts nothing at its next boot. The [mounts
 chapter](mounts.md#what-a-mount-is) states the lifecycle.
 

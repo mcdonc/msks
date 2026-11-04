@@ -102,10 +102,9 @@ When the workspace mounts host shares, a mounts line follows the
 same shape: one entry per mount (`projects:/mnt/projects:rw`), a
 skipped mount's kind beside its spec (`refs:/srv/refs:ro ·
 skipped`), and an `applies at next start` note while a change is
-pending. The note stands until a start takes the configured set:
-the daemon compares the configured mounts with the set the last
-start attached, and the two agree again after the next start (or
-after an edit that returns the list to the attached shape). The
+pending. The daemon compares the configured mounts with the set
+the last start attached, and the note rests while the two agree.
+The next start takes a changed set and clears the note. The
 line repaints with the page's per-second read, so a change made
 anywhere reaches the page.
 
