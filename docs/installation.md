@@ -1,10 +1,14 @@
 # Installation
 
-msks ships as one Python wheel with everything inside: the client (`msks`), the
-daemon (`msksd`), the consent-decider terminal (`msks-term-popup`), and the
-Debian host setup this chapter describes (`msks-setup-debian-host`).
+msks ships as a Python distribution with everything inside: the client
+(`msks`), the daemon (`msksd`), the consent-decider terminal
+(`msks-term-popup`), and host setup scripts this chapter describes
+(`msks-setup-debian-host`, `msks-setup-fedora-host`, and
+`msks-setup-macos-host`).
 
-The wheel needs Python 3.14 or newer.
+_msks_ needs Python 3.14 or newer.
+
+Install the Python distribution using `uv`:
 
 ```bash
    curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -12,88 +16,16 @@ The wheel needs Python 3.14 or newer.
    uv tool install --python 3.14 msks
 ```
 
-There is an automated setup for the remainder on Debian-derived hosts — Debian
-itself, Ubuntu 24.04 or newer, and Linux Mint 22 or newer (the platform gate
-accepts the `debian`, `ubuntu`, and `linuxmint` os-release IDs with those
-release floors: older Ubuntu and Mint archives lack `virtiofsd`, which the
-setup installs). One version caveat: host mounts need virtiofsd 1.13.0 or
-newer, and Linux Mint 22's archive ships 1.10.0 — `msksd doctor` names the
-gap, and the workaround is a self-built virtiofsd pointed at with
-`MSKSD_VIRTIOFSD` (see [mounts](mounts.md)). It's
-currently bridge-out for any other type of Linux host, save for NixOS, which
-remains undocumented now, apologies.
-
-_msks_ also runs on macOS hosts on Mac M3+ machines using a Lima virtual
-machine to run the daemon and macOS to run the client.
-
-## Setup using `msks-setup-debian-host` console script
-
-The msks daemon runs the workspaces directly on the host using
-[cloud-hypervisor](https://github.com/cloud-hypervisor/cloud-hypervisor) and
-various networking and kernel-y bits need to be satisfied for it to work
-properly.
-
-The host therefore needs pieces the wheel cannot carry. These are software
-dependency packages, kernel modules, a routing sysctl, two capabilities for the
-daemon's user, and a service that keeps `msksd` running.
-
-On a Debian deployment host, use `msks-setup-debian-host` console script
-(installed by the wheel) to do those things:
-
-```console
-sudo "$(command -v msks-setup-debian-host)"
-```
-
-The quoted form matters: the console script lands in `~/.local/bin`, which
-sudo's path does not carry — the bare name would answer "command not
-found".
-
-Run it as the user the daemon will serve under `sudo`, the `SUDO_USER` account
-is the executing user, and the service the tool registers will belong to your
-normal user account.
-
-![A successful run of msks-setup-debian-host](screens/msks-setup-debian-host.png)
-
-The run is idempotent: re-run any time, and re-run after a util-linux upgrade
-(the wrapper keeps a copy of `setpriv`; see below).
-
-## Taking the setup back off
-
-`msks-setup-debian-host --uninstall` reverses the run: it stops and
-disables the `msksd` user service and removes its unit file and its
-enablement symlink (the stop lets the daemon finish its shutdown
-cycle, workspaces included), turns linger off, removes the two `/etc`
-files the run landed, removes the capability wrapper, takes the
-executing user out of the `kvm` group (the tool keeps no record of
-which run added a membership, so any member leaves — the summary
-names the `adduser` line that restores it), strips the PATH block
-from `~/.profile`, and removes the cloud-hypervisor binary. Kernel
-modules already loaded stay loaded until the next reboot.
-
-After the sysctl file leaves, `sysctl --system` re-applies every remaining
-sysctl.d file — the same set a boot applies. A second owner that wrote its
-own forwarding file keeps its setting; a live-only forwarder the tool never
-saw keeps its value too. On a host where no remaining file names
-`net.ipv4.ip_forward`, the live value the setup run set stays on until the
-next reboot — the summary names `sysctl -w net.ipv4.ip_forward=0` for
-the operator who wants it off immediately.
-
-The apt packages the run installed stay installed — they are shared
-Debian packages, and other software on the host may use them. The
-uninstall summary prints the ones whose probes answer present, with a
-copy-paste `apt-get remove --purge ...` line, so you can remove the ones
-nothing else needs yourself.
-
-The uninstall run is idempotent the same way: a piece already gone is a
-line in the summary, not an error, and the first real refusal stops the
-run — the setup run's rule. `--no-service` holds its meaning — the
-service is left alone, every other piece still leaves.
+There is an automated setup script for the remainder on Debian-derived,
+Fedora-derived hosts, and macOS hosts, each described below.
 
 ## What the setup lands
 
 Each phase runs in order, and the first refusal stops the run with an error.
+On Apple Silicon, everything except the msks client is installed into a Lima
+virtual machine.
 
-**Apt packages**. The apt packages required by the server and the
+**Packages**. The packages required by the server and the
 client.
 
 **The capability wrapper.** `/usr/local/bin/msks-caps` — a
@@ -138,22 +70,16 @@ manager's default carries them); a daemon started by hand
 (`msks-dev`, a bare `msksd`) inherits the session's PATH, so
 the same login carries the fix to both shapes.
 
-**The systemd user service.** On a host systemd manages, the
-setup writes `~/.config/systemd/user/msksd.service` for the
-executing user and enables it. The unit execs `msksd` through
-the wrapper, so the file capabilities grant it the same
-posture a root unit would have. It runs with
-`MSKSD_EGRESS_ENABLED=true` and the uplink interface the setup
-detected, and it creates the unix listener's runtime directory
-under the user's own `$XDG_RUNTIME_DIR` (`RuntimeDirectory=msks`,
-the client's default socket candidate). It restarts the daemon
-on failure. Finally, `loginctl enable-linger` keeps the user
-manager, and the daemon, running across logouts and boots. A user
-manager that was already running may have forked before the kvm
-group write reached it; the daemon then holds the old groups
-until that manager restarts, and the run's summary says so. A re-run
-rewrites the unit and restarts a running daemon onto it when
-the unit changed.
+**The systemd user service.** On a host systemd manages, the setup writes
+`~/.config/systemd/user/msksd.service` for the executing user and enables
+it. The unit execs `msksd` through the wrapper, so the file capabilities grant
+it the same posture a root unit would have so it can spawn VMs. It runs with
+`MSKSD_EGRESS_ENABLED=true` and the uplink interface the setup detected, and it
+creates the unix listener's runtime directory under the user's own
+`$XDG_RUNTIME_DIR` (`RuntimeDirectory=msks`, the client's default socket
+candidate). It restarts the daemon on failure. Finally, `loginctl
+enable-linger` keeps the user manager, and the daemon, running across logouts
+and boots.
 
 **Cloud Hypervisor's static release binary**. So guest VMs can be started.
 
@@ -179,14 +105,56 @@ consent verdict, the detected uplink, and the service line.
 You will need to log out and back in for `msksd doctor` to return clean after
 using the host installer.
 
+## Setup on a Debian host
+
+You can use the `msks-setup-debian-host` script to set up `msks` on Debian
+13, Ubuntu 24.04 or newer, and Linux Mint 22 or newer.
+
+_The platform gate accepts the `debian`, `ubuntu`, and `linuxmint` os-release
+IDs with those release floors: older Ubuntu and Mint archives lack `virtiofsd`,
+which the setup requires_. _One version caveat: host mounts need virtiofsd
+1.13.0 or newer, and Linux Mint 22's archive ships 1.10.0 — `msksd doctor`
+names the gap, and the workaround is a self-built virtiofsd pointed at with
+`MSKSD_VIRTIOFSD` (see [mounts](mounts.md))_.
+
+The msks daemon runs the workspaces directly on the host using
+[cloud-hypervisor](https://github.com/cloud-hypervisor/cloud-hypervisor) and
+various networking and kernel-y bits need to be satisfied for it to work
+properly.
+
+The host therefore needs pieces the wheel cannot carry. These are software
+dependency packages, kernel modules, a routing sysctl, two capabilities for the
+daemon's user, and a service that keeps `msksd` running.
+
+On a Debian deployment host, use `msks-setup-debian-host` console script
+(installed by the wheel) to do those things.
+
+You can run it like this after installing the msks Python distribution:
+
+```console
+sudo "$(command -v msks-setup-debian-host)"
+```
+
+The quoted form matters: the console script lands in `~/.local/bin`, which
+sudo's path does not carry — the bare name would answer "command not
+found".
+
+Run it as the user the daemon will serve under `sudo`, the `SUDO_USER` account
+is the executing user, and the service the tool registers will belong to your
+normal user account.
+
+![A successful run of msks-setup-debian-host](screens/msks-setup-debian-host.png)
+
+The run is idempotent: re-run any time, and re-run after a util-linux upgrade
+(the wrapper keeps a copy of `setpriv`; see below).
+
 ## Setup on a Fedora host
 
-`msks-setup-fedora-host` is the same setup's Fedora entry: one
-`HostProfile` — the package map, the probe names, the dnf
-verbs, the `usermod`/`gpasswd` group commands — over the same
-phases the Debian tool runs (the wrapper, the routing kernel
-settings, the packages, the kvm grant, the systemd user
-service, the `--uninstall` mirror, the VMM download).
+`msks-setup-fedora-host` is the way to install msksd on Fedora: it contains a
+`HostProfile` — the package map, the probe names, the dnf verbs, the
+`usermod`/`gpasswd` group commands — over the same phases the Debian tool runs
+(the wrapper, the routing kernel settings, the packages, the kvm grant, the
+systemd user service, the `--uninstall` mirror, the VMM download).
 
 ```console
 sudo "$(command -v msks-setup-fedora-host)"
@@ -204,10 +172,7 @@ moves on. The CA probe names Fedora's own command,
 Debian map probes `update-ca-certificates`.
 
 The kvm membership runs through `usermod -aG kvm`, and the
-uninstall summary's removal line is dnf's. A module the
-running kernel's tree lacks names the stock kernel package —
-`kernel`, or `kernel-16k` on the Asahi host class (a release
-string carrying `asahi`).
+uninstall summary's removal line is dnf's.
 
 The same pieces land at the same paths for the same reasons
 the Debian section above documents: the wrapper at
@@ -217,15 +182,15 @@ sysctl and modules files under `/etc`, the user unit under
 release for the host's architecture. `--uninstall` reverses
 the run the same way.
 
-## The same host by hand (if you'd rather not trust `msks-setup-debian-host`)
+## The same host by hand (if you'd rather not trust `msks-setup-{debian,fedora}-host`)
 
-`msks-setup-debian-host` is a program the wheel ships, and
+`msks-setup-{debian,fedora}-host` is a program the wheel ships, and
 running it means running shipped code as root. An operator who
 prefers to read every step first can land the same host in an
 interactive root shell.
 
 To do so, install the package set — the same set
-`msks-setup-debian-host` lands, so a host finished by hand
+`msks-setup-{debian,fedora}-host` lands, so a host finished by hand
 comes up clean under the doctor too:
 
 ```console
@@ -352,12 +317,7 @@ sudo install -m755 cloud-hypervisor-static /usr/local/bin/cloud-hypervisor
 sudo install -m755 ch-remote-static /usr/local/bin/ch-remote-static
 ```
 
-## The host doctor
-
-The [The host doctor](doctor.md) chapter documents the `msksd doctor` command
-that can diagnose installation issues.
-
-## Apple Silicon hosts
+## macOS on Apple Silicon hosts
 
 Running `msks-setup-macos-host` runs the macOS installer, which is expected to
 work on M3+ Macs. It installs the Lima virtual machine system (via Brew), and
@@ -370,7 +330,7 @@ prefix and forwards each attached share to the workspace that
 asked for it — see the [mounts chapter's macOS
 section](mounts.md#shares-on-a-macos-host).
 
-### Sizing the msksd VM
+### Sizing the msksd Lima VM
 
 The VM starts at the template's sizing — 4 CPUs, 8 GiB of memory, a
 60 GiB disk — and the sizing flags change it at creation and on every
@@ -392,10 +352,48 @@ and a workspace.
 When the VM's disk runs low, the daemon's storage warning and the 507
 refusal name the same grow command, so the fix is one re-run away.
 
+## Linux on Mac Hardware
+
 It doesn't work on Asahi. An Apple Silicon host whose kernel runs KVM in NV
 mode does not yet deliver guest interrupts
 ([#649](https://github.com/mcdonc/msks/issues/649)): a workspace starts and its
 kernel boots deep into first boot, then stalls before ssh answers.
+
+## Uninstalling msks
+
+`msks-setup-{debian,fedora,macos}-host --uninstall` reverses the run: it stops
+and disables the `msksd` user service and removes its unit file and its
+enablement symlink (the stop lets the daemon finish its shutdown cycle,
+workspaces included), turns linger off, removes the two `/etc` files the run
+landed, removes the capability wrapper, takes the executing user out of the
+`kvm` group (the tool keeps no record of which run added a membership, so any
+member leaves — the summary names the `adduser` line that restores it), strips
+the PATH block from `~/.profile`, and removes the cloud-hypervisor
+binary. Kernel modules already loaded stay loaded until the next reboot.
+
+After the sysctl file leaves, `sysctl --system` re-applies every remaining
+sysctl.d file — the same set a boot applies. A second owner that wrote its
+own forwarding file keeps its setting; a live-only forwarder the tool never
+saw keeps its value too. On a host where no remaining file names
+`net.ipv4.ip_forward`, the live value the setup run set stays on until the
+next reboot — the summary names `sysctl -w net.ipv4.ip_forward=0` for
+the operator who wants it off immediately.
+
+The packages the run installed stay installed — they are shared
+packages, and other software on the host may use them. The
+uninstall summary prints the ones whose probes answer present, with a
+copy-paste `apt-get remove --purge ...` line, so you can remove the ones
+nothing else needs yourself.
+
+The uninstall run is idempotent the same way: a piece already gone is a
+line in the summary, not an error, and the first real refusal stops the
+run — the setup run's rule. `--no-service` holds its meaning — the
+service is left alone, every other piece still leaves.
+
+## The host doctor
+
+The [The host doctor](doctor.md) chapter documents the `msksd doctor` command
+that can diagnose installation issues.
 
 ## The alternative paths
 
