@@ -1911,7 +1911,7 @@ def parse_args(
         "--uninstall",
         action="store_true",
         help="undo the setup (#604): stop and remove the msksd "
-        "service, remove the wrapper, the client link, the routing "
+        "service, remove the wrapper, the client links, the routing "
         "kernel files, "
         "the cloud-hypervisor binary, the kvm membership, and the "
         "profile block — the apt packages stay, and the summary "

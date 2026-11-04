@@ -73,6 +73,25 @@ def fedora_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(
         hostsetup, "CLOUD_HYPERVISOR_BIN", str(tmp_path / "cloud-hypervisor")
     )
+    # The client links' paths (#719, #755): under tmp_path, as
+    # the Debian rig patches them — this fixture's bin dir ships
+    # no client sibling, but a future fixture that adds one must
+    # never write the host's real /usr/local/bin.
+    monkeypatch.setattr(
+        hostsetup, "CLIENT_LINK", str(tmp_path / "client" / "msks")
+    )
+    monkeypatch.setattr(
+        hostsetup, "POPUP_LINK", str(tmp_path / "client" / "msks-term-popup")
+    )
+    monkeypatch.setattr(
+        hostsetup,
+        "CLIENT_LINKS",
+        (
+            ("msks", hostsetup.CLIENT_LINK),
+            ("msks-term-popup", hostsetup.POPUP_LINK),
+        ),
+    )
+    (tmp_path / "client").mkdir()
     monkeypatch.setattr(hostsetup, "OS_RELEASE", str(release))
     monkeypatch.setattr(hostsetup.os, "geteuid", lambda: 0)
     monkeypatch.setattr(hostsetup, "which", lambda tool: f"/usr/bin/{tool}")

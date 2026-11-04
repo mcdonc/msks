@@ -2366,6 +2366,33 @@ def test_no_client_sibling_stands_the_phase_down(
     assert "no msks-term-popup beside the tool" in out
 
 
+def test_a_missing_popup_sibling_skips_alone(
+    monkeypatch: pytest.MonkeyPatch,
+    debian_host: Host,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """#755: the two commands claim independently — a venv that
+    ships ``msks`` without ``msks-term-popup`` (a deleted
+    sibling) lands the one link and stands the other down with
+    its note, and the re-run keeps the same state."""
+    real = hostsetup.bin_sibling
+
+    def only_msks(name: str):
+        return real(name) if name == "msks" else None
+
+    monkeypatch.setattr(hostsetup, "bin_sibling", only_msks)
+    assert main() == 0
+    assert Path(hostsetup.CLIENT_LINK).is_symlink()
+    assert not Path(hostsetup.POPUP_LINK).exists()
+    out = capsys.readouterr().out
+    assert "-> " in out  # the one claim
+    assert "no msks-term-popup beside the tool" in out
+    assert main() == 0
+    assert (
+        capsys.readouterr().out.count("already linked") == 1
+    )  # the re-run keeps the landed link
+
+
 def test_an_unstatable_link_reads_live(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
