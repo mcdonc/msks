@@ -28,12 +28,6 @@ The list re-reads the daemon every five seconds. A workspace changed
 from another surface (the CLI, another operator) appears without a
 keypress.
 
-A workspace with unresolved mounts shows a marker in the status column:
-`✗1 stopped` is how many of the workspace's mounts are unresolved. The
-marker clears when the config and the workspace agree again. The [mounts
-chapter](mounts.md#the-skip-behavior) lists every kind of skip and its
-reason. The workspace's page shows each unresolved mount and its kind.
-
 When you create a workspace, it looks like this:
 
 ![The create form over the list](screens/create-form.svg)
@@ -88,9 +82,7 @@ workspaces, for navigation.
 The **workspace page** operates on an already-created workspace. Its
 two-line header: the workspace's name on the first line with its status
 beside it, in the state's color, then the id, image, host, and
-created date on the second. At an 80-column terminal the meta line
-clips each field to a fixed budget; a wider terminal shows every
-field whole.
+created date on the second.
 
 Below the header, two status lines share one shape: a muted label,
 then the value. The consent line shows the mode and one granted
