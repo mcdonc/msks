@@ -1435,6 +1435,14 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>The Linux host setups link <code>msks-term-popup</code> beside <code>msks</code>
+  (#755).</strong> <code>msks-setup-debian-host</code> and <code>msks-setup-fedora-host</code>
+  now land a <code>/usr/local/bin/msks-term-popup</code> symlink beside the
+  <code>msks</code> link, so a <code>terminal_open_cmd</code> window resolves the
+  consent-terminal launcher on its own PATH; <code>--uninstall</code>
+  removes both links.</p>
+</li>
+<li>
 <p><strong>The listings' columns widen with the terminal (#749).</strong> The
   workspaces list and the secrets page now grow their columns when the
   terminal runs wider than 80 columns: the name and image columns (the

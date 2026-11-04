@@ -1189,7 +1189,10 @@ terminal and its command flag in <code>terminal_open_cmd</code>, and
 <p>The macOS form needs the brew-prefix links. An <code>open</code>-opened
 window resolves commands on a fresh login PATH, and
 <code>msks-setup-macos-host</code> links both client commands there
-(#734). tmux comes from that PATH the same way.</p>
+(#734). tmux comes from that PATH the same way. The Linux forms
+need the same: the window resolves <code>msks-term-popup</code> on its own
+PATH, and <code>msks-setup-debian-host</code> and <code>msks-setup-fedora-host</code>
+link it beside <code>msks</code> at <code>/usr/local/bin</code> (#755).</p>
 <p>The popup viewer keeps its own attach to the hidden session, so a hold
 that arrives while it is open is already in the list. Verdicts posted
 from it go through the same REST contract as the consent page. A post
