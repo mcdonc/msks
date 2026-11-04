@@ -469,10 +469,10 @@ def meta_budgets(row: dict, available: int | None) -> tuple[int, int, int]:
     minimums = (META_ID_W, META_IMAGE_W, META_HOST_W)
     if available is None or available <= META_FRAME_W:
         return minimums
-    fixed = [clip(raw, width) for raw, width in zip(meta_raw(row), minimums)]
-    frame = cell_len(meta_text((*fixed, meta_created(row))))
-    spare = max(0, available - max(META_FRAME_W, frame))
-    return widen_budgets(meta_raw(row), minimums, spare)
+    # Past the frame the whole budget is spare: the fixed span
+    # rides the frame's own 78 cells, whatever the row's fields
+    # clip to.
+    return widen_budgets(meta_raw(row), minimums, available - META_FRAME_W)
 
 
 def meta_fields(

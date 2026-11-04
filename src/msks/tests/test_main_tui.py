@@ -1529,6 +1529,28 @@ async def test_a_hold_arriving_pushes_nothing(monkeypatch) -> None:
         assert page.pending_count() == 1
 
 
+async def test_the_consent_pages_header_widens_with_the_terminal(
+    monkeypatch,
+) -> None:
+    """#752: the consent page paints the same two-line header, and
+    its meta line follows the terminal's width like the page
+    beneath it — the whole id on a wider frame, the fixed clip
+    back at 80 columns."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([{**row(), "id": "a1b2c3d4e5f6g7h8"}])
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        await press_until(pilot, "e", lambda: on_consent(app))
+        meta = app.screen.query_one("#header-meta", Static)
+        assert "…" in str(meta.content)
+        await pilot.resize_terminal(120, 24)
+        await wait_for(lambda: "a1b2c3d4e5f6g7h8" in str(meta.content))
+        await pilot.resize_terminal(80, 24)
+        await wait_for(lambda: "…" in str(meta.content))
+
+
 async def test_the_consent_action_opens_the_page_by_hand(
     monkeypatch,
 ) -> None:
