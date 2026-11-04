@@ -800,7 +800,7 @@ you to proxy LLM requests without keeping your API keys on the agent host.</p>
 <p><em>msks</em> runs on:</p>
 <ul>
 <li>
-<p>Linux on Intel and ARM systems</p>
+<p>Linux on Intel and ARM systems (Debian/Fedora)</p>
 </li>
 <li>
 <p>macOS on M3+ systems</p>
@@ -811,6 +811,12 @@ you to proxy LLM requests without keeping your API keys on the agent host.</p>
 <li><a href="installation/"><strong>Installation</strong></a>: install the Python wheel, and the one
    command that prepares a host: the capability wrapper, the routing
    kernel, <code>/dev/kvm</code>, and the lingered service that keeps the daemon running.</li>
+<li><a href="doctor/"><strong>The host doctor</strong></a>: the one command that
+   checks the host for every tool the daemon and client exec,
+   and names the fix for each miss.</li>
+<li><a href="first-run/"><strong>First run</strong></a>: what the daemon lands on its
+   first serve — the CA, the config template, the socket — and
+   the first workspace.</li>
 <li><a href="tui/"><strong>The TUI</strong></a>: the full-screen workspace tree: the
    workspace, secrets, and image pages, the failure panels, the
    consent decider, and the terminal windows the shell action
@@ -818,42 +824,36 @@ you to proxy LLM requests without keeping your API keys on the agent host.</p>
 <li><a href="cli/"><strong>The CLI client</strong></a>: every command and the
    client's settings: <code>msks</code> against the daemon's HTTP API, ssh
    and rsync over the forward.</li>
-<li><a href="config/"><strong>Configuration</strong></a>: the daemon's settings: every
-   key, its environment variable, and its default, from the
-   listener's socket to the egress stack's ceilings.</li>
-<li><a href="doctor/"><strong>The host doctor</strong></a>: the one command that
-   checks the host for every tool the daemon and client exec,
-   and names the fix for each miss.</li>
-<li><a href="first-run/"><strong>First run</strong></a>: what the daemon lands on its
-   first serve — the CA, the config template, the socket — and
-   the first workspace.</li>
-<li><a href="images/"><strong>Workspace images</strong></a>: the image contract, the
-   shipped builder, and the published channel: import from a
-   manifest URL, the descriptions the builds bake, the hash-keyed
-   releases.</li>
+<li><a href="mounts/"><strong>Host share mounts</strong></a>: the host trees a
+   workspace mounts into its guest — the two gates that govern
+   them, the coherence contract between guests, and the macOS
+   share stack with its polling, naming, single-writer, and
+   eject contracts.</li>
 <li><a href="networking/"><strong>Guest networking</strong></a>: the per-VM tap, the
    DHCP and DNS the guest sees, the NAT path out, and the
    forward that carries ssh and rsync.</li>
 <li><a href="egress-consent/"><strong>Egress consent</strong></a>: the consent
    postures, verdicts and durations, switching modes live, and
    the probe endpoint that proves the chain end to end.</li>
-<li><a href="storage/"><strong>Storage</strong></a>: the state disk, the per-workspace
-    volumes, and the capacity report that prices them.</li>
-<li><a href="mounts/"><strong>Host share mounts</strong></a>: the host trees a
-    workspace mounts into its guest — the two gates that govern
-    them, the coherence contract between guests, and the macOS
-    share stack with its polling, naming, single-writer, and
-    eject contracts.</li>
 <li><a href="llm/"><strong>LLM Proxy</strong></a>: how to make use of msksd's built-in
-    LLM proxy.</li>
+   LLM proxy.</li>
 <li><a href="secrets/"><strong>Secrets</strong></a>: placeholders, the swap on the
     wire, and the sentinel discipline.</li>
-<li><a href="development/"><strong>Development environment</strong></a>: the devenv
-    side of a checkout — the dev daemon, the shell's client
-    presets, the worktree identity.</li>
+<li><a href="config/"><strong>Configuration</strong></a>: the daemon's settings: every
+    key, its environment variable, and its default, from the
+    listener's socket to the egress stack's ceilings.</li>
+<li><a href="images/"><strong>Workspace images</strong></a>: the image contract, the
+    shipped builder, and the published channel: import from a
+    manifest URL, the descriptions the builds bake, the hash-keyed
+    releases.</li>
+<li><a href="storage/"><strong>Storage</strong></a>: the state disk, the per-workspace
+    volumes, and the capacity report that prices them.</li>
 <li><a href="api/"><strong>The HTTP API</strong></a>: the <code>/api/v1</code> surface itself —
     the endpoints the commands wrap, the authentication model,
     and the TCP listener a remote client reaches.</li>
+<li><a href="development/"><strong>Development environment</strong></a>: the devenv
+    side of a checkout — the dev daemon, the shell's client
+    presets, the worktree identity.</li>
 <li><a href="changes/"><strong>Changelog</strong></a>: what changed, release by
     release.</li>
 </ol>
