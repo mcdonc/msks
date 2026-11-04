@@ -87,7 +87,7 @@ identity](#the-dev-identity)).
 ### The product Lima host, from a build in hand
 
 `msks-setup-macos-host` (the [installation chapter's Apple Silicon
-section](installation.md#apple-silicon-hosts)) runs msksd inside
+section](installation.md#macos-on-apple-silicon-hosts)) runs msksd inside
 its own Lima VM on the Mac and writes the client config: an
 end-to-end daemon with no separate Linux host. The tool installs
 the PyPI release matching its own version; `--wheel` installs a
@@ -157,7 +157,7 @@ environment preset lands only when you gave nothing). Pointing the
 dev identity at your own key (a symlink over the minted file)
 works, with the identity chapter's rules: the passphrase prompt
 appears when the daemon's rows are locked under it and no agent
-holds it. See [The identity file](first-run.md#the-identity-file).
+holds it. See [The key files](first-run.md#the-key-files).
 
 ## Doctor on the dev host
 
