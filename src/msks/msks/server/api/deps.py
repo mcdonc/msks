@@ -21,7 +21,7 @@ async def local_peer_ok(scope: dict, app) -> bool:
     listener's policy accepts (#555). The policy's group walk
     runs in a worker thread: it is a libc NSS call, and a
     directory backend that stalls (sssd down, resolver timeout)
-    would otherwise hold both listeners' event loop with it."""
+    would otherwise stall both listeners' event loop with it."""
     uid = localsocket.is_unix_scope(scope)
     if uid is None:
         return False

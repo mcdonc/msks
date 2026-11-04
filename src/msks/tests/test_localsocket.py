@@ -196,8 +196,10 @@ def test_policy_reads_the_socket_group_membership(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The membership gate reads the group walk login performs
-    (``os.getgrouplist``), not the flat ``gr_mem`` list: nested
-    and NSS-supplementary membership passes (#743)."""
+    (``os.getgrouplist``), not the flat ``gr_mem`` list: a peer
+    whose account database holds a supplementary group for them
+    — one a directory backend expanded into the walk's answer —
+    passes (#743)."""
     monkeypatch.setattr(
         localsocket.pwd,
         "getpwuid",

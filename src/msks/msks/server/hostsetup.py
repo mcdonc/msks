@@ -999,9 +999,9 @@ def in_group(user: str, name: str) -> bool:
     try:
         entry = grp.getgrnam(name)
         account = pwd_getpwnam(user)
+        return entry.gr_gid in os.getgrouplist(user, account.pw_gid)
     except KeyError, OSError:
         return False
-    return entry.gr_gid in os.getgrouplist(user, account.pw_gid)
 
 
 def ensure_kvm_membership(

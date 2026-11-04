@@ -1256,6 +1256,19 @@ def test_in_group_reads_membership_and_primary_group(
     )
     assert hostsetup.in_group("chrism", "kvm") is False
 
+    # The primary-group pass rides the base gid getgrouplist
+    # always includes — the arm that replaced the old explicit
+    # pw_gid == gr_gid check.
+    monkeypatch.setattr(
+        hostsetup,
+        "pwd_getpwnam",
+        lambda name: FakeEntry("chrism", 1000, "/home/chrism", gid=104),
+    )
+    monkeypatch.setattr(
+        hostsetup.os, "getgrouplist", lambda user, base: [base]
+    )
+    assert hostsetup.in_group("chrism", "kvm") is True
+
     class MissingGrp:
         def getgrnam(self, name):
             raise KeyError(name)
