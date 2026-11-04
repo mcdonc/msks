@@ -4627,10 +4627,11 @@ def test_the_flash_note_leads_with_the_console_suggestion(
     def refused_forward(workspace_id):
         raise SystemExit(long_line)
 
+    def never(workspace_id, passthrough, transport=None):
+        raise AssertionError("ssh must not run past the probe")
+
     monkeypatch.setattr(follow_mod, "ensure_forward", refused_forward)
-    monkeypatch.setattr(
-        follow_mod, "run_workspace_ssh", lambda wid, p, transport=None: 0
-    )
+    monkeypatch.setattr(follow_mod, "run_workspace_ssh", never)
     monkeypatch.setattr(follow_mod, "run_workspace_shell", list.append)
     with caplog.at_level("WARNING", logger="msks.client.tui.follow"):
         note = follow_mod.run_ssh_flow("w1")
