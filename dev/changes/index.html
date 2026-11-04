@@ -1320,6 +1320,19 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>The local socket's liveness probe reads a busy listener as
+  live (#742).</strong> A second daemon starting beside a live one no
+  longer unlinks the live daemon's socket file when a burst of
+  local clients fills the listener's accept backlog: the probe
+  now unlinks only a socket the kernel refuses outright
+  (<code>ECONNREFUSED</code>), treats a backlog-full hold (<code>EAGAIN</code>, a
+  timed-out connect) as "someone may be listening", and raises a
+  named error when it cannot tell. The socket file is also
+  created directly with its final <code>0660</code> mode, closing the brief
+  window in which a permissive umask left it connectible before
+  the mode change landed.</p>
+</li>
+<li>
 <p><strong><code>msks-setup-macos-host --check</code> refuses an empty CA fetch
   (#738).</strong> The check pass now refuses with the re-run remedy
   when the daemon's CA has not come back from the VM. The
