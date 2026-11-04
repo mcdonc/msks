@@ -22,7 +22,7 @@ the cloud-hypervisor VMM, and a few configuration settings.
 
 Tool names resolve on the daemon's search path, not the
 caller's. The session's own PATH answers first. Then come
-Debian's admin directories (`/usr/local/sbin`, `/usr/sbin`,
+admin directories (`/usr/local/sbin`, `/usr/sbin`,
 `/sbin`), because the systemd user manager's default PATH
 carries them. A session whose PATH lacks these directories
 still gets the daemon's truth.
