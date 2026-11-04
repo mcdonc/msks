@@ -5454,11 +5454,13 @@ def test_ls_marker_names_multiple_kinds() -> None:
 
 def mounted_row() -> dict:
     """The row the mount exchange reads and the daemon's refreshed
-    reply."""
+    reply — pending, the set differing from what the last start
+    attached."""
     return {
         "id": "1a2b3c4d",
         "name": "alpha",
         "mounts": [{"host": "/srv/proj", "guest": "/mnt/proj", "mode": "rw"}],
+        "mounts_pending": True,
         "mount_issues": [],
     }
 
@@ -5537,6 +5539,49 @@ def test_cmd_umount_removes_the_mount(
                 lambda req: httpx.Response(200, json=mounted_row())
             ),
         )
+
+
+def test_cmd_mount_without_a_pending_change_drops_the_suffix(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``msks mount`` (#756): the re-add story. The row walked in
+    with one mount pending (an earlier umount split it from the
+    attached pair); the re-add returns the list to the attached
+    shape, the daemon's reply carries no pending flag, and the
+    outcome line names the set without the next-start suffix —
+    nothing changed that a start must take."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.method == "GET":
+            return httpx.Response(200, json=mounted_row())
+        return httpx.Response(
+            200,
+            json={
+                **mounted_row(),
+                "mounts": [
+                    {
+                        "host": "/srv/proj",
+                        "guest": "/mnt/proj",
+                        "mode": "rw",
+                    },
+                    {
+                        "host": "/srv/refs",
+                        "guest": "/srv/refs",
+                        "mode": "ro",
+                    },
+                ],
+                "mounts_pending": False,
+            },
+        )
+
+    client_env(monkeypatch)
+    rc = cli.cmd_mount(
+        "alpha", "/srv/refs:/srv/refs:ro", transport=mock(handler)
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "alpha mounts /srv/proj:/mnt/proj:rw, /srv/refs:/srv/refs:ro" in out
+    assert "(next start)" not in out
 
 
 def test_the_mount_line_names_derived_skips() -> None:

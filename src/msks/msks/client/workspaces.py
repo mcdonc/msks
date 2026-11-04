@@ -614,15 +614,19 @@ def mount_row_label(row: dict) -> str:
 
 def mounts_line(row: dict) -> str:
     """The mount/umount outcome line: the workspace, its mounts,
-    and any skips the daemon derived — the next start attaches
-    exactly this set, skips named."""
+    and any skips the daemon derived. The next-start suffix rides
+    the daemon's ``mounts_pending`` flag (#756): it stands while
+    the configured set differs from the set the last start
+    attached, and drops once the two agree (an edit that returned
+    the list to its attached shape changes nothing that a start
+    must take)."""
     mounts = row.get("mounts") or []
     if not mounts:
         return f"{mount_row_label(row)} mounts nothing"
     rendered = ", ".join(spec_text(m) for m in mounts)
+    suffix = " (next start)" if row.get("mounts_pending") else ""
     return (
-        f"{mount_row_label(row)} mounts {rendered}"
-        f"{issue_notes(row)} (next start)"
+        f"{mount_row_label(row)} mounts {rendered}{issue_notes(row)}{suffix}"
     )
 
 

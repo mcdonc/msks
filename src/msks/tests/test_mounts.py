@@ -213,7 +213,11 @@ def msks_server_settings(db_path: Path) -> ServerSettings:
 
 async def test_set_mounts_roundtrip(tmp_path: Path) -> None:
     """set_mounts writes the whole list; the row view decodes it
-    back; None clears to the mountless row."""
+    back; None clears to the mountless row. The pending flag
+    (#756) reads the pair: a configured set no start has taken
+    stands pending; the attached snapshot — written whole, its
+    order its own — reconciles it; a split sets it apart
+    again."""
     settings = Settings(server=msks_server_settings(tmp_path / "roundtrip.db"))
     app = build_app(settings)
     model = app.state.model
@@ -223,15 +227,41 @@ async def test_set_mounts_roundtrip(tmp_path: Path) -> None:
     )
     await model.set_mounts(
         "ws-m",
-        [{"host": "/srv/projects", "guest": "/mnt/p", "mode": "rw"}],
+        [
+            {"host": "/srv/projects", "guest": "/mnt/p", "mode": "rw"},
+            {"host": "/srv/other", "guest": "/mnt/o"},
+        ],
     )
     row = await model.get_workspace("ws-m")
     assert row["mounts"] == [
-        {"host": "/srv/projects", "guest": "/mnt/p", "mode": "rw"}
+        {"host": "/srv/projects", "guest": "/mnt/p", "mode": "rw"},
+        {"host": "/srv/other", "guest": "/mnt/o", "mode": "rw"},
     ]
+    assert row["mounts_pending"] is True
+    # The start's snapshot — recorded in its own order, the set
+    # the launch took — reconciles the pair: the comparison is
+    # the whole set, not the list's order or a subset.
+    reversed_set = [mount.as_dict() for mount in parse_mounts(row["mounts"])][
+        ::-1
+    ]
+    await model.set_attached_mounts("ws-m", reversed_set)
+    row = await model.get_workspace("ws-m")
+    assert row["mounts_pending"] is False
     await model.set_mounts("ws-m", None)
     row = await model.get_workspace("ws-m")
     assert row["mounts"] == []
+    # The cleared list still stands pending while the snapshot
+    # holds the set the last start took — the removal is a change
+    # the next start reconciles (the empty snapshot).
+    assert row["mounts_pending"] is True
+    await model.set_attached_mounts("ws-m", [])
+    row = await model.get_workspace("ws-m")
+    assert row["mounts_pending"] is False
+    # A configured set the snapshot does not match stands pending
+    # again.
+    await model.set_mounts("ws-m", [{"host": "/srv/other", "guest": "/mnt/o"}])
+    row = await model.get_workspace("ws-m")
+    assert row["mounts_pending"] is True
 
 
 async def test_start_publishes_skips_and_proceeds(
@@ -296,6 +326,82 @@ async def test_start_publishes_skips_and_proceeds(
             },
         )
     ]
+
+
+async def test_the_row_names_a_pending_mount_change(
+    client,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The row's ``mounts_pending`` flag (#756): a start's
+    snapshot is the set it attached, so a workspace cycled
+    start/stop on an unchanged config reads not pending — the
+    surfaces' next-start note keys on the flag, not on the
+    mounts' presence. An edit while stopped splits the pair
+    until the next start reconciles it; a start that skips a
+    mount leaves the pair split, the skip never attached."""
+    http, app, _ = client
+    app.state.settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+    fine = tmp_path / "fine"
+    fine.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={
+            "id": "ws-pending",
+            "kernel": "/k",
+            "rootfs": "/r",
+            "mounts": [{"host": str(fine), "guest": "/mnt/fine"}],
+        },
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+    # A set no start has taken stands pending — the create's own
+    # reply says so.
+    assert created.json()["mounts_pending"] is True
+
+    async def started_and_fetched() -> dict:
+        started = await http.post(
+            f"/api/v1/workspaces/{wid}/start", headers=auth()
+        )
+        assert started.status_code == 200
+        stopped = await http.post(
+            f"/api/v1/workspaces/{wid}/stop", headers=auth()
+        )
+        assert stopped.status_code == 200
+        row = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
+        return row.json()
+
+    # The repeated cycle on an unchanged config (#756's story):
+    # each start attaches the configured set, so the flag rests.
+    assert (await started_and_fetched())["mounts_pending"] is False
+    assert (await started_and_fetched())["mounts_pending"] is False
+    # An edit while stopped splits the pair — the set mount takes
+    # its place beside the attached one, pending until a start
+    # takes it.
+    edited = await http.post(
+        f"/api/v1/workspaces/{wid}/mounts",
+        json={
+            "mounts": [
+                {"host": str(fine), "guest": "/mnt/fine"},
+                {"host": str(other), "guest": "/mnt/other"},
+            ]
+        },
+        headers=auth(),
+    )
+    assert edited.json()["mounts_pending"] is True
+    # A start that skips a mount leaves the pair split: the
+    # narrowed roots refuse the first mount, the start attaches
+    # the second alone, and the flag stands (the next start
+    # retries the refused one).
+    app.state.settings.mounts = MountSettings(host_roots=(str(other),))
+    row = await started_and_fetched()
+    assert row["mounts_pending"] is True
+    assert [issue["host"] for issue in row["mount_issues"]] == [str(fine)]
+    # The widened roots heal the gate; the start that attaches
+    # the whole configured set reconciles the pair again.
+    app.state.settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+    assert (await started_and_fetched())["mounts_pending"] is False
 
 
 def test_disjoint_mounts_validate_clean() -> None:

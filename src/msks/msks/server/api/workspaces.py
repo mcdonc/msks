@@ -415,6 +415,15 @@ def router(app) -> APIRouter:
                 # forever — a row wedged at starting that holds rw
                 # exclusivity and never reconciles (round 3 review).
                 in_flight.discard(workspace_id)
+            # The attached snapshot lands with the running status
+            # (#756): the set this launch took, beside the
+            # configured set it read — a failed launch above
+            # restores the prior status and keeps the previous
+            # snapshot, so the pending story still names the last
+            # start that truly attached.
+            await app.state.model.set_attached_mounts(
+                workspace_id, [mount.as_dict() for mount in attachable]
+            )
             await app.state.model.set_status(workspace_id, "running")
         return {"id": workspace_id, "status": "running"}
 

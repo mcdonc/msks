@@ -386,6 +386,31 @@ class Model:
             await session.commit()
             return result.rowcount > 0
 
+    async def set_attached_mounts(
+        self, workspace_id: str, mounts: list[dict] | None
+    ) -> bool:
+        """Record the mounts a start attached (#756); False when
+        the row is absent.
+
+        Only a successful start writes here — the snapshot of the
+        set the launch actually took (the configured set minus
+        its skips), the same wire shape ``set_mounts`` stores. An
+        empty list records a start that attached nothing (the
+        column's NULL, the same as never-started: both leave the
+        flag pending while the row mounts anything). The row read
+        beside ``mounts`` is the pending story; the next start is
+        the only writer that reconciles the pair."""
+        maker = sessionmaker_for(self.engine())
+        encoded = json.dumps(mounts) if mounts else None
+        async with maker() as session:
+            result = await session.execute(
+                update(Workspace)
+                .where(Workspace.id == workspace_id)
+                .values(attached_mounts=encoded)
+            )
+            await session.commit()
+            return result.rowcount > 0
+
     async def set_egress_policy(
         self, workspace_id: str, mode: str, allowlist: list[str] | None
     ) -> bool:
@@ -944,7 +969,12 @@ def workspace_dict(row: Workspace) -> dict:
     serves the parsed form: a row a pre-#685 daemon wrote keeps
     its stored shape in the column until the next set, but every
     read serves the entries the one grammar admits (#685's drop
-    at read) — no surface ever sees a named entry back."""
+    at read) — no surface ever sees a named entry back.
+    ``mounts_pending`` (#756) compares the configured set against
+    the set the last start attached: True while the two disagree
+    (an edit the next start takes, a mount never yet attached),
+    False once they agree again."""
+    configured = parse_mounts(row.mounts)
     return {
         "id": row.id,
         "name": row.name,
@@ -965,7 +995,9 @@ def workspace_dict(row: Workspace) -> dict:
         "egress_allowlist": json.loads(row.egress_allowlist)
         if row.egress_allowlist
         else [],
-        "mounts": [mount.as_dict() for mount in parse_mounts(row.mounts)],
+        "mounts": [mount.as_dict() for mount in configured],
+        "mounts_pending": set(configured)
+        != set(parse_mounts(row.attached_mounts)),
         "user_data": row.user_data,
         "ssh_pubkey": row.ssh_pubkey,
         "login_user": row.login_user,

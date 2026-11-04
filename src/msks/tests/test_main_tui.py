@@ -261,12 +261,18 @@ class FakeData:
     async def set_mounts(self, workspace_id: str, mounts: list) -> dict:
         """The mounts exchange (#620, part #624): recorded, the
         row's mounts replaced; a refusal a test armed raises the
-        way the daemon's would."""
+        way the daemon's would. The reply carries the pending
+        flag the daemon derives (#756): a list that changed the
+        row's set differs from what the last start attached, and
+        an unchanged list keeps the flag the row walked in
+        with."""
         self.calls.append(("set-mounts", workspace_id, mounts))
         if self.mounts_refusal is not None:
             raise SystemExit(self.mounts_refusal)
         for row in self.rows:
             if row["id"] == workspace_id:
+                if [dict(m) for m in mounts] != row.get("mounts"):
+                    row["mounts_pending"] = True
                 row["mounts"] = [dict(m) for m in mounts]
                 return dict(row)
         raise KeyError(workspace_id)
@@ -5981,13 +5987,16 @@ async def test_a_failed_catalog_read_names_its_verb(monkeypatch) -> None:
 
 def mounted_row(status: str = "stopped") -> dict:
     """One row carrying mounts and their derived state: one
-    healthy, one skipped."""
+    healthy, one skipped, and a pending set (the skipped mount
+    never attached, so the configured set and the last start's
+    disagree)."""
     return {
         **row(status=status),
         "mounts": [
             {"host": "/srv/proj", "guest": "/mnt/proj", "mode": "rw"},
             {"host": "/srv/gone", "guest": "/mnt/gone", "mode": "rw"},
         ],
+        "mounts_pending": True,
         "mount_issues": [
             {
                 "kind": "skipped",
@@ -6038,10 +6047,12 @@ def test_the_mounts_editor_boundary_branches() -> None:
 
 
 def test_the_mounts_line_names_each_state() -> None:
-    """The page's mounts line (#752): every mount's spec, the
-    skipped one named with its kind, and the next-start note —
-    all on the status lines' one grammar, the label muted in its
-    column and a `·` between the value's parts."""
+    """The page's mounts line (#752, #756): every mount's spec,
+    the skipped one named with its kind, and — while the
+    configured set and the last start's attached set disagree —
+    the next-start note, all on the status lines' one grammar,
+    the label muted in its column and a `·` between the value's
+    parts. The two sets agreeing holds the note back."""
     from msks.client.tui.mounts import mounts_line
 
     line = mounts_line(mounted_row())
@@ -6054,6 +6065,10 @@ def test_the_mounts_line_names_each_state() -> None:
     assert plain[span.start : span.end] == "mounts  "
     assert span.style == rows_mod.muted_style({})
     assert mounts_line(row()).plain == ""
+    settled = {**mounted_row(), "mounts_pending": False}
+    settled_plain = mounts_line(settled).plain
+    assert "/srv/proj:/mnt/proj:rw" in settled_plain
+    assert "applies at next start" not in settled_plain
 
 
 def mounts_text(app) -> str:
@@ -6495,10 +6510,14 @@ async def test_the_mounts_editor_deletes_through_the_real_api(
                 pilot, "enter", lambda: isinstance(tui.screen, MountsScreen)
             )
             await pilot.press("r")
+            # The removal leaves nothing pending — the workspace
+            # never started, so the mountless reply agrees with
+            # the empty attached set: the note names the save
+            # alone (#756).
             await wait_for(
                 lambda: (
-                    "saved — applies at the next start"
-                    in str(tui.screen.query_one("#mount-note", Static).content)
+                    str(tui.screen.query_one("#mount-note", Static).content)
+                    == "saved"
                 )
             )
             await press_until(pilot, "escape", lambda: on_page(tui))

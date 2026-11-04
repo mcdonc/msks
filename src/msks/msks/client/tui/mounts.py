@@ -71,19 +71,31 @@ def mount_row_text(mount: dict, issues: list[dict]) -> str:
 
 
 def mounts_line(row: dict, theme_variables: dict | None = None) -> Content:
-    """The workspace page's mounts line (#620, part #624, #752):
-    one entry per mount joined with the status lines' one
+    """The workspace page's mounts line (#620, part #624, #752,
+    #756): one entry per mount joined with the status lines' one
     grammar — the ``mounts`` label muted in the label column, a
     ``·`` between the value's parts — with a skipped mount's
     kind riding beside its spec and the next-start note joining
-    the same rhythm. Empty when the workspace mounts nothing."""
+    only while a change is pending. Empty when the workspace
+    mounts nothing."""
     mounts = row.get("mounts") or []
     if not mounts:
         return Content("")
     issues = row.get("mount_issues") or []
     parts = [mount_state_text(mount, issues) for mount in mounts]
-    value = " · ".join(parts) + " · applies at next start"
+    value = " · ".join(parts) + pending_note(row)
     return status_line("mounts", value, theme_variables)
+
+
+def pending_note(row: dict) -> str:
+    """The line's next-start part (#756): the daemon's
+    ``mounts_pending`` flag stands while the configured set
+    differs from the set the last start attached (an edit the
+    next start takes, a mount never yet attached), and the note
+    clears when the two agree again."""
+    if row.get("mounts_pending"):
+        return " · applies at next start"
+    return ""
 
 
 def replaced_mount(mounts: list, mount: dict | None, entry: dict) -> list:
@@ -239,7 +251,11 @@ class MountsScreen(ModalScreen[dict | None]):
         self.row = fresh
         self.call_after_refresh(self.rebuild)
         self.call_after_refresh(
-            lambda: self.note("saved — applies at the next start")
+            lambda: self.note(
+                "saved — applies at the next start"
+                if fresh.get("mounts_pending")
+                else "saved"
+            )
         )
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:

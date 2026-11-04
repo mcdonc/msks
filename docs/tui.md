@@ -101,9 +101,12 @@ listed on the workspace's egress consent screen.
 When the workspace mounts host shares, a mounts line follows the
 same shape: one entry per mount (`projects:/mnt/projects:rw`), a
 skipped mount's kind beside its spec (`refs:/srv/refs:ro ·
-skipped`), and a trailing `applies at next start` note. The line
-repaints with the page's per-second read, so a change made anywhere
-reaches the page.
+skipped`), and an `applies at next start` note while a change is
+pending. The daemon compares the configured mounts with the set
+the last start attached, and the note rests while the two agree.
+The next start takes a changed set and clears the note. The
+line repaints with the page's per-second read, so a change made
+anywhere reaches the page.
 
 The page's actions sit in a framed panel with a muted caption above
 each group. The `use` group holds a shell; `configure` holds egress
