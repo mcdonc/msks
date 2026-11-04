@@ -371,7 +371,10 @@ terminal_open_cmd: open -na Ghostty.app --args -e msks-term-popup  # macOS
 The macOS form needs the brew-prefix links. An `open`-opened
 window resolves commands on a fresh login PATH, and
 `msks-setup-macos-host` links both client commands there
-(#734). tmux comes from that PATH the same way.
+(#734). tmux comes from that PATH the same way. The Linux forms
+need the same: the window resolves `msks-term-popup` on its own
+PATH, and `msks-setup-debian-host` and `msks-setup-fedora-host`
+link it beside `msks` at `/usr/local/bin` (#755).
 
 The popup viewer keeps its own attach to the hidden session, so a hold
 that arrives while it is open is already in the list. Verdicts posted
