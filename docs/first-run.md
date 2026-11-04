@@ -81,9 +81,9 @@ the first-boot probe's retries and the session each count as a signing request.
 
 A passphrase-encrypted `identity_file` raises the session's one passphrase
 prompt when the daemon's locked secret rows need it. The TUI asks once when the
-tree opens, and the answer unlocks every locked row for the session. Escape or
-Cancel leaves the rows locked; they stay named on the secrets page and
-re-askable there.
+tree opens, and the answer unlocks every locked secret row for the
+session. Escape or Cancel leaves the secrets locked; they stay named on the
+secrets page and re-askable there.
 
 ### `pubkey_file`: the public half
 
