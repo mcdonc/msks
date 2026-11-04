@@ -1223,39 +1223,49 @@ def test_adduser_kvm_failure_refuses(
 def test_in_group_reads_membership_and_primary_group(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The two gates: named membership in the group's member list,
-    and the account's primary group — the same pair #555's peer
-    policy reads. A database that answers nothing says no."""
+    """The gate reads the same group walk #555's peer policy
+    reads: the account's gids from getgrouplist, matched against
+    the named group's gid. A database that answers nothing says
+    no."""
 
-    class MemberGrp:
+    class KvmGrp:
         class entry:
-            gr_mem = ["chrism"]
             gr_gid = 104
 
         def getgrnam(self, name):
             return self.entry
 
-    monkeypatch.setattr(hostsetup, "grp", MemberGrp())
+    monkeypatch.setattr(hostsetup, "grp", KvmGrp())
     monkeypatch.setattr(
         hostsetup,
         "pwd_getpwnam",
         lambda name: FakeEntry("chrism", 1000, "/home/chrism"),
     )
+    seen = {}
+
+    def grouplist(user: str, base: int) -> list[int]:
+        seen["user"], seen["base"] = user, base
+        return [1000, 104]  # primary + the kvm gid the walk answers
+
+    monkeypatch.setattr(hostsetup.os, "getgrouplist", grouplist)
     assert hostsetup.in_group("chrism", "kvm") is True
+    assert seen == {"user": "chrism", "base": 1000}
 
-    class PrimaryGrp:
-        class entry:
-            gr_mem = []
-            gr_gid = 104
+    monkeypatch.setattr(
+        hostsetup.os, "getgrouplist", lambda user, base: [1000]
+    )
+    assert hostsetup.in_group("chrism", "kvm") is False
 
-        def getgrnam(self, name):
-            return self.entry
-
-    monkeypatch.setattr(hostsetup, "grp", PrimaryGrp())
+    # The primary-group pass rides the base gid getgrouplist
+    # always includes — the arm that replaced the old explicit
+    # pw_gid == gr_gid check.
     monkeypatch.setattr(
         hostsetup,
         "pwd_getpwnam",
         lambda name: FakeEntry("chrism", 1000, "/home/chrism", gid=104),
+    )
+    monkeypatch.setattr(
+        hostsetup.os, "getgrouplist", lambda user, base: [base]
     )
     assert hostsetup.in_group("chrism", "kvm") is True
 

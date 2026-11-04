@@ -38,6 +38,16 @@ tagged `vX.Y.Z`.
   waits for the tty to become writable and retries; the session
   lands in the shell with every byte intact.
 
+### Security
+
+- **Local socket group admission (#743).** The token-less local
+  listener resolves peer group membership the way login does:
+  every supplementary group the account database holds for the
+  user counts, including the nesting a directory backend (SSSD
+  with AD) expands itself. A member removed from the socket's
+  group loses token-less access at the next request instead of
+  at the next daemon restart.
+
 ### Changed
 
 - **`msks-setup-macos-host` keeps an existing client config

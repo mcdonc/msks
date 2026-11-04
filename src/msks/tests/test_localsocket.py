@@ -195,24 +195,45 @@ def test_policy_passes_the_daemon_uid() -> None:
 def test_policy_reads_the_socket_group_membership(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    localsocket._in_group.cache_clear()
+    """The membership gate reads the group walk login performs
+    (``os.getgrouplist``), not the flat ``gr_mem`` list: a peer
+    whose account database holds a supplementary group for them
+    — one a directory backend expanded into the walk's answer —
+    passes (#743)."""
     monkeypatch.setattr(
         localsocket.pwd,
         "getpwuid",
         lambda uid: SimpleNamespace(pw_name="alice", pw_gid=1001),
     )
+    seen = {}
+
+    def grouplist(user: str, base: int) -> list[int]:
+        seen["user"], seen["base"] = user, base
+        return [1001, 54321]  # primary + a nested/NSS-supplementary gid
+
+    monkeypatch.setattr(localsocket.os, "getgrouplist", grouplist)
+    assert localsocket.peer_allowed(4242, 54321) is True
+    assert seen == {"user": "alice", "base": 1001}
+
+
+def test_policy_sees_a_removal_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No cache stands between the group database and the
+    policy: a member removed from the socket's group fails the
+    next request — the token-less path closes at once, not at
+    the next daemon restart (#743)."""
     monkeypatch.setattr(
-        localsocket.grp,
-        "getgrgid",
-        lambda gid: SimpleNamespace(gr_mem=["alice", "bob"]),
+        localsocket.pwd,
+        "getpwuid",
+        lambda uid: SimpleNamespace(pw_name="alice", pw_gid=1001),
+    )
+    groups = [1001, 54321]
+    monkeypatch.setattr(
+        localsocket.os, "getgrouplist", lambda user, base: groups
     )
     assert localsocket.peer_allowed(4242, 54321) is True
-    localsocket._in_group.cache_clear()
-    monkeypatch.setattr(
-        localsocket.grp,
-        "getgrgid",
-        lambda gid: SimpleNamespace(gr_mem=["bob"]),
-    )
+    groups[:] = [1001]  # the group edit lands between requests
     assert localsocket.peer_allowed(4242, 54321) is False
 
 
@@ -224,14 +245,38 @@ def test_policy_reads_the_socket_group_as_primary(
         "getpwuid",
         lambda uid: SimpleNamespace(pw_name="alice", pw_gid=54321),
     )
+    monkeypatch.setattr(
+        localsocket.os,
+        "getgrouplist",
+        lambda user, base: [54321],  # getgrouplist always includes base
+    )
     assert localsocket.peer_allowed(4242, 54321) is True
 
 
-def test_policy_denies_an_unknown_uid_without_a_socket_gid(
+def test_policy_fails_closed_when_the_group_walk_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An NSS failure mid-walk denies the token-less path: the
+    peer falls to the bearer-token path instead of passing."""
+
+    def refused(user: str, base: int) -> list[int]:
+        raise OSError("NSS unreachable")
+
+    monkeypatch.setattr(
+        localsocket.pwd,
+        "getpwuid",
+        lambda uid: SimpleNamespace(pw_name="alice", pw_gid=1001),
+    )
+    monkeypatch.setattr(localsocket.os, "getgrouplist", refused)
+    assert localsocket.peer_allowed(4242, 54321) is False
+
+
+def test_policy_denies_an_unknown_uid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(localsocket.pwd, "getpwuid", raises_keyerror)
     assert localsocket.peer_allowed(4242, None) is False
+    assert localsocket.peer_allowed(4242, 54321) is False
 
 
 def raises_keyerror(uid):
@@ -646,18 +691,6 @@ def test_wrap_protocols_is_idempotent_over_a_loaded_config() -> None:
     wrapped = config.http_protocol_class
     localsocket.wrap_protocols(config)  # already loaded: load is skipped
     assert config.http_protocol_class is not wrapped
-
-
-def test_group_membership_answers_false_for_an_unknown_group(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def missing(gid):
-        raise KeyError(gid)
-
-    monkeypatch.setattr(localsocket.grp, "getgrgid", missing)
-    localsocket._in_group.cache_clear()
-    assert localsocket._in_group("alice", 99999) is False
-    localsocket._in_group.cache_clear()
 
 
 def test_wrap_protocols_skips_a_ws_disabled_config() -> None:
