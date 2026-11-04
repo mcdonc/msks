@@ -87,23 +87,30 @@ workspaces, for navigation.
 
 The **workspace page** operates on an already-created workspace. Its
 two-line header: the workspace's name on the first line with its status
-beside it, in the state's color, then the id, image hash, host, and
-created date.
+beside it, in the state's color, then the id, image, host, and
+created date on the second. At an 80-column terminal the meta line
+clips each field to a fixed budget; a wider terminal shows every
+field whole.
 
-Below it, a status line for egress consent shows the mode and one
-granted scope with its expiry. Two or more grants show as a count with
-the nearest expiry (`5 grants · next expires 4h`). Grant details are
+Below the header, two status lines share one shape: a muted label,
+then the value. The consent line shows the mode and one granted
+scope with its expiry. Two or more grants show as a count with the
+nearest expiry (`5 grants · next expires 4h`). Grant details are
 listed on the workspace's egress consent screen.
 
-When the workspace mounts host shares, a mounts line follows: one entry
-per mount (`projects:/mnt/projects:rw`), with derived state beside any
-mount the daemon holds unresolved (`refs:/srv/refs:ro (skipped)`), and
-a note when a change applies at the next start. The line repaints with
-the page's per-second read, so a change made anywhere reaches the page.
+When the workspace mounts host shares, a mounts line follows the
+same shape: one entry per mount (`projects:/mnt/projects:rw`), a
+skipped mount's kind beside its spec (`refs:/srv/refs:ro ·
+skipped`), and a trailing `applies at next start` note. The line
+repaints with the page's per-second read, so a change made anywhere
+reaches the page.
 
-The page's actions come in three groups: a shell; egress consent, an
-edit dialog for the sizes and topology, and the mounts editor; and
-start and stop.
+The page's actions sit in a framed panel with a muted caption above
+each group. The `use` group holds a shell; `configure` holds egress
+consent, an edit dialog for the sizes and topology, and the mounts
+editor; `power` holds start and stop. Bold names the action the
+workspace's status invites; the highlight bar and a marker name the
+row Enter acts on.
 
 The **mounts editor** shows the workspace's mounts one row each, in the
 CLI's `HOST_PATH:GUEST_PATH:MODE` grammar with the mode always shown.

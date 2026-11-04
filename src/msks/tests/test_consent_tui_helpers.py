@@ -29,9 +29,10 @@ from msks.client.tui.consent_ui import (
 
 
 class FakeChild:
-    def __init__(self, rid, rule_id=None):
+    def __init__(self, rid, rule_id=None, disabled=False):
         self.request_id = rid
         self.rule_id = rule_id
+        self.disabled = disabled
 
 
 class FakeRows:
@@ -107,6 +108,15 @@ def test_row_and_focus_helpers() -> None:
     focused = FakeRows([FakeChild("a")], index=0)
     ensure_focus(focused)
     assert focused.index == 0  # kept, not reset
+    # A disabled row (a caption, #752) passes the highlight
+    # through to the first row that takes it — and a list of
+    # nothing but disabled rows leaves the highlight unset.
+    mixed = FakeRows([FakeChild("a", disabled=True), FakeChild("b")])
+    ensure_focus(mixed)
+    assert mixed.index == 1
+    all_disabled = FakeRows([FakeChild("a", disabled=True)])
+    ensure_focus(all_disabled)
+    assert all_disabled.index is None
 
 
 def event(kind: str = "swap", **kw) -> consent_mod.SecretEvent:

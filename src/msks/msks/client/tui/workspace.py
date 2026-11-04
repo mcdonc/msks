@@ -52,7 +52,13 @@ from .follow import FLOW_SHELL
 from .forms import EDIT_FREE_STATUSES, EditScreen, edit_stop_question
 from .link import CONNECTED, REJECTED, UNUSABLE_TOKEN, DeciderLink
 from .mounts import MountsScreen, mounts_line
-from .rows import header_meta, header_name, muted_style, workspace_label
+from .rows import (
+    header_meta,
+    header_name,
+    muted_style,
+    status_line,
+    workspace_label,
+)
 
 #: The workspace page's shell action (#341) — a page action, not a
 #: flow: the tree keeps running while the window owns its own
@@ -119,30 +125,34 @@ def granted_line(controller) -> str:
     return summary
 
 
-def consent_line(link, row: dict) -> str:
-    """The workspace page's consent status line (#309): the granted
-    scopes — one named, several counted (#366) — or the honest
-    absence, prefixed by the mode; the row's recorded mode stands
-    in until the first rules frame lands. The state is named
-    whenever it is not connected: a drop never implies that
-    silence is data (the controller keeps its last snapshot through
-    the backoff ladder, so the line says so beside it)."""
+def consent_line(
+    link, row: dict, theme_variables: dict | None = None
+) -> Content:
+    """The workspace page's consent status line (#309, #752): the
+    status lines' one grammar — the ``consent`` label muted in
+    the label column, the granted scopes — one named, several
+    counted (#366) — or the honest absence, joined with a ``·``
+    behind the mode; the row's recorded mode stands in until the
+    first rules frame lands. The state is named whenever it is
+    not connected: a drop never implies that silence is data (the
+    controller keeps its last snapshot through the backoff
+    ladder, so the line says so beside it)."""
     if link.state in (REJECTED, UNUSABLE_TOKEN):
-        # The daemon's refusal text is free text on a markup-
-        # parsing Static: it rides flash_safe, so a truncated
-        # closing tag in the reason parses clean at update time
-        # (#318's rule) — the timer's repaint included.
-        return f"egress consent: {flash_safe(link.reject_reason)}"
+        # The daemon's refusal text is free text, and the value
+        # rides a Content's plain text (#318's rule needs no
+        # escaping here): a truncated closing tag in the reason
+        # parses clean at update time — the timer's repaint
+        # included.
+        return status_line("consent", link.reject_reason, theme_variables)
     rules = link.controller.rules
     if rules is None:
         mode = row.get("egress_mode") or "-"
-        return f"egress consent: mode {mode} · {link.state}"
-    line = (
-        f"egress consent: mode {rules.mode} · {granted_line(link.controller)}"
-    )
+        value = f"mode {mode} · {link.state}"
+        return status_line("consent", value, theme_variables)
+    value = f"mode {rules.mode} · {granted_line(link.controller)}"
     if link.state != CONNECTED:
-        line += f" · {link.state}"
-    return line
+        value += f" · {link.state}"
+    return status_line("consent", value, theme_variables)
 
 
 #: The power verbs' dimming rule (#367): the status that
@@ -163,16 +173,16 @@ DIMMED_WHEN = {
 
 
 class PageAction(NamedTuple):
-    """One fixed action row of the workspace page (#309, #367):
-    its kind, the name it paints, the muted description behind
-    the em dash (empty when the name stands alone), and whether
-    the row leads its group — the lead row carries the top margin
-    that separates the groups."""
+    """One fixed action row of the workspace page (#309, #367,
+    #752): its kind, the name it paints, the muted description
+    behind the em dash (empty when the name stands alone), and
+    the group it belongs to — use, configure, or power — whose
+    name rides the muted caption row above the group's rows."""
 
     kind: str
     name: str
     desc: str
-    lead: bool
+    group: str
 
 
 def action_note(kind: str, status: str) -> str | None:
@@ -207,11 +217,12 @@ def dimmed_action_content(
 def live_action_content(
     name: str, desc: str, marker: str, muted: str, primary: bool
 ) -> Content:
-    """A live action row's paint (#367, #470 W1/S3): the name
-    bold on the page's primary row — the action the current
-    status permits, and the row Enter acts on — the description
-    muted behind an em dash (every live row carries one, #470
-    W2)."""
+    """A live action row's paint (#367, #470 W1/S3, #752): the
+    name bold on the page's primary rows alone — the action the
+    current status permits — the description muted behind an em
+    dash (every live row carries one, #470 W2). Focus carries its
+    own cues: the list's highlight bar and the marker cell, so
+    bold answers one question only."""
     text = f"{marker} {name} — {desc}"
     offset = 2 + len(name)
     spans = []
@@ -234,49 +245,51 @@ def primary_action(kind: str, status: str) -> bool:
 def action_content(
     spec: PageAction, status: str, theme_variables: dict | None, focused: bool
 ) -> Content:
-    """One action row's paint (#367, #470 W1/S3): a marker cell on
-    the row Enter acts on — the highlighted row (the highlight
-    bar stays the list's own cue; the marker keeps the row
-    legible where a theme's bar reads weakly) — beside the row's
-    tone-painted content. A power row the status dims
+    """One action row's paint (#367, #470 W1/S3, #752): a marker
+    cell on the row Enter acts on — the highlighted row (the
+    highlight bar stays the list's own cue; the marker keeps the
+    row legible where a theme's bar reads weakly) — beside the
+    row's tone-painted content. A power row the status dims
     (:data:`DIMMED_WHEN`) mutes the whole row behind its reason;
     every other row rides :func:`live_action_content`, its bold
-    on the row the status permits (:func:`primary_action`) and
-    on the focused row itself. The cells ride a Content's plain
-    text, so a markup-carrying name cannot shift the spans."""
+    on the rows the status permits (:func:`primary_action`)
+    alone. The cells ride a Content's plain text, so a
+    markup-carrying name cannot shift the spans."""
     marker = "▸" if focused else " "
     muted = muted_style(theme_variables or {})
     note = action_note(spec.kind, status)
     if note is not None:
         return dimmed_action_content(spec.name, note, marker, muted)
-    primary = primary_action(spec.kind, status) or focused
+    primary = primary_action(spec.kind, status)
     return live_action_content(spec.name, spec.desc, marker, muted, primary)
 
 
-#: The workspace page's fixed actions (#309), top to bottom in
-#: three groups — use, configure, power — each group's lead row
-#: (``lead`` True) carrying the top margin that separates the
-#: groups (#367); the use group's lead carries it too, the
-#: breathing room between the status lines and the actions.
+#: The workspace page's fixed actions (#309, #752), top to bottom
+#: in three groups — use, configure, power — each group's name
+#: riding the muted caption row above its rows (#367's blank-line
+#: separation carried by the captions, #752).
 PAGE_ACTIONS = (
     PageAction(
-        ACTION_SHELL_WINDOW, "Open a shell", "ssh in this terminal", True
+        ACTION_SHELL_WINDOW,
+        "Open a shell",
+        "ssh in this terminal",
+        "use",
     ),
     PageAction(
         ACTION_CONSENT,
         "Egress",
         "decide holds and review rules",
-        True,
+        "configure",
     ),
-    PageAction("edit", "Edit settings", "sizes and topology", False),
+    PageAction("edit", "Edit settings", "sizes and topology", "configure"),
     PageAction(
         "mounts",
         "Mounts",
         "host shares at guest paths",
-        False,
+        "configure",
     ),
-    PageAction("start", "Start", "boot the workspace", True),
-    PageAction("stop", "Stop", "power it off", False),
+    PageAction("start", "Start", "boot the workspace", "power"),
+    PageAction("stop", "Stop", "power it off", "power"),
 )
 
 
@@ -344,13 +357,18 @@ class WorkspaceScreen(Screen):
             id="header",
         )
         yield Static(
-            header_meta(self.row, self.app.theme_variables),
+            header_meta(self.row, self.app.theme_variables, self.meta_width()),
             id="header-meta",
         )
-        yield Static(consent_line(link, self.row), id="consent")
+        yield Static(
+            consent_line(link, self.row, self.app.theme_variables),
+            id="consent",
+        )
         # The mounts line (#620, part #624): the row's mounts with
         # their derived state, repainted with the header each tick.
-        yield Static(mounts_line(self.row), id="mounts", markup=False)
+        yield Static(
+            mounts_line(self.row, self.app.theme_variables), id="mounts"
+        )
         # The action list mounts on the first rebuild (compose
         # yields the container alone).
         yield Vertical(id="page")
@@ -378,6 +396,21 @@ class WorkspaceScreen(Screen):
         fresh row for the header."""
         self.rebuilds.request()
         self.refresh_row()
+
+    def on_resize(self) -> None:
+        """The terminal's width moved (#752): the meta line's
+        budgets follow it, so the id, image, and host read as
+        whole as the new width allows — at once, not on the next
+        tick."""
+        self.paint_header()
+
+    def meta_width(self) -> int | None:
+        """The meta line's available cells: the screen's width
+        less the line's own padding. A width the layout has not
+        settled yet (compose, before the first layout) paints the
+        fixed budgets."""
+        width = self.size.width - 2
+        return width if width > 0 else None
 
     def on_unmount(self) -> None:
         """The page is gone: stop deciding for the workspace (the
@@ -512,7 +545,9 @@ class WorkspaceScreen(Screen):
                 )
             )
             self.query_one("#header-meta", Static).update(
-                header_meta(self.row, self.app.theme_variables)
+                header_meta(
+                    self.row, self.app.theme_variables, self.meta_width()
+                )
             )
         except NoMatches:
             pass  # teardown unmounted a header line under the worker
@@ -523,7 +558,9 @@ class WorkspaceScreen(Screen):
         keeps it current, and the editor's reply lands it
         immediately."""
         try:
-            self.query_one("#mounts", Static).update(mounts_line(self.row))
+            self.query_one("#mounts", Static).update(
+                mounts_line(self.row, self.app.theme_variables)
+            )
         except NoMatches:
             pass  # teardown unmounted the line under the timer
 
@@ -531,7 +568,11 @@ class WorkspaceScreen(Screen):
         if self.link is not None:
             try:
                 self.query_one("#consent", Static).update(
-                    self.flash_line.text(consent_line(self.link, self.row))
+                    self.flash_line.text(
+                        consent_line(
+                            self.link, self.row, self.app.theme_variables
+                        )
+                    )
                 )
             except NoMatches:
                 pass  # teardown unmounted the line under the timer
@@ -607,17 +648,33 @@ class WorkspaceScreen(Screen):
         except NoMatches:
             return None
 
+    def action_rows(self, rows: ListView) -> list:
+        """The list's action rows — the group caption rows (#752)
+        excluded, so a walk addresses the actions alone."""
+        return [
+            child for child in rows.children if "caption" not in child.classes
+        ]
+
     def fixed_items(self) -> list[ListItem]:
-        """The page's actions (#367), each tagged with its kind —
-        a group's lead row carrying the class that paints its
-        separating margin."""
-        items = []
+        """The page's rows (#367, #752): each group's muted caption
+        above its action rows, every row tagged with its kind. A
+        caption rides a disabled ListItem, so the list's cursor
+        walks straight through it — the group's bounds read on
+        screen without ever taking the highlight."""
+        items: list[ListItem] = []
+        group = None
         for spec in PAGE_ACTIONS:
+            if spec.group != group:
+                group = spec.group
+                caption = ListItem(Static(f" {group}"), disabled=True)
+                caption.page_caption = group
+                caption.add_class("caption")
+                if items:
+                    caption.add_class("spaced")
+                items.append(caption)
             item = ListItem(Static(self.row_paint(spec, focused=False)))
             item.page_action = spec.kind
             item.page_key = ("action", spec.kind)
-            if spec.lead:
-                item.add_class("group-lead")
             items.append(item)
         return items
 
@@ -638,15 +695,17 @@ class WorkspaceScreen(Screen):
         """Repaint the action rows in place (#367): the marker
         follows the row Enter acts on and the power pair's dimming
         follows the row's status — without rebuilding the list,
-        so focus and identity stay put."""
+        so focus and identity stay put. The caption rows stand
+        outside the walk: their text never moves."""
         rows = self.actions_widget()
         if rows is None:
             return
         highlighted = rows.highlighted_child
+        actions = self.action_rows(rows)
         # Teardown shrinks the list under the paint: the walk
         # paints the rows that stand, never the specs beyond, and
         # a row that lost its Static skips alone.
-        for child, spec in zip(rows.children, PAGE_ACTIONS):
+        for child, spec in zip(actions, PAGE_ACTIONS):
             try:
                 child.query_one(Static).update(
                     self.row_paint(spec, focused=child is highlighted)

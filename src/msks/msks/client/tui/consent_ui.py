@@ -269,9 +269,14 @@ def focused_rule_id(rows: ListView | None) -> str | None:
 
 def ensure_focus(rows: ListView) -> None:
     """Give the list a highlight when it has rows but none focused —
-    a hold is always decidable from the keyboard."""
+    a hold is always decidable from the keyboard. The first row
+    that takes it: a disabled row (a caption, #752) stands
+    outside the walk and passes the highlight through."""
     if rows.index is None and rows.children:
-        rows.index = 0
+        for position, child in enumerate(rows.children):
+            if not child.disabled:
+                rows.index = position
+                return
 
 
 def focused_attr(rows: ListView | None, attr: str):

@@ -18,11 +18,12 @@ from functools import partial
 
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.content import Content
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Input, Label, ListItem, ListView, Static
 
 from ..workspaces import mount_spec
-from .rows import clip, workspace_label
+from .rows import clip, status_line, workspace_label
 
 #: The editor row's spec column budget: the share, the guest path,
 #: and the mode beside the state's word — the guest path is the
@@ -69,18 +70,20 @@ def mount_row_text(mount: dict, issues: list[dict]) -> str:
     )
 
 
-def mounts_line(row: dict) -> str:
-    """The workspace page's mounts line (#620, part #624): one
-    entry per mount, its state riding beside — healthy mounts read
-    their spec alone; a skip names itself, the marker that stands
-    until the config and the row agree again. Empty when the
-    workspace mounts nothing."""
+def mounts_line(row: dict, theme_variables: dict | None = None) -> Content:
+    """The workspace page's mounts line (#620, part #624, #752):
+    one entry per mount joined with the status lines' one
+    grammar — the ``mounts`` label muted in the label column, a
+    ``·`` between the value's parts — with a skipped mount's
+    kind riding beside its spec and the next-start note joining
+    the same rhythm. Empty when the workspace mounts nothing."""
     mounts = row.get("mounts") or []
     if not mounts:
-        return ""
+        return Content("")
     issues = row.get("mount_issues") or []
     parts = [mount_state_text(mount, issues) for mount in mounts]
-    return "mounts  " + "  ·  ".join(parts) + "  (next start)"
+    value = " · ".join(parts) + " · applies at next start"
+    return status_line("mounts", value, theme_variables)
 
 
 def replaced_mount(mounts: list, mount: dict | None, entry: dict) -> list:
@@ -103,9 +106,10 @@ def clamp_index(focused: int, count: int) -> int | None:
 
 def mount_state_text(mount: dict, issues: list[dict]) -> str:
     """One mount's line entry: its spec alone when healthy, its
-    kind riding beside when the daemon derived a skip."""
+    kind riding beside with the status line's ``·`` join when the
+    daemon derived a skip."""
     issue = issue_for(mount, issues)
-    state = "" if issue is None else f" ({issue['kind']})"
+    state = "" if issue is None else f" · {issue['kind']}"
     return f"{mount_spec_text(mount)}{state}"
 
 
