@@ -1,29 +1,38 @@
 # First run
 
-The installation process has resulted in a running `msksd` systemd user
-service.
+After the installation process has resulted in a running `msksd` systemd user
+service, it's ready to use.
 
-To see status and log output, from the account the daemon runs as (the service
-is a systemd user unit, lingered so it survives logout):
+On Linux, to see status and log output, from the account the daemon runs as
+(the service is a systemd user unit):
 
 ```bash
   systemctl --user status msksd
   journalctl --user -u msksd -f          # follow the daemon's log
 ```
 
-When msksd is first started, it creates a state dir
-(`~/.local/state/msksd`). The `msksd.yaml` config file is generated within it
-as a commented template (see [Configuration](config.md)).
+On macOS, do the following (the daemon runs inside the Lima VM, as a
+systemd system unit):
 
-The unix listener binds `$XDG_RUNTIME_DIR/msks/msksd.sock`. Same-host clients
-connect through it on peer-credential authentication. A remote can, if
-configured, contact a TLS/https listener with a bearer token, but it is not
-configured by default.
+```bash
+  limactl shell msksd -- systemctl status msksd
+  limactl shell msksd -- sudo journalctl -u msksd -f   # follow the daemon's log
+```
+
+When msksd is first started on Linux (or within the Lima VM that runs Linux on
+Mac), it creates a state dir (`~/.local/state/msksd`). The `msksd.yaml` config
+file is generated within it as a commented template (see
+[Configuration](config.md)).
+
+The unix listener binds `$XDG_RUNTIME_DIR/msks/msksd.sock`. Same-host Linux
+clients connect through it on peer-credential authentication. A remote can, if
+configured, contact a TLS/https listener with a bearer token. That's how it
+works on macOS.
 
 With the host prepared, the service lingered, and an image imported, invoking
 the `msks` (the client) on the same account will find the socket.
 
-## The identity file
+## The key files
 
 Every workspace msks uses your public ssh key as the workspace's operator
 identity.
@@ -41,12 +50,12 @@ The client names the key in its YAML file
 (`~/.config/msks/msks.yaml`) or its environment, with two keys:
 
 ```yaml
-identity_file: ~/.ssh/id_ed25519 # the private half, read in place
-pubkey_file: ~/.ssh/id_ed25519.pub # the public half alone
+identity_file: ~/.ssh/id_ed25519 # the private half
+pubkey_file: ~/.ssh/id_ed25519.pub # the public half
 ```
 
-If your identity is in your ssh agent, you needn't specify the `identity-file`,
-just the pubkey_file.
+If your identity is typically in your ssh agent, you needn't specify the
+`identity-file`, just the pubkey_file.
 
 ### `identity_file`: the private half
 
@@ -89,7 +98,9 @@ agent, so `ssh-add` the key in the shell you run msks from. An agent holding
 the key makes the sessions work with the private half never read from disk.
 A shell whose agent does not hold it leaves the workspace's key auth without
 an answer, and `msks ssh` exits with a line saying the identity resolves
-nowhere. The console route still works.
+nowhere.
+
+`msks console` will wok to access a wokspace if you've lost your key.
 
 ### Where the private half lives at runtime
 
