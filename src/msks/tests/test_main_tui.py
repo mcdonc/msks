@@ -1494,6 +1494,19 @@ def test_the_meta_budgets_fill_clipped_fields_in_order() -> None:
     assert rows_mod.meta_budgets(wide_row, fixed - 10) == (8, 14, 8)
     # Enough spare reads every field whole.
     assert rows_mod.meta_budgets(wide_row, fixed + 60) == (16, 19, 34)
+    # A row with slack at the 80-column frame keeps the fixed
+    # minimums (#752's acceptance: the fixed layout belongs to
+    # the frame, not to the row) — the growth starts only past
+    # the frame.
+    short_row = {
+        **row(),
+        "id": "03c9d241ab",
+        "image_ref": "debian:13",
+        "host": "",
+    }
+    assert rows_mod.meta_budgets(short_row, 78) == (8, 14, 8)
+    assert "…" in rows_mod.header_meta(short_row, {}, 78).plain
+    assert "03c9d241ab" in rows_mod.header_meta(short_row, {}, 82).plain
 
 
 async def test_a_hold_arriving_pushes_nothing(monkeypatch) -> None:

@@ -930,7 +930,11 @@ class ConsentPage(Screen):
             id="header",
         )
         yield Static(
-            header_meta(self.host.row, self.app.theme_variables),
+            header_meta(
+                self.host.row,
+                self.app.theme_variables,
+                self.host.meta_width(),
+            ),
             id="header-meta",
         )
         with Vertical(id="consent-page"):
@@ -1303,7 +1307,11 @@ class ConsentPage(Screen):
                 )
             )
             self.query_one("#header-meta", Static).update(
-                header_meta(self.host.row, self.app.theme_variables)
+                header_meta(
+                    self.host.row,
+                    self.app.theme_variables,
+                    self.host.meta_width(),
+                )
             )
         except NoMatches:
             pass  # teardown unmounted a header line under the worker

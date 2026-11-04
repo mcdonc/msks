@@ -394,6 +394,14 @@ META_ID_W = 8
 META_IMAGE_W = 14
 META_HOST_W = 8
 
+#: The meta line's fixed frame (#752): the cells an 80-column
+#: terminal leaves the line after its own padding — at and under
+#: this budget every field keeps its fixed minimum whatever the
+#: row's own span (a row with slack at that width clips all the
+#: same), so an 80-column terminal renders exactly the fixed
+#: layout and only a wider one spends spare cells.
+META_FRAME_W = 78
+
 
 def image_cell(row: dict) -> str:
     """The meta line's image cell (#523): the catalog's
@@ -452,17 +460,18 @@ def widen_budgets(
 
 def meta_budgets(row: dict, available: int | None) -> tuple[int, int, int]:
     """The meta line's clip budgets (#470 S2, #752): the fixed
-    minimums while the line fits the available cells — a
-    terminal at or under 80 columns renders exactly the fixed
-    layout — and on a wider terminal the spare cells fill each
-    clipped field to its whole value, the id first, then the
-    image, then the host, so a wide terminal reads every field
-    whole."""
+    minimums at and under the 80-column frame (its span leaving
+    slack still clips — the fixed layout is the whole frame's,
+    not a row's), and on a wider terminal the spare cells fill
+    each clipped field to its whole value, the id first, then
+    the image, then the host, so a wide terminal reads every
+    field whole."""
     minimums = (META_ID_W, META_IMAGE_W, META_HOST_W)
-    if available is None:
+    if available is None or available <= META_FRAME_W:
         return minimums
     fixed = [clip(raw, width) for raw, width in zip(meta_raw(row), minimums)]
-    spare = available - cell_len(meta_text((*fixed, meta_created(row))))
+    frame = cell_len(meta_text((*fixed, meta_created(row))))
+    spare = max(0, available - max(META_FRAME_W, frame))
     return widen_budgets(meta_raw(row), minimums, spare)
 
 
