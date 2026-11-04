@@ -950,20 +950,27 @@ workspaces, for navigation.</p>
 <p><img alt="The workspace page: header, consent line, the three action groups" src="../screens/workspace-page.svg" /></p>
 <p>The <strong>workspace page</strong> operates on an already-created workspace. Its
 two-line header: the workspace's name on the first line with its status
-beside it, in the state's color, then the id, image hash, host, and
-created date.</p>
-<p>Below it, a status line for egress consent shows the mode and one
-granted scope with its expiry. Two or more grants show as a count with
-the nearest expiry (<code>5 grants · next expires 4h</code>). Grant details are
+beside it, in the state's color, then the id, image, host, and
+created date on the second. At an 80-column terminal the meta line
+clips each field to a fixed budget; a wider terminal shows every
+field whole.</p>
+<p>Below the header, two status lines share one shape: a muted label,
+then the value. The consent line shows the mode and one granted
+scope with its expiry. Two or more grants show as a count with the
+nearest expiry (<code>5 grants · next expires 4h</code>). Grant details are
 listed on the workspace's egress consent screen.</p>
-<p>When the workspace mounts host shares, a mounts line follows: one entry
-per mount (<code>projects:/mnt/projects:rw</code>), with derived state beside any
-mount the daemon holds unresolved (<code>refs:/srv/refs:ro (skipped)</code>), and
-a note when a change applies at the next start. The line repaints with
-the page's per-second read, so a change made anywhere reaches the page.</p>
-<p>The page's actions come in three groups: a shell; egress consent, an
-edit dialog for the sizes and topology, and the mounts editor; and
-start and stop.</p>
+<p>When the workspace mounts host shares, a mounts line follows the
+same shape: one entry per mount (<code>projects:/mnt/projects:rw</code>), a
+skipped mount's kind beside its spec (<code>refs:/srv/refs:ro ·
+skipped</code>), and a trailing <code>applies at next start</code> note. The line
+repaints with the page's per-second read, so a change made anywhere
+reaches the page.</p>
+<p>The page's actions sit in a framed panel with a muted caption above
+each group. The <code>use</code> group holds a shell; <code>configure</code> holds egress
+consent, an edit dialog for the sizes and topology, and the mounts
+editor; <code>power</code> holds start and stop. Bold names the action the
+workspace's status invites; the highlight bar and a marker name the
+row Enter acts on.</p>
 <p>The <strong>mounts editor</strong> shows the workspace's mounts one row each, in the
 CLI's <code>HOST_PATH:GUEST_PATH:MODE</code> grammar with the mode always shown.
 <code>a</code> adds a row (a single-line input), Enter edits the focused row
