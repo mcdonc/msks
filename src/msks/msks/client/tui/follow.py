@@ -7,6 +7,7 @@ of their own.
 """
 
 import asyncio
+import logging
 import os
 import sys
 
@@ -19,11 +20,14 @@ from ..wintitle import TITLE_MARKER
 
 #: The full-terminal flows a page can record (#309): the
 #: same-terminal ssh session the shell action takes by default
-#: (#562), and the console shell — the ssh refusal's fallback and
-#: the dead-launcher fallback before it. The consent decider
-#: stopped chaining when it moved into the tree (#358).
+#: (#562), and the console shell — the dead-launcher fallback
+#: (a configured launcher that cannot start runs the console in
+#: this terminal instead). The consent decider stopped chaining
+#: when it moved into the tree (#358).
 FLOW_SSH = "ssh"
 FLOW_SHELL = "shell"
+
+logger = logging.getLogger(__name__)
 
 
 class TuiFollow:
@@ -86,17 +90,17 @@ def run_ssh_flow(workspace_id: str) -> str | None:
     """An ssh session in the TUI's own terminal (#562): the tree
     exited for this flow, ssh runs where it stood, and the tree
     restarts when the session hands the terminal back. A refusal
-    the probe names — no NIC, not running, the service not
-    listening, an identity the daemon rejected — takes the
-    console one step later and returns the note the restarted
-    tree flashes (the console is the failsafe; ssh is the
-    interactive path, and a refusal the operator can read rides
-    along — its first line, the flash's one row). An ssh that ran
-    reports only its exit code — 255 included, since ssh hands a
-    session's own exit through unchanged and a console after a
-    finished session is a surprise, not a fallback; a console
-    that refuses too raises on: the outer loop flashes that
-    reason."""
+    — the probe's (no NIC, not running, the service not
+    listening, an identity the daemon rejected), or one the ssh
+    run raises itself (ssh missing from PATH, an identity
+    setting that points nowhere) — opens nothing in the
+    session's place (#748): the full refusal is logged, and the
+    note the restarted tree flashes puts the ``msks console``
+    suggestion first and the refusal's first line after it (the
+    flash's one row ellipsizes at its end, and the suggestion is
+    the part the operator acts on). An ssh that ran reports only
+    its exit code — 255 included, since ssh hands a session's
+    own exit through unchanged."""
     try:
         ensure_forward(workspace_id)
         code = run_workspace_ssh(workspace_id, [])
@@ -104,9 +108,12 @@ def run_ssh_flow(workspace_id: str) -> str | None:
             return None
         return f"ssh exited {code}"
     except SystemExit as exc:
-        reason = first_line(str(exc))
-        run_shell_flow(workspace_id)
-        return f"ssh refused ({reason}) — the console session ran instead"
+        logger.warning(
+            "msks ssh refused for %s:\n%s",
+            workspace_id,
+            str(exc).strip() or "refused",
+        )
+        return f"ssh refused — try msks console ({first_line(str(exc))})"
 
 
 def ssh_child_argv(workspace_id: str) -> list[str]:

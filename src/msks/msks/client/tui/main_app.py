@@ -56,8 +56,8 @@ def require_terminal() -> None:
 def land_flow(follow: TuiFollow, action: tuple[str, str]) -> None:
     """Run one recorded flow and land its answer on the follow
     queue: a note the flow answers becomes the restarted tree's
-    first flash (the ssh flow's fallback names why ssh stood
-    down), and a refusal's SystemExit reason lands the same way
+    first flash (the ssh flow's refusal note names why no
+    session ran), and a refusal's SystemExit reason lands the same way
     (it prints nowhere until the interpreter's top level, which
     the restart would eat). Real exceptions (bugs) still surface."""
     try:

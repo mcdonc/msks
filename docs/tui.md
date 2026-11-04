@@ -212,8 +212,11 @@ ssh carries every resize to the guest. A workspace ssh cannot reach (no
 NIC, no identity configured) takes a longer path. The flow boots a
 stopped workspace first (the ssh session it runs boots it itself) and
 probes the forward. A probe that reports a refusal (no NIC, the service
-not listening) falls back to a `msks console` session one step later,
-and the tree's first flash explains why ssh stood down.
+not listening) opens no session: the tree's first flash leads with the
+`msks console` suggestion and follows with the refusal's first line. The
+row ellipsizes at its end, so the suggestion stays visible. The full
+refusal text is logged before the tree restarts. The console stays a
+command you choose to run, not a session the flow opens for you.
 
 An ssh session that ran reports only its exit code, 255 included: ssh
 passes a session's own exit through unchanged, and a console after a

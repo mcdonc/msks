@@ -260,7 +260,7 @@ def action_content(
 #: breathing room between the status lines and the actions.
 PAGE_ACTIONS = (
     PageAction(
-        ACTION_SHELL_WINDOW, "Open a shell", "ssh; console as fallback", True
+        ACTION_SHELL_WINDOW, "Open a shell", "ssh in this terminal", True
     ),
     PageAction(
         ACTION_CONSENT,
@@ -732,8 +732,10 @@ class WorkspaceScreen(Screen):
         connect while ssh carries the terminal's resizes — and the
         tree restarts when the session hands the terminal back; a
         forward the flow's probe names unreachable — or an ssh
-        that fails to connect — falls back to the console one step
-        later (the flow's own rule). A configured terminal
+        that fails to connect — opens nothing in the session's
+        place (#748): the restart's flash leads with the
+        ``msks console`` suggestion and follows with the refusal's
+        first line, and the full refusal is logged. A configured terminal
         launcher (``terminal_open_cmd``) opens windows beside the
         running tree instead: the launcher runs the ssh invocation
         as its child, which inherits the tree's materialized
