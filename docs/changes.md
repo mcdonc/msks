@@ -112,6 +112,13 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The Linux host setups link `msks-term-popup` beside `msks`
+  (#755).** `msks-setup-debian-host` and `msks-setup-fedora-host`
+  now land a `/usr/local/bin/msks-term-popup` symlink beside the
+  `msks` link, so a `terminal_open_cmd` window resolves the
+  consent-terminal launcher on its own PATH; `--uninstall`
+  removes both links.
+
 - **The listings' columns widen with the terminal (#749).** The
   workspaces list and the secrets page now grow their columns when the
   terminal runs wider than 80 columns: the name and image columns (the

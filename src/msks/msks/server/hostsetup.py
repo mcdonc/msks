@@ -54,11 +54,14 @@ host's own architecture, and the landed binary answers
 ``--version`` before the run calls it landed; a present binary
 stays untouched. The phase runs last, so a host whose egress
 passes the Debian mirror but not github.com still finishes
-every other piece. The client's console script links at
-``/usr/local/bin/msks`` — the bin sibling this tool's own venv
-ships, on every login PATH (#719); a path already holding a
-live link or a regular file refuses by name, and a dangling
-link re-points. /dev/kvm access arrives through the kvm
+every other piece. The client's console scripts link at
+``/usr/local/bin`` (#719, #755) — ``msks`` and, beside it,
+``msks-term-popup``, the consent-terminal launcher a
+GUI-opened window resolves on its own PATH — each pointing at
+the bin sibling this tool's own venv ships, on every login
+PATH; a path already holding a live link or a regular file
+refuses by name, and a dangling link re-points. /dev/kvm access
+arrives through the kvm
 group on the daemon's user, the same supplementary-group grant the
 NixOS unit makes — the tool adds the executing user to the group
 when missing (#560; bare runs and new logins need it on the
@@ -76,7 +79,7 @@ all, because no manager means no daemon), then the unit file
 and its enablement symlink, the sysctl and
 modules files leave (``sysctl --system`` re-applies every
 remaining sysctl.d file, so a second owner's setting survives),
-the wrapper, the client link, the kvm membership (the tool
+the wrapper, the client links, the kvm membership (the tool
 keeps no state, so any member leaves — the line names the
 restore), the ``~/.profile`` block, and the cloud-hypervisor
 binary — while
@@ -130,11 +133,22 @@ DEBIAN_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 WRAPPER = "/usr/local/bin/msks-caps"
 
-#: Where the client's console script links (#719): the
+#: Where the client's console scripts link (#719, #755): the
 #: /usr/local/bin real estate the wrapper and the VMM already
-#: occupy — on every login PATH, so the link needs no profile
+#: occupy — on every login PATH, so the links need no profile
 #: edits and no login-shell gamble over ~/.local/bin.
 CLIENT_LINK = "/usr/local/bin/msks"
+POPUP_LINK = "/usr/local/bin/msks-term-popup"
+
+#: The client's console commands the link phase lands (#719,
+#: #755): the client for every shell, and the consent-terminal
+#: launcher beside it — the command a GUI-opened terminal window
+#: resolves on its own PATH, the fresh-PATH rule the macOS tool
+#: links both commands for (#734).
+CLIENT_LINKS = (
+    ("msks", CLIENT_LINK),
+    ("msks-term-popup", POPUP_LINK),
+)
 CAPS = "cap_net_admin,cap_net_bind_service"
 SYSCTL_FILE = "/etc/sysctl.d/msks-egress.conf"
 MODULES_FILE = "/etc/modules-load.d/msks.conf"
@@ -1151,36 +1165,49 @@ def claim_link(path: str, sibling: str, error) -> str:
 
 
 def link_client() -> str:
-    """The client's console script onto every login PATH (#719):
-    a symlink at /usr/local/bin/msks — the real estate the
-    wrapper and the VMM already occupy, so no profile edits and
-    no login-shell gamble — pointing at the bin sibling this
-    tool's own venv ships. No sibling stands the phase down
-    with a note (the deployment runs its client from elsewhere —
-    invoked_as()'s reasoning again); the arms at the path are
-    :func:`claim_link`'s."""
-    sibling = bin_sibling("msks")
-    if sibling is None:
-        return (
-            "skipped: no msks beside the tool (the deployment's "
-            "client lives elsewhere)"
-        )
-    return claim_link(CLIENT_LINK, sibling, HostSetupError)
+    """The client's console scripts onto every login PATH (#719,
+    #755): a symlink per command (:data:`CLIENT_LINKS`) — ``msks``
+    for every shell and ``msks-term-popup`` beside it, the
+    consent-terminal launcher a GUI-opened window resolves on its
+    own PATH — into /usr/local/bin, the real estate the wrapper
+    and the VMM already occupy, so no profile edits and no
+    login-shell gamble. Each command points at the bin sibling
+    this tool's own venv ships; a command with no sibling stands
+    down with a note (the deployment runs its client from
+    elsewhere — invoked_as()'s reasoning again); the arms at each
+    path are :func:`claim_link`'s."""
+    notes = []
+    for name, path in CLIENT_LINKS:
+        sibling = bin_sibling(name)
+        if sibling is None:
+            notes.append(
+                f"skipped: no {name} beside the tool (the "
+                "deployment's client lives elsewhere)"
+            )
+            continue
+        notes.append(claim_link(path, sibling, HostSetupError))
+    return " · ".join(notes)
 
 
 def drop_client_link() -> str:
-    """The client link's mirror (#719): the symlink goes
+    """The client links' mirror (#719, #755): each symlink goes
     whatever it pointed at (the tool proves no run's own link),
-    and a regular file at the path stays — the uninstall never
+    and a regular file at a path stays — the uninstall never
     removes an operator's own file."""
-    link = Path(CLIENT_LINK)
-    if link.is_symlink():
-        target = os.readlink(CLIENT_LINK)
-        link.unlink()
-        return f"{CLIENT_LINK} removed (pointed at {target})"
-    if link.exists():
-        return f"{CLIENT_LINK} is a file the tool did not land (left as-is)"
-    return f"{CLIENT_LINK} already absent"
+    notes = []
+    for _name, path in CLIENT_LINKS:
+        link = Path(path)
+        if link.is_symlink():
+            target = os.readlink(path)
+            link.unlink()
+            notes.append(f"{path} removed (pointed at {target})")
+        elif link.exists():
+            notes.append(
+                f"{path} is a file the tool did not land (left as-is)"
+            )
+        else:
+            notes.append(f"{path} already absent")
+    return " · ".join(notes)
 
 
 def systemd_manages() -> bool:

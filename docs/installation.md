@@ -157,22 +157,24 @@ the unit changed.
 
 **Cloud Hypervisor's static release binary**. So guest VMs can be started.
 
-**The client link.** `/usr/local/bin/msks` — a symlink to the
-`msks` console script that shipped beside the setup tool,
-landing in the same directory the wrapper and the VMM binary
-occupy. Every login shell carries `/usr/local/bin`, so a bare
-`msks` answers for every user on the host with no profile
-edits. A regular file or a live link to another target at the
-path refuses by name (the run never clobbers what it did not
-land); a dangling link re-points (stale by definition);
-`--uninstall`
-removes it.
+**The client links.** `/usr/local/bin/msks` and
+`/usr/local/bin/msks-term-popup` — symlinks to the console
+scripts that shipped beside the setup tool, landing in the same
+directory the wrapper and the VMM binary occupy. Every login
+shell carries `/usr/local/bin`, so a bare `msks` answers for
+every user on the host with no profile edits, and a
+GUI-opened terminal window resolves the consent-terminal
+launcher on its own PATH. A regular file or a live link to
+another target at a path refuses by name (the run never clobbers
+what it did not land); a dangling link re-points (stale by
+definition); `--uninstall`
+removes both.
 
 **PATH manipulation.** Adds `/usr/sbin` to the sudoing user's `PATH` so various
 binaries can be found.
 
 The run ends with a summary: the wrapper and its caps, the sysctl, the modules
-file, the tools' paths, `/dev/kvm`, the login PATH block, the client link, the
+file, the tools' paths, `/dev/kvm`, the login PATH block, the client links, the
 consent verdict, the detected uplink, and the service line.
 
 You will need to log out and back in for `msksd doctor` to return clean after

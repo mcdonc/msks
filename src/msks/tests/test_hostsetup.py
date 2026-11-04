@@ -147,6 +147,7 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     bin_dir.mkdir()
     (bin_dir / "msksd").write_text("#!/bin/sh\n")
     (bin_dir / "msks").write_text("#!/bin/sh\n")
+    (bin_dir / "msks-term-popup").write_text("#!/bin/sh\n")
     monkeypatch.setattr(
         hostsetup.sys, "argv", [str(bin_dir / "msks-setup-debian-host")]
     )
@@ -190,11 +191,22 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(
         hostsetup, "CLOUD_HYPERVISOR_BIN", str(tmp_path / "cloud-hypervisor")
     )
-    # The client link's path (#719): under tmp_path, like the
-    # VMM's — the phase's real symlink never reaches the host's
-    # /usr/local/bin.
+    # The client links' paths (#719, #755): under tmp_path, like
+    # the VMM's — the phase's real symlinks never reach the
+    # host's /usr/local/bin.
     monkeypatch.setattr(
         hostsetup, "CLIENT_LINK", str(tmp_path / "client" / "msks")
+    )
+    monkeypatch.setattr(
+        hostsetup, "POPUP_LINK", str(tmp_path / "client" / "msks-term-popup")
+    )
+    monkeypatch.setattr(
+        hostsetup,
+        "CLIENT_LINKS",
+        (
+            ("msks", hostsetup.CLIENT_LINK),
+            ("msks-term-popup", hostsetup.POPUP_LINK),
+        ),
     )
     (tmp_path / "client").mkdir()
     monkeypatch.setattr(hostsetup, "OS_RELEASE", str(release))
@@ -2268,22 +2280,33 @@ def test_uninstall_sweeps_the_part_sibling(
 def test_the_client_link_lands_idempotently(
     debian_host: Host, capsys: pytest.CaptureFixture
 ) -> None:
-    """#719: the run links the client's console script into
-    /usr/local/bin — fresh, then already-linked on the re-run —
-    and the summary carries the line."""
+    """#719, #755: the run links the client's console scripts into
+    /usr/local/bin — ``msks`` and ``msks-term-popup`` beside it —
+    fresh, then already-linked on the re-run, and the summary
+    carries the line."""
     assert main() == 0
     link = Path(hostsetup.CLIENT_LINK)
+    popup = Path(hostsetup.POPUP_LINK)
     assert link.is_symlink()
     assert link.resolve() == Path(sys.argv[0]).resolve().parent / "msks"
+    assert popup.is_symlink()
+    assert (
+        popup.resolve()
+        == Path(sys.argv[0]).resolve().parent / "msks-term-popup"
+    )
     out = capsys.readouterr().out
     assert "client:    " in out and "-> " in out
     assert main() == 0
-    assert "already linked" in capsys.readouterr().out
-    # The uninstall mirror removes it, and a second sweep names
-    # its absence.
+    assert capsys.readouterr().out.count("already linked") == 2
+    # The uninstall mirror removes both, and a second sweep names
+    # their absence.
     assert main(["--uninstall"]) == 0
-    assert not link.exists()
-    assert "already absent" in capsys.readouterr().out
+    assert not link.exists() and not popup.exists()
+    assert capsys.readouterr().out.count("removed (pointed at") == 2
+    assert main(["--uninstall"]) == 0
+    out = capsys.readouterr().out
+    assert f"{hostsetup.CLIENT_LINK} already absent" in out
+    assert f"{hostsetup.POPUP_LINK} already absent" in out
 
 
 def test_the_client_link_repoints_a_dangling_link(
@@ -2294,8 +2317,14 @@ def test_the_client_link_repoints_a_dangling_link(
     name should follow)."""
     link = Path(hostsetup.CLIENT_LINK)
     link.symlink_to("/no/such/venv/bin/msks")
+    popup = Path(hostsetup.POPUP_LINK)
+    popup.symlink_to("/no/such/venv/bin/msks-term-popup")
     assert main() == 0
     assert link.resolve() == Path(sys.argv[0]).resolve().parent / "msks"
+    assert (
+        popup.resolve()
+        == Path(sys.argv[0]).resolve().parent / "msks-term-popup"
+    )
 
 
 def test_a_foreign_thing_at_the_link_path_refuses(
@@ -2327,12 +2356,14 @@ def test_no_client_sibling_stands_the_phase_down(
     debian_host: Host,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    """A deployment whose bin dir ships no msks beside the tool
-    skips the phase with the note — the service phase's
-    invoked_as reasoning, the client's shape."""
+    """A deployment whose bin dir ships no client beside the tool
+    skips each command's phase with the note — the service
+    phase's invoked_as reasoning, the client's shape."""
     monkeypatch.setattr(hostsetup, "bin_sibling", lambda name: None)
     assert main() == 0
-    assert "no msks beside the tool" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "no msks beside the tool" in out
+    assert "no msks-term-popup beside the tool" in out
 
 
 def test_an_unstatable_link_reads_live(
