@@ -82,6 +82,14 @@ tagged `vX.Y.Z`.
   follows with the refusal's first line; the full refusal is
   logged. The action's hint reads "ssh in this terminal".
 
+- **TUI workspace page (#752).** The action list sits in a framed
+  panel with a muted caption above each group (use, configure,
+  power), the consent and mounts lines share one label-column
+  grammar with `·` joins, and the header's meta line widens its
+  budgets on a wide terminal so the id, image, and host read
+  whole. Bold now marks the primary action alone; the highlight
+  bar and the marker name the focused row.
+
 - **`msks-setup-macos-host` keeps an existing client config
   (#730).** The tool writes `~/.config/msks/msks.yaml` only when
   the file is missing; an existing file stays byte-for-byte,

@@ -394,6 +394,14 @@ META_ID_W = 8
 META_IMAGE_W = 14
 META_HOST_W = 8
 
+#: The meta line's fixed frame (#752): the cells an 80-column
+#: terminal leaves the line after its own padding — at and under
+#: this budget every field keeps its fixed minimum whatever the
+#: row's own span (a row with slack at that width clips all the
+#: same), so an 80-column terminal renders exactly the fixed
+#: layout and only a wider one spends spare cells.
+META_FRAME_W = 78
+
 
 def image_cell(row: dict) -> str:
     """The meta line's image cell (#523): the catalog's
@@ -401,48 +409,137 @@ def image_cell(row: dict) -> str:
     — with the row's digest as the fallback for a row the catalog
     cannot resolve (a pruned image, a row older than the hash).
     The digest prefix names nothing an operator can act on."""
-    return clip(
-        row.get("image_ref") or row.get("image_hash") or "-", META_IMAGE_W
-    )
+    return clip(meta_raw(row)[1], META_IMAGE_W)
 
 
-def meta_fields(row: dict) -> tuple[str, str, str, str]:
-    """The meta line's fields, each clipped to its budget (#470
-    S2): the immutable id, the image, the host, and the created
-    date — each with its honest fallback for a row that predates
-    it. The image reads the catalog reference (#523): the
-    ``name:version`` the listing's IMAGE column shows, the row's
-    digest only when the catalog cannot resolve it (a pruned
-    image) — the digest prefix names nothing an operator can act
-    on."""
-    created = (row.get("created_at") or "")[:10]
+def meta_raw(row: dict) -> tuple[str, str, str]:
+    """The meta line's three clipped fields' raw values: the
+    immutable id, the image (the catalog reference, the row's
+    digest as its fallback), and the host — each with its honest
+    fallback for a row that predates it."""
     return (
-        clip(row["id"], META_ID_W),
-        image_cell(row),
-        clip(row.get("host") or "-", META_HOST_W),
-        created or "-",
+        row["id"],
+        row.get("image_ref") or row.get("image_hash") or "-",
+        row.get("host") or "-",
     )
 
 
-def header_meta(row: dict, theme_variables: dict | None = None) -> Content:
-    """The header's second line (#351, #470 S2, #523): the
+def meta_text(cells: tuple[str, str, str, str]) -> str:
+    """The meta line's text from its four cells."""
+    wid, image, host, created = cells
+    return f" id {wid}  ·  image {image}  ·  host {host}  ·  created {created}"
+
+
+def meta_created(row: dict) -> str:
+    """The meta line's created cell: the stamp's date, or the
+    honest dash for a row that predates it."""
+    return (row.get("created_at") or "")[:10] or "-"
+
+
+def grow_budget(raw: str, width: int, spare: int) -> tuple[int, int]:
+    """One meta field's widened budget (#752): the spare cells
+    fill the field to its whole value, what remains of the spare
+    handed back for the next field."""
+    give = min(max(0, cell_len(raw) - width), max(0, spare))
+    return width + give, spare - give
+
+
+def widen_budgets(
+    raw: tuple[str, str, str],
+    minimums: tuple[int, int, int],
+    spare: int,
+) -> tuple[int, int, int]:
+    """The minimums with the spare spent (#752): each clipped
+    field fills to its whole value in order, what remains of the
+    spare handed along to the next."""
+    widths = list(minimums)
+    for index in range(len(widths)):
+        widths[index], spare = grow_budget(raw[index], widths[index], spare)
+    return (widths[0], widths[1], widths[2])
+
+
+def meta_budgets(row: dict, available: int | None) -> tuple[int, int, int]:
+    """The meta line's clip budgets (#470 S2, #752): the fixed
+    minimums at and under the 80-column frame (its span leaving
+    slack still clips — the fixed layout is the whole frame's,
+    not a row's), and on a wider terminal the spare cells fill
+    each clipped field to its whole value, the id first, then
+    the image, then the host, so a wide terminal reads every
+    field whole."""
+    minimums = (META_ID_W, META_IMAGE_W, META_HOST_W)
+    if available is None or available <= META_FRAME_W:
+        return minimums
+    # Past the frame the whole budget is spare: the fixed span
+    # rides the frame's own 78 cells, whatever the row's fields
+    # clip to.
+    return widen_budgets(meta_raw(row), minimums, available - META_FRAME_W)
+
+
+def meta_fields(
+    row: dict, available: int | None = None
+) -> tuple[str, str, str, str]:
+    """The meta line's fields, each clipped to its budget (#470
+    S2, #752): the immutable id, the image, the host, and the
+    created date. The image reads the catalog reference (#523):
+    the ``name:version`` the listing's IMAGE column shows, the
+    row's digest only when the catalog cannot resolve it (a
+    pruned image) — the digest prefix names nothing an operator
+    can act on."""
+    widths = meta_budgets(row, available)
+    raw = meta_raw(row)
+    return (
+        clip(raw[0], widths[0]),
+        clip(raw[1], widths[1]),
+        clip(raw[2], widths[2]),
+        meta_created(row),
+    )
+
+
+def header_meta(
+    row: dict,
+    theme_variables: dict | None = None,
+    available: int | None = None,
+) -> Content:
+    """The header's second line (#351, #470 S2, #523, #752): the
     immutable id, the image (the catalog reference, the digest as
     its fallback), the host, and the created date — every field
-    clipped to its own budget so the line fits an 80-column
-    terminal with the date whole. The page paints the line muted,
-    and its ``·`` separators carry the same muted span style the
-    name line gives the status (#366): a theme variable the
-    render resolves, the one expression both header lines' muted
-    accents share. The fields ride a Content's plain text (the
-    name line's rule — no escaping)."""
-    wid, image, host, created = meta_fields(row)
-    text = f" id {wid}  ·  image {image}  ·  host {host}  ·  created {created}"
+    clipped to a budget that holds the line inside an 80-column
+    terminal with the date whole, and widens on a wider one
+    (:func:`meta_budgets`) until every field reads whole. The
+    page paints the line muted, and its ``·`` separators carry
+    the same muted span style the name line gives the status
+    (#366): a theme variable the render resolves, the one
+    expression both header lines' muted accents share. The
+    fields ride a Content's plain text (the name line's rule —
+    no escaping)."""
+    text = meta_text(meta_fields(row, available))
     style = muted_style(theme_variables or {})
     spans = [
         Span(mark.start(), mark.end(), style)
         for mark in re.finditer("·", text)
     ]
     return Content(text, spans)
+
+
+#: The workspace page's status lines' label column (#752): the
+#: consent and mounts lines share one grammar — the label muted
+#: in a fixed column, the value beside it in the page's own
+#: foreground, one ``·`` between the value's parts.
+STATUS_LABEL_W = 8
+
+
+def status_line(
+    label: str, value: str, theme_variables: dict | None = None
+) -> Content:
+    """One status line's paint (#752): the label muted in the
+    fixed column, the value beside it — the one grammar the
+    workspace page's consent and mounts lines share. The value
+    rides a Content's plain text, so free text in it (a daemon
+    refusal, a mount path) cannot shift the span."""
+    pad = " " * max(1, STATUS_LABEL_W - len(label))
+    text = f" {label}{pad}{value}"
+    style = muted_style(theme_variables or {})
+    return Content(text, [Span(1, 1 + len(label) + len(pad), style)])
 
 
 #: The daemon URL's cell budget in the status line (#349): the

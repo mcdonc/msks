@@ -137,13 +137,16 @@ class MsksTuiApp(App):
     #header-meta { height: 1; padding: 0 1; background: $panel;
                    color: $text-muted; text-wrap: nowrap;
                    text-overflow: ellipsis; }
-    #consent { height: 1; padding: 0 1; color: $text-muted;
-               text-wrap: nowrap; text-overflow: ellipsis; }
+    #consent, #mounts { height: 1; padding: 0 1;
+                        text-wrap: nowrap;
+                        text-overflow: ellipsis; }
     #page { height: 1fr; align: center middle; }
     #actions { width: 64; height: auto; max-width: 100%;
-              max-height: 100%; }
+              max-height: 100%; background: $panel;
+              border: round $primary; padding: 1 2; }
     #actions ListItem { height: 1; padding: 0 1; }
-    #actions ListItem.group-lead { margin-top: 1; }
+    #actions ListItem.caption { color: $text-muted; }
+    #actions ListItem.caption.spaced { margin-top: 1; }
     #actions ListItem Static { text-wrap: nowrap;
                               text-overflow: ellipsis; }
     WorkspaceForm { align: center middle; }

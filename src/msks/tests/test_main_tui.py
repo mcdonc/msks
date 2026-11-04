@@ -470,10 +470,20 @@ def listing_settled(app) -> bool:
     return app.screen.focused_row() is not None
 
 
+def action_rows(app):
+    """The page's action rows — the group caption rows (#752)
+    excluded, so an index addresses the actions alone."""
+    return [
+        child
+        for child in app.screen.query_one("#actions").children
+        if "caption" not in child.classes
+    ]
+
+
 def action_children(app) -> int:
     """The workspace page's action count; -1 in a swap window."""
     try:
-        return len(app.screen.query_one("#actions").children)
+        return len(action_rows(app))
     except Exception:
         return -1
 
@@ -490,12 +500,7 @@ def action_text(app, index: int) -> str:
     """One action row's text; empty while its inner widget is
     still mounting."""
     try:
-        return str(
-            app.screen.query_one("#actions")
-            .children[index]
-            .query_one(Static)
-            .content
-        )
+        return str(action_rows(app)[index].query_one(Static).content)
     except Exception:
         return ""
 
@@ -1426,6 +1431,82 @@ async def test_the_page_centers_its_action_block(monkeypatch) -> None:
         below = page.region.bottom - actions.region.bottom
         assert abs(above - below) <= 1
         assert actions.region.bottom <= page.region.bottom
+        # The framed panel (#752): the list's own background and
+        # border ride the same width, and the caption rows sit
+        # inside the frame.
+        assert actions.styles.background.a == 1.0
+        assert str(actions.styles.border) != "none"
+        assert "caption" in actions.children[0].classes
+
+
+async def test_a_wider_terminal_widens_the_meta_line(monkeypatch) -> None:
+    """#752: the meta line's budgets follow the terminal's width
+    — a resize repaints the line at once, the whole id, image,
+    and host reading on the wider frame, the fixed clip back at
+    80 columns."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData(
+        [
+            {
+                **row(),
+                "id": "a1b2c3d4e5f6g7h8",
+                "image_ref": "debian-testing:13.6",
+                "host": "workstation-3.lab",
+            }
+        ]
+    )
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        meta = app.screen.query_one("#header-meta", Static)
+        assert "…" in str(meta.content)
+        await pilot.resize_terminal(120, 24)
+        await pilot.pause()
+        text = str(meta.content)
+        assert "a1b2c3d4e5f6g7h8" in text
+        assert "debian-testing:13.6" in text
+        assert "workstation-3.lab" in text
+        assert "…" not in text
+        await pilot.resize_terminal(80, 24)
+        await pilot.pause()
+        assert "…" in str(meta.content)
+
+
+def test_the_meta_budgets_fill_clipped_fields_in_order() -> None:
+    """#752: the spare cells beyond the fixed line fill each
+    clipped field to its whole value — the id first, then the
+    image, then the host — and a budget that cannot hold the
+    fixed line keeps the fixed minimums."""
+    wide_row = {
+        **row(),
+        "id": "a1b2c3d4e5f6g7h8",
+        "image_ref": "debian-testing:13.6",
+        "host": "workstation-3.lab.example.internal",
+    }
+    fixed = cell_len(rows_mod.meta_text(rows_mod.meta_fields(wide_row)))
+    # Two spare cells land on the id alone; the image and the
+    # host keep the fixed minimums.
+    assert rows_mod.meta_budgets(wide_row, fixed + 2) == (10, 14, 8)
+    # A budget at the fixed span holds the fixed layout; one
+    # under it keeps the minimums too (the frame clips beyond).
+    assert rows_mod.meta_budgets(wide_row, fixed) == (8, 14, 8)
+    assert rows_mod.meta_budgets(wide_row, fixed - 10) == (8, 14, 8)
+    # Enough spare reads every field whole.
+    assert rows_mod.meta_budgets(wide_row, fixed + 60) == (16, 19, 34)
+    # A row with slack at the 80-column frame keeps the fixed
+    # minimums (#752's acceptance: the fixed layout belongs to
+    # the frame, not to the row) — the growth starts only past
+    # the frame.
+    short_row = {
+        **row(),
+        "id": "03c9d241ab",
+        "image_ref": "debian:13",
+        "host": "",
+    }
+    assert rows_mod.meta_budgets(short_row, 78) == (8, 14, 8)
+    assert "…" in rows_mod.header_meta(short_row, {}, 78).plain
+    assert "03c9d241ab" in rows_mod.header_meta(short_row, {}, 82).plain
 
 
 async def test_a_hold_arriving_pushes_nothing(monkeypatch) -> None:
@@ -1446,6 +1527,28 @@ async def test_a_hold_arriving_pushes_nothing(monkeypatch) -> None:
         assert on_page(app)  # the hold pushed nothing
         assert "press e" in consent_text(app)
         assert page.pending_count() == 1
+
+
+async def test_the_consent_pages_header_widens_with_the_terminal(
+    monkeypatch,
+) -> None:
+    """#752: the consent page paints the same two-line header, and
+    its meta line follows the terminal's width like the page
+    beneath it — the whole id on a wider frame, the fixed clip
+    back at 80 columns."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([{**row(), "id": "a1b2c3d4e5f6g7h8"}])
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 6)
+        await press_until(pilot, "e", lambda: on_consent(app))
+        meta = app.screen.query_one("#header-meta", Static)
+        assert "…" in str(meta.content)
+        await pilot.resize_terminal(120, 24)
+        await wait_for(lambda: "a1b2c3d4e5f6g7h8" in str(meta.content))
+        await pilot.resize_terminal(80, 24)
+        await wait_for(lambda: "…" in str(meta.content))
 
 
 async def test_the_consent_action_opens_the_page_by_hand(
@@ -2590,6 +2693,26 @@ def test_the_line_helpers() -> None:
     # The whole line fits an 80-column terminal's padding with
     # the date whole (#470 S2).
     assert cell_len(long_meta.rstrip()) <= 78
+    # A wider terminal spends its spare cells on the clipped
+    # fields (#752): the id, the image, and the host read whole —
+    # and a budget that cannot hold the fixed line keeps the
+    # fixed minimums, the exact layout an 80-column terminal
+    # renders.
+    wide_row = {
+        **row(),
+        "id": "a1b2c3d4e5f6g7h8",
+        "image_ref": "debian-testing:13.6",
+        "host": "workstation-3.lab.example.internal",
+    }
+    wide = rows_mod.header_meta(wide_row, {}, available=120).plain
+    assert "a1b2c3d4e5f6g7h8" in wide
+    assert "debian-testing:13.6" in wide
+    assert "workstation-3.lab.example.internal" in wide
+    assert "…" not in wide
+    assert (
+        rows_mod.header_meta(wide_row, {}, available=78).plain
+        == rows_mod.header_meta(wide_row).plain
+    )
 
     # The listing's display order (#470 L1): newest creation
     # first, a stamp that does not parse sinks to the end in the
@@ -3268,23 +3391,20 @@ def test_the_consent_line_names_a_rejection() -> None:
     link = DeciderLink(WS)
     link.state = link_mod.REJECTED
     link.reject_reason = "unknown workspace"
-    assert "unknown workspace" in consent_line(link, row())
+    assert "unknown workspace" in consent_line(link, row()).plain
 
 
 def test_the_consent_line_parses_a_truncated_tag_in_the_reason() -> None:
-    """A rejection reason carrying a truncated closing tag parses
-    clean where the line lands — the workspace page's #consent
-    Static parses markup at update time, and the timer's repaint
-    feeds it the raw reason; a bare [/ would raise there and kill
-    the app mid-tick (#476, #318's rule)."""
-    from textual.content import Content
-
+    """A rejection reason carrying a truncated closing tag lands
+    clean where the line goes — the workspace page's #consent
+    Static renders the line as a Content whose plain text never
+    parses markup (#752 carried #318's rule from the markup era:
+    a bare [/ would raise there and kill the app mid-tick)."""
     link = DeciderLink(WS)
     link.state = link_mod.REJECTED
     link.reject_reason = "unknown workspace [/dev"
     line = consent_line(link, row())
-    Content.from_markup(line)  # parses, no MarkupError
-    assert "unknown workspace" in line
+    assert "unknown workspace [/dev" in line.plain  # plain, no parse
 
 
 def test_the_consent_line_names_an_unusable_token() -> None:
@@ -3294,7 +3414,7 @@ def test_the_consent_line_names_an_unusable_token() -> None:
     link = DeciderLink(WS)
     link.state = link_mod.UNUSABLE_TOKEN
     link.reject_reason = "the token cannot ride the websocket handshake"
-    assert "cannot ride" in consent_line(link, row())
+    assert "cannot ride" in consent_line(link, row()).plain
 
 
 def grant_row(
@@ -3536,9 +3656,11 @@ async def test_the_swap_windows_self_heal(monkeypatch) -> None:
         page = await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 6)
         # Tear the action list away: the next sync rebuilds it, and
-        # the paint paths swallow the missing widgets.
+        # the paint paths swallow the missing widgets. The torn row
+        # is an action row (the caption rows stand outside the
+        # paint walk).
         actions = page.query_one("#actions")
-        await actions.children[0].query_one(Static).remove()
+        await action_rows(app)[0].query_one(Static).remove()
         page.paint_actions()  # swallowed: a row lost its Static
         await actions.remove()
         await page.query_one("#header").remove()
@@ -3572,8 +3694,9 @@ async def test_a_rebuild_over_a_standing_list_keeps_focus(
         await pilot.pause()
         rows = page.actions_widget()
         assert rows is not None and rows is not before  # a fresh list
-        assert rows.index == 2  # the focused row kept by its key
+        assert rows.index == 4  # the edit row kept by its key
         assert "Edit settings" in action_text(app, 2)
+        assert not rows.children[rows.index].disabled  # never a caption
 
 
 async def test_a_bare_listing_read_in_a_swap_window(monkeypatch) -> None:
@@ -3763,34 +3886,46 @@ async def test_the_focused_row_carries_the_marker(monkeypatch) -> None:
         assert page_actions(app) is before  # repainted, not rebuilt
 
 
-def test_the_groups_lead_rows_carry_the_class() -> None:
-    """#367: the three groups' lead rows — use, configure, power
-    — carry the class that paints the separating margin."""
+def test_the_groups_captions_paint_above_each_tier() -> None:
+    """#752: the three groups — use, configure, power — each carry
+    a muted caption row above their actions, and the captions
+    stand disabled so the list's cursor walks through them
+    without ever taking the highlight."""
     page = WorkspaceScreen(row())
     items = page.fixed_items()
-    assert [i.page_action for i in items] == [
+    assert [getattr(i, "page_action", None) for i in items] == [
+        None,
         "shell-window",
+        None,
         "egress-consent",
         "edit",
         "mounts",
+        None,
         "start",
         "stop",
     ]
-    leads = [
-        index
-        for index, item in enumerate(items)
-        if "group-lead" in item.classes
+    captions = [i for i in items if "caption" in i.classes]
+    assert [i.page_caption for i in captions] == [
+        "use",
+        "configure",
+        "power",
     ]
-    assert leads == [0, 1, 4]
+    assert all(i.disabled for i in captions)
+    # The first caption sits at the panel's top; the later ones
+    # carry the blank line that separates the tiers.
+    assert "spaced" not in captions[0].classes
+    assert all("spaced" in i.classes for i in captions[1:])
 
 
 def test_action_rows_paint_two_tones() -> None:
-    """#367, #470 W1/W2/S3: the name stands in the default
-    foreground — bold on the row the status permits (the shell in
-    every state, #479 — its child boots a stopped workspace —
-    Start beside one that sits stopped) and on the focused row —
-    the description rides muted, and a power row the status dims
-    mutes the whole row behind its reason."""
+    """#367, #470 W1/W2/S3, #752: the name stands in the default
+    foreground — bold on the rows the status permits alone (the
+    shell in every state, #479 — its child boots a stopped
+    workspace — Start beside one that sits stopped) — the
+    description rides muted, and a power row the status dims
+    mutes the whole row behind its reason. Focus answers to the
+    bar and the marker alone: a focused row that is not primary
+    carries no bold."""
     muted = rows_mod.muted_style({})
     shell = action_content(PAGE_ACTIONS[0], "running", {}, focused=True)
     assert str(shell).startswith("▸ Open a shell — ssh in this terminal")
@@ -3807,13 +3942,14 @@ def test_action_rows_paint_two_tones() -> None:
     assert str(start).startswith("  Start — boot the workspace")
     assert Span(2, 7, "$text bold") in start.spans
     assert Span(10, 28, muted) in start.spans
-    # A focused live row carries the bold cue beside the marker
-    # (#470 S3) wherever the status's emphasis sits.
+    # A focused live row carries the marker alone (#752: the bold
+    # cue answers to the primary rows, wherever the status's
+    # emphasis sits).
     edit = action_content(PAGE_ACTIONS[2], "stopped", {}, focused=True)
     mounts = action_content(PAGE_ACTIONS[3], "stopped", {}, focused=False)
     assert str(mounts).startswith("  Mounts — host shares at guest paths")
     assert str(edit).startswith("▸ Edit settings — sizes and topology")
-    assert Span(2, 15, "$text bold") in edit.spans
+    assert not any(span.style == "$text bold" for span in edit.spans)
     stop = action_content(PAGE_ACTIONS[5], "stopped", {}, False)
     assert str(stop).startswith("  Stop — workspace is stopped")
     assert Span(2, 6, muted) in stop.spans
@@ -3945,12 +4081,12 @@ async def test_the_consent_line_names_a_drop_after_rules() -> None:
     link = DeciderLink(WS)
     link.controller.apply_frame(rules_frame())
     link.state = link_mod.RECONNECTING
-    line = consent_line(link, row())
+    line = consent_line(link, row()).plain
     assert "mode interactive" in line
     assert "api.example:443" in line
     assert "reconnecting" in line
     link.state = link_mod.CONNECTED
-    assert "connected" not in consent_line(link, row())
+    assert "connected" not in consent_line(link, row()).plain
 
 
 def test_whole_number_refuses_unicode_digits() -> None:
@@ -5902,15 +6038,22 @@ def test_the_mounts_editor_boundary_branches() -> None:
 
 
 def test_the_mounts_line_names_each_state() -> None:
-    """The page's mounts line: every mount's spec, the skipped one
-    named with its kind, and the next-start note."""
+    """The page's mounts line (#752): every mount's spec, the
+    skipped one named with its kind, and the next-start note —
+    all on the status lines' one grammar, the label muted in its
+    column and a `·` between the value's parts."""
     from msks.client.tui.mounts import mounts_line
 
     line = mounts_line(mounted_row())
-    assert "/srv/proj:/mnt/proj:rw" in line
-    assert "/srv/gone:/mnt/gone:rw (skipped)" in line
-    assert "(next start)" in line
-    assert mounts_line(row()) == ""
+    plain = line.plain
+    assert "/srv/proj:/mnt/proj:rw" in plain
+    assert "/srv/gone:/mnt/gone:rw · skipped" in plain
+    assert "· applies at next start" in plain
+    assert plain.startswith(" mounts  ")
+    (span,) = line.spans
+    assert plain[span.start : span.end] == "mounts  "
+    assert span.style == rows_mod.muted_style({})
+    assert mounts_line(row()).plain == ""
 
 
 def mounts_text(app) -> str:
@@ -6257,7 +6400,7 @@ async def test_the_mounts_editor_close_hands_back_the_row(monkeypatch) -> None:
         await pilot.press("r")  # remove the focused healthy mount
         await wait_for(lambda: len(data.calls) >= 1)
         await press_until(pilot, "escape", lambda: on_page(app))
-        assert "gone:/mnt/gone:rw (skipped)" in mounts_text(app)
+        assert "gone:/mnt/gone:rw · skipped" in mounts_text(app)
         assert "proj" not in mounts_text(app)
 
 
