@@ -5,6 +5,7 @@ import sqlite3
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import sqlalchemy as sa
@@ -12,6 +13,7 @@ from alembic import command
 from alembic.script import ScriptDirectory
 from msks.app import App, build_app
 from msks.microvm import VmSpec
+from msks.model import db as db_mod
 from msks.model import hash_token, new_token
 from msks.model import model as model_mod
 from msks.model.db import BUSY_TIMEOUT_S, Base, engine_for
@@ -676,6 +678,28 @@ async def test_wal_persists_and_a_clean_dispose_removes_the_siblings(
     finally:
         await second.dispose()
     assert mode == "wal"
+
+
+def test_enable_wal_refuses_a_mode_it_cannot_switch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A filesystem that cannot host WAL's shared-memory file
+    (an NFS-style state dir) answers the pragma with the old mode
+    instead of raising — the daemon must fail the startup loudly,
+    not run the whole process on the defaults #744 removed
+    (#744 review)."""
+
+    class Staying:
+        def execute(self, sql: str):
+            assert "journal_mode" in sql
+            return SimpleNamespace(fetchone=lambda: ("delete",))
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(db_mod.sqlite3, "connect", lambda *a, **k: Staying())
+    with pytest.raises(OSError, match="journal_mode stayed"):
+        db_mod.engine_for(tmp_path / "t.db")
 
 
 async def test_a_second_writer_waits_out_the_first(tmp_path: Path) -> None:

@@ -67,10 +67,25 @@ def enable_wal(db_path: Path) -> None:
     readers stop blocking writers and writers queue on the busy
     timeout instead of failing (#744); a clean final close
     checkpoints and removes the ``-wal``/``-shm`` siblings, which
-    inherit the database file's mode."""
+    inherit the database file's mode. The blocking connect (a
+    contended switch can wait out the busy timeout) rides the
+    serial lifespan startup, where engine creation happens — never
+    a live request; an engine is (re)created lazily only at boot
+    and after ``close()``, which tests alone do. The pragma answers
+    with the new mode or the old one: a filesystem that cannot
+    host WAL's shared-memory file (an NFS-style state dir) says
+    ``delete`` instead of raising, and that answer is refused —
+    the daemon fails the startup loudly rather than running the
+    process on the defaults #744 removed.
+    """
     raw = sqlite3.connect(db_path, timeout=BUSY_TIMEOUT_S)
     try:
-        raw.execute("PRAGMA journal_mode=WAL")
+        mode = raw.execute("PRAGMA journal_mode=WAL").fetchone()
+        if mode != ("wal",):
+            raise OSError(
+                f"{db_path}: journal_mode stayed {mode!r}; WAL needs "
+                "a filesystem that supports its shared-memory file"
+            )
     finally:
         raw.close()
 
