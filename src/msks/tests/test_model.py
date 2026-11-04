@@ -1,5 +1,6 @@
 """Model-layer tests: CRUD, tokens, bootstrap, status validation."""
 
+import asyncio
 import sqlite3
 from contextlib import closing
 from datetime import datetime
@@ -13,7 +14,7 @@ from msks.app import App, build_app
 from msks.microvm import VmSpec
 from msks.model import hash_token, new_token
 from msks.model import model as model_mod
-from msks.model.db import Base, engine_for
+from msks.model.db import BUSY_TIMEOUT_S, Base, engine_for
 from msks.model.model import alembic_config
 from msks.settings import ServerSettings, Settings
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -627,6 +628,96 @@ async def test_close_without_engine(app_for) -> None:
     app = app_for()
     await app.state.model.close()
     assert app.state.model._engine is None
+
+
+async def test_the_engine_runs_wal_with_a_busy_timeout(
+    tmp_path: Path,
+) -> None:
+    """#744: the engine leaves sqlite's defaults behind — WAL
+    journaling, and a lock wait past the 5-second builtin — so a
+    writer that meets a contender waits it out instead of raising
+    into a client-facing 500."""
+    engine = engine_for(tmp_path / "t.db")
+    try:
+        async with engine.connect() as conn:
+            mode = (
+                await conn.execute(sa.text("PRAGMA journal_mode"))
+            ).scalar()
+            wait = (
+                await conn.execute(sa.text("PRAGMA busy_timeout"))
+            ).scalar()
+    finally:
+        await engine.dispose()
+    assert mode == "wal"
+    assert wait == int(BUSY_TIMEOUT_S * 1000)
+
+
+async def test_wal_persists_and_a_clean_dispose_removes_the_siblings(
+    tmp_path: Path,
+) -> None:
+    """WAL lives in the file, not the connection: a later engine on
+    the same file runs WAL without re-setting anything, and the
+    last clean close checkpoints and removes the ``-wal``/``-shm``
+    siblings — the state dir holds the one db file again (#744)."""
+    db_path = tmp_path / "t.db"
+    engine = engine_for(db_path)
+    async with engine.begin() as conn:
+        await conn.execute(sa.text("CREATE TABLE t(x INTEGER)"))
+    await engine.dispose()
+    assert not db_path.with_name("t.db-wal").exists()
+    assert not db_path.with_name("t.db-shm").exists()
+
+    second = engine_for(db_path)
+    try:
+        async with second.connect() as conn:
+            mode = (
+                await conn.execute(sa.text("PRAGMA journal_mode"))
+            ).scalar()
+    finally:
+        await second.dispose()
+    assert mode == "wal"
+
+
+async def test_a_second_writer_waits_out_the_first(tmp_path: Path) -> None:
+    """Two live write transactions (#744): the first holds the
+    write lock through an uncommitted insert, and the second — a
+    create racing the watcher's status transition, in the daemon —
+    waits behind it on the busy timeout and lands once the first
+    commits, instead of raising OperationalError into a 500."""
+    engine = engine_for(tmp_path / "t.db")
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(sa.text("CREATE TABLE t(x INTEGER)"))
+
+        first = await engine.connect()
+        tx = await first.begin()
+        await first.execute(sa.text("INSERT INTO t VALUES (1)"))
+
+        async def second_write() -> None:
+            second = await engine.connect()
+            try:
+                await second.execute(sa.text("INSERT INTO t VALUES (2)"))
+                await second.commit()
+            finally:
+                await second.close()
+
+        task = asyncio.create_task(second_write())
+        await asyncio.sleep(0.1)
+        # Still behind the first writer's lock — waiting, not failed.
+        assert not task.done()
+        await tx.commit()
+        await asyncio.wait_for(task, timeout=5)
+        await first.close()
+
+        async with engine.connect() as conn:
+            rows = (
+                (await conn.execute(sa.text("SELECT x FROM t ORDER BY x")))
+                .scalars()
+                .all()
+            )
+    finally:
+        await engine.dispose()
+    assert rows == [1, 2]
 
 
 async def test_migrate_recovers_from_torn_migration(

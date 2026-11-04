@@ -20,6 +20,18 @@ tagged `vX.Y.Z`.
   window in which a permissive umask left it connectible before
   the mode change landed.
 
+- **The daemon's sqlite engine runs WAL with a busy timeout
+  (#744).** The model engine previously took sqlite's defaults
+  (rollback journal, 5-second lock wait), so two concurrent
+  writers — a create racing the watcher's status transition,
+  consent verdict pins during bulk activity — could exhaust the
+  wait and surface as a client-facing 500. Writers now queue
+  behind one another for up to 30 seconds, and readers no
+  longer block writers. A clean shutdown removes the WAL
+  siblings; after a crash, `-wal`/`-shm` files may sit beside
+  `<state_dir>/msks.db` until the next start checkpoints them
+  away.
+
 - **`msks-setup-macos-host --check` refuses an empty CA fetch
   (#738).** The check pass now refuses with the re-run remedy
   when the daemon's CA has not come back from the VM. The

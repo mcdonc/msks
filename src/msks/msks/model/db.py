@@ -1,5 +1,6 @@
 """Engine/session plumbing and the ORM base for msksd."""
 
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -11,6 +12,14 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+
+#: How long a sqlite connection waits for a contended lock before
+#: raising (#744), in seconds — ``sqlite3.connect``'s ``timeout``.
+#: Writes are milliseconds, but two concurrent writers — a create
+#: racing the watcher's status transition, consent verdict pins
+#: during bulk activity — can stack behind one another longer than
+#: sqlite's 5-second default, which surfaces as a client-facing 500.
+BUSY_TIMEOUT_S = 30.0
 
 NAMING_CONVENTION = {
     "ix": "ix_%(column_0_label)s",
@@ -47,10 +56,39 @@ def tighten_db_mode(db_path: Path) -> None:
         db_path.chmod(0o600)
 
 
+def enable_wal(db_path: Path) -> None:
+    """Switch the database file to WAL journaling (one connection,
+    opened and closed again at once).
+
+    The mode lives in the file, not the connection: WAL persists
+    across connections and restarts, so setting it at engine
+    creation covers every pooled connection and every later engine
+    on the same file without per-connection pragmas. In WAL,
+    readers stop blocking writers and writers queue on the busy
+    timeout instead of failing (#744); a clean final close
+    checkpoints and removes the ``-wal``/``-shm`` siblings, which
+    inherit the database file's mode."""
+    raw = sqlite3.connect(db_path, timeout=BUSY_TIMEOUT_S)
+    try:
+        raw.execute("PRAGMA journal_mode=WAL")
+    finally:
+        raw.close()
+
+
 def engine_for(db_path: Path) -> AsyncEngine:
-    """The async engine for one database file (parent dirs created)."""
+    """The async engine for one database file (parent dirs created).
+
+    The database runs in WAL mode with a busy timeout (#744):
+    readers stop blocking writers, and a connection that meets a
+    locked file waits out the contender instead of raising into a
+    client-facing 500.
+    """
     tighten_db_mode(db_path)
-    return create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    enable_wal(db_path)
+    return create_async_engine(
+        f"sqlite+aiosqlite:///{db_path}",
+        connect_args={"timeout": BUSY_TIMEOUT_S},
+    )
 
 
 def sessionmaker_for(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
