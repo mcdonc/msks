@@ -19,14 +19,12 @@ the marker: only the wrapped protocols set it, and they set it
 only when ``getsockopt(SO_PEERCRED)`` answered.
 """
 
-import grp
 import os
 import pwd
 import socket
 import struct
 import sys
 from contextlib import suppress
-from functools import lru_cache
 from pathlib import Path
 
 import uvicorn
@@ -174,36 +172,32 @@ def unlink(path: Path) -> None:
         path.unlink()
 
 
-@lru_cache(maxsize=64)
-def _in_group(user: str, gid: int) -> bool:
-    """True when *user* belongs to group *gid* (name-level check)."""
-    with suppress(KeyError):
-        return user in grp.getgrgid(gid).gr_mem
-    return False
-
-
 def peer_allowed(uid: int, socket_gid: int | None) -> bool:
     """The local-listener policy: may this peer uid skip the token?
 
     The daemon's own uid always passes (the same-user deployment
     — ``msksd`` and ``msks`` as one user). Otherwise the peer
-    must belong to the socket file's group, as its primary group
-    or by membership: the operator who chgrps the socket to a
-    shared group has said who else may connect, and this reads
-    that answer from the group database rather than trusting the
-    connect to imply consent. A peer that passes neither gate
-    still reaches the bearer-token path — the socket is one way
-    in, not a wall.
+    must belong to the socket file's group: the operator who
+    chgrps the socket to a shared group has said who else may
+    connect, and this resolves membership the way login does —
+    ``os.getgrouplist`` walks the group database's nesting and
+    the NSS supplementary groups (AD/LDAP hosts) in one call,
+    where a flat ``gr_mem`` read carries direct by-name members
+    alone. The walk runs per request with no cache, so a member
+    removed from the group fails the next request, not the next
+    daemon restart. A peer that passes neither gate still
+    reaches the bearer-token path — the socket is one way in,
+    not a wall.
     """
     if uid == os.geteuid():
         return True
     if socket_gid is None:
         return False
-    with suppress(KeyError):
+    # A uid the passwd database cannot name, or a group walk NSS
+    # refuses, fails closed: the request falls to the token path.
+    with suppress(KeyError, OSError):
         entry = pwd.getpwuid(uid)
-        if entry.pw_gid == socket_gid:
-            return True
-        return _in_group(entry.pw_name, socket_gid)
+        return socket_gid in os.getgrouplist(entry.pw_name, entry.pw_gid)
     return False
 
 

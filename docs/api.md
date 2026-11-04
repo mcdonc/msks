@@ -37,7 +37,10 @@ not a deployment's path.
 credentials: the daemon's own uid passes, and so does any
 member of the socket file's group — the file is mode 0660, so
 `chgrp` it to a shared group to admit that group's members
-without a token or TLS. A daemon without a runtime dir (a
+without a token or TLS. Membership resolves the way login
+resolves it: nested groups and directory-supplied supplementary
+groups (AD/LDAP hosts) count, and removing a member takes
+effect at the next request. A daemon without a runtime dir (a
 container, a hand-written unit) serves TCP alone until the
 setting names a path. The socket is the same-host path — a
 local script or the client's default candidate path — and the
