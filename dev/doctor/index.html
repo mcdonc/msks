@@ -817,78 +817,76 @@
 <h1 id="the-host-doctor">The host doctor<a class="headerlink" href="#the-host-doctor" title="Permanent link">&para;</a></h1>
 <p><img alt="The doctor's report: every row with its marker, the hints
 under each miss, and the closing tally" src="../screens/doctor.png" /></p>
-<p><code>msksd doctor</code> checks the host for the external tools and libraries used by the
-daemon and the client exec at runtime, and tells you how to fix problems. Run
-it when a host is newly prepared, when a refusal names a missing tool, or
-before a deployment first serves:</p>
+<p><code>msksd doctor</code> checks the host for the tools and libraries the
+daemon and the client exec at runtime. Every miss comes with a
+fix.</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">msksd doctor</span>
 </span></code></pre></div>
-<p>The command takes the same <code>--config</code> flag the daemon takes.
-It therefore checks the tools this host's daemon will actually
-exec: the config's tool paths and the environment apply. See
-<a href="../config/">Configuration</a> for the settings and their
-precedence.</p>
+<p>The command takes the same <code>--config</code> flag the daemon takes. It
+checks the tools this host's daemon will actually exec: the
+config's tool paths and environment apply.</p>
 <h2 id="what-it-checks">What it checks<a class="headerlink" href="#what-it-checks" title="Permanent link">&para;</a></h2>
-<p>The errors cover the dependencies, and the cloud-hypervisor VMM and various
-configuration settings. The check set covers runtime requirements
-only. Debugging and development tools stay out of it.</p>
+<p>The checks cover runtime needs only: the external dependencies,
+the cloud-hypervisor VMM, and a few configuration settings.</p>
 <p>Tool names resolve on the daemon's search path, not the
-caller's: the session's own PATH answers first, then Debian's
-admin directories (<code>/usr/local/sbin</code>, <code>/usr/sbin</code>, <code>/sbin</code>),
-because the systemd user manager's default PATH carries them —
-the daemon finds what a non-root login shell cannot type. A
-session whose PATH lacks the directories still gets the
-daemon's truth, and when a tool was found only through them,
-the run adds a warning row suggesting the relogin (the setup
-tool's <code>~/.profile</code> block) or the <code>PATH=</code> export. A daemon
-started by hand inherits the session's PATH, so the row's fix
-reaches that shape too.</p>
-<p>One check grades by platform, not by a tool: on an Apple
+caller's. The session's own PATH answers first. Then come
+Debian's admin directories (<code>/usr/local/sbin</code>, <code>/usr/sbin</code>,
+<code>/sbin</code>), because the systemd user manager's default PATH
+carries them. A session whose PATH lacks these directories
+still gets the daemon's truth.</p>
+<p>When a tool was found only through the admin directories, the
+run adds a warning row. Its fix is to log out and back in (the
+setup tool adds the directories to <code>~/.profile</code>), or to run
+<code>export PATH=$PATH:/usr/sbin:/sbin</code>. A daemon started by hand
+inherits the session's PATH, so the fix reaches that shape too.</p>
+<p>One check grades by platform, not by a tool. On an Apple
 Silicon host whose kernel runs KVM in nested-virtualization
 mode (the Asahi Linux class today), the report carries a
-warning row naming the kernel's guest-interrupt limitation
-(<a href="https://github.com/mcdonc/msks/issues/649">#649</a>) — workspaces
-start and their kernels boot, then stall before ssh answers,
-while everything short of a guest boot works. The row requires
-both markers: cpu0's MIDR names Apple's implementer, and the
-kernel runs KVM in NV mode — the command line sets
-<code>kvm-arm.mode=nested</code>, sysfs publishes kvm's mode parameter as
-<code>nested</code>, or the kernel log carries KVM's NV-mode init line
-(<code>VHE+NV2 mode initialized</code>). The markers name the mode, not
-the kernel's provenance. Each marker is read where the host
-leaves it readable: a restricted kernel log reads as absent,
-while the command line and sysfs stay world-readable. x86_64
-hosts and non-Apple arm64 servers carry none of this and get
-no row, and an Apple-silicon host whose KVM is not in NV mode
-stays clean too — a Linux VM under macOS's
-Virtualization.framework reads as Apple silicon (the
-hypervisor passes the host MIDR through) while its own KVM
-delivers guest interrupts, so workspaces boot and ssh answers
-there (<a href="https://github.com/mcdonc/msks/issues/664">#664</a>).</p>
+warning row about the kernel's guest-interrupt limitation
+(<a href="https://github.com/mcdonc/msks/issues/649">#649</a>). On such a
+host, workspaces start and their kernels boot, then stall
+before ssh answers. Everything short of a guest boot works.</p>
+<p>The row requires both markers. The first marker: cpu0's MIDR
+reports Apple's implementer. The second marker: the kernel runs
+KVM in NV mode. The mode shows up in any of three places. The
+command line sets <code>kvm-arm.mode=nested</code>, sysfs publishes kvm's
+mode parameter as <code>nested</code>, or the kernel log carries KVM's
+NV-mode init line (<code>VHE+NV2 mode initialized</code>). The markers
+report the mode, not the kernel's provenance.</p>
+<p>Each marker is read where the host leaves it readable. A
+restricted kernel log reads as absent. The command line and
+sysfs stay world-readable.</p>
+<p>x86_64 hosts and non-Apple arm64 servers get no row. An
+Apple-silicon host whose KVM is not in NV mode stays clean too.
+A Linux VM under macOS's Virtualization.framework reads as
+Apple silicon, because the hypervisor passes the host MIDR
+through. Its own KVM delivers guest interrupts, so workspaces
+boot and ssh answers there
+(<a href="https://github.com/mcdonc/msks/issues/664">#664</a>).</p>
 <h2 id="reading-the-report">Reading the report<a class="headerlink" href="#reading-the-report" title="Permanent link">&para;</a></h2>
 <p>Every row prints with a marker:</p>
 <ul>
-<li><strong>✓</strong> — present and functional: the binary answered its
+<li><strong>✓</strong>: present and functional. The binary answered its
   version probe, the library answered one of its three probes,
   the binding loaded.</li>
-<li><strong>⚠</strong> — a warning-grade miss: a degraded path the daemon does
-  not need (the ssh/rsync pair), or a config that failed to
-  load.</li>
-<li><strong>✗</strong> — an error-grade miss: a core-path dependency the
-  daemon needs.</li>
+<li><strong>⚠</strong>: a warning-grade miss. The daemon does not need this
+  path (the ssh/rsync pair), or a config failed to load.</li>
+<li><strong>✗</strong>: an error-grade miss. The daemon needs this dependency
+  on a core path.</li>
 </ul>
-<p>Each miss carries an install hint matched to the detected package manager,
-printed as a paste-ready command sequence under the row. The hints match each
-manager's real package names: <code>genisoimage</code> serves <code>mkisofs</code>, <code>qemu-utils</code>
-ships <code>qemu-img</code>, etc.</p>
-<p>Where a fix is not a distro package, the hint names the
-real source: cloud-hypervisor installs from the upstream static
-release, which Debian's archive carries in none of its
-suites.</p>
-<p>The run ends with a tally (<code>14 passed</code>, or <code>12 passed, 1 error,
-1 warning</code>). When anything failed, a closing block repeats every
-miss with its fix. The exit code is 0 when every check passes or
-only warns, and 1 when any check errors.</p>
+<p>Each miss carries an install hint matched to the detected
+package manager, printed as a paste-ready command sequence
+under the row. The hints use each manager's real package
+names: <code>genisoimage</code> serves <code>mkisofs</code>, and <code>qemu-utils</code> ships
+<code>qemu-img</code>.</p>
+<p>Some fixes are not distro packages. Where that is so, the hint
+gives the real source: cloud-hypervisor installs from the
+upstream static release. Debian's archive carries it in none of
+its suites.</p>
+<p>The run ends with a tally (<code>14 passed</code>, or <code>12 passed, 1
+error, 1 warning</code>). When anything failed, a closing block
+repeats every miss with its fix. The exit code is 0 when every
+check passes or only warns, and 1 when any check errors.</p>
 
 
 
