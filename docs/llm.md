@@ -3,10 +3,11 @@
 Every workspace consumes LLMs through msksd. The daemon holds the
 provider credentials and the routing configuration; each workspace
 holds only its own proxy credential and talks to an OpenAI-shaped
-endpoint served on its own tap. Provider keys never enter a workspace, and a workspace uses
+endpoint served on its own tap. Provider keys never enter a
+workspace, and a workspace uses
 LLMs with its egress consent untouched. This holds even for a
 workspace with no egress at all (once one is attached), or a
-`static` workspace whose allowlist names no providers: the
+`static` workspace whose allowlist carries no providers: the
 daemon makes the upstream connection itself.
 
 ## The two routing modes
@@ -40,25 +41,26 @@ overrides the file's list wholesale. The colons of the string
 grammar split with two exceptions, so the common shapes all parse:
 
 - an entry whose key is a `file:` or `cmd:` reference keeps
-  everything from the marker — paths and commands carry colons
-  (`openai/gpt-4o::file:/etc/msksd/openai.key`);
+  everything from the marker (paths and commands carry colons:
+  `openai/gpt-4o::file:/etc/msksd/openai.key`);
 - a scheme-bearing base keeps its port and any key after its path
   (`openai/gpt-4o:https://api.openai.com/v1:sk-...`).
 
 A **single** entry whose model name is `*` is _passthrough
-mode_. The entry's base names one upstream, requests forward
+mode_. The entry's base gives one upstream, requests forward
 verbatim over httpx, and `/models` is discovered dynamically
 from the upstream. Every model the upstream serves is
-available with no further configuration. Any other list is _multi-provider mode_:
+available with no further configuration. Any other list is
+_multi-provider mode_:
 the entries become a [`litellm`](https://github.com/BerriAI/litellm)
 router. A workspace addresses a model by its logical name: the part
 after the provider slash for a string entry, or the explicit
-`model_name` for a dict one. A request that names no model, or
+`model_name` for a dict one. A request that gives no model, or
 a name the list does not carry, uses the first configured
 model. Known providers
 (`openai`, `anthropic`, `cohere`, `mistral`, `groq`, `together_ai`,
 `deepseek`, `fireworks_ai`) fill their default base when an entry
-names none.
+gives none.
 
 An empty list (the default) presents no LLM surface at all:
 nothing binds on any tap, and the per-workspace input chain admits
@@ -69,32 +71,38 @@ no proxy port.
 Every secret-bearing value resolves indirection at configure time:
 `file:` reads a path, `cmd:` runs a shell command and takes its
 stdout. It works on each entry's key and on the shared default
-`llm_api_key` (`MSKSD_LLM_API_KEY`). A broken reference refuses
-the configure — the daemon log carries the named error (the
+`llm_api_key` (`MSKSD_LLM_API_KEY`). A broken reference fails
+the configure: the daemon log carries the named error (the
 entry's own text, operator-visible), and requests answer a 503
-that names only the failure, never the entry — instead of sending
+that gives only the failure, never the entry, instead of sending
 an empty key upstream.
 
 ## The listener, the firewall, and the tap
 
-Each egress workspace's tap carries its host-reachable services —
+Each egress workspace's tap carries its host-reachable services:
 DHCP (67), the resolver (53), the interceptor's listener while
-armed (#199), and — when a model list is configured — the proxy at
+armed (#199), and, when a model list is configured, the proxy at
 `llm_port` (`MSKSD_LLM_PORT`, default `8770`). The proxy holds no
 credential (#483): the tap that a request arrived on is the whole
-identity. Four layers pin it. The listener binds the tap's own address and the tap device
+identity. Four layers pin it.
+
+The listener binds the tap's own address and the tap device
 itself (`SO_BINDTODEVICE`). The kernel therefore delivers a
 packet to the socket only when it arrived on that tap. A
 packet another guest sends over its own tap dies at the socket
 even when firewall tables are missing: every per-VM apply is
 fail-tolerant, so a failed or flushed table is a state the
-daemon keeps serving through. The base firewall table carries one static guard beside the
+daemon keeps serving through.
+
+The base firewall table carries one static guard beside the
 masquerade: loopback traffic to the tap pool on the proxy port
 drops. That answers a host process, which the kernel's
 weak-host delivery would otherwise hand to the listener
 through any device pin. The per-VM nftables input chain
 ahead of the socket admits exactly this port from exactly that
-tap, pinned to the guest's source address. A packet that reaches the host from outside, routed in over
+tap, pinned to the guest's source address.
+
+A packet that reaches the host from outside, routed in over
 the uplink toward a tap address, dies at the pin too: it did
 not arrive on the tap, and the pin refuses off-tap arrivals
 whatever interface carried them. This was verified the same
@@ -124,8 +132,8 @@ MSKSWS_BASE_URL=http://172.31.0.2:8770/v1
 MSKSWS_API_KEY=msks-local-proxy
 ```
 
-Both guest images ship the agent toolchain beside it (#266, #268): each
-image bakes pinned Node and the pinned pi coding agent on
+Both guest images ship the agent toolchain beside it (#266, #268):
+each image bakes pinned Node and the pinned pi coding agent on
 every account's default `PATH`: the Debian image under
 `/usr/local`, the NixOS image through its system profile. Each
 also plants a pi extension (`llm-models.ts`) in `/etc/skel`
@@ -135,7 +143,9 @@ the extension in `~/.pi/agent/extensions/`, where pi discovers
 it. At every pi startup the extension makes one fetch of
 `${MSKSWS_BASE_URL}/models`, aborted at 1.5 seconds, and registers
 the catalog under the `msks` provider, so `/model` always shows
-the daemon's live model list. A workspace whose daemon serves no model list registers
+the daemon's live model list.
+
+A workspace whose daemon serves no model list registers
 nothing after that one attempt, and pi starts without the
 provider. The environment pair is seeded even when no proxy
 listens, so the fetch, not the shell, is what discovers the
@@ -144,9 +154,10 @@ body can hold the read slightly past the abort. A copy a user has
 edited stays edited; nothing re-overwrites it.
 
 Two limits to know. A home that existed before the image carried
-the extension keeps its old state — the extension reaches accounts
+the extension keeps its old state: the extension reaches accounts
 provisioned after the image did, and an older home can copy it
-from `/etc/skel/.pi/agent/extensions/`. The model metadata the extension registers is a placeholder:
+from `/etc/skel/.pi/agent/extensions/`. The model metadata the
+extension registers is a placeholder:
 128k context, 8192 max output, plain text chat, zero cost.
 The proxy's OpenAI-shaped model list carries no limits, so a
 model that serves more is under-planned and one that serves
@@ -157,10 +168,10 @@ The toolchain pins move with an image rebuild (the shared pins in
 `nix/guest-debian.nix`); a workspace that already booted keeps
 what it booted with.
 
-One more create-time fact rides the seed: the port. The planted
-`MSKSWS_BASE_URL` names the port the daemon served when the
+One more create-time fact travels the seed: the port. The planted
+`MSKSWS_BASE_URL` carries the port the daemon served when the
 workspace was created. Moving `MSKSD_LLM_PORT` later does not
-rebind a live listener — each workspace's listener and firewall
+rebind a live listener: each workspace's listener and firewall
 admission move at its next stop/start, and until then that
 workspace's LLM surface stays on the old port (fail-closed:
 refused). A workspace created before a port change needs the
@@ -168,16 +179,16 @@ same hand update for its planted environment (or a recreate).
 
 One upstream-side behavior worth knowing in multi-provider mode:
 providers that want images inline make the daemon fetch remote
-URLs a request's message parts name — litellm's own URL
+URLs a request's message parts carry; litellm's own URL
 validation guards those fetches.
 
 ## What a request may carry
 
 The proxy forwards the fields an OpenAI chat-completion request
-carries — `model`, `messages`, `stream`, sampling and tool
-parameters — and drops everything else before the router sees
+carries (`model`, `messages`, `stream`, sampling and tool
+parameters) and drops everything else before the router sees
 the body. Provider credentials and endpoints are deployment
-configuration: a request that names `api_base`, `api_key`, or any
+configuration: a request that gives `api_base`, `api_key`, or any
 other routing parameter gets those fields dropped, never
 honored. A body larger than 16 MiB answers 413; a body that is
 not a JSON object answers 400.
@@ -189,9 +200,10 @@ model list re-routes the very next request wherever a listener
 already serves, in either direction: models added begin
 serving, and models removed answer 503 on the open port. The
 closed-port posture of an unconfigured daemon arrives with
-that workspace's next stop/start. A workspace that booted while no model list was
-configured has no listener and no firewall admission — its next
-stop/start brings the surface up once the daemon is configured.
-(The first request after a swap pays the reconfigure — the
-lazily-imported litellm tree, a `cmd:` secret's subprocess — off
-the serving loop, so no other workspace's traffic waits on it.)
+that workspace's next stop/start. A workspace that booted while
+no model list was configured has no listener and no firewall
+admission; its next stop/start brings the surface up once the
+daemon is configured. (The first request after a swap pays the
+reconfigure: the lazily-imported litellm tree, a `cmd:` secret's
+subprocess, off the serving loop, so no other workspace's
+traffic waits on it.)

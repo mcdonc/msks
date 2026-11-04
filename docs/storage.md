@@ -3,19 +3,20 @@
 Every workspace owns exactly two persistent artifacts, created with
 the workspace and kept for its whole life:
 
-- the **root overlay** — a qcow2 copy-on-write file over the
+- the **root overlay**: a qcow2 copy-on-write file over the
   workspace's base image. Everything the guest writes to the root
-  filesystem (an `apt install`, an `/etc` edit) lands in the overlay;
-  the shared base stays pristine, so every workspace on that image
-  starts from an identical, unmodified root.
-- the **/home volume** — an ext4 filesystem attached as a second
-  virtio-blk disk the guest mounts at `/home`. User data lives here,
-  outside the root, so it survives even a full factory reset.
+  filesystem (an `apt install`, an `/etc` edit) lands in the
+  overlay; the shared base stays pristine, so every workspace on
+  that image starts from an identical, unmodified root.
+- the **/home volume**: an ext4 filesystem attached as a second
+  virtio-blk disk the guest mounts at `/home`. User data lives
+  here, outside the root, so it survives even a full factory
+  reset.
 
-Both artifacts have lifetimes separate from the VM's: `stop` powers
-the machine off and keeps the data; `start` boots the same overlay
-and volume again. Only `delete` (and factory reset, for the overlay
-alone) removes them.
+Both artifacts have lifetimes separate from the VM's: `stop`
+powers the machine off and keeps the data; `start` boots the
+same overlay and volume again. Only `delete` (and factory reset,
+for the overlay alone) removes them.
 
 ## Local backend layout
 
@@ -29,14 +30,14 @@ alone) removes them.
 ```
 
 The overlay is created with
-`qemu-img create -f qcow2 -F raw -b <base rootfs>` — a one-level
-chain, never nested overlays. Its
-backing file is the rootfs recorded at workspace create, so a
-workspace always runs the image version it was created with:
-importing a newer image changes what _new_ workspaces boot, never
-existing ones. (Rebasing an overlay onto a newer base exists as a
-`qemu-img` operation and may become an explicit "upgrade workspace
-image" action later; it never happens implicitly.)
+`qemu-img create -f qcow2 -F raw -b <base rootfs>`: a one-level
+chain, never nested overlays. Its backing file is the rootfs
+recorded at workspace create, so a workspace always runs the
+image version it was created with: importing a newer image
+changes what _new_ workspaces boot, never existing ones.
+(Rebasing an overlay onto a newer base exists as a `qemu-img`
+operation and may become an explicit "upgrade workspace image"
+action later; it never happens implicitly.)
 
 The home volume is a sparse ext4 file. An idle volume costs
 its metadata, not its nominal size, and it grows as the guest
@@ -47,55 +48,59 @@ The seed exists exactly when the workspace was created with
 `cidata`, built with `mkisofs` (genisoimage) and attached to
 the VM **read-only**. It is installed mode 0600 because the
 payload can embed tokens; its staging directory is 0700, and
-the database file that records the payload is 0600. It rides
-the workspace's vm directory, so it survives `stop`/`start` and
-dies with the workspace. Factory reset keeps it — it is immutable
-create-time input, so the reset workspace re-provisions from it —
-and `docs/images.md` describes what runs the payload.
+the database file that records the payload is 0600. It lives
+in the workspace's vm directory, so it survives
+`stop`/`start` and dies with the workspace. Factory reset
+keeps it (it is immutable create-time input, so the reset
+workspace re-provisions from it), and `docs/images.md`
+describes what runs the payload.
 
-A start heals missing artifacts: if the overlay or the volume file
-is absent (a crash mid-create, or a workspace row created before
-this scheme existed), the daemon recreates it before the VM boots.
-Data that exists is never touched. Creation is atomic per artifact. Each file is built under a
+A start heals missing artifacts: if the overlay or the volume
+file is absent (a crash mid-create, or a workspace row created
+before this scheme existed), the daemon recreates it before the
+VM boots. Data that exists is never touched.
+
+Creation is atomic per artifact. Each file is built under a
 private temporary name and installed with one rename, and a
 failed create rolls back what it made. A missing tool, ENOSPC,
 or a partial write leaves nothing at the final path, so the
 retry starts from a clean pair instead of booting a blank
-disk. A daemon crash mid-create can still leave
-a finished artifact (or its `*.tmp` scratch) behind; the removal
-helpers sweep the scratch files, and the next create names any
+disk. A daemon crash mid-create can still leave a finished
+artifact (or its `*.tmp` scratch) behind; the removal helpers
+sweep the scratch files, and the next create reports any
 leftover instead of adopting it.
 
-Workspace **create never reuses an existing artifact**. A
-file found where a new workspace's overlay or volume would
-live fails the create with a named error. That file is the
-debris of a previous workspace of the same id, and adopting it
-silently would hand the new workspace the old one's data. Clear the files and create again.
+Workspace **create never reuses an existing artifact**. A file
+found where a new workspace's overlay or volume would live
+fails the create with a named error. That file is the debris of
+a previous workspace of the same id, and adopting it silently
+would hand the new workspace the old one's data. Clear the
+files and create again.
 
 ## Sizing
 
-Both sizes are set at workspace create and configurable
-three ways. Per request: `root_mib` / `home_mib` on workspace
-create. Per daemon: `MSKSD_ROOT_MIB`, default 10240, and
+Both sizes are set at workspace create and configurable three
+ways. Per request: `root_mib` / `home_mib` on workspace create.
+Per daemon: `MSKSD_ROOT_MIB`, default 10240, and
 `MSKSD_HOME_MIB`, default 20480. Per image: the catalog's
 manifest carries the cmdline the guest boots, which pairs with
-the sizes. The overlay's
-virtual size never drops below its base image's size — a smaller
-disk would truncate the base filesystem.
+the sizes. The overlay's virtual size never drops below its
+base image's size: a smaller disk would truncate the base
+filesystem.
 
 Create is not the only time sizes move: `POST
-/api/v1/workspaces/{id}/resize` (`msks resize`) revisits them on a
-**stopped** workspace:
+/api/v1/workspaces/{id}/resize` (`msks resize`) revisits them
+on a **stopped** workspace:
 
-- the **/home volume** grows or shrinks. The daemon first quiets the filesystem's journal with
-  `e2fsck -fy`. A volume a hard stop left dirty is corrected
-  here; corrections are that tool's job, not an error. Then
-  `resize2fs` moves the filesystem and the file follows. A grow
-  truncates the file up first. A shrink truncates down only
-  after the filesystem agreed. `resize2fs` refuses to shrink
-  below the blocks in use, and that refusal reaches the caller
-  as a named `409`: free data in the workspace or shrink
-  less.
+- the **/home volume** grows or shrinks. The daemon first
+  quiets the filesystem's journal with `e2fsck -fy`. A volume a
+  hard stop left dirty is corrected here; corrections are that
+  tool's job, not an error. Then `resize2fs` moves the
+  filesystem and the file follows. A grow truncates the file up
+  first. A shrink truncates down only after the filesystem
+  agreed. `resize2fs` refuses to shrink below the blocks in
+  use, and that refusal reaches the caller as a named `409`:
+  free data in the workspace or shrink less.
 - the **root overlay** grows only, measured against the
   overlay's actual virtual size (create clamps it to the base
   image's size, so it can sit above the row). Its partition
@@ -105,22 +110,23 @@ Create is not the only time sizes move: `POST
   resize.
 
 A resize carries the home-volume moves' guards (free lifecycle
-statuses, the placement check, the move-lock against a concurrent
-boot). The artifact files are the truth each side moves. The grow
-gate reads the overlay's actual virtual size; create clamps it
-to the base image, and a corrupt overlay (one qemu-img probes
-as raw or empty) answers a named `503` instead of being
-truncated. The home move classifies grow-versus-shrink by the
-volume file, so a volume imported above its row's size
-reconciles through the same request. The row follows each side as it moves: `msks ls --json` and
+statuses, the placement check, the move-lock against a
+concurrent boot). The artifact files are the truth each side
+moves. The grow gate reads the overlay's actual virtual size;
+create clamps it to the base image, and a corrupt overlay (one
+qemu-img probes as raw or empty) answers a named `503` instead
+of being truncated. The home move classifies grow-versus-shrink
+by the volume file, so a volume imported above its row's size
+reconciles through the same request.
+
+The row follows each side as it moves: `msks ls --json` and
 `msks storage` report the new ceiling immediately, and the
-bytes move at once on the host. A workspace whose artifact
-file is absent simply records the new size, and the next
-start's artifact heal builds the blank artifact at it. A
-request naming sizes the files already have answers an
-idempotent `200` that moves nothing.
-A completed resize is announced on the events channel
-(`workspace.resized`, with the new sizes and topology).
+bytes move at once on the host. A workspace whose artifact file
+is absent simply records the new size, and the next start's
+artifact heal builds the blank artifact at it. A request giving
+sizes the files already have answers an idempotent `200` that
+moves nothing. A completed resize is announced on the events
+channel (`workspace.resized`, with the new sizes and topology).
 
 ## Capacity reporting
 
@@ -146,47 +152,49 @@ state disk    used 23.4G of 40G    free 16.6G    pressure ok
 ```
 
 - **The budget line** is the daemon's own `statvfs` on the state
-  disk — the number that predicts what a full state disk causes
-  (guest-side I/O errors on every workspace). `pressure` names the
-  condition: `warn` past `MSKSD_STORAGE_WARN_PCT` (default 90)
-  percent used, `critical` at or below `MSKSD_STORAGE_FLOOR_MIB`
-  (default 512) free, `ok` otherwise.
-- **Cost** is the disk blocks an artifact occupies — the sparse
+  disk: the number that predicts what a full state disk causes
+  (guest-side I/O errors on every workspace). `pressure` gives
+  the condition: `warn` past `MSKSD_STORAGE_WARN_PCT` (default 90) percent used, `critical` at or below
+  `MSKSD_STORAGE_FLOOR_MIB` (default 512) free, `ok`
+  otherwise.
+- **Cost** is the disk blocks an artifact occupies: the sparse
   files' real footprint, never their nominal size. An overlay's
-  cost sits a little above the root filesystem usage the guest's
-  own `df` reports (qcow2 bookkeeping rides along) and stays below
-  its ceiling until the guest fills it.
+  cost sits a little above the root filesystem usage the
+  guest's own `df` reports (qcow2 bookkeeping rides along) and
+  stays below its ceiling until the guest fills it.
 - **Ceiling** is the size fixed at create (`root_mib` /
-  `home_mib`) — the quota the guest's `df` shows its user.
+  `home_mib`): the quota the guest's `df` shows its user.
 - **Imported** is when the archive came in, local time to the
   minute. Rebuilding an image and importing it again adds a
   second entry under the same reference; the time tells the
-  entries apart, and the short hash `msks image ls` shows names
-  the one `msks image rm` removes. Re-importing the same archive
-  refreshes the time.
+  entries apart, and the short hash `msks image ls` shows
+  identifies the one `msks image rm` removes. Re-importing the
+  same archive refreshes the time.
 
-The fullness a workspace user feels is their own `df` inside the
-workspace; the daemon never guesses at it from outside a running
-VM (the ext4 journal lags the host's view of it).
+The fullness a workspace user feels is their own `df` inside
+the workspace; the daemon never guesses at it from outside a
+running VM (the ext4 journal lags the host's view of it).
 
-The watcher probes the state disk every `MSKSD_EVENT_POLL_S` and
-publishes a `storage.pressure` event on each change (a steady
-condition announces once, with the daemon's first known pressure
-announced as a baseline), with a named log line at `warn` and
-`critical`. Below the floor, workspace creates, image imports, and
-home-volume imports answer `507` naming the floor and the
-reclaim path. `msks storage` names the consumers; `msks rm`
-and `msks image rm` remove them. Lowering
+The watcher probes the state disk every `MSKSD_EVENT_POLL_S`
+and publishes a `storage.pressure` event on each change (a
+steady condition announces once, with the daemon's first known
+pressure announced as a baseline), with a named log line at
+`warn` and `critical`. Below the floor, workspace creates,
+image imports, and home-volume imports answer `507` giving the
+floor and the reclaim path. `msks storage` gives the consumers;
+`msks rm` and `msks image rm` remove them. Lowering
 `MSKSD_STORAGE_FLOOR_MIB` admits writes at less headroom, if
 that is the deployment's choice. Raising the floor refuses
-more writes, not fewer. Imports are sized when the size is knowable. An image import
-must fit the floor plus twice the archive's bytes: the
-retained copy plus its unpacked cache. A home-volume import
-must fit the floor plus the upload's `Content-Length` when the
-client sent one. A chunked upload carries no length and gets
-the floor alone. Existing workspaces keep running below
-the floor; their own writes can still fill the disk, so a `warn`
-line is the cue to reclaim before they do.
+more writes, not fewer.
+
+Imports are sized when the size is knowable. An image import
+must fit the floor plus twice the archive's bytes: the retained
+copy plus its unpacked cache. A home-volume import must fit the
+floor plus the upload's `Content-Length` when the client sent
+one. A chunked upload carries no length and gets the floor
+alone. Existing workspaces keep running below the floor; their
+own writes can still fill the disk, so a `warn` line is the cue
+to reclaim before they do.
 
 `GET /api/v1/storage` serves the same document the CLI renders,
 and `msks storage <id>` narrows the workspace table to one
@@ -194,21 +202,22 @@ workspace.
 
 ## Factory reset
 
-`POST /api/v1/workspaces/{id}/reset` deletes only the overlay. The
-next start boots the pristine base image again — installed packages
-and every other root change are gone — while `/home` keeps its data.
-The VM is stopped first (the overlay is the running root device);
-a wedged VM is killed, exactly as `delete` does.
+`POST /api/v1/workspaces/{id}/reset` deletes only the overlay.
+The next start boots the pristine base image again (installed
+packages and every other root change are gone) while `/home`
+keeps its data. The VM is stopped first (the overlay is the
+running root device); a wedged VM is killed, exactly as
+`delete` does.
 
-Because the overlay is the root filesystem, reset also clears any
-provisioned state the guest keeps there (cloud-init's run-once
-markers live under `/var/lib/cloud`), so future provisioning
-re-runs on the next boot.
+Because the overlay is the root filesystem, reset also clears
+any provisioned state the guest keeps there (cloud-init's
+run-once markers live under `/var/lib/cloud`), so future
+provisioning re-runs on the next boot.
 
 ## Home volume export and import
 
 The home volume travels through the daemon's authenticated
-listener as byte streams — the interim mechanism for backup,
+listener as byte streams: the interim mechanism for backup,
 migration to another daemon, and seeding a fresh workspace with
 data:
 
@@ -217,87 +226,89 @@ GET /api/v1/workspaces/{id}/home    → the volume file's bytes, streamed
 PUT /api/v1/workspaces/{id}/home    → replaces the volume from the body
 ```
 
-`msks home export` / `msks home import` drive both endpoints from
-the CLI (`docs/cli.md`); a token holder may also call them with any
-HTTP client.
+`msks home export` / `msks home import` drive both endpoints
+from the CLI (`docs/cli.md`); a token holder may also call them
+with any HTTP client.
 
-The body is the volume file's bytes **verbatim** — an ext4 image,
-labeled `msks-home` when msksd made it. An import installs what it
-receives: a hand-made ext4 image (or one exported from another
-workspace) lands exactly as uploaded. The ext-family magic sits
-~1 KiB into the image, and the daemon checks it as the body's
-first bytes arrive — a wrong file is refused with `400` at
-kilobyte cost, and the workspace's existing volume is untouched.
-The check cannot judge completeness: the daemon installs the bytes
-that arrive, so verify a hand-made image (`e2fsck -n`) before
-importing it; a transfer that dies mid-body is the disconnect
-case and installs nothing.
+The body is the volume file's bytes **verbatim**: an ext4
+image, labeled `msks-home` when msksd made it. An import
+installs what it receives: a hand-made ext4 image (or one
+exported from another workspace) lands exactly as uploaded. The
+ext-family magic sits ~1 KiB into the image, and the daemon
+checks it as the body's first bytes arrive; a wrong file is
+refused with `400` at kilobyte cost, and the workspace's
+existing volume is untouched. The check cannot judge
+completeness: the daemon installs the bytes that arrive, so
+verify a hand-made image (`e2fsck -n`) before importing it. A
+transfer that dies mid-body is the disconnect case and installs
+nothing.
 
 Sparseness survives the round trip: the import writes in 1 MiB
-windows and turns every all-zero window back into a sparse hole, so
-a blank 2 GiB volume re-imports at its data's cost, not its
-nominal size. A volume exported over a slow link composes with any
-compressor (`msks home export ws - | gzip > ws.ext4.gz`) because
-`-` streams the bytes to stdout.
+windows and turns every all-zero window back into a sparse
+hole, so a blank 2 GiB volume re-imports at its data's cost,
+not its nominal size. A volume exported over a slow link
+composes with any compressor (`msks home export ws - | gzip >
+ws.ext4.gz`) because `-` streams the bytes to stdout.
 
-Both endpoints answer `409` unless the workspace's row says
-its VM is down. `created`, `stopped`, and `absent` move
-freely. `starting`, `running`, and `paused` keep the volume:
-an export under a guest mid-write is a torn image, and an
-import into a mounted device would be overwritten or lost.
-`unknown` refuses too. The seam reports it when a live VMM
-stopped answering its API, so a possibly-live VM gets the
-volume's protection. Stop
+Both endpoints answer `409` unless the workspace's row says its
+VM is down. `created`, `stopped`, and `absent` move freely.
+`starting`, `running`, and `paused` keep the volume: an export
+under a guest mid-write is a torn image, and an import into a
+mounted device would be overwritten or lost. `unknown` refuses
+too. The seam reports it when a live VMM stopped answering its
+API, so a possibly-live VM gets the volume's protection. Stop
 the workspace first (`msks stop`). Under the move's lock the
 daemon also asks the seam itself: a row can lag a boot by one
-watcher poll interval, and the live VMM's answer refuses where the
-row would pass.
+watcher poll interval, and the live VMM's answer refuses where
+the row would pass.
 
 A move, a boot, and a delete serialize per workspace on one
 lock. A boot that arrives during a move waits for it to finish
-and boots the volume the move left. A move that arrives after
-a boot sees the running row and answers `409`. A delete orders
+and boots the volume the move left. A move that arrives after a
+boot sees the running row and answers `409`. A delete orders
 against an import instead of racing it. A waiter gives up after
 `MSKSD_MOVE_WAIT_TIMEOUT_S` (120 s default) and answers a named
-`409` (a volume move is in flight) rather than hanging — a stalled
-export reader holds its lock as long as its connection lives. A
-foreign host answers the placement `409` every artifact route
-shares.
+`409` (a volume move is in flight) rather than hanging; a
+stalled export reader holds its lock as long as its connection
+lives. A foreign host answers the placement `409` every
+artifact route shares.
 
 An import whose filesystem size differs from the workspace's
 recorded `home_mib` mounts fine either way: an ext4 filesystem
 smaller than its device is legal. `home_mib` stays the size a
 blank rebuilt volume gets, and growing an imported filesystem
-is a guest-side `resize2fs`. The install is atomic: a failed or cut-off upload leaves the
-existing volume in place. Every completed move is announced on
-the events channel as `home.exported` / `home.imported`, with
-the byte count. An export announces when its stream reaches
-the end, so a cancelled download publishes nothing.
+is a guest-side `resize2fs`. The install is atomic: a failed or
+cut-off upload leaves the existing volume in place. Every
+completed move is announced on the events channel as
+`home.exported` / `home.imported`, with the byte count. An
+export announces when its stream reaches the end, so a
+cancelled download publishes nothing.
 
 ## Placement and single-attach
 
-The workspace row records the **host** that owns its artifacts. On the local backend that is always the msksd host that
-created the workspace. A start, stop, reset, or delete through
-a daemon on another host fails with `409` naming where the
-artifacts live. Booting a workspace with an empty `/home`,
-marking a running VM stopped, or dropping the row out from
-under a live VM are all worse than the refusal. The host name is the daemon's
-`MSKSD_HOST_NAME` (default: the host's hostname at daemon start) —
-pin it explicitly when the hostname is not stable (laptops,
-containers) so a rename does not strand every workspace. Deleting
-a workspace whose artifacts live elsewhere happens from that host:
-this one refuses rather than orphan the files. A workspace runs on
-at most one host at a time — the row's placement is the authority
-locally, and the volume's single-writer semantics make a double
-attach impossible.
+The workspace row records the **host** that owns its artifacts.
+On the local backend that is always the msksd host that created
+the workspace. A start, stop, reset, or delete through a daemon
+on another host fails with `409` giving where the artifacts
+live. Booting a workspace with an empty `/home`, marking a
+running VM stopped, or dropping the row out from under a live
+VM are all worse than the refusal. The host name is the
+daemon's `MSKSD_HOST_NAME` (default: the host's hostname at
+daemon start); pin it explicitly when the hostname is not
+stable (laptops, containers) so a rename does not strand every
+workspace. Deleting a workspace whose artifacts live elsewhere
+happens from that host: this one refuses rather than orphan the
+files. A workspace runs on at most one host at a time; the
+row's placement is the authority locally, and the volume's
+single-writer semantics make a double attach impossible.
 
 ## Image pinning
 
 A catalog image with live workspaces cannot be removed
-(`DELETE /api/v1/images/{hash}` answers `409` naming the
-workspace): each workspace's overlay backs that exact image file,
-and its kernel and initrd are read from the image's cache on every
-boot. Deleting the workspace releases the pin.
+(`DELETE /api/v1/images/{hash}` answers `409` giving the
+workspace): each workspace's overlay backs that exact image
+file, and its kernel and initrd are read from the image's cache
+on every boot. Deleting the workspace releases the pin.
 
 ## Environment variables
 

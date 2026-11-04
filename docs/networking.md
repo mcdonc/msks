@@ -1,7 +1,7 @@
 # Guest networking
 
 A workspace talks to the network only when it was created with
-`egress: true` — and when it does, every piece of the path lives in
+`egress: true`, and when it does, every piece of the path lives in
 the daemon, where the guest cannot reach it.
 
 ```bash
@@ -9,7 +9,7 @@ curl -X POST .../api/v1/workspaces \
   -d '{"id": "ws1", "egress": true}'        # or: msks create ws1 --egress
 ```
 
-This chapter covers the plumbing — the NIC, the tap, DHCP, DNS,
+This chapter covers the plumbing: the NIC, the tap, DHCP, DNS,
 NAT, and the forward that carries ssh and rsync into the
 workspace. The consent layer that gates where a new connection
 may go is its own chapter: [Egress
@@ -38,7 +38,7 @@ cycles, daemon restarts, and even digest collisions between
 workspace ids therefore keep the same address.
 
 msksd is the only DHCP server and the only resolver the guest
-ever sees. The DHCP offer names the tap as gateway and as DNS
+ever sees. The DHCP offer gives the tap as gateway and as DNS
 server, and a small forwarder on the tap answers port 53 by
 relaying to the host's own upstream (`MSKSD_EGRESS_DNS_UPSTREAM`,
 or the first nameserver in the host's `/etc/resolv.conf`). The resolver
@@ -59,17 +59,17 @@ tap:
 
 - **Forward.** The guest's own source address may leave via the
   uplink, and the replies to connections the guest established may
-  come back. Everything else across the tap drops: traffic from a spoofed
-  source, traffic headed anywhere but the uplink (which is what
-  blocks one workspace from reaching another's tap), and inbound
-  the guest never asked for. Nothing outside initiates a
+  come back. Everything else across the tap drops: traffic from a
+  spoofed source, traffic headed anywhere but the uplink (which is
+  what blocks one workspace from reaching another's tap), and
+  inbound the guest never asked for. Nothing outside initiates a
   connection into a workspace.
 - **Input.** The guest may reach a fixed set of ports on the host
   through its tap: DHCP (67), the resolver (53), the interceptor's
   listener while armed, and the LLM proxy port when one is
   configured. Everything else
-  from the tap drops before the host's own services — the API
-  listener among them — so guest root cannot port-scan the
+  from the tap drops before the host's own services (the API
+  listener among them), so guest root cannot port-scan the
   host.
 
 What the chain deliberately permits depends on the
@@ -89,11 +89,12 @@ dedicated service user holding exactly two ambient
 capabilities. `CAP_NET_ADMIN` covers taps and their addresses,
 the nftables tables, and (because ambient capabilities survive
 `exec`) the workspace VMM opening its tap. `CAP_NET_BIND_SERVICE`
-covers the DHCP and DNS listeners, UDP 67 and 53. Nothing in the daemon's process tree
+covers the DHCP and DNS listeners, UDP 67 and 53. Nothing in the
+daemon's process tree
 runs as uid 0; `/dev/kvm` reaches the VMM through the `kvm` group.
-The per-tap service listeners — the interceptor, the LLM proxy,
-and the probe service — bind ports above 1024 by default;
-a setting that names a privileged port needs the capability.
+The per-tap service listeners (the interceptor, the LLM proxy,
+and the probe service) bind ports above 1024 by default;
+a setting that gives a privileged port needs the capability.
 The host's firewall is never touched; containment stays inside the
 host by design.
 
@@ -104,8 +105,8 @@ address and resolver, and that is the whole of it. No sidecar, no
 agent, no firewall.
 
 **A workspace created with `"egress": false`** presents no NIC
-at all: no tap, no chains, no services — the posture available on
-every backend, and the one that needs zero enforcement machinery.
+at all: no tap, no chains, no services. The posture is available
+on every backend, and it needs zero enforcement machinery.
 
 ## Configuration
 
@@ -120,8 +121,8 @@ every backend, and the one that needs zero enforcement machinery.
 | `MSKSD_IP_TOOL` / `MSKSD_NFT_TOOL` | `ip` / `nft`    | The plumbing tools' paths                                                               |
 
 A ruleset apply hands `nft` a file under the daemon's state
-directory and names it by path, so the tool configured above
-runs with the daemon's own read access to that directory — a
+directory and passes it by path, so the tool configured above
+runs with the daemon's own read access to that directory. A
 wrapper that execs the real `nft` as another user, or in another
 mount namespace, must carry that access along.
 
@@ -130,56 +131,57 @@ Egress needs the daemon to hold `CAP_NET_ADMIN` and
 module grant exactly those two) and a kernel that routes. The
 host ships `net.ipv4.ip_forward=1` as a boot-time `sysctl.d`
 setting, and the daemon verifies it at startup. A daemon that
-reads `0` refuses every egress workspace with a cause naming
-the sysctl key. The deployment host satisfies the routing kernel the daemon
-verifies: the NixOS module in `nix/module.nix` sets
-`net.ipv4.ip_forward=1`, names its own uplink through settings, and
-grants the daemon the two capabilities — a `nixos-rebuild switch`
-is the whole host setup. The dev host's wrapper carries the same
-grant for `msks-dev` (its uplink default names this dev host's
-interface). Debian and Fedora deployment hosts run their setup
-tool — `msks-setup-debian-host` or `msks-setup-fedora-host` —
-and [the Installation
+reads `0` refuses every egress workspace with a cause that
+gives the sysctl key. The deployment host satisfies the routing
+kernel the daemon verifies: the NixOS module in `nix/module.nix`
+sets `net.ipv4.ip_forward=1`, picks its own uplink through
+settings, and grants the daemon the two capabilities; a
+`nixos-rebuild switch` is the whole host setup. The dev host's
+wrapper carries the same grant for `msks-dev` (its uplink
+default carries this dev host's interface). Debian and Fedora
+deployment hosts run their setup tool, `msks-setup-debian-host`
+or `msks-setup-fedora-host`, and [the Installation
 chapter](installation.md) walks the tool end to end. For egress
 it matters that the tool installs the same capability wrapper,
-lands the sysctl and the module set this section names, and
+lands the sysctl and the module set this section lists, and
 registers the daemon's systemd user service with
 `MSKSD_EGRESS_ENABLED=true` and the detected uplink. An
 operator who sets `MSKSD_EGRESS_ENABLED=false` arms nothing, and
-every egress workspace then refuses to boot with the cause named.
+every egress workspace then refuses to boot with the cause
+given.
 The dev-host egress smoke (`TEST_EGRESS=1`) runs as root,
 because ambient capabilities cannot be granted to an arbitrary
 shell. The harness creates real taps, loads nftables rules,
 and binds ports 67 and 53, so it runs as full root and sets
-`ip_forward` itself for the duration of the run. That is the test's constraint,
-not the server's: the daemon needs only the two capabilities and an
-already-routing kernel.
+`ip_forward` itself for the duration of the run. That is the
+test's constraint, not the server's: the daemon needs only the
+two capabilities and an already-routing kernel.
 
 ## Reaching guest services (the forward)
 
 Egress is the guest's outbound path; the forward websocket
-(`msks forward`, issue) is the client's inbound one, and it rides
+(`msks forward`, issue) is the client's inbound one, and it uses
 the same per-VM tap.
 The daemon dials the workspace's deterministic tap address on
-the port the caller names and bridges raw bytes over its
+the port the caller gives and bridges raw bytes over its
 authenticated websocket API. The CLI chapter's `msks forward`
 section covers the stdio and `--local` shapes and the
 close-code contract.
 
 The workspace image meets the forward with a TCP service plane of
-its own: sshd — the image's Debian package, enabled — and
-rsync. sshd listens on all interfaces once the guest's NIC has its
+its own: sshd (the image's Debian package, enabled) and rsync.
+sshd listens on all interfaces once the guest's NIC has its
 address; a boot-time unit holds the port behind DHCP, with a
 15s ceiling so a slow lease never blocks it for long. Every
 login is a key login: `PasswordAuthentication no`, and root may
-log in with a key only (`PermitRootLogin prohibit-password`). Host keys are
-generated on the workspace's first boot into its persistent root
-overlay, so a stop/start cycle presents the same host key — the
-`known_hosts` entry you recorded on first login keeps matching. The
-entry lives under the workspace's immutable id, so a workspace
-recreated under the same name is a new id with a fresh cache: it
-trusts its own first-boot host keys instead of refusing the first
-instance's.
+log in with a key only (`PermitRootLogin prohibit-password`).
+Host keys are generated on the workspace's first boot into its
+persistent root overlay, so a stop/start cycle presents the
+same host key: the `known_hosts` entry you recorded on first
+login keeps matching. The entry lives under the workspace's
+immutable id, so a workspace recreated under the same name is a
+new id with a fresh cache: it trusts its own first-boot host
+keys instead of refusing the first instance's.
 A workspace without egress carries the same image unchanged: its
 forward is refused at the API with close code 4501 before any dial,
 and its console is the virtio-console getty.
@@ -188,19 +190,19 @@ and its console is the virtio-console getty.
 
 A workspace created through the client carries the operator's
 key as its ssh identity (issues). `identity_file` (or
-`MSKSC_IDENTITY_FILE`) names your private key, its derived
+`MSKSC_IDENTITY_FILE`) gives your private key, its derived
 public half travels with the create request, and the first
 boot plants that line into `authorized_keys` for root and the
-workspace's login user. The planting rides the same cidata
+workspace's login user. The planting travels the same cidata
 seed disk that carries `user_data`, so the guest needs no key
 steps of its own. msks
 generates no key: a client with no identity configured refuses
-the create with a one-line error naming the config keys, the
+the create with a one-line error giving the config keys, the
 variables, and `--pubkey`. `pubkey_file` (or
-`MSKSC_PUBKEY_FILE`) names the public half directly instead
-— a `.pub` file, read in place of any private material,
-the create form for a key kept encrypted while the operator's
-agent holds it. The daemon stores and seeds the public
+`MSKSC_PUBKEY_FILE`) gives the public half directly instead: a
+`.pub` file, read in place of any private material, the create
+form for a key kept encrypted while the operator's agent holds
+it. The daemon stores and seeds the public
 line only; its database never holds a private half and its key
 fetch carries no private field at all. The
 public half persists across daemon
@@ -209,12 +211,13 @@ row, and a stop/start cycle serves the same line again. The seed
 composes the identity's script with any `user_data` payload as
 MIME siblings, so a workspace can carry both.
 
-The daemon validates the supplied line by shape — a label in the
+The daemon validates the supplied line by shape: a label in the
 algorithm-name charset, fields, base64 body, and a blob whose
-embedded algorithm name agrees with its label — and annotates it
-with its own provenance comment (`msks-client:<id>`). A supplied
-key is accepted at any type: the guest's sshd, the platform's
-own, is the authority on which keys it will authenticate.
+embedded algorithm name agrees with its label. It annotates the
+line with its own provenance comment (`msks-client:<id>`). A
+supplied key is accepted at any type: the guest's sshd, the
+platform's own, is the authority on which keys it will
+authenticate.
 
 With the identity materialized, the usual client shapes work over
 the forward:
@@ -226,12 +229,12 @@ rsync -e 'ssh -i ~/.ssh/id_ed25519 -p 2201' \
     -av ./site/ root@127.0.0.1:/root/site/
 ```
 
-The same login works as the workspace's login user —
-`ssh -i ... -p 2201 alice@127.0.0.1`, the name `msks create
---user` recorded — whose home rides the persistent
+The same login works as the workspace's login user
+(`ssh -i ... -p 2201 alice@127.0.0.1`, the name `msks create
+--user` recorded), whose home lives on the persistent
 `/home` volume. A workspace created before records no user
-of its own; log in as `root`, or as `msks` — the account the
-image itself ships, named directly.
+of its own; log in as `root`, or as `msks`, the account the
+image itself ships, given directly.
 
 `msks ssh` is the zero-step form of the same login: it boots
 the workspace if needed and runs ssh with the forward as its
@@ -243,11 +246,12 @@ matter). Otherwise it stages the operator identity from
 private half never becomes a file. It logs in as the
 workspace's login user by default, and as `root` for a
 workspace that records none. `-l root` is also the recovery
-login; see the CLI chapter's `msks ssh` section. When the command itself booted the workspace, it holds the
-connection back until the guest accepts the workspace key. A
-probe login retries behind the first boot's identity seeding,
-so the first attempt lands as a session instead of
-`Permission denied (publickey)`.
+login; see the CLI chapter's `msks ssh` section. When the
+command itself booted the workspace, it holds the connection
+back until the guest accepts the workspace key. A probe login
+retries behind the first boot's identity seeding, so the first
+attempt lands as a session instead of `Permission denied
+(publickey)`.
 
 `msks rsync` is the copy form of the same seam: it runs the
 host rsync over the forward with the identity staged in
@@ -257,7 +261,7 @@ devbox -- -aP src/ :src/` targets the login user's home;
 `msks rsync` section has the details.
 
 The user's own ssh config carries the same workflow for plain `ssh`
-invocations — one wildcard block serves every workspace:
+invocations; one wildcard block serves every workspace:
 
 ```text
 Host msks-*
@@ -274,23 +278,24 @@ Host msks-*
 `ssh msks-devbox`, `rsync -aP src/ msks-devbox:/src/`, `git clone
 msks-devbox:srv/proj.git`, and VS Code Remote-SSH work against the
 alias; ControlMaster shares one forward connection across
-concurrent invocations. The block sets no `User`: plain `ssh` logs in as its own
-default, the local username. That is the workspace's recorded
-login user for the operator who created it (the name `msks
-create --user` planted; `ssh -l alice` reaches a workspace
-another operator's name recorded). A workspace that records no
-user dials `root`, the account every seed provisions a key
-for. The alias block names the operator's own
-key with `IdentityFile` — the same file `identity_file` names.
+concurrent invocations. The block sets no `User`: plain `ssh`
+logs in as its own default, the local username. That is the
+workspace's recorded login user for the operator who created it
+(the name `msks create --user` planted; `ssh -l alice` reaches a
+workspace another operator's name recorded). A workspace that
+records no user dials `root`, the account every seed provisions
+a key for. The alias block gives the operator's own key with
+`IdentityFile`, the same file `identity_file` points at.
 Those paths are the client cache root's defaults and stay
 where the block writes them: OpenSSH reads its own config, so
 `MSKSC_CACHE_DIR` (the variable the devenv shell presets for
 its command forms) moves only the `msks ssh`/`msks rsync`
 state. A relocated cache takes the alias block's paths with it
-only when you edit the block to match. `msks ssh` is the command form
-that carries the identity per-session from memory instead — plain
-`ssh` invocations against the alias need the file. The ProxyCommand runs `msks` in the user's environment, so
-`MSKSC_URL`, `MSKSC_TOKEN`, and `MSKSC_CAFILE` must be set
+only when you edit the block to match. `msks ssh` is the
+command form that carries the identity per-session from memory
+instead; plain `ssh` invocations against the alias need the
+file. The ProxyCommand runs `msks` in the user's environment,
+so `MSKSC_URL`, `MSKSC_TOKEN`, and `MSKSC_CAFILE` must be set
 there. `ssh -l root msks-devbox` is the recovery login. `-A`
 forwards the operator's own agent into the workspace, and so
 does `msks ssh -- -A`, which rewrites the request onto the
@@ -303,37 +308,38 @@ private key that opens the workspace's ssh.
 ### An operator-supplied key for one workspace
 
 `msks create --pubkey FILE` (issue) builds the workspace
-around a public key chosen for that one create — the key that
-`~/.ssh/id_ed25519.pub` names, a hardware token's key, any
-well-formed OpenSSH line — instead of the configured key. The
+around a public key chosen for that one create (the key that
+`~/.ssh/id_ed25519.pub` gives, a hardware token's key, any
+well-formed OpenSSH line) instead of the configured key. The
 supplied line travels to the daemon at its own key type and is
-accepted at any type — the guest's sshd, the platform's own, is
+accepted at any type: the guest's sshd, the platform's own, is
 the authority on which keys it will authenticate. The daemon
 re-annotates the line with its provenance comment and seeds it
-like any other identity; its database holds the public half only.
+like any other identity; its database holds the public half
+only.
 
 The private half never leaves the operator's custody:
 nothing is written client-side, and login uses the operator's
 own key (`ssh -i` through a forward, or the `Host msks-*`
 alias with `IdentityFile` pointing at the operator's key
 file). The private half already exists wherever the operator
-keeps it, so the client fetches and stores nothing. `msks ssh` on such a workspace signs
-through the operator's agent when it holds the planted key
-, reads the key `identity_file` names when it pairs with
-the planted public half, and otherwise exits with a line naming
-those recoveries.
+keeps it, so the client fetches and stores nothing. `msks ssh`
+on such a workspace signs through the operator's agent when it
+holds the planted key, reads the key `identity_file` points at
+when it pairs with the planted public half, and otherwise exits
+with a line giving those recoveries.
 
 ### Identities minted before
 
 A workspace whose row predates keeps the public half it was
 created with, and the private half stays wherever the mint left
-it — on the client that minted it, or in the operator's own
-files. The daemon holds none (the stored halves and the serving of
-them are long dropped), so an older workspace logs in the same
-way a current one does. The login works through the operator's
-agent when it holds the key; through the file `identity_file`
-names when it pairs with the planted public half; or through
-`ssh -i` with the half directly. The
+it: on the client that minted it, or in the operator's own
+files. The daemon holds none (the stored halves and the serving
+of them are long dropped), so an older workspace logs in the
+same way a current one does. The login works through the
+operator's agent when it holds the key; through the file
+`identity_file` points at when it pairs with the planted public
+half; or through `ssh -i` with the half directly. The
 console keeps working either way: the token-gated root
 autologin, not a key login.
 
@@ -355,14 +361,14 @@ ssh -A msks-devbox
 ```
 
 Inside the session your agent is present: `ssh-add -l` lists your
-keys, and every ssh the session starts — git's included — offers
+keys, and every ssh the session starts (git's included) offers
 them to the remote, so the ordinary push needs no extra setup:
 
 ```bash
 git -C ~/work/proj push origin main
 ```
 
-The credential stays on your machine. The agent rides the
+The credential stays on your machine. The agent travels the
 connection as a socket, so nothing is written to the workspace's
 disks, the image, or the seed; when the session closes, the
 workspace keeps no copy of the key. Host-key checking for the
@@ -373,7 +379,7 @@ Two msks-specific details:
 
 - `msks ssh my-workspace -- -A`, the one-command login with
   forwarding, forwards your agent too. The command rewrites
-  the request onto the socket `SSH_AUTH_SOCK` names, the same
+  the request onto the socket `SSH_AUTH_SOCK` gives, the same
   agent the alias form above forwards, so no ssh-config block
   is needed. The
   plain alias (`ssh -A msks-devbox`) and the forward port directly
@@ -381,9 +387,9 @@ Two msks-specific details:
   work as always.
 - With the alias's ControlMaster, the agent arrives only on the
   connection that creates the master. If you connected earlier
-  without `-A`, close the master first — `ssh -O exit msks-devbox`
-  — then reconnect with `-A`, or wait out the ControlPersist
-  window.
+  without `-A`, close the master first (`ssh -O exit
+msks-devbox`), then reconnect with `-A`, or wait out the
+  ControlPersist window.
 
 What the network allows depends on the workspace's consent
 mode. `allow` reaches any destination beyond the host without
@@ -392,9 +398,11 @@ the uplink. `static` and `interactive` gate each destination
 first (the [egress consent](egress-consent.md) chapter covers
 the semantics).
 Guest-initiated connections aimed at the host itself stay
-dropped in every mode (only DHCP and the resolver answer it). The end-to-end proofs are the `test_local_egress_git_out`
+dropped in every mode (only DHCP and the resolver answer it).
+The end-to-end proofs are the `test_local_egress_git_out`
 smoke (`TEST_EGRESS=1` locally, and part of CI's KVM
-workflow) and the `test_local_egress_consent_*` smokes. The git smoke installs git in the guest over a plain `allow`
+workflow) and the `test_local_egress_consent_*` smokes. The
+git smoke installs git in the guest over a plain `allow`
 egress path and pushes a commit over a test-widened input pin.
 It uses only a key that arrived through the forward as a
 forwarded agent, since the host itself stays unreachable from
@@ -415,4 +423,4 @@ NIC whatever runs it.
 `start` arms the tap and services before the VMM boots (the VMM
 opens the tap by name); `stop`, `kill`, and `delete` tear the tap,
 its chain, and its services down again. A failed boot unwinds its
-own plumbing — no half-open path outlives a failed workspace start.
+own plumbing: no half-open path outlives a failed workspace start.
