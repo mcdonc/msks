@@ -1392,6 +1392,15 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>The TUI's shell action reports an ssh refusal instead of
+  opening a console (#748).</strong> The "Open a shell" action used to
+  fall back to a <code>msks console</code> session when the ssh attempt was
+  refused. It now opens nothing in the session's place. The
+  tree's first flash leads with a <code>msks console</code> suggestion and
+  follows with the refusal's first line; the full refusal is
+  logged. The action's hint reads "ssh in this terminal".</p>
+</li>
+<li>
 <p><strong><code>msks-setup-macos-host</code> keeps an existing client config
   (#730).</strong> The tool writes <code>~/.config/msks/msks.yaml</code> only when
   the file is missing; an existing file stays byte-for-byte,
