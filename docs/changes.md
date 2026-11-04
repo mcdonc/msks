@@ -96,6 +96,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The listings' columns widen with the terminal (#749).** The
+  workspaces list and the secrets page now grow their columns when the
+  terminal runs wider than 80 columns: the name and image columns (the
+  workspaces list) and the coverage, name, and destinations columns
+  (the secrets page) take the extra cells, so long names and image
+  references read whole instead of clipping. At 80 columns or
+  narrower, the layout stays fixed as before.
+
 - **`msks-setup-macos-host` links `msks-term-popup` beside
   `msks` (#734).** The brew prefix's bin dir carries both client
   commands, so a consent-terminal window opened through an

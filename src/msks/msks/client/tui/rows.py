@@ -19,11 +19,13 @@ def workspace_label(row: dict) -> str:
 
 #: The listing's columns (#347): the header's label and the
 #: column's width, in row order — every row pads each field to its
-#: column's width, so the columns line up down the list. The name
-#: column pays for the frame's edges (#349): at 80 columns the
-#: border and the scrollbar together leave 74 cells for a row,
+#: column's width, so the columns line up down the list. The widths
+#: are the fixed minimums the 80-column frame budgets: at that width
+#: the border and the scrollbar together leave 74 cells for a row,
 #: and the widest label the created column reads (#350,
-#: ``yesterday``) must fit whole beside the columns before it.
+#: ``yesterday``) must fit whole beside the columns before it. A
+#: wider terminal widens the growing columns past these minimums
+#: (:func:`expanded_columns`).
 LIST_COLUMNS = (
     ("NAME", 22),
     ("STATUS", 10),
@@ -35,10 +37,59 @@ LIST_COLUMNS = (
 #: The space between two listing columns.
 COLUMN_GAP = "  "
 
-#: The listing's column widths, in row order.
-NAME_W, STATUS_W, EGRESS_W, IMAGE_W, CREATED_W = (
-    width for _label, width in LIST_COLUMNS
-)
+
+#: The cells a listing row's frame eats before its first column
+#: (#347, #349): the round border's two edges, the row's two-cell
+#: padding, and the scrollbar's two — at an 80-column terminal the
+#: 74 cells that remain are exactly the fixed columns' span, so
+#: both listings (the workspaces', the secrets') compute their
+#: widened budgets from the terminal's width less this.
+LIST_FRAME_CELLS = 6
+
+#: The columns the listing's spare width flows into when the
+#: terminal runs wider than the fixed columns' span (#347): the
+#: name and the image — the two columns whose content runs long
+#: (workspace names, image references) — while the status,
+#: egress, and created columns hold their vocabulary-sized shape
+#: whatever the terminal's width.
+GROWING_LABELS = frozenset({"NAME", "IMAGE"})
+
+
+def fixed_span(columns) -> int:
+    """The columns' fixed span: their widths and the gaps between
+    them together — the budget an 80-column frame pays, and the
+    line a wider terminal's spare cells are counted from."""
+    return sum(width for _label, width in columns) + len(COLUMN_GAP) * (
+        len(columns) - 1
+    )
+
+
+def grown_widths(spare: int, growing: list[str]) -> dict[str, int]:
+    """The cells each growing column adds: the spare split evenly
+    between the growing columns, an odd cell to the earlier
+    ones."""
+    share, extra = divmod(spare, len(growing))
+    return {
+        label: share + (1 if index < extra else 0)
+        for index, label in enumerate(growing)
+    }
+
+
+def expanded_columns(
+    available: int, base=LIST_COLUMNS, grow=GROWING_LABELS
+) -> tuple:
+    """The listing's columns widened to fill ``available`` display
+    cells: the fixed widths are the minimums, and every cell
+    beyond their span splits evenly between the growing columns,
+    an odd cell to the earlier one. A budget at or under the
+    fixed span returns the fixed columns — the frame clips the
+    cells beyond, as it always did."""
+    spare = available - fixed_span(base)
+    if spare <= 0:
+        return base
+    growing = [label for label, _width in base if label in grow]
+    added = grown_widths(spare, growing)
+    return tuple((label, width + added.get(label, 0)) for label, width in base)
 
 
 def cell_prefix(text: str, width: int) -> str:
@@ -225,16 +276,18 @@ def created_label(created_at: str | None, now: datetime | None = None) -> str:
     return age_label((when.date() - local.date()).days)
 
 
-def row_cells(row: dict) -> tuple[str, ...]:
-    """The row's column cells (#347), each clipped to its
-    column's width whatever the daemon's vocabulary grows; the
-    created cell reads as a relative label (#350)."""
+def row_cells(row: dict, columns=LIST_COLUMNS) -> tuple[str, ...]:
+    """The row's column cells (#347) at the given columns' widths,
+    each clipped to its column's width whatever the daemon's
+    vocabulary grows; the created cell reads as a relative label
+    (#350)."""
+    widths = [width for _label, width in columns]
     return (
-        clip(workspace_label(row), NAME_W),
-        clip(status_with_issues(row), STATUS_W),
-        clip(row.get("egress_mode") or "-", EGRESS_W),
-        clip(row.get("image_ref") or row.get("image_hash") or "-", IMAGE_W),
-        clip(created_label(row.get("created_at")), CREATED_W),
+        clip(workspace_label(row), widths[0]),
+        clip(status_with_issues(row), widths[1]),
+        clip(row.get("egress_mode") or "-", widths[2]),
+        clip(row.get("image_ref") or row.get("image_hash") or "-", widths[3]),
+        clip(created_label(row.get("created_at")), widths[4]),
     )
 
 
@@ -252,9 +305,14 @@ def status_with_issues(row: dict) -> str:
 
 
 def row_content(
-    row: dict, theme_variables: dict | None = None, focused: bool = False
+    row: dict,
+    theme_variables: dict | None = None,
+    focused: bool = False,
+    columns=LIST_COLUMNS,
 ) -> Content:
-    """One listing row (#348, #470 S1/S3): the padded cells with
+    """One listing row (#348, #470 S1/S3) at the given columns'
+    widths (:func:`expanded_columns` widens a row to the
+    terminal): the padded cells with
     the status cell alone carrying its state's color (dot and
     word), and the focused row's name bold — the focus cue that
     survives a theme whose highlight bar reads weakly. The span's
@@ -264,10 +322,10 @@ def row_content(
     columns (the name cell's own length fixes the span's offset:
     a wide-character name pads with fewer characters than its
     display width)."""
-    cells = row_cells(row)
+    cells = row_cells(row, columns)
     name, status, *_ = cells
-    line = padded_cells(cells).rstrip()
-    offset = len(cell_pad(name, NAME_W)) + len(COLUMN_GAP)
+    line = padded_cells(cells, columns).rstrip()
+    offset = len(cell_pad(name, columns[0][1])) + len(COLUMN_GAP)
     spans = [
         Span(
             offset,

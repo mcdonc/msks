@@ -35,6 +35,7 @@ from msks.client.tui.secrets import (
     ttl_default,
     ttl_text,
 )
+from rich.cells import cell_len
 from test_consent_page import FakeFactory, FakeWS, press_until, wait_for
 from test_main_tui import (
     FakeData,
@@ -47,6 +48,8 @@ from test_main_tui import (
     row,
 )
 from testkeys import mint
+from textual import events
+from textual.geometry import Size
 from textual.widgets import Button, Input, Select, Static
 
 
@@ -278,6 +281,48 @@ async def test_a_listing_failure_flashes() -> None:
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
         await wait_for(lambda: "listing failed" in secrets_status(app))
+
+
+async def test_the_page_widens_with_the_terminal() -> None:
+    """#347's rule over #390's columns: a wider terminal widens the
+    page — the coverage, name, and destinations columns share the
+    spare cells, a destinations list the fixed widths clipped
+    reads whole, and the header's labels line up with the
+    repainted rows' cells."""
+    data = FakeData([])
+    data.secret_rows = [
+        secret_row(dests=["api.github.com", "ghcr.example.internal"]),
+    ]
+    app, _follow = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await open_secrets(pilot, app)
+        await wait_for(lambda: "…" in secret_text(app, 0))  # clipped at 80
+        await pilot.resize_terminal(170, 24)
+        await wait_for(lambda: "…" not in secret_text(app, 0))
+        plain = secret_text(app, 0)
+        assert "api.github.com, ghcr.example.internal" in plain
+        header = str(app.screen.query_one("#secret-columns", Static).content)
+        assert cell_len(header[: header.index("NAME")]) == cell_len(
+            plain[: plain.index("github_api")]
+        )
+
+
+def test_a_resize_before_the_page_builds_keeps_its_widths() -> None:
+    """#347: a resize event that lands while the page still
+    composes (before its widgets mount) sets the columns and
+    paints nothing — the first rows build at the widths when they
+    land. The page's spare splits three ways: coverage, name, and
+    destinations."""
+    screen = secrets_mod.SecretsScreen()
+    screen.on_resize(events.Resize(Size(200, 24), Size(200, 24)))
+    assert screen.columns == (
+        ("COVERAGE", 53),
+        ("NAME", 54),
+        ("DESTS", 55),
+        ("EXPIRES", 8),
+        ("CREATED", 8),
+        ("STATE", 6),
+    )
 
 
 async def test_the_empty_daemon_states_it() -> None:

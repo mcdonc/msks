@@ -65,10 +65,12 @@ from test_consent_tui import (
     rules_frame as shared_rules_frame,
 )
 from testkeys import mint as MINT
+from textual import events
 from textual.color import Color
 from textual.containers import Vertical
 from textual.content import Content, Span
 from textual.css.query import NoMatches
+from textual.geometry import Size
 from textual.widgets import Button, Input, OptionList, Select, Static
 
 WS = "ws-a"
@@ -2666,6 +2668,70 @@ def test_the_listing_columns_line_up(monkeypatch) -> None:
     assert rows_mod.cell_prefix("北a", 3) == "北a"
 
 
+def test_the_columns_widen_with_the_terminal() -> None:
+    """#347: the fixed widths are the 80-column minimums, and a
+    wider terminal's spare cells split evenly between the name
+    and image columns — the two whose content runs long — an odd
+    cell to the earlier one; the status, egress, and created
+    columns hold their vocabulary-sized shape, and a budget at or
+    under the fixed span (a narrower terminal) keeps the fixed
+    columns, the cells beyond clipping as they always did."""
+    base = rows_mod.LIST_COLUMNS
+    assert rows_mod.expanded_columns(74) == base
+    assert rows_mod.expanded_columns(0) == base
+    assert rows_mod.expanded_columns(78) == (
+        ("NAME", 24),
+        ("STATUS", 10),
+        ("EGRESS", 12),
+        ("IMAGE", 14),
+        ("CREATED ↓", 10),
+    )
+    # An odd spare cell goes to the earlier growing column.
+    odd = rows_mod.expanded_columns(79)
+    assert odd[0] == ("NAME", 25)
+    assert odd[3] == ("IMAGE", 14)
+    # Another listing's own columns grow through the same helper.
+    assert rows_mod.expanded_columns(
+        79, base=(("COVERAGE", 13),), grow={"COVERAGE"}
+    ) == (("COVERAGE", 79),)
+
+
+def test_widened_rows_keep_the_columns_and_fit_long_content(
+    monkeypatch,
+) -> None:
+    """#347: a row rendered at the widened widths keeps the
+    columns — every cell pads to its column's width, the header's
+    labels ride the same offsets — and the content the fixed
+    widths clipped (a long name, a long image reference) reads
+    whole."""
+    pinned_clock(monkeypatch)
+    columns = rows_mod.expanded_columns(134)  # 60 spare: NAME 52, IMAGE 42
+    wide = rows_mod.row_content(
+        {**row(name="n" * 40), "image_ref": "ghcr.internal.example/debian:13"},
+        columns=columns,
+    ).plain
+    header = rows_mod.list_header(columns)
+    assert "n" * 40 in wide
+    assert "ghcr.internal.example/debian:13" in wide
+    assert cell_len(header[: header.index("STATUS")]) == cell_len(
+        wide[: wide.index("● stopped")]
+    )
+    assert cell_len(header[: header.index("CREATED ↓")]) == cell_len(
+        wide[: wide.index("2d ago")]
+    )
+
+
+def test_a_resize_before_the_listing_builds_keeps_its_widths() -> None:
+    """#347: a resize event that lands while the screen still
+    composes (before its widgets mount) sets the columns and
+    paints nothing — the first rows build at the widths when they
+    land."""
+    screen = main_screen_mod.MainScreen()
+    screen.on_resize(events.Resize(Size(200, 24), Size(200, 24)))
+    assert screen.columns[0] == ("NAME", 82)  # 120 spare, halved
+    assert screen.columns[3] == ("IMAGE", 72)
+
+
 def test_the_created_column_buckets_by_the_pinned_rule() -> None:
     """#350: the CREATED column reads a relative label, bucketed
     by one pinned rule over whole calendar days between the
@@ -2731,6 +2797,31 @@ async def test_the_listing_header_row_shows_with_rows() -> None:
         await pilot.press("r")
         await wait_for(lambda: list_children(app) == 0)
         assert not columns.display
+
+
+async def test_the_listing_widens_with_the_terminal(monkeypatch) -> None:
+    """#347: a wider terminal widens the listing — the name and
+    image columns share the spare cells, a name the fixed widths
+    clipped reads whole, and the header's labels line up with the
+    repainted rows' cells. A move that changes no widths (a
+    height-only resize) repaints nothing."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row(name="n" * 40)])
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await wait_for(lambda: "…" in row_text(app, 0))  # clipped at 80
+        await pilot.resize_terminal(140, 24)
+        await wait_for(lambda: "n" * 40 in row_text(app, 0))
+        header = str(app.query_one("#columns", Static).content)
+        plain = row_text(app, 0)
+        assert cell_len(header[: header.index("STATUS")]) == cell_len(
+            plain[: plain.index("● stopped")]
+        )
+        # A height-only move leaves the widths where they were —
+        # the header stands as the widening pass painted it.
+        await pilot.resize_terminal(140, 40)
+        await pilot.pause()
+        assert str(app.query_one("#columns", Static).content) == header
 
 
 async def test_the_listing_renders_inside_a_frame(monkeypatch) -> None:
