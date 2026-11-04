@@ -5454,11 +5454,13 @@ def test_ls_marker_names_multiple_kinds() -> None:
 
 def mounted_row() -> dict:
     """The row the mount exchange reads and the daemon's refreshed
-    reply."""
+    reply — pending, the set differing from what the last start
+    attached."""
     return {
         "id": "1a2b3c4d",
         "name": "alpha",
         "mounts": [{"host": "/srv/proj", "guest": "/mnt/proj", "mode": "rw"}],
+        "mounts_pending": True,
         "mount_issues": [],
     }
 
@@ -5537,6 +5539,33 @@ def test_cmd_umount_removes_the_mount(
                 lambda req: httpx.Response(200, json=mounted_row())
             ),
         )
+
+
+def test_cmd_mount_without_a_pending_change_drops_the_suffix(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``msks mount`` (#756): a reply whose set agrees with what
+    the last start attached carries no pending flag, and the
+    outcome line names the set without the next-start suffix —
+    the re-add that returns the row to its attached shape
+    changes nothing a start must take."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.method == "GET":
+            return httpx.Response(200, json=mounted_row())
+        return httpx.Response(
+            200,
+            json={**mounted_row(), "mounts_pending": False},
+        )
+
+    client_env(monkeypatch)
+    rc = cli.cmd_mount(
+        "alpha", "/srv/refs:/srv/refs:ro", transport=mock(handler)
+    )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "alpha mounts /srv/proj:/mnt/proj:rw" in out
+    assert "(next start)" not in out
 
 
 def test_the_mount_line_names_derived_skips() -> None:

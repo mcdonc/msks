@@ -122,6 +122,14 @@ class Workspace(Base):
     # row — a pre-#620 row and a workspace created without mounts
     # read identically.
     mounts: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The mounts the workspace's last start attached (#756): the
+    # healthy subset of the configured set at the moment the
+    # launch took them — a snapshot, written only at a successful
+    # start. NULL is a workspace that never started (no record),
+    # and the pair with ``mounts`` is the row's pending story: the
+    # two agree until an edit or a skip splits them, and the next
+    # start writes the record that reconciles them.
+    attached_mounts: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The host's timezone captured at create (#633): the zone
     # name the seed's first-boot block sets the guest's clock to.
     # NULL is a UTC-or-unreadable host — nothing rides and the

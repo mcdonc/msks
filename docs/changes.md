@@ -8,6 +8,17 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **The mounts `applies at next start` note (#756).** The
+  workspace page's mounts line and the `msks mount`/`msks umount`
+  outcome showed the note whenever the workspace mounted
+  anything, even after start/stop cycles with an unchanged
+  config. Every workspace row now carries a `mounts_pending`
+  flag: the daemon compares the configured mounts with the set
+  the last start attached, and the note shows only while the two
+  differ (an edit the next start takes, a mount never yet
+  attached). A workspace created with mounts shows the note until
+  its first start.
+
 - **The local socket's liveness probe reads a busy listener as
   live (#742).** A second daemon starting beside a live one no
   longer unlinks the live daemon's socket file when a burst of
