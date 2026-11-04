@@ -7,6 +7,9 @@ under each miss, and the closing tally](screens/doctor.png)
 daemon and the client exec at runtime. Every reported issue suggests a
 fix.
 
+Note that msksd doctor is not very useful on macOS: use
+`msks-setup-macos-host --check` instead.
+
 ```console
 msksd doctor
 ```
