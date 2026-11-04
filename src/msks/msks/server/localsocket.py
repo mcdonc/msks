@@ -180,14 +180,16 @@ def peer_allowed(uid: int, socket_gid: int | None) -> bool:
     must belong to the socket file's group: the operator who
     chgrps the socket to a shared group has said who else may
     connect, and this resolves membership the way login does —
-    ``os.getgrouplist`` walks the group database's nesting and
-    the NSS supplementary groups (AD/LDAP hosts) in one call,
+    ``os.getgrouplist`` answers with every supplementary group
+    the account database holds for the user, including the
+    nesting a directory backend (SSSD with AD) expands itself,
     where a flat ``gr_mem`` read carries direct by-name members
     alone. The walk runs per request with no cache, so a member
     removed from the group fails the next request, not the next
-    daemon restart. A peer that passes neither gate still
-    reaches the bearer-token path — the socket is one way in,
-    not a wall.
+    daemon restart — the account database's own cache (sssd's
+    entry cache) is the only delay left. A peer that passes
+    neither gate still reaches the bearer-token path — the
+    socket is one way in, not a wall.
     """
     if uid == os.geteuid():
         return True

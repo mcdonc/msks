@@ -38,9 +38,12 @@ credentials: the daemon's own uid passes, and so does any
 member of the socket file's group — the file is mode 0660, so
 `chgrp` it to a shared group to admit that group's members
 without a token or TLS. Membership resolves the way login
-resolves it: nested groups and directory-supplied supplementary
-groups (AD/LDAP hosts) count, and removing a member takes
-effect at the next request. A daemon without a runtime dir (a
+resolves it: every supplementary group the account database
+holds for the user counts, including the nesting a directory
+backend (SSSD with AD) expands itself. The daemon keeps no
+membership cache of its own. Removing a member takes effect at
+the next request, once the account database serves the change.
+A daemon without a runtime dir (a
 container, a hand-written unit) serves TCP alone until the
 setting names a path. The socket is the same-host path — a
 local script or the client's default candidate path — and the

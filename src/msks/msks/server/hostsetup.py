@@ -988,16 +988,20 @@ def uplink() -> str:
 
 
 def in_group(user: str, name: str) -> bool:
-    """Whether *user* holds group *name* — by membership or as its
-    primary group (the same two gates #555's peer policy reads).
-    A database that answers nothing says no, and the caller's
-    adduser is idempotent either way."""
+    """Whether *user* holds group *name* — as its primary group
+    or by membership, resolved the same way #555's peer policy
+    resolves the socket group: ``getgrouplist`` answers with
+    every supplementary group the account database holds for
+    the user, including the nesting a directory backend (SSSD
+    with AD) expands itself. A database that answers nothing
+    says no, and the caller's adduser is idempotent either
+    way."""
     try:
         entry = grp.getgrnam(name)
         account = pwd_getpwnam(user)
     except KeyError, OSError:
         return False
-    return user in entry.gr_mem or account.pw_gid == entry.gr_gid
+    return entry.gr_gid in os.getgrouplist(user, account.pw_gid)
 
 
 def ensure_kvm_membership(

@@ -910,9 +910,9 @@ def test_the_kvm_row_passes_for_a_member(
 def test_the_kvm_row_passes_when_the_primary_group_is_kvm(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Primary-group membership counts (in_group's second gate,
-    the #555 posture): the session carries the gid as its
-    primary, the supplementary list stays empty."""
+    """Primary-group membership counts (the #555 posture): the
+    session carries the gid as its primary, the supplementary
+    list stays empty."""
     kvm_seam(monkeypatch)
     monkeypatch.setattr(doctor_mod.os, "getgroups", lambda: [])
     monkeypatch.setattr(doctor_mod.os, "getgid", lambda: 108)

@@ -269,7 +269,7 @@ def test_policy_fails_closed_when_the_group_walk_errors(
     assert localsocket.peer_allowed(4242, 54321) is False
 
 
-def test_policy_denies_an_unknown_uid_without_a_socket_gid(
+def test_policy_denies_an_unknown_uid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(localsocket.pwd, "getpwuid", raises_keyerror)

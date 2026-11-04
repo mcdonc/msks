@@ -42,10 +42,11 @@ tagged `vX.Y.Z`.
 
 - **Local socket group admission (#743).** The token-less local
   listener resolves peer group membership the way login does:
-  nested and directory-supplied (NSS) supplementary membership
-  counts, and a member removed from the socket's group loses
-  token-less access at the next request instead of at the next
-  daemon restart.
+  every supplementary group the account database holds for the
+  user counts, including the nesting a directory backend (SSSD
+  with AD) expands itself. A member removed from the socket's
+  group loses token-less access at the next request instead of
+  at the next daemon restart.
 
 ### Changed
 
