@@ -5580,7 +5580,7 @@ def test_cmd_mount_without_a_pending_change_drops_the_suffix(
     )
     assert rc == 0
     out = capsys.readouterr().out
-    assert "alpha mounts /srv/proj:/mnt/proj:rw" in out
+    assert "alpha mounts /srv/proj:/mnt/proj:rw, /srv/refs:/srv/refs:ro" in out
     assert "(next start)" not in out
 
 
