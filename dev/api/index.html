@@ -1124,10 +1124,14 @@ carries both settings and the socket's tradeoffs.</p>
 </span></code></pre></div>
 <p>The daemon validates the list against its #667 gates (a host
 path outside the allowed roots, and one that does not resolve
-under them, are named 400s) and answers with the refreshed row;
-every row the daemon serves carries <code>mounts</code> and the derived
-<code>mount_issues</code> — the skip state <code>msks ls</code> and the TUI render.
-<code>msks mount</code>/<code>umount</code> and the TUI's editor ride this route.</p>
+under them, are named 400s) and answers with the refreshed row.
+Every row the daemon serves carries <code>mounts</code>, the derived
+<code>mount_issues</code>, and <code>mounts_pending</code>. The <code>mount_issues</code> field
+holds the skip state <code>msks ls</code> and the TUI render; the
+<code>mounts_pending</code> field says whether the configured set differs
+from the set the last start attached, and the next-start notes
+key on it. <code>msks mount</code>/<code>umount</code> and the TUI's editor ride this
+route.</p>
 <ul>
 <li><code>GET</code>/<code>PUT …/home</code> export and import the home volume as a
   byte stream — the same stream <code>msks home import</code>/<code>export</code>

@@ -2125,12 +2125,16 @@ create's own <code>--share</code> grammar:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>$ msks mount ws1 /srv/refs:/srv/refs:ro
 </span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>ws1 mounts /srv/projects:/mnt/projects:rw, /srv/refs:/srv/refs:ro (next start)
 </span></code></pre></div>
-<p>The outcome line names the resulting set and the next-start
-note: setting mounts never touches a running VM, and the next
-<code>msks start</code> attaches exactly this set (<a href="../mounts/#what-a-mount-is">what a mount
-is</a> states the lifecycle — the seed
-each boot carries bakes the current set, so a restart after a
-change lands it and prunes the dropped mounts). The daemon
+<p>The outcome line names the resulting set, and the next-start
+note rides it while the change is pending: setting mounts never
+touches a running VM, and the next <code>msks start</code> attaches exactly
+this set. The row carries <code>mounts_pending</code>: the daemon compares
+the configured set with the set the last start attached. The
+note rests once a start has taken the set, and an edit that
+returns the list to its attached shape shows the set alone.
+(<a href="../mounts/#what-a-mount-is">what a mount is</a> states the lifecycle — the
+seed each boot carries bakes the current set, so a restart after
+a change lands it and prunes the dropped mounts.) The daemon
 validates the whole list against its gates and the row rules (a
 host path appears once per workspace, guest paths are absolute
 and mutually disjoint); a refusal names itself on one line. A
@@ -2142,10 +2146,14 @@ reason.</p>
 <p>Removes a workspace's mounts of one host path — every guest path
 the share occupies:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>$ msks umount ws1 /srv/refs
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>ws1 mounts /srv/projects:/mnt/projects:rw (next start)
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>ws1 mounts /srv/projects:/mnt/projects:rw
 </span></code></pre></div>
-<p>A host path the workspace does not mount is one local line. The next
-start attaches the remainder, and a workspace whose last mount
+<p>A host path the workspace does not mount is one local line. The
+example returns the list to the shape the last start attached, so
+the outcome drops the next-start note. A removal that leaves the
+configured set differing from the attached shape keeps the note.
+The next start attaches the remainder, and a workspace whose
+last mount
 leaves this way mounts nothing at its next boot. The <a href="../mounts/#what-a-mount-is">mounts
 chapter</a> states the lifecycle.</p>
 <h2 id="msks-rm"><code>msks rm</code><a class="headerlink" href="#msks-rm" title="Permanent link">&para;</a></h2>

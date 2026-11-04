@@ -1320,6 +1320,18 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>The mounts <code>applies at next start</code> note (#756).</strong> The
+  workspace page's mounts line and the <code>msks mount</code>/<code>msks umount</code>
+  outcome showed the note whenever the workspace mounted
+  anything, even after start/stop cycles with an unchanged
+  config. Every workspace row now carries a <code>mounts_pending</code>
+  flag: the daemon compares the configured mounts with the set
+  the last start attached, and the note shows only while the two
+  differ (an edit the next start takes, a mount never yet
+  attached). A workspace created with mounts shows the note until
+  its first start.</p>
+</li>
+<li>
 <p><strong>The local socket's liveness probe reads a busy listener as
   live (#742).</strong> A second daemon starting beside a live one no
   longer unlinks the live daemon's socket file when a burst of

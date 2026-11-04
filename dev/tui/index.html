@@ -962,9 +962,12 @@ listed on the workspace's egress consent screen.</p>
 <p>When the workspace mounts host shares, a mounts line follows the
 same shape: one entry per mount (<code>projects:/mnt/projects:rw</code>), a
 skipped mount's kind beside its spec (<code>refs:/srv/refs:ro ·
-skipped</code>), and a trailing <code>applies at next start</code> note. The line
-repaints with the page's per-second read, so a change made anywhere
-reaches the page.</p>
+skipped</code>), and an <code>applies at next start</code> note while a change is
+pending. The daemon compares the configured mounts with the set
+the last start attached, and the note rests while the two agree.
+The next start takes a changed set and clears the note. The
+line repaints with the page's per-second read, so a change made
+anywhere reaches the page.</p>
 <p>The page's actions sit in a framed panel with a muted caption above
 each group. The <code>use</code> group holds a shell; <code>configure</code> holds egress
 consent, an edit dialog for the sizes and topology, and the mounts
