@@ -903,11 +903,6 @@ you type. Enter opens the workspace's page.</p>
 <p>The list re-reads the daemon every five seconds. A workspace changed
 from another surface (the CLI, another operator) appears without a
 keypress.</p>
-<p>A workspace with unresolved mounts shows a marker in the status column:
-<code>✗1 stopped</code> is how many of the workspace's mounts are unresolved. The
-marker clears when the config and the workspace agree again. The <a href="../mounts/#the-skip-behavior">mounts
-chapter</a> lists every kind of skip and its
-reason. The workspace's page shows each unresolved mount and its kind.</p>
 <p>When you create a workspace, it looks like this:</p>
 <p><img alt="The create form over the list" src="../screens/create-form.svg" /></p>
 <p>The <strong>secrets page</strong> lists every placeholder the daemon holds, in five
@@ -951,9 +946,7 @@ workspaces, for navigation.</p>
 <p>The <strong>workspace page</strong> operates on an already-created workspace. Its
 two-line header: the workspace's name on the first line with its status
 beside it, in the state's color, then the id, image, host, and
-created date on the second. At an 80-column terminal the meta line
-clips each field to a fixed budget; a wider terminal shows every
-field whole.</p>
+created date on the second.</p>
 <p>Below the header, two status lines share one shape: a muted label,
 then the value. The consent line shows the mode and one granted
 scope with its expiry. Two or more grants show as a count with the
