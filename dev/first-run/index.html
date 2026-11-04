@@ -365,15 +365,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#the-identity-file" class="md-nav__link">
+  <a href="#the-key-files" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The identity file
+        The key files
       </span>
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="The identity file">
+    <nav class="md-nav" aria-label="The key files">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -388,10 +388,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#pubkey_file-the-public-half-alone" class="md-nav__link">
+  <a href="#pubkey_file-the-public-half" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        <code>pubkey_file</code>: the public half alone
+        <code>pubkey_file</code>: the public half
       </span>
     </span>
   </a>
@@ -812,15 +812,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#the-identity-file" class="md-nav__link">
+  <a href="#the-key-files" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The identity file
+        The key files
       </span>
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="The identity file">
+    <nav class="md-nav" aria-label="The key files">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -835,10 +835,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#pubkey_file-the-public-half-alone" class="md-nav__link">
+  <a href="#pubkey_file-the-public-half" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        <code>pubkey_file</code>: the public half alone
+        <code>pubkey_file</code>: the public half
       </span>
     </span>
   </a>
@@ -893,23 +893,29 @@
 
 
 <h1 id="first-run">First run<a class="headerlink" href="#first-run" title="Permanent link">&para;</a></h1>
-<p>The installation process has resulted in a running <code>msksd</code> systemd user
-service.</p>
-<p>To see status and log output, from the account the daemon runs as (the service
-is a systemd user unit, lingered so it survives logout):</p>
+<p>After the installation process has resulted in a running <code>msksd</code> systemd user
+service, it's ready to use.</p>
+<p>On Linux, to see status and log output, from the account the daemon runs as
+(the service is a systemd user unit):</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="w">  </span>systemctl<span class="w"> </span>--user<span class="w"> </span>status<span class="w"> </span>msksd
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>journalctl<span class="w"> </span>--user<span class="w"> </span>-u<span class="w"> </span>msksd<span class="w"> </span>-f<span class="w">          </span><span class="c1"># follow the daemon's log</span>
 </span></code></pre></div>
-<p>When msksd is first started, it creates a state dir
-(<code>~/.local/state/msksd</code>). The <code>msksd.yaml</code> config file is generated within it
-as a commented template (see <a href="../config/">Configuration</a>).</p>
-<p>The unix listener binds <code>$XDG_RUNTIME_DIR/msks/msksd.sock</code>. Same-host clients
-connect through it on peer-credential authentication. A remote can, if
-configured, contact a TLS/https listener with a bearer token, but it is not
-configured by default.</p>
+<p>On macOS, do the following (the daemon runs inside the Lima VM, as a
+systemd system unit):</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="w">  </span>limactl<span class="w"> </span>shell<span class="w"> </span>msksd<span class="w"> </span>--<span class="w"> </span>systemctl<span class="w"> </span>status<span class="w"> </span>msksd
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>limactl<span class="w"> </span>shell<span class="w"> </span>msksd<span class="w"> </span>--<span class="w"> </span>sudo<span class="w"> </span>journalctl<span class="w"> </span>-u<span class="w"> </span>msksd<span class="w"> </span>-f<span class="w">   </span><span class="c1"># follow the daemon's log</span>
+</span></code></pre></div>
+<p>When msksd is first started on Linux (or within the Lima VM that runs Linux on
+Mac), it creates a state dir (<code>~/.local/state/msksd</code>). The <code>msksd.yaml</code> config
+file is generated within it as a commented template (see
+<a href="../config/">Configuration</a>).</p>
+<p>The unix listener binds <code>$XDG_RUNTIME_DIR/msks/msksd.sock</code>. Same-host Linux
+clients connect through it on peer-credential authentication. A remote can, if
+configured, contact a TLS/https listener with a bearer token. That's how it
+works on macOS.</p>
 <p>With the host prepared, the service lingered, and an image imported, invoking
 the <code>msks</code> (the client) on the same account will find the socket.</p>
-<h2 id="the-identity-file">The identity file<a class="headerlink" href="#the-identity-file" title="Permanent link">&para;</a></h2>
+<h2 id="the-key-files">The key files<a class="headerlink" href="#the-key-files" title="Permanent link">&para;</a></h2>
 <p>Every workspace msks uses your public ssh key as the workspace's operator
 identity.</p>
 <p>Every <code>msks ssh</code> and <code>msks rsync</code> session uses your private half.</p>
@@ -920,11 +926,11 @@ again.</p>
 <p>Thus, you need to configure an ssh key before msksd/msks will work properly.</p>
 <p>The client names the key in its YAML file
 (<code>~/.config/msks/msks.yaml</code>) or its environment, with two keys:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">identity_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/id_ed25519</span><span class="w"> </span><span class="c1"># the private half, read in place</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">pubkey_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/id_ed25519.pub</span><span class="w"> </span><span class="c1"># the public half alone</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">identity_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/id_ed25519</span><span class="w"> </span><span class="c1"># the private half</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nt">pubkey_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/id_ed25519.pub</span><span class="w"> </span><span class="c1"># the public half</span>
 </span></code></pre></div>
-<p>If your identity is in your ssh agent, you needn't specify the <code>identity-file</code>,
-just the pubkey_file.</p>
+<p>If your identity is typically in your ssh agent, you needn't specify the
+<code>identity-file</code>, just the pubkey_file.</p>
 <h3 id="identity_file-the-private-half"><code>identity_file</code>: the private half<a class="headerlink" href="#identity_file-the-private-half" title="Permanent link">&para;</a></h3>
 <p><code>identity_file</code> names your private key file, read in place. msks derives the
 public half from it at create, and the key file is never copied into msks's
@@ -945,10 +951,10 @@ confirmation per signature (a hardware token's touch) asks at its own cadence:
 the first-boot probe's retries and the session each count as a signing request.</p>
 <p>A passphrase-encrypted <code>identity_file</code> raises the session's one passphrase
 prompt when the daemon's locked secret rows need it. The TUI asks once when the
-tree opens, and the answer unlocks every locked row for the session. Escape or
-Cancel leaves the rows locked; they stay named on the secrets page and
-re-askable there.</p>
-<h3 id="pubkey_file-the-public-half-alone"><code>pubkey_file</code>: the public half alone<a class="headerlink" href="#pubkey_file-the-public-half-alone" title="Permanent link">&para;</a></h3>
+tree opens, and the answer unlocks every locked secret row for the
+session. Escape or Cancel leaves the secrets locked; they stay named on the
+secrets page and re-askable there.</p>
+<h3 id="pubkey_file-the-public-half"><code>pubkey_file</code>: the public half<a class="headerlink" href="#pubkey_file-the-public-half" title="Permanent link">&para;</a></h3>
 <p><code>pubkey_file</code> names a <code>.pub</code> file, and a create with it set plants that one
 line as the workspace's identity and reads no private material at all. This is
 the form for a key you keep encrypted on disk: the public half sits in the
@@ -959,7 +965,8 @@ agent, so <code>ssh-add</code> the key in the shell you run msks from. An agent 
 the key makes the sessions work with the private half never read from disk.
 A shell whose agent does not hold it leaves the workspace's key auth without
 an answer, and <code>msks ssh</code> exits with a line saying the identity resolves
-nowhere. The console route still works.</p>
+nowhere.</p>
+<p><code>msks console</code> will wok to access a wokspace if you've lost your key.</p>
 <h3 id="where-the-private-half-lives-at-runtime">Where the private half lives at runtime<a class="headerlink" href="#where-the-private-half-lives-at-runtime" title="Permanent link">&para;</a></h3>
 <p>An agent-held key stays in the agent: msks asks it to sign, and the file on
 disk is never opened. A key msks stages itself runs in a transient in-process

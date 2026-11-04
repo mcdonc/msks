@@ -1369,7 +1369,7 @@ Mac's own minted one, or point <code>MSKSC_IDENTITY_FILE</code> at the same
 personal key on both hosts (see <a href="#the-dev-identity">The dev
 identity</a>).</p>
 <h3 id="the-product-lima-host-from-a-build-in-hand">The product Lima host, from a build in hand<a class="headerlink" href="#the-product-lima-host-from-a-build-in-hand" title="Permanent link">&para;</a></h3>
-<p><code>msks-setup-macos-host</code> (the <a href="../installation/#apple-silicon-hosts">installation chapter's Apple Silicon
+<p><code>msks-setup-macos-host</code> (the <a href="../installation/#macos-on-apple-silicon-hosts">installation chapter's Apple Silicon
 section</a>) runs msksd inside
 its own Lima VM on the Mac and writes the client config: an
 end-to-end daemon with no separate Linux host. The tool installs
@@ -1425,7 +1425,7 @@ environment preset lands only when you gave nothing). Pointing the
 dev identity at your own key (a symlink over the minted file)
 works, with the identity chapter's rules: the passphrase prompt
 appears when the daemon's rows are locked under it and no agent
-holds it. See <a href="../first-run/#the-identity-file">The identity file</a>.</p>
+holds it. See <a href="../first-run/#the-key-files">The key files</a>.</p>
 <h2 id="doctor-on-the-dev-host">Doctor on the dev host<a class="headerlink" href="#doctor-on-the-dev-host" title="Permanent link">&para;</a></h2>
 <p>The dev daemon runs bare: <code>scripts/dev-daemon.sh</code> points
 <code>MSKSD_CONFIG_DIR</code> at the devenv root. A hand-run <code>msksd doctor</code>

@@ -818,8 +818,10 @@
 <p><img alt="The doctor's report: every row with its marker, the hints
 under each miss, and the closing tally" src="../screens/doctor.png" /></p>
 <p><code>msksd doctor</code> checks the host for the tools and libraries the
-daemon and the client exec at runtime. Every miss comes with a
+daemon and the client exec at runtime. Every reported issue suggests a
 fix.</p>
+<p>Note that msksd doctor is not very useful on macOS: use
+<code>msks-setup-macos-host --check</code> instead.</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="go">msksd doctor</span>
 </span></code></pre></div>
 <p>The command takes the same <code>--config</code> flag the daemon takes. It
@@ -830,39 +832,15 @@ config's tool paths and environment apply.</p>
 the cloud-hypervisor VMM, and a few configuration settings.</p>
 <p>Tool names resolve on the daemon's search path, not the
 caller's. The session's own PATH answers first. Then come
-Debian's admin directories (<code>/usr/local/sbin</code>, <code>/usr/sbin</code>,
+admin directories (<code>/usr/local/sbin</code>, <code>/usr/sbin</code>,
 <code>/sbin</code>), because the systemd user manager's default PATH
 carries them. A session whose PATH lacks these directories
 still gets the daemon's truth.</p>
 <p>When a tool was found only through the admin directories, the
-run adds a warning row. Its fix is to log out and back in (the
+run adds a warning. Its fix is to log out and back in (the
 setup tool adds the directories to <code>~/.profile</code>), or to run
 <code>export PATH=$PATH:/usr/sbin:/sbin</code>. A daemon started by hand
 inherits the session's PATH, so the fix reaches that shape too.</p>
-<p>One check grades by platform, not by a tool. On an Apple
-Silicon host whose kernel runs KVM in nested-virtualization
-mode (the Asahi Linux class today), the report carries a
-warning row about the kernel's guest-interrupt limitation
-(<a href="https://github.com/mcdonc/msks/issues/649">#649</a>). On such a
-host, workspaces start and their kernels boot, then stall
-before ssh answers. Everything short of a guest boot works.</p>
-<p>The row requires both markers. The first marker: cpu0's MIDR
-reports Apple's implementer. The second marker: the kernel runs
-KVM in NV mode. The mode shows up in any of three places. The
-command line sets <code>kvm-arm.mode=nested</code>, sysfs publishes kvm's
-mode parameter as <code>nested</code>, or the kernel log carries KVM's
-NV-mode init line (<code>VHE+NV2 mode initialized</code>). The markers
-report the mode, not the kernel's provenance.</p>
-<p>Each marker is read where the host leaves it readable. A
-restricted kernel log reads as absent. The command line and
-sysfs stay world-readable.</p>
-<p>x86_64 hosts and non-Apple arm64 servers get no row. An
-Apple-silicon host whose KVM is not in NV mode stays clean too.
-A Linux VM under macOS's Virtualization.framework reads as
-Apple silicon, because the hypervisor passes the host MIDR
-through. Its own KVM delivers guest interrupts, so workspaces
-boot and ssh answers there
-(<a href="https://github.com/mcdonc/msks/issues/664">#664</a>).</p>
 <h2 id="reading-the-report">Reading the report<a class="headerlink" href="#reading-the-report" title="Permanent link">&para;</a></h2>
 <p>Every row prints with a marker:</p>
 <ul>
@@ -881,8 +859,7 @@ names: <code>genisoimage</code> serves <code>mkisofs</code>, and <code>qemu-util
 <code>qemu-img</code>.</p>
 <p>Some fixes are not distro packages. Where that is so, the hint
 gives the real source: cloud-hypervisor installs from the
-upstream static release. Debian's archive carries it in none of
-its suites.</p>
+upstream static release.</p>
 <p>The run ends with a tally (<code>14 passed</code>, or <code>12 passed, 1
 error, 1 warning</code>). When anything failed, a closing block
 repeats every miss with its fix. The exit code is 0 when every

@@ -1560,7 +1560,7 @@ file key is documented below, and <code>MSKSC_TERMINAL_OPEN_CMD</code>'s in
 <tr>
 <td><code>MSKSC_IDENTITY_FILE</code></td>
 <td><code>identity_file</code></td>
-<td>Your own private key file, the ssh identity <code>msks create</code> plants into every workspace (msks generates none; <a href="../first-run/#the-identity-file">the identity section</a> owns the whole story); a leading <code>~</code> expands</td>
+<td>Your own private key file, the ssh identity <code>msks create</code> plants into every workspace (msks generates none; <a href="../first-run/#the-key-files">the identity section</a> owns the whole story); a leading <code>~</code> expands</td>
 <td>unset (<code>pubkey_file</code> answers, else <code>msks create</code> refuses)</td>
 </tr>
 <tr>
@@ -1607,7 +1607,7 @@ for confirmation per signature (a hardware token's touch) asks
 at its own cadence: the first-boot probe's retries and the
 session each count as a signing request.</p>
 <p><code>MSKSC_PUBKEY_FILE</code> points at your key's public half, a <code>.pub</code>
-file (<a href="../first-run/#the-identity-file">the identity section</a>
+file (<a href="../first-run/#the-key-files">the identity section</a>
 owns the agent requirement this form carries). A create with it
 set plants that one line as the identity and reads no private
 material at all. It is the form for a key you keep encrypted:
