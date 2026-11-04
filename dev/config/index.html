@@ -1305,7 +1305,7 @@ the file itself carries them all at one level.</p>
 <td><code>MSKSD_STATE_DIR</code></td>
 <td>string</td>
 <td><code>~/.local/state/msksd</code></td>
-<td>The daemon's state directory: the sqlite database (<code>&lt;state_dir&gt;/msks.db</code>) and per-workspace artifacts. <code>~</code> expands.</td>
+<td>The daemon's state directory: the sqlite database (<code>&lt;state_dir&gt;/msks.db</code>) and per-workspace artifacts. <code>~</code> expands. The database runs in WAL mode: <code>-wal</code>/<code>-shm</code> sibling files sit beside it while the daemon runs and are removed again at a clean shutdown. A copy of the database taken mid-run should take the siblings with it.</td>
 </tr>
 <tr>
 <td><code>cloud_hypervisor</code></td>
