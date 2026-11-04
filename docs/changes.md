@@ -29,7 +29,7 @@ tagged `vX.Y.Z`.
   behind one another for up to 30 seconds, and readers no
   longer block writers. A clean shutdown removes the WAL
   siblings; after a crash, `-wal`/`-shm` files may sit beside
-  `<state_dir>/msks.db` — the next start recovers them, and the
+  `<state_dir>/msks.db`: the next start recovers them, and the
   next clean shutdown removes them.
 
 - **`msks-setup-macos-host --check` refuses an empty CA fetch
