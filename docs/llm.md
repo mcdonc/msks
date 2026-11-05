@@ -11,7 +11,7 @@ providers: the daemon makes the upstream connection itself.
 
 `msks` uses **LiteLLM** under the hood for this capability.
 
-## The two routing modes
+## Routing modes
 
 The model list is one `msks.yaml` config file setting, `llm_models`. Its
 entries are spelled in YAML dict format. The `MSKSD_LLM_MODELS` environment
@@ -27,12 +27,19 @@ llm_models:
       model: openai/gpt-4o
       api_base: https://api.openai.com/v1
       api_key: file:/etc/msksd/openai.key
-  - model-name: claude-sonnet-4
+  - model_name: claude-sonnet-4
     params:
       model: anthropic/claude-sonnet-4
       api_key: cmd:pass show anthropic
       rpm: 10
 ```
+
+A workspace addresses a model by its logical name: the part after the provider
+slash for a string entry, or the explicit `model_name` for a dict one. A
+request that gives no model, or a name the list does not carry, uses the first
+configured model. Known providers (`openai`, `anthropic`, `cohere`, `mistral`,
+`groq`, `together_ai`, `deepseek`, `fireworks_ai`) fill their default base when
+an entry gives none.
 
 Dict keys accept kebab- or snake-case, `params` is a shorthand for LiteLLM's
 `litellm_params`. `file:`/`cmd:` indirection works on `api_key`/`api_base`
@@ -64,72 +71,18 @@ llm_models:
 Any other list is _multi-provider mode_: the entries become a
 [`litellm`](https://github.com/BerriAI/litellm) router.
 
-A workspace addresses a model by its logical name: the part after the provider
-slash for a string entry, or the explicit `model_name` for a dict one. A
-request that gives no model, or a name the list does not carry, uses the first
-configured model. Known providers (`openai`, `anthropic`, `cohere`, `mistral`,
-`groq`, `together_ai`, `deepseek`, `fireworks_ai`) fill their default base when
-an entry gives none.
-
 An empty list (the default) presents no LLM surface at all:
 nothing binds on any tap, and the per-workspace input chain admits
 no proxy port.
 
-## The Anthropic Messages route
+## The Anthropic Messages route (for Claude API access)
 
-The proxy also serves `/v1/messages`, the Anthropic Messages API
-claude-code speaks. The route serves both modes, on the same port
-as the OpenAI pair.
+The LLM proxy serves `/v1/messages`, the Anthropic Messages API claude-code
+speaks.
 
-In passthrough mode the request forwards verbatim to the
-upstream's own `/v1/messages` endpoint. The upstream must serve
-the Messages API itself for this route: Anthropic's API, or any
-Anthropic-compatible gateway. The entry's key rides as
-`x-api-key`, and the `anthropic-version` and `anthropic-beta`
-headers forward with `2023-06-01` as the default version. A
-passthrough entry pointed at an OpenAI-shaped upstream still
-serves the OpenAI pair; the Messages route answers that upstream's
-own error.
-
-In multi-provider mode the proxy translates. A Messages request
-becomes a chat completion, the router answers, and the answer
-comes back as a Messages message: content blocks, `stop_reason`,
-and usage mapped field for field. A streamed answer renders as
-Messages events (`message_start` through `message_stop`), with
-the upstream asked for chunk usage: the output-token count lands
-in the closing `message_delta`, and the opening frame carries a
-zero input count in this mode (the OpenAI chunk stream delivers
-usage only after the frame has gone out). A request that names a
-model the list does not carry uses the first configured model,
-the same rule the OpenAI pair follows, so claude-code's own model
-names need no mapping. Fields the OpenAI completion body has no
-counterpart for drop in this mode: `top_k`, `thinking`, and the
-prompt-cache markers.
-
-Asking for chunk usage also changed the router's parameter
-handling: a request field the target provider rejects now drops
-instead of failing the request, on both the Messages route and
-the OpenAI pair.
-
-The two modes treat a guest's routing fields differently, and
-the difference is deliberate. Router mode walks the request
-through an Anthropic field allowlist, so a guest body naming
-`api_key` or `api_base` drops those fields. Passthrough mode
-forwards the body verbatim, because the Messages body is the
-upstream's own contract: the credential is the header set the
-daemon builds (the entry's key as `x-api-key`), and a field in
-the body names no credential the upstream honors beside it. An
-allowlist walk here would also drop valid top-level Messages
-fields (`top_k`, `thinking`) that the upstream itself
-understands.
-
-claude-code also asks `POST /v1/messages/count_tokens` for its
-context tracking. Passthrough mode forwards it verbatim;
-router mode answers 404, and the client estimates locally.
-
-Configuring the proxy for claude-code is one `msks.yaml` block.
-The passthrough form names one Messages upstream, and every
-model it serves is available:
+Configuring the proxy exclusively for claude-code API access is one `msks.yaml`
+block. The passthrough form names the endpoint, and every model it
+serves is available:
 
 ```yaml
 llm_models:
@@ -141,10 +94,11 @@ llm_models:
 
 The environment form is equivalent:
 `MSKSD_LLM_MODELS='*:https://api.anthropic.com/v1:file:/etc/msksd/anthropic.key'`.
+
 An Anthropic-compatible gateway works the same way: point
 `api_base` at the gateway's own base.
 
-The multi-provider form serves claude-code beside other clients.
+A multi-provider form serves claude-code beside other clients.
 An entry whose logical name is the model name claude-code sends
 answers that model's requests directly; a name the list does not
 carry falls to the first entry:
@@ -165,14 +119,66 @@ With this list, a claude-code request for `claude-sonnet-4-5`
 takes the first entry, and an OpenAI-shaped client asking for
 `gpt-4o` takes the second.
 
+In passthrough mode the request forwards verbatim to the
+upstream's own `/v1/messages` endpoint. The upstream must serve
+the Messages API itself for this route: Anthropic's API, or any
+Anthropic-compatible gateway. The entry's key rides as
+`x-api-key`, and the `anthropic-version` and `anthropic-beta`
+headers forward with `2023-06-01` as the default version. A
+passthrough entry pointed at an OpenAI-shaped upstream still
+serves the OpenAI pair; the Messages route answers that upstream's
+own error.
+
+A workspace that wants claude-code on the proxy must export a few envvars by
+hand:
+
+```console
+gw=$(ip route show default | awk '{print $3; exit}')
+export ANTHROPIC_BASE_URL="http://$gw:8770"
+export ANTHROPIC_AUTH_TOKEN="msks-local-proxy"
+```
+
+The token is the same placeholder the proxy never reads (the
+tap is the credential); it exists because claude-code refuses a
+base URL with no credential beside it. The port is the one the
+daemon serves (`MSKSD_LLM_PORT`). Set in a shell profile, the
+pair reaches every Anthropic SDK client in the workspace, not
+claude-code alone. A client that must reach an Anthropic
+endpoint directly unsets `ANTHROPIC_BASE_URL` in its own
+environment.
+
+```console
+$ env | grep MSKSWS
+MSKSWS_BASE_URL=http://172.31.0.2:8770/v1
+MSKSWS_API_KEY=msks-local-proxy
+```
+
+A workspace with the pair exported and no model list configured
+points claude-code at a port with no listener. It fails fast
+until a model list is configured, the same posture the MSKSWS
+pair carries.
+
 ## Subscription claude-code with no stored credentials
 
-The proxy route above spends an API key. An operator with a
+`claude` is preinstalled in every msks VM.
+
+The LLM proxy cannot successfully be used to access a subscription Anthropic
+account. Instead, you should almost certainly use the normal Anthropic
+subscription login process to connect to Claude Code.
+
+But that does leave Claude credentials on the VM.
+
+If you want to keep Claude credentials off the VM even with an Anthropic
+subscription instead of an API key, an operator with a
 claude.ai subscription and no API billing can still run
 claude-code inside a workspace, with nothing credential-shaped
 left on the guest's disk: subscription login with RAM-only
 tokens. The tokens live in a tmpfs for the session and vanish
 at shutdown.
+
+This is only useful if you use more than one coding agent on the same VM, and
+you distrust the other to not steal your Claude credentials. Otherwise, it's
+overkill.
 
 Subscription authentication is OAuth, and claude-code holds
 its tokens wherever it runs (`~/.claude` on Linux). No msks
@@ -213,7 +219,7 @@ the code the page shows, and paste it at the guest CLI's
 prompt. A reboot drops the tokens (the tmpfs again), and the
 next session logs in the same way.
 
-**Let the flows out.** The token exchange dials
+**The flow.** The token exchange dials
 `platform.claude.com`. The session dials `api.anthropic.com`.
 claude-code's telemetry hosts (statsig, sentry) and its other
 non-essential calls dial too; exporting
@@ -230,22 +236,11 @@ The flags replace the whole list; repeat them to keep entries
 the workspace already had. An `interactive` workspace answers
 the two prompts instead.
 
-**The boundary, stated plainly.** While a session is logged
+**The boundary.** While a session is logged
 in, a live token sits in guest RAM. Every in-guest client
 must hold one. Nothing survives a reboot or a logout. The
 proxy route above is the stronger isolation: the guest holds
-no credential at all, at any moment. It is the one to prefer
-wherever API billing is on the table.
-
-## Secrets stay out of the config file
-
-Every secret-bearing value resolves indirection at configure time: `file:`
-reads a path, `cmd:` runs a shell command and takes its stdout. It works on
-each entry's key and on the shared default `llm_api_key`
-(`MSKSD_LLM_API_KEY`). A broken reference fails the configure: the daemon log
-carries the named error (the entry's own text, operator-visible), and requests
-answer a 503 that gives only the failure, never the entry, instead of sending
-an empty key upstream.
+no disk credential at all, at any moment.
 
 ## The guest environment
 
@@ -260,35 +255,8 @@ exists for OpenAI-shaped clients that refuse an empty key. The MSKSWS names
 carry the msks prefix because the proxy is this daemon's own service; a
 vendor-shaped name would claim otherwise. No Anthropic-shaped pair rides
 the seed: claude-code reads such a pair as bearer auth and skips its own
-OAuth login, and a seeded default would decide the credential model for
-every workspace. A workspace that wants claude-code on the proxy exports
-the pair by hand:
-
-```console
-gw=$(ip route show default | awk '{print $3; exit}')
-export ANTHROPIC_BASE_URL="http://$gw:8770"
-export ANTHROPIC_AUTH_TOKEN="msks-local-proxy"
-```
-
-The token is the same placeholder the proxy never reads (the
-tap is the credential); it exists because claude-code refuses a
-base URL with no credential beside it. The port is the one the
-daemon serves (`MSKSD_LLM_PORT`). Set in a shell profile, the
-pair reaches every Anthropic SDK client in the workspace, not
-claude-code alone. A client that must reach an Anthropic
-endpoint directly unsets `ANTHROPIC_BASE_URL` in its own
-environment.
-
-```console
-$ env | grep MSKSWS
-MSKSWS_BASE_URL=http://172.31.0.2:8770/v1
-MSKSWS_API_KEY=msks-local-proxy
-```
-
-A workspace with the pair exported and no model list configured
-points claude-code at a port with no listener. It fails fast
-until a model list is configured, the same posture the MSKSWS
-pair carries.
+OAuth login, and the manual exports live in the Messages route section
+above.
 
 All guest images ship the agent toolchain beside it: each image bakes pinned
 Node and the pinned **pi** coding agent on every account's default `PATH`: the
