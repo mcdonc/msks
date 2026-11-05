@@ -139,12 +139,9 @@ export ANTHROPIC_BASE_URL="${MSKSWS_BASE_URL%/v1}"
 export ANTHROPIC_AUTH_TOKEN="msks-local-proxy"
 ```
 
-The token is a placeholder; it exists because claude-code refuses a
-base URL with no credential beside it. The port is the one the
-daemon served at the workspace's create (`MSKSD_LLM_PORT`,
-default 8770), the same value the seed carries. Set in a shell
-profile, the pair reaches every Anthropic SDK client in the
-workspace, not claude-code alone.
+The token is a placeholder; it exists because claude-code refuses a base URL
+with no credential beside it. Set in a shell profile, the pair reaches every
+Anthropic SDK client in the workspace, not claude-code alone.
 
 ## Subscription claude-code with no stored credentials
 
@@ -164,7 +161,7 @@ at shutdown.
 
 This is only useful if you use more than one coding agent on the same VM, and
 you distrust the other to not steal your Claude credentials. Otherwise, it's
-total overkill.
+total overkill. It's better to just silo claude into its own workspace.
 
 Subscription authentication is OAuth, and claude-code holds
 its tokens wherever it runs (`~/.claude` on Linux). No msks
@@ -222,7 +219,7 @@ The flags replace the whole list; repeat them to keep entries
 the workspace already had. An `interactive` workspace answers
 the two prompts instead.
 
-## Pi coding agent
+## Integration with the Pi coding agent
 
 Each msks VM ships with the `pi` coding agent installed. Each image bakes
 pinned Node and the pinned **pi** coding agent on every account's default
@@ -246,15 +243,5 @@ list.
 
 ## SIGHUP
 
-The proxy reads settings live. A `SIGHUP` that changes the
-model list re-routes the very next request wherever a listener
-already serves, in either direction: models added begin
-serving, and models removed answer 503 on the open port. The
-closed-port posture of an unconfigured daemon arrives with
-that workspace's next stop/start. A workspace that booted while
-no model list was configured has no listener and no firewall
-admission; its next stop/start brings the surface up once the
-daemon is configured. (The first request after a swap pays the
-reconfigure: the lazily-imported litellm tree, a `cmd:` secret's
-subprocess, off the serving loop, so no other workspace's
-traffic waits on it.)
+A restart or `SIGHUP` of msksd is required in order to register changes to the
+LLM proxy settings.
