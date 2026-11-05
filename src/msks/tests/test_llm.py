@@ -1825,6 +1825,9 @@ async def test_messages_endpoint_streams_router_mode_events() -> None:
             },
         )
     assert stream.status_code == 200
+    # The stream asked the upstream for chunk usage (#765 review):
+    # the translated request carries the include_usage option.
+    assert fake.calls[0]["stream_options"] == {"include_usage": True}
     kinds = [
         json.loads(line[len("data: ") :])["type"]
         for line in stream.text.splitlines()
@@ -1999,6 +2002,7 @@ async def test_smoke_anthropic_conversation_through_the_proxy() -> None:
     to it from its /v1/messages route, and a three-turn
     conversation (text, tool round-trip, streamed text) completes
     with the wire shapes and the credential headers intact."""
+    AnthropicEmulator.seen.clear()
     server = ThreadingHTTPServer(("127.0.0.1", 0), AnthropicEmulator)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -2332,3 +2336,175 @@ async def test_messages_endpoint_maps_a_streaming_upstream_failure() -> None:
         )
     assert reply.status_code == 502
     assert reply.json()["error"]["type"] == "api_error"
+
+
+def test_stream_stops_each_block_before_the_next_opens() -> None:
+    """The Messages event stream closes each block before the next
+    opens (#765 review): two sequential tool calls stop the first
+    before the second starts, and a text block after a tool call
+    stops the tool before the text opens."""
+    stream = AnthropicStream()
+
+    def tool(index: int, arguments: str, name: str = "", id_: str = ""):
+        call: dict = {"index": index, "function": {"arguments": arguments}}
+        if name:
+            call["id"] = id_ or f"call_{index}"
+            call["function"]["name"] = name
+        return {"choices": [{"delta": {"tool_calls": [call]}}]}
+
+    events: list[dict] = []
+    for chunk in [
+        {"id": "chatcmpl-2", "model": "m"},
+        tool(0, "", name="first", id_="call_0"),
+        tool(0, '{"a"'),
+        tool(1, "", name="second", id_="call_1"),
+        tool(1, '{"b"'),
+        {"choices": [{"delta": {"content": "after"}}]},
+        {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+    ]:
+        events.extend(stream.feed(chunk))
+    events.extend(stream.finish())
+    kinds = [event["type"] for event in events]
+    assert kinds == [
+        "message_start",
+        "ping",
+        "content_block_start",  # tool 0 opens
+        "content_block_delta",  # its argument fragment
+        "content_block_stop",  # tool 0 stops before tool 1
+        "content_block_start",  # tool 1 opens
+        "content_block_delta",  # its argument fragment
+        "content_block_stop",  # tool 1 stops for the text
+        "content_block_start",  # the text opens
+        "content_block_delta",
+        "content_block_stop",  # the text closes at finish
+        "message_delta",
+        "message_stop",
+    ]
+    # The stops precede the next start, on the right indexes.
+    assert events[2]["content_block"]["name"] == "first"
+    assert events[3]["delta"]["partial_json"] == '{"a"'
+    assert events[4] == {"type": "content_block_stop", "index": 0}
+    assert events[5]["content_block"]["name"] == "second"
+    assert events[6]["delta"]["partial_json"] == '{"b"'
+    assert events[7] == {"type": "content_block_stop", "index": 1}
+    assert events[8]["content_block"] == {"type": "text", "text": ""}
+    assert events[9]["delta"] == {"type": "text_delta", "text": "after"}
+    assert events[10] == {"type": "content_block_stop", "index": 2}
+    # The frame carries the upstream id.
+    assert events[0]["message"]["id"] == "chatcmpl-2"
+
+
+def test_events_from_message_carries_the_id_and_input_usage() -> None:
+    """The single-shot sequence keeps the upstream id and the
+    message's own input usage in the frame."""
+    message = openai_to_anthropic(
+        {
+            "id": "chatcmpl-3",
+            "model": "m",
+            "choices": [
+                {"finish_reason": "stop", "message": {"content": "hi"}}
+            ],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 2},
+        }
+    )
+    events = events_from_message(message)
+    assert events[0]["message"]["id"] == "chatcmpl-3"
+    assert events[0]["message"]["usage"]["input_tokens"] == 12
+
+
+def test_a_url_image_source_passes_through() -> None:
+    """A url image block keeps its URL: the upstream fetches it
+    itself, exactly as the Messages API would."""
+    kwargs = anthropic_to_openai(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "url",
+                                "url": "https://x/y.png",
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    part = kwargs["messages"][0]["content"][0]
+    assert part["image_url"]["url"] == "https://x/y.png"
+
+
+async def test_count_tokens_forwards_in_passthrough_and_404s_in_router() -> (
+    None
+):
+    """The count-tokens probe: passthrough forwards it verbatim
+    (the upstream's own answer comes home); router mode answers
+    404, and a Messages client estimates locally."""
+    proxy = proxy_under_test(
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
+    )
+
+    def counter(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/messages/count_tokens")
+        body = json.loads(request.content.decode())
+        return httpx.Response(200, json={"input_tokens": len(str(body))})
+
+    proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
+        transport=httpx.MockTransport(counter), timeout=timeout
+    )
+    proxy.router.ensure(proxy.app.state.settings)
+    async with async_client(proxy, "10.0.0.1") as http:
+        reply = await http.post(
+            "/v1/messages/count_tokens",
+            headers=AUTH,
+            json={"model": "m", "messages": []},
+        )
+        assert reply.status_code == 200
+        assert reply.json()["input_tokens"] > 0
+
+    fake = FakeLitellmRouter(answer={"id": "x"})
+    routed = fake_router_proxy(llm_settings(("openai/gpt-x",)), fake)
+    async with async_client(routed, "10.0.0.1") as http:
+        missing = await http.post(
+            "/v1/messages/count_tokens",
+            headers=AUTH,
+            json={"model": "m", "messages": []},
+        )
+        assert missing.status_code == 404
+
+    unconfigured = proxy_under_test()
+    async with async_client(unconfigured, "10.0.0.1") as http:
+        down = await http.post(
+            "/v1/messages/count_tokens",
+            headers=AUTH,
+            json={"model": "m", "messages": []},
+        )
+        assert down.status_code == 503
+        bad = await http.post(
+            "/v1/messages/count_tokens",
+            headers=AUTH,
+            content=b"not json",
+        )
+        assert bad.status_code == 400
+
+    def downup(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500)
+
+    broken = proxy_under_test(
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
+    )
+    broken.router.client_factory = lambda timeout: httpx.AsyncClient(
+        transport=httpx.MockTransport(downup), timeout=timeout
+    )
+    broken.router.ensure(broken.app.state.settings)
+    async with async_client(broken, "10.0.0.1") as http:
+        failed = await http.post(
+            "/v1/messages/count_tokens",
+            headers=AUTH,
+            json={"model": "m", "messages": []},
+        )
+        assert failed.status_code == 502
+        assert failed.json()["error"]["type"] == "api_error"

@@ -449,6 +449,11 @@ class LlmRouter:
             model_list=model_list,
             routing_strategy="simple-shuffle",
             num_retries=2,
+            # #765: the Messages stream path asks OpenAI-shaped
+            # upstreams for chunk usage (``stream_options``); a
+            # provider whose API lacks the parameter drops it
+            # silently instead of failing the request.
+            default_litellm_params={"drop_params": True},
         )
 
     def clear(self) -> None:
@@ -589,6 +594,20 @@ class LlmRouter:
             resp.raise_for_status()
         return resp
 
+    async def passthrough_count_tokens(
+        self, body: dict, version: str | None
+    ) -> dict:
+        """Forward one count-tokens request (#765): the answer is
+        the upstream's own, verbatim."""
+        assert self._http_client is not None
+        resp = await self._http_client.post(
+            f"{self._passthrough_base}/messages/count_tokens",
+            json=body,
+            headers=self.anthropic_headers(version, None),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     async def list_upstream_models(self) -> list[dict[str, Any]]:
         """The model list: the upstream's own in passthrough mode
         (dynamic discovery), the configured names otherwise."""
@@ -690,10 +709,16 @@ def system_text(system: Any) -> str:
 
 
 def image_part(block: dict) -> dict:
-    """One image block to the OpenAI data-URL part (the Messages
-    shape carries base64 media; the OpenAI shape names a URL, and
-    the data-URL spelling is the one every provider accepts)."""
+    """One image block to the OpenAI part: a base64 source
+    becomes the data-URL spelling every provider accepts, and a
+    url source passes its URL through (a url block an upstream
+    fetches itself stays a fetch)."""
     source = block.get("source", {})
+    if source.get("type") == "url":
+        return {
+            "type": "image_url",
+            "image_url": {"url": source.get("url", "")},
+        }
     media_type = source.get("media_type", "application/octet-stream")
     data = source.get("data", "")
     return {
@@ -1016,14 +1041,16 @@ def sse_line(event: dict) -> str:
     return f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
 
 
-def message_start(model: str, input_tokens: int) -> dict:
+def message_start(
+    model: str, input_tokens: int, message_id: str = "msg_msks"
+) -> dict:
     """The opening event: the message frame with empty content and
     the input usage (the Messages stream bills input here and
     output in ``message_delta``)."""
     return {
         "type": "message_start",
         "message": {
-            "id": "msg_msks",
+            "id": message_id,
             "type": "message",
             "role": "assistant",
             "model": model,
@@ -1057,11 +1084,13 @@ class AnthropicStream:
     """
 
     def __init__(self) -> None:
+        self.id = "msg_msks"
         self.model = ""
         self.input_tokens = 0
         self.output_tokens = 0
         self.stop = "end_turn"
         self.next_index = 0
+        self.open_block: int | None = None
         self.text_index: int | None = None
         self.tool_indexes: dict[int, int] = {}
         self.started = False
@@ -1070,13 +1099,17 @@ class AnthropicStream:
         """The events the first chunk owes: the message frame, then
         the ping a Messages client expects before content."""
         self.started = True
-        return [message_start(self.model, self.input_tokens), {"type": "ping"}]
+        return [
+            message_start(self.model, self.input_tokens, self.id),
+            {"type": "ping"},
+        ]
 
     def start_if_first(self, chunk: dict) -> list[dict]:
-        """The first chunk's events: the model name and the input
+        """The first chunk's events: the id, model name, and input
         usage land on the converter before the frame renders."""
         if self.started:
             return []
+        self.id = chunk.get("id", self.id)
         self.model = chunk.get("model", self.model)
         self.input_tokens = usage_input(chunk.get("usage"))
         return self.start_events()
@@ -1099,13 +1132,11 @@ class AnthropicStream:
         return events
 
     def record_usage(self, usage: Any) -> None:
-        """A chunk's usage onto the converter's counters; input
-        lands in the frame already sent, output in the closing
-        ``message_delta``."""
+        """A chunk's output-token count onto the converter's
+        counter (input billed in the frame already sent; output
+        lands in the closing ``message_delta``)."""
         if not isinstance(usage, dict):
             return
-        if usage.get("prompt_tokens"):
-            self.input_tokens = usage["prompt_tokens"]
         if usage.get("completion_tokens"):
             self.output_tokens = usage["completion_tokens"]
 
@@ -1128,18 +1159,20 @@ class AnthropicStream:
         return events
 
     def text_events(self, text: str) -> list[dict]:
-        """Open the text block when none is open, then the
-        delta."""
+        """Open the text block when none is open (closing whatever
+        block is), then the delta."""
         if self.text_index is None:
+            events = self.close_open()
             self.text_index = self.next_index
             self.next_index += 1
-            events = [
+            self.open_block = self.text_index
+            events.append(
                 {
                     "type": "content_block_start",
                     "index": self.text_index,
                     "content_block": {"type": "text", "text": ""},
                 }
-            ]
+            )
         else:
             events = []
         events.append(
@@ -1153,9 +1186,13 @@ class AnthropicStream:
 
     def tool_events(self, call: dict) -> list[dict]:
         """One tool-call fragment: the first for an index opens the
-        ``tool_use`` block (after closing an open text block —
-        tool calls follow the text in an assistant turn), and an
-        arguments fragment is an ``input_json_delta``."""
+        ``tool_use`` block (closing whatever block is open — the
+        Messages event stream stops each block before the next
+        opens), and an arguments fragment is an
+        ``input_json_delta``. A fragment for an index whose block
+        already closed (an interleaved chunk stream) still names
+        its block index: OpenAI streams tool calls sequentially,
+        so the shape stays a rare upstream's own."""
         index = call.get("index", 0)
         if index not in self.tool_indexes:
             return self.open_tool_block(index, call) + self.fragment_events(
@@ -1165,11 +1202,12 @@ class AnthropicStream:
 
     def open_tool_block(self, index: int, call: dict) -> list[dict]:
         """The ``tool_use`` block's opening events at a fresh
-        index, after an open text block closes."""
-        events: list[dict] = self.close_text()
+        index, after the open block closes."""
+        events: list[dict] = self.close_open()
         block_index = self.next_index
         self.next_index += 1
         self.tool_indexes[index] = block_index
+        self.open_block = block_index
         function = call.get("function") or {}
         events.append(
             {
@@ -1203,23 +1241,24 @@ class AnthropicStream:
             }
         ]
 
-    def close_text(self) -> list[dict]:
-        """The open text block's stop, when one is open."""
-        if self.text_index is None:
+    def close_open(self) -> list[dict]:
+        """The open block's stop, when one is open: the Messages
+        event stream closes each block before the next opens, so
+        a block opening and a stream finishing share this."""
+        if self.open_block is None:
             return []
-        event = {"type": "content_block_stop", "index": self.text_index}
+        event = {"type": "content_block_stop", "index": self.open_block}
+        self.open_block = None
         self.text_index = None
         return [event]
 
     def finish(self) -> list[dict]:
         """The closing events: the message frame when no chunk ever
         arrived (an empty answer is still a well-formed stream),
-        every open block stops, then the usage-bearing
+        the open block stops, then the usage-bearing
         ``message_delta`` and ``message_stop``."""
         events = self.start_events() if not self.started else []
-        events.extend(self.close_text())
-        for block_index in self.tool_indexes.values():
-            events.append({"type": "content_block_stop", "index": block_index})
+        events.extend(self.close_open())
         events.append(
             {
                 "type": "message_delta",
@@ -1237,7 +1276,12 @@ def events_from_message(message: dict) -> list[dict]:
     for and an upstream that answered without one still gets:
     ``message_start``, every block opened, its whole content as
     one delta, stopped, then the closing pair."""
-    events = [message_start(message["model"], 0), {"type": "ping"}]
+    events = [
+        message_start(
+            message["model"], message["usage"]["input_tokens"], message["id"]
+        ),
+        {"type": "ping"},
+    ]
     for index, block in enumerate(message["content"]):
         events.append(
             {
@@ -1779,12 +1823,45 @@ def build_proxy_app(proxy: LlmProxy) -> FastAPI:
                 content=anthropic_api_error("LLM upstream request failed"),
             )
 
+    async def count_tokens(request: Request):
+        """The Messages count-tokens probe (``POST
+        /v1/messages/count_tokens``, #765): claude-code's context
+        tracker asks it. Passthrough mode forwards it verbatim to
+        the upstream's own endpoint; router mode answers 404 —
+        the translated completion shape has no token counter, and
+        a Messages client estimates locally when the endpoint
+        answers nothing."""
+        await proxy.authorize(request)
+        refusal, body = await parse_body(request)
+        if refusal is not None:
+            return refusal
+        router, failure = await configured_router(proxy)
+        if failure is not None:
+            return failure
+        if not router.passthrough:
+            raise HTTPException(status_code=404, detail="no token counter")
+        try:
+            return JSONResponse(
+                content=await router.passthrough_count_tokens(
+                    body, request.headers.get("anthropic-version")
+                )
+            )
+        except Exception:
+            logger.exception("LLM anthropic count_tokens failed")
+            return JSONResponse(
+                status_code=502,
+                content=anthropic_api_error("LLM upstream request failed"),
+            )
+
     app = FastAPI()
     app.router.add_api_route("/v1/models", list_models, methods=["GET"])
     app.router.add_api_route(
         "/v1/chat/completions", chat_completions, methods=["POST"]
     )
     app.router.add_api_route("/v1/messages", messages, methods=["POST"])
+    app.router.add_api_route(
+        "/v1/messages/count_tokens", count_tokens, methods=["POST"]
+    )
     return app
 
 
@@ -1824,6 +1901,12 @@ async def dispatch_anthropic_routed(router: LlmRouter, body: dict):
     complete event sequence — the client asked for events and
     events arrive."""
     kwargs = chat_fields(anthropic_to_openai(body))
+    if kwargs.get("stream", False):
+        # OpenAI-shaped upstreams omit chunk usage unless asked;
+        # claude-code reads the output-token count the closing
+        # ``message_delta`` carries. A provider without the
+        # parameter drops it (the Router's ``drop_params``).
+        kwargs["stream_options"] = {"include_usage": True}
     response = await router.acompletion(**kwargs)
     if kwargs.get("stream", False):
         if hasattr(response, "__aiter__"):

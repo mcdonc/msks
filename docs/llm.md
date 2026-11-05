@@ -95,15 +95,29 @@ In multi-provider mode the proxy translates. A Messages request
 becomes a chat completion, the router answers, and the answer
 comes back as a Messages message: content blocks, `stop_reason`,
 and usage mapped field for field. A streamed answer renders as
-Messages events (`message_start` through `message_stop`). A
-request that names a model the list does not carry uses the first
-configured model, the same rule the OpenAI pair follows, so
-claude-code's own model names need no mapping.
+Messages events (`message_start` through `message_stop`), with
+chunk usage requested from the upstream. A request that names a
+model the list does not carry uses the first configured model,
+the same rule the OpenAI pair follows, so claude-code's own model
+names need no mapping. Fields the OpenAI completion body has no
+counterpart for drop in this mode: `top_k`, thinking blocks,
+and the prompt-cache markers.
 
-The route carries the same gates as the OpenAI pair: the tap is
-the credential, the body caps are the same, and the request's
-forwardable fields are an allowlist. A guest body naming
-`api_key` or `api_base` drops those fields, in both modes.
+The two modes treat a guest's routing fields differently, and
+the difference is deliberate. Router mode walks the request
+through an Anthropic field allowlist, so a guest body naming
+`api_key` or `api_base` drops those fields. Passthrough mode
+forwards the body verbatim, because the Messages body is the
+upstream's own contract: the credential is the header set the
+daemon builds (the entry's key as `x-api-key`), and a field in
+the body names no credential the upstream honors beside it. An
+allowlist walk here would also drop valid Messages fields
+(`top_k`, the cache markers) that the upstream itself
+understands.
+
+claude-code also asks `POST /v1/messages/count_tokens` for its
+context tracking. Passthrough mode forwards it verbatim;
+router mode answers 404, and the client estimates locally.
 
 ## Secrets stay out of the config file
 
@@ -130,7 +144,14 @@ vendor-shaped name would claim otherwise. The seed exports one vendor-shaped
 pair on purpose (`#765`): `ANTHROPIC_BASE_URL` points at the proxy's Messages
 route on the same port, and `ANTHROPIC_AUTH_TOKEN` is the same placeholder.
 claude-code reads those two variables and no others, so a login shell inside
-the workspace is already configured for it and for every MSKSWS-aware client:
+the workspace is already configured for it and for every MSKSWS-aware client.
+
+The Anthropic pair reaches every Anthropic SDK client in the workspace, not
+claude-code alone: a script that exports its own `ANTHROPIC_API_KEY` also
+follows the redirected base URL, and its key is never consulted (the proxy
+authenticates by tap and carries the daemon's own upstream key). A client
+that must reach an Anthropic endpoint directly unsets `ANTHROPIC_BASE_URL`
+in its own environment.
 
 ```console
 $ env | grep -e MSKSWS -e ANTHROPIC
