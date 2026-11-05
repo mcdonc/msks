@@ -1,9 +1,15 @@
 # First run
 
 After the installation process has resulted in a running `msksd` systemd user
-service, it's ready to use.
+service, it's almost ready to use. But you need to supply your ssh keypair and
+import at least one image used as a base for workspace creation before you can
+succesfully create one.
 
-On Linux, to see status and log output, from the account the daemon runs as
+## Make sure it's running
+
+Before trying to connect to `msksd` via the client, make sure it's running.
+
+On Linux, to see status and log output from the account the daemon runs as
 (the service is a systemd user unit):
 
 ```bash
@@ -55,7 +61,8 @@ pubkey_file: ~/.ssh/id_ed25519.pub # the public half
 ```
 
 If your identity is typically in your ssh agent, you needn't specify the
-`identity-file`, just the pubkey_file.
+`identity-file`, just the pubkey_file. But it's more foolproof to specify both
+at first.
 
 ### `identity_file`: the private half
 
@@ -73,12 +80,7 @@ on disk.
 
 If your ssh key is not already in an agent, a key no agent holds is staged
 in memory as an unencrypted OpenSSH-format key (`ed25519`, `ecdsa`
-P-256/P-384/P-521, or `rsa`). msks never types a passphrase. An encrypted
-key no agent holds is refused with a line naming `ssh-add` as the first fix,
-then decrypting a copy, then `--pubkey` at create. An agent that asks for
-confirmation per signature (a hardware token's touch) asks at its own
-cadence: the first-boot probe's retries and the session each count as a
-signing request.
+P-256/P-384/P-521, or `rsa`). msks never types a passphrase.
 
 A passphrase-encrypted `identity_file` raises the session's one passphrase
 prompt when the daemon's locked secret rows need it. The TUI asks once when
@@ -92,14 +94,6 @@ secrets page and re-askable there.
 line as the workspace's identity and reads no private material at all. This is
 the form for a key you keep encrypted on disk: the public half sits in the
 `.pub` file while the private half answers from your agent.
-
-**The requirement**: your ssh-agent holds the actual key. `msks ssh`and
-`msks rsync` on such a workspace authenticate through `SSH_AUTH_SOCK`'s
-agent; `ssh-add` the key in
-the shell you run msks from. An agent holding the key makes the sessions
-work with the private half never read from disk. A shell whose agent does
-not hold it leaves the workspace's key auth without an answer, and `msks
-ssh` exits with a line saying the identity resolves nowhere.
 
 `msks console` will wok to access a wokspace if you've lost your key.
 

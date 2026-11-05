@@ -5,13 +5,12 @@ surface. It runs from any host that can reach the daemon (a dev box,
 a CI runner), and every command authenticates
 with the same bearer token the REST API uses.
 
-The client and the daemon ship from one wheel, and every
-invocation (the `image` group aside, whose `check` member runs
-offline against a local archive) makes one best-effort `/health`
-roundtrip. A daemon answering a different version than this
-client prints one stderr line giving both and the remedy: rerun
-`msks-setup-macos-host` on the Mac to update the daemon in the
-VM. Equal versions and every probe failure print nothing.
+The client and the daemon ship in the same Python distribution, and every
+invocation makes one best-effort `/health` roundtrip. A daemon answering a
+different version than the client prints one stderr line giving both and the
+remedy. This is ususally not encountered except on MacOS. If you see this on
+MacOS, rerun `msks-setup-macos-host` on the Mac to update the daemon in the
+VM.
 
 The command set covers the operator loop:
 
@@ -38,7 +37,7 @@ can export each side independently. The list-valued settings
 (`MSKSC_TERMINAL_OPEN_CMD`, `MSKSC_SSH_OPTIONS`) carry their string form;
 `MSKSC_SSH_OPTIONS`'s file key is documented below, and
 `MSKSC_TERMINAL_OPEN_CMD`'s in [The TUI](tui.md) beside the shell action it
-configures.
+configures. Each of the environment variables has a config-file equivalent.
 
 | Variable                   | Config file key      | Meaning                                                                                                                                                                                                                                                                            | Default                                                   |
 | -------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |

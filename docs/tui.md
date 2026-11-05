@@ -6,9 +6,9 @@ The TUI uses the same REST API as the CLI commands, with the same environment
 variables, config file, and daemon aliases. It reads no daemon state directly.
 Every page uses the API.
 
-A bare `msks` (no arguments at all) launches the full-screen workspace
-tree. `msks tui` is the same command, and `msks tui my-workspace` opens
-that workspace's page directly.
+A bare `msks` (no arguments at all) launches the TUI. The default page is a
+full-screen workspace tree. `msks tui` is the same command, and `msks tui
+my-workspace` opens that workspace's page directly.
 
 ## The workspace tree
 
@@ -25,9 +25,21 @@ The list re-reads the daemon every five seconds. A workspace changed
 from another surface (the CLI, another operator) appears without a
 keypress.
 
+## Workspace creation
+
 When you create a workspace, it looks like this:
 
 ![The create form over the list](screens/create-form.svg)
+
+The only required field is `name`. You may need to [import an
+image](first-run.md#importing-a-guest-vm-image) before you can successfully
+create a workspace. There are Debian, Fedora, and NixOS images available for
+import. You can also [build your own](images.md#building-your-own).
+
+You can change `vcpus`, `memory`, `root`, and `home` values after a workspace
+is created. The rest are fixed for the lifetime of the workspace.
+
+## The secrets page
 
 The **secrets page** lists every placeholder the daemon holds, in columns:
 coverage (`*` for the daemon-wide row, otherwise its workspace ids), name,
@@ -73,6 +85,8 @@ it with the same show and copy actions. The sentinel therefore reads back on
 demand, both at mint time and after. Each placeholder row cross-references
 its workspaces, for navigation.
 
+## The workspace page
+
 ![The workspace page: header, consent line, the three action groups](screens/workspace-page.svg)
 
 The **workspace page** operates on an already-created workspace. Its
@@ -101,6 +115,8 @@ edit dialog for the sizes and topology, and the mounts editor; `power` holds
 start and stop. Bold marks the action the workspace's status invites. The
 highlight bar and a marker name the row Enter acts on.
 
+### The mounts page
+
 The **mounts editor** shows the workspace's mounts one row each, in the
 CLI's `HOST_PATH:GUEST_PATH:MODE` grammar with the mode always shown.
 `a` adds a row (a single-line input), Enter edits the focused row
@@ -117,6 +133,8 @@ under a root the daemon's VM does not mount, is refused with the remedy
 stated. The [mounts chapter](mounts.md) and the [configuration
 rows](config.md#host-share-mounts) describe the behavior. The CLI's [`msks
 mount`](cli.md#msks-mount) uses the same route.
+
+### The images page
 
 ![The image page: the catalog group, then the published channel](screens/image-page.svg)
 
@@ -140,6 +158,8 @@ image rm` makes. The page re-reads the workspace each second, so the
 dimming follows a start or stop made anywhere, not only on the page. A
 workspace the listing no longer sees (removed from another surface)
 closes its page, and the removal appears on the list's status line.
+
+### The egress consent page
 
 ![The egress consent page: a held request over the in-effect verdicts](screens/consent-page.svg)
 
@@ -180,6 +200,8 @@ decides. While no hold waits, the verdict keys do nothing and leave the
 footer until one arrives. See [`msks egress`](cli.md#msks-egress) for
 what verdicts and rules cover.
 
+### The edit page
+
 The page's **Edit settings** action opens the edit dialog: the create
 form's layout, seeded with the workspace's current values. ![The edit dialog: the sizes and topology, prefilled](screens/edit-dialog.svg)
 
@@ -201,11 +223,11 @@ changed value with a note pointing at the field, instead of accepting
 it silently. A size left blank keeps its current value. Escape closes
 the dialog and changes nothing.
 
+### Opening a shell
+
 The page's **Open a shell** action runs `msks ssh` in the TUI's own
 terminal: the tree exits, the ssh session runs where it stood, and the
-tree restarts when the session returns the terminal. It uses ssh rather
-than the console because the console keeps the getty's geometry while
-ssh carries every resize to the guest.
+tree restarts when the session returns the terminal.
 
 A workspace ssh cannot reach (no NIC, no identity configured) takes a longer
 path. The flow boots a stopped workspace first (the ssh session it runs boots
@@ -236,7 +258,7 @@ quits the tree. Ctrl+Q exits the client from any screen (the tree, a page, a
 form field, or a panel stacked over them), the same clean exit `q` takes at
 the workspaces list.
 
-## The shell action's terminal settings
+#### The shell action's terminal settings
 
 The workspace page's **Open a shell** action runs `msks ssh`: in the TUI's
 own terminal by default, or in a new window through a configured launcher.
@@ -244,7 +266,7 @@ Two client settings shape those windows. Their environment-variable rows are
 in [the client environment table](cli.md#client-environment). Their file
 keys are documented here.
 
-## `terminal_open_cmd`
+#### `terminal_open_cmd`
 
 `terminal_open_cmd` is the launcher the workspace page's **Open a shell**
 action uses to open workspace shells in new terminal windows. It is the
@@ -282,7 +304,7 @@ to launch. A configured launcher that fails to execute (a binary that is
 missing or not executable) reports the reason on the tree's first flash
 after the same-terminal shell ends. The shell runs in the same terminal.
 
-## `terminal_title`
+#### `terminal_title`
 
 `terminal_title` sets the title of every terminal window the workspace
 page's shell action opens through a configured launcher. `{workspace}`
@@ -311,7 +333,7 @@ flag sets). A `msks ssh` you type yourself keeps your terminal's title:
 the setting applies only to the windows msks opens, and a same-terminal
 shell (the dead-launcher fallback) changes nothing.
 
-## `msks-term-popup`: the consent-decider terminal
+#### `msks-term-popup`: the consent-decider terminal
 
 `msks-term-popup` is a shipped client command that runs the appended
 shell inside a local tmux session and answers the workspace's egress
