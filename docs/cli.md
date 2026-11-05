@@ -32,14 +32,13 @@ msks rm ws                    # delete it (and its data)
 
 ## Client environment
 
-The client reads environment variables prefixed
-`MSKSC_` (client) to stay apart from the daemon's `MSKSD_*` (server)
-namespace, so a box that runs both can export each side
-independently.
-The list-valued settings (`MSKSC_TERMINAL_OPEN_CMD`,
-`MSKSC_SSH_OPTIONS`) carry their string form; `MSKSC_SSH_OPTIONS`'s
-file key is documented below, and `MSKSC_TERMINAL_OPEN_CMD`'s in
-[The TUI](tui.md) beside the shell action it configures.
+The client reads environment variables prefixed `MSKSC_` (client) to stay
+apart from the daemon's `MSKSD_*` (server) namespace. A box that runs both
+can export each side independently. The list-valued settings
+(`MSKSC_TERMINAL_OPEN_CMD`, `MSKSC_SSH_OPTIONS`) carry their string form;
+`MSKSC_SSH_OPTIONS`'s file key is documented below, and
+`MSKSC_TERMINAL_OPEN_CMD`'s in [The TUI](tui.md) beside the shell action it
+configures.
 
 | Variable                   | Config file key      | Meaning                                                                                                                                                                                                                                                                            | Default                                                   |
 | -------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
@@ -54,32 +53,28 @@ file key is documented below, and `MSKSC_TERMINAL_OPEN_CMD`'s in
 | `MSKSC_TERMINAL_TITLE`     | `terminal_title`     | The title template for the workspace-shell windows the workspace page opens (the file key's section lives in [The TUI](tui.md)); `{workspace}` resolves to the workspace's id                                                                                                      | unset (the terminal's own title)                          |
 | `MSKSC_IMAGE_MANIFEST_URL` | `image_manifest_url` | Where the TUI's Import image action (`i` on the workspace list) reads the published channel's manifest (a fork's or self-hoster's channel gives its own); the picker shows each row's ref, description, and size, and the pick POSTs the row's URL to the daemon's import endpoint | this repository's latest release's `images.json`          |
 
-`MSKSC_CACHE_DIR` exists because the host-key cache is
-disposable: a swept cache costs one trust-on-first-use re-pin, so
-pointing it at a per-project, disposable location is the intended
-use.
+`MSKSC_CACHE_DIR` exists because the host-key cache is disposable: a swept
+cache costs one trust-on-first-use re-pin. Pointing it at a per-project,
+disposable location is the intended use.
 
-Each directory-valued setting takes an absolute path (a relative
-value is refused with a line giving the fix; a leading `~`
-expands; an empty value counts as unset), and the per-workspace
-directories are created below it.
+Each directory-valued setting takes an absolute path (a relative value is
+refused with a line giving the fix; a leading `~` expands; an empty value
+counts as unset). The per-workspace directories are created below it.
 
-`MSKSC_IDENTITY_FILE` points at a file, not a directory: your own
-private key, read in place. msks derives the public half from it
-at create. `msks ssh` and `msks rsync` sign through your own
-ssh-agent when it holds that key (`ssh-add` it; the match is on
-the key material, so the file it came from and its name do not
-matter). Otherwise they stage the private half in memory. The
-key file itself is never copied into msks's state.
+`MSKSC_IDENTITY_FILE` points at a file, not a directory: your own private
+key, read in place. msks derives the public half from it at create. `msks
+ssh` and `msks rsync` sign through your own ssh-agent when it holds that key
+(`ssh-add` it). The match is on the key material, so the file it came from
+and its name do not matter. Otherwise they stage the private half in memory.
+The key file itself is never copied into msks's state.
 
-A key msks stages itself is an unencrypted OpenSSH-format key
-(`ed25519`, `ecdsa` P-256/P-384/P-521, or `rsa`); msks never
-types a passphrase. An encrypted key no agent holds is refused
-with a line giving the fixes in order: `ssh-add` the key,
-decrypt a copy, or pass `--pubkey` at create. An agent that asks
-for confirmation per signature (a hardware token's touch) asks
-at its own cadence: the first-boot probe's retries and the
-session each count as a signing request.
+A key msks stages itself is an unencrypted OpenSSH-format key (`ed25519`,
+`ecdsa` P-256/P-384/P-521, or `rsa`). msks never types a passphrase. An
+encrypted key no agent holds is refused with a line giving the fixes in
+order: `ssh-add` the key, decrypt a copy, or pass `--pubkey` at create. An
+agent that asks for confirmation per signature (a hardware token's touch)
+asks at its own cadence: the first-boot probe's retries and the session each
+count as a signing request.
 
 `MSKSC_PUBKEY_FILE` points at your key's public half, a `.pub`
 file ([the identity section](first-run.md#the-key-files)
@@ -92,14 +87,12 @@ answers from your agent. It wins over `identity_file` (so
 rules and global-only shape, and `--pubkey` still overrides it
 for one create.
 
-A missing `MSKSC_TOKEN` is an error before any network activity
-(the client gives the variable and exits), unless the daemon is
-reached through the local socket, where the kernel vouches for
-the client and no token exists to read. Tokens come from the
-daemon: `POST /api/v1/tokens` mints one. The devenv shell
-presets all three from the worktree's own dev daemon; the
-[Development environment](development.md) chapter owns what the
-shell seeds.
+A missing `MSKSC_TOKEN` is an error before any network activity (the client
+gives the variable and exits), unless the daemon is reached through the
+local socket, where the kernel vouches for the client and no token exists to
+read. Tokens come from the daemon: `POST /api/v1/tokens` mints one. The
+devenv shell presets all three from the worktree's own dev daemon. The
+[Development environment](development.md) chapter owns what the shell seeds.
 
 An unconfigured client (no `MSKSC_URL`, no `MSKSC_SOCKET`, no
 config-file daemon) looks for the default socket a same-host
@@ -123,10 +116,9 @@ network and worth closing before anything real.
 
 The environment variables above have a durable home: a YAML file at
 `~/.config/msks/msks.yaml` (relocated by `MSKSC_CONFIG_DIR`, or
-`XDG_CONFIG_HOME`). The variables keep working beside it, and each
-one overrides the same key in the file, so a fresh devenv shell with
-its presets exported behaves exactly as it does today. Precedence,
-highest first:
+`XDG_CONFIG_HOME`). The variables keep working beside it, and each one
+overrides the same key in the file. A fresh devenv shell with its presets
+exported behaves exactly as it does today. Precedence, highest first:
 
 ```text
 --daemon flag > MSKSC_* environment > the file's daemon aliases
@@ -140,15 +132,14 @@ a missing one is an error, and an explicit path is never
 generated. `--config=none` reads the environment and the
 built-in defaults only.
 
-Every scalar key is its `MSKSC_*` variable with the prefix
-stripped and lowercased (`MSKSC_URL` → `url`,
-`MSKSC_EXPECTED_IMAGE` → `expected_image`), with the same
-semantics as the variable. A leading `~` expands, and a key set
-to nothing (`key:` with no value, or `""`) is the unset form.
-Hyphens and underscores spell the same key: `token-file` and
-`token_file` are one key (klangk's file spelled kebab; msks's
-variables spell snake), and a file that carries both spellings
-of one key is refused, the second treated as a duplicate.
+Every scalar key is its `MSKSC_*` variable with the prefix stripped and
+lowercased (`MSKSC_URL` → `url`, `MSKSC_EXPECTED_IMAGE` → `expected_image`),
+with the same semantics as the variable. A leading `~` expands, and a key
+set to nothing (`key:` with no value, or `""`) is the unset form. Hyphens
+and underscores spell the same key: `token-file` and `token_file` are one
+key (klangk's file spelled kebab; msks's variables spell snake). A file that
+carries both spellings of one key is refused, the second treated as a
+duplicate.
 
 `token_file` is the one key whose variable carries a different
 shape: the file points at a file holding one daemon token. The
@@ -176,12 +167,11 @@ msksd's config file carries.
 
 ### Daemon aliases
 
-The file's one structural key is `daemons:`, one entry per daemon
-you talk to. An entry picks its daemon one way: `url` for a
-remote daemon, or `socket` for a local listener (peer-credential
-authentication; the entry carries no `token_file` and no
-`cafile`); `token_file`, `cafile`, and `expected_image` override
-their global keys for that alias:
+The file's one structural key is `daemons:`, one entry per daemon you talk
+to. An entry picks its daemon one way: `url` for a remote daemon, or
+`socket` for a local listener (peer-credential authentication; the entry
+carries no `token_file` and no `cafile`). The keys `token_file`, `cafile`,
+and `expected_image` override their globals for that alias:
 
 ```yaml
 url: https://127.0.0.1:8660
@@ -198,16 +188,15 @@ daemons:
 active_daemon: lab
 ```
 
-`active_daemon` gives the alias a bare `msks` addresses; the
-`--daemon <alias-or-url-or-path>` flag picks one for a single
-invocation and also takes a raw URL or an absolute socket path.
-The two selections sit at different layers of the precedence
-rule. A `--daemon` alias outranks the environment for that
-invocation, because you picked the daemon and its entry's keys
-win over the ambient exports. An `active_daemon` alias sits
-below the environment: the devenv presets keep winning, so a
-worktree shell still talks to its own dev daemon beside a user
-config file that picks another.
+`active_daemon` gives the alias a bare `msks` addresses. The `--daemon
+<alias-or-url-or-path>` flag picks one for a single invocation and also
+takes a raw URL or an absolute socket path. The two selections sit at
+different layers of the precedence rule. A `--daemon` alias outranks the
+environment for that invocation, because you picked the daemon and its
+entry's keys win over the ambient exports. An `active_daemon` alias sits
+below the environment: the devenv presets keep winning. A worktree shell
+still talks to its own dev daemon beside a user config file that picks
+another.
 
 ### `ssh_options`
 
@@ -274,20 +263,18 @@ yields a different id, with nothing of the first instance left
 to collide. The second workspace's `msks ssh` works on the first
 try, with a fresh host-key cache of its own.
 
-Every command that takes a workspace accepts either reference:
-`msks console ws` and `msks console 1a2b3c4d5e` reach the same
-workspace. The name is the everyday reference; the id is the
-reference no other workspace shares.
+Every command that takes a workspace accepts either reference: `msks console
+ws` and `msks console 1a2b3c4d5e` reach the same workspace. The name is the
+everyday reference. The id is the reference no other workspace shares.
 
 ## `msks ls`
 
-Prints one line per workspace the daemon knows, aligned in seven
-columns: name, id, status, egress mode, created date, image
-(catalog reference, or the digest when the catalog cannot resolve
-one), and owning host. The columns are measured against the values
-present: a long name or image reference widens its column for
-every row, so each row's columns start at the same offsets, header
-row included.
+Prints one line per workspace the daemon knows, aligned in seven columns:
+name, id, status, egress mode, created date, image (catalog reference, or
+the digest when the catalog cannot resolve one), and owning host. The
+columns are measured against the values present: a long name or image
+reference widens its column for every row. Each row's columns start at the
+same offsets, header row included.
 
 ```text
 $ msks ls
@@ -411,11 +398,11 @@ below generate theirs):
 | `--user`      | `user`                  | The workspace's login user; default: your username                                 |
 | `--share`     | `mounts`                | A host directory mounted into the guest: `HOST_PATH:GUEST_PATH:MODE`, repeatable   |
 
-Only the flags you pass are sent; unset flags let the daemon
-apply its own defaults. An `--image` reference resolves against
-the daemon's image catalog (`docs/images.md`); explicit `--kernel`
-and `--rootfs` bypass it. Size ranges are enforced server-side;
-a value outside them comes back as a validation error (below).
+Only the flags you pass are sent. Unset flags let the daemon apply its own
+defaults. An `--image` reference resolves against the daemon's image catalog
+(`docs/images.md`); explicit `--kernel` and `--rootfs` bypass it. Size
+ranges are enforced server-side; a value outside them comes back as a
+validation error (below).
 
 `--share` gives a host directory, the absolute guest path it
 lands at, and a mode (`ro` or `rw`, defaulting to `rw` when the
@@ -426,22 +413,20 @@ msks create ws1 --share /srv/projects:/mnt/projects --share /srv/refs:/srv/refs:
 ```
 
 The host path must sit under one of the daemon's allowed roots
-(`mount_host_roots`,
-[configuration](config.md#host-share-mounts)), resolved against
-symlink escapes. The mounts apply at the workspace's next start;
-a `--start` create attaches them on its first boot. The [mounts
-chapter](mounts.md) holds the behavior: the two gates, the mode
-bound, and the coherence between guests sharing one tree.
-`msks mount` and `msks umount` change the set later.
+(`mount_host_roots`, [configuration](config.md#host-share-mounts)), resolved
+against symlink escapes. The mounts apply at the workspace's next start. A
+`--start` create attaches them on its first boot. The [mounts
+chapter](mounts.md) holds the behavior: the two gates, the mode bound, and
+the coherence between guests sharing one tree. `msks mount` and `msks
+umount` change the set later.
 
-`--user NAME` records the workspace's login user, and the name
-is carried on the row. The guest's first boot seeds the account:
-`useradd -m`; a home on the persistent `/home` volume, populated
-from `/etc/skel`; the workspace identity in its `authorized_keys`;
-and the same passwordless-sudo grant the image's own workspace
-user carries. `msks ssh`, `msks rsync`, and `msks console` then
-use the recorded name as their default login, so a workspace
-answers the same identity for every operator that reaches it.
+`--user NAME` records the workspace's login user, and the name is carried on
+the row. The guest's first boot seeds the account: `useradd -m`; a home on
+the persistent `/home` volume, populated from `/etc/skel`; the workspace
+identity in its `authorized_keys`; and the same passwordless-sudo grant the
+image's own workspace user carries. `msks ssh`, `msks rsync`, and `msks
+console` then use the recorded name as their default login. A workspace
+therefore answers the same identity for every operator that reaches it.
 
 Without `--user` the create fills the invoking user's name: a
 bare create lands your own account. The name must fit the
@@ -470,11 +455,10 @@ created my-workspace (id 9f2c41ab77)
 attach with: msks console my-workspace
 ```
 
-The confirmation line prints both halves of the workspace's
-identity, the label you chose and the id the daemon minted, as
-soon as the create succeeds and before the boot is attempted. A
-failed boot still leaves the workspace created; the error
-message says so and gives the recovery command:
+The confirmation line prints both halves of the workspace's identity, the
+label you chose and the id the daemon minted, as soon as the create succeeds
+and before the boot is attempted. A failed boot still leaves the workspace
+created; the error message says so. The recovery command:
 
 ```text
 created my-workspace (id 9f2c41ab77)
@@ -507,11 +491,10 @@ gives your private key file (the config file or the environment),
 and a create with neither that nor `--pubkey` refuses with a
 one-line error giving both.
 
-msks does not scan `~/.ssh` and never guesses which of your keys
-to take. The create sends the key's derived public half only and
-writes nothing per-workspace; your private key file stays where
-it lives, read in place and copied nowhere. The confirmation
-gives the identity it used:
+msks does not scan `~/.ssh` and never guesses which of your keys to take.
+The create sends the key's derived public half only and writes nothing
+per-workspace. Your private key file stays where it lives, read in place and
+copied nowhere. The confirmation gives the identity it used:
 
 ```bash
 $ msks create my-workspace --image debian:13 --start
@@ -520,12 +503,11 @@ identity: /home/you/.ssh/id_ed25519
 attach with: msks console my-workspace
 ```
 
-`msks ssh` and `msks rsync` resolve the same key at session
-time, so a workspace re-created under the same name keeps your
-access: a new id, the same key. Session resolution consults your
-own ssh-agent first: when `SSH_AUTH_SOCK` gives a live agent
-holding that key, the session signs through the agent and the
-key file's encryption stops mattering.
+`msks ssh` and `msks rsync` resolve the same key at session time. A
+workspace re-created under the same name therefore keeps your access: a new
+id, the same key. Session resolution consults your own ssh-agent first: when
+`SSH_AUTH_SOCK` gives a live agent holding that key, the session signs
+through the agent and the key file's encryption stops mattering.
 
 A key msks stages for its own sessions is an unencrypted
 OpenSSH-format key: `ed25519`, `ecdsa` (P-256/P-384/P-521), or
@@ -571,21 +553,19 @@ $ msks stop my-workspace
 my-workspace stopped
 ```
 
-The stop asks the guest for a graceful, deadline-bounded
-power-off: the daemon presses the ACPI power button and the
-guest's systemd runs a full shutdown, so the write-out can take a
-moment. The deadline is the daemon's (`MSKSD_SHUTDOWN_TIMEOUT_S`);
-there is no client-side timeout flag, and like `msks start` the
-client waits at most two minutes on the answer. A stop that
-misses the daemon's deadline answers 503 with the endpoint's
-detail on one line, exit non-zero.
+The stop asks the guest for a graceful, deadline-bounded power-off: the
+daemon presses the ACPI power button and the guest's systemd runs a full
+shutdown. The write-out can take a moment. The deadline is the daemon's
+(`MSKSD_SHUTDOWN_TIMEOUT_S`); there is no client-side timeout flag, and like
+`msks start` the client waits at most two minutes on the answer. A stop that
+misses the daemon's deadline answers 503 with the endpoint's detail on one
+line, exit non-zero.
 
-Stopping a workspace that is already stopped is a no-op success:
-the daemon reports it stopped either way, and the client asks
-without pre-filtering on local state. The same holds for a
-workspace that was never booted; the row records `stopped`
-without a launch ever happening. The data survives the stop: the
-root overlay and the `/home` volume come back on the next `msks
+Stopping a workspace that is already stopped is a no-op success: the daemon
+reports it stopped either way, and the client asks without pre-filtering on
+local state. The same holds for a workspace that was never booted: the row
+records `stopped` without a launch ever happening. The data survives the
+stop: the root overlay and the `/home` volume come back on the next `msks
 start`.
 
 ## `msks resize`
@@ -616,13 +596,12 @@ resized ws4: root 10240 MiB, home 4096 MiB, cpus 4, mem 4096 MiB
   create clamped it to the base image. Shrinking the root stays
   unsupported: `msks rm` and a fresh create, or a factory reset,
   reclaim a root instead.
-- `--cpus` and `--mem-mib` set the vCPU count and guest memory.
-  The daemon records them in the workspace row and boots it with
-  the new topology at the next `msks start`; a running workspace
-  is never reconfigured live. The bounds are create's (`--cpus`
-  1–64, `--mem-mib` 64–32768 MiB), and the command's output
-  carries the boot note when they changed. The flags mix freely
-  with the disk flags: one invocation can move the disks and the
+- `--cpus` and `--mem-mib` set the vCPU count and guest memory. The daemon
+  records them in the workspace row and boots it with the new topology at
+  the next `msks start`. A running workspace is never reconfigured live. The
+  bounds are create's (`--cpus` 1–64, `--mem-mib` 64–32768 MiB), and the
+  command's output carries the boot note when they changed. The flags mix
+  freely with the disk flags: one invocation can move the disks and the
   topology together.
 
 The workspace must be in a free lifecycle state (`created`,
@@ -643,23 +622,20 @@ $ msks mount ws1 /srv/refs:/srv/refs:ro
 ws1 mounts /srv/projects:/mnt/projects:rw, /srv/refs:/srv/refs:ro (next start)
 ```
 
-The outcome line gives the resulting set, and the next-start
-note joins it while the change is pending: setting mounts never
-touches a running VM, and the next `msks start` attaches exactly
-this set. The row carries `mounts_pending`: the daemon compares
-the configured set with the set the last start attached. The
-note rests once a start has taken the set, and an edit that
-returns the list to its attached shape shows the set alone.
-([what a mount is](mounts.md#what-a-mount-is) states the
-lifecycle: the seed each boot carries bakes the current set, so a
-restart after a change lands it and prunes the dropped mounts.)
-The daemon validates the whole list against its gates and the row
-rules (a host path appears once per workspace, guest paths are
-absolute and mutually disjoint); a refusal prints its reason on
-one line. A mount the daemon's derived state holds unresolved
-prints its kind after the set; the [mounts
-chapter](mounts.md#the-skip-behavior) holds every kind and its
-reason.
+The outcome line gives the resulting set, and the next-start note joins it
+while the change is pending: setting mounts never touches a running VM, and
+the next `msks start` attaches exactly this set. The row carries
+`mounts_pending`: the daemon compares the configured set with the set the
+last start attached. The note rests once a start has taken the set, and an
+edit that returns the list to its attached shape shows the set alone. ([what
+a mount is](mounts.md#what-a-mount-is) states the lifecycle: the seed each
+boot carries bakes the current set, so a restart after a change lands it and
+prunes the dropped mounts.) The daemon validates the whole list against its
+gates and the row rules (a host path appears once per workspace, guest paths
+are absolute and mutually disjoint); a refusal prints its reason on one
+line. A mount the daemon's derived state holds unresolved prints its kind
+after the set. The [mounts chapter](mounts.md#the-skip-behavior) holds every
+kind and its reason.
 
 ## `msks umount`
 
@@ -681,13 +657,12 @@ mount leaves this way mounts nothing at its next boot. The
 
 ## `msks rm`
 
-Deletes workspaces (`DELETE /api/v1/workspaces/{id-or-name}`):
-the row, the VMM (stopped first, killed if wedged), and the
-persistent artifacts, the root overlay and the `/home` volume.
-The data does not come back; creating a workspace under the same
-name mints a fresh id and starts from the image's pristine root,
-with nothing of the deleted instance left to collide with. One
-workspace or several:
+Deletes workspaces (`DELETE /api/v1/workspaces/{id-or-name}`): the row, the
+VMM (stopped first, killed if wedged), and the persistent artifacts, the
+root overlay and the `/home` volume. The data does not come back. Creating a
+workspace under the same name mints a fresh id and starts from the image's
+pristine root, with nothing of the deleted instance left to collide with.
+One workspace or several:
 
 ```bash
 $ msks rm my-workspace
@@ -697,13 +672,12 @@ scratch-1 deleted
 scratch-2 deleted
 ```
 
-Workspaces are removed one at a time, in the order given; a
-failure stops the run there with the API's one-line error, and
-the ones already removed stay removed (each success printed its
-confirmation line). There is no confirmation prompt: deleting is
-what `rm` means, and a workspace is recoverable by recreating it.
-A workspace recorded on another host answers 409 with the host
-mismatch given in the error, like every lifecycle command.
+Workspaces are removed one at a time, in the order given. A failure stops
+the run there with the API's one-line error, and the ones already removed
+stay removed (each success printed its confirmation line). There is no
+confirmation prompt: deleting is what `rm` means, and a workspace is
+recoverable by recreating it. A workspace recorded on another host answers
+409 with the host mismatch given in the error, like every lifecycle command.
 
 ## `msks image`
 
@@ -725,21 +699,19 @@ debian:13.6    9f2c41ab77de  default  6.12.107+deb13 (raw)  Debian 13.6 cloud im
 alpine:3.20    33aa9db1c4ef  -        6.12.7 (raw)          -                                2026-09-19 09:41
 ```
 
-The image the daemon designates as default carries the `default`
-flag; a bare `msks create` resolves to it. The `description`
-column carries the identity the build baked into the image,
-capped for the row; `image info` prints it at full length, and an
-image whose manifest carried none keeps the column with a dash.
-The `imported` column shows the moment the archive entered the
-catalog, in local time to the minute; an entry re-imported under
-the same reference moves the time forward with it. A renamed row
-adds an `origin` column beside the ref, showing the archive's
-own pair where it differs from the registered one; rows whose
-archive pair matches keep the column with a dash. `--json` prints
-the listing as the API returns it (`GET /api/v1/images`, each
-row's `imported` field in ISO 8601 UTC, each row's
-`origin_name`/`origin_version` carrying the manifest pair),
-stable for scripting.
+The image the daemon designates as default carries the `default` flag. A
+bare `msks create` resolves to it. The `description` column carries the
+identity the build baked into the image, capped for the row. `image info`
+prints it at full length, and an image whose manifest carried none keeps the
+column with a dash. The `imported` column shows the moment the archive
+entered the catalog, in local time to the minute. An entry re-imported under
+the same reference moves the time forward with it. A renamed row adds an
+`origin` column beside the ref, showing the archive's own pair where it
+differs from the registered one. Rows whose archive pair matches keep the
+column with a dash. `--json` prints the listing as the API returns it (`GET
+/api/v1/images`, each row's `imported` field in ISO 8601 UTC, each row's
+`origin_name`/`origin_version` carrying the manifest pair), stable for
+scripting.
 
 ### `msks image import`
 
@@ -760,11 +732,10 @@ imported mine:1.0 (9f2c41ab77de)
 ```
 
 A `--name`/`--version` override registers the archive under an
-operator-chosen pair; either key alone, the other from the
-archive's own manifest, whose pair stays recorded as the row's
-origin (see `docs/images.md`). The archive bytes and the content
-hash stay exactly as they were; a pair another row already holds
-is refused with a named error.
+operator-chosen pair. Either key alone, the other comes from the archive's
+own manifest, whose pair stays recorded as the row's origin (see
+`docs/images.md`). The archive bytes and the content hash stay exactly as
+they were. A pair another row already holds is refused with a named error.
 
 A URL source is fetched into the catalog's staging area under the
 import ceiling and deadline (`MSKSD_IMAGE_IMPORT_MAX_MIB`,
@@ -790,17 +761,16 @@ $ msks image rename mine:1.4 --version 1.5
 renamed mine:1.4 to mine:1.5 (9f2c41ab77de)
 ```
 
-Either key alone keeps the other at its registered value; pass at
-least one. The reference forms are the same as `image rm`'s:
-`name:version`, a bare name (its newest version), `name@hash`, a
-full hash, or a unique hash prefix. The rename goes through the
-daemon (`PATCH /api/v1/images/<hash>`) after resolving the
-reference against the listing. A pair another row already holds
-is refused with the daemon's named error (409), and a pair the
-reference forms cannot carry (`:` or `@` inside a value, or an
-empty one) is refused with a named error too. After a rename the
-old `name:version` stops resolving; `name@hash` (with the new
-name) and bare-hash references keep booting the same bytes.
+Either key alone keeps the other at its registered value. Pass at least one.
+The reference forms are the same as `image rm`'s: `name:version`, a bare
+name (its newest version), `name@hash`, a full hash, or a unique hash
+prefix. The rename goes through the daemon (`PATCH /api/v1/images/<hash>`)
+after resolving the reference against the listing. A pair another row
+already holds is refused with the daemon's named error (409), and a pair the
+reference forms cannot carry (`:` or `@` inside a value, or an empty one) is
+refused with a named error too. After a rename the old `name:version` stops
+resolving; `name@hash` (with the new name) and bare-hash references keep
+booting the same bytes.
 
 ### `msks image check`
 
@@ -840,13 +810,12 @@ $ msks image rm debian:12
 debian:12 deleted
 ```
 
-The removal is keyed by the image's hash after resolving the
-reference against the listing. An image a workspace still boots
-is refused (the API's 409 gives the workspace), and a reference
-that matches nothing exits with the catalog spelled out so the
-next try can be copy-pasted. An ambiguous hash prefix lists the
-images it matches; use the full hash or `name@hash`. (Two imports
-of the same `name:version`, a rebuilt archive, are the usual
+The removal is keyed by the image's hash after resolving the reference
+against the listing. An image a workspace still boots is refused (the API's
+409 gives the workspace), and a reference that matches nothing exits with
+the catalog spelled out so the next try can be copy-pasted. An ambiguous
+hash prefix lists the images it matches. Use the full hash or `name@hash`.
+(Two imports of the same `name:version`, a rebuilt archive, are the usual
 ambiguity, and only the hash forms still identify one of them.)
 
 ### `msks image info`
@@ -867,10 +836,9 @@ seed         provisioner - (none declared)
 default      yes
 ```
 
-The reference forms are the same as `image rm`'s. The
-`description` row is the identity the build baked into the
-image's manifest; an image whose manifest carried none prints
-`- (none baked)`.
+The reference forms are the same as `image rm`'s. The `description` row is
+the identity the build baked into the image's manifest. An image whose
+manifest carried none prints `- (none baked)`.
 
 ### `msks image default`
 
@@ -886,15 +854,14 @@ default designation removed; a bare create falls back to the sole
 entry debian:13.6 (98ccf2e1f2db)
 ```
 
-The reference forms are the same as `image rm`'s:
-`name:version`, a bare name (its newest version), `name@hash`, a
-full hash, a unique hash prefix. The designation goes through the
-daemon (`POST /api/v1/images/default`), survives restarts, and
-the next `image ls` marks the row. A fresh `MSKSD_DEFAULT_IMAGE`
-import at daemon startup still reclaims the slot; the command is
-the operator's designation between restarts. A reference that
-matches nothing exits with the catalog spelled out, the same miss
-`image rm` answers.
+The reference forms are the same as `image rm`'s: `name:version`, a bare
+name (its newest version), `name@hash`, a full hash, a unique hash prefix.
+The designation goes through the daemon (`POST /api/v1/images/default`),
+survives restarts, and the next `image ls` marks the row. A fresh
+`MSKSD_DEFAULT_IMAGE` import at daemon startup still reclaims the slot. The
+command is the operator's designation between restarts. A reference that
+matches nothing exits with the catalog spelled out, the same miss `image rm`
+answers.
 
 `--unset` clears the designation (`DELETE
 /api/v1/images/default`) and reports the fallback a bare create
@@ -916,43 +883,39 @@ msks home import fresh-ws my-workspace.ext4
 msks home import fresh-ws - < backup.ext4
 ```
 
-The workspace must be stopped (a volume under a running VM
-answers `409`; stop it first, `msks stop` is enough). A boot that
-arrives during a move waits for it and boots the volume the move
-left; moves, boots, and deletes serialize per workspace, and the
-waiter answers a named 409 after `MSKSD_MOVE_WAIT_TIMEOUT_S`
-instead of hanging. Export streams the volume file's bytes
-verbatim and prints one confirmation line (`exported
-my-workspace (2097152 bytes) to my-workspace.ext4`). `-` writes
-the bytes to stdout and moves the note to stderr, so a pipe stays
-clean for gzip or ssh. A reader that goes away mid-stream (`|
-head`, a compressor on a full disk) prints one line on stderr and
-exits non-zero. Import uploads the named ext4 image (or stdin,
-for `-`), the daemon replaces the volume with it, and the reply
-is the byte count: `imported 2097152 bytes into fresh-ws`.
+The workspace must be stopped (a volume under a running VM answers `409`;
+stop it first, `msks stop` is enough). A boot that arrives during a move
+waits for it and boots the volume the move left. Moves, boots, and deletes
+serialize per workspace, and the waiter answers a named 409 after
+`MSKSD_MOVE_WAIT_TIMEOUT_S` instead of hanging. Export streams the volume
+file's bytes verbatim and prints one confirmation line (`exported
+my-workspace (2097152 bytes) to my-workspace.ext4`). `-` writes the bytes to
+stdout and moves the note to stderr, so a pipe stays clean for gzip or ssh.
+A reader that goes away mid-stream (`| head`, a compressor on a full disk)
+prints one line on stderr and exits non-zero. Import uploads the named ext4
+image (or stdin, for `-`), the daemon replaces the volume with it, and the
+reply is the byte count: `imported 2097152 bytes into fresh-ws`.
 
-The daemon refuses with one line and exit 1. Refused: a file that
-is not an ext4 image (`msks: 400: the request body is not an
-ext4 image ...`), a workspace in the wrong state, and everything
-the API's refusals give (a foreign host). An import keeps the
-workspace's existing volume until the upload completes and passes
-the ext4 check; a cut-off upload changes nothing.
+The daemon refuses with one line and exit 1. Refused: a file that is not an
+ext4 image (`msks: 400: the request body is not an ext4 image ...`), a
+workspace in the wrong state, and everything the API's refusals give (a
+foreign host). An import keeps the workspace's existing volume until the
+upload completes and passes the ext4 check. A cut-off upload changes
+nothing.
 
-The typical pairings are backup (`export`, later `import` back
-into the same workspace after a `rm` + `create`) and migration
-(`export` on one daemon, `create` + `import` on another). Seeding
-is the third: build an ext4 image with the data a fleet of
-workspaces starts from, then import it into each fresh one.
-Inside a workspace with egress, git and rsync over the forward
-(`docs/networking.md`) carry day-to-day code; the volume moves
-are for the whole `/home` at once.
+The typical pairings are backup (`export`, later `import` back into the same
+workspace after a `rm` + `create`) and migration (`export` on one daemon,
+`create` + `import` on another). Seeding is the third: build an ext4 image
+with the data a fleet of workspaces starts from, then import it into each
+fresh one. Inside a workspace with egress, git and rsync over the forward
+(`docs/networking.md`) carry day-to-day code. The volume moves are for the
+whole `/home` at once.
 
 ## `msks secret`
 
-Placeholder secrets: mint a sentinel (daemon-wide by default,
-scoped with `--workspace`) and the daemon keeps your value as
-per-recipient ciphertext blobs in its database; the workspace
-never holds it (the full story is
+Placeholder secrets: mint a sentinel (daemon-wide by default, scoped with
+`--workspace`) and the daemon keeps your value as per-recipient ciphertext
+blobs in its database. The workspace never holds it (the full story is
 [docs/secrets.md](secrets.md)):
 
 ```bash
@@ -979,30 +942,27 @@ msks secret coverage myws scoped         # exempt myws from daemon-wide rows
 ```
 
 `--secret-file` takes a path or `-` for a pipe, and the value is
-whitespace-stripped at both ends. The secret is never accepted as
-a command-line argument, because argv appears in process lists
-and shell history. An empty file is refused before any network
-roundtrip. `--dest` repeats and binds the swap: an exact host
-(`api.github.com`) or a suffix that covers every host under a
-domain (`.github.com`). `--workspace` takes one ref or a comma
-list and repeats. Omitted, the mint covers every workspace on
-the daemon (one row, one `mskssec2_` sentinel), while a scoped
-mint prints a `mskssec1_` sentinel, so the string alone gives its
-reach. The mint prints the sentinel; the listing and the audit
-omit it (`secret ls` never shows one), and the daemon serves a
-row's sentinel back on demand over the token-authenticated API
-(the `msks tui` row panel is that surface). `revoke` and `renew`
-take the same targeting the mint took. `revoke` takes effect on
-the next request and retires the whole row everywhere at once,
-and `renew` extends a `--ttl` lifetime in place with the sentinel
-unchanged.
+whitespace-stripped at both ends. The secret is never accepted as a
+command-line argument, because argv appears in process lists and shell
+history. An empty file is refused before any network roundtrip. `--dest`
+repeats and binds the swap: an exact host (`api.github.com`) or a suffix
+that covers every host under a domain (`.github.com`). `--workspace` takes
+one ref or a comma list and repeats. Omitted, the mint covers every
+workspace on the daemon (one row, one `mskssec2_` sentinel), while a scoped
+mint prints a `mskssec1_` sentinel, so the string alone gives its reach. The
+mint prints the sentinel; the listing and the audit omit it (`secret ls`
+never shows one). The daemon serves a row's sentinel back on demand over the
+token-authenticated API (the `msks tui` row panel is that surface). `revoke`
+and `renew` take the same targeting the mint took. `revoke` takes effect on
+the next request and retires the whole row everywhere at once, and `renew`
+extends a `--ttl` lifetime in place with the sentinel unchanged.
 
 ## `msks console`
 
 An interactive shell inside a workspace, over the daemon's console
-websocket. The command boots the workspace first when the daemon
-reports it as not running; the notices print on stderr while the
-boot runs, then the session attaches:
+websocket. The command boots the workspace first when the daemon reports it
+as not running. The notices print on stderr while the boot runs, then the
+session attaches:
 
 ```text
 $ msks console my-workspace
@@ -1023,11 +983,10 @@ $ msks console my-workspace
 (workspace prompt, as root)
 ```
 
-The getty keeps its own terminal geometry for the session's life:
-the console stream is a raw byte pipe, so a window resized
-mid-session does not reach it. Full-screen work (editors, tmux)
-belongs to an ssh session through the forward: ssh's
-window-change channel resizes its pty live.
+The getty keeps its own terminal geometry for the session's life: the
+console stream is a raw byte pipe, so a window resized mid-session does not
+reach it. Full-screen work (editors, tmux) belongs to an ssh session through
+the forward: ssh's window-change channel resizes its pty live.
 
 A workspace that is already running attaches with no preamble.
 Two states get special handling:
@@ -1043,16 +1002,15 @@ stop` it, then `msks start` again).
 A start that loses a race (the daemon reports `stopped`, another
 client boots it in the gap) re-checks and attaches to the winner.
 
-Ctrl-] detaches and leaves the workspace running; Ctrl-C and
-Ctrl-D reach the guest. To type a literal Ctrl-] into the guest,
-press it twice quickly (the second press within 50 ms): the pair
-delivers one Ctrl-] byte. A single Ctrl-], or one followed by any
-other byte, detaches, and the byte that followed the escape is
-consumed with it, so a paste that happens to contain a lone
-Ctrl-] detaches the session. Large pastes travel as a few
-websocket frames (4,096-byte chunks), not one frame per byte.
-The session needs a tty on both stdin and stdout. See the
-README's workspace-console section for the transport story.
+Ctrl-] detaches and leaves the workspace running. Ctrl-C and Ctrl-D reach
+the guest. To type a literal Ctrl-] into the guest, press it twice quickly
+(the second press within 50 ms): the pair delivers one Ctrl-] byte. A single
+Ctrl-], or one followed by any other byte, detaches, and the byte that
+followed the escape is consumed with it, so a paste that happens to contain
+a lone Ctrl-] detaches the session. Large pastes travel as a few websocket
+frames (4,096-byte chunks), not one frame per byte. The session needs a tty
+on both stdin and stdout. See the README's workspace-console section for the
+transport story.
 
 A session whose guest stream stops carrying bytes while input
 keeps flowing is closed by the daemon after
@@ -1090,21 +1048,20 @@ msks forward my-workspace 22                 # stdio: ProxyCommand shape
 msks forward my-workspace 8080 --local 8080   # loopback listener
 ```
 
-`--local PORT` binds `127.0.0.1:PORT` instead of stdio; every
-accepted connection opens its own forward websocket, so parallel
-clients (a browser and a curl, two ssh sessions) are independent
-sessions. Refusals print one line (the daemon's close codes give
-the cause: no NIC, not running, service not listening, still
-booting), while a clean end of stream (the guest service closed,
-stdin EOF) leaves exit code 0.
+`--local PORT` binds `127.0.0.1:PORT` instead of stdio. Every accepted
+connection opens its own forward websocket, so parallel clients (a browser
+and a curl, two ssh sessions) are independent sessions. Refusals print one
+line (the daemon's close codes give the cause: no NIC, not running, service
+not listening, still booting), while a clean end of stream (the guest
+service closed, stdin EOF) leaves exit code 0.
 
-The forward authenticates with the websocket handshake's
-`Authorization: Bearer` header (the same scheme as every other
-msks surface): the token never appears in a URL, so proxy and
-process logs hold no credentials. Only egress workspaces have a
-NIC to forward to; a workspace created `--no-egress` is refused
-with the reason naming it. `forward.opened` and `forward.closed`
-events appear on the daemon's events channel for every session.
+The forward authenticates with the websocket handshake's `Authorization:
+Bearer` header (the same scheme as every other msks surface): the token
+never appears in a URL, so proxy and process logs hold no credentials. Only
+egress workspaces have a NIC to forward to. A workspace created
+`--no-egress` is refused with the reason naming it. `forward.opened` and
+`forward.closed` events appear on the daemon's events channel for every
+session.
 
 ## `msks egress`
 
@@ -1138,39 +1095,34 @@ msks egress watch ws-dev --decide --duration forever
                                   # the same, prompting y/n per request
 ```
 
-`decide` and `revoke` identify the request by the id `watch` and
-`requests` print (the full id, copy-pasteable); both act only on
-the given workspace's requests. A portless destination (a
-non-TCP/UDP flow) prompts as `host (all ports)`: an allow opens
-every port on the host for the duration. Durations: `once` (this
-connection only; a reconnect re-prompts), `5m`, `15m`,
-`tilrestart` (until the workspace VM stops; the default),
-`forever` (the workspace's lifetime, replayed at every boot).
-`revoke` undoes an in-effect verdict immediately: the flow rules
-and the destination's live connections drop, and new connections
-gate again.
+`decide` and `revoke` identify the request by the id `watch` and `requests`
+print (the full id, copy-pasteable). Both act only on the given workspace's
+requests. A portless destination (a non-TCP/UDP flow) prompts as `host (all
+ports)`: an allow opens every port on the host for the duration. Durations:
+`once` (this connection only; a reconnect re-prompts), `5m`, `15m`,
+`tilrestart` (until the workspace VM stops; the default), `forever` (the
+workspace's lifetime, replayed at every boot). `revoke` undoes an in-effect
+verdict immediately: the flow rules and the destination's live connections
+drop, and new connections gate again.
 
-`mode` switches a workspace's posture without recreating it. A
-running workspace swaps live: the whole firewall table re-applies
-in one transaction, established connections survive (an attached
-`msks ssh` session stays up), the resolver flips with the chain,
-and any held request answers deny when the switch leaves
-`interactive`. A stopped workspace builds the new posture at its
-next start; the command's output line says which happened.
-Verdicts carry across switches: an `allow forever` granted under
-`interactive` keeps acting under `static`. Switching to `static`
-therefore freezes the workspace at everything approved so far:
-name-keyed verdicts in full and, on a direct gated-to-gated
-switch, the kernel-side pins too. A round-trip through `allow`
-rebuilds the pins from the durable rows (`forever` verdicts
-re-pin at entry; a timed address-keyed allow re-prompts or
-re-learns on the guest's next resolution). `--allow SPEC`
-(repeatable, create's grammar) replaces the allowlist; omitted,
-the workspace keeps its list. Switching to `static` with nothing
-effectively allowed (an empty allowlist and no in-effect allowed
-verdict) is refused with a message giving the fix: pass `--allow`
-entries, or pass `--offline` to run the switch anyway. That
-posture answers every name NXDOMAIN: an offline workspace
+`mode` switches a workspace's posture without recreating it. A running
+workspace swaps live: the whole firewall table re-applies in one
+transaction, established connections survive (an attached `msks ssh` session
+stays up), the resolver flips with the chain, and any held request answers
+deny when the switch leaves `interactive`. A stopped workspace builds the
+new posture at its next start. The command's output line says which
+happened. Verdicts carry across switches: an `allow forever` granted under
+`interactive` keeps acting under `static`. Switching to `static` therefore
+freezes the workspace at everything approved so far: name-keyed verdicts in
+full and, on a direct gated-to-gated switch, the kernel-side pins too. A
+round-trip through `allow` rebuilds the pins from the durable rows
+(`forever` verdicts re-pin at entry; a timed address-keyed allow re-prompts
+or re-learns on the guest's next resolution). `--allow SPEC` (repeatable,
+create's grammar) replaces the allowlist. Omitted, the workspace keeps its
+list. Switching to `static` with nothing effectively allowed (an empty
+allowlist and no in-effect allowed verdict) is refused with a message giving
+the fix: pass `--allow` entries, or pass `--offline` to run the switch
+anyway. That posture answers every name NXDOMAIN: an offline workspace
 reachable only by ssh.
 
 ## `msks key`
@@ -1186,12 +1138,11 @@ environment as every other command:
 msks key my-workspace                    # the public authorized_keys line
 ```
 
-The command is public-only: the private half is the operator's
-own key, and it never crossed the API to begin with; it lives
-wherever `identity_file` points, or in the agent that holds it.
-A workspace that predates answers 404 with "no ssh identity"; a
-keyless create (a deliberate API call with no key) answers the
-same. The public half persists across daemon restarts and
+The command is public-only: the private half is the operator's own key, and
+it never crossed the API to begin with. It lives wherever `identity_file`
+points, or in the agent that holds it. A workspace that predates answers 404
+with "no ssh identity"; a keyless create (a deliberate API call with no key)
+answers the same. The public half persists across daemon restarts and
 workspace stop/start.
 
 ## `msks ssh`
@@ -1206,9 +1157,9 @@ msks ssh my-workspace -- -A        # forward your agent ($SSH_AUTH_SOCK)
 msks ssh my-workspace -- -L 8080:localhost:80
 ```
 
-Options you pass here win for the invocation; the config file's
-`ssh_options` key remembers a set for every session instead. See
-[its section](#ssh_options) for the precedence between the two.
+Options you pass here win for the invocation. The config file's
+`ssh_options` key remembers a set for every session instead. See [its
+section](#ssh_options) for the precedence between the two.
 
 The command boots the workspace first when the daemon reports it
 as not running (the same notices as `msks console`). It then
@@ -1216,18 +1167,16 @@ fetches the identity over the authenticated API and runs `ssh`
 with the forward websocket as its ProxyCommand (`msks forward
 <ws> 22`).
 
-A session that booted its workspace waits out the guest's first
-boot. The daemon reports `running` while the guest's sshd is
-already up but the identity seed has yet to land in
-`authorized_keys`. The command therefore probes the login first,
-with a throwaway `true` as the remote command, retried for up to
-30s with a one-line notice between attempts. It opens the real
-session, interactive or one-shot, once the guest accepts the
-workspace key. A remote command runs exactly once either way.
-The probe carries only the session's login user and
-agent-forwarding setting, plus msks's own transport, its quiet
-flag, and a `true` command. A session's tunnels and other ssh
-options therefore cannot hold the wait open or alter it; the
+A session that booted its workspace waits out the guest's first boot. The
+daemon reports `running` while the guest's sshd is already up but the
+identity seed has yet to land in `authorized_keys`. The command therefore
+probes the login first, with a throwaway `true` as the remote command,
+retried for up to 30s with a one-line notice between attempts. It opens the
+real session, interactive or one-shot, once the guest accepts the workspace
+key. A remote command runs exactly once either way. The probe carries only
+the session's login user and agent-forwarding setting, plus msks's own
+transport, its quiet flag, and a `true` command. A session's tunnels and
+other ssh options therefore cannot hold the wait open or alter it. The
 session itself keeps every option.
 
 The API serves the public half, and the private half resolves at
@@ -1282,32 +1231,28 @@ ForwardAgent=yes`) forwards **your** agent, the socket
 the same keys as on the host, and `git push git@github.com`,
 `ssh`, and friends sign with the host's credentials.
 
-The session authenticates through a transient in-process agent
-(above), and stock ssh would forward _that_ one when asked to
-forward at all. msks therefore rewrites the request into
-`ForwardAgent=<your socket>`, an explicit path. An OpenSSH client
-8.2 or newer parses the form; an older client exits with its own
-usage error (RHEL 8's 8.0, for one). The workspace identity stays
-an authentication credential and reaches the guest as nothing
-else. A request that already gives a socket
-(`-o ForwardAgent=/path/to/sock`) keeps its own. `-A` with no
-live agent behind `SSH_AUTH_SOCK` exits with one line marking
-it. Forwarding set by an ssh config file keeps the stock meaning
-under this command (it forwards the session agent); the command
-line is where your agent is given.
+The session authenticates through a transient in-process agent (above), and
+stock ssh would forward _that_ one when asked to forward at all. msks
+therefore rewrites the request into `ForwardAgent=<your socket>`, an
+explicit path. An OpenSSH client 8.2 or newer parses the form. An older
+client exits with its own usage error (RHEL 8's 8.0, for one). The workspace
+identity stays an authentication credential and reaches the guest as nothing
+else. A request that already gives a socket (`-o
+ForwardAgent=/path/to/sock`) keeps its own. `-A` with no live agent behind
+`SSH_AUTH_SOCK` exits with one line marking it. Forwarding set by an ssh
+config file keeps the stock meaning under this command (it forwards the
+session agent); the command line is where your agent is given.
 
-Everything after the workspace id (the `--` is optional; any
-argument ssh would take works verbatim) is passed to ssh. A
-passthrough that starts with a plain word is a remote command
-(`msks ssh my-workspace -- uname -a`). When it starts with an
-option, ssh's own separator carries a command after the options
-(`msks ssh my-workspace -- -A -- uname -a`). `-A` forwards your
-agent, the same forwarding the paragraphs above describe (before
-it forwarded the session agent, the workspace identity, which
-served nested logins to the same workspace: ssh from inside to
-`localhost`). That use now points at the identity explicitly
-instead: `identity_file` gives your own key, and your agent holds
-it for the nested login.
+Everything after the workspace id (the `--` is optional; any argument ssh
+would take works verbatim) is passed to ssh. A passthrough that starts with
+a plain word is a remote command (`msks ssh my-workspace -- uname -a`). When
+it starts with an option, ssh's own separator carries a command after the
+options (`msks ssh my-workspace -- -A -- uname -a`). `-A` forwards your
+agent, the same forwarding the paragraphs above describe (before it
+forwarded the session agent, the workspace identity, which served nested
+logins to the same workspace: ssh from inside to `localhost`). That use now
+points at the identity explicitly instead: `identity_file` gives your own
+key, and your agent holds it for the nested login.
 
 The exit code is ssh's own (255 for ssh failures), not the msks
 command set. The session agent lives exactly as long as the
@@ -1344,21 +1289,19 @@ msks rsync my-workspace -- -av root@:/root/out.tar ./out.tar  # pull
 msks rsync my-workspace -- -aP ./src/ :src/         # as the login user
 ```
 
-Everything after the workspace id (the `--` is optional) is given
-to rsync; msks parses no rsync flags. The one shaping pass is the
-empty host: a path whose host is empty (`:/root/site/`, or
-`root@:/root/site/`) targets the workspace this command gives,
-its host filled in as the copy runs. The direction, push or pull,
-comes entirely from the rsync arguments, and the login user comes
-from the paths the same way. `root@:/root/site/` logs in as root;
-a bare `:src/` logs in as the workspace's login user, whose home
-is the persistent `/home` volume (the shape for copies under your
-own account). A path that gives a host keeps it, and the
-transport is the proxy either way, so the name never resolves.
-`::module` paths are rsync's daemon protocol against port 873; the
-workspace image runs no rsync daemon (sshd stays its one inbound
-service), so that form is left as typed and fails as rsync's own
-error.
+Everything after the workspace id (the `--` is optional) is given to rsync.
+msks parses no rsync flags. The one shaping pass is the empty host: a path
+whose host is empty (`:/root/site/`, or `root@:/root/site/`) targets the
+workspace this command gives, its host filled in as the copy runs. The
+direction, push or pull, comes entirely from the rsync arguments, and the
+login user comes from the paths the same way. `root@:/root/site/` logs in as
+root; a bare `:src/` logs in as the workspace's login user, whose home is
+the persistent `/home` volume (the shape for copies under your own account).
+A path that gives a host keeps it, and the transport is the proxy either
+way, so the name never resolves. `::module` paths are rsync's daemon
+protocol against port 873; the workspace image runs no rsync daemon (sshd
+stays its one inbound service), so that form is left as typed and fails as
+rsync's own error.
 
 A word that starts with a colon reaches this fill even when it is
 the split-apart value of an rsync option (`--filter :rules`),
@@ -1366,37 +1309,31 @@ because msks does not parse rsync's flags to tell the two apart.
 That spelling uses the attached form (`--filter=:rules`), which
 msks never touches.
 
-The command boots the workspace first when the daemon reports it
-as not running (the same notices as `msks console`), fetches the
-identity over the authenticated API, and runs the host `rsync`
-with the same transport `msks ssh` uses. That transport is the
-forward websocket as the ssh ProxyCommand (each rsync connection
-opens its own), the per-workspace `known_hosts` under
-`accept-new`, and the identity staged in a transient in-process
-ssh-agent. The private half exists only in memory; rsync's ssh
-children identify it by its public half and sign through the
-agent socket, and the command writes no key file. The operator
-identity (`identity_file`), a `--pubkey` workspace, and the
-earlier row shapes (daemon-minted, client-minted) all work: the
-private half resolves where it lives. That may be the operator's
-agent first (the same key-material match `msks ssh` applies), the
-operator's own file, the API, or the per-workspace file. A key
-that resolves nowhere on this client exits with the line giving
-where it can be. A session that booted its workspace waits out
-the guest's first boot exactly as `msks ssh` does: a probe login
-retries behind the identity seed (up to 30s, one line between
-attempts), and the copy runs once the guest accepts the workspace
-key.
+The command boots the workspace first when the daemon reports it as not
+running (the same notices as `msks console`), fetches the identity over the
+authenticated API, and runs the host `rsync` with the same transport `msks
+ssh` uses. That transport is the forward websocket as the ssh ProxyCommand
+(each rsync connection opens its own), the per-workspace `known_hosts` under
+`accept-new`, and the identity staged in a transient in-process ssh-agent.
+The private half exists only in memory. rsync's ssh children identify it by
+its public half and sign through the agent socket, and the command writes no
+key file. The operator identity (`identity_file`), a `--pubkey` workspace,
+and the earlier row shapes (daemon-minted, client-minted) all work: the
+private half resolves where it lives. That may be the operator's agent first
+(the same key-material match `msks ssh` applies), the operator's own file,
+the API, or the per-workspace file. A key that resolves nowhere on this
+client exits with the line giving where it can be. A session that booted its
+workspace waits out the guest's first boot exactly as `msks ssh` does: a
+probe login retries behind the identity seed (up to 30s, one line between
+attempts), and the copy runs once the guest accepts the workspace key.
 
-The login user is the workspace's recorded login user, stated as
-a generated per-session ssh config, so rsync's own `user@` path
-spelling overrides it (`root@:/root/site/` logs in as root). An
-explicit `-e` in the passthrough replaces msks's remote shell
-entirely (rsync takes the last `-e`, and the empty-host fill
-keeps pointing at the workspace id your own transport must then
-reach), the same override shape ssh passthrough options have.
-The host prerequisites are `ssh` and `rsync`; the exit code is
-rsync's own.
+The login user is the workspace's recorded login user, stated as a generated
+per-session ssh config, so rsync's own `user@` path spelling overrides it
+(`root@:/root/site/` logs in as root). An explicit `-e` in the passthrough
+replaces msks's remote shell entirely (rsync takes the last `-e`, and the
+empty-host fill keeps pointing at the workspace id your own transport must
+then reach), the same override shape ssh passthrough options have. The host
+prerequisites are `ssh` and `rsync`. The exit code is rsync's own.
 
 ## Errors, exit codes, and timeouts
 

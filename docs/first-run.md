@@ -73,16 +73,17 @@ on disk.
 
 If your ssh key is not already in an agent, a key no agent holds is staged
 in memory as an unencrypted OpenSSH-format key (`ed25519`, `ecdsa`
-P-256/P-384/P-521, or `rsa`); msks never types a passphrase. An encrypted key
-no agent holds is refused with a line naming `ssh-add` as the first fix, then
-decrypting a copy, then `--pubkey` at create. An agent that asks for
-confirmation per signature (a hardware token's touch) asks at its own cadence:
-the first-boot probe's retries and the session each count as a signing request.
+P-256/P-384/P-521, or `rsa`). msks never types a passphrase. An encrypted
+key no agent holds is refused with a line naming `ssh-add` as the first fix,
+then decrypting a copy, then `--pubkey` at create. An agent that asks for
+confirmation per signature (a hardware token's touch) asks at its own
+cadence: the first-boot probe's retries and the session each count as a
+signing request.
 
 A passphrase-encrypted `identity_file` raises the session's one passphrase
-prompt when the daemon's locked secret rows need it. The TUI asks once when the
-tree opens, and the answer unlocks every locked secret row for the
-session. Escape or Cancel leaves the secrets locked; they stay named on the
+prompt when the daemon's locked secret rows need it. The TUI asks once when
+the tree opens, and the answer unlocks every locked secret row for the
+session. Escape or Cancel leaves the secrets locked. They stay named on the
 secrets page and re-askable there.
 
 ### `pubkey_file`: the public half
@@ -94,11 +95,11 @@ the form for a key you keep encrypted on disk: the public half sits in the
 
 **The requirement**: your ssh-agent holds the actual key. `msks ssh`and
 `msks rsync` on such a workspace authenticate through `SSH_AUTH_SOCK`'s
-agent, so `ssh-add` the key in the shell you run msks from. An agent holding
-the key makes the sessions work with the private half never read from disk.
-A shell whose agent does not hold it leaves the workspace's key auth without
-an answer, and `msks ssh` exits with a line saying the identity resolves
-nowhere.
+agent; `ssh-add` the key in
+the shell you run msks from. An agent holding the key makes the sessions
+work with the private half never read from disk. A shell whose agent does
+not hold it leaves the workspace's key auth without an answer, and `msks
+ssh` exits with a line saying the identity resolves nowhere.
 
 `msks console` will wok to access a wokspace if you've lost your key.
 
@@ -111,9 +112,8 @@ agent that dies with the session. And a session you forward your agent into
 workspace identity msks mints stays separate, and your keys arrive only where
 you forwarded them.
 
-With neither key naming a usable source, `msks create` refuses
-with a line saying so; it is the one command that needs the
-identity at its start.
+With neither key naming a usable source, `msks create` refuses with a line
+saying so. It is the one command that needs the identity at its start.
 
 ## Importing a guest VM image
 
