@@ -1,44 +1,42 @@
 # Host share mounts
 
-A workspace can mount host directory trees into its guest. The
-host side is the operator's decision: the daemon's config gives
-the allowed roots a guest's mounts must sit under, and (on a
-VM-hosted daemon) the trees its own VM carries. The guest side is
-the requester's: each workspace gives a host path, the absolute
-guest path it lands at, and a mode (`ro` or `rw`, defaulting to
-`rw`).
+A workspace can mount host directory trees into its guest. The daemon's config
+gives the allowed roots a guest's mounts must sit under via
+`mount_host_roots`, and -- on a VM-hosted daemon -- the trees its own VM
+carries. On the guest side, each workspace gives a host path, the absolute
+guest path it lands at, and a mode (`ro` or `rw`, defaulting to `rw`).
+
+You can motify `mount_host_roots` Within the daemon hosts's
+`~/.config/msksd/msksd.yaml`:
 
 ```bash
 # the operator allows the roots (msksd.yaml; reloadable on SIGHUP)
 mount_host_roots:
   - /srv/projects
   - /srv/refs
+```
 
+With this configuration active in the msksd daemon, you can successfully mount
+files from the host's `/srv/projects` and `/srv/ref` locations:
+
+```bash
 # a workspace mounts host paths (applies at its next start)
 msks create ws1 --share /srv/projects:/mnt/projects
 msks mount ws1 /srv/refs:/mnt/refs:ro
 msks umount ws1 /srv/refs
 ```
 
-Shares by name (a `mount_shares` config list and mounts that
-referenced one) were removed: host paths are the one surface, and
-a config that still carries the key fails at load with the
-removal message.
-
 ## What a mount is
 
-A workspace's mount gives a host path, an absolute guest path, and a mode.
-The guest path becomes a root-owned mount point inside the VM: absolute,
-below the filesystem root, outside the pseudo-filesystems (`/proc`, `/sys`,
-`/dev`, `/run`) and outside `/home` (the home volume owns it; see the
-[storage chapter](storage.md)). Two mounts of one workspace never overlap,
-and a host path appears once per workspace. Mounts follow next-start
-semantics, like resize: setting them never touches a running VM, and the
-next start attaches the current set. The seed that boot carries bakes
-exactly these mounts. A restart after a change lands the new set and prunes
-the dropped one. Two mounts set at once from two terminals race
-last-write-wins (the surface sets the whole list). A workspace served by one
-operator at a time never sees the race.
+A workspace's mount gives a host path, an absolute guest path, and a mode. The
+guest path becomes a root-owned mount point inside the VM. The location must
+be absolute, below the filesystem root, outside the pseudo-filesystems
+(`/proc`, `/sys`, `/dev`, `/run`) and outside `/home`.
+
+Two mounts of one workspace never overlap, and a host path appears once per
+workspace. Mounts follow next-start semantics, like resize: setting them never
+touches a running VM, and the next start attaches the current set. A restart
+after a change lands the new set and prunes the dropped one.
 
 ## The two gates
 
@@ -65,20 +63,17 @@ TUI editor both refuse it, giving the field the colon broke).
 A mount attaches read-write unless it says `ro`: the trust
 decision is made before the mode matters (the root is allowed),
 and a mount that wants less says `ro`. Read-write mounts hold no
-exclusivity: any number of workspaces may attach the same tree,
-and the coherence contract (below) is their concurrency story.
+exclusivity: any number of workspaces may attach the same tree.
 
 ## The skip behavior
 
-A start proceeds when a mount cannot attach, and the skip is
-state, not a log line. A root the reload removed from the allowed
-list, a path whose root the daemon's VM no longer mounts, a
-symlink that moved out from under its allowed root, or a path
-that vanished since the set: each publishes an event
-(`mount.skipped`) giving the mount and the reason, and the row
-carries the standing marker (`msks ls` prints `running, 1 mount
-skipped`) until the config and the row agree again. The
-workspace's other mounts attach.
+A start proceeds when a mount cannot attach. A root the reload removed from the
+allowed list, a path whose root the daemon's VM no longer mounts, a symlink
+that moved out from under its allowed root, or a path that vanished since the
+set: each publishes an event (`mount.skipped`) giving the mount and the reason,
+and the row carries the standing marker (`msks ls` prints `running, 1 mount
+skipped`) until the config and the row agree again. The workspace's other
+mounts attach.
 
 ## Coherence between guests
 
@@ -117,101 +112,84 @@ File events do not cross virtiofs. Changes made on the Mac (an editor's
 save, a build's output) reach every attached workspace as data, promptly
 coherent the way [coherence between guests](#coherence-between-guests)
 describes, but no inotify event follows them: the share carries data, not
-notifications. Watchers on shared trees run in polling mode (Vite's
-`server.watch.usePolling` setting, jest's `--watchAll`, or the tool's own
-poll option), and a tool that can watch only through events cannot watch a
-share at all. Signaling built on the same polling takes one care: a file's
-existence becomes visible before its content does (a writer creates empty,
-then fills). A poller therefore waits for a completion marker the writer
-emits after the data, never for the file itself.
+notifications.
+
+Watchers on shared trees run in polling mode (Vite's `server.watch.usePolling`
+setting, jest's `--watchAll`, or the tool's own poll option), and a tool that
+can watch only through events cannot watch a share at all. Signaling built on
+the same polling takes one care: a file's existence becomes visible before its
+content does (a writer creates empty, then fills). A poller therefore waits for
+a completion marker the writer emits after the data, never for the file itself.
 
 ### macOS: Case and normalization follow the Mac volume
 
-The tree a workspace mounts is the Mac's volume, and its naming rules cross
-with it. A Mac's default volume matches names case-insensitively, storing
-them as typed (case-preserving), and compares them
-Unicode-normalization-insensitively: a name typed composed (NFC) and the
-same name decomposed (NFD) are one file. Tools inside the workspace that
-expect Linux naming can trip. Two names differing only in case cannot
-coexist in one directory (a checkout holding both `README` and `readme`
-collapses them), and a tool comparing filename bytes sees NFD where the Mac
-accepted NFC. Archive and package tooling that hashes or compares names
-byte-for-byte can report a mismatch against a Linux-built expectation. A
-tree that must keep Linux naming rules exactly lives in the workspace's own
-storage (the [storage chapter](storage.md)) instead.
+The tree a workspace mounts is a Mac volume, and its naming rules cross
+with it. A Mac's default volume matches names case-insensitively, storing them
+as typed (case-preserving), and compares them
+Unicode-normalization-insensitively: a name typed composed (NFC) and the same
+name decomposed (NFD) are one file.
+
+Tools inside the workspace that expect Linux naming can fail on the share. Two
+names differing only in case cannot coexist in one directory (a checkout
+holding both `README` and `readme` collapses them), and a tool comparing
+filename bytes sees NFD where the Mac accepted NFC.
+
+Archive and package tooling that hashes or compares names byte-for-byte can
+report a mismatch against a Linux-built expectation. A tree that must keep
+Linux naming rules exactly must live in the workspace's own storage, not on a
+mount.
 
 ### macOS: The rw single-writer contract
 
-An `rw` share gives the workspace as its writer. Locks taken inside the
+An `rw` share allows the workspace as a writer. Locks taken inside the
 workspace hold there and stop there: `flock` and `fcntl` locks end at the
-workspace's own virtiofsd, and the Mac side honors none of them. Finder, an
-open editor, or a Mac-side build writes past any lock the workspace took.
-Between workspaces, [coherence between guests](#coherence-between-guests)
-governs: lockfile creates (`O_EXCL`: git, cargo) serialize through the host
-kernel and work cross-workspace; `flock`/`fcntl` do not cross an attach.
-Trees whose tools lock and treat the lock as the whole story (a cargo or
-bazel cache, a SQLite database, anything with a journal on disk) take one
-writer at a time: the workspace's, or the Mac's. A Mac that only reads the
-share (browsing in Finder, opening a file) travels the coherence contract. A
-Mac-side writer into a lock-using tree races the workspace.
+workspace's own virtiofsd, and the Mac side honors none of them.
+
+Finder, an open editor, or a Mac-side build writes past any lock the workspace
+took. Between workspaces, [coherence between
+guests](#coherence-between-guests) governs: lockfile creates (`O_EXCL`: git,
+cargo) serialize through the host kernel and work cross-workspace;
+`flock`/`fcntl` do not cross an attach.
+
+Trees whose tools lock and treat the lock as the whole story (a cargo or bazel
+cache, a SQLite database, anything with a journal on disk) take one writer at a
+time: the workspace's, or the Mac's. A Mac that only reads the share (browsing
+in Finder, opening a file) travels the coherence contract. A Mac-side writer
+into a lock-using tree races the workspace.
 
 ### macOS: External volumes stay busy while shared
 
 A file the stack holds open keeps its Mac volume mounted. A disk whose tree
 is shared into a running workspace therefore refuses to eject (the Finder
 reports the volume in use) until the workspace stops and its files close.
-`msks stop` on the workspace, eject the disk, and start again: with the
-volume back on the Mac, the share reattaches at the next start the way every
-mount set does. Without it, the start skips the mount and carries the marker
-([the skip behavior](#the-skip-behavior)). Sharing the volume at all was the
-template edit above, since a `/Volumes/...` root sits outside the default
-home mount.
+
+To allow the volume to unmount, `msks stop` on the workspace and eject the
+disk.
 
 ## The plumbing
 
-Each attached share is one virtiofsd process (the platform's own `virtiofsd`
-package), spawned before the VM and stopped with it. The default binary name
-resolves on PATH first and then the package's install locations off PATH, so
-the daemon finds it without configuration. `MSKSD_VIRTIOFSD` gives a
-different binary. The mounts need virtiofsd **1.13.0 or newer**: the
-identity translation and the read-only enforcement both landed upstream
-there, and an older binary refuses the daemon's arguments at start. `msksd
-doctor` gives the gap: Linux Mint 22's archive ships 1.10.0, so its hosts
-build a newer virtiofsd and point `MSKSD_VIRTIOFSD` at it. The resolution
-runs at settings load and again on SIGHUP: a binary installed after the
-daemon started is one reload away.
+Each attached share is one virtiofsd process using the platform's own
+`virtiofsd` package, spawned before the VM and stopped with it.
+
+The default `virtiofsd` binary name resolves on PATH first and then the
+package's install locations off PATH, so the daemon finds it without
+configuration. `MSKSD_VIRTIOFSD` gives a different binary.
+
+The mounts need virtiofsd **1.13.0 or newer**: the identity translation and the
+read-only enforcement both landed upstream there, and an older binary refuses
+the daemon's arguments at start. `msksd doctor` gives the gap: Linux Mint 22's
+archive ships 1.10.0, so its hosts build a newer virtiofsd and point
+`MSKSD_VIRTIOFSD` at it. The resolution runs at settings load and again on
+SIGHUP: a binary installed after the daemon started is one reload away.
 
 File ownership translates in both directions. Writes from the guest land on
-the host as the daemon's own user, whatever guest account made them.
-Host-side ownership stays advisory, as with a typical bind mount. Files read
-back inside the guest present as the workspace's own user: the login user
-the workspace gives, or the image's built-in `msks` account when it gives
-none. The share's tree therefore reads as the logged-in user's files, and a
-file the guest creates stays writable by the account that created it. An
-edge sits outside that rule: a login user the operator's `user_data` premade
-at another uid presents as the first uid the seed provisions (1001 on a
-pristine image), not the premade account's own. The host's own permission
-bits still govern every write: a file that presents as the workspace user's
-still refuses what its host-side mode refuses. The guest mounts through
-systemd units the workspace's seed writes (one per mount, named for the
-guest path, re-baked at each start). A reboot therefore remounts without
-cloud-init running again.
+the host as the daemon's own user, whatever guest account made them. Host-side ownership stays advisory, as with a typical bind mount.
 
-Extended attributes remap under one host prefix
-(`user.virtiofs.`), so a guest cannot write host security labels
-or root-owned namespaces through the share. One name the map
-denies outright and leaves unmapped: `security.capability`.
-Denied, the boundary does not depend on the daemon's privilege:
-a daemon running as root keeps the capability that would let it
-honor a guest's file-capability writes, and the map is what
-says no. Left unmapped, the host kernel clears file capabilities
-on write itself. A remapped name would hand that job to
-virtiofsd, whose clearing path re-checks the file's mode even
-through a file descriptor opened writable at creation, so a
-program that creates a file without write bits and keeps
-writing through the open descriptor (git's loose-object files)
-would get EACCES on every write (#657). File capabilities cannot
-travel on share files at all: a name an earlier version's map
-stored as `user.virtiofs.security.capability` still lists in the
-guest as `security.capability`, reads as absent, and clears only
-from the host side.
+Files read back inside the guest present as the workspace's own user: the login
+user the workspace gives, or the image's built-in `msks` account when it gives
+none. The share's tree therefore reads as the logged-in user's files, and a
+file the guest creates stays writable by the account that created it.
+
+Extended attributes remap under one host prefix (`user.virtiofs.`), so a guest
+cannot write host security labels or root-owned namespaces through the
+share.
