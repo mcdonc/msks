@@ -506,6 +506,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-anthropic-messages-route" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Anthropic Messages route
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#secrets-stay-out-of-the-config-file" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -817,6 +828,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-anthropic-messages-route" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The Anthropic Messages route
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#secrets-stay-out-of-the-config-file" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -883,8 +905,7 @@
 <h1 id="the-workspace-llm-proxy">The workspace LLM proxy<a class="headerlink" href="#the-workspace-llm-proxy" title="Permanent link">&para;</a></h1>
 <p>Every workspace can consume LLM endpoints through msksd. The daemon holds the
 provider credentials and the routing configuration; each workspace holds only
-its own proxy credential and talks to an OpenAI-shaped endpoint served on its
-own tap.</p>
+its own proxy credential and talks to endpoints served on its own tap.</p>
 <p>Provider keys never enter a workspace, and a workspace uses LLMs with its
 egress consent untouched. This holds even for a workspace with no egress at all
 (once one is attached), or a <code>static</code> workspace whose allowlist carries no
@@ -942,6 +963,81 @@ an entry gives none.</p>
 <p>An empty list (the default) presents no LLM surface at all:
 nothing binds on any tap, and the per-workspace input chain admits
 no proxy port.</p>
+<h2 id="the-anthropic-messages-route">The Anthropic Messages route<a class="headerlink" href="#the-anthropic-messages-route" title="Permanent link">&para;</a></h2>
+<p>The proxy also serves <code>/v1/messages</code>, the Anthropic Messages API
+claude-code speaks. The route serves both modes, on the same port
+as the OpenAI pair.</p>
+<p>In passthrough mode the request forwards verbatim to the
+upstream's own <code>/v1/messages</code> endpoint. The upstream must serve
+the Messages API itself for this route: Anthropic's API, or any
+Anthropic-compatible gateway. The entry's key rides as
+<code>x-api-key</code>, and the <code>anthropic-version</code> and <code>anthropic-beta</code>
+headers forward with <code>2023-06-01</code> as the default version. A
+passthrough entry pointed at an OpenAI-shaped upstream still
+serves the OpenAI pair; the Messages route answers that upstream's
+own error.</p>
+<p>In multi-provider mode the proxy translates. A Messages request
+becomes a chat completion, the router answers, and the answer
+comes back as a Messages message: content blocks, <code>stop_reason</code>,
+and usage mapped field for field. A streamed answer renders as
+Messages events (<code>message_start</code> through <code>message_stop</code>), with
+the upstream asked for chunk usage: the output-token count lands
+in the closing <code>message_delta</code>, and the opening frame carries a
+zero input count in this mode (the OpenAI chunk stream delivers
+usage only after the frame has gone out). A request that names a
+model the list does not carry uses the first configured model,
+the same rule the OpenAI pair follows, so claude-code's own model
+names need no mapping. Fields the OpenAI completion body has no
+counterpart for drop in this mode: <code>top_k</code>, <code>thinking</code>, and the
+prompt-cache markers.</p>
+<p>Asking for chunk usage also changed the router's parameter
+handling: a request field the target provider rejects now drops
+instead of failing the request, on both the Messages route and
+the OpenAI pair.</p>
+<p>The two modes treat a guest's routing fields differently, and
+the difference is deliberate. Router mode walks the request
+through an Anthropic field allowlist, so a guest body naming
+<code>api_key</code> or <code>api_base</code> drops those fields. Passthrough mode
+forwards the body verbatim, because the Messages body is the
+upstream's own contract: the credential is the header set the
+daemon builds (the entry's key as <code>x-api-key</code>), and a field in
+the body names no credential the upstream honors beside it. An
+allowlist walk here would also drop valid top-level Messages
+fields (<code>top_k</code>, <code>thinking</code>) that the upstream itself
+understands.</p>
+<p>claude-code also asks <code>POST /v1/messages/count_tokens</code> for its
+context tracking. Passthrough mode forwards it verbatim;
+router mode answers 404, and the client estimates locally.</p>
+<p>Configuring the proxy for claude-code is one <code>msks.yaml</code> block.
+The passthrough form names one Messages upstream, and every
+model it serves is available:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">llm_models</span><span class="p">:</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="s">"*"</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">      </span><span class="nt">api_base</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://api.anthropic.com/v1</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">file:/etc/msksd/anthropic.key</span>
+</span></code></pre></div>
+<p>The environment form is equivalent:
+<code>MSKSD_LLM_MODELS='*:https://api.anthropic.com/v1:file:/etc/msksd/anthropic.key'</code>.
+An Anthropic-compatible gateway works the same way: point
+<code>api_base</code> at the gateway's own base.</p>
+<p>The multi-provider form serves claude-code beside other clients.
+An entry whose logical name is the model name claude-code sends
+answers that model's requests directly; a name the list does not
+carry falls to the first entry:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">llm_models</span><span class="p">:</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">claude-sonnet-4-5</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">anthropic/claude-sonnet-4-5</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">file:/etc/msksd/anthropic.key</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">gpt-4o</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">    </span><span class="nt">params</span><span class="p">:</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">      </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">openai/gpt-4o</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">      </span><span class="nt">api_key</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">file:/etc/msksd/openai.key</span>
+</span></code></pre></div>
+<p>With this list, a claude-code request for <code>claude-sonnet-4-5</code>
+takes the first entry, and an OpenAI-shaped client asking for
+<code>gpt-4o</code> takes the second.</p>
 <h2 id="secrets-stay-out-of-the-config-file">Secrets stay out of the config file<a class="headerlink" href="#secrets-stay-out-of-the-config-file" title="Permanent link">&para;</a></h2>
 <p>Every secret-bearing value resolves indirection at configure time: <code>file:</code>
 reads a path, <code>cmd:</code> runs a shell command and takes its stdout. It works on
@@ -957,14 +1053,28 @@ is the vehicle, and the tap is the one described in
 exports <code>MSKSWS_BASE_URL</code>, built from the DHCP lease's gateway
 and the daemon's port.</p>
 <p>It also exports <code>MSKSWS_API_KEY</code>, a placeholder the proxy never reads: it
-exists for OpenAI-shaped clients that refuse an empty key. The names carry the
-msks prefix because the proxy is this daemon's own service; a vendor-shaped
-name would claim otherwise. A login shell inside the workspace is therefore
-already configured for every MSKSWS-aware client:</p>
-<div class="language-console highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="gp">$ </span>env<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>MSKSWS
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="go">MSKSWS_BASE_URL=http://172.31.0.2:8770/v1</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="go">MSKSWS_API_KEY=msks-local-proxy</span>
+exists for OpenAI-shaped clients that refuse an empty key. The MSKSWS names
+carry the msks prefix because the proxy is this daemon's own service; a
+vendor-shaped name would claim otherwise. The seed exports one vendor-shaped
+pair on purpose (<code>#765</code>): <code>ANTHROPIC_BASE_URL</code> points at the proxy's Messages
+route on the same port, and <code>ANTHROPIC_AUTH_TOKEN</code> is the same placeholder.
+claude-code reads those two variables and no others, so a login shell inside
+the workspace is already configured for it and for every MSKSWS-aware client.</p>
+<p>The Anthropic pair reaches every Anthropic SDK client in the workspace, not
+claude-code alone: a script that exports its own <code>ANTHROPIC_API_KEY</code> also
+follows the redirected base URL, and its key is never consulted (the proxy
+authenticates by tap and carries the daemon's own upstream key). A client
+that must reach an Anthropic endpoint directly unsets <code>ANTHROPIC_BASE_URL</code>
+in its own environment.</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="gp">$ </span>env<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-e<span class="w"> </span>MSKSWS<span class="w"> </span>-e<span class="w"> </span>ANTHROPIC
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">MSKSWS_BASE_URL=http://172.31.0.2:8770/v1</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">MSKSWS_API_KEY=msks-local-proxy</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="go">ANTHROPIC_BASE_URL=http://172.31.0.2:8770</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="go">ANTHROPIC_AUTH_TOKEN=msks-local-proxy</span>
 </span></code></pre></div>
+<p>The Anthropic pair is seeded even when the daemon serves no model
+list, like the MSKSWS pair. claude-code then points at a port with
+no listener and fails fast until a model list is configured.</p>
 <p>All guest images ship the agent toolchain beside it: each image bakes pinned
 Node and the pinned <strong>pi</strong> coding agent on every account's default <code>PATH</code>: the
 Debian/Fedora image under <code>/usr/local</code>, the NixOS image through its system
