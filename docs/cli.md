@@ -3,14 +3,7 @@
 Along with invoking the TUI, the `msks` command is a client for the daemon's
 `/api/v1` REST surface.
 
-The client and the daemon ship in the same Python distribution, and every
-invocation makes one best-effort `/health` roundtrip by the client to the
-daemon. If the daemon is a different version than the client, the invocation
-prints one stderr line giving both and the remedy. This is ususally not
-encountered except on MacOS. If you see this on MacOS, rerun
-`msks-setup-macos-host` on the Mac to update the daemon in the VM.
-
-The command set covers the operator loop:
+Here's an overview of the common command set:
 
 ```bash
 msks                         # the workspace tree TUI
@@ -27,15 +20,21 @@ msks stop ws                  # power it off
 msks rm ws                    # delete it (and its data)
 ```
 
+The client and the daemon ship in the same Python distribution, but they might
+be run from different installation directories, so daemon and client versions
+may not be in sync, which may cause problems. To cope with this, every command
+makes one best-effort `/health` roundtrip by the client to the daemon to do a
+version compatibility check. If the daemon is a different version than the
+client, the invocation prints one stderr line giving both and a remedy. This is
+most usually encountered on MacOS, because the daemon runs in a Lima VM
+separate from the client. If you see this on MacOS, rerun
+`msks-setup-macos-host` on the Mac to update the daemon in the Lima VM.
+
 ## Client environment
 
-The client reads environment variables prefixed `MSKSC_` (client) to stay
-apart from the daemon's `MSKSD_*` (server) namespace. A box that runs both
-can export each side independently. The list-valued settings
-(`MSKSC_TERMINAL_OPEN_CMD`, `MSKSC_SSH_OPTIONS`) carry their string form;
-`MSKSC_SSH_OPTIONS`'s file key is documented below, and
-`MSKSC_TERMINAL_OPEN_CMD`'s in [The TUI](tui.md) beside the shell action it
-configures. Each of the environment variables has a config-file equivalent.
+The client reads environment variables prefixed `MSKSC_` (client) to stay apart
+from the daemon's `MSKSD_*` (server) namespace. Each of the environment
+variables has a config-file equivalent.
 
 | Variable                   | Config file key      | Meaning                                                                                                                                                                                                                                                                            | Default                                                   |
 | -------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
@@ -66,12 +65,9 @@ and its name do not matter. Otherwise they stage the private half in memory.
 The key file itself is never copied into msks's state.
 
 A key msks stages itself is an unencrypted OpenSSH-format key (`ed25519`,
-`ecdsa` P-256/P-384/P-521, or `rsa`). msks never types a passphrase. An
-encrypted key no agent holds is refused with a line giving the fixes in
-order: `ssh-add` the key, decrypt a copy, or pass `--pubkey` at create. An
-agent that asks for confirmation per signature (a hardware token's touch)
-asks at its own cadence: the first-boot probe's retries and the session each
-count as a signing request.
+`ecdsa` P-256/P-384/P-521, or `rsa`). An encrypted key no agent holds is
+refused with a line giving the fixes in order: `ssh-add` the key, decrypt a
+copy, or pass `--pubkey` at create.
 
 `MSKSC_PUBKEY_FILE` points at your key's public half, a `.pub`
 file ([the identity section](first-run.md#the-key-files)
@@ -79,17 +75,12 @@ owns the agent requirement this form carries). A create with it
 set plants that one line as the identity and reads no private
 material at all. It is the form for a key you keep encrypted:
 the public half is in a `.pub` file while the private half
-answers from your agent. It wins over `identity_file` (so
-`identity_file` is never consulted), carries the same path
-rules and global-only shape, and `--pubkey` still overrides it
-for one create.
+answers from your agent.
 
 A missing `MSKSC_TOKEN` is an error before any network activity (the client
 gives the variable and exits), unless the daemon is reached through the
 local socket, where the kernel vouches for the client and no token exists to
-read. Tokens come from the daemon: `POST /api/v1/tokens` mints one. The
-devenv shell presets all three from the worktree's own dev daemon. The
-[Development environment](development.md) chapter owns what the shell seeds.
+read.
 
 An unconfigured client (no `MSKSC_URL`, no `MSKSC_SOCKET`, no
 config-file daemon) looks for the default socket a same-host
@@ -103,11 +94,7 @@ The daemon serves TLS with a self-signed certificate. Point
 `MSKSC_CAFILE` at the daemon's CA (`msks-ca.pem` under its state
 directory) and the client verifies the certificate chain. A
 `cafile` that is missing or holds no parsable certificate is a
-one-line refusal giving the daemon's CA file. Without
-`MSKSC_CAFILE` the client proceeds unverified and prints a
-warning to stderr on every invocation: the same
-trust-on-first-use posture as `msks console`, fine for a lab
-network and worth closing before anything real.
+one-line refusal giving the daemon's CA file.
 
 ## The client config file
 
@@ -118,8 +105,8 @@ overrides the same key in the file. A fresh devenv shell with its presets
 exported behaves exactly as it does today. Precedence, highest first:
 
 ```text
---daemon flag > MSKSC_* environment > the file's daemon aliases
-> the file's global keys > built-in defaults
+--daemon flag > MSKSC_* environment > the file's daemon aliases >
+    the file's global keys > built-in defaults
 ```
 
 A bare `msks` reads the default path and, on the first run,
@@ -164,11 +151,11 @@ msksd's config file carries.
 
 ### Daemon aliases
 
-The file's one structural key is `daemons:`, one entry per daemon you talk
-to. An entry picks its daemon one way: `url` for a remote daemon, or
-`socket` for a local listener (peer-credential authentication; the entry
-carries no `token_file` and no `cafile`). The keys `token_file`, `cafile`,
-and `expected_image` override their globals for that alias:
+`daemons:` specifies one entry per daemon you talk to. An entry picks its
+daemon one way: `url` for a remote daemon, or `socket` for a local listener
+(peer-credential authentication; the entry carries no `token_file` and no
+`cafile`). The keys `token_file`, `cafile`, and `expected_image` override their
+globals for that alias:
 
 ```yaml
 url: https://127.0.0.1:8660
@@ -268,10 +255,7 @@ everyday reference. The id is the reference no other workspace shares.
 
 Prints one line per workspace the daemon knows, aligned in seven columns:
 name, id, status, egress mode, created date, image (catalog reference, or
-the digest when the catalog cannot resolve one), and owning host. The
-columns are measured against the values present: a long name or image
-reference widens its column for every row. Each row's columns start at the
-same offsets, header row included.
+the digest when the catalog cannot resolve one),
 
 ```text
 $ msks ls
@@ -288,13 +272,13 @@ skip carries the count beside its status (`running, 1 mount
 skipped` above), a standing marker that lasts until the config
 and the row agree again; the [mounts
 chapter](mounts.md#the-skip-behavior) lists every kind of skip and
-its reason. A digest the catalog cannot resolve to a reference
-reads as its middle-clipped form (the `image` column's own
-budget). A `-` in the name column is a workspace without a label
-(created nameless through the API, or before the id/name split),
-addressed by its id alone. A `-` in the image column means the
-workspace boots explicit kernel/rootfs paths instead of a catalog
-image.
+its reason.
+
+A digest the catalog cannot resolve to a reference reads as its middle-clipped
+form (the `image` column's own budget). A `-` in the name column is a workspace
+without a label (created nameless through the API, or before the id/name
+split), addressed by its id alone. A `-` in the image column means the
+workspace boots explicit kernel/rootfs paths instead of a catalog image.
 
 `--json` replaces the table with one JSON document, the API's
 workspace rows verbatim: id, name, kernel, initrd, rootfs,

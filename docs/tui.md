@@ -41,14 +41,14 @@ is created. The rest are fixed for the lifetime of the workspace.
 
 ## The secrets page
 
+You can register secret placeholders to use in workspaces instead of
+putting actual secrets into VMs.
+
 The **secrets page** lists every placeholder the daemon holds, in columns:
 coverage (`*` for the daemon-wide row, otherwise its workspace ids), name,
 destinations, remaining lifetime, and created date.
 
 ![The secrets page: the placeholder list](screens/secrets-page.svg)
-
-You can register secret placeholders for your workspace to use instead of
-putting actual secrets into VMs.
 
 The lifetime cell is a live countdown (`2h`, then `1h`), repainted every
 second. An unbounded row reads `never`. `x` revokes the focused row after a
@@ -65,9 +65,7 @@ in one field. Coverage follows: the daemon-wide row, or a multi-select
 fed by the tree's workspace list.
 
 The lifetime field offers `unbounded` by default, with an hour to thirty days
-beside it. The value is a masked field you type or paste into, so the form
-takes the secret's bytes directly. Submit checks the secret store first (`msks
-secret check`'s endpoint), then mints.
+beside it. Submit checks the secret store first for dupes, then mints.
 
 ![The sentinel's panel: masked, with Show and Copy](screens/sentinel-panel.svg)
 
@@ -82,8 +80,7 @@ The display ends with the panel: closing it clears its text, and the minted
 row stays in the page's list. Enter (or a click) on a listing row opens the
 panel again. The page fetches the row's sentinel from the daemon and shows
 it with the same show and copy actions. The sentinel therefore reads back on
-demand, both at mint time and after. Each placeholder row cross-references
-its workspaces, for navigation.
+demand, both at mint time and after.
 
 ## The workspace page
 
@@ -103,17 +100,7 @@ listed on the workspace's egress consent screen.
 When the workspace mounts host shares, a mounts line follows the same shape.
 It carries one entry per mount (`projects:/mnt/projects:rw`), a skipped
 mount's kind beside its spec (`refs:/srv/refs:ro · skipped`), and an
-`applies at next start` note while a change is pending. The daemon compares
-the configured mounts with the set the last start attached, and the note
-rests while the two agree. The next start takes a changed set and clears the
-note. The line repaints with the page's per-second read, so a change made
-anywhere reaches the page.
-
-The page's actions sit in a framed panel with a muted caption above each
-group. The `use` group holds a shell; `configure` holds egress consent, an
-edit dialog for the sizes and topology, and the mounts editor; `power` holds
-start and stop. Bold marks the action the workspace's status invites. The
-highlight bar and a marker name the row Enter acts on.
+`applies at next start` note while a change is pending.
 
 ### The mounts page
 
@@ -155,9 +142,7 @@ a catalog row's detail.
 
 `D` deletes a catalog row after a confirmation, the same DELETE `msks
 image rm` makes. The page re-reads the workspace each second, so the
-dimming follows a start or stop made anywhere, not only on the page. A
-workspace the listing no longer sees (removed from another surface)
-closes its page, and the removal appears on the list's status line.
+dimming follows a start or stop made anywhere, not only on the page.
 
 ### The egress consent page
 
@@ -225,24 +210,17 @@ the dialog and changes nothing.
 
 ### Opening a shell
 
-The page's **Open a shell** action runs `msks ssh` in the TUI's own
-terminal: the tree exits, the ssh session runs where it stood, and the
-tree restarts when the session returns the terminal.
+By default, the page's **Open a shell** action runs `msks ssh` in the TUI's own
+terminal: the tree exits, the ssh session runs where it stood, and the tree
+restarts when the session returns the terminal. Configure `msks` to open
+shells in new windows using `terminal_open_cmd`, documented below.
 
-A workspace ssh cannot reach (no NIC, no identity configured) takes a longer
-path. The flow boots a stopped workspace first (the ssh session it runs boots
-it itself) and probes the forward. A probe that reports a refusal (no NIC, the
-service not listening) opens no session: the tree's first flash leads with the
-`msks console` suggestion and follows with the refusal's first line. The row
-ellipsizes at its end, so the suggestion stays visible. The full refusal text
-is logged before the tree restarts.
-
-An ssh session that ran reports only its exit code, 255 included: ssh
-passes a session's own exit through unchanged, and a console after a
-finished session would be a surprise, not a fallback. The action works
-on a stopped workspace too: the ssh session boots the workspace itself
-(it carries the workspace's id, and prints the pre-flight's `msks: <id>
-is stopped; starting it`).
+A workspace that ssh cannot reach (no NIC, no identity configured) takes a
+longer path. The flow boots a stopped workspace first and probes the forward. A
+probe that reports a refusal opens no session: the tree's first flash leads
+with a suggestion to use `msks console` as a fallback and follows with the
+refusal's first line. The row ellipsizes at its end, so the suggestion stays
+visible. The full refusal text is logged before the tree restarts.
 
 A host that wants shells in windows beside the running tree configures a
 terminal launcher (`terminal_open_cmd` below). The action then spawns the
@@ -269,13 +247,13 @@ keys are documented here.
 #### `terminal_open_cmd`
 
 `terminal_open_cmd` is the launcher the workspace page's **Open a shell**
-action uses to open workspace shells in new terminal windows. It is the
-opt-in for hosts that want windows beside the running tree. The msks
+action uses to open workspace shells in new terminal windows. It is the opt-in
+for hosts that want windows beside the running tree isntead of within. The msks
 invocation is appended after it, the way most terminals take a command after
 `-e` / `--`:
 
 ```yaml
-terminal_open_cmd: konsole -e          # string form (shell-split)
+terminal_open_cmd: konsole --hold -e   # string form (shell-split)
 terminal_open_cmd:                     # Linux (list form, no shell quoting)
   - ghostty
   - +wait
@@ -288,14 +266,14 @@ terminal_open_cmd:                     # macOS (open launches Ghostty.app)
   - -e
 ```
 
-On Linux, Ghostty's `-e` takes the appended invocation as the window's
-command, and `+wait` holds the ghostty process until the window closes — the
-same hold `konsole -e` gives. On macOS the `ghostty` CLI is a helper tool;
-`open -n` starts a new Ghostty.app instance and `--args` hands it the `-e`.
-A window opened through `open` runs with a fresh login environment: nothing
-from the shell the TUI runs in passes through. The appended client therefore
-locates its packages and its daemon on its own. A venv-installed client is
-self-locating, and the config file names the daemon.
+Any terminal is supported, but let's explain the options to the Ghostty
+terminal examples anove. On Linux, Ghostty's `-e` takes the appended
+invocation as the window's command, and `+wait` holds the ghostty process until
+the window closes — the same hold `konsole -e` gives. On macOS the `ghostty`
+CLI is a helper tool; `open -n` starts a new Ghostty.app instance and `--args`
+hands it the `-e`. A window opened through `open` runs with a fresh login
+environment: nothing from the shell the TUI runs in passes through. The
+appended client therefore locates its packages and its daemon on its own.
 
 `terminal_open_cmd`'s environment form (`MSKSC_TERMINAL_OPEN_CMD`) overrides
 the file value with the string form. Unset (the default), the shell action
@@ -316,15 +294,14 @@ command addresses no workspace:
 terminal_title: msks — {workspace}
 ```
 
-Two paths write it. A launcher that runs `msks-term-popup` writes the title
-before it attaches tmux, and the launch's own tmux server pins `set-titles`
-off. The title stays for the window's lifetime: a workspace shell inside the
-window cannot rewrite it. Every other launcher gets the title from the
-appended `msks ssh` itself: the window msks opens is marked at spawn, and
-the command sets it before the session starts. A workspace that sets its own
-title from inside the session (a `PROMPT_COMMAND` with a title escape, the
-way stock ssh sessions can) rewrites it there. tmux shields the popup path.
-Nothing shields the plain path.
+A launcher that runs `msks-term-popup` writes the title before it attaches
+tmux, and the launch's own tmux server pins `set-titles` off. The title stays
+for the window's lifetime: a workspace shell inside the window cannot rewrite
+it. Every other launcher gets the title from the appended `msks ssh` itself:
+the window msks opens is marked at spawn, and the command sets it before the
+session starts. A workspace that sets its own title from inside the session (a
+`PROMPT_COMMAND` with a title escape, the way stock ssh sessions can) rewrites
+it there. tmux shields the popup path. Nothing shields the plain path.
 
 `terminal_title`'s environment form (`MSKSC_TERMINAL_TITLE`) overrides
 the file value. The default is unset: the terminal emulator's own title
@@ -337,7 +314,19 @@ shell (the dead-launcher fallback) changes nothing.
 
 `msks-term-popup` is a shipped client command that runs the appended
 shell inside a local tmux session and answers the workspace's egress
-consent prompts right there. The launch also starts the consent-decider
+consent prompts right there.
+
+To use, it change your `msks.yaml` config file such that it's the program
+opened by `terminal_open_cmd`. For example:
+
+```yaml
+terminal_open_cmd: konsole -e msks-term-popup
+terminal_open_cmd: xterm -e msks-term-popup
+terminal_open_cmd: ghostty +wait -e msks-term-popup       # Linux
+terminal_open_cmd: open -na Ghostty.app --args -e msks-term-popup  # macOS
+```
+
+The launch also starts the consent-decider
 app in a hidden tmux session on the same socket, where it holds the
 workspace's decider registration for the window's whole life. ![The popup's decider app: the held-request queue and verdict keys](screens/term-popup-decider.svg)
 
@@ -347,7 +336,9 @@ until restart and `d` denies the selected hold. The uppercase twins `A` and
 `D` pick a duration for their verdict (Enter picks, Escape cancels). `m`
 switches the workspace's egress mode. The picker offers `allow`, `static`,
 and `interactive` with the current mode highlighted (Enter picks, Escape or
-`q` cancels). Picking `static` while nothing is effectively allowed asks the
+`q` cancels).
+
+Picking `static` while nothing is effectively allowed asks the
 empty-static question first, the same confirmation the consent page asks.
 The switch goes through the same endpoint `msks egress mode` uses. The
 status line shows the current mode beside the connection state, and a
@@ -368,20 +359,11 @@ that runs a command: put your terminal and its command flag in
 `terminal_open_cmd`, and `msks-term-popup` right after it (tmux 3.2 or newer
 must be on PATH):
 
-```yaml
-terminal_open_cmd: konsole -e msks-term-popup
-terminal_open_cmd: xterm -e msks-term-popup
-terminal_open_cmd: ghostty +wait -e msks-term-popup       # Linux
-terminal_open_cmd: open -na Ghostty.app --args -e msks-term-popup  # macOS
-```
-
-The macOS form needs the brew-prefix links. An `open`-opened
-window resolves commands on a fresh login PATH, and
-`msks-setup-macos-host` links both client commands there
-(#734). tmux comes from that PATH the same way. The Linux forms
-need the same: the window resolves `msks-term-popup` on its own
-PATH, and `msks-setup-debian-host` and `msks-setup-fedora-host`
-link it beside `msks` at `/usr/local/bin` (#755).
+On macOS, an `open`-opened window resolves commands on a fresh login PATH, and
+`msks-setup-macos-host` links both client commands there. tmux comes
+from that PATH the same way. The Linux forms need the same: the window resolves
+`msks-term-popup` on its own PATH, and `msks-setup-debian-host` and
+`msks-setup-fedora-host` link it beside `msks` at `/usr/local/bin`.
 
 The popup viewer keeps its own attach to the hidden session. A hold that
 arrives while it is open is already in the list. Verdicts posted from it go
@@ -389,15 +371,12 @@ through the same REST contract as the consent page. A post that cannot
 complete (the request resolved in another decider window while the verdict
 was in flight) reports the reason on the popup's status line.
 
-The window the prefix opens takes its title from `terminal_title`
-(`msks — {workspace}` resolves the workspace's id into it). The
-session's status bar shows the workspace too: the launch resolves the
-workspace's name and pins it to the bar's left side (`[project-x]`).
-The id stands in whenever the lookup fails (the daemon down, the
-workspace gone, the wait run out), and `shell` stands for a plain
-shell. The window list after the label stays empty, and so does the
-bar's right side, which tmux's default fills with the pane's title, the
-clock, and the date: the label is the whole bar.
+The session's status bar shows the workspace: the launch resolves the
+workspace's name and pins it to the bar's left side (`[project-x]`). The id
+stands in whenever the lookup fails (the daemon down, the workspace gone, the
+wait run out), and `shell` stands for a plain shell. The window list after the
+label stays empty, and so does the bar's right side, which tmux's default fills
+with the pane's title, the clock, and the date.
 
 The hidden consent session runs on the launch's own socket, one small
 server per window. The app retires when the window has been gone for a
@@ -405,26 +384,17 @@ while, taking the session and the server with it. The window's own hold
 flags (`konsole --hold`, xterm's `-hold`) keep the window open after
 the session ends, as they do for a plain shell window.
 
-The pane keeps 10000 lines of scrollback and takes the mouse wheel. Wheel up
-scrolls into the pane's history, and wheel down scrolls back toward the live
-output. Reaching the bottom (or pressing `q`) returns to the plain shell.
-The keyboard path covers the same history: `Ctrl-b [` (or `Ctrl-b PageUp`)
-opens tmux's copy mode, where the arrow keys and PageUp/PageDown move
-through it. `Shift-PageUp` and `Shift-PageDown` page through it too, one
-page per press, entering copy mode on the way up and returning to the shell
-at the bottom.
+The tmux pane keeps 10000 lines of scrollback and takes the mouse wheel. Wheel
+up scrolls into the pane's history, and wheel down scrolls back toward the live
+output. Reaching the bottom (or pressing `q`) returns to the plain shell. The
+keyboard path covers the same history: `Ctrl-b [` (or `Ctrl-b PageUp`) opens
+tmux's copy mode, where the arrow keys and PageUp/PageDown move through
+it. `Shift-PageUp` and `Shift-PageDown` page through it too, one page per
+press, entering copy mode on the way up and returning to the shell at the
+bottom.
 
-A terminal that keeps the shifted pair for its own view still has the
-wheel, because its scrollback has nothing to show on this pane. Konsole
-can hand the pair to the pane with a keytab rule scoped to the
-alternate screen, sending `\E[5;2~` and `\E[6;2~`. The bare
-PageUp/PageDown reach the shell untouched.
-
-These settings, the status bar's name among them, live on the window's own
-tmux server (the launch's dedicated socket). An operator's own running tmux
-server keeps its own settings. With tmux's mouse mode on, a plain drag
-selects text in tmux's buffer, and holding Shift while dragging selects the
-terminal's native text (most terminals hand Shift drags to their own
-selection). A consent popup raised while the pane is scrolled still takes
-its verdict keys: the popup overlays the scrolled pane, and the next
-keypress answers it.
+A plain drag selects text in tmux's buffer, and holding Shift while dragging
+selects the terminal's native text (most terminals hand Shift drags to their
+own selection). A consent popup raised while the pane is scrolled still takes
+its verdict keys: the popup overlays the scrolled pane, and the next keypress
+answers it.
