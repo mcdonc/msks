@@ -2,8 +2,7 @@
 
 Every workspace can consume LLM endpoints through msksd. The daemon holds the
 provider credentials and the routing configuration; each workspace holds only
-its own proxy credential and talks to an OpenAI-shaped endpoint served on its
-own tap.
+its own proxy credential and talks to endpoints served on its own tap.
 
 Provider keys never enter a workspace, and a workspace uses LLMs with its
 egress consent untouched. This holds even for a workspace with no egress at all
@@ -76,6 +75,36 @@ An empty list (the default) presents no LLM surface at all:
 nothing binds on any tap, and the per-workspace input chain admits
 no proxy port.
 
+## The Anthropic Messages route
+
+The proxy also serves `/v1/messages`, the Anthropic Messages API
+claude-code speaks. The route serves both modes, on the same port
+as the OpenAI pair.
+
+In passthrough mode the request forwards verbatim to the
+upstream's own `/v1/messages` endpoint. The upstream must serve
+the Messages API itself for this route: Anthropic's API, or any
+Anthropic-compatible gateway. The entry's key rides as
+`x-api-key`, and the `anthropic-version` and `anthropic-beta`
+headers forward with `2023-06-01` as the default version. A
+passthrough entry pointed at an OpenAI-shaped upstream still
+serves the OpenAI pair; the Messages route answers that upstream's
+own error.
+
+In multi-provider mode the proxy translates. A Messages request
+becomes a chat completion, the router answers, and the answer
+comes back as a Messages message: content blocks, `stop_reason`,
+and usage mapped field for field. A streamed answer renders as
+Messages events (`message_start` through `message_stop`). A
+request that names a model the list does not carry uses the first
+configured model, the same rule the OpenAI pair follows, so
+claude-code's own model names need no mapping.
+
+The route carries the same gates as the OpenAI pair: the tap is
+the credential, the body caps are the same, and the request's
+forwardable fields are an allowlist. A guest body naming
+`api_key` or `api_base` drops those fields, in both modes.
+
 ## Secrets stay out of the config file
 
 Every secret-bearing value resolves indirection at configure time: `file:`
@@ -95,16 +124,25 @@ exports `MSKSWS_BASE_URL`, built from the DHCP lease's gateway
 and the daemon's port.
 
 It also exports `MSKSWS_API_KEY`, a placeholder the proxy never reads: it
-exists for OpenAI-shaped clients that refuse an empty key. The names carry the
-msks prefix because the proxy is this daemon's own service; a vendor-shaped
-name would claim otherwise. A login shell inside the workspace is therefore
-already configured for every MSKSWS-aware client:
+exists for OpenAI-shaped clients that refuse an empty key. The MSKSWS names
+carry the msks prefix because the proxy is this daemon's own service; a
+vendor-shaped name would claim otherwise. The seed exports one vendor-shaped
+pair on purpose (`#765`): `ANTHROPIC_BASE_URL` points at the proxy's Messages
+route on the same port, and `ANTHROPIC_AUTH_TOKEN` is the same placeholder.
+claude-code reads those two variables and no others, so a login shell inside
+the workspace is already configured for it and for every MSKSWS-aware client:
 
 ```console
-$ env | grep MSKSWS
+$ env | grep -e MSKSWS -e ANTHROPIC
 MSKSWS_BASE_URL=http://172.31.0.2:8770/v1
 MSKSWS_API_KEY=msks-local-proxy
+ANTHROPIC_BASE_URL=http://172.31.0.2:8770
+ANTHROPIC_AUTH_TOKEN=msks-local-proxy
 ```
+
+The Anthropic pair is seeded even when the daemon serves no model
+list, like the MSKSWS pair. claude-code then points at a port with
+no listener and fails fast until a model list is configured.
 
 All guest images ship the agent toolchain beside it: each image bakes pinned
 Node and the pinned **pi** coding agent on every account's default `PATH`: the

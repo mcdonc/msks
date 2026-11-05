@@ -4,7 +4,9 @@ import asyncio
 import json
 import socket
 import sys
+import threading
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import MappingProxyType
 
@@ -13,20 +15,27 @@ import pytest
 from fastapi.responses import JSONResponse, StreamingResponse
 from msks.app import build_app
 from msks.llm import (
+    ANTHROPIC_FIELDS,
+    AnthropicStream,
     LlmProxy,
     LlmRouter,
     TapListener,
+    anthropic_fields,
+    anthropic_to_openai,
     bind_to_device,
     build_model_list,
     chat_fields,
     dispatch_completion,
+    events_from_message,
     finish_aclose_task,
     is_passthrough,
     normalize_dict_entry,
+    openai_to_anthropic,
     parse_model_entry,
     resolve_indirection,
     spawn_aclose,
     split_entry,
+    sse_line,
 )
 from msks.settings import LlmSettings, Settings
 
@@ -1183,3 +1192,1143 @@ def test_normalize_copies_deep_between_configures(real_litellm) -> None:
     again = router._router.model_list[0]
     assert again["litellm_params"]["metadata"]["team"] == "core"
     assert entry["litellm_params"]["metadata"]["team"] == "core"
+
+
+# --- the Anthropic Messages translation (#765) ----------------------------
+
+
+def test_anthropic_fields_drops_routing_and_unknown_fields() -> None:
+    """The Messages allowlist behaves like the OpenAI one: routing
+    parameters a guest injected never reach the converter, and
+    ``top_k`` (no OpenAI field) drops by design."""
+    kept = anthropic_fields(
+        {
+            "model": "claude-x",
+            "messages": [],
+            "max_tokens": 64,
+            "api_key": "sk-guess",
+            "api_base": "http://attacker/v1",
+            "top_k": 3,
+            "unknown": True,
+        }
+    )
+    assert kept == {"model": "claude-x", "messages": [], "max_tokens": 64}
+    assert "top_k" not in ANTHROPIC_FIELDS
+
+
+def test_anthropic_to_openai_converts_a_tool_conversation() -> None:
+    """A full claude-code-shaped body converts: system blocks to
+    one system message, a tool_use turn to an assistant
+    tool_calls message, the tool_result turn to tool messages
+    that come first, images to data-URL parts, tools to the
+    function shape, and the scalar fields map name for name."""
+    kwargs = anthropic_to_openai(
+        {
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 1024,
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "stop_sequences": ["\n\nHuman:"],
+            "stream": False,
+            "system": [
+                {"type": "text", "text": "Be terse."},
+                {"type": "text", "text": "Use tools."},
+            ],
+            "tools": [
+                {
+                    "name": "get_weather",
+                    "description": "Weather for a city.",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+            "tool_choice": {"type": "any"},
+            "metadata": {"user_id": "u-7"},
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Weather in Trenton?"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": "aGk=",
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "Checking."},
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_1",
+                            "name": "get_weather",
+                            "input": {"city": "Trenton"},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_1",
+                            "content": [{"type": "text", "text": "Sunny"}],
+                        },
+                        {"type": "text", "text": "Go on."},
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "thinking",
+                            "thinking": "hmm",
+                            "signature": "s",
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+    assert kwargs["model"] == "claude-sonnet-4-5"
+    assert kwargs["max_tokens"] == 1024
+    assert kwargs["temperature"] == 0.2
+    assert kwargs["top_p"] == 0.9
+    assert kwargs["stop"] == ["\n\nHuman:"]
+    assert kwargs["stream"] is False
+    assert kwargs["user"] == "u-7"
+    assert kwargs["tool_choice"] == "required"
+    assert kwargs["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Weather for a city.",
+                "parameters": {"type": "object"},
+            },
+        }
+    ]
+    messages = kwargs["messages"]
+    assert messages[0] == {
+        "role": "system",
+        "content": "Be terse.\n\nUse tools.",
+    }
+    assert messages[1]["role"] == "user"
+    assert messages[1]["content"][0] == {
+        "type": "text",
+        "text": "Weather in Trenton?",
+    }
+    assert messages[1]["content"][1]["image_url"]["url"].startswith(
+        "data:image/png;base64,"
+    )
+    assert messages[2] == {
+        "role": "assistant",
+        "content": "Checking.",
+        "tool_calls": [
+            {
+                "type": "function",
+                "id": "toolu_1",
+                "function": {
+                    "name": "get_weather",
+                    "arguments": '{"city": "Trenton"}',
+                },
+            }
+        ],
+    }
+    # The tool message comes first, then the turn's own text.
+    assert messages[3] == {
+        "role": "tool",
+        "tool_call_id": "toolu_1",
+        "content": "Sunny",
+    }
+    assert messages[4] == {
+        "role": "user",
+        "content": [{"type": "text", "text": "Go on."}],
+    }
+    # The thinking-only turn contributed nothing.
+    assert messages[-1] is messages[4]
+
+
+def test_anthropic_to_openai_tool_choice_and_string_shapes() -> None:
+    """The tool_choice variants map; a plain string turn and an
+    empty system block keep the simple shapes."""
+    body = {
+        "model": "m",
+        "messages": [{"role": "user", "content": "hi"}],
+        "system": "",
+        "tool_choice": {"type": "tool", "name": "f"},
+    }
+    kwargs = anthropic_to_openai(body)
+    assert kwargs["messages"] == [{"role": "user", "content": "hi"}]
+    assert kwargs["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "f"},
+    }
+    assert anthropic_to_openai({"tool_choice": {"type": "auto"}}) == {
+        "messages": [],
+        "tool_choice": "auto",
+    }
+    assert anthropic_to_openai({"tool_choice": {"type": "none"}}) == {
+        "messages": [],
+        "tool_choice": "none",
+    }
+    # A shape the map does not know drops; a non-dict one too.
+    assert "tool_choice" not in anthropic_to_openai(
+        {"tool_choice": {"type": "weird"}}
+    )
+    assert "tool_choice" not in anthropic_to_openai({"tool_choice": "auto"})
+    # A tool_result-only user turn contributes the tool message
+    # alone; a tool_use-only assistant turn carries null content.
+    kwargs = anthropic_to_openai(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "t",
+                            "content": "done",
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "t",
+                            "name": "f",
+                            "input": {},
+                        }
+                    ],
+                },
+            ]
+        }
+    )
+    assert kwargs["messages"] == [
+        {"role": "tool", "tool_call_id": "t", "content": "done"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "type": "function",
+                    "id": "t",
+                    "function": {"name": "f", "arguments": "{}"},
+                }
+            ],
+        },
+    ]
+
+
+def test_openai_to_anthropic_covers_text_tools_and_usage() -> None:
+    """The answer conversion: text and tool calls become blocks,
+    the finish reasons map, usage maps with zeros when absent,
+    and an unparsable arguments string answers an empty input."""
+    message = openai_to_anthropic(
+        {
+            "id": "chatcmpl-1",
+            "model": "gpt-test",
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "content": "Let me check.",
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "function": {
+                                    "name": "f",
+                                    "arguments": '{"a": 1}',
+                                },
+                            },
+                            {
+                                "id": "call_2",
+                                "function": {
+                                    "name": "g",
+                                    "arguments": "not json",
+                                },
+                            },
+                        ],
+                    },
+                }
+            ],
+            "usage": {"prompt_tokens": 9, "completion_tokens": 4},
+        }
+    )
+    assert message["id"] == "chatcmpl-1"
+    assert message["type"] == "message"
+    assert message["stop_reason"] == "tool_use"
+    assert message["usage"] == {"input_tokens": 9, "output_tokens": 4}
+    assert message["content"][0] == {"type": "text", "text": "Let me check."}
+    assert message["content"][1] == {
+        "type": "tool_use",
+        "id": "call_1",
+        "name": "f",
+        "input": {"a": 1},
+    }
+    assert message["content"][2]["input"] == {}
+
+    # The other finish reasons, part-list content, and the empty
+    # answer's placeholder block.
+    def answer(finish, content):
+        return openai_to_anthropic(
+            {
+                "model": "m",
+                "choices": [
+                    {"finish_reason": finish, "message": {"content": content}}
+                ],
+            }
+        )
+
+    assert answer("stop", "bye")["stop_reason"] == "end_turn"
+    assert answer("length", None)["stop_reason"] == "max_tokens"
+    assert answer(None, None)["content"] == [{"type": "text", "text": ""}]
+    assert answer("stop", [{"type": "text", "text": "part"}])["content"] == [
+        {"type": "text", "text": "part"}
+    ]
+
+
+def test_anthropic_stream_converts_a_chunk_sequence() -> None:
+    """The stream state machine: message_start with the first
+    chunk's usage, text deltas under one block index, tool-call
+    fragments opening their own block after the text closes, the
+    final usage recorded, and the closing pair carrying the
+    stop reason."""
+    stream = AnthropicStream()
+    events: list[dict] = []
+    for chunk in [
+        {
+            "model": "gpt-test",
+            "usage": {"prompt_tokens": 7},
+            "choices": [{"delta": {"content": "Hel"}}],
+        },
+        {"choices": [{"delta": {"content": "lo"}}]},
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_1",
+                                "function": {"name": "f", "arguments": ""},
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {"index": 0, "function": {"arguments": '{"a"'}}
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "choices": [{"delta": {}, "finish_reason": "tool_calls"}],
+            "usage": {"completion_tokens": 6},
+        },
+    ]:
+        events.extend(stream.feed(chunk))
+    events.extend(stream.finish())
+    kinds = [event["type"] for event in events]
+    assert kinds == [
+        "message_start",
+        "ping",
+        "content_block_start",
+        "content_block_delta",
+        "content_block_delta",
+        "content_block_stop",
+        "content_block_start",
+        "content_block_delta",
+        "content_block_stop",
+        "message_delta",
+        "message_stop",
+    ]
+    start = events[0]
+    assert start["message"]["model"] == "gpt-test"
+    assert start["message"]["usage"] == {
+        "input_tokens": 7,
+        "output_tokens": 0,
+    }
+    assert events[2]["content_block"] == {"type": "text", "text": ""}
+    assert events[3]["delta"] == {"type": "text_delta", "text": "Hel"}
+    assert events[4]["delta"] == {"type": "text_delta", "text": "lo"}
+    assert events[5]["index"] == 0
+    assert events[6]["content_block"]["type"] == "tool_use"
+    assert events[6]["content_block"]["id"] == "call_1"
+    assert events[6]["index"] == 1
+    assert events[7]["delta"] == {
+        "type": "input_json_delta",
+        "partial_json": '{"a"',
+    }
+    closing = events[-2]
+    assert closing["delta"] == {
+        "stop_reason": "tool_use",
+        "stop_sequence": None,
+    }
+    assert closing["usage"] == {"output_tokens": 6}
+    # Every rendered line carries the event name beside the data.
+    assert sse_line(events[0]).startswith("event: message_start\ndata: {")
+
+
+def test_anthropic_stream_finishes_what_never_started() -> None:
+    """A chunk stream that ends before its first chunk (an empty
+    upstream answer) still renders a well-formed event sequence."""
+    events = AnthropicStream().finish()
+    assert [event["type"] for event in events] == [
+        "message_start",
+        "ping",
+        "message_delta",
+        "message_stop",
+    ]
+    assert events[-2]["delta"]["stop_reason"] == "end_turn"
+
+
+def test_events_from_message_renders_the_full_sequence() -> None:
+    """The single-shot path: a converted message becomes the
+    whole stream an upstream that ignored ``stream`` still owes."""
+    message = openai_to_anthropic(
+        {
+            "model": "m",
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"content": "hi"},
+                }
+            ],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+        }
+    )
+    events = events_from_message(message)
+    assert [event["type"] for event in events] == [
+        "message_start",
+        "ping",
+        "content_block_start",
+        "content_block_delta",
+        "content_block_stop",
+        "message_delta",
+        "message_stop",
+    ]
+    assert events[3]["delta"] == {"type": "text_delta", "text": "hi"}
+    assert events[-2]["usage"] == {
+        "input_tokens": 2,
+        "output_tokens": 1,
+    }
+
+
+# --- the /v1/messages route (#765) ----------------------------------------
+
+
+def anthropic_upstream_handler(request: httpx.Request) -> httpx.Response:
+    """The emulated Messages upstream: answers the request's own
+    body under an ``echo`` key, records the headers the route
+    built, and streams SSE lines when the body asked to."""
+    seen: dict = {}
+    if request.url.path.endswith("/models"):
+        return httpx.Response(200, json={"data": []})
+    body = json.loads(request.content.decode())
+    if body.get("stream"):
+        return httpx.Response(
+            200,
+            content=(
+                b"event: message_start\n"
+                b'data: {"type": "message_start"}\n\n'
+                b"event: message_stop\n"
+                b'data: {"type": "message_stop"}\n\n'
+            ),
+            headers={"content-type": "text/event-stream"},
+        )
+    seen["body"] = body
+    seen["x-api-key"] = request.headers.get("x-api-key")
+    seen["anthropic-version"] = request.headers.get("anthropic-version")
+    seen["anthropic-beta"] = request.headers.get("anthropic-beta")
+    return httpx.Response(200, json={"echo": seen})
+
+
+async def test_messages_endpoint_forwards_verbatim_in_passthrough() -> None:
+    """Passthrough mode: the body reaches the upstream verbatim
+    (routing fields included — the upstream's own wire shape is
+    the contract), the entry's key rides as x-api-key, and the
+    version and beta headers forward with a default when absent."""
+    proxy = proxy_under_test(
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
+    )
+    proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
+        transport=httpx.MockTransport(anthropic_upstream_handler),
+        timeout=timeout,
+    )
+    proxy.router.ensure(proxy.app.state.settings)
+    body = {
+        "model": "claude-sonnet-4-5",
+        "max_tokens": 32,
+        "messages": [{"role": "user", "content": "hi"}],
+    }
+    async with async_client(proxy, "10.0.0.1") as http:
+        reply = await http.post("/v1/messages", headers=AUTH, json=body)
+        versioned = await http.post(
+            "/v1/messages",
+            headers={
+                **AUTH,
+                "anthropic-version": "2024-01-01",
+                "anthropic-beta": "context-management-2025-06-27",
+            },
+            json=body,
+        )
+    assert reply.status_code == 200
+    echo = reply.json()["echo"]
+    assert echo["body"] == body
+    assert echo["x-api-key"] == "sk-x"
+    assert echo["anthropic-version"] == "2023-06-01"
+    assert echo["anthropic-beta"] is None
+    sent = versioned.json()["echo"]
+    assert sent["anthropic-version"] == "2024-01-01"
+    assert sent["anthropic-beta"] == "context-management-2025-06-27"
+
+
+async def test_messages_endpoint_streams_passthrough_sse() -> None:
+    """A streaming Messages body in passthrough mode: the SSE
+    lines come home as they arrived."""
+    proxy = proxy_under_test(
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
+    )
+    proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
+        transport=httpx.MockTransport(anthropic_upstream_handler),
+        timeout=timeout,
+    )
+    proxy.router.ensure(proxy.app.state.settings)
+    async with async_client(proxy, "10.0.0.1") as http:
+        reply = await http.post(
+            "/v1/messages",
+            headers=AUTH,
+            json={"model": "m", "messages": [], "stream": True},
+        )
+    assert reply.status_code == 200
+    assert reply.text == (
+        "event: message_start\n"
+        'data: {"type": "message_start"}\n\n'
+        "event: message_stop\n"
+        'data: {"type": "message_stop"}\n\n'
+    )
+
+
+async def test_messages_endpoint_answers_503_unconfigured() -> None:
+    proxy = proxy_under_test()
+    async with async_client(proxy, "10.0.0.1") as http:
+        reply = await http.post(
+            "/v1/messages", headers=AUTH, json={"messages": []}
+        )
+    assert reply.status_code == 503
+
+
+def fake_router_proxy(settings: Settings, fake) -> LlmProxy:
+    """A proxy whose router-mode answering half is a fake: the
+    ensure seam freezes (the settings object latches, no rebuild
+    runs), so the fake stays installed through the request path's
+    own configure check."""
+    proxy = proxy_under_test(settings=settings)
+
+    async def frozen(settings) -> None:
+        proxy.router._settings = settings
+
+    proxy.router._router = fake
+    proxy.router.ensure_async = frozen
+    return proxy
+
+
+async def test_messages_endpoint_translates_in_router_mode() -> None:
+    """Router mode: the Messages body translates to completion
+    kwargs (a guest's routing fields never reach the router), and
+    the OpenAI answer comes home as a Messages message."""
+    fake = FakeLitellmRouter(
+        answer={
+            "id": "chatcmpl-9",
+            "model": "gpt-x",
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"content": "Trenton is sunny."},
+                }
+            ],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 3},
+        }
+    )
+    proxy = fake_router_proxy(llm_settings(("openai/gpt-x",)), fake)
+    async with async_client(proxy, "10.0.0.1") as http:
+        reply = await http.post(
+            "/v1/messages",
+            headers=AUTH,
+            json={
+                "model": "claude-sonnet-4-5",
+                "max_tokens": 64,
+                "system": "Be terse.",
+                "messages": [
+                    {"role": "user", "content": "Weather in Trenton?"}
+                ],
+                "api_key": "sk-guess",
+                "api_base": "http://attacker/v1",
+            },
+        )
+    assert reply.status_code == 200
+    message = reply.json()
+    assert message["type"] == "message"
+    assert message["content"] == [
+        {"type": "text", "text": "Trenton is sunny."}
+    ]
+    assert message["stop_reason"] == "end_turn"
+    assert message["usage"] == {"input_tokens": 5, "output_tokens": 3}
+    call = fake.calls[0]
+    assert call["model"] == "one"  # the router's default took the name
+    assert call["messages"][0] == {"role": "system", "content": "Be terse."}
+    assert "api_key" not in call
+    assert "api_base" not in call
+
+
+async def test_messages_endpoint_streams_router_mode_events() -> None:
+    """Router mode with stream set: the chunk stream renders as
+    Anthropic events; an upstream that answers a streaming request
+    without a stream still gets the full event sequence."""
+    fake = FakeLitellmRouter(
+        chunks=[
+            {
+                "model": "gpt-x",
+                "choices": [{"delta": {"content": "Hel"}}],
+            },
+            {
+                "choices": [
+                    {"delta": {"content": "lo"}, "finish_reason": "stop"}
+                ]
+            },
+        ]
+    )
+    proxy = fake_router_proxy(llm_settings(("openai/gpt-x",)), fake)
+    async with async_client(proxy, "10.0.0.1") as http:
+        stream = await http.post(
+            "/v1/messages",
+            headers=AUTH,
+            json={
+                "model": "m",
+                "max_tokens": 8,
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        )
+    assert stream.status_code == 200
+    kinds = [
+        json.loads(line[len("data: ") :])["type"]
+        for line in stream.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert kinds == [
+        "message_start",
+        "ping",
+        "content_block_start",
+        "content_block_delta",
+        "content_block_delta",
+        "content_block_stop",
+        "message_delta",
+        "message_stop",
+    ]
+
+    single = FakeLitellmRouter(
+        answer={
+            "model": "gpt-x",
+            "choices": [
+                {"finish_reason": "stop", "message": {"content": "one shot"}}
+            ],
+        }
+    )
+    proxy.router._router = single
+    async with async_client(proxy, "10.0.0.1") as http:
+        shot = await http.post(
+            "/v1/messages",
+            headers=AUTH,
+            json={
+                "model": "m",
+                "max_tokens": 8,
+                "messages": [{"role": "user", "content": "hi"}],
+                "stream": True,
+            },
+        )
+    assert shot.status_code == 200
+    assert '"text": "one shot"' in shot.text
+    assert shot.text.rstrip().endswith('data: {"type": "message_stop"}')
+
+
+async def test_messages_endpoint_maps_upstream_failure() -> None:
+    """A failing Messages upstream answers the Messages error
+    shape at 502, in both modes."""
+    proxy = proxy_under_test(
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
+    )
+
+    def down(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500)
+
+    proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
+        transport=httpx.MockTransport(down), timeout=timeout
+    )
+    proxy.router.ensure(proxy.app.state.settings)
+    async with async_client(proxy, "10.0.0.1") as http:
+        reply = await http.post(
+            "/v1/messages",
+            headers=AUTH,
+            json={"model": "m", "messages": []},
+        )
+    assert reply.status_code == 502
+    assert reply.json() == {
+        "type": "error",
+        "error": {
+            "type": "api_error",
+            "message": "LLM upstream request failed",
+        },
+    }
+
+
+# --- the emulated-Anthropic-API smoke test (#765) -------------------------
+
+
+class AnthropicEmulator(BaseHTTPRequestHandler):
+    """An in-process Anthropic Messages API, scripted per request:
+    the conversation's shape picks the answer, so a claude-code
+    shaped client loop (text, tool round-trip, stream) runs
+    against real sockets end to end."""
+
+    protocol_version = "HTTP/1.1"
+    seen: list[dict] = []
+
+    def do_POST(self) -> None:  # noqa: N802 - http.server's name
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        self.seen.append(
+            {
+                "path": self.path,
+                "x-api-key": self.headers.get("x-api-key"),
+                "anthropic-version": self.headers.get("anthropic-version"),
+                "body": body,
+            }
+        )
+        if body.get("stream"):
+            events = [
+                {"type": "message_start", "message": {"model": body["model"]}},
+                {"type": "ping"},
+                {"type": "content_block_start", "index": 0},
+                {"type": "content_block_delta", "index": 0},
+                {"type": "content_block_stop", "index": 0},
+                {"type": "message_delta"},
+                {"type": "message_stop"},
+            ]
+            payload = "".join(
+                f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
+                for event in events
+            ).encode()
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+        message = self.scripted_answer(body)
+        payload = json.dumps(message).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def scripted_answer(self, body: dict) -> dict:
+        """The emulated model: a tool round-trip answers a
+        tool_use then the result's text, everything else answers
+        plain text."""
+        kinds = [
+            block.get("type")
+            for message in body["messages"]
+            for block in (
+                message["content"]
+                if isinstance(message["content"], list)
+                else []
+            )
+        ]
+        if "tool_result" in kinds:
+            content: list[dict] = [
+                {"type": "text", "text": "Sunny in Trenton"}
+            ]
+            stop = "end_turn"
+        elif body.get("tools"):
+            content = [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_smoke",
+                    "name": "get_weather",
+                    "input": {"city": "Trenton"},
+                }
+            ]
+            stop = "tool_use"
+        else:
+            content = [{"type": "text", "text": "The answer is 42"}]
+            stop = "end_turn"
+        return {
+            "id": "msg_emulated",
+            "type": "message",
+            "role": "assistant",
+            "model": body["model"],
+            "content": content,
+            "stop_reason": stop,
+            "stop_sequence": None,
+            "usage": {"input_tokens": 11, "output_tokens": 7},
+        }
+
+    def log_message(self, format: str, *args) -> None:
+        """Quiet: the emulator's traffic is the test's own
+        assertions, not noise for the console."""
+
+
+async def test_smoke_anthropic_conversation_through_the_proxy() -> None:
+    """claude-code's own loop, end to end over real sockets: an
+    emulated Anthropic API serves the upstream, the proxy forwards
+    to it from its /v1/messages route, and a three-turn
+    conversation (text, tool round-trip, streamed text) completes
+    with the wire shapes and the credential headers intact."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), AnthropicEmulator)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        proxy = proxy_under_test(
+            settings=llm_settings((f"*:http://127.0.0.1:{port}/v1:sk-up",)),
+        )
+        proxy.router.ensure(proxy.app.state.settings)
+        seen: list[dict] = []
+        async with async_client(proxy, "10.0.0.1") as http:
+            # Turn one: plain text, the request claude-code sends
+            # (its own headers: version, beta list, bearer token).
+            first = await http.post(
+                "/v1/messages",
+                headers={
+                    **AUTH,
+                    "anthropic-version": "2023-06-01",
+                    "anthropic-beta": "oauth-2025-04-20",
+                },
+                json={
+                    "model": "claude-sonnet-4-5",
+                    "max_tokens": 256,
+                    "system": "You are terse.",
+                    "messages": [
+                        {"role": "user", "content": "What is the answer?"}
+                    ],
+                },
+            )
+            assert first.status_code == 200
+            message = first.json()
+            assert message["type"] == "message"
+            assert message["content"] == [
+                {"type": "text", "text": "The answer is 42"}
+            ]
+            assert message["stop_reason"] == "end_turn"
+
+            # Turn two: a tool definition answers a tool_use.
+            tools = [
+                {
+                    "name": "get_weather",
+                    "description": "Weather for a city.",
+                    "input_schema": {"type": "object"},
+                }
+            ]
+            second = await http.post(
+                "/v1/messages",
+                headers=AUTH,
+                json={
+                    "model": "claude-sonnet-4-5",
+                    "max_tokens": 256,
+                    "tools": tools,
+                    "messages": [
+                        {"role": "user", "content": "Weather in Trenton?"}
+                    ],
+                },
+            )
+            assert second.status_code == 200
+            use = second.json()["content"][0]
+            assert use["type"] == "tool_use"
+            assert use["name"] == "get_weather"
+            assert use["input"] == {"city": "Trenton"}
+            assert second.json()["stop_reason"] == "tool_use"
+
+            # Turn three: the client's tool result comes back as
+            # text, and the streamed answer arrives as events.
+            third = await http.post(
+                "/v1/messages",
+                headers=AUTH,
+                json={
+                    "model": "claude-sonnet-4-5",
+                    "max_tokens": 256,
+                    "stream": True,
+                    "tools": tools,
+                    "messages": [
+                        {"role": "user", "content": "Weather in Trenton?"},
+                        {
+                            "role": "assistant",
+                            "content": [second.json()["content"][0]],
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": use["id"],
+                                    "content": "Sunny",
+                                }
+                            ],
+                        },
+                    ],
+                },
+            )
+            assert third.status_code == 200
+            events = [
+                json.loads(line[len("data: ") :])
+                for line in third.text.splitlines()
+                if line.startswith("data: ")
+            ]
+            assert [event["type"] for event in events] == [
+                "message_start",
+                "ping",
+                "content_block_start",
+                "content_block_delta",
+                "content_block_stop",
+                "message_delta",
+                "message_stop",
+            ]
+            assert events[0]["message"]["model"] == "claude-sonnet-4-5"
+        seen = AnthropicEmulator.seen
+        # Every upstream request kept the Messages contract: the
+        # path, the entry's key, and the version (defaulted when
+        # the client sent none).
+        assert [request["path"] for request in seen] == [
+            "/v1/messages",
+            "/v1/messages",
+            "/v1/messages",
+        ]
+        assert {request["x-api-key"] for request in seen} == {"sk-up"}
+        assert seen[0]["anthropic-version"] == "2023-06-01"
+        assert seen[1]["anthropic-version"] == "2023-06-01"
+        # The bodies arrived verbatim — the emulation's own
+        # scripted answers read the guest's fields.
+        assert seen[0]["body"]["system"] == "You are terse."
+        assert seen[2]["body"]["stream"] is True
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_conversion_survives_malformed_guest_shapes() -> None:
+    """The converter's guards: a non-dict message, a non-dict
+    block, a non-dict tool, a tool_result without content, and a
+    system prompt that is neither string nor blocks each cost
+    their own entry — the request converts without them."""
+    kwargs = anthropic_to_openai(
+        {
+            "system": 42,
+            "messages": [
+                "not a message",
+                {
+                    "role": "user",
+                    "content": [
+                        "not a block",
+                        {"type": "tool_result", "tool_use_id": "t"},
+                        {"type": "text", "text": "real"},
+                    ],
+                },
+            ],
+            "tools": ["not a tool", {"name": "real", "input_schema": {}}],
+        }
+    )
+    assert kwargs["messages"] == [
+        {"role": "tool", "tool_call_id": "t", "content": ""},
+        {"role": "user", "content": [{"type": "text", "text": "real"}]},
+    ]
+    assert [tool["function"]["name"] for tool in kwargs["tools"]] == ["real"]
+
+
+def test_conversion_covers_the_assistant_text_turn() -> None:
+    """An assistant turn without tool calls keeps its text as its
+    own message."""
+    kwargs = anthropic_to_openai(
+        {
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "hello"}],
+                },
+            ]
+        }
+    )
+    assert kwargs["messages"][1] == {
+        "role": "assistant",
+        "content": "hello",
+    }
+
+
+def test_answer_conversion_guards_its_shapes() -> None:
+    """The answer-side guards: an empty string content beside tool
+    calls, a parts list with non-text parts, and a non-dict tool
+    call each skip without breaking the message."""
+    message = openai_to_anthropic(
+        {
+            "model": "m",
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            "not a call",
+                            {
+                                "id": "c",
+                                "function": {"name": "f", "arguments": "{}"},
+                            },
+                        ],
+                    },
+                }
+            ],
+        }
+    )
+    assert message["content"] == [
+        {"type": "tool_use", "id": "c", "name": "f", "input": {}}
+    ]
+    parts = openai_to_anthropic(
+        {
+            "model": "m",
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "content": [
+                            "plain",
+                            {"type": "image_url", "image_url": {"url": "x"}},
+                            {"type": "text", "text": "kept"},
+                        ]
+                    },
+                }
+            ],
+        }
+    )
+    assert parts["content"] == [{"type": "text", "text": "kept"}]
+
+
+def test_stream_feed_ignores_a_non_dict_usage() -> None:
+    """A chunk whose usage is not a mapping records nothing and
+    converts its events as usual."""
+    stream = AnthropicStream()
+    events = stream.feed(
+        {"model": "m", "usage": 5, "choices": [{"delta": {"content": "x"}}]}
+    )
+    assert events[0]["type"] == "message_start"
+    assert events[0]["message"]["usage"]["input_tokens"] == 0
+    assert events[-1]["delta"] == {"type": "text_delta", "text": "x"}
+
+
+def test_events_from_message_covers_the_tool_use_block() -> None:
+    """The single-shot sequence renders a tool_use block's input
+    as one json delta."""
+    message = openai_to_anthropic(
+        {
+            "model": "m",
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "id": "c",
+                                "function": {
+                                    "name": "f",
+                                    "arguments": '{"a": 1}',
+                                },
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+    )
+    events = events_from_message(message)
+    delta = events[3]
+    assert delta["delta"] == {
+        "type": "input_json_delta",
+        "partial_json": '{"a": 1}',
+    }
+
+
+async def test_messages_endpoint_without_an_upstream_key_sends_none() -> None:
+    """A passthrough entry with no key forwards the Messages
+    request with no x-api-key header (the upstream serves an
+    unauthenticated gateway)."""
+    proxy = proxy_under_test(
+        settings=llm_settings(("*:http://up.stream/v1",)),
+    )
+    proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
+        transport=httpx.MockTransport(anthropic_upstream_handler),
+        timeout=timeout,
+    )
+    proxy.router.ensure(proxy.app.state.settings)
+    async with async_client(proxy, "10.0.0.1") as http:
+        reply = await http.post(
+            "/v1/messages",
+            headers=AUTH,
+            json={"model": "m", "messages": []},
+        )
+    assert reply.status_code == 200
+    assert reply.json()["echo"]["x-api-key"] is None
+
+
+async def test_messages_endpoint_refuses_malformed_bodies() -> None:
+    """The body caps answer on the Messages route too: a
+    non-JSON body answers 400, an announced oversize answers
+    413."""
+    proxy = proxy_under_test()
+    async with async_client(proxy, "10.0.0.1") as http:
+        bad = await http.post(
+            "/v1/messages", headers=AUTH, content=b"not json"
+        )
+        assert bad.status_code == 400
+        oversize = await http.post(
+            "/v1/messages",
+            headers={**AUTH, "content-length": str(17 * 1024 * 1024)},
+            json={"model": "m", "messages": []},
+        )
+        assert oversize.status_code == 413
+
+
+async def test_messages_endpoint_maps_a_streaming_upstream_failure() -> None:
+    """A Messages stream whose upstream fails answers the
+    Messages error shape at 502 (the streamed half of the
+    passthrough error path)."""
+
+    def down(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500)
+
+    proxy = proxy_under_test(
+        settings=llm_settings(("*:http://up.stream/v1:sk-x",)),
+    )
+    proxy.router.client_factory = lambda timeout: httpx.AsyncClient(
+        transport=httpx.MockTransport(down), timeout=timeout
+    )
+    proxy.router.ensure(proxy.app.state.settings)
+    async with async_client(proxy, "10.0.0.1") as http:
+        reply = await http.post(
+            "/v1/messages",
+            headers=AUTH,
+            json={"model": "m", "messages": [], "stream": True},
+        )
+    assert reply.status_code == 502
+    assert reply.json()["error"]["type"] == "api_error"

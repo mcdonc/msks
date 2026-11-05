@@ -122,7 +122,10 @@ def seed_script(
     The daemon's LLM proxy environment rides the same script
     (#259, #483): the profile.d exports that name the proxy on this
     workspace's tap for MSKSWS_*-aware clients — a placeholder key,
-    because the proxy authenticates by tap. A port with no
+    because the proxy authenticates by tap. The #765 Anthropic pair
+    (``ANTHROPIC_BASE_URL``/``ANTHROPIC_AUTH_TOKEN``) points
+    claude-code at the proxy's Messages route, vendor-shaped on
+    purpose: claude-code reads no other knob. A port with no
     identity (a pre-#111 row whose seed is healing) seeds the
     proxy block alone.
 
@@ -535,16 +538,19 @@ LLM_KEY_PLACEHOLDER = "msks-local-proxy"
 
 def llm_seed_block(port: int) -> str:
     """The #259 block, post-#483: the profile.d script that exports
-    the MSKSWS_* client environment — the base URL names the DHCP
-    lease's gateway (this workspace's tap address) and the port
-    the daemon served at create, so login shells name the proxy
-    with zero manual steps. The names carry the msks prefix, not
-    the generic OpenAI pair: the proxy is this daemon's own
-    service, and a vendor-shaped name would claim otherwise. The
-    API key is the module placeholder — the proxy authenticates
-    by tap (#483), so the value carries no authority; the heredoc
-    is quoted, so it plants unexpanded and computes the gateway
-    at login."""
+    the MSKSWS_* client environment and the #765 Anthropic pair —
+    the base URL names the DHCP lease's gateway (this workspace's
+    tap address) and the port the daemon served at create, so
+    login shells name the proxy with zero manual steps. The
+    MSKSWS names carry the msks prefix, not the generic OpenAI
+    pair: the proxy is this daemon's own service, and a
+    vendor-shaped name would claim otherwise. The Anthropic pair
+    is vendor-shaped on purpose (#765): claude-code reads no
+    other knob, and the proxy serves its Messages route
+    (``/v1/messages``) on the same port. The auth token is the
+    module placeholder — the proxy authenticates by tap (#483),
+    so the value carries no authority; the heredoc is quoted, so
+    it plants unexpanded and computes the gateway at login."""
     return (
         # The block owns its profile.d target: the NixOS base ships
         # no /etc/profile.d, and the heredoc below aborts a set -eu
@@ -555,11 +561,17 @@ def llm_seed_block(port: int) -> str:
         "# workspace's tap for MSKSWS_*-aware clients. The proxy\n"
         "# serves the workspace whose tap reached it (#483); the\n"
         "# API key is a placeholder the proxy never reads.\n"
+        "# #765: the Anthropic pair points claude-code at the\n"
+        "# proxy's /v1/messages route; the token is the same\n"
+        "# placeholder, never read.\n"
         "gw=$(ip route show default 2>/dev/null | awk '{print $3; exit}')\n"
         'if [ -n "$gw" ]; then\n'
         f'  MSKSWS_BASE_URL="http://$gw:{port}/v1"\n'
         f'  MSKSWS_API_KEY="{LLM_KEY_PLACEHOLDER}"\n'
         "  export MSKSWS_BASE_URL MSKSWS_API_KEY\n"
+        f'  ANTHROPIC_BASE_URL="http://$gw:{port}"\n'
+        f'  ANTHROPIC_AUTH_TOKEN="{LLM_KEY_PLACEHOLDER}"\n'
+        "  export ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN\n"
         "fi\n"
         "MSEOF\n"
     )
