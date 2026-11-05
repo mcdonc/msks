@@ -585,11 +585,11 @@ with no manual step.
 consent](egress-consent.md) like any other outbound flow. An
 `interactive` workspace holds the first packet of each new
 destination for a decider. The API flow asks for
-`api.anthropic.com`; claude-code's telemetry hosts (statsig,
-sentry) ask too, and denying them is harmless. Set
-`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` to keep them from
-asking at all. A `static` workspace needs the destinations it
-should reach on the allowlist:
+`api.anthropic.com`. claude-code's telemetry hosts (statsig,
+sentry) may ask too, and denying them is harmless. Export
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` in the same
+profile to keep them from dialing at all. A `static` workspace
+needs the destinations it should reach on the allowlist:
 
 ```console
 msks egress mode dev static --allow api.anthropic.com
@@ -616,7 +616,7 @@ indirection) and serves claude-code with zero workspace setup:
 the seeded `ANTHROPIC_BASE_URL` does the pointing. It fits an
 operator who wants every workspace on one daemon-held
 credential. The sentinel route keeps the key in the store as
-ciphertext and the store locked: no workspace spends anything
+ciphertext and the store locked. No workspace spends anything
 until an operator stands an unlock window, and the egress
 consent gate decides when claude-code reaches the origin at
 all. It fits an operator who already runs placeholders, or who
