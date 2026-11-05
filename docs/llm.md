@@ -184,9 +184,11 @@ holds nothing.
 
 **Unset the seeded pair.** This path dials Anthropic directly,
 so the proxy pair must go. The seed re-exports
-`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` at every login.
-Put the unset in `~/.bashrc`, which runs after the seed's
-profile.d, and keep it there:
+`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` at every login
+(the profile.d script on Debian and Fedora, `profile.local` on
+NixOS). Put the unset in `~/.profile`, which a login shell
+reads on every guest image after the seed's own script, and
+keep it there:
 
 ```console
 unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN
@@ -194,41 +196,37 @@ export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 ```
 
 The second line keeps claude-code's telemetry hosts (statsig,
-sentry) from dialing, so they never ask the egress gate.
+sentry) and every other non-essential call from dialing, so
+they never ask the egress gate.
 
 **Keep `~/.claude` in RAM.** Mount a tmpfs on it before the
 first login. Tokens, settings, and session history then live
 in memory alone, and a reboot drops them all:
 
 ```console
-sudo install -d -o "$USER" ~/.claude
-sudo mount -t tmpfs tmpfs ~/.claude
+mkdir -p ~/.claude
+sudo mount -t tmpfs -o mode=700,uid="$USER" tmpfs ~/.claude
 ```
 
-A workspace where mounting does not fit runs `claude logout`
-at the end of each session instead. Either way the home volume
-stays clean; a copied workspace or a home-volume backup carries
-no credential.
+A workspace where mounting does not fit runs
+`claude auth logout` at the end of each session instead.
+Either way the home volume stays clean. A copied workspace or
+a home-volume backup carries no credential.
 
-**Log in through the forward bridge.** `claude login` prints
-an authorize URL whose redirect names a `localhost` port inside
-the guest. Read the port off the printed URL, bridge it, and
-open the URL on your own machine:
+**Log in with the paste-code flow.** `claude auth login`
+prints an authorize URL. Open it on your own machine, any
+browser works, and the guest is never dialed. Authorize, copy
+the code the page shows, and paste it at the guest CLI's
+prompt. A reboot drops the tokens (the tmpfs again), and the
+next session logs in the same way.
 
-```console
-msks forward myws 41113 --local 41113
-```
-
-The browser's redirect lands back in the guest through the
-bridge and the login completes. A reboot drops the tokens (the
-tmpfs again), and the next session logs in the same way.
-
-**Let the flows out.** The login dials `claude.ai`; the session
-dials `api.anthropic.com`. A `static` workspace allowlists both:
+**Let the flows out.** The token exchange dials
+`platform.claude.com`; the session dials `api.anthropic.com`.
+A `static` workspace allowlists both:
 
 ```console
 msks egress mode myws static --allow api.anthropic.com \
-    --allow claude.ai
+    --allow platform.claude.com
 ```
 
 The flags replace the whole list; repeat them to keep entries
@@ -238,8 +236,8 @@ the two prompts instead.
 **The boundary, stated plainly.** While a session is logged
 in, a live token sits in guest RAM. Every in-guest client
 must hold one. Nothing survives a reboot or a logout. The
-proxy route above is the stronger isolation (the guest holds
-no credential at all, at any moment) and is the one to prefer
+proxy route above is the stronger isolation: the guest holds
+no credential at all, at any moment. It is the one to prefer
 wherever API billing is on the table.
 
 ## Secrets stay out of the config file
