@@ -2,7 +2,7 @@
 
 The consent layer decides, per workspace, whether each new
 outbound connection is allowed. It runs on the per-VM chain the
-[guest networking](networking.md) chapter builds.
+[guest networking](networking.md) chapter describes.
 
 ![The egress consent page: three held requests queued over the
 in-effect verdicts](screens/consent-holds.svg)
