@@ -1176,30 +1176,20 @@ module grant exactly those two) and a kernel that routes. The
 host ships <code>net.ipv4.ip_forward=1</code> as a boot-time <code>sysctl.d</code>
 setting, and the daemon verifies it at startup. A daemon that
 reads <code>0</code> refuses every egress workspace with a cause that
-gives the sysctl key. The deployment host satisfies the routing
-kernel the daemon verifies: the NixOS module in <code>nix/module.nix</code>
-sets <code>net.ipv4.ip_forward=1</code>, picks its own uplink through
-settings, and grants the daemon the two capabilities; a
-<code>nixos-rebuild switch</code> is the whole host setup. The dev host's
-wrapper carries the same grant for <code>msks-dev</code> (its uplink
-default carries this dev host's interface). Debian and Fedora
-deployment hosts run their setup tool, <code>msks-setup-debian-host</code>
-or <code>msks-setup-fedora-host</code>, and <a href="../installation/">the Installation
-chapter</a> walks the tool end to end. For egress
-it matters that the tool installs the same capability wrapper,
-lands the sysctl and the module set this section lists, and
-registers the daemon's systemd user service with
-<code>MSKSD_EGRESS_ENABLED=true</code> and the detected uplink. An
-operator who sets <code>MSKSD_EGRESS_ENABLED=false</code> arms nothing, and
-every egress workspace then refuses to boot with the cause
-given.
-The dev-host egress smoke (<code>TEST_EGRESS=1</code>) runs as root,
-because ambient capabilities cannot be granted to an arbitrary
-shell. The harness creates real taps, loads nftables rules,
-and binds ports 67 and 53, so it runs as full root and sets
-<code>ip_forward</code> itself for the duration of the run. That is the
-test's constraint, not the server's: the daemon needs only the
-two capabilities and an already-routing kernel.</p>
+gives the sysctl key.</p>
+<p>Debian and Fedora deployment hosts run their setup tool,
+<code>msks-setup-debian-host</code> or <code>msks-setup-fedora-host</code>, and <a href="../installation/">the Installation
+chapter</a> walks the tool end to end. For egress it matters that
+the tool installs a capability wrapper, lands the sysctl and the module set
+this section lists, and registers the daemon's systemd user service with
+<code>MSKSD_EGRESS_ENABLED=true</code> and the detected uplink. An operator who sets
+<code>MSKSD_EGRESS_ENABLED=false</code> arms nothing, and every egress workspace then
+refuses to boot with the cause given. The dev-host egress smoke
+(<code>TEST_EGRESS=1</code>) runs as root, because ambient capabilities cannot be granted
+to an arbitrary shell. The harness creates real taps, loads nftables rules, and
+binds ports 67 and 53, so it runs as full root and sets <code>ip_forward</code> itself for
+the duration of the run. That is the test's constraint, not the server's: the
+daemon needs only the two capabilities and an already-routing kernel.</p>
 <h2 id="reaching-guest-services-the-forward">Reaching guest services (the forward)<a class="headerlink" href="#reaching-guest-services-the-forward" title="Permanent link">&para;</a></h2>
 <p>Egress is the guest's outbound path; the forward websocket
 (<code>msks forward</code>, issue) is the client's inbound one, and it uses
@@ -1241,14 +1231,13 @@ variables, and <code>--pubkey</code>. <code>pubkey_file</code> (or
 <code>MSKSC_PUBKEY_FILE</code>) gives the public half directly instead: a
 <code>.pub</code> file, read in place of any private material, the create
 form for a key kept encrypted while the operator's agent holds
-it. The daemon stores and seeds the public
-line only; its database never holds a private half and its key
-fetch carries no private field at all. The
-public half persists across daemon
-restarts and workspace stop/start: it lives on the workspace's
-row, and a stop/start cycle serves the same line again. The seed
-composes the identity's script with any <code>user_data</code> payload as
-MIME siblings, so a workspace can carry both.</p>
+it.</p>
+<p>The daemon stores and seeds the public line only; its database never holds a
+private half and its key fetch carries no private field at all. The public half
+persists across daemon restarts and workspace stop/start: it lives on the
+workspace's row, and a stop/start cycle serves the same line again. The seed
+composes the identity's script with any <code>user_data</code> payload as MIME siblings,
+so a workspace can carry both.</p>
 <p>The daemon validates the supplied line by shape: a label in the
 algorithm-name charset, fields, base64 body, and a blob whose
 embedded algorithm name agrees with its label. It annotates the
@@ -1285,7 +1274,7 @@ back until the guest accepts the workspace key. A probe login
 retries behind the first boot's identity seeding, so the first
 attempt lands as a session instead of <code>Permission denied
 (publickey)</code>.</p>
-<p><code>msks rsync</code> is the copy form of the same seam: it runs the
+<p><code>msks rsync</code> is the copy form of the same: it runs the
 host rsync over the forward with the identity staged in
 memory, and the copy opens its own forward. <code>msks rsync
 devbox -- -aP src/ :src/</code> targets the login user's home;
