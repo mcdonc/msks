@@ -165,6 +165,83 @@ With this list, a claude-code request for `claude-sonnet-4-5`
 takes the first entry, and an OpenAI-shaped client asking for
 `gpt-4o` takes the second.
 
+## Subscription claude-code with no stored credentials
+
+The proxy route above spends an API key. An operator with a
+claude.ai subscription and no API billing can still run
+claude-code inside a workspace, with nothing credential-shaped
+left on the guest's disk: subscription login with RAM-only
+tokens. The tokens live in a tmpfs for the session and vanish
+at shutdown.
+
+Subscription authentication is OAuth, and claude-code holds
+its tokens wherever it runs (`~/.claude` on Linux). No msks
+machinery can hold them for the guest. The proxy and the
+placeholder swap both present a static credential, and the
+OAuth token rotates on refresh. What the workspace can do is
+keep the token off the home volume, so a powered-off workspace
+holds nothing.
+
+**Unset the seeded pair.** This path dials Anthropic directly,
+so the proxy pair must go. The seed re-exports
+`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` at every login.
+Put the unset in `~/.bashrc`, which runs after the seed's
+profile.d, and keep it there:
+
+```console
+unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN
+export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+```
+
+The second line keeps claude-code's telemetry hosts (statsig,
+sentry) from dialing, so they never ask the egress gate.
+
+**Keep `~/.claude` in RAM.** Mount a tmpfs on it before the
+first login. Tokens, settings, and session history then live
+in memory alone, and a reboot drops them all:
+
+```console
+sudo install -d -o "$USER" ~/.claude
+sudo mount -t tmpfs tmpfs ~/.claude
+```
+
+A workspace where mounting does not fit runs `claude logout`
+at the end of each session instead. Either way the home volume
+stays clean; a copied workspace or a home-volume backup carries
+no credential.
+
+**Log in through the forward bridge.** `claude login` prints
+an authorize URL whose redirect names a `localhost` port inside
+the guest. Read the port off the printed URL, bridge it, and
+open the URL on your own machine:
+
+```console
+msks forward myws 41113 --local 41113
+```
+
+The browser's redirect lands back in the guest through the
+bridge and the login completes. A reboot drops the tokens (the
+tmpfs again), and the next session logs in the same way.
+
+**Let the flows out.** The login dials `claude.ai`; the session
+dials `api.anthropic.com`. A `static` workspace allowlists both:
+
+```console
+msks egress mode myws static --allow api.anthropic.com \
+    --allow claude.ai
+```
+
+The flags replace the whole list; repeat them to keep entries
+the workspace already had. An `interactive` workspace answers
+the two prompts instead.
+
+**The boundary, stated plainly.** While a session is logged
+in, a live token sits in guest RAM. Every in-guest client
+must hold one. Nothing survives a reboot or a logout. The
+proxy route above is the stronger isolation (the guest holds
+no credential at all, at any moment) and is the one to prefer
+wherever API billing is on the table.
+
 ## Secrets stay out of the config file
 
 Every secret-bearing value resolves indirection at configure time: `file:`
@@ -187,7 +264,7 @@ It also exports `MSKSWS_API_KEY`, a placeholder the proxy never reads: it
 exists for OpenAI-shaped clients that refuse an empty key. The MSKSWS names
 carry the msks prefix because the proxy is this daemon's own service; a
 vendor-shaped name would claim otherwise. The seed exports one vendor-shaped
-pair on purpose (`#765`): `ANTHROPIC_BASE_URL` points at the proxy's Messages
+pair on purpose: `ANTHROPIC_BASE_URL` points at the proxy's Messages
 route on the same port, and `ANTHROPIC_AUTH_TOKEN` is the same placeholder.
 claude-code reads those two variables and no others, so a login shell inside
 the workspace is already configured for it and for every MSKSWS-aware client.
