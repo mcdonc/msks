@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import secrets as secrets_mod
 from datetime import UTC
@@ -2647,17 +2648,30 @@ def mint_body(**overrides) -> dict:
 
 async def test_mint_stores_the_value_and_answers_the_sentinel_once(
     client,
+    caplog,
 ) -> None:
     http, app, _stub = client
     private_pem, _public = await seed_workspace(app)
-    response = await http.post(
-        "/api/v1/secrets", json=mint_body(), headers=auth()
-    )
+    with caplog.at_level(logging.INFO, logger="msks.events"):
+        response = await http.post(
+            "/api/v1/secrets", json=mint_body(), headers=auth()
+        )
     assert response.status_code == 201
     row = response.json()
     assert row["sentinel"].startswith("mskssec1_")
     assert "value" not in row
     assert row["dests"] == ["api.github.com"]
+    # #762: the secrets family's publish journals, and the frame
+    # carries no secret value — ids, names, and coverage only.
+    lines = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.name == "msks.events"
+    ]
+    minted = next(line for line in lines if line["event"] == "secret.mint")
+    assert minted["data"]["placeholder_id"] == row["id"]
+    assert "value" not in minted["data"]
+    assert "sentinel" not in minted["data"]
     # The operator's value landed as one ciphertext blob per
     # covering workspace key, decryptable by the workspace
     # identity's private half alone — the daemon holds no
@@ -4381,8 +4395,11 @@ async def test_a_reencryption_failure_answers_503_with_the_cache_warm(
     )
 
 
-async def test_an_unlock_leaves_the_audit_and_event_trail(client) -> None:
+async def test_an_unlock_leaves_the_audit_and_event_trail(
+    client, caplog
+) -> None:
     http, app, _stub = client
+    caplog.set_level(logging.INFO, logger="msks.events")
     await seed_workspace(app)
     row = (
         await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
@@ -4404,6 +4421,18 @@ async def test_an_unlock_leaves_the_audit_and_event_trail(client) -> None:
     assert frame["event"] == "secret.unlock"
     assert frame["data"]["name"] == "github_api"
     assert frame["data"]["placeholder_id"] == row["id"]
+    # #762: the unlock holds the plaintext in hand one refactor
+    # away — the journaled frame must carry no value and no
+    # sentinel.
+    lines = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.name == "msks.events"
+    ]
+    unlocked = next(line for line in lines if line["event"] == "secret.unlock")
+    assert "value" not in unlocked["data"]
+    assert "sentinel" not in unlocked["data"]
+    assert "ghp-real-token" not in json_mod.dumps(unlocked)
 
 
 async def test_an_unlock_for_a_revoked_row_answers_404(client) -> None:

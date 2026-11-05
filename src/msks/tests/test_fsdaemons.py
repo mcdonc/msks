@@ -9,6 +9,8 @@ refusal, and the doctor rows.
 
 import asyncio
 import contextlib
+import json
+import logging
 import os
 import shutil
 import sys
@@ -333,13 +335,18 @@ async def test_fs_pid_serves_matches_the_socket(tmp_path: Path) -> None:
         await proc.wait()
 
 
-async def test_start_skips_a_gate_refused_host_path(client, tmp_path):  # noqa: F811
+async def test_start_skips_a_gate_refused_host_path(  # noqa: F811
+    client,  # noqa: F811
+    tmp_path,
+    caplog,
+):
     """The host form's skip at start (#672): a mount whose root
     the policy gate no longer allows — here a symlink retargeted
     to walk out of the allowed root, the escape rule #667 names
     — skips with mount.skipped carrying the gate's message; the
     start proceeds."""
     http, app, _stub = client
+    caplog.set_level(logging.INFO, logger="msks.events")
     allowed = tmp_path / "allowed"
     allowed.mkdir()
     link = allowed / "tree"
@@ -375,6 +382,14 @@ async def test_start_skips_a_gate_refused_host_path(client, tmp_path):  # noqa: 
     assert published[0][0] == "mount.skipped"
     assert "outside the allowed host-share roots" in published[0][1]["detail"]
     assert published[0][1]["host"] == str(link)
+    # #762: the mount-skip family's publish journals, one line
+    # per frame.
+    lines = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.name == "msks.events"
+    ]
+    assert any(line["event"] == "mount.skipped" for line in lines)
 
 
 async def test_start_passes_only_attachable_mounts(client, tmp_path):  # noqa: F811

@@ -1,6 +1,8 @@
 """The consent engine: holds, verdicts, timeouts, revocation (#69)."""
 
 import asyncio
+import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -127,8 +129,15 @@ async def test_interactive_without_decider_denies_fast(engine_app) -> None:
     assert rows[0]["decided_by"] is None
 
 
-async def test_interactive_holds_prompts_and_resolves(engine_app) -> None:
+async def test_interactive_holds_prompts_and_resolves(
+    engine_app, caplog
+) -> None:
     app, frames, queue = engine_app
+    # The whole test: the coordinator's publishes are
+    # fire-and-forget tasks, and the level must still be INFO
+    # when they run (#762's lines land whenever the task is
+    # scheduled, not at the hold call).
+    caplog.set_level(logging.INFO, logger="msks.events")
     app.state.deciders.register(1, "ws-interactive")
     future = await app.state.consent.hold("ws-interactive", "api.example", 443)
     assert not future.done()
@@ -164,6 +173,14 @@ async def test_interactive_holds_prompts_and_resolves(engine_app) -> None:
     await drain(queue)
     assert any(e == "egress.resolved" for e, _f in frames)
     assert any(e == "egress.rules" for e, _f in frames)
+    # #762: the consent family's publishes journal, one line per frame.
+    lines = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.name == "msks.events"
+    ]
+    assert any(line["event"] == "egress.request" for line in lines)
+    assert any(line["event"] == "egress.resolved" for line in lines)
     # A second resolve finds the hold gone.
     assert (
         await app.state.consent.resolve(

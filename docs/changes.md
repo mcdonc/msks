@@ -123,6 +123,16 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The daemon journals every published event (#762).** Every
+  frame the events hub publishes also writes one INFO line to
+  the daemon's journal, carrying the whole frame as JSON. On
+  Linux read it with `journalctl --user -u msksd`; on a macOS
+  host, `sudo journalctl -u msksd` inside the Lima VM. The
+  event lines are INFO and sit in journald's own rate-limit
+  pool, separate from the daemon's error lines; journald's
+  retention rotates the record. Secret values and sentinels
+  never ride event frames.
+
 - **The Linux host setups link `msks-term-popup` beside `msks`
   (#755).** `msks-setup-debian-host` and `msks-setup-fedora-host`
   now land a `/usr/local/bin/msks-term-popup` symlink beside the

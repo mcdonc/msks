@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -454,15 +455,18 @@ async def test_secret_for_reads_the_unlock_cache(app) -> None:
     assert await app.state.interceptor.secret_for(entry) == "the-real-one"
 
 
-async def test_swap_and_sighting_events_reach_the_hub(app) -> None:
+async def test_swap_and_sighting_events_reach_the_hub(app, caplog) -> None:
     hub: EventHub = app.state.hub
     queue = hub.subscribe()
     row = await mint_placeholder(app)
     entry = rows_entry(row)
-    await app.state.interceptor.publish_swap("ws-a", entry, "api.example.com")
-    await app.state.interceptor.publish_sighting(
-        "ws-a", entry, "elsewhere.example.net"
-    )
+    with caplog.at_level(logging.INFO, logger="msks.events"):
+        await app.state.interceptor.publish_swap(
+            "ws-a", entry, "api.example.com"
+        )
+        await app.state.interceptor.publish_sighting(
+            "ws-a", entry, "elsewhere.example.net"
+        )
     first = json.loads(await asyncio.wait_for(queue.get(), 1))
     second = json.loads(await asyncio.wait_for(queue.get(), 1))
     assert first["event"] == "secret.swap"
@@ -474,6 +478,15 @@ async def test_swap_and_sighting_events_reach_the_hub(app) -> None:
     assert second["event"] == "secret.sighting"
     assert second["data"]["host"] == "elsewhere.example.net"
     assert second["data"]["placeholder_id"] == row["id"]
+    # #762: the interceptor family's publishes journal, one line
+    # per frame.
+    lines = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.name == "msks.events"
+    ]
+    assert any(line["event"] == "secret.swap" for line in lines)
+    assert any(line["event"] == "secret.sighting" for line in lines)
 
 
 async def test_build_master_orders_the_addon_first(tmp_path) -> None:
