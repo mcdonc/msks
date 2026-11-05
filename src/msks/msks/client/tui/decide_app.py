@@ -24,7 +24,7 @@ consent page's own shapes, the switch rides the same endpoint
 ``msks egress mode`` speaks, and the landed switch or the
 daemon's refusal names itself on the status line. The shell
 window's tmux status row carries the mode beside the popup hint
-(#764): this app writes the mode half on every rules frame,
+(#764): this app writes the mode half whenever it changes,
 whatever surface decided the change.
 
 Standalone — ``python -m msks.client.tui.decide_app -w WORKSPACE``
@@ -607,7 +607,11 @@ class ConsentDeciderApp(App[None]):
                 timeout=term_popup.TMUX_TIMEOUT_S,
                 check=False,
             )
-        except subprocess.SubprocessError:
+        # The PEP 758 form: a tmux missing from the decider's
+        # PATH raises OSError, a slow one TimeoutExpired — both
+        # leave the row on its last write, and the next change
+        # retries.
+        except OSError, subprocess.SubprocessError:
             return
 
     # --- the viewer ---------------------------------------------------------

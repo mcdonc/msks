@@ -1138,7 +1138,8 @@ async def test_a_mode_change_during_a_write_catches_up(
     frame has landed and refresh_bar recorded it — the loop-back
     pass is then the only path to the second write."""
     posted, seam = verdict_seam()
-    record_tmux(monkeypatch)
+    record_tmux(monkeypatch)  # the liveness/show stubs; the
+    # recorder below replaces the run stub with the held write.
     frames = [rules_frame(mode="allow")]
     ran = []
     holder = {}

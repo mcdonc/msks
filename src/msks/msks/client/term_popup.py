@@ -115,6 +115,13 @@ LABEL_WAIT_S = 5.0
 #: ``Esc``, ``C-b``) live in the popup's own footer, not the row.
 STATUS_HINT = "C-b p popup"
 
+#: The status row's right-side budget (#764): the longest value
+#: (``interactive · C-b p popup``) is 25 cells, and the fresh
+#: server reads the operator's tmux.conf — a conf that lowered
+#: the default 40 would clip the mode half. Pinned like the left
+#: side's budget (#455).
+STATUS_RIGHT_LENGTH = 40
+
 #: The popup's page-scroll bindings (#444), the keyboard twin of
 #: the wheel path above: each command pages one page — up on the
 #: shifted page-up key, down on its twin — through the same
@@ -450,7 +457,17 @@ def session_argv(
         "set-option",
         "-g",
         "status-right",
-        status_right(),
+        # The hint rides the bar only where the reopen binding
+        # ships: a workspace-named window (the consent chain's
+        # ``p`` binding). A child naming no workspace runs no
+        # decider and binds nothing — ``C-b p`` there is stock
+        # tmux's previous-window, and a hint naming it would lie.
+        status_right() if workspace_id is not None else "",
+        ";",
+        "set-option",
+        "-g",
+        "status-right-length",
+        str(STATUS_RIGHT_LENGTH),
         ";",
         "new-session",
         "-s",
