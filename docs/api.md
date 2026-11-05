@@ -104,8 +104,8 @@ carries both settings and the socket's tradeoffs.
   the request gives none (`root_mib`, `home_mib`).
 - `GET /api/v1/probe`: the secrets-interception probe row: the
   seeded placeholder's id, sentinel, host and port, username,
-  and the fixed credential. The [egress consent
-  chapter](egress-consent.md#the-probe-endpoint) owns the
+  and the fixed credential. The [secrets
+  chapter](secrets.md#the-probe-endpoint) owns the
   verification flow.
 
 ## Workspaces

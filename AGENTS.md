@@ -334,6 +334,14 @@ voice; this rule is for `docs/` prose.
   removed 23 uses of it.
 - **Cut the filler.** "simply", "just", "note that", "it is worth
   noting" add nothing. Delete them.
+- **No `, so` or semicolon hinges on long sentences.** A comma-plus-so
+  or a semicolon that joins two complete sentences is a sentence break
+  waiting to happen: end the sentence there and start a new one. Save
+  `, so` for short sentences whose cause and effect fit in one breath.
+- **Parentheses carry one aside, briefly.** A parenthetical that holds
+  a clause of its own, or parentheses that make up most of a sentence,
+  are a sentence in hiding. Promote the content to its own sentence.
+  A short parenthetical (a name, a path, a quick gloss) is fine.
 
 ```markdown
 Wrong: A workspace whose mounts skip carries a marker in the status
@@ -347,10 +355,30 @@ unresolved. The marker clears when the config and the workspace agree
 again. The mounts chapter lists every kind of skip and its reason.
 ```
 
-The wrong/right pair is the actual before and after of a tui.md
-sentence. A docs sentence over roughly 30 words, or carrying more
-than one aside, is a rewrite signal: re-read it as a reader and split
-it.
+```markdown
+Wrong: Both guests export `SSL_CERT_FILE` (a bundle of the platform's
+own roots with the CA appended; the variable replaces the default
+lookup, so it must carry both), `NODE_EXTRA_CA_CERTS` for node-based
+clients, and `GIT_SSL_CAINFO` pointing at the same bundle for git.
+NixOS's `/etc/profile` reads no `profile.d`, so its sanctioned
+`/etc/profile.local` hook sources the same exports; that also brings
+the LLM proxy's environment alive there.
+
+Right: Both guests export three variables for the interception CA.
+`SSL_CERT_FILE` points at a bundle of the platform's own roots with
+the CA appended. The variable replaces the default lookup, so the
+bundle must carry both. `NODE_EXTRA_CA_CERTS` serves node-based
+clients, and `GIT_SSL_CAINFO` points git at the same bundle. NixOS's
+`/etc/profile` reads no `profile.d`. Its sanctioned
+`/etc/profile.local` hook sources the same exports, which also brings
+the LLM proxy's environment alive there.
+```
+
+The wrong/right pairs are actual before and after sentences from the
+chapters. A docs sentence over roughly 30 words, or carrying more
+than one aside, or hinging on `, so` or a semicolon between two full
+sentences, or hiding most of its content in parentheses, is a rewrite
+signal: re-read it as a reader and split it.
 
 ## Changelog (`docs/changes.md`)
 

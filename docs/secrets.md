@@ -198,7 +198,7 @@ startup: the daemon-wide row named **`probe`**, allowlisting
 `secretprobe.msks`, carrying the fixed credential blob
 `bXNrczptc2tz` as its secret. It exists so an operator can
 verify interception from inside a workspace with zero minting
-(the [probe endpoint](egress-consent.md#the-probe-endpoint)).
+(the [probe endpoint](#the-probe-endpoint)).
 Its sentinel never needs to be treated as a secret: the
 credential it swaps to is public and gates nothing beyond the
 probe's own `ok` page.
@@ -224,6 +224,71 @@ credential at all. Between the window's expiry and the next
 read (or boot, or an operator's unlock with the public value)
 the probe's swap answers the locked refusal like any other
 row.
+
+## The probe endpoint
+
+The daemon serves one deliberately ordinary HTTPS service every
+workspace can reach: **`https://secretprobe.msks/`**, an
+emulated external endpoint protected by HTTP basic auth
+(username `msks`, password `msks`). It exists so an operator
+can verify from inside a workspace that **secret interception works end
+to end**. The `ok` page can only exist when the whole chain ran: redirect,
+TLS splice, leaf mint, and the sentinel-to-secret swap.
+
+The daemon seeds the machinery itself at first-time startup, and the
+interception CA is installed at first boot. The seeded placeholder is the
+daemon-wide row named `probe`, whose secret is the base64 of the whole
+credential `bXNrczptc2tz`. Nothing is left to
+do by hand. The verification:
+
+```bash
+# on the host: read the seeded sentinel (token-gated API)
+curl -s -H "Authorization: Bearer $TOKEN" https://msksd/api/v1/probe
+
+# inside the workspace: the sentinel rides as the raw Basic blob
+curl -H "Authorization: Basic <sentinel>" https://secretprobe.msks/
+ok
+```
+
+A request that reaches the service has already passed the nft
+redirect (guest TCP 80/443 to the per-tap interceptor
+listener), the splice tier (the SNI matched an allowlisted
+entry), and the daemon CA's leaf mint. The swap then rewrote
+the raw blob into a well-formed credential. The interceptor's
+upstream dial was repointed to the service's own per-tap port
+(`probe_port`, default 8644) and verified against the service
+CA the daemon mints. The guest's 443 is the redirect's port.
+The service listener binds the setting's unprivileged number, which a
+host wildcard cannot squat. The service validated the
+fixed pair. A broken link answers distinctly: a TLS failure
+points at the splice or the CA, a `401` points at the swap (or
+a wrong credential), a timeout points at the redirect.
+
+The endpoint performs one action: it answers the fixed
+credential with `ok`. It reads no workspace state, accepts no
+commands, and returns no other data. The credentials are a
+fixed probe value shared by every deployment, and the endpoint
+gates nothing beyond its own `ok` page. That is also why the
+seeded row's sentinel is served back over the token-gated API
+(`GET /api/v1/probe`): a token holder already owns the daemon.
+
+Two reachability notes. The probe answers only while the
+workspace is **armed**. A workspace scoped against daemon-wide
+placeholders (no covering row of its own) never arms. Its direct dial to
+`secretprobe.msks:443` finds nothing admitted and times out. That posture is the documented way to opt a
+workspace out of interception entirely.
+
+The guest's trust in its own interception CA is installed at
+first boot on both images. Debian guests link it into the
+system trust store. Both guests export three variables for the
+CA. `SSL_CERT_FILE` points at a bundle of the platform's own
+roots with the CA appended. The variable replaces the default
+lookup, so the bundle must carry both. `NODE_EXTRA_CA_CERTS`
+serves node-based clients, and `GIT_SSL_CAINFO` points git at
+the same bundle. NixOS's `/etc/profile` reads no `profile.d`.
+Its sanctioned `/etc/profile.local` hook sources the same
+exports, which also brings the LLM proxy's environment alive
+there.
 
 ## The mint flow
 
