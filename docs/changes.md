@@ -331,7 +331,7 @@ tagged `vX.Y.Z`.
   lifecycle, the cloud-hypervisor `--fs` wiring, and the guest
   mount units are the #620 machinery, keyed by a tag derived
   from the path. See the [mounts
-  chapter](mounts.md#the-two-gates) for the two gates and their
+  chapter](mounts.md#the-mount-gates) for the two gates and their
   refusal remedies.
 
 - **Lima template share roots under the reserved prefix

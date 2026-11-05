@@ -38,27 +38,27 @@ workspace. Mounts follow next-start semantics, like resize: setting them never
 touches a running VM, and the next start attaches the current set. A restart
 after a change lands the new set and prunes the dropped one.
 
-## The two gates
+## The mount gates
 
-Each host path runs two gates at set time, each refusing with its
-remedy:
+Each host path checks two gates at set time:
 
-1. **The mount gate** (VM-hosted daemons, `mount_host_mode: prefix`): the
+1. **The policy gate** (every host): the path, resolved against
+   symlink escapes, must sit under one of the allowed roots
+   under `mount_host_roots`. A path outside them is refused with the
+   instruction to add it or a parent to the daemon's config. A
+   symlink that resolves outside its allowed root is refused
+   the same way.
+2. **The mount gate** (VM-hosted daemons, `mount_host_mode: prefix`): the
    path, translated under `/mnt/msks`, must sit under a root the daemon's VM
    actually has mounted. A path whose root is not mounted is refused with the
    instruction to recreate the VM from a template that mounts it. vz mounts are
-   fixed at VM start, so a config edit cannot add one.
-2. **The policy gate** (every host): the path, resolved against
-   symlink escapes, must sit under one of the allowed roots
-   (`mount_host_roots`). A path outside them is refused with the
-   instruction to add it or a parent to the daemon's config. A
-   symlink that resolves outside its allowed root is refused
-   the same way: the share cannot walk out of what the
-   operator allowed.
+   fixed at VM start, so a config edit cannot add one. This knob
+   is typically only used on MacOS, to account for double-mounting
+   under the Lima VM filesystem.
 
 The spec grammar splits its fields on colons, so a host path
-containing one is inexpressible on the wire (`--share` and the
-TUI editor both refuse it, giving the field the colon broke).
+containing one is inexpressible on the wire. `--share` and the
+TUI editor both refuse it, giving the field that the colon broke.
 
 A mount attaches read-write unless it says `ro`: the trust
 decision is made before the mode matters (the root is allowed),
@@ -67,23 +67,22 @@ exclusivity: any number of workspaces may attach the same tree.
 
 ## The skip behavior
 
-A start proceeds when a mount cannot attach. A root the reload removed from the
-allowed list, a path whose root the daemon's VM no longer mounts, a symlink
-that moved out from under its allowed root, or a path that vanished since the
-set: each publishes an event (`mount.skipped`) giving the mount and the reason,
-and the row carries the standing marker (`msks ls` prints `running, 1 mount
-skipped`) until the config and the row agree again. The workspace's other
-mounts attach.
+A start proceeds when a mount cannot attach caused by a root the reload removed
+from the allowed list, a path whose root the daemon's VM no longer mounts, a
+symlink that moved out from under its allowed root, or a path that vanished
+since the set. Each publishes an event (`mount.skipped`) giving the mount and
+the reason, and the row carries the standing marker (`msks ls` prints `running,
+1 mount skipped`) until the config and the row agree again. The workspace's
+other mounts attach.
 
 ## Coherence between guests
 
-A host tree attaches read-write to any number of workspaces at
-once, and every attach forces `cache=never`: data writes become
-promptly coherent through the one host page cache, and lockfile
-coordination (`O_EXCL` creates: git, cargo) works because the
-host kernel serializes it. Two things do not coordinate between
-guests on the same share: `flock`/`fcntl` locks (each attach is
-its own virtiofsd), and `mmap` coherence.
+A host tree attaches read-write to any number of workspaces at once, and every
+attach forces virtiofs `cache=never`. This means data writes become coherent
+through the host page cache, and lockfile coordination (`O_EXCL` creates: git,
+cargo) works because the host kernel serializes it. Things that do not
+coordinate between guests on the same share: `flock`/`fcntl` locks (each attach
+is its own virtiofsd), and `mmap` coherence.
 
 ## Shares on a macOS host
 
@@ -96,11 +95,10 @@ carries it from there into the workspace guest.
 
 The client speaks Mac paths throughout (`--share ~/code:/mnt/code`), and the
 daemon's `prefix` host mode does the translation before the [two
-gates](#the-two-gates) run. The Lima template mounts the invoking user's
-home under the prefix at VM creation, writable, so the common case needs no
-edit. A share root outside it (another user's home, a `/Volumes` tree) is a
-template edit plus VM recreation, and the mount gate's refusal gives that
-remedy.
+gates](#the-mount-gates) run. The Lima template mounts the invoking user's home
+under the prefix at VM creation, writable, so the common case needs no edit. A
+share root outside it (another user's home, a `/Volumes` tree) is a template
+edit plus VM recreation, and the mount gate's refusal suggests a remedy.
 
 The far end of the share is the Mac's own volume, and its
 behaviors cross with the tree. Four of them are contract, not
@@ -177,10 +175,7 @@ configuration. `MSKSD_VIRTIOFSD` gives a different binary.
 
 The mounts need virtiofsd **1.13.0 or newer**: the identity translation and the
 read-only enforcement both landed upstream there, and an older binary refuses
-the daemon's arguments at start. `msksd doctor` gives the gap: Linux Mint 22's
-archive ships 1.10.0, so its hosts build a newer virtiofsd and point
-`MSKSD_VIRTIOFSD` at it. The resolution runs at settings load and again on
-SIGHUP: a binary installed after the daemon started is one reload away.
+the daemon's arguments at start.
 
 File ownership translates in both directions. Writes from the guest land on
 the host as the daemon's own user, whatever guest account made them. Host-side ownership stays advisory, as with a typical bind mount.
