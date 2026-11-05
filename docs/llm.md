@@ -130,22 +130,23 @@ serves the OpenAI pair; the Messages route answers that upstream's
 own error.
 
 A workspace that wants claude-code on the proxy must export a few envvars by
-hand:
+hand. The base URL derives from the seeded `MSKSWS_BASE_URL`, so it names
+the same tap address and port the seed planted:
 
 ```console
-gw=$(ip route show default | awk '{print $3; exit}')
-export ANTHROPIC_BASE_URL="http://$gw:8770"
+export ANTHROPIC_BASE_URL="${MSKSWS_BASE_URL%/v1}"
 export ANTHROPIC_AUTH_TOKEN="msks-local-proxy"
 ```
 
 The token is the same placeholder the proxy never reads (the
 tap is the credential); it exists because claude-code refuses a
 base URL with no credential beside it. The port is the one the
-daemon serves (`MSKSD_LLM_PORT`). Set in a shell profile, the
-pair reaches every Anthropic SDK client in the workspace, not
-claude-code alone. A client that must reach an Anthropic
-endpoint directly unsets `ANTHROPIC_BASE_URL` in its own
-environment.
+daemon served at the workspace's create (`MSKSD_LLM_PORT`,
+default 8770), the same value the seed carries. Set in a shell
+profile, the pair reaches every Anthropic SDK client in the
+workspace, not claude-code alone. A client that must reach an
+Anthropic endpoint directly unsets `ANTHROPIC_BASE_URL` in its
+own environment.
 
 ```console
 $ env | grep MSKSWS
