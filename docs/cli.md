@@ -1,16 +1,14 @@
 # The CLI client
 
-The `msks` command is a thin client for the daemon's `/api/v1` REST
-surface. It runs from any host that can reach the daemon (a dev box,
-a CI runner), and every command authenticates
-with the same bearer token the REST API uses.
+Along with invoking the TUI, the `msks` command is a client for the daemon's
+`/api/v1` REST surface.
 
 The client and the daemon ship in the same Python distribution, and every
-invocation makes one best-effort `/health` roundtrip. A daemon answering a
-different version than the client prints one stderr line giving both and the
-remedy. This is ususally not encountered except on MacOS. If you see this on
-MacOS, rerun `msks-setup-macos-host` on the Mac to update the daemon in the
-VM.
+invocation makes one best-effort `/health` roundtrip by the client to the
+daemon. If the daemon is a different version than the client, the invocation
+prints one stderr line giving both and the remedy. This is ususally not
+encountered except on MacOS. If you see this on MacOS, rerun
+`msks-setup-macos-host` on the Mac to update the daemon in the VM.
 
 The command set covers the operator loop:
 
