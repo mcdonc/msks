@@ -132,6 +132,23 @@ tagged `vX.Y.Z`.
   decided it. A window with no workspace (a plain shell) ships
   neither half.
 
+- **The Anthropic Messages route on the workspace LLM proxy
+  (#765).** The proxy serves `POST /v1/messages` beside the
+  OpenAI pair, so claude-code talks to the daemon's proxy
+  directly. In passthrough mode the request forwards verbatim to
+  the upstream's own Messages endpoint (the upstream must serve
+  the Messages API); the count-tokens probe forwards too. In
+  multi-provider mode the proxy translates between the Messages
+  shape and chat completions, streamed answers included. The
+  router now drops a request field the target provider rejects
+  instead of failing the request (a side effect of asking routed
+  streams for chunk usage). The workspace seed exports
+  `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` pointing at
+  the route, so claude-code works in a login shell with no
+  manual steps; every Anthropic SDK client in the workspace
+  follows the pair. See `docs/llm.md` → "The Anthropic Messages
+  route".
+
 - **The daemon journals every published event (#762).** Every
   frame the events hub publishes also writes one INFO line to
   the daemon's journal, carrying the whole frame as JSON. On

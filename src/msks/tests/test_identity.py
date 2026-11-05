@@ -806,15 +806,20 @@ def test_seed_script_appends_the_llm_block() -> None:
     """A key-minted workspace with a proxy port seeds both: the
     identity machinery and the proxy-environment block after it
     (#483: the exports name the proxy, the key is the placeholder).
-    The exports carry the msks-prefixed pair (#266): the proxy is
-    this daemon's own service, so the names say so, and no
-    vendor-shaped variable leaves the seed."""
+    The MSKSWS pair carries the msks prefix (#266): the proxy is
+    this daemon's own service, so the names say so. The Anthropic
+    pair is vendor-shaped on purpose (#765): claude-code reads no
+    other knob, and the token is the same placeholder the proxy
+    never reads."""
     script = seed_script(PUBLIC, llm_port=8770)
     assert "/etc/msks/llm.token" not in script
     assert "/etc/profile.d/msks-llm.sh" in script
     assert 'MSKSWS_BASE_URL="http://$gw:8770/v1"' in script
     assert 'MSKSWS_API_KEY="msks-local-proxy"' in script
     assert "export MSKSWS_BASE_URL MSKSWS_API_KEY" in script
+    assert 'ANTHROPIC_BASE_URL="http://$gw:8770"' in script
+    assert 'ANTHROPIC_AUTH_TOKEN="msks-local-proxy"' in script
+    assert "export ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN" in script
     assert "OPENAI" not in script
     # The agent toolchain is the image's, not the seed's (#266):
     # the seed carries per-workspace facts only.
