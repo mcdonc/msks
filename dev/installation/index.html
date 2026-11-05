@@ -1022,66 +1022,58 @@ On Apple Silicon, everything except the msks client is installed into a Lima
 virtual machine.</p>
 <p><strong>Packages</strong>. The packages required by the server and the
 client.</p>
-<p><strong>The capability wrapper.</strong> <code>/usr/local/bin/msks-caps</code> — a
-root-owned copy of util-linux <code>setpriv</code> carrying file
-capabilities <code>cap_net_admin</code> and <code>cap_net_bind_service</code>. The
-daemon's per-VM taps and nftables chains need <code>net_admin</code>; the
-egress stack's DHCP (port 67) and DNS (port 53) need
-<code>net_bind_service</code>. The wrapper raises both caps ambient, so
-they flow to the daemon and every tool it execs — and the grant
-surface is the wrapper's execute permission: any local user
-able to run it holds the two capabilities through it. After
-installing it the setup runs the wrapper and verifies the caps.</p>
+<p><strong>The capability wrapper.</strong> <code>/usr/local/bin/msks-caps</code> — a root-owned copy
+of util-linux <code>setpriv</code> carrying file capabilities <code>cap_net_admin</code> and
+<code>cap_net_bind_service</code>. The daemon's per-VM taps and nftables chains need
+<code>net_admin</code>; the egress stack's DHCP (port 67) and DNS (port 53) need
+<code>net_bind_service</code>. The wrapper raises both caps ambient, so they flow to
+the daemon and every tool it execs. The grant surface is the wrapper's
+execute permission: any local user able to run it holds the two capabilities
+through it. After installing it the setup runs the wrapper and verifies the
+caps.</p>
 <p><strong>The routing kernel.</strong> <code>/etc/sysctl.d/msks-egress.conf</code> sets
-<code>net.ipv4.ip_forward=1</code> at boot, and the value applies
-immediately: route packets between the per-VM taps and the
-host uplink. The daemon reads the sysctl at startup and refuses
-every egress workspace, with the cause named, while it reads 0.
-<code>/etc/modules-load.d/msks.conf</code> loads the netfilter and tun
-modules at boot: the nftables machinery, NAT, conntrack, the
-deny RST, and the interactive consent queue. A module the
-kernel tree lacks lands a warning with the kernel package that
-carries it; interactive egress consent needs its whole module
-set, and the run's summary names the verdict.</p>
-<p><strong><code>/dev/kvm</code>.</strong> Access arrives through the <code>kvm</code> group on the
-daemon's user; the setup adds the executing user to the group
-when missing. The account picks the group up at the next login; an
-already-running session keeps the old groups until it starts
-anew.</p>
-<p><strong>The login PATH.</strong> The account that typed the command (the
-<code>SUDO_USER</code> under sudo) gains <code>/usr/sbin</code> and <code>/sbin</code> on its
-login PATH: the setup appends a guarded block to that account's
-<code>~/.profile</code>, idempotently, so a re-run never duplicates it.
-Debian keeps <code>nft</code>, <code>conntrack</code>, and the e2fsprogs trio in
-<code>/usr/sbin</code>, and a non-root login shell does not carry the
-directory — the block means the operator's next login can type
-the names the daemon execs. A daemon started by the systemd
-user unit finds the directories on its own PATH (the unit
-manager's default carries them); a daemon started by hand
-(<code>msks-dev</code>, a bare <code>msksd</code>) inherits the session's PATH, so
-the same login carries the fix to both shapes.</p>
+<code>net.ipv4.ip_forward=1</code> at boot, and the value applies immediately: route
+packets between the per-VM taps and the host uplink. The daemon reads the
+sysctl at startup and refuses every egress workspace, with the cause named,
+while it reads 0. <code>/etc/modules-load.d/msks.conf</code> loads the netfilter and
+tun modules at boot: the nftables machinery, NAT, conntrack, the deny RST,
+and the interactive consent queue. A module the kernel tree lacks draws a
+warning naming the kernel package that carries it. Interactive egress
+consent needs its whole module set, and the run's summary names the verdict.</p>
+<p><strong><code>/dev/kvm</code>.</strong> Access arrives through the <code>kvm</code> group on the daemon's user.
+The setup adds the executing user to the group when missing. The account
+picks the group up at the next login. An already-running session keeps the
+old groups until it starts anew.</p>
+<p><strong>The login PATH.</strong> The account that typed the command (the <code>SUDO_USER</code>
+under sudo) gains <code>/usr/sbin</code> and <code>/sbin</code> on its login PATH: the setup
+appends a guarded block to that account's <code>~/.profile</code>, idempotently, so a
+re-run never duplicates it. Debian keeps <code>nft</code>, <code>conntrack</code>, and the
+e2fsprogs trio in <code>/usr/sbin</code>, and a non-root login shell does not carry the
+directory. The block means the operator's next login can type the names the
+daemon execs. A daemon started by the systemd user unit finds the
+directories on its own PATH (the unit manager's default carries them). A
+daemon started by hand (<code>msks-dev</code>, a bare <code>msksd</code>) inherits the session's
+PATH, so the same login carries the fix to both shapes.</p>
 <p><strong>The systemd user service.</strong> On a host systemd manages, the setup writes
 <code>~/.config/systemd/user/msksd.service</code> for the executing user and enables
-it. The unit execs <code>msksd</code> through the wrapper, so the file capabilities grant
-it the same posture a root unit would have so it can spawn VMs. It runs with
-<code>MSKSD_EGRESS_ENABLED=true</code> and the uplink interface the setup detected, and it
-creates the unix listener's runtime directory under the user's own
-<code>$XDG_RUNTIME_DIR</code> (<code>RuntimeDirectory=msks</code>, the client's default socket
-candidate). It restarts the daemon on failure. Finally, <code>loginctl
-enable-linger</code> keeps the user manager, and the daemon, running across logouts
-and boots.</p>
+it. The unit execs <code>msksd</code> through the wrapper, so the file capabilities
+grant it the same posture a root unit would have, so it can spawn VMs. It
+runs with <code>MSKSD_EGRESS_ENABLED=true</code> and the uplink interface the setup
+detected, and it creates the unix listener's runtime directory under the
+user's own <code>$XDG_RUNTIME_DIR</code> (<code>RuntimeDirectory=msks</code>, the client's default
+socket candidate). It restarts the daemon on failure. Finally, <code>loginctl
+enable-linger</code> keeps the user manager, and the daemon, running across
+logouts and boots.</p>
 <p><strong>Cloud Hypervisor's static release binary</strong>. So guest VMs can be started.</p>
 <p><strong>The client links.</strong> <code>/usr/local/bin/msks</code> and
-<code>/usr/local/bin/msks-term-popup</code> are symlinks to the console
-scripts that shipped beside the setup tool. They land in the
-directory the wrapper and the VMM binary already occupy. Every
-login shell carries <code>/usr/local/bin</code>, so a bare <code>msks</code> answers
-for every user on the host with no profile edits, and a
-GUI-opened terminal window resolves the consent-terminal
-launcher on its own PATH. A regular file or a live link to
-another target at a path refuses by name: the run never clobbers
-what it did not land. A dangling link re-points, stale by
-definition. <code>--uninstall</code> removes both.</p>
+<code>/usr/local/bin/msks-term-popup</code> are symlinks to the console scripts that
+shipped beside the setup tool. They land in the directory the wrapper and
+the VMM binary already occupy. Every login shell carries <code>/usr/local/bin</code>,
+so a bare <code>msks</code> answers for every user on the host with no profile edits. A
+GUI-opened terminal window resolves the consent-terminal launcher on its own
+PATH. A regular file or a live link to another target at a path refuses by
+name: the run never clobbers what it did not land. A dangling link
+re-points, stale by definition. <code>--uninstall</code> removes both.</p>
 <p><strong>PATH manipulation.</strong> Adds <code>/usr/sbin</code> to the sudoing user's <code>PATH</code> so various
 binaries can be found.</p>
 <p>The run ends with a summary: the wrapper and its caps, the sysctl, the modules
@@ -1092,12 +1084,12 @@ using the host installer.</p>
 <h2 id="setup-on-a-debian-host">Setup on a Debian host<a class="headerlink" href="#setup-on-a-debian-host" title="Permanent link">&para;</a></h2>
 <p>You can use the <code>msks-setup-debian-host</code> script to set up <code>msks</code> on Debian
 13, Ubuntu 24.04 or newer, and Linux Mint 22 or newer.</p>
-<p><em>The platform gate accepts the <code>debian</code>, <code>ubuntu</code>, and <code>linuxmint</code> os-release
-IDs with those release floors: older Ubuntu and Mint archives lack <code>virtiofsd</code>,
-which the setup requires</em>. <em>One version caveat: host mounts need virtiofsd
-1.13.0 or newer, and Linux Mint 22's archive ships 1.10.0 — <code>msksd doctor</code>
-names the gap, and the workaround is a self-built virtiofsd pointed at with
-<code>MSKSD_VIRTIOFSD</code> (see <a href="../mounts/">mounts</a>)</em>.</p>
+<p><em>The platform gate accepts the <code>debian</code>, <code>ubuntu</code>, and <code>linuxmint</code>
+os-release IDs with those release floors: older Ubuntu and Mint archives
+lack <code>virtiofsd</code>, which the setup requires</em>. <em>One version caveat: host
+mounts need virtiofsd 1.13.0 or newer, and Linux Mint 22's archive ships
+1.10.0. <code>msksd doctor</code> gives the gap, and the workaround is a self-built
+virtiofsd pointed at with <code>MSKSD_VIRTIOFSD</code> (see <a href="../mounts/">mounts</a>)</em>.</p>
 <p>The msks daemon runs the workspaces directly on the host using
 <a href="https://github.com/cloud-hypervisor/cloud-hypervisor">cloud-hypervisor</a> and
 various networking and kernel-y bits need to be satisfied for it to work
@@ -1120,23 +1112,21 @@ normal user account.</p>
 <p>The run is idempotent: re-run any time, and re-run after a util-linux upgrade
 (the wrapper keeps a copy of <code>setpriv</code>; see below).</p>
 <h2 id="setup-on-a-fedora-host">Setup on a Fedora host<a class="headerlink" href="#setup-on-a-fedora-host" title="Permanent link">&para;</a></h2>
-<p><code>msks-setup-fedora-host</code> is the way to install msksd on Fedora: it contains a
-<code>HostProfile</code> — the package map, the probe names, the dnf verbs, the
-<code>usermod</code>/<code>gpasswd</code> group commands — over the same phases the Debian tool runs
-(the wrapper, the routing kernel settings, the packages, the kvm grant, the
-systemd user service, the <code>--uninstall</code> mirror, the VMM download).</p>
+<p><code>msks-setup-fedora-host</code> is the way to install msksd on Fedora: it contains
+a <code>HostProfile</code> (the package map, the probe names, the dnf verbs, the
+<code>usermod</code>/<code>gpasswd</code> group commands) over the same phases the Debian tool
+runs (the wrapper, the routing kernel settings, the packages, the kvm grant,
+the systemd user service, the <code>--uninstall</code> mirror, the VMM download).</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="go">sudo "$(command -v msks-setup-fedora-host)"</span>
 </span></code></pre></div>
-<p>The run installs through dnf the packages a stock Fedora
-answers without: <code>conntrack-tools</code>, <code>qemu-img</code>, <code>tmux</code>,
-<code>virtiofsd</code>, and the consent stack's <code>libnetfilter_queue</code> when
-the linker cache lacks the soname. A stock install already
-carries the rest of the probed set — <code>setpriv</code>, <code>setcap</code>, <code>ip</code>,
-<code>nft</code>, <code>modprobe</code>, <code>sysctl</code>, the e2fsprogs trio, <code>mkisofs</code>,
-<code>ssh</code>, and <code>rsync</code> — so those probes read present and the run
-moves on. The CA probe names Fedora's own command,
-<code>update-ca-trust</code> (the ca-certificates package), where the
-Debian map probes <code>update-ca-certificates</code>.</p>
+<p>The run installs through dnf the packages a stock Fedora answers without:
+<code>conntrack-tools</code>, <code>qemu-img</code>, <code>tmux</code>, <code>virtiofsd</code>, and the consent stack's
+<code>libnetfilter_queue</code> when the linker cache lacks the soname. A stock install
+already carries the rest of the probed set (<code>setpriv</code>, <code>setcap</code>, <code>ip</code>,
+<code>nft</code>, <code>modprobe</code>, <code>sysctl</code>, the e2fsprogs trio, <code>mkisofs</code>, <code>ssh</code>, and
+<code>rsync</code>), so those probes read present and the run moves on. The CA probe
+names Fedora's own command, <code>update-ca-trust</code> (the ca-certificates package),
+where the Debian map probes <code>update-ca-certificates</code>.</p>
 <p>The kvm membership runs through <code>usermod -aG kvm</code>, and the
 uninstall summary's removal line is dnf's.</p>
 <p>The same pieces land at the same paths for the same reasons
@@ -1151,9 +1141,9 @@ the run the same way.</p>
 running it means running shipped code as root. An operator who
 prefers to read every step first can land the same host in an
 interactive root shell.</p>
-<p>To do so, install the package set — the same set
-<code>msks-setup-{debian,fedora}-host</code> lands, so a host finished by hand
-comes up clean under the doctor too:</p>
+<p>To do so, install the package set. It is the same set
+<code>msks-setup-{debian,fedora}-host</code> lands, so a host finished by hand comes up
+clean under the doctor too:</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="go">sudo -i apt install iproute2 \</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="go">                    nftables \</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="go">                    conntrack \</span>
@@ -1174,10 +1164,9 @@ comes up clean under the doctor too:</p>
 <p><code>ca-certificates</code> is the set's one self-serving package: the CA
 bundle the next step's <code>curl</code> to github.com needs for its TLS
 verification.</p>
-<p>The capability wrapper — a fresh root-owned copy of <code>setpriv</code>,
-with the two capabilities set and read back (a filesystem
-without capability xattrs takes the <code>setcap</code> and loses it, so
-the readback is the proof):</p>
+<p>The capability wrapper is a fresh root-owned copy of <code>setpriv</code>, with the two
+capabilities set and read back. A filesystem without capability xattrs takes
+the <code>setcap</code> and loses it, so the readback is the proof:</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">install -o root -g root -m 0755 "$(command -v setpriv)" /usr/local/bin/msks-caps</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">setcap cap_net_admin,cap_net_bind_service+ep /usr/local/bin/msks-caps</span>
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">getcap /usr/local/bin/msks-caps</span>
@@ -1210,12 +1199,11 @@ landed quietly.</p>
 next login:</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="go">usermod -aG kvm &lt;the-user-the-daemon-runs-as&gt;</span>
 </span></code></pre></div>
-<p>The systemd user service is the daemon user's own piece — leave
-the root shell and run it as that user. Write
-<code>~/.config/systemd/user/msksd.service</code> with the unit below
-(adjust the <code>msksd</code> path to where the install put it, and the
-uplink to this host's default-route interface — <code>ip route show
-default</code> names it):</p>
+<p>The systemd user service is the daemon user's own piece — leave the root
+shell and run it as that user. Write <code>~/.config/systemd/user/msksd.service</code>
+with the unit below. Adjust the <code>msksd</code> path to where the install put it,
+and the uplink's default-route interface (default via 192.168.1.1 dev eno4
+proto dhcp src 192.168.1.112 metric 100 gives it):</p>
 <div class="language-ini highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">[Unit]</span>
 </span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="na">Description</span><span class="o">=</span><span class="s">msks daemon (workspaces as cloud-hypervisor microvms)</span>
 </span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>
@@ -1252,11 +1240,10 @@ sanctioned VMM install — Debian's archive does not carry it.</p>
 <p>Running <code>msks-setup-macos-host</code> runs the macOS installer, which is expected to
 work on M3+ Macs. It installs the Lima virtual machine system (via Brew), and
 runs msksd within a Lima VM. The msks client runs on the Mac itself.</p>
-<p>The msksd VM that <code>msks-setup-macos-host</code> creates from the
-shipped Lima template is the host that shares Mac folders into
-workspaces: the VM mounts them under its reserved
-prefix and forwards each attached share to the workspace that
-asked for it — see the <a href="../mounts/#shares-on-a-macos-host">mounts chapter's macOS
+<p>The msksd VM that <code>msks-setup-macos-host</code> creates from the shipped Lima
+template is the host that shares Mac folders into workspaces. The VM mounts
+them under its reserved prefix and forwards each attached share to the
+workspace that asked for it; see the <a href="../mounts/#shares-on-a-macos-host">mounts chapter's macOS
 section</a>.</p>
 <h3 id="sizing-the-msksd-lima-vm">Sizing the msksd Lima VM<a class="headerlink" href="#sizing-the-msksd-lima-vm" title="Permanent link">&para;</a></h3>
 <p>The VM starts at the template's sizing — 4 CPUs, 8 GiB of memory, a
@@ -1273,47 +1260,46 @@ is sparse, so it fills on demand up to the size you set. The floors are
 2 CPUs, 4 GiB of memory, and 20 GiB of disk: the VM must hold the daemon
 and a workspace.</p>
 <p>When the VM's disk runs low, the daemon's storage warning and the 507
-refusal name the same grow command, so the fix is one re-run away.</p>
+refusal name the same grow command. The fix is one re-run away.</p>
 <h2 id="linux-on-mac-hardware">Linux on Mac Hardware<a class="headerlink" href="#linux-on-mac-hardware" title="Permanent link">&para;</a></h2>
 <p>It doesn't work on Asahi. An Apple Silicon host whose kernel runs KVM in NV
 mode does not yet deliver guest interrupts
 (<a href="https://github.com/mcdonc/msks/issues/649">#649</a>): a workspace starts and its
 kernel boots deep into first boot, then stalls before ssh answers.</p>
 <h2 id="uninstalling-msks">Uninstalling msks<a class="headerlink" href="#uninstalling-msks" title="Permanent link">&para;</a></h2>
-<p><code>msks-setup-{debian,fedora,macos}-host --uninstall</code> reverses the run: it stops
-and disables the <code>msksd</code> user service and removes its unit file and its
-enablement symlink (the stop lets the daemon finish its shutdown cycle,
-workspaces included), turns linger off, removes the two <code>/etc</code> files the run
-landed, removes the capability wrapper, takes the executing user out of the
-<code>kvm</code> group (the tool keeps no record of which run added a membership, so any
-member leaves — the summary names the <code>adduser</code> line that restores it), strips
-the PATH block from <code>~/.profile</code>, and removes the cloud-hypervisor
-binary. Kernel modules already loaded stay loaded until the next reboot.</p>
+<p><code>msks-setup-{debian,fedora,macos}-host --uninstall</code> reverses the run. It
+stops and disables the <code>msksd</code> user service and removes its unit file and
+its enablement symlink; the stop lets the daemon finish its shutdown cycle,
+workspaces included. It turns linger off, removes the two <code>/etc</code> files the
+run landed, and removes the capability wrapper. It takes the executing user
+out of the <code>kvm</code> group; the tool keeps no record of which run added a
+membership, so any member leaves, and the summary names the <code>adduser</code> line
+that restores it. It strips the PATH block from <code>~/.profile</code> and removes the
+cloud-hypervisor binary. Kernel modules already loaded stay loaded until the
+next reboot.</p>
 <p>After the sysctl file leaves, <code>sysctl --system</code> re-applies every remaining
-sysctl.d file — the same set a boot applies. A second owner that wrote its
-own forwarding file keeps its setting; a live-only forwarder the tool never
-saw keeps its value too. On a host where no remaining file names
-<code>net.ipv4.ip_forward</code>, the live value the setup run set stays on until the
-next reboot — the summary names <code>sysctl -w net.ipv4.ip_forward=0</code> for
-the operator who wants it off immediately.</p>
-<p>The packages the run installed stay installed — they are shared
-packages, and other software on the host may use them. The
-uninstall summary prints the ones whose probes answer present, with a
-copy-paste <code>apt-get remove --purge ...</code> line, so you can remove the ones
-nothing else needs yourself.</p>
-<p>The uninstall run is idempotent the same way: a piece already gone is a
-line in the summary, not an error, and the first real refusal stops the
-run — the setup run's rule. <code>--no-service</code> holds its meaning — the
-service is left alone, every other piece still leaves.</p>
+sysctl.d file, the same set a boot applies. A second owner that wrote its own
+forwarding file keeps its setting. A live-only forwarder the tool never saw
+keeps its value too. On a
+host where no remaining file names <code>net.ipv4.ip_forward</code>, the live value the
+setup run set stays on until the next reboot. The summary names <code>sysctl -w
+net.ipv4.ip_forward=0</code> for the operator who wants it off immediately.</p>
+<p>The packages the run installed stay installed: they are shared packages, and
+other software on the host may use them. The uninstall summary prints the
+ones whose probes answer present, with a copy-paste <code>apt-get remove --purge
+...</code> line. You can remove the ones nothing else needs yourself.</p>
+<p>The uninstall run is idempotent the same way: a piece already gone is a line
+in the summary, not an error, and the first real refusal stops the run: the
+setup run's rule. <code>--no-service</code> holds its meaning: the service is left
+alone, every other piece still leaves.</p>
 <h2 id="the-host-doctor">The host doctor<a class="headerlink" href="#the-host-doctor" title="Permanent link">&para;</a></h2>
 <p>The <a href="../doctor/">The host doctor</a> chapter documents the <code>msksd doctor</code> command
 that can diagnose installation issues.</p>
 <h2 id="the-alternative-paths">The alternative paths<a class="headerlink" href="#the-alternative-paths" title="Permanent link">&para;</a></h2>
-<p><strong>A development host</strong> (this repository's checkout) runs the
-daemon through Nix and devenv; the <a href="../development/">Development
-environment</a> chapter owns that path. A Mac
-developing from a checkout has its own chapter — <a href="../development/#developing-on-a-macos-host">Developing on a
-macOS host</a>.</p>
+<p><strong>A development host</strong> (this repository's checkout) runs the daemon through
+Nix and devenv. The <a href="../development/">Development environment</a> chapter owns
+that path. A Mac developing from a checkout has its own chapter —
+<a href="../development/#developing-on-a-macos-host">Developing on a macOS host</a>.</p>
 
 
 

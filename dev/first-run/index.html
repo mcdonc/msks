@@ -944,15 +944,16 @@ config, only the public one (<code>pubkey_file</code>), and the private half nee
 on disk.</p>
 <p>If your ssh key is not already in an agent, a key no agent holds is staged
 in memory as an unencrypted OpenSSH-format key (<code>ed25519</code>, <code>ecdsa</code>
-P-256/P-384/P-521, or <code>rsa</code>); msks never types a passphrase. An encrypted key
-no agent holds is refused with a line naming <code>ssh-add</code> as the first fix, then
-decrypting a copy, then <code>--pubkey</code> at create. An agent that asks for
-confirmation per signature (a hardware token's touch) asks at its own cadence:
-the first-boot probe's retries and the session each count as a signing request.</p>
+P-256/P-384/P-521, or <code>rsa</code>). msks never types a passphrase. An encrypted
+key no agent holds is refused with a line naming <code>ssh-add</code> as the first fix,
+then decrypting a copy, then <code>--pubkey</code> at create. An agent that asks for
+confirmation per signature (a hardware token's touch) asks at its own
+cadence: the first-boot probe's retries and the session each count as a
+signing request.</p>
 <p>A passphrase-encrypted <code>identity_file</code> raises the session's one passphrase
-prompt when the daemon's locked secret rows need it. The TUI asks once when the
-tree opens, and the answer unlocks every locked secret row for the
-session. Escape or Cancel leaves the secrets locked; they stay named on the
+prompt when the daemon's locked secret rows need it. The TUI asks once when
+the tree opens, and the answer unlocks every locked secret row for the
+session. Escape or Cancel leaves the secrets locked. They stay named on the
 secrets page and re-askable there.</p>
 <h3 id="pubkey_file-the-public-half"><code>pubkey_file</code>: the public half<a class="headerlink" href="#pubkey_file-the-public-half" title="Permanent link">&para;</a></h3>
 <p><code>pubkey_file</code> names a <code>.pub</code> file, and a create with it set plants that one
@@ -961,11 +962,11 @@ the form for a key you keep encrypted on disk: the public half sits in the
 <code>.pub</code> file while the private half answers from your agent.</p>
 <p><strong>The requirement</strong>: your ssh-agent holds the actual key. <code>msks ssh</code>and
 <code>msks rsync</code> on such a workspace authenticate through <code>SSH_AUTH_SOCK</code>'s
-agent, so <code>ssh-add</code> the key in the shell you run msks from. An agent holding
-the key makes the sessions work with the private half never read from disk.
-A shell whose agent does not hold it leaves the workspace's key auth without
-an answer, and <code>msks ssh</code> exits with a line saying the identity resolves
-nowhere.</p>
+agent; <code>ssh-add</code> the key in
+the shell you run msks from. An agent holding the key makes the sessions
+work with the private half never read from disk. A shell whose agent does
+not hold it leaves the workspace's key auth without an answer, and <code>msks
+ssh</code> exits with a line saying the identity resolves nowhere.</p>
 <p><code>msks console</code> will wok to access a wokspace if you've lost your key.</p>
 <h3 id="where-the-private-half-lives-at-runtime">Where the private half lives at runtime<a class="headerlink" href="#where-the-private-half-lives-at-runtime" title="Permanent link">&para;</a></h3>
 <p>An agent-held key stays in the agent: msks asks it to sign, and the file on
@@ -974,9 +975,8 @@ agent that dies with the session. And a session you forward your agent into
 (<code>ssh_options</code> with <code>-A</code>) carries the agent you named into the workspace. The
 workspace identity msks mints stays separate, and your keys arrive only where
 you forwarded them.</p>
-<p>With neither key naming a usable source, <code>msks create</code> refuses
-with a line saying so; it is the one command that needs the
-identity at its start.</p>
+<p>With neither key naming a usable source, <code>msks create</code> refuses with a line
+saying so. It is the one command that needs the identity at its start.</p>
 <h2 id="importing-a-guest-vm-image">Importing a guest VM image<a class="headerlink" href="#importing-a-guest-vm-image" title="Permanent link">&para;</a></h2>
 <p>On first run, a workspace image has not been imported, so you are not able to
 create guest VMs. A workspace image arrives either from the published channel

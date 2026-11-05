@@ -1054,20 +1054,17 @@ deterministically from the workspace id, and the pool slice is
 recorded on the workspace row at first attach. Stop/start
 cycles, daemon restarts, and even digest collisions between
 workspace ids therefore keep the same address.</p>
-<p>msksd is the only DHCP server and the only resolver the guest
-ever sees. The DHCP offer gives the tap as gateway and as DNS
-server, and a small forwarder on the tap answers port 53 by
-relaying to the host's own upstream (<code>MSKSD_EGRESS_DNS_UPSTREAM</code>,
-or the first nameserver in the host's <code>/etc/resolv.conf</code>). The resolver
-speaks UDP; TCP/53 has no listener, so a query needing TCP fallback
-(DNSSEC validation, very large RRsets) fails fast. The forwarder
-answers queries from its own guest only; anything else arriving on
-the tap is dropped unread, so a spoofed-source datagram cannot turn
-the daemon into a reflection amplifier. The resolver also grows the
-naming layer: query cache, name learning for prompts, and the
-lockout that keeps DNS from being routed around, all behind that
-same offered
-resolver.</p>
+<p>msksd is the only DHCP server and the only resolver the guest ever sees. The
+DHCP offer gives the tap as gateway and as DNS server, and a small forwarder
+on the tap answers port 53 by relaying to the host's own upstream
+(<code>MSKSD_EGRESS_DNS_UPSTREAM</code>, or the first nameserver in the host's
+<code>/etc/resolv.conf</code>). The resolver speaks UDP. TCP/53 has no listener, so a
+query needing TCP fallback (DNSSEC validation, very large RRsets) fails
+fast. The forwarder answers queries from its own guest only. Anything else
+arriving on the tap is dropped unread, so a spoofed-source datagram cannot
+turn the daemon into a reflection amplifier. The resolver also grows the
+naming layer: query cache, name learning for prompts, and the lockout that
+keeps DNS from being routed around, all behind that same offered resolver.</p>
 <h2 id="what-the-chain-enforces">What the chain enforces<a class="headerlink" href="#what-the-chain-enforces" title="Permanent link">&para;</a></h2>
 <p>The per-VM table hooks two places, both scoped to the workspace's
 tap:</p>
@@ -1095,21 +1092,18 @@ any host reachable through the host uplink is reachable. In
 <code>static</code> and <code>interactive</code> modes, every new flow passes a
 destination gate first.</p>
 <h2 id="what-runs-where">What runs where<a class="headerlink" href="#what-runs-where" title="Permanent link">&para;</a></h2>
-<p><strong>On the host:</strong> the tap, its address, the per-VM nftables
-table, the NAT masquerade on the uplink, the DHCP service, and
-the DNS forwarder are all owned by msksd. It runs as a
-dedicated service user holding exactly two ambient
-capabilities. <code>CAP_NET_ADMIN</code> covers taps and their addresses,
-the nftables tables, and (because ambient capabilities survive
-<code>exec</code>) the workspace VMM opening its tap. <code>CAP_NET_BIND_SERVICE</code>
-covers the DHCP and DNS listeners, UDP 67 and 53. Nothing in the
-daemon's process tree
-runs as uid 0; <code>/dev/kvm</code> reaches the VMM through the <code>kvm</code> group.
-The per-tap service listeners (the interceptor, the LLM proxy,
-and the probe service) bind ports above 1024 by default;
-a setting that gives a privileged port needs the capability.
-The host's firewall is never touched; containment stays inside the
-host by design.</p>
+<p><strong>On the host:</strong> the tap, its address, the per-VM nftables table, the NAT
+masquerade on the uplink, the DHCP service, and the DNS forwarder are all
+owned by msksd. It runs as a dedicated service user holding exactly two
+ambient capabilities. <code>CAP_NET_ADMIN</code> covers taps and their addresses, the
+nftables tables, and (because ambient capabilities survive <code>exec</code>) the
+workspace VMM opening its tap. <code>CAP_NET_BIND_SERVICE</code> covers the DHCP and
+DNS listeners, UDP 67 and 53. Nothing in the daemon's process tree runs as
+uid 0; <code>/dev/kvm</code> reaches the VMM through the <code>kvm</code> group. The per-tap
+service listeners (the interceptor, the LLM proxy, and the probe service)
+bind ports above 1024 by default. A setting that gives a privileged port
+needs the capability. The host's firewall is never touched. Containment
+stays inside the host by design.</p>
 <p><strong>Inside the guest:</strong> nothing msks-specific. The image overlay ships
 a systemd-networkd DHCP unit (see <a href="../images/">images.md</a>); the
 kernel's <code>virtio_net</code> driver configures the NIC, DHCP configures the
@@ -1191,31 +1185,26 @@ binds ports 67 and 53, so it runs as full root and sets <code>ip_forward</code> 
 the duration of the run. That is the test's constraint, not the server's: the
 daemon needs only the two capabilities and an already-routing kernel.</p>
 <h2 id="reaching-guest-services-the-forward">Reaching guest services (the forward)<a class="headerlink" href="#reaching-guest-services-the-forward" title="Permanent link">&para;</a></h2>
-<p>Egress is the guest's outbound path; the forward websocket
-(<code>msks forward</code>, issue) is the client's inbound one, and it uses
-the same per-VM tap.
-The daemon dials the workspace's deterministic tap address on
-the port the caller gives and bridges raw bytes over its
-authenticated websocket API. The CLI chapter's <code>msks forward</code>
-section covers the stdio and <code>--local</code> shapes and the
-close-code contract.</p>
-<p>The workspace image meets the forward with a TCP service plane of
-its own: sshd (the image's Debian package, enabled) and rsync.
-sshd listens on all interfaces once the guest's NIC has its
-address; a boot-time unit holds the port behind DHCP, with a
-15s ceiling so a slow lease never blocks it for long. Every
-login is a key login: <code>PasswordAuthentication no</code>, and root may
-log in with a key only (<code>PermitRootLogin prohibit-password</code>).
-Host keys are generated on the workspace's first boot into its
-persistent root overlay, so a stop/start cycle presents the
-same host key: the <code>known_hosts</code> entry you recorded on first
-login keeps matching. The entry lives under the workspace's
-immutable id, so a workspace recreated under the same name is a
-new id with a fresh cache: it trusts its own first-boot host
-keys instead of refusing the first instance's.
-A workspace without egress carries the same image unchanged: its
-forward is refused at the API with close code 4501 before any dial,
-and its console is the virtio-console getty.</p>
+<p>Egress is the guest's outbound path. The forward websocket (<code>msks forward</code>,
+issue) is the client's inbound one, and it uses the same per-VM tap. The
+daemon dials the workspace's deterministic tap address on the port the
+caller gives and bridges raw bytes over its authenticated websocket API. The
+CLI chapter's <code>msks forward</code> section covers the stdio and <code>--local</code> shapes
+and the close-code contract.</p>
+<p>The workspace image meets the forward with a TCP service plane of its own:
+sshd (the image's Debian package, enabled) and rsync. sshd listens on all
+interfaces once the guest's NIC has its address. A boot-time unit holds the
+port behind DHCP, with a 15s ceiling so a slow lease never blocks it for
+long. Every login is a key login: <code>PasswordAuthentication no</code>, and root may
+log in with a key only (<code>PermitRootLogin prohibit-password</code>). Host keys are
+generated on the workspace's first boot into its persistent root overlay, so
+a stop/start cycle presents the same host key: the <code>known_hosts</code> entry you
+recorded on first login keeps matching. The entry lives under the
+workspace's immutable id, so a workspace recreated under the same name is a
+new id with a fresh cache: it trusts its own first-boot host keys instead of
+refusing the first instance's. A workspace without egress carries the same
+image unchanged: its forward is refused at the API with close code 4501
+before any dial, and its console is the virtio-console getty.</p>
 <h3 id="the-workspace-ssh-identity">The workspace ssh identity<a class="headerlink" href="#the-workspace-ssh-identity" title="Permanent link">&para;</a></h3>
 <p>A workspace created through the client carries the operator's
 key as its ssh identity (issues). <code>identity_file</code> (or
@@ -1232,12 +1221,12 @@ variables, and <code>--pubkey</code>. <code>pubkey_file</code> (or
 <code>.pub</code> file, read in place of any private material, the create
 form for a key kept encrypted while the operator's agent holds
 it.</p>
-<p>The daemon stores and seeds the public line only; its database never holds a
-private half and its key fetch carries no private field at all. The public half
-persists across daemon restarts and workspace stop/start: it lives on the
-workspace's row, and a stop/start cycle serves the same line again. The seed
-composes the identity's script with any <code>user_data</code> payload as MIME siblings,
-so a workspace can carry both.</p>
+<p>The daemon stores and seeds the public line only. Its database never holds a
+private half and its key fetch carries no private field at all. The public
+half persists across daemon restarts and workspace stop/start: it lives on
+the workspace's row, and a stop/start cycle serves the same line again. The
+seed composes the identity's script with any <code>user_data</code> payload as MIME
+siblings, so a workspace can carry both.</p>
 <p>The daemon validates the supplied line by shape: a label in the
 algorithm-name charset, fields, base64 body, and a blob whose
 embedded algorithm name agrees with its label. It annotates the
@@ -1252,12 +1241,11 @@ the forward:</p>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>rsync<span class="w"> </span>-e<span class="w"> </span><span class="s1">'ssh -i ~/.ssh/id_ed25519 -p 2201'</span><span class="w"> </span><span class="se">\</span>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span>-av<span class="w"> </span>./site/<span class="w"> </span>root@127.0.0.1:/root/site/
 </span></code></pre></div>
-<p>The same login works as the workspace's login user
-(<code>ssh -i ... -p 2201 alice@127.0.0.1</code>, the name <code>msks create
---user</code> recorded), whose home lives on the persistent
-<code>/home</code> volume. A workspace created before records no user
-of its own; log in as <code>root</code>, or as <code>msks</code>, the account the
-image itself ships, given directly.</p>
+<p>The same login works as the workspace's login user (<code>ssh -i ... -p 2201
+alice@127.0.0.1</code>, the name <code>msks create --user</code> recorded), whose home lives
+on the persistent <code>/home</code> volume. A workspace created before records no user
+of its own. Log in as <code>root</code>, or as <code>msks</code>, the account the image itself
+ships, given directly.</p>
 <p><code>msks ssh</code> is the zero-step form of the same login: it boots
 the workspace if needed and runs ssh with the forward as its
 ProxyCommand. It signs through the operator's own agent when
@@ -1293,44 +1281,38 @@ invocations; one wildcard block serves every workspace:</p>
 </span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    ControlPersist 10m
 </span></code></pre></div>
 <p><code>ssh msks-devbox</code>, <code>rsync -aP src/ msks-devbox:/src/</code>, <code>git clone
-msks-devbox:srv/proj.git</code>, and VS Code Remote-SSH work against the
-alias; ControlMaster shares one forward connection across
-concurrent invocations. The block sets no <code>User</code>: plain <code>ssh</code>
-logs in as its own default, the local username. That is the
-workspace's recorded login user for the operator who created it
-(the name <code>msks create --user</code> planted; <code>ssh -l alice</code> reaches a
-workspace another operator's name recorded). A workspace that
-records no user dials <code>root</code>, the account every seed provisions
-a key for. The alias block gives the operator's own key with
-<code>IdentityFile</code>, the same file <code>identity_file</code> points at.
-Those paths are the client cache root's defaults and stay
-where the block writes them: OpenSSH reads its own config, so
-<code>MSKSC_CACHE_DIR</code> (the variable the devenv shell presets for
-its command forms) moves only the <code>msks ssh</code>/<code>msks rsync</code>
-state. A relocated cache takes the alias block's paths with it
-only when you edit the block to match. <code>msks ssh</code> is the
-command form that carries the identity per-session from memory
-instead; plain <code>ssh</code> invocations against the alias need the
-file. The ProxyCommand runs <code>msks</code> in the user's environment,
-so <code>MSKSC_URL</code>, <code>MSKSC_TOKEN</code>, and <code>MSKSC_CAFILE</code> must be set
-there. <code>ssh -l root msks-devbox</code> is the recovery login. <code>-A</code>
-forwards the operator's own agent into the workspace, and so
-does <code>msks ssh -- -A</code>, which rewrites the request onto the
-same socket without the alias block.</p>
+msks-devbox:srv/proj.git</code>, and VS Code Remote-SSH work against the alias;
+ControlMaster shares one forward connection across concurrent invocations.
+The block sets no <code>User</code>: plain <code>ssh</code> logs in as its own default, the local
+username. That is the workspace's recorded login user for the operator who
+created it (the name <code>msks create --user</code> planted; <code>ssh -l alice</code> reaches a
+workspace another operator's name recorded). A workspace that records no
+user dials <code>root</code>, the account every seed provisions a key for. The alias
+block gives the operator's own key with <code>IdentityFile</code>, the same file
+<code>identity_file</code> points at. Those paths are the client cache root's defaults
+and stay where the block writes them. OpenSSH reads its own config, so
+<code>MSKSC_CACHE_DIR</code> (the variable the devenv shell presets for its command
+forms) moves only the <code>msks ssh</code>/<code>msks rsync</code> state. A relocated cache takes
+the alias block's paths with it only when you edit the block to match. <code>msks
+ssh</code> is the command form that carries the identity per-session from memory
+instead. Plain <code>ssh</code> invocations against the alias need the file. The
+ProxyCommand runs <code>msks</code> in the user's environment, so <code>MSKSC_URL</code>,
+<code>MSKSC_TOKEN</code>, and <code>MSKSC_CAFILE</code> must be set there. <code>ssh -l root
+msks-devbox</code> is the recovery login. <code>-A</code> forwards the operator's own agent
+into the workspace, and so does <code>msks ssh -- -A</code>, which rewrites the request
+onto the same socket without the alias block.</p>
 <p>This is the client-held-secrets posture: the daemon host keeps
 every capability the console and forward grant, but holds no
 private key that opens the workspace's ssh.</p>
 <h3 id="an-operator-supplied-key-for-one-workspace">An operator-supplied key for one workspace<a class="headerlink" href="#an-operator-supplied-key-for-one-workspace" title="Permanent link">&para;</a></h3>
-<p><code>msks create --pubkey FILE</code> (issue) builds the workspace
-around a public key chosen for that one create (the key that
-<code>~/.ssh/id_ed25519.pub</code> gives, a hardware token's key, any
-well-formed OpenSSH line) instead of the configured key. The
-supplied line travels to the daemon at its own key type and is
-accepted at any type: the guest's sshd, the platform's own, is
-the authority on which keys it will authenticate. The daemon
-re-annotates the line with its provenance comment and seeds it
-like any other identity; its database holds the public half
-only.</p>
+<p><code>msks create --pubkey FILE</code> (issue) builds the workspace around a public key
+chosen for that one create (the key that <code>~/.ssh/id_ed25519.pub</code> gives, a
+hardware token's key, any well-formed OpenSSH line) instead of the
+configured key. The supplied line travels to the daemon at its own key type
+and is accepted at any type: the guest's sshd, the platform's own, is the
+authority on which keys it will authenticate. The daemon re-annotates the
+line with its provenance comment and seeds it like any other identity. Its
+database holds the public half only.</p>
 <p>The private half never leaves the operator's custody:
 nothing is written client-side, and login uses the operator's
 own key (<code>ssh -i</code> through a forward, or the <code>Host msks-*</code>
@@ -1354,13 +1336,12 @@ half; or through <code>ssh -i</code> with the half directly. The
 console keeps working either way: the token-gated root
 autologin, not a key login.</p>
 <h3 id="pushing-code-out-with-your-own-credentials">Pushing code out with your own credentials<a class="headerlink" href="#pushing-code-out-with-your-own-credentials" title="Permanent link">&para;</a></h3>
-<p>Written for the developer working inside a workspace: your
-repo's remote (GitHub, a private GitLab host, anything
-reachable on the network) accepts a push only with your
-credentials, and the workspace has none of them and should
-hold none. The workflow is
-one login with agent forwarding, after which a push from inside
-the workspace works exactly as it does on your own machine.</p>
+<p>Written for the developer working inside a workspace: your repo's remote
+(GitHub, a private GitLab host, anything reachable on the network) accepts a
+push only with your credentials, and the workspace has none of them and
+should hold none. The workflow is one login with agent forwarding, after
+which a push from inside the workspace works exactly as it does on your own
+machine.</p>
 <p>On your client machine, load the key into your agent (<code>ssh-add</code>),
 then log in through the forward with <code>-A</code>:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>ssh<span class="w"> </span>-A<span class="w"> </span>msks-devbox
@@ -1412,10 +1393,10 @@ and the fail-closed denials through the real kernel path.</p>
 <h2 id="backend-support">Backend support<a class="headerlink" href="#backend-support" title="Permanent link">&para;</a></h2>
 <p>Egress is a local-backend feature; the consent API itself is
 enforcement-agnostic (see “Local-only semantics” in <a href="../egress-consent/">Egress
-consent</a>), so a future backend can drive a
+consent</a>). A future backend can therefore drive a
 different mechanism from the same model. The no-NIC posture works
-everywhere: a workspace created with <code>"egress": false</code> presents no
-NIC whatever runs it.</p>
+everywhere: a workspace created with <code>"egress": false</code> presents no NIC
+whatever runs it.</p>
 <h2 id="lifecycle">Lifecycle<a class="headerlink" href="#lifecycle" title="Permanent link">&para;</a></h2>
 <p><code>start</code> arms the tap and services before the VMM boots (the VMM
 opens the tap by name); <code>stop</code>, <code>kill</code>, and <code>delete</code> tear the tap,

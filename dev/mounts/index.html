@@ -1025,30 +1025,27 @@ referenced one) were removed: host paths are the one surface, and
 a config that still carries the key fails at load with the
 removal message.</p>
 <h2 id="what-a-mount-is">What a mount is<a class="headerlink" href="#what-a-mount-is" title="Permanent link">&para;</a></h2>
-<p>A workspace's mount gives a host path, an absolute guest path,
-and a mode. The guest path becomes a root-owned mount point
-inside the VM: absolute, below the filesystem root, outside the
-pseudo-filesystems (<code>/proc</code>, <code>/sys</code>, <code>/dev</code>, <code>/run</code>) and outside
-<code>/home</code> (the home volume owns it; see the <a href="../storage/">storage
-chapter</a>). Two mounts of one workspace never overlap,
-and a host path appears once per workspace. Mounts follow
-next-start semantics, like resize: setting them never touches a
-running VM, and the next start attaches the current set. The seed
-that boot carries bakes exactly these mounts, so a restart after
-a change lands the new set and prunes the dropped one. Two mounts
-set at once from two terminals race last-write-wins (the surface
-sets the whole list); a workspace served by one operator at a
-time never sees the race.</p>
+<p>A workspace's mount gives a host path, an absolute guest path, and a mode.
+The guest path becomes a root-owned mount point inside the VM: absolute,
+below the filesystem root, outside the pseudo-filesystems (<code>/proc</code>, <code>/sys</code>,
+<code>/dev</code>, <code>/run</code>) and outside <code>/home</code> (the home volume owns it; see the
+<a href="../storage/">storage chapter</a>). Two mounts of one workspace never overlap,
+and a host path appears once per workspace. Mounts follow next-start
+semantics, like resize: setting them never touches a running VM, and the
+next start attaches the current set. The seed that boot carries bakes
+exactly these mounts. A restart after a change lands the new set and prunes
+the dropped one. Two mounts set at once from two terminals race
+last-write-wins (the surface sets the whole list). A workspace served by one
+operator at a time never sees the race.</p>
 <h2 id="the-two-gates">The two gates<a class="headerlink" href="#the-two-gates" title="Permanent link">&para;</a></h2>
 <p>Each host path runs two gates at set time, each refusing with its
 remedy:</p>
 <ol>
-<li><strong>The mount gate</strong> (VM-hosted daemons, <code>mount_host_mode:
-prefix</code>): the path, translated under <code>/mnt/msks</code>, must sit
-   under a root the daemon's VM actually has mounted. A path
-   whose root is not mounted is refused with the instruction to
-   recreate the VM from a template that mounts it; vz mounts
-   are fixed at VM start, so a config edit cannot add one.</li>
+<li><strong>The mount gate</strong> (VM-hosted daemons, <code>mount_host_mode: prefix</code>): the
+   path, translated under <code>/mnt/msks</code>, must sit under a root the daemon's VM
+   actually has mounted. A path whose root is not mounted is refused with the
+   instruction to recreate the VM from a template that mounts it. vz mounts are
+   fixed at VM start, so a config edit cannot add one.</li>
 <li><strong>The policy gate</strong> (every host): the path, resolved against
    symlink escapes, must sit under one of the allowed roots
    (<code>mount_host_roots</code>). A path outside them is refused with the
@@ -1090,107 +1087,91 @@ shared Mac folder crosses two hops to reach a workspace: vz
 virtiofs carries it from macOS into the daemon's VM under the
 reserved prefix and one virtiofsd per attached share
 carries it from there into the workspace guest.</p>
-<p>The client speaks Mac paths throughout (<code>--share
-~/code:/mnt/code</code>), and the daemon's <code>prefix</code> host mode does the
-translation before the <a href="#the-two-gates">two gates</a> run. The Lima
-template mounts the invoking user's home under the prefix at VM
-creation, writable, so the common case needs no edit; a share
-root outside it (another user's home, a <code>/Volumes</code> tree) is a
-template edit plus VM recreation, and the mount gate's refusal
-gives that remedy.</p>
+<p>The client speaks Mac paths throughout (<code>--share ~/code:/mnt/code</code>), and the
+daemon's <code>prefix</code> host mode does the translation before the <a href="#the-two-gates">two
+gates</a> run. The Lima template mounts the invoking user's
+home under the prefix at VM creation, writable, so the common case needs no
+edit. A share root outside it (another user's home, a <code>/Volumes</code> tree) is a
+template edit plus VM recreation, and the mount gate's refusal gives that
+remedy.</p>
 <p>The far end of the share is the Mac's own volume, and its
 behaviors cross with the tree. Four of them are contract, not
 configuration:</p>
 <h3 id="macos-watchers-poll">macOS: Watchers poll<a class="headerlink" href="#macos-watchers-poll" title="Permanent link">&para;</a></h3>
-<p>File events do not cross virtiofs. Changes made on the Mac (an
-editor's save, a build's output) reach every attached
-workspace as data, promptly coherent the way <a href="#coherence-between-guests">coherence
-between guests</a> describes, but no
-inotify event follows them: the share carries data, not
-notifications. Watchers on shared trees run in polling mode
-(Vite's <code>server.watch.usePolling</code> setting, jest's <code>--watchAll</code>,
-or the tool's own poll option), and a tool that can watch
-only through events cannot watch a share at all. Signaling
-built on the same polling takes one care: a file's existence
-becomes visible before its content does (a writer creates
-empty, then fills), so a poller waits for a completion marker
-the writer emits after the data, never for the file itself.</p>
+<p>File events do not cross virtiofs. Changes made on the Mac (an editor's
+save, a build's output) reach every attached workspace as data, promptly
+coherent the way <a href="#coherence-between-guests">coherence between guests</a>
+describes, but no inotify event follows them: the share carries data, not
+notifications. Watchers on shared trees run in polling mode (Vite's
+<code>server.watch.usePolling</code> setting, jest's <code>--watchAll</code>, or the tool's own
+poll option), and a tool that can watch only through events cannot watch a
+share at all. Signaling built on the same polling takes one care: a file's
+existence becomes visible before its content does (a writer creates empty,
+then fills). A poller therefore waits for a completion marker the writer
+emits after the data, never for the file itself.</p>
 <h3 id="macos-case-and-normalization-follow-the-mac-volume">macOS: Case and normalization follow the Mac volume<a class="headerlink" href="#macos-case-and-normalization-follow-the-mac-volume" title="Permanent link">&para;</a></h3>
-<p>The tree a workspace mounts is the Mac's volume, and its naming
-rules cross with it. A Mac's default volume matches names
-case-insensitively, storing them as typed (case-preserving),
-and compares them
-Unicode-normalization-insensitively: a name typed
-composed (NFC) and the same name decomposed (NFD) are one file.
-Tools inside the workspace that expect Linux naming can trip.
-Two names differing only in case cannot coexist in one
-directory (a checkout holding both <code>README</code> and <code>readme</code>
-collapses them), and a tool comparing filename bytes sees NFD
-where the Mac accepted NFC: archive and package tooling that
-hashes or compares names byte-for-byte can report a mismatch
-against a Linux-built expectation. A tree that must keep Linux
-naming rules exactly lives in the workspace's own storage (the
-<a href="../storage/">storage chapter</a>) instead.</p>
+<p>The tree a workspace mounts is the Mac's volume, and its naming rules cross
+with it. A Mac's default volume matches names case-insensitively, storing
+them as typed (case-preserving), and compares them
+Unicode-normalization-insensitively: a name typed composed (NFC) and the
+same name decomposed (NFD) are one file. Tools inside the workspace that
+expect Linux naming can trip. Two names differing only in case cannot
+coexist in one directory (a checkout holding both <code>README</code> and <code>readme</code>
+collapses them), and a tool comparing filename bytes sees NFD where the Mac
+accepted NFC. Archive and package tooling that hashes or compares names
+byte-for-byte can report a mismatch against a Linux-built expectation. A
+tree that must keep Linux naming rules exactly lives in the workspace's own
+storage (the <a href="../storage/">storage chapter</a>) instead.</p>
 <h3 id="macos-the-rw-single-writer-contract">macOS: The rw single-writer contract<a class="headerlink" href="#macos-the-rw-single-writer-contract" title="Permanent link">&para;</a></h3>
-<p>An <code>rw</code> share gives the workspace as its writer. Locks taken
-inside the workspace hold there and stop there: <code>flock</code> and
-<code>fcntl</code> locks end at the workspace's own virtiofsd, and the Mac
-side honors none of them: Finder, an open editor, or a
-Mac-side build writes past any lock the workspace took.
-Between workspaces, <a href="#coherence-between-guests">coherence between
-guests</a> governs: lockfile creates
-(<code>O_EXCL</code>: git, cargo) serialize through the host kernel and
-work cross-workspace; <code>flock</code>/<code>fcntl</code> do not cross an attach.
-Trees whose tools lock and treat the lock as the whole story (a
-cargo or bazel cache, a SQLite database, anything with a
-journal on disk) take one writer at a time: the workspace's,
-or the Mac's. A Mac that only reads the share (browsing in
-Finder, opening a file) travels the coherence contract; a
+<p>An <code>rw</code> share gives the workspace as its writer. Locks taken inside the
+workspace hold there and stop there: <code>flock</code> and <code>fcntl</code> locks end at the
+workspace's own virtiofsd, and the Mac side honors none of them. Finder, an
+open editor, or a Mac-side build writes past any lock the workspace took.
+Between workspaces, <a href="#coherence-between-guests">coherence between guests</a>
+governs: lockfile creates (<code>O_EXCL</code>: git, cargo) serialize through the host
+kernel and work cross-workspace; <code>flock</code>/<code>fcntl</code> do not cross an attach.
+Trees whose tools lock and treat the lock as the whole story (a cargo or
+bazel cache, a SQLite database, anything with a journal on disk) take one
+writer at a time: the workspace's, or the Mac's. A Mac that only reads the
+share (browsing in Finder, opening a file) travels the coherence contract. A
 Mac-side writer into a lock-using tree races the workspace.</p>
 <h3 id="macos-external-volumes-stay-busy-while-shared">macOS: External volumes stay busy while shared<a class="headerlink" href="#macos-external-volumes-stay-busy-while-shared" title="Permanent link">&para;</a></h3>
-<p>A file the stack holds open keeps its Mac volume mounted, so a
-disk whose tree is shared into a running workspace refuses to
-eject (the Finder reports the volume in use) until the
-workspace stops and its files close. <code>msks stop</code> on the
-workspace, eject the disk, and start again: with the volume
-back on the Mac, the share reattaches at the next start the
-way every mount set does; without it, the start skips the
-mount and carries the marker (<a href="#the-skip-behavior">the skip
-behavior</a>). Sharing the volume at all was
-the template edit above, since a <code>/Volumes/...</code> root sits
-outside the default home mount.</p>
+<p>A file the stack holds open keeps its Mac volume mounted. A disk whose tree
+is shared into a running workspace therefore refuses to eject (the Finder
+reports the volume in use) until the workspace stops and its files close.
+<code>msks stop</code> on the workspace, eject the disk, and start again: with the
+volume back on the Mac, the share reattaches at the next start the way every
+mount set does. Without it, the start skips the mount and carries the marker
+(<a href="#the-skip-behavior">the skip behavior</a>). Sharing the volume at all was the
+template edit above, since a <code>/Volumes/...</code> root sits outside the default
+home mount.</p>
 <h2 id="the-plumbing">The plumbing<a class="headerlink" href="#the-plumbing" title="Permanent link">&para;</a></h2>
-<p>Each attached share is one virtiofsd process (the platform's own
-<code>virtiofsd</code> package; the default binary name resolves on PATH
-first and then the package's install locations off PATH, so the
-daemon finds it without configuration; <code>MSKSD_VIRTIOFSD</code> gives a
-different binary), spawned before the VM and stopped with it.
-The mounts need virtiofsd <strong>1.13.0 or newer</strong>: the identity
-translation and the read-only enforcement both landed upstream
-there, and an older binary refuses the daemon's arguments at
-start (<code>msksd doctor</code> gives the gap: Linux Mint 22's archive
-ships 1.10.0, so its hosts build a newer virtiofsd and point
-<code>MSKSD_VIRTIOFSD</code> at it). The resolution runs at settings load
-and again on SIGHUP: a binary installed after the daemon started
-is one reload away.</p>
-<p>File ownership translates in both directions. Writes from the
-guest land on the host as the daemon's own user, whatever guest
-account made them; host-side ownership stays advisory, as with
-a typical bind mount. Files read back inside the guest present
-as the workspace's own user: the login user the workspace gives,
-or the image's built-in <code>msks</code> account when it gives none. The
-share's tree therefore reads as the logged-in user's files, and
-a file the guest creates stays writable by the account that
-created it. An edge sits outside that rule: a login user the
-operator's <code>user_data</code> premade at another uid presents as the
-first uid the seed provisions (1001 on a pristine image), not
-the premade account's own; and the host's own permission bits
-still govern every write: a file that presents as the workspace
-user's still refuses what its host-side mode refuses. The
-guest mounts
-through systemd units the workspace's seed writes (one per
-mount, named for the guest path, re-baked at each start), so a
-reboot remounts without cloud-init running again.</p>
+<p>Each attached share is one virtiofsd process (the platform's own <code>virtiofsd</code>
+package), spawned before the VM and stopped with it. The default binary name
+resolves on PATH first and then the package's install locations off PATH, so
+the daemon finds it without configuration. <code>MSKSD_VIRTIOFSD</code> gives a
+different binary. The mounts need virtiofsd <strong>1.13.0 or newer</strong>: the
+identity translation and the read-only enforcement both landed upstream
+there, and an older binary refuses the daemon's arguments at start. <code>msksd
+doctor</code> gives the gap: Linux Mint 22's archive ships 1.10.0, so its hosts
+build a newer virtiofsd and point <code>MSKSD_VIRTIOFSD</code> at it. The resolution
+runs at settings load and again on SIGHUP: a binary installed after the
+daemon started is one reload away.</p>
+<p>File ownership translates in both directions. Writes from the guest land on
+the host as the daemon's own user, whatever guest account made them.
+Host-side ownership stays advisory, as with a typical bind mount. Files read
+back inside the guest present as the workspace's own user: the login user
+the workspace gives, or the image's built-in <code>msks</code> account when it gives
+none. The share's tree therefore reads as the logged-in user's files, and a
+file the guest creates stays writable by the account that created it. An
+edge sits outside that rule: a login user the operator's <code>user_data</code> premade
+at another uid presents as the first uid the seed provisions (1001 on a
+pristine image), not the premade account's own. The host's own permission
+bits still govern every write: a file that presents as the workspace user's
+still refuses what its host-side mode refuses. The guest mounts through
+systemd units the workspace's seed writes (one per mount, named for the
+guest path, re-baked at each start). A reboot therefore remounts without
+cloud-init running again.</p>
 <p>Extended attributes remap under one host prefix
 (<code>user.virtiofs.</code>), so a guest cannot write host security labels
 or root-owned namespaces through the share. One name the map

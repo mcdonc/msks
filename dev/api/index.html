@@ -991,12 +991,12 @@
 
 
 <h1 id="the-http-api">The HTTP API<a class="headerlink" href="#the-http-api" title="Permanent link">&para;</a></h1>
-<p>Everything the client does goes through one versioned HTTP
-surface: <code>/api/v1</code>, HTTPS with a bearer token over TCP, or a
-unix socket with peer-credential authentication for same-host
-clients. The CLI and TUI chapters describe the commands that
-wrap these endpoints; this chapter is the surface itself, for
-scripts and integrations that speak to msksd directly.</p>
+<p>Everything the client does goes through one versioned HTTP surface:
+<code>/api/v1</code>, HTTPS with a bearer token over TCP, or a unix socket with
+peer-credential authentication for same-host clients. The CLI and TUI
+chapters describe the commands that wrap these endpoints. This chapter is
+the surface itself, for scripts and integrations that speak to msksd
+directly.</p>
 <p>The machine-readable schema ships with the daemon: <code>GET
 /openapi.json</code> answers an OpenAPI 3.1 document covering every
 REST route below, served unauthenticated alongside the
@@ -1004,40 +1004,35 @@ interactive <code>/docs</code>. The schema covers routes, never data. The
 prose here owns the behavior; the schema owns the shapes.</p>
 <h2 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Permanent link">&para;</a></h2>
 <p>There are two listeners for the API.</p>
-<p><strong>The TCP listener</strong> serves HTTPS and WSS on the <code>host</code>/<code>port</code>
-settings (<code>MSKSD_HOST</code>/<code>MSKSD_PORT</code>, default
-<code>127.0.0.1:8660</code>). Every request carries a bearer token in the
-<code>Authorization</code> header. TLS is verified against the CA the
-daemon mints at first serve (<code>msks-ca.pem</code> in the state dir),
-the same CA that signs the daemon's serving certificate. The
-first token is seeded by the <code>bootstrap_token</code> setting at first
-boot (the <a href="../config/">Configuration chapter</a> carries the
-setting and its environment variable); after that, a token
-holder mints tokens through the API itself (below). The dev
-daemon seeds its own first token from a file the dev script
-writes: a dev-workflow artifact, not a deployment's path.</p>
+<p><strong>The TCP listener</strong> serves HTTPS and WSS on the <code>host</code>/<code>port</code> settings
+(<code>MSKSD_HOST</code>/<code>MSKSD_PORT</code>, default <code>127.0.0.1:8660</code>). Every request carries
+a bearer token in the <code>Authorization</code> header. TLS is verified against the CA
+the daemon mints at first serve (<code>msks-ca.pem</code> in the state dir), the same
+CA that signs the daemon's serving certificate. The first token is seeded by
+the <code>bootstrap_token</code> setting at first boot. The <a href="../config/">Configuration
+chapter</a> carries the setting and its environment variable. After
+that, a token holder mints tokens through the API itself (below). The dev
+daemon seeds its own first token from a file the dev script writes: a
+dev-workflow artifact, not a deployment's path.</p>
 <p><strong>The unix socket</strong> binds at <code>MSKSD_SOCKET</code> (default
-<code>$XDG_RUNTIME_DIR/msks/msksd.sock</code>) and authenticates by peer
-credentials: the daemon's own uid passes, and so does any
-member of the socket file's group. The file is mode 0660;
-<code>chgrp</code> it to a shared group to admit that group's members
-without a token or TLS. Membership resolves the way login
-resolves it: every supplementary group the account database
-holds for the user counts, including the nesting a directory
-backend (SSSD with AD) expands itself. The daemon keeps no
-membership cache of its own. Removing a member takes effect at
-the next request, once the account database serves the change.
-A daemon without a runtime dir (a container, a hand-written
-unit) serves TCP alone until the setting gives a path. The
-socket is the same-host path (a local script, or the client's
-default candidate path); the TCP listener is the remote path.
-Neither weakens the other: TCP without a token answers 401.</p>
-<p>A missing, expired, or revoked token answers 401. The console,
-forward, and events websockets take the same bearer token in
-the handshake's <code>Authorization</code> header, never a URL parameter,
-so the credential cannot appear in a proxy's access log. A
-failed handshake closes <strong>4401</strong>; 4404 is an unknown workspace
-on the console and forward.</p>
+<code>$XDG_RUNTIME_DIR/msks/msksd.sock</code>) and authenticates by peer credentials:
+the daemon's own uid passes, and so does any member of the socket file's
+group. The file is mode 0660; <code>chgrp</code> it to a shared group to admit that
+group's members without a token or TLS. Membership resolves the way login
+resolves it: every supplementary group the account database holds for the
+user counts, including the nesting a directory backend (SSSD with AD)
+expands itself. The daemon keeps no membership cache of its own. Removing a
+member takes effect at the next request, once the account database serves
+the change. A daemon without a runtime dir (a container, a hand-written
+unit) serves TCP alone until the setting gives a path. The socket is the
+same-host path (a local script, or the client's default candidate path). The
+TCP listener is the remote path. Neither weakens the other: TCP without a
+token answers 401.</p>
+<p>A missing, expired, or revoked token answers 401. The console, forward, and
+events websockets take the same bearer token in the handshake's
+<code>Authorization</code> header, never a URL parameter. The credential therefore
+cannot appear in a proxy's access log. A failed handshake closes <strong>4401</strong>;
+4404 is an unknown workspace on the console and forward.</p>
 <h2 id="enabling-the-tcp-interface">Enabling the TCP interface<a class="headerlink" href="#enabling-the-tcp-interface" title="Permanent link">&para;</a></h2>
 <p>The TCP listener serves loopback from the first start: the dev
 daemon and the NixOS module both do. Reaching it from another
@@ -1047,16 +1042,14 @@ machine is three settings and one file:</p>
    remote client reaches: a specific interface's address, or
    <code>0.0.0.0</code> for every interface. The setting is read at
    startup; a reload applies it at restart.</li>
-<li><strong>Ship the CA to the client.</strong> Copy <code>msks-ca.pem</code> from the
-   daemon's state dir to the client machine and point the
-   client at it (<code>MSKSC_CAFILE</code> for the msks client,
-   <code>--cacert</code> for curl). The daemon's certificate is signed by
-   this CA alone; the system roots know nothing about it.</li>
+<li><strong>Ship the CA to the client.</strong> Copy <code>msks-ca.pem</code> from the daemon's state
+   dir to the client machine and point the client at it (<code>MSKSC_CAFILE</code> for
+   the msks client, <code>--cacert</code> for curl). The daemon's certificate is signed
+   by this CA alone. The system roots know nothing about it.</li>
 <li><strong>Ship a token.</strong> Mint one through the API itself (<code>POST
-/api/v1/tokens</code>; the first one comes from the
-   <code>bootstrap_token</code> setting above) and hand it to the client:
-   <code>MSKSC_TOKEN</code> for the msks client, or the <code>Authorization:
-Bearer</code> header for anything else.</li>
+/api/v1/tokens</code>; the first one comes from the <code>bootstrap_token</code>
+   setting above). Hand it to the client: <code>MSKSC_TOKEN</code> for the msks
+   client, or the <code>Authorization: Bearer</code> header for anything else.</li>
 </ol>
 <p>Then the first call, from the client machine:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">MSKSC_URL</span><span class="o">=</span>https://msksd.internal:8660
@@ -1120,26 +1113,23 @@ carries both settings and the socket's tradeoffs.</p>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'content-type: application/json'</span><span class="w"> </span><span class="se">\</span>
 </span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"mounts": [{"host": "/srv/projects", "guest": "/mnt/projects"}]}'</span>
 </span></code></pre></div>
-<p>The daemon validates the list against its #667 gates (a host
-path outside the allowed roots, and one that does not resolve
-under them, are named 400s) and answers with the refreshed
-row. Every row the daemon serves carries <code>mounts</code>, the
-derived <code>mount_issues</code>, and <code>mounts_pending</code>. The
-<code>mount_issues</code> field holds the skip state that <code>msks ls</code> and
-the TUI render. The <code>mounts_pending</code> field says whether the
-configured set differs from the set the last start attached,
-and the next-start notes key on it. <code>msks mount</code>/<code>umount</code> and
-the TUI's editor use this route.</p>
+<p>The daemon validates the list against its #667 gates (a host path outside
+the allowed roots, and one that does not resolve under them, are named
+400s). It answers with the refreshed row. Every row the daemon serves
+carries <code>mounts</code>, the derived <code>mount_issues</code>, and <code>mounts_pending</code>. The
+<code>mount_issues</code> field holds the skip state that <code>msks ls</code> and the TUI render.
+The <code>mounts_pending</code> field says whether the configured set differs from the
+set the last start attached, and the next-start notes key on it. <code>msks
+mount</code>/<code>umount</code> and the TUI's editor use this route.</p>
 <ul>
 <li><code>GET</code>/<code>PUT …/home</code>: export and import the home volume as a
   byte stream, the same stream <code>msks home import</code>/<code>export</code>
   use.</li>
 </ul>
 <p>The behaviors each verb drives are the CLI chapter's subjects:
-<a href="../cli/#msks-create">create</a> and its fields,
-<a href="../cli/#msks-resize">resize</a>, and the home stream through
-<a href="../cli/#msks-home">msks home</a>; the reset surface is
-API-direct.</p>
+<a href="../cli/#msks-create">create</a> and its fields, <a href="../cli/#msks-resize">resize</a>,
+and the home stream through <a href="../cli/#msks-home">msks home</a>. The reset surface
+is API-direct.</p>
 <h2 id="images">Images<a class="headerlink" href="#images" title="Permanent link">&para;</a></h2>
 <p>The catalog the workspaces boot from:</p>
 <ul>
@@ -1173,14 +1163,13 @@ manifest, and the published channel.</p>
 </span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"name": "github_api", "dests": ["api.github.com"],</span>
 </span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="s1">       "value": "ghp_..."}'</span>
 </span></code></pre></div>
-<p>The mint answer carries the <strong>sentinel</strong>, never the value.
-<code>GET /api/v1/secrets</code> lists rows with coverage and expiry;
-<code>GET …/secrets/{id}</code> reads one row's sentinel back;
-<code>POST …/renew</code> extends a lifetime; <code>DELETE</code> revokes. The audit
-trail is <code>GET /api/v1/secrets/audit</code>; a locked store answers
-<code>GET /api/v1/secrets/pending</code> and takes <code>POST
-/api/v1/secrets/unlock</code>: the operator's passphrase window the
-secrets chapter describes.</p>
+<p>The mint answer carries the <strong>sentinel</strong>, never the value. <code>GET
+/api/v1/secrets</code> lists rows with coverage and expiry; <code>GET …/secrets/{id}</code>
+reads one row's sentinel back; <code>POST …/renew</code> extends a lifetime; <code>DELETE</code>
+revokes. The audit trail is <code>GET /api/v1/secrets/audit</code>. A locked store
+answers <code>GET /api/v1/secrets/pending</code> and takes <code>POST
+/api/v1/secrets/unlock</code>: the operator's passphrase window the secrets
+chapter describes.</p>
 <h2 id="tokens">Tokens<a class="headerlink" href="#tokens" title="Permanent link">&para;</a></h2>
 <p><code>GET</code>/<code>POST /api/v1/tokens</code> and <code>DELETE
 /api/v1/tokens/{token_id}</code>: a token holder mints, lists, and
@@ -1222,10 +1211,9 @@ consent chapter</a>:</p>
   lifecycle events. A client that announces itself as a decider
   receives that workspace's pending holds; <code>msks egress watch</code>
   prints the frames as lines.</li>
-<li><code>wss://…/api/v1/workspaces/{id}/console</code>: the guest's serial
-  console as a bidirectional byte stream. Ctrl-] detaches in
-  the client; the <a href="../cli/#msks-console">console chapter</a>
-  covers the interactive form.</li>
+<li><code>wss://…/api/v1/workspaces/{id}/console</code>: the guest's serial console as a
+  bidirectional byte stream. Ctrl-] detaches in the client. The <a href="../cli/#msks-console">console
+  chapter</a> covers the interactive form.</li>
 <li><code>wss://…/api/v1/workspaces/{id}/forward/{port}</code>: raw TCP
   bytes between the client and that port on the workspace's
   tap, the pipe <code>msks forward</code> and ssh's ProxyCommand use. A
