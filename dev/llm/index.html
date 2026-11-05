@@ -528,10 +528,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#pi-coding-agent" class="md-nav__link">
+  <a href="#integration-with-the-pi-coding-agent" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Pi coding agent
+        Integration with the Pi coding agent
       </span>
     </span>
   </a>
@@ -839,10 +839,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#pi-coding-agent" class="md-nav__link">
+  <a href="#integration-with-the-pi-coding-agent" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Pi coding agent
+        Integration with the Pi coding agent
       </span>
     </span>
   </a>
@@ -989,12 +989,9 @@ hand. The base URL derives from the seeded <code>MSKSWS_BASE_URL</code>:</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">export ANTHROPIC_BASE_URL="${MSKSWS_BASE_URL%/v1}"</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">export ANTHROPIC_AUTH_TOKEN="msks-local-proxy"</span>
 </span></code></pre></div>
-<p>The token is a placeholder; it exists because claude-code refuses a
-base URL with no credential beside it. The port is the one the
-daemon served at the workspace's create (<code>MSKSD_LLM_PORT</code>,
-default 8770), the same value the seed carries. Set in a shell
-profile, the pair reaches every Anthropic SDK client in the
-workspace, not claude-code alone.</p>
+<p>The token is a placeholder; it exists because claude-code refuses a base URL
+with no credential beside it. Set in a shell profile, the pair reaches every
+Anthropic SDK client in the workspace, not claude-code alone.</p>
 <h2 id="subscription-claude-code-with-no-stored-credentials">Subscription claude-code with no stored credentials<a class="headerlink" href="#subscription-claude-code-with-no-stored-credentials" title="Permanent link">&para;</a></h2>
 <p>The LLM proxy cannot successfully be used to access a subscription Anthropic
 account. Instead, you should almost certainly use the normal Anthropic
@@ -1009,7 +1006,7 @@ tokens. The tokens live in a tmpfs for the session and vanish
 at shutdown.</p>
 <p>This is only useful if you use more than one coding agent on the same VM, and
 you distrust the other to not steal your Claude credentials. Otherwise, it's
-total overkill.</p>
+total overkill. It's better to just silo claude into its own workspace.</p>
 <p>Subscription authentication is OAuth, and claude-code holds
 its tokens wherever it runs (<code>~/.claude</code> on Linux). No msks
 machinery can hold them for the guest. The proxy and the
@@ -1055,7 +1052,7 @@ matter:</p>
 <p>The flags replace the whole list; repeat them to keep entries
 the workspace already had. An <code>interactive</code> workspace answers
 the two prompts instead.</p>
-<h2 id="pi-coding-agent">Pi coding agent<a class="headerlink" href="#pi-coding-agent" title="Permanent link">&para;</a></h2>
+<h2 id="integration-with-the-pi-coding-agent">Integration with the Pi coding agent<a class="headerlink" href="#integration-with-the-pi-coding-agent" title="Permanent link">&para;</a></h2>
 <p>Each msks VM ships with the <code>pi</code> coding agent installed. Each image bakes
 pinned Node and the pinned <strong>pi</strong> coding agent on every account's default
 <code>PATH</code>: the Debian/Fedora image under <code>/usr/local</code>, the NixOS image through its
@@ -1073,18 +1070,8 @@ discovers it. At every pi startup the extension makes one fetch of
 under the <code>msks</code> provider, so <code>/model</code> always shows the daemon's live model
 list.</p>
 <h2 id="sighup">SIGHUP<a class="headerlink" href="#sighup" title="Permanent link">&para;</a></h2>
-<p>The proxy reads settings live. A <code>SIGHUP</code> that changes the
-model list re-routes the very next request wherever a listener
-already serves, in either direction: models added begin
-serving, and models removed answer 503 on the open port. The
-closed-port posture of an unconfigured daemon arrives with
-that workspace's next stop/start. A workspace that booted while
-no model list was configured has no listener and no firewall
-admission; its next stop/start brings the surface up once the
-daemon is configured. (The first request after a swap pays the
-reconfigure: the lazily-imported litellm tree, a <code>cmd:</code> secret's
-subprocess, off the serving loop, so no other workspace's
-traffic waits on it.)</p>
+<p>A restart or <code>SIGHUP</code> of msksd is required in order to register changes to the
+LLM proxy settings.</p>
 
 
 
