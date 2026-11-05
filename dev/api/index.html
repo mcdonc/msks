@@ -1210,7 +1210,11 @@ consent chapter</a>:</p>
   <code>egress.request</code>, <code>egress.resolved</code>), and the secret
   lifecycle events. A client that announces itself as a decider
   receives that workspace's pending holds; <code>msks egress watch</code>
-  prints the frames as lines.</li>
+  prints the frames as lines. Every publish also writes one INFO
+  line to the daemon's journal (#762), so the event history
+  stays readable after the subscribers are gone. The lines carry
+  the frames' identifiers, names, hosts, ports, paths, and
+  counts; secret values and sentinels never ride them.</li>
 <li><code>wss://…/api/v1/workspaces/{id}/console</code>: the guest's serial console as a
   bidirectional byte stream. Ctrl-] detaches in the client. The <a href="../cli/#msks-console">console
   chapter</a> covers the interactive form.</li>
