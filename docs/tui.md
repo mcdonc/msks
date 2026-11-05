@@ -375,8 +375,12 @@ The session's status bar shows the workspace: the launch resolves the
 workspace's name and pins it to the bar's left side (`[project-x]`). The id
 stands in whenever the lookup fails (the daemon down, the workspace gone, the
 wait run out), and `shell` stands for a plain shell. The window list after the
-label stays empty, and so does the bar's right side, which tmux's default fills
-with the pane's title, the clock, and the date.
+label stays empty. The bar's right side carries the egress mode beside the
+popup hint (`interactive · C-b p popup`, #764): the hint lands at launch, and
+the decider app fills the mode in front of it from its first rules frame,
+updating it on every change whatever surface decided it. Before that frame
+lands the hint stands alone, and a workspace without egress keeps it that
+way.
 
 The hidden consent session runs on the launch's own socket, one small
 server per window. The app retires when the window has been gone for a

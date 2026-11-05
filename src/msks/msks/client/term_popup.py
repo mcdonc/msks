@@ -110,6 +110,11 @@ STATUS_LEFT_LENGTH = 64
 #: id stands in.
 LABEL_WAIT_S = 5.0
 
+#: The status row's popup hint (#764): the reopen binding's
+#: spelling beside what it opens. The dismiss keys (``q``,
+#: ``Esc``, ``C-b``) live in the popup's own footer, not the row.
+STATUS_HINT = "C-b p popup"
+
 #: The popup's page-scroll bindings (#444), the keyboard twin of
 #: the wheel path above: each command pages one page — up on the
 #: shifted page-up key, down on its twin — through the same
@@ -372,9 +377,11 @@ def session_argv(
     empty (#458): tmux's default bar follows the left side with
     the window list — an index, the pane command's name, a
     current-window flag — and a single-window session names
-    itself enough with the label. The right side pins to empty
-    with them: tmux's default paints the pane's title, the clock,
-    and the date there, and the label is the whole bar.
+    itself enough with the label. The right side carries the
+    popup hint alone at launch (#764): tmux's default would paint
+    the pane's title, the clock, and the date there, and the
+    decider app's first rules frame fills the mode half in front
+    of the hint (its own ``set-option`` on this socket).
     Everything
     lands on this launch's own server (the dedicated socket
     carries it), so the operator's own tmux server, when one
@@ -426,9 +433,9 @@ def session_argv(
         # The window-list formats pin to empty (#458): tmux's
         # default bar follows the left side with the window list,
         # and a single-window session names itself enough with
-        # the label. The right side pins to empty with them —
-        # tmux's default paints the pane title, the clock, and
-        # the date there — so the label is the whole bar.
+        # the label. The right side carries the popup hint alone
+        # at launch (#764); the decider app's first rules frame
+        # fills the mode half in front of it.
         ";",
         "set-option",
         "-g",
@@ -443,7 +450,7 @@ def session_argv(
         "set-option",
         "-g",
         "status-right",
-        "",
+        status_right(),
         ";",
         "new-session",
         "-s",
@@ -547,6 +554,27 @@ def status_label(workspace_id: str | None) -> str:
     except Exception, SystemExit:
         return workspace_id
     return row.get("name") or workspace_id
+
+
+def status_right(mode: str | None = None) -> str:
+    """The status row's right side (#764): the workspace's egress
+    mode once a rules frame named it, the reopen hint always. A
+    ``None`` mode is the launch-time half — the mode is unknown
+    until the decider's first frame, and an absent half reads
+    cleaner than a guess the app would replace moments later."""
+    head = f"{mode.replace('#', '##')} · " if mode else "· "
+    return f"{head}{STATUS_HINT}"
+
+
+def mode_argv(socket: str, mode: str) -> list[str]:
+    """One ``set-option`` refreshing the status row's mode half
+    (#764) — the decider app's write path, server-global on the
+    launch's own socket. The hidden session renders no bar (its
+    ``status`` is off), so the option reaches the shell row
+    alone."""
+    return tmux_argv(
+        socket, "set-option", "-g", "status-right", status_right(mode)
+    )
 
 
 def session_name(workspace_id: str | None) -> str:

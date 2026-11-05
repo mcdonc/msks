@@ -199,7 +199,7 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
         "set-option",
         "-g",
         "status-right",
-        "",
+        tp.status_right(),
         ";",
         "new-session",
         "-s",
@@ -226,6 +226,30 @@ def test_session_argv_escapes_a_hash_in_the_label() -> None:
         ["top"], session="s", workspace_id=None, label="a#b"
     )
     assert argv[argv.index("status-left") + 1] == "[a##b] "
+
+
+def test_status_right_carries_the_hint_then_the_mode() -> None:
+    """#764: the row's right half. The launch-time form is the
+    hint alone (the mode is unknown until the decider's first
+    frame), and the decider's write puts the mode in front."""
+    assert tp.status_right() == f"· {tp.STATUS_HINT}"
+    assert tp.STATUS_HINT == "C-b p popup"
+    assert tp.status_right("interactive") == (
+        f"interactive · {tp.STATUS_HINT}"
+    )
+
+
+def test_mode_argv_writes_the_row_on_the_launch_socket() -> None:
+    argv = tp.mode_argv("msks-ws1-7", "static")
+    assert argv == [
+        "tmux",
+        "-L",
+        "msks-ws1-7",
+        "set-option",
+        "-g",
+        "status-right",
+        f"static · {tp.STATUS_HINT}",
+    ]
 
 
 def test_session_argv_without_a_workspace_ships_no_consent_session() -> None:
@@ -418,7 +442,7 @@ def test_the_status_bar_carries_the_workspace_name() -> None:
             check=True,
         )
         assert proc.stdout.strip() == (
-            f"[project-x] |{tp.STATUS_LEFT_LENGTH}|||"
+            f"[project-x] |{tp.STATUS_LEFT_LENGTH}|||{tp.status_right()}"
         )
     finally:
         subprocess.run(

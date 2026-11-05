@@ -293,6 +293,18 @@ async def test_the_duration_picker_decides_the_picked_window() -> None:
         assert len(posted) == 1
 
 
+def row_writes(ran: list) -> list:
+    """The status row's #764 writes among the recorded tmux
+    argvs — the popup paths' tests treat them as expected
+    traffic beside their own asserts."""
+    return [argv for argv in ran if "status-right" in argv]
+
+
+def apart_from_row_writes(ran: list) -> list:
+    """The recorded argvs without the row's writes."""
+    return [argv for argv in ran if "status-right" not in argv]
+
+
 async def test_a_hold_that_lands_shows_the_popup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -302,8 +314,9 @@ async def test_a_hold_that_lands_shows_the_popup(
     async with build(
         frames, seam, popup_socket=SOCKET, popup_session=tp.CONSENT_SESSION
     ).run_test():
-        await until(lambda: ran)
-    assert ran == [tp.show_popup_argv(SOCKET, VIEWER)]
+        await until(lambda: tp.show_popup_argv(SOCKET, VIEWER) in ran)
+    assert apart_from_row_writes(ran) == [tp.show_popup_argv(SOCKET, VIEWER)]
+    assert row_writes(ran) == [tp.mode_argv(SOCKET, "interactive")]
     assert posted == []
 
 
@@ -685,8 +698,10 @@ async def test_the_show_path_is_deduplicated(
     ).run_test():
         await asyncio.sleep(0.3)
     # The already-open viewer covers the burst: one show, and it
-    # is the hidden-session check, not a subprocess.
-    assert ran == []
+    # is the hidden-session check, not a subprocess. The row's
+    # one write is the only tmux traffic.
+    assert apart_from_row_writes(ran) == []
+    assert row_writes(ran) == [tp.mode_argv(SOCKET, "interactive")]
 
 
 def test_main_builds_the_app_from_the_argv(
@@ -836,7 +851,7 @@ async def test_a_show_that_targets_nothing_retries(
         await until(lambda: pilot.app.show_task.done())
         await asyncio.sleep(0.1)
         assert pilot.app.is_running
-    assert ran == []
+    assert apart_from_row_writes(ran) == []
     assert posted == []
 
 
@@ -1008,8 +1023,8 @@ async def test_the_show_covers_every_shell_client(
     async with build(
         frames, seam, popup_socket=SOCKET, popup_session=tp.CONSENT_SESSION
     ).run_test():
-        await until(lambda: len(ran) == 2)
-    assert ran == [
+        await until(lambda: len(ran) == 3)
+    assert apart_from_row_writes(ran) == [
         tp.show_popup_argv(SOCKET, "/dev/pts/3"),
         tp.show_popup_argv(SOCKET, "/dev/pts/9"),
     ]
@@ -1058,3 +1073,162 @@ async def test_the_quick_keys_read_the_rows_the_operator_sees() -> None:
         await pilot.press("d")
         await until(lambda: len(posted) == 1)
         assert posted == [("ws1", "r2", "deny", "once")]
+
+
+# --- the status row's mode half (#764) --------------------------------------
+
+
+async def test_rules_frames_write_the_status_rows_mode_half(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The persistent app follows the rules into the shell
+    window's tmux row: the first frame writes the mode in front
+    of the hint, a same-mode frame writes nothing more, and a
+    changed mode writes again."""
+    posted, seam = verdict_seam()
+    ran = record_tmux(monkeypatch)
+    frames = [rules_frame(mode="interactive"), request_frame("r1")]
+    async with build(
+        frames, seam, popup_socket=SOCKET, popup_session=tp.CONSENT_SESSION
+    ).run_test() as pilot:
+        await until(lambda: tp.mode_argv(SOCKET, "interactive") in ran)
+        ran.clear()
+        # A hold landing re-lands the same rules: no second write.
+        frames.append(request_frame("r2"))
+        await until(lambda: len(row_texts(pilot.app)) == 2)
+        await asyncio.sleep(0.3)
+        assert tp.mode_argv(SOCKET, "interactive") not in ran
+        # A mode change from any surface writes the new mode.
+        frames.append(rules_frame(mode="static"))
+        await until(lambda: tp.mode_argv(SOCKET, "static") in ran)
+        # The app's own switch (#465) lands through the same
+        # write path: the picker's answer reaches the row without
+        # waiting for the pushed frame (the daemon's reply is the
+        # whole rules frame with ``applied`` beside it).
+        ran.clear()
+        pilot.app.mode_landed(
+            {"workspace_id": "ws1", "mode": "allow", "applied": True},
+            "allow",
+        )
+        await until(lambda: tp.mode_argv(SOCKET, "allow") in ran)
+    assert posted == []
+
+
+async def test_the_standalone_app_writes_no_status_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Standalone owns no tmux socket: the frames land, the row's
+    write path never runs."""
+    posted, seam = verdict_seam()
+    ran = record_tmux(monkeypatch)
+    frames = [rules_frame(), request_frame("r1")]
+    async with build(frames, seam).run_test() as pilot:
+        await until(lambda: len(row_texts(pilot.app)) == 1)
+        await asyncio.sleep(0.3)
+    assert all("status-right" not in " ".join(argv) for argv in ran)
+    assert posted == []
+
+
+async def test_a_mode_change_during_a_write_catches_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The worker writes the mode it read, then writes again when
+    the mode changed while the write was in flight: the row never
+    rests on a stale mode. The first write holds until the second
+    frame has landed and refresh_bar recorded it — the loop-back
+    pass is then the only path to the second write."""
+    posted, seam = verdict_seam()
+    record_tmux(monkeypatch)
+    frames = [rules_frame(mode="allow")]
+    ran = []
+    holder = {}
+    first = {"done": False}
+
+    def land_then_record(argv, **kwargs):
+        if not first["done"]:
+            first["done"] = True
+            frames.append(rules_frame(mode="static"))
+            deadline = time.monotonic() + 5
+            while holder.get("bar_mode") != "static":
+                if time.monotonic() > deadline:
+                    break
+                time.sleep(0.01)
+        ran.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(da.subprocess, "run", land_then_record)
+    app = build(
+        frames, seam, popup_socket=SOCKET, popup_session=tp.CONSENT_SESSION
+    )
+
+    async def mirror() -> None:
+        while True:
+            holder["bar_mode"] = app.bar_mode
+            await asyncio.sleep(0.01)
+
+    async with app.run_test():
+        mirroring = asyncio.create_task(mirror())
+        await until(
+            lambda: (
+                tp.mode_argv(SOCKET, "allow") in ran
+                and tp.mode_argv(SOCKET, "static") in ran
+            )
+        )
+        await until(lambda: app.bar_task.done())
+        mirroring.cancel()
+        assert app.is_running
+    assert ran.index(tp.mode_argv(SOCKET, "allow")) < ran.index(
+        tp.mode_argv(SOCKET, "static")
+    )
+    assert posted == []
+
+
+async def test_a_failed_row_write_changes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A write that times out ends its pass: the row keeps its
+    last write, the app keeps running, and the next change
+    retries."""
+    posted, seam = verdict_seam()
+    record_tmux(monkeypatch)  # the liveness/show stubs; the
+    # recorder below replaces the run stub with the refusal.
+    calls = []
+
+    def refuse_status_writes(argv, **kwargs):
+        calls.append(list(argv))
+        if "status-right" in argv:
+            raise subprocess.TimeoutExpired(argv, 3.0)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(da.subprocess, "run", refuse_status_writes)
+    frames = [rules_frame(mode="interactive"), request_frame("r1")]
+    async with build(
+        frames, seam, popup_socket=SOCKET, popup_session=tp.CONSENT_SESSION
+    ).run_test() as pilot:
+        await until(lambda: pilot.app.bar_task is not None)
+        await until(lambda: pilot.app.bar_task.done())
+        assert pilot.app.is_running
+    # The refused write is the row's alone, once: the popup paths'
+    # calls pass through untouched.
+    writes = [argv for argv in calls if "status-right" in argv]
+    assert writes == [tp.mode_argv(SOCKET, "interactive")]
+    assert posted == []
+
+
+async def test_a_persistent_app_without_a_socket_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Degenerate wiring — a session name with no socket — never
+    reaches subprocess: the write path stands down, the row keeps
+    whatever the launch wrote."""
+    posted, seam = verdict_seam()
+    ran = record_tmux(monkeypatch)
+    frames = [rules_frame(), request_frame("r1")]
+    async with build(
+        frames, seam, popup_socket=None, popup_session=tp.CONSENT_SESSION
+    ).run_test() as pilot:
+        await until(lambda: len(row_texts(pilot.app)) == 1)
+        await until(lambda: pilot.app.bar_task is not None)
+        await until(lambda: pilot.app.bar_task.done())
+        assert ran == []
+    assert posted == []
