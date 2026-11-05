@@ -16,10 +16,10 @@
       
       
       
-        <link rel="prev" href="../tui/">
+        <link rel="prev" href="../secrets/">
       
       
-        <link rel="next" href="../mounts/">
+        <link rel="next" href="../config/">
       
       
         
@@ -340,6 +340,136 @@
     
   
   The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Host Share Mounts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../egress-consent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Consent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
 
     
   </span>
@@ -773,136 +903,6 @@
   
 </nav>
       
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../mounts/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Host Share Mounts
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../networking/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Guest Networking
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../egress-consent/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Egress Consent
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../llm/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  LLM Proxy
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../secrets/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Secrets
-
-    
-  </span>
-  
-  
-
-      </a>
     </li>
   
 
@@ -1821,16 +1821,11 @@ cost:</p>
   imports answer a named <code>507</code> until space comes back. <code>msks
 storage</code> gives the consumers; <code>msks rm</code> and <code>msks image rm</code>
   remove them. The message's other escape is <em>lowering</em> the
-  floor; raising it refuses more, not fewer. Imports are sized
-  when the size is knowable: the image archive is counted twice
-  (retained copy plus unpacked cache), and a home upload with a
-  <code>Content-Length</code> must fit above the floor.</li>
+  floor; raising it refuses more, not fewer.</li>
 </ul>
 <p><code>msks storage &lt;workspace&gt;</code> narrows the workspace table to one
 workspace, by name or id. <code>--json</code> prints the API's <code>GET
-/api/v1/storage</code> document verbatim (state block, per-workspace
-rows, catalog rows). The events channel carries a
-<code>storage.pressure</code> event whenever the pressure changes.</p>
+/api/v1/storage</code> document verbatim.</p>
 <h2 id="msks-create"><code>msks create</code><a class="headerlink" href="#msks-create" title="Permanent link">&para;</a></h2>
 <p>POSTs the API's create body. The positional argument gives the
 workspace's name and follows the daemon's workspace charset:
@@ -2107,9 +2102,7 @@ boot carries bakes the current set, so a restart after a change lands it and
 prunes the dropped mounts.) The daemon validates the whole list against its
 gates and the row rules (a host path appears once per workspace, guest paths
 are absolute and mutually disjoint); a refusal prints its reason on one
-line. A mount the daemon's derived state holds unresolved prints its kind
-after the set. The <a href="../mounts/#the-skip-behavior">mounts chapter</a> holds every
-kind and its reason.</p>
+line.</p>
 <h2 id="msks-umount"><code>msks umount</code><a class="headerlink" href="#msks-umount" title="Permanent link">&para;</a></h2>
 <p>Removes a workspace's mounts of one host path, every guest path
 the share occupies:</p>
@@ -2294,9 +2287,8 @@ now takes. The sole catalog entry stays what it boots (the line
 above). On a catalog holding several images, a bare create needs
 <code>--image</code> until one is designated again, and the line says so.</p>
 <h2 id="msks-home"><code>msks home</code><a class="headerlink" href="#msks-home" title="Permanent link">&para;</a></h2>
-<p>Moves a workspace's <code>/home</code> volume through the daemon (backup,
-migration to another daemon, seeding a fresh workspace with data),
-as the two byte-stream endpoints <code>docs/storage.md</code> documents:</p>
+<p>Moves a workspace's <code>/home</code> volume through the daemon, useful for backup,
+migration to another daemon or seeding a fresh workspace with data.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>my-workspace<span class="w">              </span><span class="c1"># writes my-workspace.ext4</span>
 </span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>my-workspace<span class="w"> </span>other.ext4<span class="w">   </span><span class="c1"># gives the output file</span>
 </span><span id="__span-25-3"><a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>my-workspace<span class="w"> </span>-<span class="w"> </span><span class="p">|</span><span class="w"> </span>gzip<span class="w"> </span>&gt;<span class="w"> </span>backup.ext4.gz
@@ -2307,14 +2299,14 @@ as the two byte-stream endpoints <code>docs/storage.md</code> documents:</p>
 stop it first, <code>msks stop</code> is enough). A boot that arrives during a move
 waits for it and boots the volume the move left. Moves, boots, and deletes
 serialize per workspace, and the waiter answers a named 409 after
-<code>MSKSD_MOVE_WAIT_TIMEOUT_S</code> instead of hanging. Export streams the volume
-file's bytes verbatim and prints one confirmation line (<code>exported
-my-workspace (2097152 bytes) to my-workspace.ext4</code>). <code>-</code> writes the bytes to
-stdout and moves the note to stderr, so a pipe stays clean for gzip or ssh.
-A reader that goes away mid-stream (<code>| head</code>, a compressor on a full disk)
-prints one line on stderr and exits non-zero. Import uploads the named ext4
-image (or stdin, for <code>-</code>), the daemon replaces the volume with it, and the
-reply is the byte count: <code>imported 2097152 bytes into fresh-ws</code>.</p>
+<code>MSKSD_MOVE_WAIT_TIMEOUT_S</code> instead of hanging.</p>
+<p>Export streams the volume file's bytes verbatim and prints one confirmation
+line (<code>exported my-workspace (2097152 bytes) to my-workspace.ext4</code>). <code>-</code> writes
+the bytes to stdout and moves the note to stderr, so a pipe stays clean for
+gzip or ssh. A reader that goes away mid-stream (<code>| head</code>, a compressor on a
+full disk) prints one line on stderr and exits non-zero. Import uploads the
+named ext4 image (or stdin, for <code>-</code>), the daemon replaces the volume with it,
+and the reply is the byte count: <code>imported 2097152 bytes into fresh-ws</code>.</p>
 <p>The daemon refuses with one line and exit 1. Refused: a file that is not an
 ext4 image (<code>msks: 400: the request body is not an ext4 image ...</code>), a
 workspace in the wrong state, and everything the API's refusals give (a
@@ -2329,10 +2321,9 @@ fresh one. Inside a workspace with egress, git and rsync over the forward
 (<code>docs/networking.md</code>) carry day-to-day code. The volume moves are for the
 whole <code>/home</code> at once.</p>
 <h2 id="msks-secret"><code>msks secret</code><a class="headerlink" href="#msks-secret" title="Permanent link">&para;</a></h2>
-<p>Placeholder secrets: mint a sentinel (daemon-wide by default, scoped with
-<code>--workspace</code>) and the daemon keeps your value as per-recipient ciphertext
-blobs in its database. The workspace never holds it (the full story is
-<a href="../secrets/">docs/secrets.md</a>):</p>
+<p>Mint a secret placeholder (daemon-wide by default, scoped with <code>--workspace</code>)
+and the daemon keeps your value as per-recipient ciphertext blobs in its
+database. See also <a href="../secrets/">docs/secrets.md</a>.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="c1"># from a password manager, nothing touches disk: daemon-wide,</span>
 </span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="c1"># one sentinel for every workspace on the daemon</span>
 </span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>op<span class="w"> </span><span class="nb">read</span><span class="w"> </span><span class="s1">'op://Vault/github/credential'</span><span class="w"> </span><span class="se">\</span>
@@ -2357,23 +2348,24 @@ blobs in its database. The workspace never holds it (the full story is
 <p><code>--secret-file</code> takes a path or <code>-</code> for a pipe, and the value is
 whitespace-stripped at both ends. The secret is never accepted as a
 command-line argument, because argv appears in process lists and shell
-history. An empty file is refused before any network roundtrip. <code>--dest</code>
-repeats and binds the swap: an exact host (<code>api.github.com</code>) or a suffix
-that covers every host under a domain (<code>.github.com</code>). <code>--workspace</code> takes
-one ref or a comma list and repeats. Omitted, the mint covers every
-workspace on the daemon (one row, one <code>mskssec2_</code> sentinel), while a scoped
-mint prints a <code>mskssec1_</code> sentinel, so the string alone gives its reach. The
-mint prints the sentinel; the listing and the audit omit it (<code>secret ls</code>
-never shows one). The daemon serves a row's sentinel back on demand over the
-token-authenticated API (the <code>msks tui</code> row panel is that surface). <code>revoke</code>
-and <code>renew</code> take the same targeting the mint took. <code>revoke</code> takes effect on
-the next request and retires the whole row everywhere at once, and <code>renew</code>
-extends a <code>--ttl</code> lifetime in place with the sentinel unchanged.</p>
+history.</p>
+<p>An empty file is refused before any network roundtrip. <code>--dest</code> repeats and
+binds the swap: an exact host (<code>api.github.com</code>) or a suffix that covers every
+host under a domain (<code>.github.com</code>). <code>--workspace</code> takes one ref or a comma
+list and repeats. Omitted, the mint covers every workspace on the daemon (one
+row, one <code>mskssec2_</code> sentinel), while a scoped mint prints a <code>mskssec1_</code>
+sentinel, so the string alone gives its reach. The mint prints the sentinel;
+the listing and the audit omit it (<code>secret ls</code> never shows one). The daemon
+serves a row's sentinel back on demand over the token-authenticated
+API. <code>revoke</code> and <code>renew</code> take the same targeting the mint took. <code>revoke</code> takes
+effect on the next request and retires the whole row everywhere at once, and
+<code>renew</code> extends a <code>--ttl</code> lifetime in place with the sentinel unchanged.</p>
 <h2 id="msks-console"><code>msks console</code><a class="headerlink" href="#msks-console" title="Permanent link">&para;</a></h2>
 <p>An interactive shell inside a workspace, over the daemon's console
-websocket. The command boots the workspace first when the daemon reports it
-as not running. The notices print on stderr while the boot runs, then the
-session attaches:</p>
+websocket. This is useful when <code>msks ssh</code> is not working properly, because it
+works when the ssh daemon is not responding for whatever reason. The command
+boots the workspace first when the daemon reports it as not running. The
+notices print on stderr while the boot runs, then the session attaches:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-27-1"><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>$ msks console my-workspace
 </span><span id="__span-27-2"><a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>msks: my-workspace is stopped; starting it
 </span><span id="__span-27-3"><a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>msks: my-workspace running
@@ -2388,10 +2380,6 @@ or over ssh for the full interactive posture:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>$ msks console my-workspace
 </span><span id="__span-28-2"><a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>(workspace prompt, as root)
 </span></code></pre></div>
-<p>The getty keeps its own terminal geometry for the session's life: the
-console stream is a raw byte pipe, so a window resized mid-session does not
-reach it. Full-screen work (editors, tmux) belongs to an ssh session through
-the forward: ssh's window-change channel resizes its pty live.</p>
 <p>A workspace that is already running attaches with no preamble.
 Two states get special handling:</p>
 <ul>
@@ -2412,28 +2400,7 @@ Ctrl-], or one followed by any other byte, detaches, and the byte that
 followed the escape is consumed with it, so a paste that happens to contain
 a lone Ctrl-] detaches the session. Large pastes travel as a few websocket
 frames (4,096-byte chunks), not one frame per byte. The session needs a tty
-on both stdin and stdout. See the README's workspace-console section for the
-transport story.</p>
-<p>A session whose guest stream stops carrying bytes while input
-keeps flowing is closed by the daemon after
-<code>console_stall_timeout_s</code> (<code>MSKSD_CONSOLE_STALL_TIMEOUT_S</code>, 60 s
-default). The guest pty echoes every input byte, so that silence
-marks a wedged stream, and the client exits with <code>console stalled
-(guest stream wedged; reconnect for a fresh session)</code>.
-Reconnecting opens a fresh shell in the same workspace. An idle
-session stays open indefinitely: the clock runs only while client
-input is waiting for its echo.</p>
-<p>Two caveats. A program that reads with echo off (<code>read -s</code>
-password prompts, <code>su</code>) also draws no echo, so a prompt left
-waiting past the window closes the session. Set the timeout
-higher, or to <code>0</code> for off, for such workflows. The deadline is
-anchored at the first unanswered input, so continuous sending
-into a dead console still gets the named close one window later.
-A stream that wedges while the helper still holds undelivered
-output is closed by the helper's own teardown after 300 s
-(without the 4502 name). A stream that wedges fully idle stays
-open, because nothing is in flight to time, until the next input
-arms the daemon's clock.</p>
+on both stdin and stdout.</p>
 <h2 id="msks-forward"><code>msks forward</code><a class="headerlink" href="#msks-forward" title="Permanent link">&para;</a></h2>
 <p>A guest TCP port on this command's stdio (the pipe ssh's
 ProxyCommand expects), over the daemon's forward websocket. The
@@ -2441,7 +2408,7 @@ command boots the workspace first when the daemon reports it as
 not running (the same notices as <code>msks console</code>), then bridges
 bytes unexamined in both directions: a tty is not required, and
 binary protocols (ssh, rsync) pass through it cleanly:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-29-1"><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>msks<span class="w"> </span>forward<span class="w"> </span>my-workspace<span class="w"> </span><span class="m">22</span><span class="w">                 </span><span class="c1"># stdio: ProxyCommand shape</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-29-1"><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>msks<span class="w"> </span>forward<span class="w"> </span>my-workspace<span class="w"> </span><span class="m">22</span><span class="w">                  </span><span class="c1"># stdio: ProxyCommand shape</span>
 </span><span id="__span-29-2"><a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>msks<span class="w"> </span>forward<span class="w"> </span>my-workspace<span class="w"> </span><span class="m">8080</span><span class="w"> </span>--local<span class="w"> </span><span class="m">8080</span><span class="w">   </span><span class="c1"># loopback listener</span>
 </span></code></pre></div>
 <p><code>--local PORT</code> binds <code>127.0.0.1:PORT</code> instead of stdio. Every accepted
@@ -2450,40 +2417,27 @@ and a curl, two ssh sessions) are independent sessions. Refusals print one
 line (the daemon's close codes give the cause: no NIC, not running, service
 not listening, still booting), while a clean end of stream (the guest
 service closed, stdin EOF) leaves exit code 0.</p>
-<p>The forward authenticates with the websocket handshake's <code>Authorization:
-Bearer</code> header (the same scheme as every other msks surface): the token
-never appears in a URL, so proxy and process logs hold no credentials. Only
-egress workspaces have a NIC to forward to. A workspace created
-<code>--no-egress</code> is refused with the reason naming it. <code>forward.opened</code> and
-<code>forward.closed</code> events appear on the daemon's events channel for every
-session.</p>
 <h2 id="msks-egress"><code>msks egress</code><a class="headerlink" href="#msks-egress" title="Permanent link">&para;</a></h2>
-<p>Egress consent: decide, watch, and inspect a workspace's
-outbound-destination verdicts. A workspace in <code>interactive</code> mode
-holds each new outbound connection's first packet until a decider
-allows or denies it. For web flows (TCP 80/443) of an armed
-interceptor workspace, the hold lands at the connection's TLS
-handshake or its first HTTP request and shares the same rows and
-durations. <code>static</code> workspaces allow only their create-time
-allowlist. <code>allow</code> workspaces (the create default) record
-off-list destinations and pass them.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>msks tui                          # THE decider: the workspace page's
-</span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>                                  # egress consent page (see `msks` above)
-</span><span id="__span-30-3"><a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>msks egress rules ws-dev          # the mode, allowlist, and in-effect verdicts
-</span><span id="__span-30-4"><a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>msks egress requests ws-dev       # the consent rows (audit trail), newest first
-</span><span id="__span-30-5"><a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a>msks egress requests ws-dev --decision pending
-</span><span id="__span-30-6"><a id="__codelineno-30-6" name="__codelineno-30-6" href="#__codelineno-30-6"></a>msks egress decide ws-dev &lt;request-id&gt; allow --duration 5m
-</span><span id="__span-30-7"><a id="__codelineno-30-7" name="__codelineno-30-7" href="#__codelineno-30-7"></a>msks egress decide ws-dev &lt;request-id&gt; deny --duration forever
-</span><span id="__span-30-8"><a id="__codelineno-30-8" name="__codelineno-30-8" href="#__codelineno-30-8"></a>msks egress revoke ws-dev &lt;request-id&gt;
-</span><span id="__span-30-9"><a id="__codelineno-30-9" name="__codelineno-30-9" href="#__codelineno-30-9"></a>msks egress mode ws-dev interactive          # switch the posture;
-</span><span id="__span-30-10"><a id="__codelineno-30-10" name="__codelineno-30-10" href="#__codelineno-30-10"></a>msks egress mode ws-dev static --allow .debian.org   # --allow replaces
-</span><span id="__span-30-11"><a id="__codelineno-30-11" name="__codelineno-30-11" href="#__codelineno-30-11"></a>msks egress mode ws-dev static --offline     # ... the allowlist (--offline
-</span><span id="__span-30-12"><a id="__codelineno-30-12" name="__codelineno-30-12" href="#__codelineno-30-12"></a>                                              # confirms an empty static)
-</span><span id="__span-30-13"><a id="__codelineno-30-13" name="__codelineno-30-13" href="#__codelineno-30-13"></a>msks egress watch ws-dev          # stream frames; registers this client as
-</span><span id="__span-30-14"><a id="__codelineno-30-14" name="__codelineno-30-14" href="#__codelineno-30-14"></a>                                  # a decider (holds wait only while one is
-</span><span id="__span-30-15"><a id="__codelineno-30-15" name="__codelineno-30-15" href="#__codelineno-30-15"></a>                                  # connected)
-</span><span id="__span-30-16"><a id="__codelineno-30-16" name="__codelineno-30-16" href="#__codelineno-30-16"></a>msks egress watch ws-dev --decide --duration forever
-</span><span id="__span-30-17"><a id="__codelineno-30-17" name="__codelineno-30-17" href="#__codelineno-30-17"></a>                                  # the same, prompting y/n per request
+<p>Decide, watch, and inspect a workspace's outbound-destination egress consent
+verdicts. A workspace in <code>interactive</code> mode holds each new outbound
+connection's first packet until a decider allows or denies it. <code>static</code>
+workspaces allow only their create-time allowlist. <code>allow</code> workspaces (the
+create default) record off-list destinations and pass them.</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>msks egress rules ws-dev          # the mode, allowlist, and in-effect verdicts
+</span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>msks egress requests ws-dev       # the consent rows (audit trail), newest first
+</span><span id="__span-30-3"><a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>msks egress requests ws-dev --decision pending
+</span><span id="__span-30-4"><a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>msks egress decide ws-dev &lt;request-id&gt; allow --duration 5m
+</span><span id="__span-30-5"><a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a>msks egress decide ws-dev &lt;request-id&gt; deny --duration forever
+</span><span id="__span-30-6"><a id="__codelineno-30-6" name="__codelineno-30-6" href="#__codelineno-30-6"></a>msks egress revoke ws-dev &lt;request-id&gt;
+</span><span id="__span-30-7"><a id="__codelineno-30-7" name="__codelineno-30-7" href="#__codelineno-30-7"></a>msks egress mode ws-dev interactive          # switch the posture;
+</span><span id="__span-30-8"><a id="__codelineno-30-8" name="__codelineno-30-8" href="#__codelineno-30-8"></a>msks egress mode ws-dev static --allow .debian.org   # --allow replaces
+</span><span id="__span-30-9"><a id="__codelineno-30-9" name="__codelineno-30-9" href="#__codelineno-30-9"></a>msks egress mode ws-dev static --offline     # ... the allowlist (--offline
+</span><span id="__span-30-10"><a id="__codelineno-30-10" name="__codelineno-30-10" href="#__codelineno-30-10"></a>                                              # confirms an empty static)
+</span><span id="__span-30-11"><a id="__codelineno-30-11" name="__codelineno-30-11" href="#__codelineno-30-11"></a>msks egress watch ws-dev          # stream frames; registers this client as
+</span><span id="__span-30-12"><a id="__codelineno-30-12" name="__codelineno-30-12" href="#__codelineno-30-12"></a>                                  # a decider (holds wait only while one is
+</span><span id="__span-30-13"><a id="__codelineno-30-13" name="__codelineno-30-13" href="#__codelineno-30-13"></a>                                  # connected)
+</span><span id="__span-30-14"><a id="__codelineno-30-14" name="__codelineno-30-14" href="#__codelineno-30-14"></a>msks egress watch ws-dev --decide --duration forever
+</span><span id="__span-30-15"><a id="__codelineno-30-15" name="__codelineno-30-15" href="#__codelineno-30-15"></a>                                  # the same, prompting y/n per request
 </span></code></pre></div>
 <p><code>decide</code> and <code>revoke</code> identify the request by the id <code>watch</code> and <code>requests</code>
 print (the full id, copy-pasteable). Both act only on the given workspace's
@@ -2500,7 +2454,8 @@ transaction, established connections survive (an attached <code>msks ssh</code> 
 stays up), the resolver flips with the chain, and any held request answers
 deny when the switch leaves <code>interactive</code>. A stopped workspace builds the
 new posture at its next start. The command's output line says which
-happened. Verdicts carry across switches: an <code>allow forever</code> granted under
+happened.</p>
+<p>Verdicts carry across switches: an <code>allow forever</code> granted under
 <code>interactive</code> keeps acting under <code>static</code>. Switching to <code>static</code> therefore
 freezes the workspace at everything approved so far: name-keyed verdicts in
 full and, on a direct gated-to-gated switch, the kernel-side pins too. A
@@ -2514,23 +2469,18 @@ the fix: pass <code>--allow</code> entries, or pass <code>--offline</code> to ru
 anyway. That posture answers every name NXDOMAIN: an offline workspace
 reachable only by ssh.</p>
 <h2 id="msks-key"><code>msks key</code><a class="headerlink" href="#msks-key" title="Permanent link">&para;</a></h2>
-<p>The workspace's ssh identity: every workspace a local-backend
-daemon creates carries the public half its create sent, the
-operator's key, whose line the guest's first boot planted into
-<code>authorized_keys</code> for root and the workspace's login user. The
-fetch takes the same <code>MSKSC_URL</code>/<code>MSKSC_TOKEN</code>/<code>MSKSC_CAFILE</code>
-environment as every other command:</p>
+<p>Displays the workspace's ssh identity. Every workspace a local-backend daemon
+creates carries the public half its create sent, the operator's key, whose line
+the guest's first boot planted into <code>authorized_keys</code> for root and the
+workspace's login user. The fetch takes the same
+<code>MSKSC_URL</code>/<code>MSKSC_TOKEN</code>/<code>MSKSC_CAFILE</code> environment as every other command:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-31-1"><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a>msks<span class="w"> </span>key<span class="w"> </span>my-workspace<span class="w">                    </span><span class="c1"># the public authorized_keys line</span>
 </span></code></pre></div>
 <p>The command is public-only: the private half is the operator's own key, and
 it never crossed the API to begin with. It lives wherever <code>identity_file</code>
-points, or in the agent that holds it. A workspace that predates answers 404
-with "no ssh identity"; a keyless create (a deliberate API call with no key)
-answers the same. The public half persists across daemon restarts and
-workspace stop/start.</p>
+points, or in the agent that holds it.</p>
 <h2 id="msks-ssh"><code>msks ssh</code><a class="headerlink" href="#msks-ssh" title="Permanent link">&para;</a></h2>
-<p>Stock ssh into a workspace over the forward, with the identity
-staged in memory: one command, no key steps:</p>
+<p>Stock ssh into a workspace, using a forward.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w">              </span><span class="c1"># as the workspace's login user</span>
 </span><span id="__span-32-2"><a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-l<span class="w"> </span>root<span class="w">   </span><span class="c1"># the recovery login</span>
 </span><span id="__span-32-3"><a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-A<span class="w">        </span><span class="c1"># forward your agent ($SSH_AUTH_SOCK)</span>
@@ -2545,16 +2495,16 @@ fetches the identity over the authenticated API and runs <code>ssh</code>
 with the forward websocket as its ProxyCommand (<code>msks forward
 &lt;ws&gt; 22</code>).</p>
 <p>A session that booted its workspace waits out the guest's first boot. The
-daemon reports <code>running</code> while the guest's sshd is already up but the
-identity seed has yet to land in <code>authorized_keys</code>. The command therefore
-probes the login first, with a throwaway <code>true</code> as the remote command,
-retried for up to 30s with a one-line notice between attempts. It opens the
-real session, interactive or one-shot, once the guest accepts the workspace
-key. A remote command runs exactly once either way. The probe carries only
-the session's login user and agent-forwarding setting, plus msks's own
-transport, its quiet flag, and a <code>true</code> command. A session's tunnels and
-other ssh options therefore cannot hold the wait open or alter it. The
-session itself keeps every option.</p>
+daemon reports <code>running</code> while the guest's sshd is already up but the identity
+seed has yet to land in <code>authorized_keys</code>. The command therefore probes the
+login first, with a throwaway <code>true</code> as the remote command, retried for up to
+30s with a one-line notice between attempts. It opens the real session,
+interactive or one-shot, once the guest accepts the workspace key. A remote
+command runs exactly once either way.</p>
+<p>The probe carries only the session's login user and agent-forwarding setting,
+plus msks's own transport, its quiet flag, and a <code>true</code> command. A session's
+tunnels and other ssh options therefore cannot hold the wait open or alter
+it. The session itself keeps every option.</p>
 <p>The API serves the public half, and the private half resolves at
 session time. Your own agent comes first: when <code>SSH_AUTH_SOCK</code>
 gives a live agent holding the workspace's key, matched on the
@@ -2565,8 +2515,7 @@ operator identity: <code>identity_file</code> (or <code>MSKSC_IDENTITY_FILE</cod
 the same key the create planted. When neither holds the
 workspace's key, the command exits with one line giving both
 rungs and the ways back in (ssh-add the key, point identity*file
-at it, or ssh -i directly). The console keeps working either
-way: it is the token-gated root autologin, not a key login.</p>
+at it, or ssh -i directly).</p>
 <p>The session writes no new copy of the private half anywhere. A
 transient in-process ssh-agent holds it in memory for the
 session; ssh identifies the identity by its public half (<code>-i</code>,
@@ -2582,22 +2531,21 @@ keys on the workspace's immutable id, so a workspace recreated
 under the same name starts with a fresh cache and trusts its own
 first-boot keys again. Every invocation pins under that one id
 alias, whichever way the workspace was addressed: <code>msks ssh
-&lt;name&gt;</code> and the TUI's shell action record the same known_hosts
+&lt;name&gt;</code> and the TUI's shell action record the same <code>known_hosts</code>
 entry, and an operator's own <code>~/.ssh/config</code> <code>Host &lt;name&gt;</code> block
 no longer matches the session (the id is the hostname msks ssh
-dials; use the id in a matching block instead). Host keys persist
-across stop/start on the workspace's overlay, so the
-first-connection entry keeps matching. When the daemon recreates
-the overlay under a live workspace (a healed loss, a factory
-reset), the guest regenerates its host keys: the daemon advances
-the workspace's disk epoch, the cache rotates with it, and the
-next connection pins the fresh keys with a notice marking the
-recreation instead of refusing. A rotation leaves the previous
-epoch's cache behind (the <code>&lt;id&gt;/</code> directory, then <code>&lt;id&gt;.e1/</code>,
-<code>&lt;id&gt;.e2/</code>, ... as rotations accumulate); those directories are
-dead: delete them at will. The alias block keeps its own
-known_hosts under <code>~/.cache/msks/msks-&lt;ws&gt;/</code>; the two paths
-record the same host key independently.</p>
+dials; use the id in a matching block instead).</p>
+<p>Host keys persist across stop/start on the workspace's overlay, so the
+first-connection entry keeps matching. When the daemon recreates the overlay
+under a live workspace (a healed loss, a factory reset), the guest regenerates
+its host keys: the daemon advances the workspace's disk epoch, the cache
+rotates with it, and the next connection pins the fresh keys with a notice
+marking the recreation instead of refusing. A rotation leaves the previous
+epoch's cache behind (the <code>&lt;id&gt;/</code> directory, then <code>&lt;id&gt;.e1/</code>, <code>&lt;id&gt;.e2/</code>,
+... as rotations accumulate); those directories are dead: delete them at
+will. The alias block keeps its own known_hosts under
+<code>~/.cache/msks/msks-&lt;ws&gt;/</code>; the two paths record the same host key
+independently.</p>
 <p>Agent forwarding asked for on the command line (<code>-A</code>, or <code>-o
 ForwardAgent=yes</code>) forwards <strong>your</strong> agent, the socket
 <code>SSH_AUTH_SOCK</code> gives. <code>ssh-add -l</code> inside the workspace lists
@@ -2645,7 +2593,7 @@ child's PATH. It inherits your environment: <code>MSKSC_URL</code>,
 The networking chapter's alias workflow covers the <code>Host msks-*</code>
 configuration that hides all of this.</p>
 <h2 id="msks-rsync"><code>msks rsync</code><a class="headerlink" href="#msks-rsync" title="Permanent link">&para;</a></h2>
-<p>Stock rsync against a workspace over the forward, with the
+<p>Stock rsync against a workspace over an ssh forward, with the
 identity staged in memory: one command does the whole setup
 itself. The workspace boots when needed, the identity stages in
 memory, and the copy opens its own forward:</p>
