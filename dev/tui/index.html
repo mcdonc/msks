@@ -881,10 +881,10 @@
 
 
 <h1 id="the-tui">The TUI<a class="headerlink" href="#the-tui" title="Permanent link">&para;</a></h1>
-<p>The terminal UI and the command-line client are one program. The TUI uses
-the same REST API as the CLI commands, with the same environment
-variables, config file, and daemon aliases. It reads no daemon state
-directly: every page uses the API.</p>
+<p>The terminal UI and the command-line client are one program named <code>msks</code>.</p>
+<p>The TUI uses the same REST API as the CLI commands, with the same environment
+variables, config file, and daemon aliases. It reads no daemon state directly:
+every page uses the API.</p>
 <p>A bare <code>msks</code> (no arguments at all) launches the full-screen workspace
 tree. <code>msks tui</code> is the same command, and <code>msks tui my-workspace</code> opens
 that workspace's page directly.</p>
@@ -892,10 +892,6 @@ that workspace's page directly.</p>
 <p><img alt="The workspaces list: two rows, the status bar's count and daemon URL" src="../screens/workspaces-list.svg" /></p>
 <p>The tree is rooted at the <strong>workspaces list</strong>: one row per workspace,
 newest first. The CREATED column's arrow shows the sort direction. The
-columns follow the terminal's width: on a wide terminal, the name and
-image columns take the extra cells, so long names and image references
-read whole instead of clipping. At 80 columns or narrower the layout is
-fixed. The
 list's keys: <code>c</code> creates a workspace, <code>s</code> starts it, <code>S</code> stops it, <code>D</code>
 removes it (after a confirmation), <code>e</code> opens the secrets page, and <code>r</code>
 refreshes. <code>/</code> jumps to the first workspace whose name starts with what
@@ -905,11 +901,9 @@ from another surface (the CLI, another operator) appears without a
 keypress.</p>
 <p>When you create a workspace, it looks like this:</p>
 <p><img alt="The create form over the list" src="../screens/create-form.svg" /></p>
-<p>The <strong>secrets page</strong> lists every placeholder the daemon holds, in five
-columns: coverage (<code>*</code> for the daemon-wide row, otherwise its workspace
-ids), name, destinations, remaining lifetime, and created date. Its
-columns widen with the terminal the same way: the coverage, name, and
-destinations columns take the extra cells.</p>
+<p>The <strong>secrets page</strong> lists every placeholder the daemon holds, in columns:
+coverage (<code>*</code> for the daemon-wide row, otherwise its workspace ids), name,
+destinations, remaining lifetime, and created date.</p>
 <p><img alt="The secrets page: the placeholder list" src="../screens/secrets-page.svg" /></p>
 <p>You can register secret placeholders for your workspace to use instead of
 putting actual secrets into VMs.</p>
@@ -923,11 +917,11 @@ lifetime is highlighted. Picking one extends the row in place.</p>
 <p><code>c</code> opens the mint form. The name field comes first, then repeatable
 destinations: an exact host or a label-anchored suffix, comma-separated
 in one field. Coverage follows: the daemon-wide row, or a multi-select
-fed by the tree's workspace list. The lifetime field offers <code>unbounded</code>
-by default, with an hour to thirty days beside it. The value is a masked
-field you type or paste into, so the form takes the secret's bytes
-directly. Submit checks the secret store first (<code>msks secret check</code>'s
-endpoint), then mints.</p>
+fed by the tree's workspace list.</p>
+<p>The lifetime field offers <code>unbounded</code> by default, with an hour to thirty days
+beside it. The value is a masked field you type or paste into, so the form
+takes the secret's bytes directly. Submit checks the secret store first (<code>msks
+secret check</code>'s endpoint), then mints.</p>
 <p><img alt="The sentinel's panel: masked, with Show and Copy" src="../screens/sentinel-panel.svg" /></p>
 <p>A successful mint replaces the form with the sentinel's panel. The
 sentinel opens masked: the prefix shows its reach (<code>mskssec1_</code> is
@@ -935,13 +929,13 @@ scoped to the chosen workspaces, <code>mskssec2_</code> goes to every accepting
 workspace), and the body renders as bullets. <code>s</code> shows and hides it
 again. <code>c</code> copies the sentinel to the terminal's clipboard over
 OSC 52; a terminal that honors the sequence answers the copy (over ssh
-included, with no reveal needed). The display ends with the panel:
-closing it clears its text, and the minted row stays in the page's
-list. Enter (or a click) on a listing row opens the panel again. The
-page fetches the row's sentinel from the daemon and shows it with the
-same show and copy actions, so the sentinel reads back on demand, both
-at mint time and after. Each placeholder row cross-references its
-workspaces, for navigation.</p>
+included, with no reveal needed).</p>
+<p>The display ends with the panel: closing it clears its text, and the minted row
+stays in the page's list. Enter (or a click) on a listing row opens the panel
+again. The page fetches the row's sentinel from the daemon and shows it with
+the same show and copy actions, so the sentinel reads back on demand, both at
+mint time and after. Each placeholder row cross-references its workspaces, for
+navigation.</p>
 <p><img alt="The workspace page: header, consent line, the three action groups" src="../screens/workspace-page.svg" /></p>
 <p>The <strong>workspace page</strong> operates on an already-created workspace. Its
 two-line header: the workspace's name on the first line with its status
@@ -975,17 +969,17 @@ editor with the last saved set.</p>
 <p>Every change posts the whole list to the daemon's mounts route. The
 reply repaints each row with its derived state (<code>healthy</code>, or the
 skip's kind and reason); a refusal appears on the editor's note line,
-and the refused list is rolled back. The daemon owns the rules: a host
-path outside the allowed roots, or one under a root the daemon's VM
-does not mount, is refused with the remedy stated. The <a href="../mounts/">mounts
-chapter</a> and the <a href="../config/#host-share-mounts">configuration
-rows</a> describe the behavior; the CLI's
-<a href="../cli/#msks-mount"><code>msks mount</code></a> uses the same route.</p>
+and the refused list is rolled back.</p>
+<p>The daemon owns the rules: a host path outside the allowed roots, or one under
+a root the daemon's VM does not mount, is refused with the remedy stated. The
+<a href="../mounts/">mounts chapter</a> and the <a href="../config/#host-share-mounts">configuration
+rows</a> describe the behavior; the CLI's <a href="../cli/#msks-mount"><code>msks
+mount</code></a> uses the same route.</p>
 <p><img alt="The image page: the catalog group, then the published channel" src="../screens/image-page.svg" /></p>
 <p><code>i</code>: the image page. The catalog group comes first, with the default
 marker and each import's date on its rows. Then the published channel's
-rows follow, with their descriptions, sizes, and membership markers.
-The published group lists only the rows this daemon's machine can boot:
+rows follow, with their descriptions, sizes, and membership markers.</p>
+<p>The published group lists only the rows this daemon's machine can boot:
 a row that declares another architecture stays off the page, and a row
 that declares none is shown (<code>msks image import</code> follows the same
 rule). <code>[imported]</code> marks a row whose archive the catalog holds by
@@ -1018,8 +1012,7 @@ verdict; the row leaves on the daemon's refreshed frame, never
 optimistically.</p>
 <p><img alt="The mode picker: the three postures, the current one highlighted" src="../screens/mode-picker.svg" /></p>
 <p><code>m</code> opens the mode picker (<code>allow</code> / <code>static</code> / <code>interactive</code>, the
-current mode highlighted). It is the only way to switch modes since the
-workspace page's own mode action was removed. Picking a mode switches it
+current mode highlighted). Picking a mode switches it
 through the same endpoint <code>msks egress mode</code> uses, without leaving the
 page. The status line shows the new mode once the switch takes effect.
 Picking <code>static</code> while nothing is effectively allowed asks the same
@@ -1042,7 +1035,8 @@ including changes that wait for the next boot.</p>
 and the page stops the workspace, then applies the resize; decline and
 the workspace keeps running with its sizes unchanged. Home size changes
 apply immediately; root growth and the new topology apply at the next
-boot. A resize the daemon still refuses (a root shrink, among others)
+boot.</p>
+<p>A resize the daemon still refuses (a root shrink, among others)
 states its reason on the consent line. The name, image, and user fields
 show their current values read-only, marked <code>*</code> as create-time:
 changing them is a delete-and-recreate, and the dialog refuses a
@@ -1053,28 +1047,26 @@ the dialog and changes nothing.</p>
 terminal: the tree exits, the ssh session runs where it stood, and the
 tree restarts when the session returns the terminal. It uses ssh rather
 than the console because the console keeps the getty's geometry while
-ssh carries every resize to the guest. A workspace ssh cannot reach (no
-NIC, no identity configured) takes a longer path. The flow boots a
-stopped workspace first (the ssh session it runs boots it itself) and
-probes the forward. A probe that reports a refusal (no NIC, the service
-not listening) opens no session: the tree's first flash leads with the
-<code>msks console</code> suggestion and follows with the refusal's first line. The
-row ellipsizes at its end, so the suggestion stays visible. The full
-refusal text is logged before the tree restarts. The console stays a
-command you choose to run, not a session the flow opens for you.</p>
+ssh carries every resize to the guest.</p>
+<p>A workspace ssh cannot reach (no NIC, no identity configured) takes a longer
+path. The flow boots a stopped workspace first (the ssh session it runs boots
+it itself) and probes the forward. A probe that reports a refusal (no NIC, the
+service not listening) opens no session: the tree's first flash leads with the
+<code>msks console</code> suggestion and follows with the refusal's first line. The row
+ellipsizes at its end, so the suggestion stays visible. The full refusal text
+is logged before the tree restarts.</p>
 <p>An ssh session that ran reports only its exit code, 255 included: ssh
 passes a session's own exit through unchanged, and a console after a
 finished session would be a surprise, not a fallback. The action works
 on a stopped workspace too: the ssh session boots the workspace itself
 (it carries the workspace's id, and prints the pre-flight's <code>msks: &lt;id&gt;
 is stopped; starting it</code>).</p>
-<p>A host that wants shells in windows beside the running tree configures
-a terminal launcher (<code>terminal_open_cmd</code> below). The action then spawns
-the launcher with a <code>msks ssh</code> invocation appended. The spawned shell
-inherits the tree's resolved connection, so it reaches the same daemon.
-A launcher that cannot start (a missing binary, one without the execute
-bit) reports the reason on the tree's first flash, and the shell runs
-in this terminal instead: a chained <code>msks console</code> session.</p>
+<p>A host that wants shells in windows beside the running tree configures a
+terminal launcher (<code>terminal_open_cmd</code> below). The action then spawns the
+launcher with a <code>msks ssh</code> invocation appended. The spawned shell inherits the
+tree's resolved connection, so it reaches the same daemon. A launcher that
+cannot start (a missing binary, one without the execute bit) reports the reason
+on the tree's first flash, exits to the workspace page.</p>
 <p>Every screen is navigable with arrow keys. Lists move with up/down, the
 create form's fields move with up/down between them, and Escape leaves
 the screen it is on. <code>q</code> backs out of a page; at the workspaces list,

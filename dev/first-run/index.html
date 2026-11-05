@@ -916,6 +916,7 @@ works on macOS.</p>
 <p>With the host prepared, the service lingered, and an image imported, invoking
 the <code>msks</code> (the client) on the same account will find the socket.</p>
 <h2 id="the-key-files">The key files<a class="headerlink" href="#the-key-files" title="Permanent link">&para;</a></h2>
+<p>You need to configure an ssh key before msksd/msks will work properly.</p>
 <p>Every workspace msks uses your public ssh key as the workspace's operator
 identity.</p>
 <p>Every <code>msks ssh</code> and <code>msks rsync</code> session uses your private half.</p>
@@ -923,7 +924,6 @@ identity.</p>
 locks workspace secrets on the daemon: values a workspace needs at runtime are
 sealed under the identity, and the client unlocks them with the private half
 again.</p>
-<p>Thus, you need to configure an ssh key before msksd/msks will work properly.</p>
 <p>The client names the key in its YAML file
 (<code>~/.config/msks/msks.yaml</code>) or its environment, with two keys:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">identity_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/id_ed25519</span><span class="w"> </span><span class="c1"># the private half</span>
