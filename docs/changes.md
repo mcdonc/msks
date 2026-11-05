@@ -128,10 +128,10 @@ tagged `vX.Y.Z`.
   the daemon's journal, carrying the whole frame as JSON. On
   Linux read it with `journalctl --user -u msksd`; on a macOS
   host, `sudo journalctl -u msksd` inside the Lima VM. The
-  shipped units set no per-service journal rate limit, so a
-  burst of event lines cannot silence the daemon's error lines;
-  re-run the host setup tools to refresh an existing unit.
-  Secret values and sentinels never ride event frames.
+  event lines are INFO and sit in journald's own rate-limit
+  pool, separate from the daemon's error lines; journald's
+  retention rotates the record. Secret values and sentinels
+  never ride event frames.
 
 - **The Linux host setups link `msks-term-popup` beside `msks`
   (#755).** `msks-setup-debian-host` and `msks-setup-fedora-host`
