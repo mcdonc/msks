@@ -1447,6 +1447,16 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>The term-popup status row shows the egress mode and the
+  popup key (#764).</strong> <code>msks-term-popup</code>'s shell window pins
+  <code>interactive · C-b p popup</code> to the right side of its tmux
+  status row. The key hint lands at launch, and the hidden
+  decider app fills the mode in front of it from its first
+  rules frame, updating it on every change whatever surface
+  decided it. A window with no workspace (a plain shell) ships
+  neither half.</p>
+</li>
+<li>
 <p><strong>The daemon journals every published event (#762).</strong> Every
   frame the events hub publishes also writes one INFO line to
   the daemon's journal, carrying the whole frame as JSON. On
