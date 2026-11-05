@@ -96,12 +96,20 @@ becomes a chat completion, the router answers, and the answer
 comes back as a Messages message: content blocks, `stop_reason`,
 and usage mapped field for field. A streamed answer renders as
 Messages events (`message_start` through `message_stop`), with
-chunk usage requested from the upstream. A request that names a
+the upstream asked for chunk usage: the output-token count lands
+in the closing `message_delta`, and the opening frame carries a
+zero input count in this mode (the OpenAI chunk stream delivers
+usage only after the frame has gone out). A request that names a
 model the list does not carry uses the first configured model,
 the same rule the OpenAI pair follows, so claude-code's own model
 names need no mapping. Fields the OpenAI completion body has no
-counterpart for drop in this mode: `top_k`, thinking blocks,
-and the prompt-cache markers.
+counterpart for drop in this mode: `top_k`, `thinking`, and the
+prompt-cache markers.
+
+Asking for chunk usage also changed the router's parameter
+handling: a request field the target provider rejects now drops
+instead of failing the request, on both the Messages route and
+the OpenAI pair.
 
 The two modes treat a guest's routing fields differently, and
 the difference is deliberate. Router mode walks the request
@@ -111,13 +119,51 @@ forwards the body verbatim, because the Messages body is the
 upstream's own contract: the credential is the header set the
 daemon builds (the entry's key as `x-api-key`), and a field in
 the body names no credential the upstream honors beside it. An
-allowlist walk here would also drop valid Messages fields
-(`top_k`, the cache markers) that the upstream itself
+allowlist walk here would also drop valid top-level Messages
+fields (`top_k`, `thinking`) that the upstream itself
 understands.
 
 claude-code also asks `POST /v1/messages/count_tokens` for its
 context tracking. Passthrough mode forwards it verbatim;
 router mode answers 404, and the client estimates locally.
+
+Configuring the proxy for claude-code is one `msks.yaml` block.
+The passthrough form names one Messages upstream, and every
+model it serves is available:
+
+```yaml
+llm_models:
+  - model_name: "*"
+    params:
+      api_base: https://api.anthropic.com/v1
+      api_key: file:/etc/msksd/anthropic.key
+```
+
+The environment form is equivalent:
+`MSKSD_LLM_MODELS='*:https://api.anthropic.com/v1:file:/etc/msksd/anthropic.key'`.
+An Anthropic-compatible gateway works the same way: point
+`api_base` at the gateway's own base.
+
+The multi-provider form serves claude-code beside other clients.
+An entry whose logical name is the model name claude-code sends
+answers that model's requests directly; a name the list does not
+carry falls to the first entry:
+
+```yaml
+llm_models:
+  - model_name: claude-sonnet-4-5
+    params:
+      model: anthropic/claude-sonnet-4-5
+      api_key: file:/etc/msksd/anthropic.key
+  - model_name: gpt-4o
+    params:
+      model: openai/gpt-4o
+      api_key: file:/etc/msksd/openai.key
+```
+
+With this list, a claude-code request for `claude-sonnet-4-5`
+takes the first entry, and an OpenAI-shaped client asking for
+`gpt-4o` takes the second.
 
 ## Secrets stay out of the config file
 

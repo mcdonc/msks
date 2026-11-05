@@ -595,15 +595,16 @@ class LlmRouter:
         return resp
 
     async def passthrough_count_tokens(
-        self, body: dict, version: str | None
+        self, body: dict, version: str | None, beta: str | None
     ) -> dict:
         """Forward one count-tokens request (#765): the answer is
-        the upstream's own, verbatim."""
+        the upstream's own, verbatim — the same header set the
+        Messages route builds."""
         assert self._http_client is not None
         resp = await self._http_client.post(
             f"{self._passthrough_base}/messages/count_tokens",
             json=body,
-            headers=self.anthropic_headers(version, None),
+            headers=self.anthropic_headers(version, beta),
         )
         resp.raise_for_status()
         return resp.json()
@@ -1839,11 +1840,18 @@ def build_proxy_app(proxy: LlmProxy) -> FastAPI:
         if failure is not None:
             return failure
         if not router.passthrough:
-            raise HTTPException(status_code=404, detail="no token counter")
+            return JSONResponse(
+                status_code=404,
+                content=anthropic_api_error(
+                    "no token counter for a routed model list"
+                ),
+            )
         try:
             return JSONResponse(
                 content=await router.passthrough_count_tokens(
-                    body, request.headers.get("anthropic-version")
+                    body,
+                    request.headers.get("anthropic-version"),
+                    request.headers.get("anthropic-beta"),
                 )
             )
         except Exception:

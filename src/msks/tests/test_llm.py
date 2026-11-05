@@ -2449,6 +2449,7 @@ async def test_count_tokens_forwards_in_passthrough_and_404s_in_router() -> (
 
     def counter(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/messages/count_tokens")
+        assert request.headers.get("anthropic-beta") == "beta-x"
         body = json.loads(request.content.decode())
         return httpx.Response(200, json={"input_tokens": len(str(body))})
 
@@ -2459,7 +2460,7 @@ async def test_count_tokens_forwards_in_passthrough_and_404s_in_router() -> (
     async with async_client(proxy, "10.0.0.1") as http:
         reply = await http.post(
             "/v1/messages/count_tokens",
-            headers=AUTH,
+            headers={**AUTH, "anthropic-beta": "beta-x"},
             json={"model": "m", "messages": []},
         )
         assert reply.status_code == 200
@@ -2474,6 +2475,7 @@ async def test_count_tokens_forwards_in_passthrough_and_404s_in_router() -> (
             json={"model": "m", "messages": []},
         )
         assert missing.status_code == 404
+        assert missing.json()["error"]["type"] == "api_error"
 
     unconfigured = proxy_under_test()
     async with async_client(unconfigured, "10.0.0.1") as http:
