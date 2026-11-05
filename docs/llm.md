@@ -195,7 +195,7 @@ It also exports `MSKSWS_API_KEY`, a placeholder the proxy never reads: it
 exists for OpenAI-shaped clients that refuse an empty key. The MSKSWS names
 carry the msks prefix because the proxy is this daemon's own service; a
 vendor-shaped name would claim otherwise. The seed exports one vendor-shaped
-pair on purpose (`#765`): `ANTHROPIC_BASE_URL` points at the proxy's Messages
+pair on purpose: `ANTHROPIC_BASE_URL` points at the proxy's Messages
 route on the same port, and `ANTHROPIC_AUTH_TOKEN` is the same placeholder.
 claude-code reads those two variables and no others, so a login shell inside
 the workspace is already configured for it and for every MSKSWS-aware client.
