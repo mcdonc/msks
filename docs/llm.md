@@ -182,22 +182,15 @@ OAuth token rotates on refresh. What the workspace can do is
 keep the token off the home volume, so a powered-off workspace
 holds nothing.
 
-**Unset the seeded pair.** This path dials Anthropic directly,
-so the proxy pair must go. The seed re-exports
-`ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` at every login
-(the profile.d script on Debian and Fedora, `profile.local` on
-NixOS). Put the unset in `~/.profile`, which a login shell
-reads on every guest image after the seed's own script, and
-keep it there:
-
-```console
-unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN
-export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
-```
-
-The second line keeps claude-code's telemetry hosts (statsig,
-sentry) and every other non-essential call from dialing, so
-they never ask the egress gate.
+**The threat this recipe answers.** An agent sharing the
+workspace (another coding agent, a script a repository asked
+to run) reads the home volume as the same user. A disk-backed
+`~/.claude` hands it the refresh token, which works from
+anywhere until you notice. The tmpfs narrows the exposure to
+sessions where claude-code itself is running. The home volume
+never carries the token at all. The full answer for untrusted
+agents is a separate workspace: another workspace's VM reads
+nothing of this one's, live or at rest.
 
 **Keep `~/.claude` in RAM.** Mount a tmpfs on it before the
 first login. Tokens, settings, and session history then live
@@ -214,15 +207,19 @@ Either way the home volume stays clean. A copied workspace or
 a home-volume backup carries no credential.
 
 **Log in with the paste-code flow.** `claude auth login`
-prints an authorize URL. Open it on your own machine, any
+prints an authorize URL. Open it on your own machine; any
 browser works, and the guest is never dialed. Authorize, copy
 the code the page shows, and paste it at the guest CLI's
 prompt. A reboot drops the tokens (the tmpfs again), and the
 next session logs in the same way.
 
 **Let the flows out.** The token exchange dials
-`platform.claude.com`; the session dials `api.anthropic.com`.
-A `static` workspace allowlists both:
+`platform.claude.com`. The session dials `api.anthropic.com`.
+claude-code's telemetry hosts (statsig, sentry) and its other
+non-essential calls dial too; exporting
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` keeps them from
+asking at all. A `static` workspace allowlists the two that
+matter:
 
 ```console
 msks egress mode myws static --allow api.anthropic.com \
@@ -261,30 +258,37 @@ and the daemon's port.
 It also exports `MSKSWS_API_KEY`, a placeholder the proxy never reads: it
 exists for OpenAI-shaped clients that refuse an empty key. The MSKSWS names
 carry the msks prefix because the proxy is this daemon's own service; a
-vendor-shaped name would claim otherwise. The seed exports one vendor-shaped
-pair on purpose: `ANTHROPIC_BASE_URL` points at the proxy's Messages
-route on the same port, and `ANTHROPIC_AUTH_TOKEN` is the same placeholder.
-claude-code reads those two variables and no others, so a login shell inside
-the workspace is already configured for it and for every MSKSWS-aware client.
-
-The Anthropic pair reaches every Anthropic SDK client in the workspace, not
-claude-code alone: a script that exports its own `ANTHROPIC_API_KEY` also
-follows the redirected base URL, and its key is never consulted (the proxy
-authenticates by tap and carries the daemon's own upstream key). A client
-that must reach an Anthropic endpoint directly unsets `ANTHROPIC_BASE_URL`
-in its own environment.
+vendor-shaped name would claim otherwise. No Anthropic-shaped pair rides
+the seed: claude-code reads such a pair as bearer auth and skips its own
+OAuth login, and a seeded default would decide the credential model for
+every workspace. A workspace that wants claude-code on the proxy exports
+the pair by hand:
 
 ```console
-$ env | grep -e MSKSWS -e ANTHROPIC
-MSKSWS_BASE_URL=http://172.31.0.2:8770/v1
-MSKSWS_API_KEY=msks-local-proxy
-ANTHROPIC_BASE_URL=http://172.31.0.2:8770
-ANTHROPIC_AUTH_TOKEN=msks-local-proxy
+gw=$(ip route show default | awk '{print $3; exit}')
+export ANTHROPIC_BASE_URL="http://$gw:8770"
+export ANTHROPIC_AUTH_TOKEN="msks-local-proxy"
 ```
 
-The Anthropic pair is seeded even when the daemon serves no model
-list, like the MSKSWS pair. claude-code then points at a port with
-no listener and fails fast until a model list is configured.
+The token is the same placeholder the proxy never reads (the
+tap is the credential); it exists because claude-code refuses a
+base URL with no credential beside it. The port is the one the
+daemon serves (`MSKSD_LLM_PORT`). Set in a shell profile, the
+pair reaches every Anthropic SDK client in the workspace, not
+claude-code alone. A client that must reach an Anthropic
+endpoint directly unsets `ANTHROPIC_BASE_URL` in its own
+environment.
+
+```console
+$ env | grep MSKSWS
+MSKSWS_BASE_URL=http://172.31.0.2:8770/v1
+MSKSWS_API_KEY=msks-local-proxy
+```
+
+A workspace with the pair exported and no model list configured
+points claude-code at a port with no listener. It fails fast
+until a model list is configured, the same posture the MSKSWS
+pair carries.
 
 All guest images ship the agent toolchain beside it: each image bakes pinned
 Node and the pinned **pi** coding agent on every account's default `PATH`: the

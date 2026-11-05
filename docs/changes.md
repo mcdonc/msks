@@ -85,6 +85,16 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **Workspaces no longer seed the Anthropic pair (#765).**
+  The first-boot seed stops exporting `ANTHROPIC_BASE_URL` and
+  `ANTHROPIC_AUTH_TOKEN`: claude-code reads that pair as bearer
+  auth and skips its OAuth login, so a seeded default decided
+  the credential model for every workspace. claude-code on the
+  proxy route is a two-line manual export, documented in
+  `docs/llm.md` → "The guest environment"; the subscription
+  route needs no export at all. `MSKSWS_*` is unaffected, and
+  existing workspaces keep working until rebuilt.
+
 - **The TUI's shell action reports an ssh refusal instead of
   opening a console (#748).** The "Open a shell" action used to
   fall back to a `msks console` session when the ssh attempt was
@@ -142,12 +152,8 @@ tagged `vX.Y.Z`.
   shape and chat completions, streamed answers included. The
   router now drops a request field the target provider rejects
   instead of failing the request (a side effect of asking routed
-  streams for chunk usage). The workspace seed exports
-  `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` pointing at
-  the route, so claude-code works in a login shell with no
-  manual steps; every Anthropic SDK client in the workspace
-  follows the pair. See `docs/llm.md` → "The Anthropic Messages
-  route".
+  streams for chunk usage). See `docs/llm.md` → "The Anthropic
+  Messages route".
 
 - **The daemon journals every published event (#762).** Every
   frame the events hub publishes also writes one INFO line to
