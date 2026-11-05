@@ -517,6 +517,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#subscription-claude-code-with-no-stored-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Subscription claude-code with no stored credentials
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#secrets-stay-out-of-the-config-file" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -839,6 +850,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#subscription-claude-code-with-no-stored-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Subscription claude-code with no stored credentials
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#secrets-stay-out-of-the-config-file" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1038,6 +1060,64 @@ carry falls to the first entry:</p>
 <p>With this list, a claude-code request for <code>claude-sonnet-4-5</code>
 takes the first entry, and an OpenAI-shaped client asking for
 <code>gpt-4o</code> takes the second.</p>
+<h2 id="subscription-claude-code-with-no-stored-credentials">Subscription claude-code with no stored credentials<a class="headerlink" href="#subscription-claude-code-with-no-stored-credentials" title="Permanent link">&para;</a></h2>
+<p>The proxy route above spends an API key. An operator with a
+claude.ai subscription and no API billing can still run
+claude-code inside a workspace, with nothing credential-shaped
+left on the guest's disk: subscription login with RAM-only
+tokens. The tokens live in a tmpfs for the session and vanish
+at shutdown.</p>
+<p>Subscription authentication is OAuth, and claude-code holds
+its tokens wherever it runs (<code>~/.claude</code> on Linux). No msks
+machinery can hold them for the guest. The proxy and the
+placeholder swap both present a static credential, and the
+OAuth token rotates on refresh. What the workspace can do is
+keep the token off the home volume, so a powered-off workspace
+holds nothing.</p>
+<p><strong>The threat this recipe answers.</strong> An agent sharing the
+workspace (another coding agent, a script a repository asked
+to run) reads the home volume as the same user. A disk-backed
+<code>~/.claude</code> hands it the refresh token, which works from
+anywhere until you notice. The tmpfs narrows the exposure to
+sessions where claude-code itself is running. The home volume
+never carries the token at all. The full answer for untrusted
+agents is a separate workspace: another workspace's VM reads
+nothing of this one's, live or at rest.</p>
+<p><strong>Keep <code>~/.claude</code> in RAM.</strong> Mount a tmpfs on it before the
+first login. Tokens, settings, and session history then live
+in memory alone, and a reboot drops them all:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">mkdir -p ~/.claude</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">sudo mount -t tmpfs -o mode=700,uid="$USER" tmpfs ~/.claude</span>
+</span></code></pre></div>
+<p>A workspace where mounting does not fit runs
+<code>claude auth logout</code> at the end of each session instead.
+Either way the home volume stays clean. A copied workspace or
+a home-volume backup carries no credential.</p>
+<p><strong>Log in with the paste-code flow.</strong> <code>claude auth login</code>
+prints an authorize URL. Open it on your own machine; any
+browser works, and the guest is never dialed. Authorize, copy
+the code the page shows, and paste it at the guest CLI's
+prompt. A reboot drops the tokens (the tmpfs again), and the
+next session logs in the same way.</p>
+<p><strong>Let the flows out.</strong> The token exchange dials
+<code>platform.claude.com</code>. The session dials <code>api.anthropic.com</code>.
+claude-code's telemetry hosts (statsig, sentry) and its other
+non-essential calls dial too; exporting
+<code>CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1</code> keeps them from
+asking at all. A <code>static</code> workspace allowlists the two that
+matter:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">msks egress mode myws static --allow api.anthropic.com \</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">    --allow platform.claude.com</span>
+</span></code></pre></div>
+<p>The flags replace the whole list; repeat them to keep entries
+the workspace already had. An <code>interactive</code> workspace answers
+the two prompts instead.</p>
+<p><strong>The boundary, stated plainly.</strong> While a session is logged
+in, a live token sits in guest RAM. Every in-guest client
+must hold one. Nothing survives a reboot or a logout. The
+proxy route above is the stronger isolation: the guest holds
+no credential at all, at any moment. It is the one to prefer
+wherever API billing is on the table.</p>
 <h2 id="secrets-stay-out-of-the-config-file">Secrets stay out of the config file<a class="headerlink" href="#secrets-stay-out-of-the-config-file" title="Permanent link">&para;</a></h2>
 <p>Every secret-bearing value resolves indirection at configure time: <code>file:</code>
 reads a path, <code>cmd:</code> runs a shell command and takes its stdout. It works on
@@ -1055,26 +1135,31 @@ and the daemon's port.</p>
 <p>It also exports <code>MSKSWS_API_KEY</code>, a placeholder the proxy never reads: it
 exists for OpenAI-shaped clients that refuse an empty key. The MSKSWS names
 carry the msks prefix because the proxy is this daemon's own service; a
-vendor-shaped name would claim otherwise. The seed exports one vendor-shaped
-pair on purpose (<code>#765</code>): <code>ANTHROPIC_BASE_URL</code> points at the proxy's Messages
-route on the same port, and <code>ANTHROPIC_AUTH_TOKEN</code> is the same placeholder.
-claude-code reads those two variables and no others, so a login shell inside
-the workspace is already configured for it and for every MSKSWS-aware client.</p>
-<p>The Anthropic pair reaches every Anthropic SDK client in the workspace, not
-claude-code alone: a script that exports its own <code>ANTHROPIC_API_KEY</code> also
-follows the redirected base URL, and its key is never consulted (the proxy
-authenticates by tap and carries the daemon's own upstream key). A client
-that must reach an Anthropic endpoint directly unsets <code>ANTHROPIC_BASE_URL</code>
-in its own environment.</p>
-<div class="language-console highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="gp">$ </span>env<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>-e<span class="w"> </span>MSKSWS<span class="w"> </span>-e<span class="w"> </span>ANTHROPIC
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">MSKSWS_BASE_URL=http://172.31.0.2:8770/v1</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">MSKSWS_API_KEY=msks-local-proxy</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="go">ANTHROPIC_BASE_URL=http://172.31.0.2:8770</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="go">ANTHROPIC_AUTH_TOKEN=msks-local-proxy</span>
+vendor-shaped name would claim otherwise. No Anthropic-shaped pair rides
+the seed: claude-code reads such a pair as bearer auth and skips its own
+OAuth login, and a seeded default would decide the credential model for
+every workspace. A workspace that wants claude-code on the proxy exports
+the pair by hand:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">gw=$(ip route show default | awk '{print $3; exit}')</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">export ANTHROPIC_BASE_URL="http://$gw:8770"</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="go">export ANTHROPIC_AUTH_TOKEN="msks-local-proxy"</span>
 </span></code></pre></div>
-<p>The Anthropic pair is seeded even when the daemon serves no model
-list, like the MSKSWS pair. claude-code then points at a port with
-no listener and fails fast until a model list is configured.</p>
+<p>The token is the same placeholder the proxy never reads (the
+tap is the credential); it exists because claude-code refuses a
+base URL with no credential beside it. The port is the one the
+daemon serves (<code>MSKSD_LLM_PORT</code>). Set in a shell profile, the
+pair reaches every Anthropic SDK client in the workspace, not
+claude-code alone. A client that must reach an Anthropic
+endpoint directly unsets <code>ANTHROPIC_BASE_URL</code> in its own
+environment.</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="gp">$ </span>env<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>MSKSWS
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="go">MSKSWS_BASE_URL=http://172.31.0.2:8770/v1</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="go">MSKSWS_API_KEY=msks-local-proxy</span>
+</span></code></pre></div>
+<p>A workspace with the pair exported and no model list configured
+points claude-code at a port with no listener. It fails fast
+until a model list is configured, the same posture the MSKSWS
+pair carries.</p>
 <p>All guest images ship the agent toolchain beside it: each image bakes pinned
 Node and the pinned <strong>pi</strong> coding agent on every account's default <code>PATH</code>: the
 Debian/Fedora image under <code>/usr/local</code>, the NixOS image through its system

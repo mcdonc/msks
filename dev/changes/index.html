@@ -1404,6 +1404,17 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Workspaces no longer seed the Anthropic pair (#765).</strong>
+  The first-boot seed stops exporting <code>ANTHROPIC_BASE_URL</code> and
+  <code>ANTHROPIC_AUTH_TOKEN</code>: claude-code reads that pair as bearer
+  auth and skips its OAuth login, so a seeded default decided
+  the credential model for every workspace. claude-code on the
+  proxy route is a two-line manual export, documented in
+  <code>docs/llm.md</code> → "The guest environment"; the subscription
+  route needs no export at all. <code>MSKSWS_*</code> is unaffected, and
+  existing workspaces keep working until rebuilt.</p>
+</li>
+<li>
 <p><strong>The TUI's shell action reports an ssh refusal instead of
   opening a console (#748).</strong> The "Open a shell" action used to
   fall back to a <code>msks console</code> session when the ssh attempt was
@@ -1467,12 +1478,8 @@ tagged <code>vX.Y.Z</code>.</p>
   shape and chat completions, streamed answers included. The
   router now drops a request field the target provider rejects
   instead of failing the request (a side effect of asking routed
-  streams for chunk usage). The workspace seed exports
-  <code>ANTHROPIC_BASE_URL</code> and <code>ANTHROPIC_AUTH_TOKEN</code> pointing at
-  the route, so claude-code works in a login shell with no
-  manual steps; every Anthropic SDK client in the workspace
-  follows the pair. See <code>docs/llm.md</code> → "The Anthropic Messages
-  route".</p>
+  streams for chunk usage). See <code>docs/llm.md</code> → "The Anthropic
+  Messages route".</p>
 </li>
 <li>
 <p><strong>The daemon journals every published event (#762).</strong> Every
