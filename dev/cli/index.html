@@ -1479,13 +1479,7 @@
 <h1 id="the-cli-client">The CLI client<a class="headerlink" href="#the-cli-client" title="Permanent link">&para;</a></h1>
 <p>Along with invoking the TUI, the <code>msks</code> command is a client for the daemon's
 <code>/api/v1</code> REST surface.</p>
-<p>The client and the daemon ship in the same Python distribution, and every
-invocation makes one best-effort <code>/health</code> roundtrip by the client to the
-daemon. If the daemon is a different version than the client, the invocation
-prints one stderr line giving both and the remedy. This is ususally not
-encountered except on MacOS. If you see this on MacOS, rerun
-<code>msks-setup-macos-host</code> on the Mac to update the daemon in the VM.</p>
-<p>The command set covers the operator loop:</p>
+<p>Here's an overview of the common command set:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>msks<span class="w">                         </span><span class="c1"># the workspace tree TUI</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>msks<span class="w"> </span>ls<span class="w">                      </span><span class="c1"># what exists, and what state is it in</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>msks<span class="w"> </span>create<span class="w"> </span>ws<span class="w">                </span><span class="c1"># make a workspace</span>
@@ -1499,14 +1493,19 @@ encountered except on MacOS. If you see this on MacOS, rerun
 </span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>msks<span class="w"> </span>stop<span class="w"> </span>ws<span class="w">                  </span><span class="c1"># power it off</span>
 </span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>msks<span class="w"> </span>rm<span class="w"> </span>ws<span class="w">                    </span><span class="c1"># delete it (and its data)</span>
 </span></code></pre></div>
+<p>The client and the daemon ship in the same Python distribution, but they might
+be run from different installation directories, so daemon and client versions
+may not be in sync, which may cause problems. To cope with this, every command
+makes one best-effort <code>/health</code> roundtrip by the client to the daemon to do a
+version compatibility check. If the daemon is a different version than the
+client, the invocation prints one stderr line giving both and a remedy. This is
+most usually encountered on MacOS, because the daemon runs in a Lima VM
+separate from the client. If you see this on MacOS, rerun
+<code>msks-setup-macos-host</code> on the Mac to update the daemon in the Lima VM.</p>
 <h2 id="client-environment">Client environment<a class="headerlink" href="#client-environment" title="Permanent link">&para;</a></h2>
-<p>The client reads environment variables prefixed <code>MSKSC_</code> (client) to stay
-apart from the daemon's <code>MSKSD_*</code> (server) namespace. A box that runs both
-can export each side independently. The list-valued settings
-(<code>MSKSC_TERMINAL_OPEN_CMD</code>, <code>MSKSC_SSH_OPTIONS</code>) carry their string form;
-<code>MSKSC_SSH_OPTIONS</code>'s file key is documented below, and
-<code>MSKSC_TERMINAL_OPEN_CMD</code>'s in <a href="../tui/">The TUI</a> beside the shell action it
-configures. Each of the environment variables has a config-file equivalent.</p>
+<p>The client reads environment variables prefixed <code>MSKSC_</code> (client) to stay apart
+from the daemon's <code>MSKSD_*</code> (server) namespace. Each of the environment
+variables has a config-file equivalent.</p>
 <table>
 <thead>
 <tr>
@@ -1592,28 +1591,20 @@ ssh</code> and <code>msks rsync</code> sign through your own ssh-agent when it h
 and its name do not matter. Otherwise they stage the private half in memory.
 The key file itself is never copied into msks's state.</p>
 <p>A key msks stages itself is an unencrypted OpenSSH-format key (<code>ed25519</code>,
-<code>ecdsa</code> P-256/P-384/P-521, or <code>rsa</code>). msks never types a passphrase. An
-encrypted key no agent holds is refused with a line giving the fixes in
-order: <code>ssh-add</code> the key, decrypt a copy, or pass <code>--pubkey</code> at create. An
-agent that asks for confirmation per signature (a hardware token's touch)
-asks at its own cadence: the first-boot probe's retries and the session each
-count as a signing request.</p>
+<code>ecdsa</code> P-256/P-384/P-521, or <code>rsa</code>). An encrypted key no agent holds is
+refused with a line giving the fixes in order: <code>ssh-add</code> the key, decrypt a
+copy, or pass <code>--pubkey</code> at create.</p>
 <p><code>MSKSC_PUBKEY_FILE</code> points at your key's public half, a <code>.pub</code>
 file (<a href="../first-run/#the-key-files">the identity section</a>
 owns the agent requirement this form carries). A create with it
 set plants that one line as the identity and reads no private
 material at all. It is the form for a key you keep encrypted:
 the public half is in a <code>.pub</code> file while the private half
-answers from your agent. It wins over <code>identity_file</code> (so
-<code>identity_file</code> is never consulted), carries the same path
-rules and global-only shape, and <code>--pubkey</code> still overrides it
-for one create.</p>
+answers from your agent.</p>
 <p>A missing <code>MSKSC_TOKEN</code> is an error before any network activity (the client
 gives the variable and exits), unless the daemon is reached through the
 local socket, where the kernel vouches for the client and no token exists to
-read. Tokens come from the daemon: <code>POST /api/v1/tokens</code> mints one. The
-devenv shell presets all three from the worktree's own dev daemon. The
-<a href="../development/">Development environment</a> chapter owns what the shell seeds.</p>
+read.</p>
 <p>An unconfigured client (no <code>MSKSC_URL</code>, no <code>MSKSC_SOCKET</code>, no
 config-file daemon) looks for the default socket a same-host
 daemon binds (<code>$XDG_RUNTIME_DIR/msks/msksd.sock</code>) and connects
@@ -1625,19 +1616,15 @@ implicitly: a well-known port could belong to any daemon.</p>
 <code>MSKSC_CAFILE</code> at the daemon's CA (<code>msks-ca.pem</code> under its state
 directory) and the client verifies the certificate chain. A
 <code>cafile</code> that is missing or holds no parsable certificate is a
-one-line refusal giving the daemon's CA file. Without
-<code>MSKSC_CAFILE</code> the client proceeds unverified and prints a
-warning to stderr on every invocation: the same
-trust-on-first-use posture as <code>msks console</code>, fine for a lab
-network and worth closing before anything real.</p>
+one-line refusal giving the daemon's CA file.</p>
 <h2 id="the-client-config-file">The client config file<a class="headerlink" href="#the-client-config-file" title="Permanent link">&para;</a></h2>
 <p>The environment variables above have a durable home: a YAML file at
 <code>~/.config/msks/msks.yaml</code> (relocated by <code>MSKSC_CONFIG_DIR</code>, or
 <code>XDG_CONFIG_HOME</code>). The variables keep working beside it, and each one
 overrides the same key in the file. A fresh devenv shell with its presets
 exported behaves exactly as it does today. Precedence, highest first:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>--daemon flag &gt; MSKSC_* environment &gt; the file's daemon aliases
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>&gt; the file's global keys &gt; built-in defaults
+<div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>--daemon flag &gt; MSKSC_* environment &gt; the file's daemon aliases &gt;
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    the file's global keys &gt; built-in defaults
 </span></code></pre></div>
 <p>A bare <code>msks</code> reads the default path and, on the first run,
 generates a commented near-empty template there (the directory
@@ -1675,11 +1662,11 @@ connection.</p>
 giving the key and the valid ones, the same fail-fast rules
 msksd's config file carries.</p>
 <h3 id="daemon-aliases">Daemon aliases<a class="headerlink" href="#daemon-aliases" title="Permanent link">&para;</a></h3>
-<p>The file's one structural key is <code>daemons:</code>, one entry per daemon you talk
-to. An entry picks its daemon one way: <code>url</code> for a remote daemon, or
-<code>socket</code> for a local listener (peer-credential authentication; the entry
-carries no <code>token_file</code> and no <code>cafile</code>). The keys <code>token_file</code>, <code>cafile</code>,
-and <code>expected_image</code> override their globals for that alias:</p>
+<p><code>daemons:</code> specifies one entry per daemon you talk to. An entry picks its
+daemon one way: <code>url</code> for a remote daemon, or <code>socket</code> for a local listener
+(peer-credential authentication; the entry carries no <code>token_file</code> and no
+<code>cafile</code>). The keys <code>token_file</code>, <code>cafile</code>, and <code>expected_image</code> override their
+globals for that alias:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://127.0.0.1:8660</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nt">token_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.config/msks/dev.token</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nt">daemons</span><span class="p">:</span>
@@ -1762,10 +1749,7 @@ everyday reference. The id is the reference no other workspace shares.</p>
 <h2 id="msks-ls"><code>msks ls</code><a class="headerlink" href="#msks-ls" title="Permanent link">&para;</a></h2>
 <p>Prints one line per workspace the daemon knows, aligned in seven columns:
 name, id, status, egress mode, created date, image (catalog reference, or
-the digest when the catalog cannot resolve one), and owning host. The
-columns are measured against the values present: a long name or image
-reference widens its column for every row. Each row's columns start at the
-same offsets, header row included.</p>
+the digest when the catalog cannot resolve one),</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>$ msks ls
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>name          id          status                    egress       created     image             host
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>my-workspace  1a2b3c4d5e  running                   interactive  2026-05-14  debian:13.6       hv-1
@@ -1779,13 +1763,12 @@ skip carries the count beside its status (<code>running, 1 mount
 skipped</code> above), a standing marker that lasts until the config
 and the row agree again; the <a href="../mounts/#the-skip-behavior">mounts
 chapter</a> lists every kind of skip and
-its reason. A digest the catalog cannot resolve to a reference
-reads as its middle-clipped form (the <code>image</code> column's own
-budget). A <code>-</code> in the name column is a workspace without a label
-(created nameless through the API, or before the id/name split),
-addressed by its id alone. A <code>-</code> in the image column means the
-workspace boots explicit kernel/rootfs paths instead of a catalog
-image.</p>
+its reason.</p>
+<p>A digest the catalog cannot resolve to a reference reads as its middle-clipped
+form (the <code>image</code> column's own budget). A <code>-</code> in the name column is a workspace
+without a label (created nameless through the API, or before the id/name
+split), addressed by its id alone. A <code>-</code> in the image column means the
+workspace boots explicit kernel/rootfs paths instead of a catalog image.</p>
 <p><code>--json</code> replaces the table with one JSON document, the API's
 workspace rows verbatim: id, name, kernel, initrd, rootfs,
 cmdline, cpus, mem_mib, image_hash, image_ref, host, root_mib,
