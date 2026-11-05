@@ -4395,8 +4395,11 @@ async def test_a_reencryption_failure_answers_503_with_the_cache_warm(
     )
 
 
-async def test_an_unlock_leaves_the_audit_and_event_trail(client) -> None:
+async def test_an_unlock_leaves_the_audit_and_event_trail(
+    client, caplog
+) -> None:
     http, app, _stub = client
+    caplog.set_level(logging.INFO, logger="msks.events")
     await seed_workspace(app)
     row = (
         await http.post("/api/v1/secrets", json=mint_body(), headers=auth())
@@ -4418,6 +4421,18 @@ async def test_an_unlock_leaves_the_audit_and_event_trail(client) -> None:
     assert frame["event"] == "secret.unlock"
     assert frame["data"]["name"] == "github_api"
     assert frame["data"]["placeholder_id"] == row["id"]
+    # #762: the unlock holds the plaintext in hand one refactor
+    # away — the journaled frame must carry no value and no
+    # sentinel.
+    lines = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.name == "msks.events"
+    ]
+    unlocked = next(line for line in lines if line["event"] == "secret.unlock")
+    assert "value" not in unlocked["data"]
+    assert "sentinel" not in unlocked["data"]
+    assert "ghp-real-token" not in json_mod.dumps(unlocked)
 
 
 async def test_an_unlock_for_a_revoked_row_answers_404(client) -> None:

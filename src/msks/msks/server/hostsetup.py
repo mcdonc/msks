@@ -1282,6 +1282,11 @@ def unit_text(
         "StandardInput=null",
         "StandardOutput=journal",
         "StandardError=journal",
+        # #762: the journal is the record of events, so the unit
+        # carries no per-service rate limit — journald's own size
+        # caps bound the volume, and a burst of event lines must
+        # not silence the daemon's error lines with it.
+        "LogRateLimitIntervalSec=0",
         "",
         "[Install]",
         "WantedBy=default.target",

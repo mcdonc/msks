@@ -259,7 +259,9 @@ Three streams use the same listener and the same token:
   receives that workspace's pending holds; `msks egress watch`
   prints the frames as lines. Every publish also writes one INFO
   line to the daemon's journal (#762), so the event history
-  stays readable after the subscribers are gone.
+  stays readable after the subscribers are gone. The lines carry
+  the frames' identifiers, names, hosts, ports, paths, and
+  counts; secret values and sentinels never ride them.
 - `wss://…/api/v1/workspaces/{id}/console`: the guest's serial console as a
   bidirectional byte stream. Ctrl-] detaches in the client. The [console
   chapter](cli.md#msks-console) covers the interactive form.

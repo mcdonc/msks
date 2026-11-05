@@ -333,6 +333,19 @@ def test_forward_publishes_journal_the_frames(
         and line["data"] == {"id": wid, "port": 22}
         for line in lines
     )
+    # The closed line comes from a detached publish task: poll
+    # for it instead of trusting loop scheduling.
+    deadline = time.monotonic() + 5
+    while (
+        not any(line["event"] == "forward.closed" for line in lines)
+        and time.monotonic() < deadline
+    ):
+        time.sleep(0.01)
+        lines = [
+            json.loads(record.getMessage())
+            for record in caplog.records
+            if record.name == "msks.events"
+        ]
     assert any(line["event"] == "forward.closed" for line in lines)
 
 

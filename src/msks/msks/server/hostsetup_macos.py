@@ -804,6 +804,10 @@ Wants=network-online.target
 ExecStart={VM_PREFIX}/bin/msksd serve --config {VM_CONF}
 Restart=on-failure
 StateDirectory=msksd
+# 762: the journal is the record of events, so no per-service
+# rate limit — a burst of event lines must not silence the
+# daemon's error lines with it.
+LogRateLimitIntervalSec=0
 [Install]
 WantedBy=multi-user.target
 UNIT

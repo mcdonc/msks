@@ -48,11 +48,12 @@ async def test_publish_journals_the_frame(caplog) -> None:
     hub = EventHub()
     with caplog.at_level(logging.INFO, logger="msks.events"):
         await hub.publish("workspace.status", {"id": "a", "status": "running"})
-    assert json.loads(caplog.records[-1].getMessage()) == {
+    ours = [r for r in caplog.records if r.name == "msks.events"]
+    assert json.loads(ours[-1].getMessage()) == {
         "event": "workspace.status",
         "data": {"id": "a", "status": "running"},
     }
-    assert caplog.records[-1].levelname == "INFO"
+    assert ours[-1].levelname == "INFO"
 
 
 async def test_relay_and_close_all() -> None:

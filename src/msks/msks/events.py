@@ -7,9 +7,11 @@ socket receives them. Same listener/port as HTTPS — one surface.
 Every publish also writes one INFO line (#762): the daemon's
 journal is the record of events, visible after the subscribers
 are gone. The line is the whole frame, the same JSON the
-subscribers receive — the payloads carry ids, names, and counts,
-never a secret's value or a sentinel (the model keeps both out
-of frames by rule), so the record needs no redaction.
+subscribers receive. The frames carry identifiers, names,
+hosts, ports, paths, and counts — a secret's value and a
+sentinel never ride them, a property the suite pins per
+publisher family (mint and unlock carry the plaintext in hand
+one refactor away), so the record needs no redaction.
 
 A root leaf module (#408): the composition layer (``app.py``) and
 the HTTP surface (``server``) both import it, so the package graph
