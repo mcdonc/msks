@@ -528,21 +528,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-guest-environment" class="md-nav__link">
+  <a href="#pi-coding-agent" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The guest environment
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-a-request-may-carry" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        What a request may carry
+        Pi coding agent
       </span>
     </span>
   </a>
@@ -850,21 +839,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-guest-environment" class="md-nav__link">
+  <a href="#pi-coding-agent" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        The guest environment
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-a-request-may-carry" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        What a request may carry
+        Pi coding agent
       </span>
     </span>
   </a>
@@ -964,6 +942,7 @@ available with no further configuration.</p>
 nothing binds on any tap, and the per-workspace input chain admits
 no proxy port.</p>
 <h2 id="the-anthropic-messages-route-for-claude-api-access">The Anthropic Messages route (for Claude API access)<a class="headerlink" href="#the-anthropic-messages-route-for-claude-api-access" title="Permanent link">&para;</a></h2>
+<p><code>claude</code> is preinstalled in every msks VM.</p>
 <p>The LLM proxy serves <code>/v1/messages</code>, the Anthropic Messages API claude-code
 speaks.</p>
 <p>Configuring the proxy exclusively for claude-code API access is one <code>msks.yaml</code>
@@ -1006,34 +985,21 @@ passthrough entry pointed at an OpenAI-shaped upstream still
 serves the OpenAI pair; the Messages route answers that upstream's
 own error.</p>
 <p>A workspace that wants claude-code on the proxy must export a few envvars by
-hand. The base URL derives from the seeded <code>MSKSWS_BASE_URL</code>, so it names
-the same tap address and port the seed planted:</p>
+hand. The base URL derives from the seeded <code>MSKSWS_BASE_URL</code>:</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">export ANTHROPIC_BASE_URL="${MSKSWS_BASE_URL%/v1}"</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">export ANTHROPIC_AUTH_TOKEN="msks-local-proxy"</span>
 </span></code></pre></div>
-<p>The token is the same placeholder the proxy never reads (the
-tap is the credential); it exists because claude-code refuses a
+<p>The token is a placeholder; it exists because claude-code refuses a
 base URL with no credential beside it. The port is the one the
 daemon served at the workspace's create (<code>MSKSD_LLM_PORT</code>,
 default 8770), the same value the seed carries. Set in a shell
 profile, the pair reaches every Anthropic SDK client in the
-workspace, not claude-code alone. A client that must reach an
-Anthropic endpoint directly unsets <code>ANTHROPIC_BASE_URL</code> in its
-own environment.</p>
-<div class="language-console highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="gp">$ </span>env<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>MSKSWS
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">MSKSWS_BASE_URL=http://172.31.0.2:8770/v1</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">MSKSWS_API_KEY=msks-local-proxy</span>
-</span></code></pre></div>
-<p>A workspace with the pair exported and no model list configured
-points claude-code at a port with no listener. It fails fast
-until a model list is configured, the same posture the MSKSWS
-pair carries.</p>
+workspace, not claude-code alone.</p>
 <h2 id="subscription-claude-code-with-no-stored-credentials">Subscription claude-code with no stored credentials<a class="headerlink" href="#subscription-claude-code-with-no-stored-credentials" title="Permanent link">&para;</a></h2>
-<p><code>claude</code> is preinstalled in every msks VM.</p>
 <p>The LLM proxy cannot successfully be used to access a subscription Anthropic
 account. Instead, you should almost certainly use the normal Anthropic
 subscription login process to connect to Claude Code.</p>
-<p>But that does leave Claude credentials on the VM.</p>
+<p>But that process does leave Claude credentials on the VM.</p>
 <p>If you want to keep Claude credentials off the VM even with an Anthropic
 subscription instead of an API key, an operator with a
 claude.ai subscription and no API billing can still run
@@ -1043,7 +1009,7 @@ tokens. The tokens live in a tmpfs for the session and vanish
 at shutdown.</p>
 <p>This is only useful if you use more than one coding agent on the same VM, and
 you distrust the other to not steal your Claude credentials. Otherwise, it's
-overkill.</p>
+total overkill.</p>
 <p>Subscription authentication is OAuth, and claude-code holds
 its tokens wherever it runs (<code>~/.claude</code> on Linux). No msks
 machinery can hold them for the guest. The proxy and the
@@ -1063,8 +1029,8 @@ nothing of this one's, live or at rest.</p>
 <p><strong>Keep <code>~/.claude</code> in RAM.</strong> Mount a tmpfs on it before the
 first login. Tokens, settings, and session history then live
 in memory alone, and a reboot drops them all:</p>
-<div class="language-console highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">mkdir -p ~/.claude</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">sudo mount -t tmpfs -o mode=700,uid="$USER" tmpfs ~/.claude</span>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="go">mkdir -p ~/.claude</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">sudo mount -t tmpfs -o mode=700,uid="$USER" tmpfs ~/.claude</span>
 </span></code></pre></div>
 <p>A workspace where mounting does not fit runs
 <code>claude auth logout</code> at the end of each session instead.
@@ -1083,83 +1049,29 @@ non-essential calls dial too; exporting
 <code>CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1</code> keeps them from
 asking at all. A <code>static</code> workspace allowlists the two that
 matter:</p>
-<div class="language-console highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="go">msks egress mode myws static --allow api.anthropic.com \</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="go">    --allow platform.claude.com</span>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">msks egress mode myws static --allow api.anthropic.com \</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">    --allow platform.claude.com</span>
 </span></code></pre></div>
 <p>The flags replace the whole list; repeat them to keep entries
 the workspace already had. An <code>interactive</code> workspace answers
 the two prompts instead.</p>
-<p><strong>The boundary.</strong> While a session is logged
-in, a live token sits in guest RAM. Every in-guest client
-must hold one. Nothing survives a reboot or a logout. The
-proxy route above is the stronger isolation: the guest holds
-no disk credential at all, at any moment.</p>
-<h2 id="the-guest-environment">The guest environment<a class="headerlink" href="#the-guest-environment" title="Permanent link">&para;</a></h2>
-<p>The first-boot VM seed configures the clients; the identity seed
-is the vehicle, and the tap is the one described in
-<a href="../networking/">Guest networking</a>. <code>/etc/profile.d/msks-llm.sh</code>
-exports <code>MSKSWS_BASE_URL</code>, built from the DHCP lease's gateway
-and the daemon's port.</p>
-<p>It also exports <code>MSKSWS_API_KEY</code>, a placeholder the proxy never reads: it
-exists for OpenAI-shaped clients that refuse an empty key. The MSKSWS names
-carry the msks prefix because the proxy is this daemon's own service; a
-vendor-shaped name would claim otherwise. No Anthropic-shaped pair rides
-the seed: claude-code reads such a pair as bearer auth and skips its own
-OAuth login, and the manual exports live in the Messages route section
-above.</p>
-<p>All guest images ship the agent toolchain beside it: each image bakes pinned
-Node and the pinned <strong>pi</strong> coding agent on every account's default <code>PATH</code>: the
-Debian/Fedora image under <code>/usr/local</code>, the NixOS image through its system
-profile.</p>
-<p>Each also plants a pi extension (<code>llm-models.ts</code>) in <code>/etc/skel</code> and
-root's home. Every account the identity seed provisions copies the skeleton, so
-each login user ends up with the extension in <code>~/.pi/agent/extensions/</code>, where
-pi discovers it. At every pi startup the extension makes one fetch of
+<h2 id="pi-coding-agent">Pi coding agent<a class="headerlink" href="#pi-coding-agent" title="Permanent link">&para;</a></h2>
+<p>Each msks VM ships with the <code>pi</code> coding agent installed. Each image bakes
+pinned Node and the pinned <strong>pi</strong> coding agent on every account's default
+<code>PATH</code>: the Debian/Fedora image under <code>/usr/local</code>, the NixOS image through its
+system profile.</p>
+<p>The first-boot VM seed configures the clients: <code>/etc/profile.d/msks-llm.sh</code>
+exports <code>MSKSWS_BASE_URL</code>, built from the DHCP lease's gateway and the daemon's
+port. It also exports <code>MSKSWS_API_KEY</code>, a placeholder the proxy never reads:
+it exists for OpenAI-shaped clients that refuse an empty key.</p>
+<p>A pi extension consumes these envvars so that <code>/models</code> works.</p>
+<p>The pi extension is named <code>llm-models.ts</code>. It exists in <code>/etc/skel</code> and root's
+home. Every account the identity seed provisions copies the skeleton, so each
+login user ends up with the extension in <code>~/.pi/agent/extensions/</code>, where pi
+discovers it. At every pi startup the extension makes one fetch of
 <code>${MSKSWS_BASE_URL}/models</code>, aborted at 1.5 seconds, and registers the catalog
 under the <code>msks</code> provider, so <code>/model</code> always shows the daemon's live model
 list.</p>
-<p>A workspace whose daemon serves no model list registers
-nothing after that one attempt, and pi starts without the
-provider. The environment pair is seeded even when no proxy
-listens, so the fetch, not the shell, is what discovers the
-difference. A peer that answers headers fast and trickles its
-body can hold the read slightly past the abort. A copy a user has
-edited stays edited; nothing re-overwrites it.</p>
-<p>Two limits to know. A home that existed before the image carried
-the extension keeps its old state: the extension reaches accounts
-provisioned after the image did, and an older home can copy it
-from <code>/etc/skel/.pi/agent/extensions/</code>. The model metadata the
-extension registers is a placeholder:
-128k context, 8192 max output, plain text chat, zero cost.
-The proxy's OpenAI-shaped model list carries no limits, so a
-model that serves more is under-planned and one that serves
-less can over-generate. Set per-model values in
-<code>~/.pi/agent/models.json</code> when it matters.
-The toolchain pins move with an image rebuild (the shared pins in
-<code>nix/agent-toolchain.nix</code>; the Debian Node tarball pin in
-<code>nix/guest-debian.nix</code>); a workspace that already booted keeps
-what it booted with.</p>
-<p>One more create-time fact travels the seed: the port. The planted
-<code>MSKSWS_BASE_URL</code> carries the port the daemon served when the
-workspace was created. Moving <code>MSKSD_LLM_PORT</code> later does not
-rebind a live listener: each workspace's listener and firewall
-admission move at its next stop/start, and until then that
-workspace's LLM surface stays on the old port (fail-closed:
-refused). A workspace created before a port change needs the
-same hand update for its planted environment (or a recreate).</p>
-<p>One upstream-side behavior worth knowing in multi-provider mode:
-providers that want images inline make the daemon fetch remote
-URLs a request's message parts carry; litellm's own URL
-validation guards those fetches.</p>
-<h2 id="what-a-request-may-carry">What a request may carry<a class="headerlink" href="#what-a-request-may-carry" title="Permanent link">&para;</a></h2>
-<p>The proxy forwards the fields an OpenAI chat-completion request
-carries (<code>model</code>, <code>messages</code>, <code>stream</code>, sampling and tool
-parameters) and drops everything else before the router sees
-the body. Provider credentials and endpoints are deployment
-configuration: a request that gives <code>api_base</code>, <code>api_key</code>, or any
-other routing parameter gets those fields dropped, never
-honored. A body larger than 16 MiB answers 413; a body that is
-not a JSON object answers 400.</p>
 <h2 id="sighup">SIGHUP<a class="headerlink" href="#sighup" title="Permanent link">&para;</a></h2>
 <p>The proxy reads settings live. A <code>SIGHUP</code> that changes the
 model list re-routes the very next request wherever a listener
