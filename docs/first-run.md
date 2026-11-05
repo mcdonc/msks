@@ -34,6 +34,8 @@ the `msks` (the client) on the same account will find the socket.
 
 ## The key files
 
+You need to configure an ssh key before msksd/msks will work properly.
+
 Every workspace msks uses your public ssh key as the workspace's operator
 identity.
 
@@ -43,8 +45,6 @@ Every `msks ssh` and `msks rsync` session uses your private half.
 locks workspace secrets on the daemon: values a workspace needs at runtime are
 sealed under the identity, and the client unlocks them with the private half
 again.
-
-Thus, you need to configure an ssh key before msksd/msks will work properly.
 
 The client names the key in its YAML file
 (`~/.config/msks/msks.yaml`) or its environment, with two keys:
