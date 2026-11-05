@@ -518,3 +518,96 @@ appear nowhere in the audit or the events. The value travels
 its mint request alone and is never echoed. The sentinel
 appears only in the mint reply and the on-demand row fetch,
 never in the audit or the event stream.
+
+## claude-code against a subscription backend
+
+This section walks one operator story end to end. A Claude Max
+or Team subscription includes monthly API credits, and the
+console mints a key funded by them. claude-code inside a
+workspace uses that key without ever holding it. The pieces are
+this chapter's own: a mint for the key, the unlock window for
+the swap, and the interceptor for the exchange on the wire. The
+workspace LLM proxy plays no part in this path. The section's
+end states how to choose between the two.
+
+**Mint the key.** Pipe the console key from wherever it lives
+and allowlist the one destination claude-code dials:
+
+```console
+$ op read 'op://Vault/anthropic/api' \
+    | msks secret mint --name anthropic_api \
+        --dest api.anthropic.com --secret-file -
+minted */anthropic_api for api.anthropic.com
+sentinel: mskssec2_9Jm3...kQ
+```
+
+The mint above is daemon-wide: every workspace's tap accepts
+the sentinel. Add `--workspace dev` to scope it to named
+workspaces instead. The sentinel's prefix gives its reach from
+the string alone: `mskssec2_` reaches every accepting
+workspace, `mskssec1_` its row's own.
+
+**Unlock the store.** A mint leaves ciphertext the daemon
+cannot open. Run `msks secret unlock` (or open the TUI's
+secrets page) with the identity key the mint wrapped to. The
+plaintext then lives in the daemon's cache for the window
+(`MSKSD_SECRET_STORE_UNLOCK_TIMEOUT_S`, one day by default).
+Until an unlock stands, a request carrying the sentinel answers
+the locked refusal itself: HTTP 423, `msks: locked: no operator
+session within the unlock window`. Nothing forwards.
+
+**Point claude-code at Anthropic with the sentinel.** The
+workspace seed exports `ANTHROPIC_BASE_URL` naming the daemon's
+LLM proxy (#765). This path dials Anthropic directly, so unset
+the pair and paste the sentinel where claude-code reads its
+key (a shell profile or `~/.bashrc` keeps it across logins):
+
+```console
+unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN
+export ANTHROPIC_API_KEY=mskssec2_9Jm3...kQ
+claude
+```
+
+claude-code sends the credential as the `x-api-key` request
+header; the `ANTHROPIC_AUTH_TOKEN` spelling sends it as
+`authorization`. The interceptor scans both headers on every
+decrypted request, finds the sentinel, and swaps it for the
+real key toward `api.anthropic.com`. The origin sees the
+console key. The workspace holds the sentinel alone. The guest
+already trusts the daemon's interception CA (the identity seed
+staged it at first boot), so the decrypted connection validates
+with no manual step.
+
+**Let the flow out.** The connection gates on [egress
+consent](egress-consent.md) like any other outbound flow. An
+`interactive` workspace holds the first packet for a decider;
+answer the prompt once. A `static` workspace needs
+`api.anthropic.com` on the allowlist:
+
+```console
+msks egress mode dev static --allow api.anthropic.com
+```
+
+A name off the allowlist answers NXDOMAIN in the resolver
+before any dial happens.
+
+**Read the trail.** Each swap publishes a `secret.swap` event,
+and the audit view carries the mint beside them. The value and
+the sentinel appear in neither. A sighting (the sentinel toward
+a destination the allowlist misses) is the exfil signal to
+watch. `msks secret revoke` retires the row everywhere at once,
+and the next request carrying its sentinel fails closed.
+
+**Choosing between the two paths.** The proxy route holds one
+key in the daemon's config (`llm_models` with `file:`/`cmd:`
+indirection) and serves claude-code with zero workspace setup:
+the seeded `ANTHROPIC_BASE_URL` does the pointing. It fits an
+operator who wants every workspace on one daemon-held
+credential. The sentinel route keeps the key in the store as
+ciphertext, scopes it per workspace or daemon-wide, and spends
+nothing until a workspace dials Anthropic itself. It fits an
+operator who already runs placeholders, or who wants the
+egress consent gate deciding when claude-code reaches the
+origin at all. With both configured, the seeded variable wins
+inside a login shell: claude-code goes to the proxy until the
+pair is unset.

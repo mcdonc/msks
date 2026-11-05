@@ -165,6 +165,14 @@ With this list, a claude-code request for `claude-sonnet-4-5`
 takes the first entry, and an OpenAI-shaped client asking for
 `gpt-4o` takes the second.
 
+The secrets machinery offers a second path for claude-code: a
+minted placeholder whose sentinel rides claude-code's own
+credential variable, and the egress interceptor swaps the
+sentinel for the real key on the wire toward `api.anthropic.com`.
+The [secrets chapter's claude-code
+section](secrets.md#claude-code-against-a-subscription-backend)
+walks it end to end and states when each path fits.
+
 ## Secrets stay out of the config file
 
 Every secret-bearing value resolves indirection at configure time: `file:`
