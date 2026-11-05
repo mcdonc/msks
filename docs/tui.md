@@ -380,8 +380,8 @@ label stays empty.
 The bar's right side carries the egress mode beside the popup key (#764), as
 `interactive · C-b p popup`. The key hint lands at launch. The decider app
 fills the mode in front of it when its first rules frame lands, and updates it
-on every change whatever surface decided it. Every workspace carries a mode —
-a workspace created without egress reads `allow`. A window with no workspace
+on every change whatever surface decided it. Every workspace carries a mode.
+A workspace created without egress reads `allow`. A window with no workspace
 (a plain shell) ships neither half: no decider stands behind it, and `C-b p`
 stays stock tmux's own key.
 
