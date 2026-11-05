@@ -132,30 +132,21 @@ module grant exactly those two) and a kernel that routes. The
 host ships `net.ipv4.ip_forward=1` as a boot-time `sysctl.d`
 setting, and the daemon verifies it at startup. A daemon that
 reads `0` refuses every egress workspace with a cause that
-gives the sysctl key. The deployment host satisfies the routing
-kernel the daemon verifies: the NixOS module in `nix/module.nix`
-sets `net.ipv4.ip_forward=1`, picks its own uplink through
-settings, and grants the daemon the two capabilities; a
-`nixos-rebuild switch` is the whole host setup. The dev host's
-wrapper carries the same grant for `msks-dev` (its uplink
-default carries this dev host's interface). Debian and Fedora
-deployment hosts run their setup tool, `msks-setup-debian-host`
-or `msks-setup-fedora-host`, and [the Installation
-chapter](installation.md) walks the tool end to end. For egress
-it matters that the tool installs the same capability wrapper,
-lands the sysctl and the module set this section lists, and
-registers the daemon's systemd user service with
-`MSKSD_EGRESS_ENABLED=true` and the detected uplink. An
-operator who sets `MSKSD_EGRESS_ENABLED=false` arms nothing, and
-every egress workspace then refuses to boot with the cause
-given.
-The dev-host egress smoke (`TEST_EGRESS=1`) runs as root,
-because ambient capabilities cannot be granted to an arbitrary
-shell. The harness creates real taps, loads nftables rules,
-and binds ports 67 and 53, so it runs as full root and sets
-`ip_forward` itself for the duration of the run. That is the
-test's constraint, not the server's: the daemon needs only the
-two capabilities and an already-routing kernel.
+gives the sysctl key.
+
+Debian and Fedora deployment hosts run their setup tool,
+`msks-setup-debian-host` or `msks-setup-fedora-host`, and [the Installation
+chapter](installation.md) walks the tool end to end. For egress it matters that
+the tool installs a capability wrapper, lands the sysctl and the module set
+this section lists, and registers the daemon's systemd user service with
+`MSKSD_EGRESS_ENABLED=true` and the detected uplink. An operator who sets
+`MSKSD_EGRESS_ENABLED=false` arms nothing, and every egress workspace then
+refuses to boot with the cause given. The dev-host egress smoke
+(`TEST_EGRESS=1`) runs as root, because ambient capabilities cannot be granted
+to an arbitrary shell. The harness creates real taps, loads nftables rules, and
+binds ports 67 and 53, so it runs as full root and sets `ip_forward` itself for
+the duration of the run. That is the test's constraint, not the server's: the
+daemon needs only the two capabilities and an already-routing kernel.
 
 ## Reaching guest services (the forward)
 
@@ -202,14 +193,14 @@ variables, and `--pubkey`. `pubkey_file` (or
 `MSKSC_PUBKEY_FILE`) gives the public half directly instead: a
 `.pub` file, read in place of any private material, the create
 form for a key kept encrypted while the operator's agent holds
-it. The daemon stores and seeds the public
-line only; its database never holds a private half and its key
-fetch carries no private field at all. The
-public half persists across daemon
-restarts and workspace stop/start: it lives on the workspace's
-row, and a stop/start cycle serves the same line again. The seed
-composes the identity's script with any `user_data` payload as
-MIME siblings, so a workspace can carry both.
+it.
+
+The daemon stores and seeds the public line only; its database never holds a
+private half and its key fetch carries no private field at all. The public half
+persists across daemon restarts and workspace stop/start: it lives on the
+workspace's row, and a stop/start cycle serves the same line again. The seed
+composes the identity's script with any `user_data` payload as MIME siblings,
+so a workspace can carry both.
 
 The daemon validates the supplied line by shape: a label in the
 algorithm-name charset, fields, base64 body, and a blob whose
@@ -253,7 +244,7 @@ retries behind the first boot's identity seeding, so the first
 attempt lands as a session instead of `Permission denied
 (publickey)`.
 
-`msks rsync` is the copy form of the same seam: it runs the
+`msks rsync` is the copy form of the same: it runs the
 host rsync over the forward with the identity staged in
 memory, and the copy opens its own forward. `msks rsync
 devbox -- -aP src/ :src/` targets the login user's home;
