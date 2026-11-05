@@ -1006,19 +1006,20 @@ passthrough entry pointed at an OpenAI-shaped upstream still
 serves the OpenAI pair; the Messages route answers that upstream's
 own error.</p>
 <p>A workspace that wants claude-code on the proxy must export a few envvars by
-hand:</p>
-<div class="language-console highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">gw=$(ip route show default | awk '{print $3; exit}')</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">export ANTHROPIC_BASE_URL="http://$gw:8770"</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">export ANTHROPIC_AUTH_TOKEN="msks-local-proxy"</span>
+hand. The base URL derives from the seeded <code>MSKSWS_BASE_URL</code>, so it names
+the same tap address and port the seed planted:</p>
+<div class="language-console highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="go">export ANTHROPIC_BASE_URL="${MSKSWS_BASE_URL%/v1}"</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="go">export ANTHROPIC_AUTH_TOKEN="msks-local-proxy"</span>
 </span></code></pre></div>
 <p>The token is the same placeholder the proxy never reads (the
 tap is the credential); it exists because claude-code refuses a
 base URL with no credential beside it. The port is the one the
-daemon serves (<code>MSKSD_LLM_PORT</code>). Set in a shell profile, the
-pair reaches every Anthropic SDK client in the workspace, not
-claude-code alone. A client that must reach an Anthropic
-endpoint directly unsets <code>ANTHROPIC_BASE_URL</code> in its own
-environment.</p>
+daemon served at the workspace's create (<code>MSKSD_LLM_PORT</code>,
+default 8770), the same value the seed carries. Set in a shell
+profile, the pair reaches every Anthropic SDK client in the
+workspace, not claude-code alone. A client that must reach an
+Anthropic endpoint directly unsets <code>ANTHROPIC_BASE_URL</code> in its
+own environment.</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="gp">$ </span>env<span class="w"> </span><span class="p">|</span><span class="w"> </span>grep<span class="w"> </span>MSKSWS
 </span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="go">MSKSWS_BASE_URL=http://172.31.0.2:8770/v1</span>
 </span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="go">MSKSWS_API_KEY=msks-local-proxy</span>
