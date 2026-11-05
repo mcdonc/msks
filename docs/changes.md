@@ -123,6 +123,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The term-popup status row shows the egress mode and the
+  popup key (#764).** `msks-term-popup`'s shell window pins
+  `interactive · C-b p popup` to the right side of its tmux
+  status row. The key hint lands at launch, and the hidden
+  decider app fills the mode in front of it from its first
+  rules frame, updating it on every change whatever surface
+  decided it. A window with no workspace (a plain shell) ships
+  neither half.
+
 - **The daemon journals every published event (#762).** Every
   frame the events hub publishes also writes one INFO line to
   the daemon's journal, carrying the whole frame as JSON. On

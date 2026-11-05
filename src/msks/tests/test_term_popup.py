@@ -199,7 +199,12 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
         "set-option",
         "-g",
         "status-right",
-        "",
+        tp.status_right(),
+        ";",
+        "set-option",
+        "-g",
+        "status-right-length",
+        str(tp.STATUS_RIGHT_LENGTH),
         ";",
         "new-session",
         "-s",
@@ -228,6 +233,30 @@ def test_session_argv_escapes_a_hash_in_the_label() -> None:
     assert argv[argv.index("status-left") + 1] == "[a##b] "
 
 
+def test_status_right_carries_the_hint_then_the_mode() -> None:
+    """#764: the row's right half. The launch-time form is the
+    hint alone (the mode is unknown until the decider's first
+    frame), and the decider's write puts the mode in front."""
+    assert tp.status_right() == f"· {tp.STATUS_HINT}"
+    assert tp.STATUS_HINT == "C-b p popup"
+    assert tp.status_right("interactive") == (
+        f"interactive · {tp.STATUS_HINT}"
+    )
+
+
+def test_mode_argv_writes_the_row_on_the_launch_socket() -> None:
+    argv = tp.mode_argv("msks-ws1-7", "static")
+    assert argv == [
+        "tmux",
+        "-L",
+        "msks-ws1-7",
+        "set-option",
+        "-g",
+        "status-right",
+        f"static · {tp.STATUS_HINT}",
+    ]
+
+
 def test_session_argv_without_a_workspace_ships_no_consent_session() -> None:
     argv = tp.session_argv(
         ["top"], session="shell", workspace_id=None, label="shell"
@@ -237,6 +266,10 @@ def test_session_argv_without_a_workspace_ships_no_consent_session() -> None:
     assert tp.CONSENT_SESSION not in argv
     assert tp.REOPEN_KEY not in argv
     assert argv[argv.index("status-left") + 1] == "[shell] "
+    # #764: no workspace means no reopen binding, and the row
+    # advertises no hint — `C-b p` there is stock tmux's
+    # previous-window, and a hint naming it would lie.
+    assert argv[argv.index("status-right") + 1] == ""
 
 
 def test_page_keys_scroll_the_session_history() -> None:
@@ -360,12 +393,15 @@ def test_page_keys_scroll_the_session_history() -> None:
 
 
 def test_the_status_bar_carries_the_workspace_name() -> None:
-    """The #455/#458 boundary against a real tmux server: the
+    """The #455/#458/#764 boundary against a real tmux server: the
     shipped option chain writes the resolved name onto the bar —
     read back through the session it names, expanded the way the
     bar itself renders it — with the length budget raised past
-    tmux's ten-cell default, and the window-list formats and the
-    right side read back empty, so the label is the whole bar.
+    tmux's ten-cell default, the window-list formats reading
+    back empty, and the right side empty too: this launch names
+    no workspace, so no reopen binding ships and the hint stays
+    off the bar (#764). The launch-time hint on a
+    workspace-named launch is the argv unit tests' claim.
     The session runs detached on its own socket with a pane that
     stays alive (a pane that exits takes the last session — and
     its server — with it), so no window opens anywhere and the

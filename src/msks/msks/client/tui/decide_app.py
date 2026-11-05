@@ -22,7 +22,10 @@ switches the workspace's egress mode from the popup (#465): the
 picker, the gate, and the empty-static confirmation are the
 consent page's own shapes, the switch rides the same endpoint
 ``msks egress mode`` speaks, and the landed switch or the
-daemon's refusal names itself on the status line.
+daemon's refusal names itself on the status line. The shell
+window's tmux status row carries the mode beside the popup hint
+(#764): this app writes the mode half whenever it changes,
+whatever surface decided the change.
 
 Standalone — ``python -m msks.client.tui.decide_app -w WORKSPACE``
 — the same app runs outside a shell window; it quits on ``q``
@@ -184,6 +187,11 @@ class ConsentDeciderApp(App[None]):
         self.show_task: asyncio.Task | None = None
         self.hide_task: asyncio.Task | None = None
         self.verdicts: set[asyncio.Task] = set()
+        #: #764: the mode half of the status row, as last written
+        #: (``None`` until the first rules frame lands) — one
+        #: ``set-option`` per change, none per frame.
+        self.bar_mode: str | None = None
+        self.bar_task: asyncio.Task | None = None
         self.started = clock()
         self.client_seen = False
         self.empty_since: float | None = None
@@ -246,6 +254,7 @@ class ConsentDeciderApp(App[None]):
         """The link's per-frame hook, on the worker's task: hand
         the arrival to the UI's queue."""
         self.post_message(FrameLanded(outcome == ADDED))
+        self.refresh_bar()
 
     def on_frame_landed(self, event: FrameLanded) -> None:
         """One frame's arrival: repaint, and show the popup the
@@ -503,6 +512,7 @@ class ConsentDeciderApp(App[None]):
         self.link.controller.apply_frame(
             json.dumps({"event": "egress.rules", "data": reply})
         )
+        self.refresh_bar()
         effect = (
             "in effect now"
             if reply.get("applied")
@@ -546,6 +556,63 @@ class ConsentDeciderApp(App[None]):
         if not self.client_seen:
             return self.clock() - self.started >= LIVENESS_GRACE_S
         return self.clock() - self.empty_since >= LIVENESS_EMPTY_S
+
+    # --- the status row's mode half (#764) ---------------------------
+
+    def pending_mode(self) -> str | None:
+        """The mode the row wants and does not yet carry, or None.
+        A standalone app owns no tmux row to write, and a rules
+        frame that has not landed yet leaves the launch-time hint
+        alone."""
+        if not self.persistent:
+            return None
+        rules = self.link.controller.rules
+        if rules is None or rules.mode == self.bar_mode:
+            return None
+        return rules.mode
+
+    def refresh_bar(self) -> None:
+        """Follow the rules into the status row: one write per
+        change, none per frame — verdicts and holds re-land the
+        same rules frame constantly."""
+        mode = self.pending_mode()
+        if mode is None:
+            return
+        self.bar_mode = mode
+        if self.bar_task is None or self.bar_task.done():
+            self.bar_task = asyncio.create_task(self.bar_worker())
+
+    async def bar_worker(self) -> None:
+        """Write the row off the loop, catching up with itself: a
+        mode that changed while a write was in flight writes
+        again, so the row never rests on a stale mode."""
+        while True:
+            mode = self.bar_mode
+            await asyncio.to_thread(self.write_bar_mode, mode)
+            if mode == self.bar_mode:
+                return
+
+    def write_bar_mode(self, mode: str) -> None:
+        """The row's one ``set-option``, the same blocking tmux
+        budget the popup paths take. A write that fails changes
+        nothing: the row keeps its last write, and the next change
+        retries."""
+        socket = self.popup_socket
+        if not socket:
+            return
+        try:
+            subprocess.run(
+                term_popup.mode_argv(socket, mode),
+                capture_output=True,
+                timeout=term_popup.TMUX_TIMEOUT_S,
+                check=False,
+            )
+        # The PEP 758 form: a tmux missing from the decider's
+        # PATH raises OSError, a slow one TimeoutExpired — both
+        # leave the row on its last write, and the next change
+        # retries.
+        except OSError, subprocess.SubprocessError:
+            return
 
     # --- the viewer ---------------------------------------------------------
 
