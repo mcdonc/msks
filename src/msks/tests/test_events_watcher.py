@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 
@@ -38,6 +39,20 @@ async def test_hub_pubsub() -> None:
     assert other.qsize() == 1
     assert not queue.empty()
     hub.unsubscribe(queue)
+
+
+async def test_publish_journals_the_frame(caplog) -> None:
+    """#762: every publish writes one INFO line carrying the
+    whole frame — the journal is the record of events, written
+    whether or not a subscriber stands."""
+    hub = EventHub()
+    with caplog.at_level(logging.INFO, logger="msks.events"):
+        await hub.publish("workspace.status", {"id": "a", "status": "running"})
+    assert json.loads(caplog.records[-1].getMessage()) == {
+        "event": "workspace.status",
+        "data": {"id": "a", "status": "running"},
+    }
+    assert caplog.records[-1].levelname == "INFO"
 
 
 async def test_relay_and_close_all() -> None:
@@ -99,7 +114,7 @@ def test_websocket_receives_transitions(tmp_path: Path) -> None:
             assert seen
 
 
-async def test_scan_once_publishes_transition(tmp_path: Path) -> None:
+async def test_scan_once_publishes_transition(tmp_path: Path, caplog) -> None:
     api, app, stub = api_with_stub(tmp_path)
     async with api.router.lifespan_context(api):
         await app.state.model.create_workspace(
@@ -114,7 +129,8 @@ async def test_scan_once_publishes_transition(tmp_path: Path) -> None:
         stub.statuses["ws-s"] = VmStatus.STOPPED
         stub.statuses["ws-t"] = VmStatus.RUNNING
         hub = api.state.hub
-        published = await scan_once(app, hub)
+        with caplog.at_level(logging.INFO, logger="msks.events"):
+            published = await scan_once(app, hub)
         assert published == 2
         assert (await app.state.model.get_workspace("ws-s"))[
             "status"
@@ -123,6 +139,16 @@ async def test_scan_once_publishes_transition(tmp_path: Path) -> None:
             "status"
         ] == "running"
         assert await scan_once(app, hub) == 0
+        # #762: the watcher's publishes journal, one line per frame.
+        lines = [
+            json.loads(record.getMessage())
+            for record in caplog.records
+            if record.name == "msks.events"
+        ]
+        assert {
+            "event": "workspace.status",
+            "data": {"id": "ws-s", "status": "stopped"},
+        } in lines
 
 
 async def test_watch_loop_cancellable(tmp_path: Path) -> None:

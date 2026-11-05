@@ -4,6 +4,13 @@ One pub/sub hub behind ``GET /api/v1/events``: the status watcher
 publishes workspace lifecycle transitions, every connected client
 socket receives them. Same listener/port as HTTPS — one surface.
 
+Every publish also writes one INFO line (#762): the daemon's
+journal is the record of events, visible after the subscribers
+are gone. The line is the whole frame, the same JSON the
+subscribers receive — the payloads carry ids, names, and counts,
+never a secret's value or a sentinel (the model keeps both out
+of frames by rule), so the record needs no redaction.
+
 A root leaf module (#408): the composition layer (``app.py``) and
 the HTTP surface (``server``) both import it, so the package graph
 between them stays one-way. The consent engine and interceptor
@@ -14,6 +21,9 @@ this module; the watcher imports only the ``EventHub`` type.
 import asyncio
 import contextlib
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class EventHub:
@@ -58,10 +68,15 @@ class EventHub:
     async def publish(self, event_type: str, data: dict) -> None:
         """Deliver one event; a full (stalled) queue drops its oldest.
 
+        The journal line (#762) writes here, on the publishing
+        thread before any hop: the record is the publish, not the
+        delivery — a publish with no subscriber still journals.
+
         A publish running on a loop other than the home loop hops
         the delivery through ``call_soon_threadsafe`` — the only
         wake-up a foreign thread can give the home loop's poll."""
         payload = json.dumps({"event": event_type, "data": data})
+        logger.info("%s", payload)
         home = self._loop
         if home is not None and home is not asyncio.get_running_loop():
             home.call_soon_threadsafe(self._broadcast, payload)

@@ -9,6 +9,7 @@ non-ext4 body, a cut-off upload) and the CLI surface on top.
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -88,12 +89,13 @@ async def test_export_unknown_workspace_is_404(home_api) -> None:
     assert "no such workspace" in response.json()["detail"]
 
 
-async def test_export_streams_the_volume_bytes(home_api) -> None:
+async def test_export_streams_the_volume_bytes(home_api, caplog) -> None:
     wid_ws_exp = await create_workspace(home_api, "ws-exp")
     home = planted_volume(home_api, wid_ws_exp["id"])
-    response = await home_api.http.get(
-        "/api/v1/workspaces/ws-exp/home", headers=auth()
-    )
+    with caplog.at_level(logging.INFO, logger="msks.events"):
+        response = await home_api.http.get(
+            "/api/v1/workspaces/ws-exp/home", headers=auth()
+        )
     assert response.status_code == 200
     assert response.content == IMAGE
     assert response.headers["content-length"] == str(len(IMAGE))
@@ -103,6 +105,17 @@ async def test_export_streams_the_volume_bytes(home_api) -> None:
     )
     # The stream is a read: the file keeps its contents.
     assert home.read_bytes() == IMAGE
+    # #762: the volumes family's publish journals, one line per frame.
+    lines = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.name == "msks.events"
+    ]
+    exported = next(line for line in lines if line["event"] == "home.exported")
+    assert exported["data"] == {
+        "id": wid_ws_exp["id"],
+        "bytes": len(IMAGE),
+    }
 
 
 async def test_export_missing_volume_file_is_404(home_api) -> None:

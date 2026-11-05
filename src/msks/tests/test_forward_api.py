@@ -4,6 +4,8 @@ serves a real listener."""
 
 import asyncio
 import contextlib
+import json
+import logging
 import time
 
 import pytest
@@ -272,7 +274,7 @@ def test_two_forwards_run_concurrently(forward_api) -> None:
 
 
 def test_forward_publishes_open_and_closed_events(
-    forward_api, monkeypatch
+    forward_api, monkeypatch, caplog
 ) -> None:
     # A publish spy beats draining the events websocket: the route
     # awaits the hub, so the recording is synchronous with the
@@ -303,6 +305,35 @@ def test_forward_publishes_open_and_closed_events(
         while closed not in published and time.monotonic() < deadline:
             time.sleep(0.01)
         assert closed in published
+
+
+def test_forward_publishes_journal_the_frames(
+    forward_api, monkeypatch, caplog
+) -> None:
+    """#762: the forward family's publishes journal — the spy
+    path calls the real publish, so the hub's INFO line fires for
+    each frame the session publishes."""
+    api, app, net = forward_api
+    net.close_after_echo = True
+    with caplog.at_level(logging.INFO, logger="msks.events"):
+        with TestClient(api) as client:
+            wid = _make_workspace(client)
+            with client.websocket_connect(
+                "/api/v1/workspaces/ws-f/forward/22", headers=offer()
+            ) as socket:
+                socket.send_bytes(b"ping\n")
+                assert socket.receive_bytes() == b"PING\n"
+    lines = [
+        json.loads(record.getMessage())
+        for record in caplog.records
+        if record.name == "msks.events"
+    ]
+    assert any(
+        line["event"] == "forward.opened"
+        and line["data"] == {"id": wid, "port": 22}
+        for line in lines
+    )
+    assert any(line["event"] == "forward.closed" for line in lines)
 
 
 def test_forward_closed_publishes_before_a_cancelling_teardown(

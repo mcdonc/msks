@@ -257,7 +257,9 @@ Three streams use the same listener and the same token:
   `egress.request`, `egress.resolved`), and the secret
   lifecycle events. A client that announces itself as a decider
   receives that workspace's pending holds; `msks egress watch`
-  prints the frames as lines.
+  prints the frames as lines. Every publish also writes one INFO
+  line to the daemon's journal (#762), so the event history
+  stays readable after the subscribers are gone.
 - `wss://…/api/v1/workspaces/{id}/console`: the guest's serial console as a
   bidirectional byte stream. Ctrl-] detaches in the client. The [console
   chapter](cli.md#msks-console) covers the interactive form.

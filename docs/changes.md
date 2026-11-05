@@ -123,6 +123,13 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The daemon journals every published event (#762).** Every
+  frame the events hub publishes also writes one INFO line to
+  the daemon's journal, carrying the whole event frame as JSON —
+  `journalctl --user -u msksd` shows an event history after the
+  subscribed clients are gone. Event frames carry ids, names,
+  and counts; secret values and sentinels never ride them.
+
 - **The Linux host setups link `msks-term-popup` beside `msks`
   (#755).** `msks-setup-debian-host` and `msks-setup-fedora-host`
   now land a `/usr/local/bin/msks-term-popup` symlink beside the
