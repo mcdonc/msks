@@ -1,10 +1,15 @@
 # Development environment
 
-This chapter collects the devenv side of msks: everything a
-checkout of this repository presets, seeds, and runs for
-development. The published chapters describe the deployed
-product; this one describes the developer's tree: the shell,
-the dev daemon, the client presets, and the dev identity.
+Msks uses [devenv](https://devenv.sh) as development environment. A checkout
+of this repository presets, seeds, and runs for development via `devenv shell`
+or `devenv processes up`. The published chapters describe the deployed product;
+this one describes the developer's tree: the shell, the dev daemon, the client
+presets, and the dev identity.
+
+Apologies for the quality of these docs, they have not been edited carefully
+and probably won't make much sense except in snippets. Until they are edited
+into some sense, if you would like to participate in development, and need
+help, ask via a GitHub issue.
 
 ## The dev daemon
 
