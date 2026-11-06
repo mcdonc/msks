@@ -567,6 +567,18 @@ def test_unix_url_round_trips_the_path() -> None:
     assert unix_path(address) == "/run/msks/msksd.sock"
 
 
+def test_display_url_decodes_the_unix_path() -> None:
+    """#779: the transport form quotes the socket path into the
+    authority; what the operator reads decodes it. A TCP address
+    passes through unchanged."""
+    from msks.client.env import display_url, unix_url
+
+    address = unix_url("/run/user/1001/msks/msksd.sock")
+    assert display_url(address) == "http+unix:///run/user/1001/msks/msksd.sock"
+    assert "%" not in display_url(address)
+    assert display_url("https://host:8660") == "https://host:8660"
+
+
 def test_env_url_takes_the_socket_variable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

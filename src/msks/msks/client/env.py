@@ -71,6 +71,17 @@ def is_unix(url: str) -> bool:
     return url.startswith(UNIX_SCHEME)
 
 
+def display_url(url: str) -> str:
+    """The address as the operator reads it (#779): a unix
+    address shows its socket path decoded — the quoting belongs
+    to the transport form (the path percent-encoded into the
+    authority), not to a status line. A TCP address passes
+    through unchanged."""
+    if is_unix(url):
+        return UNIX_SCHEME + unix_path(url)
+    return url
+
+
 def env_url() -> str:
     """The daemon's address: a configured URL or socket, else the
     default socket an unconfigured client finds, else a refusal.

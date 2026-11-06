@@ -34,7 +34,7 @@ from textual.app import App
 from textual.screen import Screen
 
 from ..config import ClientConfig
-from ..env import env_token, env_url
+from ..env import display_url, env_token, env_url
 from .consent_ui import FlashLine, flash_safe, shared_ssl
 from .data import TuiData
 from .follow import TuiFollow, run_follow_up
@@ -255,12 +255,14 @@ class MsksTuiApp(App):
         self.follow = follow or TuiFollow()
         self.data = data or TuiData()
         self.flash_line = FlashLine()
-        # The configured daemon's URL, read once at construction:
-        # the bootstrap materialized every winner into the
-        # environment before the tree started, and the screens'
-        # status lines read it off the app instead of each holding
-        # its own env edge.
-        self.url = env_url()
+        # The configured daemon's URL, read once at construction
+        # as the operator reads it — a unix address shows its
+        # socket path decoded (#779), the quoting staying in the
+        # transport forms: the bootstrap materialized every winner
+        # into the environment before the tree started, and the
+        # screens' status lines read it off the app instead of
+        # each holding its own env edge.
+        self.url = display_url(env_url())
         # The invocation's resolved config, kept for the screens
         # that read a setting from it (#565's manifest URL).
         self.conf = conf

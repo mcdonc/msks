@@ -16,6 +16,14 @@ tagged `vX.Y.Z`.
   refresh arriving mid-flight now skips instead; the next standing tick
   (five seconds) serves the rows.
 
+- **The TUI status line shows the unix socket path decoded
+  (#779).** The line printed the daemon's transport address
+  verbatim, so the local socket read
+  `http+unix://%2Frun%2Fus…%2Fmsksd.sock`. It now decodes the
+  path — `http+unix:///run/user/1001/msks/msksd.sock` — keeping
+  the quoting where it belongs, in the address the transports
+  dial. A TCP daemon's URL shows unchanged.
+
 ### Added
 
 - **`msks clone` (#773).** One stopped workspace copies into a
