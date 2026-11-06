@@ -232,20 +232,20 @@ the seam.
 `msks console` is a websocket session, not ssh, so `ssh_options`
 applies to the ssh surfaces above and leaves it untouched.
 
-## Workspace identity: a name and an id
+## Workspace identity
 
 A workspace carries two identity fields. The **name** is the
 label you choose at create, the positional argument of every
 command, unique among the daemon's workspaces. The **id** is
 minted by the daemon at create: 10 hex digits (5 random bytes,
 re-rolled until it collides with nothing on this daemon),
-immutable, and never reused while its workspace lives. Every
-host-side surface keys on the id: the artifact directories under
-the state dir, the catalog row, and the client-side caches.
-Deleting a workspace and creating another under the same name
-yields a different id, with nothing of the first instance left
-to collide. The second workspace's `msks ssh` works on the first
-try, with a fresh host-key cache of its own.
+immutable, and never reused while its workspace lives.
+
+Every host-side surface keys on the id: the artifact directories under the
+state dir, the catalog row, and the client-side caches. Deleting a workspace
+and creating another under the same name yields a different id, with nothing of
+the first instance left to collide. The second workspace's `msks ssh` works on
+the first try, with a fresh host-key cache of its own.
 
 Every command that takes a workspace accepts either reference: `msks console
 ws` and `msks console 1a2b3c4d5e` reach the same workspace. The name is the
@@ -485,15 +485,6 @@ id, the same key. Session resolution consults your own ssh-agent first: when
 `SSH_AUTH_SOCK` gives a live agent holding that key, the session signs
 through the agent and the key file's encryption stops mattering.
 
-A key msks stages for its own sessions is an unencrypted
-OpenSSH-format key: `ed25519`, `ecdsa` (P-256/P-384/P-521), or
-`rsa`. An `identity_file` giving a key outside that set is
-refused with a line saying so, and that line also points at
-`pubkey_file`, the create that reads no private half at all.
-`--pubkey` plants any well-formed public line at any type; the
-guest's sshd stays the authority on which key types it
-authenticates.
-
 `--pubkey FILE` builds the workspace around a public key you
 already own: the file's one line travels to the daemon at any
 well-formed key type, the private half stays wherever you keep
@@ -678,12 +669,13 @@ bare `msks create` resolves to it. The `description` column carries the
 identity the build baked into the image, capped for the row. `image info`
 prints it at full length, and an image whose manifest carried none keeps the
 column with a dash. The `imported` column shows the moment the archive
-entered the catalog, in local time to the minute. An entry re-imported under
-the same reference moves the time forward with it. A renamed row adds an
-`origin` column beside the ref, showing the archive's own pair where it
-differs from the registered one. Rows whose archive pair matches keep the
-column with a dash. `--json` prints the listing as the API returns it (`GET
-/api/v1/images`, each row's `imported` field in ISO 8601 UTC, each row's
+entered the catalog, in local time to the minute.
+
+An entry re-imported under the same reference moves the time forward with it. A
+renamed row adds an `origin` column beside the ref, showing the archive's own
+pair where it differs from the registered one. Rows whose archive pair matches
+keep the column with a dash. `--json` prints the listing as the API returns it
+(`GET /api/v1/images`, each row's `imported` field in ISO 8601 UTC, each row's
 `origin_name`/`origin_version` carrying the manifest pair), stable for
 scripting.
 
@@ -983,12 +975,11 @@ on both stdin and stdout.
 
 ## `msks forward`
 
-A guest TCP port on this command's stdio (the pipe ssh's
-ProxyCommand expects), over the daemon's forward websocket. The
-command boots the workspace first when the daemon reports it as
-not running (the same notices as `msks console`), then bridges
-bytes unexamined in both directions: a tty is not required, and
-binary protocols (ssh, rsync) pass through it cleanly:
+Forwards a guest TCP port on this command's stdio over the daemon's forward
+websocket. The command boots the workspace first when the daemon reports it as
+not running (the same notices as `msks console`), then bridges bytes unexamined
+in both directions: a tty is not required, and binary protocols (ssh, rsync)
+pass through it cleanly:
 
 ```bash
 msks forward my-workspace 22                  # stdio: ProxyCommand shape
@@ -1078,7 +1069,7 @@ points, or in the agent that holds it.
 
 ## `msks ssh`
 
-Stock ssh into a workspace, using a forward.
+Use `ssh` to access a workspace, using a forward.
 
 ```bash
 msks ssh my-workspace              # as the workspace's login user
@@ -1121,14 +1112,6 @@ the same key the create planted. When neither holds the
 workspace's key, the command exits with one line giving both
 rungs and the ways back in (ssh-add the key, point identity\*file
 at it, or ssh -i directly).
-
-The session writes no new copy of the private half anywhere. A
-transient in-process ssh-agent holds it in memory for the
-session; ssh identifies the identity by its public half (`-i`,
-public material only) and signs through the agent socket. A
-daemon-held half arrives over the API and goes away with the
-process. A locally-held half, yours, is read from its one file
-and left exactly there.
 
 Host keys land in a per-workspace `known_hosts` under the msks
 cache root, under `accept-new`. The root is the `cache_dir` key
