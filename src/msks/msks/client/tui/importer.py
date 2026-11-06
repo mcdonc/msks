@@ -161,20 +161,47 @@ def sorted_catalog(catalog: list[dict]) -> list[dict]:
     )
 
 
+#: The hash-prefix column's width — the same 12-character
+#: prefix `msks image ls` prints, so the page, the CLI, and the
+#: ``name@hash`` commands share one spelling of a build.
+HASH_PREFIX = 12
+
+
+def hash_cell(value: object) -> str:
+    """A build's hash-prefix cell: the first 12 characters, or a
+    dash when the row carried no hash (a v0.1 channel row). The
+    column exists on both groups so a published row's prefix is
+    matched against the catalog's by eye."""
+    text = str(value or "")
+    return text[:HASH_PREFIX] if text else "-"
+
+
+def longest_cells(rows: list[dict], cells) -> list[int]:
+    """Each cell function's longest cell across the rows — a
+    group's column widths from its cell functions."""
+    return [max(map(len, cells_for(rows)), default=0) for cells_for in cells]
+
+
 def catalog_widths(catalog: list[dict]) -> list[int]:
     """The catalog group's column widths: the ref column takes
     the group's longest ref, the default-marker column collapses
-    when no row is the default, and the date column is its fixed
-    cell (the import moment alone — the column's position, not a
-    word, says what it is)."""
-    refs = [f"{row['name']}:{row['version']}" for row in catalog]
-    tags = ["[default]" if row.get("default") else "" for row in catalog]
-    dates = [imported_cell(row) for row in catalog]
-    return [
-        max(map(len, refs), default=0),
-        max(map(len, tags), default=0),
-        max(map(len, dates), default=0),
-    ]
+    when no row is the default, and the hash and date columns
+    are their fixed cells (the import moment alone — the column's
+    position, not a word, says what it is)."""
+
+    def refs(rows):
+        return [f"{row['name']}:{row['version']}" for row in rows]
+
+    def tags(rows):
+        return ["[default]" if row.get("default") else "" for row in rows]
+
+    def hashes(rows):
+        return [hash_cell(row.get("hash")) for row in rows]
+
+    def dates(rows):
+        return [imported_cell(row) for row in rows]
+
+    return longest_cells(catalog, [refs, tags, hashes, dates])
 
 
 def marker_cell(row: dict, catalog: list[dict]) -> str:
@@ -200,28 +227,40 @@ def published_widths(
     published: list[dict], catalog: list[dict], width: int
 ) -> list[int]:
     """The published group's column widths against *width*: the
-    identity columns (ref, size, marker) take their longest
+    identity columns (ref, size, hash, marker) take their longest
     cells, and the description column absorbs what remains — a
     narrower terminal truncates descriptions, a wider one lets
     them run to their full length."""
     refs = [row["ref"] for row in published]
     sizes = [f"({size_label(row.get('size'))})" for row in published]
+    hashes = [hash_cell(row.get("hash")) for row in published]
     markers = [marker_cell(row, catalog) for row in published]
     ref_w = max(map(len, refs), default=0)
     size_w = max(map(len, sizes), default=0)
+    hash_w = max(map(len, hashes), default=0)
     marker_w = max(map(len, markers), default=0)
-    budget = width - ref_w - size_w - marker_w - GAP * 3 - PICKER_FRAME_CELLS
-    return [ref_w, desc_column(published, budget), size_w, marker_w]
+    budget = (
+        width
+        - ref_w
+        - size_w
+        - hash_w
+        - marker_w
+        - GAP * 4
+        - PICKER_FRAME_CELLS
+    )
+    return [ref_w, desc_column(published, budget), size_w, hash_w, marker_w]
 
 
 def published_label(row: dict, catalog: list[dict], widths: list[int]) -> str:
     """One published row's label as columns: ref, description,
-    size, then the membership marker or the build date."""
+    size, the build's hash prefix, then the membership marker or
+    the build date."""
     return columnar(
         [
             row["ref"],
             capped_description(row, widths[1]),
             f"({size_label(row.get('size'))})",
+            hash_cell(row.get("hash")),
             marker_cell(row, catalog),
         ],
         widths,
@@ -230,12 +269,13 @@ def published_label(row: dict, catalog: list[dict], widths: list[int]) -> str:
 
 def catalog_label(row: dict, widths: list[int]) -> str:
     """One catalog row's label as columns: ref, the default
-    marker, and the import date (#571) — the cell `msks image
-    ls` renders."""
+    marker, the build's hash prefix, and the import date (#571)
+    — the hash cell `msks image ls` renders."""
     return columnar(
         [
             f"{row['name']}:{row['version']}",
             "[default]" if row.get("default") else "",
+            hash_cell(row.get("hash")),
             imported_cell(row),
         ],
         widths,

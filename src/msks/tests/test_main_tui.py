@@ -6790,6 +6790,16 @@ async def test_the_picker_rows_align_as_columns(monkeypatch) -> None:
         pub = [label for label in labels if "(266" in label or "(621" in label]
         assert len(pub) == 2
         assert column_at(pub[0], "(") == column_at(pub[1], "(")
+
+        # The hash-prefix column: the catalog row and the
+        # published row that match carry the same prefix in both
+        # groups (the join the markers compare).
+        prefix = "a" * 12
+        assert any(
+            label.startswith("debian:13.6") and prefix in label
+            for label in cat
+        )
+        assert any(prefix in label for label in pub)
         before = pub[0]
 
         # A narrower terminal re-lays the columns: the identity
