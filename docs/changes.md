@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.8.1] - 2026-11-06
+
 ### Fixed
 
 - **The term popup's drag selection reaches the system
