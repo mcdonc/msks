@@ -150,8 +150,11 @@ async def until(predicate, timeout: float | None = None) -> None:
     text widget has not joined the tree yet) reads as not-yet, not
     as failure. The loop is the consent suite's poll (#776): the
     lane-scaled budget, the overslept-park credit-back, and the
-    timeout's diagnostics line all arrive with it."""
-    await poll(predicate, timeout or 5.0, 0.02)
+    timeout's diagnostics line all arrive with it — a read that
+    only ever raised names its own error at the timeout, poll's
+    triage rule. An explicit ``timeout`` (``0`` included) is
+    honored as given."""
+    await poll(predicate, timeout, 0.02)
 
 
 def verdict_seam() -> tuple[list, object]:

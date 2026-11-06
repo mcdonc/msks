@@ -2785,7 +2785,7 @@ def test_the_budget_refuses_non_finite_values(monkeypatch) -> None:
     touch (#777 review): ``nan`` makes each deadline check false
     forever and ``inf`` makes the budget unbounded — both keep the
     default, never a silent un-timeouted wait."""
-    for bad in ("nan", "inf", "-inf", "infinity"):
+    for bad in ("nan", "inf", "-inf", "infinity", "1e400"):
         monkeypatch.setenv("MSKS_TUI_WAIT_S", bad)
         assert wait_budget_s() == DEFAULT_WAIT_S, bad
 
