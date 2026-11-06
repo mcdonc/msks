@@ -95,6 +95,21 @@ class TuiData:
             ssl_ctx=shared_ssl(),
         )
 
+    async def set_default_image(self, ref: str) -> dict:
+        """POST the default designation — the image page's ``d``
+        key, the same exchange the CLI's ``image default`` makes:
+        the ref is the row's full hash, and the daemon's pointer
+        file is the whole designation."""
+        return await api_call(
+            "POST",
+            env_url(),
+            env_token(),
+            "/api/v1/images/default",
+            json_body={"ref": ref},
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+        )
+
     async def create(self, body: dict) -> dict:
         """POST one workspace (the create form's fields) with the
         operator's configured key for its identity (#486) — the

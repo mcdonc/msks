@@ -143,6 +143,10 @@ class FakeData:
         self.import_refusal: str | None = None
         self.removed: list[str] = []
         self.remove_refusal: str | None = None
+        # The image page's default designation (#571): the recorded
+        # refs the ``d`` key POSTs.
+        self.default_calls: list[str] = []
+        self.default_refusal: str | None = None
         # The secrets page's surface (#390): the placeholder rows,
         # the recorded audit rows, and the calls the page makes.
         self.secret_rows: list[dict] = []
@@ -210,6 +214,17 @@ class FakeData:
             row for row in self.images_rows if row["hash"] != digest
         ]
         return {"removed": digest}
+
+    async def set_default_image(self, ref: str) -> dict:
+        """The image page's default designation: recorded, the
+        ``[default]`` flag moves to the named hash the way the
+        daemon's pointer file moves it."""
+        self.default_calls.append(ref)
+        if self.default_refusal is not None:
+            raise SystemExit(self.default_refusal)
+        for image in self.images_rows:
+            image["default"] = image["hash"] == ref
+        return {"hash": ref}
 
     async def import_image(self, source: str) -> dict:
         """The channel import (#565): recorded; a refusal a test
@@ -6882,3 +6897,125 @@ async def test_the_catalog_rows_sort_by_ref_then_newest_import() -> None:
         f"{row['name']}:{row['hash'][:1]}" for row in sorted_catalog(rows)
     ]
     assert order == ["debian:d", "debian:c", "debian:e", "nixos:b"]
+
+
+async def test_d_designates_the_highlighted_catalog_row_default(
+    monkeypatch,
+) -> None:
+    """``d`` on a catalog row POSTs the designation keyed by the
+    row's full hash and the refreshed page moves the ``[default]``
+    tag to it; the row that already holds it flashes so without a
+    call."""
+    scripted_manifest(monkeypatch)
+    data = FakeData([])
+    data.images_rows = [
+        {
+            "name": "debian",
+            "version": "13.6",
+            "hash": "a" * 64,
+            "default": True,
+            "imported": "2026-11-06T05:13:00",
+        },
+        {
+            "name": "fedora",
+            "version": "44",
+            "hash": "b" * 64,
+            "imported": "2026-11-06T05:14:00",
+        },
+    ]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        options = app.screen.query_one(OptionList)
+        # The fedora row: second catalog row, no tag yet.
+        options.highlighted = next(
+            i
+            for i, o in enumerate(options.options)
+            if str(o.prompt).startswith("fedora:44")
+        )
+        await pilot.pause()
+        await pilot.press("d")
+        await wait_for(lambda: data.default_calls == ["b" * 64])
+        await wait_for(
+            lambda: any(
+                str(o.prompt).startswith("fedora:44")
+                and "[default]" in str(o.prompt)
+                for o in options.options
+            )
+        )
+        # d on the row that already holds the designation: no call.
+        await pilot.press("d")
+        await pilot.pause()
+        assert data.default_calls == ["b" * 64]
+        page_status = str(
+            app.screen.query_one("#import-picker-status", Static).content
+        )
+        assert "already the default" in page_status
+
+
+async def test_the_data_seam_posts_the_default(monkeypatch) -> None:
+    """The TUI's default exchange: the row's full hash POSTs to
+    the daemon's default endpoint over the shared TLS context."""
+    from msks.client.tui.data import TuiData
+
+    posted: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append(request)
+        return httpx.Response(200, json={"hash": "b" * 64})
+
+    monkeypatch.setenv("MSKSC_URL", "https://daemon")
+    monkeypatch.setenv("MSKSC_TOKEN", "tok")
+    data = TuiData(transport=httpx.MockTransport(handler))
+    record = await data.set_default_image("b" * 64)
+    assert record["hash"] == "b" * 64
+    assert posted[0].url.path == "/api/v1/images/default"
+    assert json.loads(posted[0].content) == {"ref": "b" * 64}
+
+
+async def test_d_off_a_catalog_row_and_a_refused_default(
+    monkeypatch,
+) -> None:
+    """``d`` names its subject when the highlight is not a
+    catalog row, and a daemon refusal lands on the failure panel
+    with no designation."""
+    scripted_manifest(monkeypatch)
+    data = FakeData([])
+    data.images_rows = [
+        {
+            "name": "debian",
+            "version": "13.6",
+            "hash": "a" * 64,
+            "imported": "2026-11-06T05:13:00",
+        }
+    ]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        options = app.screen.query_one(OptionList)
+        # A published row holds the highlight: d names its subject.
+        options.highlighted = next(
+            i
+            for i, o in enumerate(options.options)
+            if str(o.prompt).startswith("debian:13.6")
+            and "(2" in str(o.prompt)
+        )
+        await pilot.pause()
+        await pilot.press("d")
+        await pilot.pause()
+        assert data.default_calls == []
+        page_status = str(
+            app.screen.query_one("#import-picker-status", Static).content
+        )
+        assert "highlight a catalog row" in page_status
+
+        # The catalog row holds it: an armed refusal lands on the
+        # failure panel.
+        data.default_refusal = "msks: 409: no"
+        options.highlighted = 1
+        await pilot.pause()
+        await pilot.press("d")
+        await wait_for(lambda: on_failure(app))
+        assert data.default_calls == ["a" * 64]

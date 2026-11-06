@@ -427,6 +427,7 @@ class ImageImportScreen(ModalScreen):
         Binding("q", "cancel", "Close", show=False),
         Binding("escape", "cancel", "Close", show=False),
         Binding("D", "delete", "Del", show=False),
+        Binding("d", "default", "Def", show=False),
     ]
 
     def __init__(self) -> None:
@@ -534,7 +535,8 @@ class ImageImportScreen(ModalScreen):
             return
         self.status(
             "Enter imports a published image or opens a catalog "
-            "row's detail; D deletes a catalog row; q closes"
+            "row's detail; D deletes a catalog row; d sets the "
+            "default; q closes"
         )
 
     def first_actionable(self) -> int:
@@ -662,6 +664,32 @@ class ImageImportScreen(ModalScreen):
             await self.delete_answered(answer, row)
 
         self.app.push_screen(ConfirmScreen(f"delete image {ref}?", answered))
+
+    async def action_default(self) -> None:
+        """``d``: designate the highlighted catalog row the image
+        a bare create boots — the same POST the CLI's ``image
+        default`` makes, keyed by the row's full hash. The row
+        that already holds the designation flashes so; a refusal
+        lands on the failure panel. The refresh moves the
+        ``[default]`` tag with the answer."""
+        entry = self.selected_entry()
+        if entry is None or entry[0] != "catalog":
+            self.status("d sets the default — highlight a catalog row")
+            return
+        row = entry[1]
+        ref = f"{row['name']}:{row['version']}"
+        if row.get("default"):
+            self.status(f"{ref} is already the default")
+            return
+        try:
+            await self.app.data.set_default_image(row["hash"])
+        except (Exception, SystemExit) as exc:
+            self.app.push_screen(
+                FailurePanel("default", row.get("hash"), str(exc))
+            )
+            return
+        self.app.flash(f"designated {ref} the default image")
+        self.refresh_rows()
 
     async def delete_answered(self, answer: bool, row: dict) -> None:
         """The confirm's callback: True deletes by hash and
