@@ -6838,3 +6838,37 @@ async def test_enter_on_an_imported_row_skips_the_import(monkeypatch) -> None:
             app.screen.query_one("#import-picker-status", Static).content
         )
         assert "already in the catalog" in page_status
+
+
+async def test_the_catalog_rows_sort_by_ref_then_newest_import() -> None:
+    """The catalog group reads in ref order, and one ref's rows
+    show the newest import first; a missing stamp keeps its row
+    at the bottom of its ref's block."""
+    from msks.client.tui.importer import sorted_catalog
+
+    rows = [
+        {
+            "name": "nixos",
+            "version": "26.05",
+            "hash": "b" * 64,
+            "imported": "2026-10-27T12:26:00",
+        },
+        {
+            "name": "debian",
+            "version": "13.6",
+            "hash": "c" * 64,
+            "imported": "2026-10-20T09:00:00",
+        },
+        {
+            "name": "debian",
+            "version": "13.6",
+            "hash": "d" * 64,
+            # an aware stamp sorts beside the naive ones
+            "imported": "2026-11-06T05:56:00+00:00",
+        },
+        {"name": "debian", "version": "13.6", "hash": "e" * 64},
+    ]
+    order = [
+        f"{row['name']}:{row['hash'][:1]}" for row in sorted_catalog(rows)
+    ]
+    assert order == ["debian:d", "debian:c", "debian:e", "nixos:b"]

@@ -23,6 +23,7 @@ refusals surfaced on the failure panel.
 
 import asyncio
 import time
+from datetime import UTC, datetime
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -132,6 +133,32 @@ def columnar(cells: list[str], widths: list[int]) -> str:
         cell.ljust(width) for cell, width in zip(cells, widths) if width > 0
     ]
     return (" " * GAP).join(parts).rstrip()
+
+
+def imported_moment(row: dict) -> datetime:
+    """The row's import stamp as an aware moment; a missing or
+    unparsable one sorts as the oldest (the stamp cell renders
+    its dash, the order keeps a place for it)."""
+    try:
+        moment = datetime.fromisoformat(str(row.get("imported") or ""))
+    except ValueError:
+        return datetime.min.replace(tzinfo=UTC)
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=UTC)
+    return moment
+
+
+def sorted_catalog(catalog: list[dict]) -> list[dict]:
+    """The catalog group's rows in reading order: ref ascending
+    (name, then version), and one ref's rows newest import first
+    — the row an operator just imported or refreshed stands at
+    the top of its block. Two stable sorts compose the order
+    (newest-first, then the ref's ascending pass over it)."""
+    newest_first = sorted(catalog, key=imported_moment, reverse=True)
+    return sorted(
+        newest_first,
+        key=lambda row: (row["name"], str(row["version"])),
+    )
 
 
 def catalog_widths(catalog: list[dict]) -> list[int]:
@@ -433,7 +460,7 @@ class ImageImportScreen(ModalScreen):
         ]
         rows += [
             ("catalog", entry, catalog_label(entry, cat_w))
-            for entry in self.catalog
+            for entry in sorted_catalog(self.catalog)
         ]
         rows.append(("heading", None, ""))
         rows.append(("heading", None, "Published"))
