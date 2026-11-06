@@ -1433,7 +1433,8 @@ tagged <code>vX.Y.Z</code>.</p>
 </ul>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><code>msks clone</code> (#773).</strong> One stopped workspace copies into a
+<li>
+<p><strong><code>msks clone</code> (#773).</strong> One stopped workspace copies into a
   new one: both disks (the root overlay and the <code>/home</code> volume,
   reflinked where the filesystem can share blocks) and the
   create-time config — image, sizes, egress mode, mounts, login
@@ -1446,7 +1447,21 @@ tagged <code>vX.Y.Z</code>.</p>
   rotation remedy. Also served as <code>POST
 /api/v1/workspaces/{id}/clone</code> and the workspace page's Clone
   action. The source must be stopped; a running source answers
-  the named 409.</li>
+  the named 409.</p>
+</li>
+<li>
+<p><strong>The images page.</strong> The TUI's image page is now a full page
+  with its key bindings on the footer row. <code>d</code> designates the
+  highlighted catalog row the default image (the same POST
+  <code>msks image default</code> makes), and a published row whose build
+  the catalog already holds (<code>[imported]</code>) skips the
+  re-import. Both groups show each build's 12-character hash
+  prefix beside the ref — the join the <code>[imported]</code> and
+  <code>[local]</code> markers compare — and the catalog group sorts by
+  ref with the newest import first. The rows align as columns
+  that re-lay on terminal resize, with the description column
+  dropping when the terminal is narrow.</p>
+</li>
 </ul>
 <h2 id="v070-2026-11-05">[v0.7.0] - 2026-11-05<a class="headerlink" href="#v070-2026-11-05" title="Permanent link">&para;</a></h2>
 <h3 id="fixed_1">Fixed<a class="headerlink" href="#fixed_1" title="Permanent link">&para;</a></h3>
@@ -1589,16 +1604,6 @@ tagged <code>vX.Y.Z</code>.</p>
 </ul>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
 <ul>
-<li>
-<p><strong>The image page's default key and readable columns.</strong> The
-  TUI's image page gained <code>d</code>, which designates the highlighted
-  catalog row the default image (the same POST <code>msks image
-default</code> makes). Both groups show each build's 12-character
-  hash prefix beside the ref — the join the <code>[imported]</code> and
-  <code>[local]</code> markers compare — and the catalog group sorts by
-  ref with the newest import first. The rows align as columns
-  that re-lay on terminal resize.</p>
-</li>
 <li>
 <p><strong>The term-popup status row shows the egress mode and the
   popup key (#764).</strong> <code>msks-term-popup</code>'s shell window pins
