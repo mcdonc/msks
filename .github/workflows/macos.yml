@@ -112,8 +112,17 @@ jobs:
 
       # Plain pytest, no coverage gate: on darwin the suite runs
       # under the platform skips (#691) — the same posture as a
-      # local Mac run.
+      # local Mac run. The TUI wait budget rides at 30s (#776):
+      # the mac runner carries the suite at several times the
+      # Linux pace, and the TUI waits' 10s default has flaked
+      # timeouts on loaded runs that pass on rerun — the budget
+      # is time the app actually ran (each overslept park is
+      # credited back), so 30s cannot mask a real hang, it only
+      # stops a starved runner from spending a budget it never
+      # had.
       - name: Unit tests
+        env:
+          MSKS_TUI_WAIT_S: "30"
         run: python -m pytest src/msks/tests --no-cov -n auto -q
 
       - name: Acceptance harness
