@@ -117,7 +117,7 @@ create guest VMs. A workspace image arrives either from the published channel
 URL form) or from a local build.
 
 These images are hosted on github, and the TUI enumerates them for you and
-allows you to import one. There are currently Debian and NixOS guest images
-corresponding with the most recent msks release.
+allows you to import one. There are currently Debian, Fedora and NixOS guest
+images corresponding with the most recent msks release.
 
 ![The first run's image page: the catalog empty, the published channel enumerated; the import modal holds the terminal while the daemon downloads](screens/first-run-import.svg)
