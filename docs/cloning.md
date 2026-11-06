@@ -45,15 +45,13 @@ workspace page offers the same action (`Clone`) with a name prompt.
 The source must be stopped to be cloned. The daemon refuses a clone of a
 running workspace.
 
-## In-guest secrets duplicate
+## Cloning gotchas
 
-A clone copies everything the source's disks carry, including secrets
-the guest generated itself. The clone and the source carry the
-same ssh host keys, the same `machine-id`, and the same
-application secrets any first-boot process minted (session
-signing keys, self-signed certificates). Anything that trusts the
-source's identity silently trusts the clone too: a
-`known_hosts` entry, a deploy key.
+A clone copies everything the source's disks carry. The clone and the source
+carry the same ssh host keys, the same `machine-id`, and the same application
+secrets any first-boot process minted (session signing keys, self-signed
+certificates). Anything that trusts the source's identity silently trusts the
+clone too: a `known_hosts` entry, a deploy key.
 
 There is no automatic regeneration. Rotate what matters before
 trusting the clone as a separate machine: regenerate the guest's
@@ -61,7 +59,7 @@ ssh host keys, re-key anything the workspace registered with an
 external service, or treat the clone as the same trust domain as
 its source.
 
-## Typical uses
+## Typical uses of cloning
 
 - **Seed workspace.** Prepare one workspace with the toolchain,
   repos, and login state, then clone it per task or per agent
