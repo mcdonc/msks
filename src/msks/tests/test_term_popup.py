@@ -107,6 +107,22 @@ def test_session_argv_names_the_socket_the_pane_and_the_workspace() -> None:
         "-g",
         "history-limit",
         str(tp.HISTORY_LINES),
+        # The drag copy's clipboard half (#434's mouse mode):
+        # set-clipboard on emits the OSC 52 write, and the
+        # appended feature claims Konsole, whose terminfo carries
+        # no Ms for tmux to read — without the pair, a paste in
+        # another window delivered whatever last wrote the
+        # system clipboard, not the drag just made.
+        ";",
+        "set-option",
+        "-g",
+        "set-clipboard",
+        "on",
+        ";",
+        "set-option",
+        "-ga",
+        "terminal-features",
+        tp.CLIPBOARD_FEATURES,
         # The page-scroll bindings (#444) ride the same server:
         # the shifted page keys page the same history the wheel
         # scrolls, in the stock wheel binding's own vehicle — an

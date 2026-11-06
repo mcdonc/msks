@@ -6,6 +6,20 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Fixed
+
+- **The term popup's drag selection reaches the system
+  clipboard.** `msks-term-popup`'s tmux runs with mouse mode, so
+  a plain drag copied into tmux's paste buffer alone: a paste in
+  another window delivered whatever last wrote the system
+  clipboard, not the selection just made. The launch now sets
+  `set-clipboard on` and claims the clipboard feature for
+  Konsole (whose terminfo carries no capability for tmux to
+  read), so a drag copies to the system clipboard through the
+  OSC 52 write — taken by Konsole builds since 2024, kitty,
+  foot, wezterm, ghostty, and alacritty. On a terminal without
+  the write, the Shift-drag native selection works as before.
+
 ## \[v0.8.0] - 2026-11-06
 
 ### Fixed

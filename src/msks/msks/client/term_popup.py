@@ -122,6 +122,19 @@ STATUS_HINT = "C-b p popup"
 #: side's budget (#455).
 STATUS_RIGHT_LENGTH = 40
 
+#: The terminal-features entry that claims the clipboard write
+#: for the popup's documented launcher. Mouse mode makes tmux
+#: own the drag, and the drag's copy lands in tmux's paste
+#: buffer alone unless an OSC 52 write carries it to the system
+#: clipboard — the write a terminal takes only when it
+#: implements the sequence (Konsole since 2024, kitty, foot,
+#: wezterm, ghostty, alacritty). Konsole's stock terminfo
+#: carries no ``Ms`` capability for tmux to read, so the claim
+#: rides the launch rather than the terminfo; operators on
+#: another terminal add their own entry through the tmux.conf
+#: the fresh server still reads.
+CLIPBOARD_FEATURES = ",konsole*:clipboard"
+
 #: The popup's page-scroll bindings (#444), the keyboard twin of
 #: the wheel path above: each command pages one page — up on the
 #: shifted page-up key, down on its twin — through the same
@@ -369,7 +382,13 @@ def session_argv(
     before the session exists, because a pane adopts its history
     limit only at creation: mouse mode turns the wheel into
     scrolling, and the raised history line count is how far back
-    it reaches. The page-scroll bindings (#444) land with them:
+    it reaches. The drag's copy carries to the system clipboard
+    through an OSC 52 write: ``set-clipboard on`` emits it, and
+    the appended terminal-features entry claims Konsole, whose
+    stock terminfo carries no ``Ms`` for tmux to read — without
+    the pair, a plain drag copied into tmux's paste buffer
+    alone, and a paste in another window delivered whatever last
+    wrote the system clipboard. The page-scroll bindings (#444) land with them:
     the shifted page keys page that same history through tmux's
     copy mode, the keyboard twin of the wheel. ``set-titles``
     pins off for the configured window title (#445): a fresh
@@ -417,6 +436,22 @@ def session_argv(
         "-g",
         "history-limit",
         str(HISTORY_LINES),
+        # The drag copy's clipboard half: mouse mode makes tmux
+        # own the drag, and the copy lands in tmux's paste buffer
+        # alone unless an OSC 52 write carries it out —
+        # ``set-clipboard on`` emits it, and the appended feature
+        # claims Konsole, whose terminfo carries no Ms for tmux
+        # to read.
+        ";",
+        "set-option",
+        "-g",
+        "set-clipboard",
+        "on",
+        ";",
+        "set-option",
+        "-ga",
+        "terminal-features",
+        CLIPBOARD_FEATURES,
     ]
     for key, command in PAGE_SCROLL_COMMANDS:
         argv += [";", "bind-key", "-n", key, command]
