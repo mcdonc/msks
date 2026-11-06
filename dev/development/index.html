@@ -1301,11 +1301,15 @@
 
 
 <h1 id="development-environment">Development environment<a class="headerlink" href="#development-environment" title="Permanent link">&para;</a></h1>
-<p>This chapter collects the devenv side of msks: everything a
-checkout of this repository presets, seeds, and runs for
-development. The published chapters describe the deployed
-product; this one describes the developer's tree: the shell,
-the dev daemon, the client presets, and the dev identity.</p>
+<p>Msks uses <a href="https://devenv.sh">devenv</a> as development environment. A checkout
+of this repository presets, seeds, and runs for development via <code>devenv shell</code>
+or <code>devenv processes up</code>. The published chapters describe the deployed product;
+this one describes the developer's tree: the shell, the dev daemon, the client
+presets, and the dev identity.</p>
+<p>Apologies for the quality of these docs, they have not been edited carefully
+and probably won't make much sense except in snippets. Until they are edited
+into some sense, if you would like to participate in development, and need
+help, ask via a GitHub issue.</p>
 <h2 id="the-dev-daemon">The dev daemon<a class="headerlink" href="#the-dev-daemon" title="Permanent link">&para;</a></h2>
 <p>A development host (this repository's checkout) runs the daemon
 through devenv. <code>msks-dev</code> seeds a per-worktree state dir with
