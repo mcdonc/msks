@@ -42,11 +42,15 @@ PICKER_CAP = 44
 #: The column separator's width.
 GAP = 2
 
-#: The description column gives way before the identity
-#: columns: a terminal too narrow for one drops the description
-#: entirely (the ref, size, and marker never truncate — a row
-#: may clip on a very narrow terminal, but it never lies).
+#: The description column's floor (0: the column drops when
+#: the terminal has no room for one).
 DESC_FLOOR = 0
+
+#: The cells the picker's own frame eats before a row's first
+#: column: the OptionList's two-cell scrollbar and its two-cell
+#: option padding — the screen itself carries no border. A row
+#: laid out against the screen's width less this never wraps.
+PICKER_FRAME_CELLS = 4
 
 
 def size_label(size: int | None) -> str:
@@ -178,7 +182,7 @@ def published_widths(
     ref_w = max(map(len, refs), default=0)
     size_w = max(map(len, sizes), default=0)
     marker_w = max(map(len, markers), default=0)
-    budget = width - ref_w - size_w - marker_w - GAP * 3 - 1  # scrollbar
+    budget = width - ref_w - size_w - marker_w - GAP * 3 - PICKER_FRAME_CELLS
     return [ref_w, desc_column(published, budget), size_w, marker_w]
 
 
