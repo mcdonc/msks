@@ -140,7 +140,7 @@ The published group lists only the rows this daemon's machine can boot: a
 row that declares another architecture stays off the page. A row that
 declares none is shown (`msks image import` follows the same rule).
 `[imported]` marks a row whose archive the catalog holds by exact hash
-match; `[in catalog, other build]` marks a row the catalog holds under a
+match; `[other build]` marks a row the catalog holds under a
 different hash. ![The image detail: description, hash, the built
 date](screens/image-detail.svg)
 

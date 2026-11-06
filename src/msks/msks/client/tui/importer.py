@@ -8,7 +8,7 @@ manifest's rows with their descriptions, sizes, and build dates)
 import's catalog hash equals the manifest row's hash
 (``[imported]``), while the same ref under a different hash
 (the pre-channel plain tar, a locally built archive) reads
-``[in catalog, other build]``. The published group carries the
+``[other build]``. The published group carries the
 rows the daemon's own machine can boot (#717): a row declaring
 another architecture stays off the page — the daemon's #638
 import refusal reads the same word in the archive's own
@@ -70,15 +70,17 @@ def membership(row: dict, catalog: list[dict]) -> str:
     """The published row's marker against the catalog: an exact
     hash match is ``[imported]``; the same ref under a different
     hash (the pre-channel plain tar, a locally built archive) is
-    ``[in catalog, other build]`` — a rebuild must not make the
-    marker lie. Anything else carries no marker: the page's
-    default date slot names its build day."""
+    ``[other build]`` — the ``[imported]`` marker beside it
+    already names the catalog, so the half-match needs only the
+    fact. A rebuild must not make the marker lie. Anything else
+    carries no marker: the page's default date slot names its
+    build day."""
     hashes = {image["hash"] for image in catalog}
     if row.get("hash") in hashes:
         return "[imported]"
     refs = {f"{image['name']}:{image['version']}" for image in catalog}
     if row.get("ref") in refs:
-        return "[in catalog, other build]"
+        return "[other build]"
     return ""
 
 
