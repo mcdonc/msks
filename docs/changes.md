@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.8.0] - 2026-11-06
+
 ### Fixed
 
 - **The listing refresh no longer cancels a swap mid-flight (#776).** The
@@ -34,7 +36,7 @@ tagged `vX.Y.Z`.
   verdicts, and workspace-scoped placeholders stay with the
   source. `--copy-allowlist` carries the source's allowlist; a
   clone without it starts with an empty list under the copied
-  mode. and in-guest-minted secrets (ssh host
+  mode. In-guest-minted secrets (ssh host
   keys above all) duplicate — the cloning chapter names the
   rotation remedy. Also served as `POST
 /api/v1/workspaces/{id}/clone` and the workspace page's Clone

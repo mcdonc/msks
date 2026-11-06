@@ -32,7 +32,7 @@
 
 buildPythonPackage {
   pname = "msks";
-  version = "0.7.0";
+  version = "0.8.0";
   pyproject = true;
   src = import ./source.nix { inherit lib; };
 
