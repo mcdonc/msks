@@ -5331,16 +5331,14 @@ async def test_the_import_key_opens_the_channel_picker(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await pilot.press("i")
-        await wait_for(
-            lambda: type(app.screen).__name__ == "ImageImportScreen"
-        )
+        await wait_for(lambda: type(app.screen).__name__ == "ImagesScreen")
         await wait_for(lambda: app.screen.query(OptionList) != [])
         options = app.screen.query_one(OptionList)
         labels = [str(o.prompt) for o in options.options]
         assert any("debian:13.6" in label for label in labels)
         assert any("(266 MiB)" in label for label in labels)
         status = str(app.screen.query_one("#import-picker-status").content)
-        assert "D deletes a catalog row" in status
+        assert "in the catalog ·" in status and "published" in status
         assert data.import_calls == []
 
 
@@ -5373,9 +5371,7 @@ async def test_cancelling_the_picker_imports_nothing(monkeypatch) -> None:
         await pilot.press("i")
         await wait_for(lambda: app.query(OptionList) != [])
         await pilot.press("q")
-        await wait_for(
-            lambda: type(app.screen).__name__ != "ImageImportScreen"
-        )
+        await wait_for(lambda: type(app.screen).__name__ != "ImagesScreen")
         assert data.import_calls == []
 
 
@@ -5481,9 +5477,9 @@ def test_a_heading_holds_no_action() -> None:
     """A heading row (or a stale index) selects nothing — the
     page's actions key off the entry kind, so Enter on a heading
     decides nothing."""
-    from msks.client.tui.importer import ImageImportScreen
+    from msks.client.tui.importer import ImagesScreen
 
-    screen = ImageImportScreen()
+    screen = ImagesScreen()
     screen.entries = [("heading", None)]
 
     class FakeOptions:
@@ -5543,9 +5539,7 @@ async def test_a_cancelled_fetch_pops_nothing_later(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await pilot.press("i")
-        await wait_for(
-            lambda: type(app.screen).__name__ == "ImageImportScreen"
-        )
+        await wait_for(lambda: type(app.screen).__name__ == "ImagesScreen")
         await pilot.press("q")
         await pilot.press("c")  # an innocent screen takes the top
         await wait_for(lambda: type(app.screen).__name__ == "CreateScreen")
@@ -5592,9 +5586,9 @@ def test_a_duplicated_ref_keeps_both_rows_selectable() -> None:
     """Two rows sharing a ref (a rebuilt archive) stay separate
     picks: the page selects by index, so identical labels cannot
     shadow one another."""
-    from msks.client.tui.importer import ImageImportScreen
+    from msks.client.tui.importer import ImagesScreen
 
-    screen = ImageImportScreen()
+    screen = ImagesScreen()
     screen.entries = [
         ("heading", None),
         ("published", {"ref": "x:1", "url": "a"}),
@@ -5626,13 +5620,11 @@ def test_the_importing_modal_binds_q() -> None:
 
 def test_the_picker_binds_its_cancel_keys() -> None:
     """The picker's escape binding too — the same typo class."""
-    from msks.client.tui.importer import ImageImportScreen
+    from msks.client.tui.importer import ImagesScreen
 
-    keys = {
-        (b.key, getattr(b, "action", None)) for b in ImageImportScreen.BINDINGS
-    }
-    assert ("escape", "cancel") in keys
-    assert ("q", "cancel") in keys
+    keys = {(b.key, getattr(b, "action", None)) for b in ImagesScreen.BINDINGS}
+    assert ("escape", "back") in keys
+    assert ("q", "back") in keys
 
 
 def test_a_bool_size_refuses(monkeypatch) -> None:
@@ -5648,25 +5640,25 @@ def test_a_row_missing_its_pair_and_the_left_paths() -> None:
     """The validation's floor (a row without its ref/url pair)
     and the left-guarded exits: a screen already dismissed takes
     no second dismissal and fires no callback."""
-    from msks.client.tui.importer import ImageImportScreen, manifest_row
+    from msks.client.tui.importer import ImagesScreen, manifest_row
 
     with pytest.raises(ValueError, match="lacks ref/url"):
         manifest_row({"ref": "x:1"})
     with pytest.raises(ValueError, match="lacks ref/url"):
         manifest_row("not even a dict")
 
-    screen = ImageImportScreen()
+    screen = ImagesScreen()
     screen._left = True
-    screen.action_cancel()  # already left: a second close is a no-op
+    screen.action_back()  # already left: a second close is a no-op
     screen.land(SystemExit("late failure"))  # no pop, no panel
 
 
 async def test_labels_on_a_left_screen_mount_nothing() -> None:
     """The left-guarded refresh: a re-read that finishes after
     the screen went rebuilds no list."""
-    from msks.client.tui.importer import ImageImportScreen
+    from msks.client.tui.importer import ImagesScreen
 
-    screen = ImageImportScreen()
+    screen = ImagesScreen()
     screen._left = True
     screen.catalog = [
         {
@@ -5725,9 +5717,7 @@ async def test_a_queued_q_cannot_eat_the_failure_panel(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test() as pilot:
         await pilot.press("i")
-        await wait_for(
-            lambda: type(app.screen).__name__ == "ImageImportScreen"
-        )
+        await wait_for(lambda: type(app.screen).__name__ == "ImagesScreen")
         picker = app.screen
         release.set()  # the failure lands; its pop is queued
         await wait_for(lambda: on_failure(app))
@@ -5736,7 +5726,7 @@ async def test_a_queued_q_cannot_eat_the_failure_panel(monkeypatch) -> None:
         # pop would otherwise eat the panel that just landed) —
         # the panel stands, the queue stays empty.
         assert picker._left is True
-        picker.action_cancel()
+        picker.action_back()
         await asyncio.sleep(0.2)
         assert on_failure(app)
         assert data.import_calls == []
@@ -5831,9 +5821,7 @@ async def test_enter_on_a_catalog_row_opens_the_detail(monkeypatch) -> None:
         assert "debian:13.6" in detail
         assert "the baked line" in detail
         await pilot.press("q")
-        await wait_for(
-            lambda: type(app.screen).__name__ == "ImageImportScreen"
-        )
+        await wait_for(lambda: type(app.screen).__name__ == "ImagesScreen")
         assert data.import_calls == []
 
 
@@ -5868,7 +5856,7 @@ async def test_D_on_a_published_row_names_its_scope(monkeypatch) -> None:
         options.highlighted = len(options.options) - 1  # a published row
         await pilot.press("D")
         await pilot.pause()
-        assert type(app.screen).__name__ == "ImageImportScreen"
+        assert type(app.screen).__name__ == "ImagesScreen"
         status = str(app.screen.query_one("#import-picker-status").content)
         assert "D deletes a catalog row" in status
         assert data.removed == []
@@ -5938,9 +5926,9 @@ async def test_a_none_selection_and_a_declined_confirm_decide_nothing() -> (
     nothing."""
     from types import SimpleNamespace
 
-    from msks.client.tui.importer import ImageImportScreen
+    from msks.client.tui.importer import ImagesScreen
 
-    screen = ImageImportScreen()
+    screen = ImagesScreen()
 
     class FakeOptions:
         highlighted = None

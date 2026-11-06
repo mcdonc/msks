@@ -26,7 +26,7 @@ from .consent_ui import (
     focused_attr,
 )
 from .forms import CreateScreen
-from .importer import ImageImportScreen
+from .importer import ImagesScreen
 from .rows import (
     LIST_COLUMNS,
     LIST_FRAME_CELLS,
@@ -445,7 +445,7 @@ class MainScreen(Screen):
         the published channel, the pick POSTed to the daemon's
         import endpoint, the modal holding the terminal through
         the download."""
-        self.app.push_screen(ImageImportScreen())
+        self.app.push_screen(ImagesScreen())
 
     async def created(self, body: dict | None) -> None:
         """The create form's callback: a body creates, a cancel

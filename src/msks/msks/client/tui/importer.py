@@ -27,8 +27,8 @@ from datetime import UTC, datetime
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.screen import ModalScreen
-from textual.widgets import OptionList, Static
+from textual.screen import ModalScreen, Screen
+from textual.widgets import Footer, OptionList, Static
 
 from ..config import DEFAULT_IMAGE_MANIFEST_URL
 from ..images import fetch_manifest, imported_cell
@@ -412,22 +412,24 @@ class ImageDetailScreen(ModalScreen):
         self.dismiss()
 
 
-class ImageImportScreen(ModalScreen):
-    """The image page (#565, #571): the catalog and the published
-    channel in two labeled groups. Enter imports a published row
-    (the importing modal returns here, both groups refreshing) or
-    opens the detail view for a catalog row; ``D`` deletes a
-    catalog row through the confirm screen; ``q``/Escape closes
-    the page. A manifest that cannot be fetched or read names its
-    cause on the failure panel — the default channel needs no
+class ImagesScreen(Screen):
+    """The images page (#565, #571): the catalog and the published
+    channel in two labeled groups, a full page with its bindings
+    on the footer row like every other page. Enter imports a
+    published row (the importing modal returns here, both groups
+    refreshing) or opens the detail view for a catalog row;
+    ``D`` deletes a catalog row through the confirm screen, and
+    ``d`` designates the default; ``q``/Escape closes the page.
+    A manifest that cannot be fetched or read names its cause on
+    the failure panel — the default channel needs no
     configuration, so its failure is the first an operator
     meets."""
 
     BINDINGS = [
-        Binding("q", "cancel", "Close", show=False),
-        Binding("escape", "cancel", "Close", show=False),
-        Binding("D", "delete", "Del", show=False),
-        Binding("d", "default", "Def", show=False),
+        Binding("d", "default", "Def"),
+        Binding("D", "delete", "Del"),
+        Binding("q", "back", "Back"),
+        Binding("escape", "back", "Back", show=False),
     ]
 
     def __init__(self) -> None:
@@ -442,6 +444,7 @@ class ImageImportScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         yield Static("", id="import-picker-status")
+        yield Footer()
 
     def on_mount(self) -> None:
         self.status("fetching the catalog and the published manifest…")
@@ -524,7 +527,10 @@ class ImageImportScreen(ModalScreen):
         workspace list follows)."""
         options = OptionList(*self.render_rows(), markup=False)
         options.add_class("import-picker")
-        self.mount(options)
+        # Before the footer: the page's compose already yielded it,
+        # and a bare mount would land the list below the bindings
+        # row it belongs above.
+        self.mount(options, before=self.query_one(Footer))
         options.highlighted = self.first_actionable()
         options.focus()
         if not self.catalog and not self.published:
@@ -534,9 +540,8 @@ class ImageImportScreen(ModalScreen):
             )
             return
         self.status(
-            "Enter imports a published image or opens a catalog "
-            "row's detail; D deletes a catalog row; d sets the "
-            "default; q closes"
+            f"{len(self.catalog)} in the catalog · "
+            f"{len(self.published)} published"
         )
 
     def first_actionable(self) -> int:
@@ -706,7 +711,7 @@ class ImageImportScreen(ModalScreen):
         self.app.flash(f"deleted {row['name']}:{row['version']}")
         self.refresh_rows()
 
-    def action_cancel(self) -> None:
+    def action_back(self) -> None:
         """``q``/Escape close the page — an import happens only
         through its own modal, so a close carries no callback."""
         if not self._left:

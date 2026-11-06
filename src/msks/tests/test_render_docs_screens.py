@@ -350,7 +350,7 @@ async def test_the_image_page(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.press("i")
-        await wait_for(lambda: screen_name(app) == "ImageImportScreen")
+        await wait_for(lambda: screen_name(app) == "ImagesScreen")
         await wait_for(lambda: app.screen.query(OptionList) != [])
         await pilot.pause()
         await export(app, "image-page")
@@ -376,7 +376,7 @@ async def test_the_image_detail(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.press("i")
-        await wait_for(lambda: screen_name(app) == "ImageImportScreen")
+        await wait_for(lambda: screen_name(app) == "ImagesScreen")
         await wait_for(lambda: app.screen.query(OptionList) != [])
         await pilot.press("enter")
         await wait_for(lambda: screen_name(app) == "ImageDetailScreen")
@@ -410,7 +410,7 @@ async def test_the_first_run_import(monkeypatch) -> None:
     app, _ = make_app(data)
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.press("i")
-        await wait_for(lambda: screen_name(app) == "ImageImportScreen")
+        await wait_for(lambda: screen_name(app) == "ImagesScreen")
         await wait_for(lambda: app.screen.query(OptionList) != [])
         await pilot.press("enter")
         await wait_for(lambda: screen_name(app) == "ImportingScreen")

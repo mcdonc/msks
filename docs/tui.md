@@ -132,9 +132,11 @@ mount`](cli.md#msks-mount) uses the same route.
 
 ![The image page: the catalog group, then the published channel](screens/image-page.svg)
 
-`i`: the image page. The catalog group comes first, with the default
-marker and each import's date on its rows. Then the published channel's
-rows follow, with their descriptions, sizes, and membership markers.
+`i`: the images page — a full page with its key bindings on the
+footer row. The catalog group comes first, with the default
+marker, each row's hash prefix, and each import's date. Then the
+published channel's rows follow, with their descriptions, sizes,
+hash prefixes, and membership markers.
 
 The published group lists only the rows this daemon's machine can boot: a
 row that declares another architecture stays off the page. A row that
