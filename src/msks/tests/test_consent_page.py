@@ -9,10 +9,13 @@ direct unit tests in test_consent_tui_helpers.py.
 """
 
 import asyncio
+import contextlib
 import json
+import os
 import time
 from types import SimpleNamespace
 
+import pytest
 import websockets
 from msks.client.tui import consent_ui
 from msks.client.tui.consent_ui import (
@@ -503,8 +506,59 @@ def focused_zone(app) -> str | None:
     return None
 
 
+#: The wait helpers' default budget, seconds (#776): the macOS
+#: lane's loaded runner needs several times the Linux budget, so
+#: the default reads MSKS_TUI_WAIT_S — CI's mac verify sets 30,
+#: every other lane keeps 10. A value that does not parse keeps
+#: the default; a lane cannot shrink below a tenth of a second.
+DEFAULT_WAIT_S = 10.0
+
+
+def wait_budget_s() -> float:
+    """The wait helpers' default timeout: MSKS_TUI_WAIT_S, else
+    :data:`DEFAULT_WAIT_S`."""
+    raw = os.environ.get("MSKS_TUI_WAIT_S")
+    if raw is None:
+        return DEFAULT_WAIT_S
+    try:
+        return max(float(raw), 0.1)
+    except ValueError:
+        return DEFAULT_WAIT_S
+
+
+def wait_diagnostics(cycles: int, credited: float, budget: float) -> None:
+    """One stderr line at a wait timeout (#776): what the loop did
+    and — when a Textual app is active — where it stands, so the
+    next flake names its mechanism (a starved runner credits its
+    parks; a stalled pump shows a deep queue) instead of guessing
+    from the assertion alone. Every read is best-effort: the
+    diagnostics never outrank the failure they describe."""
+    parts = [
+        f"cycles={cycles}",
+        f"credited={credited:.2f}s",
+        f"budget={budget:.2f}s",
+    ]
+    with contextlib.suppress(Exception):
+        from textual.app import active_app
+
+        app = active_app.get(None)
+        if app is not None:
+            parts.append(f"screen={type(app.screen).__name__}")
+            parts.append(f"focused={type(app.focused).__name__}")
+            queue = getattr(app, "_message_queue", None)
+            if queue is not None:
+                parts.append(f"queue={queue.qsize()}")
+    # fd 2, not sys.stderr: Textual's run_test replaces the
+    # stream object for the app's lifetime, and the line exists
+    # for timeouts that fire inside one — the descriptor write
+    # passes through every redirection (pytest's fd capture, a
+    # terminal, CI's log) untouched.
+    with contextlib.suppress(OSError):
+        os.write(2, f"[tui-wait] {' '.join(parts)}\n".encode())
+
+
 async def poll(
-    condition, timeout: float = 10.0, delay: float = 0.02
+    condition, timeout: float | None = None, delay: float = 0.02
 ) -> object:
     """Poll a condition until it lands a truthy value, and hand back that
     value. A read that raises is a read inside a rebuild's swap window,
@@ -513,10 +567,15 @@ async def poll(
     re-raises the final read's error; once any read has answered, the
     failure is the content mismatch it is (a window opening at the
     deadline does not outrank the answers before it), so triage is not
-    misdirected down the flake path this file retired."""
-    deadline = time.monotonic() + timeout
+    misdirected down the flake path this file retired — after one
+    diagnostics line (#776). ``timeout`` defaults to the lane's wait
+    budget (:func:`wait_budget_s`)."""
+    budget = wait_budget_s() if timeout is None else timeout
+    deadline = time.monotonic() + budget
     last_error = None
     answered = False
+    cycles = 0
+    credited = 0.0
     while True:
         try:
             value = condition()
@@ -527,6 +586,7 @@ async def poll(
             answered = True
         if value:
             return value
+        cycles += 1
         parked = time.monotonic()
         await asyncio.sleep(delay)
         # The park ran past its requested span: the runner was
@@ -535,6 +595,7 @@ async def poll(
         ran = time.monotonic() - parked
         if ran > delay:
             deadline += ran - delay
+            credited += ran - delay
         if time.monotonic() >= deadline:
             # The cycle's pump work gets one read before the poll
             # gives up: the frames that landed during the park are
@@ -545,13 +606,14 @@ async def poll(
                 value, last_error = None, exc
             if value:
                 return value
+            wait_diagnostics(cycles, credited, budget)
             if last_error is not None and not answered:
                 raise last_error
             raise AssertionError("condition never landed")
 
 
 async def wait_for(
-    condition, timeout: float = 10.0, delay: float = 0.02
+    condition, timeout: float | None = None, delay: float = 0.02
 ) -> None:
     """Poll a render condition until it lands, on poll's budget. A
     condition that raises is retried there, so a read inside a
@@ -560,7 +622,7 @@ async def wait_for(
 
 
 async def call_until(
-    action, landed, timeout: float = 10.0, what: str = "the action"
+    action, landed, timeout: float | None = None, what: str = "the action"
 ) -> None:
     """Run an action until its effect lands — an action issued
     inside a rebuild's swap window can no-op or miss its paint
@@ -571,10 +633,15 @@ async def call_until(
     runner cannot spend it. On timeout the report follows the
     reads, poll's rule: a check that only ever raised re-raises
     its error; once a check has answered, the failure is the
-    effect not landing — `what` names it for triage."""
-    deadline = time.monotonic() + timeout
+    effect not landing — `what` names it for triage — after one
+    diagnostics line (#776). ``timeout`` defaults to the lane's
+    wait budget (:func:`wait_budget_s`)."""
+    budget = wait_budget_s() if timeout is None else timeout
+    deadline = time.monotonic() + budget
     last_error = None
     answered = False
+    cycles = 0
+    credited = 0.0
     while True:
         started = time.monotonic()
         await action()
@@ -585,17 +652,22 @@ async def call_until(
             answered = True
         except Exception as exc:
             last_error = exc
+        cycles += 1
         await asyncio.sleep(0.05)
         ran = time.monotonic() - started
         if ran > 0.05:
             deadline += ran - 0.05
+            credited += ran - 0.05
         if time.monotonic() >= deadline:
             if last_error is not None and not answered:
                 raise last_error
+            wait_diagnostics(cycles, credited, budget)
             raise AssertionError(f"{what} never took effect")
 
 
-async def press_until(pilot, key: str, landed, timeout: float = 10.0) -> None:
+async def press_until(
+    pilot, key: str, landed, timeout: float | None = None
+) -> None:
     """Press a key until its effect lands — an action pressed inside
     a rebuild's swap window no-ops (by design), so the tests retry:
     call_until's loop and budget (#322, #468), the key as the
@@ -2678,3 +2750,55 @@ def test_shared_ssl_answers_none_over_the_local_socket(
     monkeypatch.setenv("MSKSC_SOCKET", "/run/msks/msksd.sock")
     monkeypatch.setattr(consent_ui, "_SHARED_SSL", [None])
     assert consent_ui.shared_ssl() is None
+
+
+# -- the wait helpers' budget and diagnostics (#776) ------------------
+
+
+def test_the_wait_budget_reads_the_lane(monkeypatch) -> None:
+    """MSKS_TUI_WAIT_S scales the helpers' default (#776): the mac
+    lane sets 30 against its loaded runner, every other lane keeps
+    10, and a value that does not parse keeps the default rather
+    than failing a suite over its own plumbing."""
+    monkeypatch.delenv("MSKS_TUI_WAIT_S", raising=False)
+    assert wait_budget_s() == DEFAULT_WAIT_S
+    monkeypatch.setenv("MSKS_TUI_WAIT_S", "30")
+    assert wait_budget_s() == 30.0
+    monkeypatch.setenv("MSKS_TUI_WAIT_S", "junk")
+    assert wait_budget_s() == DEFAULT_WAIT_S
+
+
+async def test_a_timeout_prints_its_diagnostics(capfd) -> None:
+    """A poll that gives up prints one stderr line first (#776):
+    the cycles it ran, the parks it credited, and the budget it
+    had — no app active, so no screen half."""
+    with pytest.raises(AssertionError, match="never landed"):
+        await wait_for(lambda: False, timeout=0.2)
+    line = capfd.readouterr().err
+    assert line.startswith("[tui-wait] ")
+    assert "cycles=" in line
+    assert "credited=" in line
+    assert "budget=0.20s" in line
+    assert "screen=" not in line  # no app stood behind the wait
+
+
+async def test_the_diagnostics_name_the_active_app(capfd) -> None:
+    """Inside a running app the same line adds where the app
+    stands (#776): the screen on top, the focused widget, and the
+    message queue's depth — the starved-runner/stalled-pump split
+    the line exists to answer."""
+    from textual.app import App
+
+    class Probe(App[None]):
+        pass
+
+    app = Probe()
+    async with app.run_test():
+        with pytest.raises(AssertionError, match="never took effect"):
+            await call_until(
+                lambda: asyncio.sleep(0), lambda: False, timeout=0.2
+            )
+        line = capfd.readouterr().err
+    assert "screen=Screen" in line
+    assert "focused=" in line
+    assert "queue=" in line
