@@ -809,7 +809,7 @@ you to proxy LLM requests without keeping your API keys on the agent host.</p>
 <h2 id="the-reading-order">The reading order<a class="headerlink" href="#the-reading-order" title="Permanent link">&para;</a></h2>
 <ol>
 <li><a href="installation/"><strong>Installation</strong></a>: install the Python wheel, and the
-   command that prepares a host.</li>
+   commands that prepares hosts.</li>
 <li><a href="doctor/"><strong>The host doctor</strong></a>: the command that
    checks the host for every tool the daemon and client executes,
    and suggests the fix for each problem.</li>
@@ -823,9 +823,7 @@ you to proxy LLM requests without keeping your API keys on the agent host.</p>
    the daemon's HTTP API, ssh and rsync over a forward.</li>
 <li><a href="mounts/"><strong>Host share mounts</strong></a>: the host trees a
    workspace mounts into its guest.</li>
-<li><a href="networking/"><strong>Guest networking</strong></a>: the per-VM tap, the
-   DHCP and DNS the guest sees, the NAT path out, and the
-   forward that carries ssh and rsync.</li>
+<li><a href="networking/"><strong>Guest networking</strong></a>: details about VM guest networking.</li>
 <li><a href="egress-consent/"><strong>Egress consent</strong></a>: the consent
    postures, verdicts and durations, switching modes live.</li>
 <li><a href="llm/"><strong>LLM Proxy</strong></a>: how to make use of msksd's built-in
