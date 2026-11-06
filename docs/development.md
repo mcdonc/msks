@@ -219,7 +219,7 @@ devenv --quiet -O dotenv.enable:bool false shell -- msks-preflight
 ### Build outputs
 
 The release artifacts each build on their own store path,
-without evaluating or building the others (#537):
+without evaluating or building the others:
 
 ```bash
 devenv build outputs.server        # msksd with the full daemon closure
@@ -245,7 +245,7 @@ nix build .#server .#client .#guest-image-debian .#guest-image-nixos
 
 The msks wheel is pure Python on every platform: nothing
 compiles at install time. Egress consent is the one runtime
-library need: the daemon's vendored NFQUEUE binding (#542) loads
+library need: the daemon's vendored NFQUEUE binding loads
 `libnetfilter_queue.so.1` by soname, so a daemon host with
 interactive egress carries the runtime package
 (`libnetfilter-queue1` on apt, `libnetfilter_queue` on dnf and
@@ -257,7 +257,7 @@ for the detected package manager when the load fails.
 ### VM guest assets
 
 The workspace guest is **Debian 13 (trixie)**, straight from Debian's
-official genericcloud cloud image (#30, #41): systemd as PID 1, apt,
+official genericcloud cloud image: systemd as PID 1, apt,
 cloud-init, and Debian's own kernel, initrd, and modules, booted
 directly (no BIOS/UEFI) by cloud-hypervisor. The image is pinned by
 its dated cloud.debian.org URL and sha512, and the build turns it
@@ -269,19 +269,19 @@ dropins that pin NoCloud and keep cloud-init off the guest's
 networking). Extraction is fully unprivileged:
 qemu-img convert, partition slice, `debugfs rdump`, `mke2fs -d`.
 Measured boot on bare-metal KVM: the vsock shell prompt at ~2.8s,
-the serial login prompt at ~7.5-8.6s (#37 tracks the <5s interactive
-goal).
-Root writes persist through the per-workspace overlay (#14), and
+the serial login prompt at ~7.5-8.6s against a <5s
+interactive goal.
+Root writes persist through the per-workspace overlay, and
 `/home` is the workspace's own ext4 volume; `apt` reaches the
 upstream through the workspace's egress NIC, served by the
-daemon's consent stack whenever the daemon holds CAP_NET_ADMIN
-(#52). The repack runs under
+daemon's consent stack whenever the daemon holds CAP_NET_ADMIN.
+The repack runs under
 fakeroot so the image is root-owned with sane password-file modes,
 and the setuid binaries the workspace user's sudo needs pass
-through the same fakeroot session as uid-0 inodes (#169).
+through the same fakeroot session as uid-0 inodes.
 Stopping a workspace presses the ACPI power button
 (`vm.power-button`): the guest's systemd-logind runs the clean
-poweroff that flushes its persistent disks (#14).
+poweroff that flushes its persistent disks.
 
 Every step of the build runs inside the repo on any Linux host with
 nix:
@@ -330,7 +330,7 @@ MSKSD_STATE_DIR=/tmp/msksd MSKSD_BOOTSTRAP_TOKEN=dev-secret MSKSD_PORT=8660 msks
   minting real tokens). `--no-tls` serves plain HTTP for development.
 - **Events**: `wss://host/api/v1/events` streams workspace status
   transitions. The websocket handshake authenticates with the same
-  `Authorization: Bearer` header the REST surface uses (#216), so
+  `Authorization: Bearer` header the REST surface uses, so
   the token never appears in a URL. Uvicorn's access log prints
   request lines (method, path, query) and not headers, so turning
   it on (`MSKSD_ACCESS_LOG=true`) does not persist credentials. A
@@ -347,7 +347,7 @@ MSKSD_STATE_DIR=/tmp/msksd MSKSD_BOOTSTRAP_TOKEN=dev-secret MSKSD_PORT=8660 msks
 - **Schema**: the SQLite database is created and upgraded by Alembic at
   startup (inside the package: `msks/migrations`).
 
-### The dev daemon (the default `processes up`, #231)
+### The dev daemon (the default `processes up`)
 
 msksd runs FIRST-LEVEL on the dev host (cloud-hypervisor on the
 real `/dev/kvm`, per-VM taps, the egress consent stack in the host
@@ -379,21 +379,21 @@ the daemon resolves one against its own CWD, so only an absolute
 value moves both to the same place.
 Gitignored but NOT disposable-clean: `git clean -xfd` deletes all
 of it, along with the dev daemon's personal `msksd.yaml` at the
-repo root (#262). Egress (and `msks ssh`, whose forwards travel
-the egress NIC) needs `CAP_NET_ADMIN` (#101): the dev host's
+repo root. Egress (and `msks ssh`, whose forwards travel
+the egress NIC) needs `CAP_NET_ADMIN`: the dev host's
 wrapper grants it, so egress workspaces run first-level; on a host
 without the grant a workspace created without `--no-egress`
 refuses to start (the 503 gives `MSKSD_EGRESS_ENABLED`, and the
 fix is `--no-egress` or the host config in `nix/module.nix`).
 Daemon edits restart with Ctrl-C and re-run (`--reload` restarts
-on tree change, #144).
+on tree change).
 
 Known quirk: cloud-hypervisor v52 rejects writes to sector 0 on
 disks without an explicit `image_type` (a QCOW2 misdetection
 guard), which breaks any guest writing an ext4 superblock: every
 disk the daemon creates declares `image_type: Raw`.
 
-### The image catalog (#40)
+### The image catalog
 
 Images are plural: msksd holds a catalog under
 `<state_dir>/images/`, every registered archive keyed by content
@@ -422,7 +422,7 @@ so a bare `POST /workspaces` works on a fresh daemon with nothing
 else imported. Explicit `kernel`/`rootfs` fields still win over
 the catalog (the shape the tests and dev flows use).
 
-### The client CLI (`msks ls`, `msks create`, `msks start`, `msks stop`, `msks rm`) (#59, #66)
+### The client CLI (`msks ls`, `msks create`, `msks start`, `msks stop`, `msks rm`)
 
 The client also covers the non-interactive half of the operator flow:
 
@@ -433,7 +433,7 @@ devenv --quiet -O dotenv.enable:bool false shell -- msks create my-workspace --s
 
 `msks ls` prints one line per workspace (name, id, status, image
 hash, host); `--json` prints one JSON document for scripting. A
-workspace carries two identity fields (#246): the name you choose
+workspace carries two identity fields: the name you choose
 at create (the label every command addresses it by) and the id the
 daemon mints, immutable and never reused, keying the artifact
 paths and the client caches; either reference reaches the same
@@ -442,7 +442,7 @@ workspace.
 `msks create` POSTs the same body the API accepts: `--image`
 picks a catalog reference, `--cpus`/`--mem-mib`/`--root-mib`/
 `--home-mib` size the VM, `--user-data` attaches a first-boot
-provisioning script (#41, a cidata seed disk the guest's
+provisioning script (a cidata seed disk the guest's
 provisioner runs once), and explicit `--kernel`/`--rootfs` (with
 optional `--initrd`, `--cmdline`) bypass the catalog. `--start`
 boots the workspace right after creating it, so `msks create ws
@@ -455,14 +455,14 @@ workspaces together with their persistent root overlay and
 daemon reports it as not running (a notice prints on stderr while
 the boot runs), and `msks home export/import <ws>` moves the whole
 `/home` volume through the daemon for backup, migration, and
-seeding (#80). All commands use the same
+seeding. All commands use the same
 `MSKSC_URL`/`MSKSC_TOKEN`/`MSKSC_CAFILE` environment as `msks
 console`; failures (unreachable daemon, timed-out request, bad
 token, API or validation errors) print one readable line instead
 of a traceback. See `docs/cli.md` for the full command and
 environment reference.
 
-### Workspace egress networking (#52)
+### Workspace egress networking
 
 Workspaces are networked from creation, and the whole path lives
 in the daemon's own net stack. `msks create ws`, or a bare `"id"`
@@ -492,11 +492,9 @@ Egress arms while `MSKSD_EGRESS_ENABLED=true` and the daemon holds
 `nix/module.nix` does the same for a deployment host. A daemon
 that cannot arm the plumbing still serves everything else, and an
 egress workspace refuses to boot with the cause given (boot those
-with `--no-egress`). Per-flow consent (allow/deny holds on each
-new connection) is #69.
-See `docs/networking.md` for the full reference.
+with `--no-egress`). See `docs/networking.md` for the full reference.
 
-### The docs site (#591)
+### The docs site
 
 The documentation builds into a static site (the same build the
 `Deploy Docs` workflow publishes to GitHub Pages on every push to
@@ -516,7 +514,7 @@ msks-docs              # serves http://127.0.0.1:8923/ live
 `RENDER_DOCS_SCREENS=1 pytest -q
 src/msks/tests/test_render_docs_screens.py`.
 
-### The workspace LLM proxy (#259)
+### The workspace LLM proxy
 
 Each workspace's tap carries its own proxy service when the daemon
 is configured for it: an OpenAI-shaped proxy (`/v1/models`,
@@ -530,7 +528,7 @@ secret indirection, a single `*` entry for single-upstream
 passthrough, any other list through the litellm router. See
 `docs/llm.md`.
 
-### Developing msks inside a workspace (#77)
+### Developing msks inside a workspace
 
 The dev-workspace bootstrap seed turns a pristine Debian workspace
 into an msks development environment over the workspace's own
@@ -572,7 +570,7 @@ is the opt-in root smoke `test_local_dev_workspace_bootstrap`
 guest build uses) remains an optional cold-start accelerator on
 top of the seed, not a prerequisite.
 
-The workspace's whole `/home` also moves through the daemon (#80):
+The workspace's whole `/home` also moves through the daemon:
 `msks home export dev` streams the volume to the client's machine
 (backup, or migration to another daemon), and `msks home import`
 restores or seeds one from an exported image:
@@ -595,7 +593,7 @@ over the egress NIC with nothing stored in the image or the seed
 See `docs/storage.md` for the byte-stream endpoints and their
 contract.
 
-### The workspace console (`msks console`) (#21)
+### The workspace console (`msks console`)
 
 An interactive shell in a running workspace, from any host that can
 reach the daemon:
@@ -619,7 +617,7 @@ session ends cleanly when either side closes.
 Detaching leaves the workspace running; the shell process inside
 the guest exits when the stream closes.
 
-Transport (#21), in the preferred vsock-first shape:
+Transport, in the preferred vsock-first shape:
 
 - The workspace VM boots with a virtio-vsock device whose host side
   is a unix socket cloud-hypervisor **listens** on
@@ -633,7 +631,7 @@ Transport (#21), in the preferred vsock-first shape:
   from `src/console-helper`), restarted by systemd if it dies. The
   helper owns the vsock listener, accepts host-originated
   connections only, and each connection negotiates the identity
-  prelude (#63): the daemon sends the requested user, the client
+  prelude: the daemon sends the requested user, the client
   terminal's size and TERM, and the helper answers `MSKS OK
 <user>` (or a named refusal) before exec'ing that user's login
   shell on a fresh pty. The pty is a plain canonical terminal:
@@ -642,29 +640,27 @@ Transport (#21), in the preferred vsock-first shape:
   discipline echoes and edits input for programs that read stdin
   directly. The shell's TERM comes from the client's terminal, so
   readline engages and provides line editing and history while it
-  is active (#61); a TERM=dumb client gets readline off. The
+  is active; a TERM=dumb client gets readline off. The
   session's user is **root** by default; `msks console --user
 <name>` requests the image's workspace user (users the image
   does not serve are refused by name).
-- The guest pty is created at the client terminal's size (#61's
-  0x0 fixed): the console request carries the geometry at connect,
+- The guest pty is created at the client terminal's size (not a
+  fixed 0x0): the console request carries the geometry at connect,
   and the pty keeps that size for the session's life. The console
-  stream is a raw byte pipe by design (#108's terminal-layer
-  decision), so a window resized mid-session does not reach it:
+  stream is a raw byte pipe by design, so a window resized mid-session does not reach it:
   reconnect for a new size, or use an ssh session through the
-  forward, where ssh's window-change channel resizes the pty live
-  (#108–#112). If console resize ever returns to the queue, it
+  forward, where ssh's window-change channel resizes the pty live. If console resize ever returns to the queue, it
   starts with a control-channel decision: a dedicated vsock
-  control port, or another design that keeps the stream raw (#78).
+  control port, or another design that keeps the stream raw.
 - `MSKSC_CAFILE` pins the daemon certificate for verification when
   you have it (the dev daemon writes `msks-ca.pem` into its state
   dir on first serve). Without it the client proceeds with
   certificate verification off and says so on stderr; the CA
   fingerprint the daemon logs at startup is the cross-check.
 
-### The VZ virtiofs hardlink landmine (#669)
+### The VZ virtiofs hardlink landmine
 
-The macOS host-share design (#667) passes host folders to
+The macOS host-share design passes host folders to
 workspace guests over virtiofs twice, and the first hop (Apple's
 VZ virtiofs server) carried a known instability through macOS 14:
 creating a hardlink sometimes renumbered the original file's
@@ -689,16 +685,15 @@ should a future macOS regress) live in the suite's README under
 `scripts/vz-hardlink-repro/`; re-run the suite on new macOS
 releases before shipping rw shares.
 
-### The two-hop virtiofs landmine (#670)
+### The two-hop virtiofs landmine
 
-The second hop of the host-share design (#667), the msksd VM
+The second hop of the host-share design, the msksd VM
 exporting a VZ virtiofs mount into workspace VMs through
 virtiofsd, is territory no shipping product covers (NFS-serving
 a virtiofs mount is broken upstream). The
 `scripts/hop2-virtiofsd-suite/` rig builds the real stack (a
 nested cloud-hypervisor guest whose virtiofs share is the outer
-VM's rw virtiofs mount) and runs the seven workloads the issue
-lists. All pass on stock Debian
+VM's rw virtiofs mount) and runs the seven workloads. All pass on stock Debian
 (virtiofsd 1.13.2, cloud-hypervisor v54, macOS 27): listings are
 byte-identical across the hop, link/unlink churn is clean, inodes
 from hop 1 pass through verbatim, a 40k-file tree leaves virtiofsd
@@ -713,6 +708,6 @@ userspace vhost-user master is what makes hop 2 possible on the
 stock kernel (Debian's cloud kernel builds no `/dev/vhost-vfs`, so
 a QEMU-shaped hop 2 would need a custom kernel), and ownership
 collapses to root across both hops (macOS uid 501 → 0 → 0), which
-the #667 single-writer contract already covers. The suite's README
+the single-writer contract already covers. The suite's README
 carries the evidence table, the re-run procedure, and the
 marker-file protocol for cross-VM signaling on a share.
