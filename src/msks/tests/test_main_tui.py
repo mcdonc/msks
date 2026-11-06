@@ -7019,3 +7019,46 @@ async def test_d_off_a_catalog_row_and_a_refused_default(
         await pilot.press("d")
         await wait_for(lambda: on_failure(app))
         assert data.default_calls == ["a" * 64]
+
+
+async def test_a_refresh_in_flight_skips_instead_of_cancelling(
+    monkeypatch,
+) -> None:
+    """#776's mac-lane diagnosis: an exclusive refresh worker
+    cancelled inside the swap strands the tree — the old list
+    removed, the fresh one never mounted — and the recorded rows
+    then skip every later refresh against a listing that never
+    painted. The in-flight mark skips a second refresh while one
+    runs; the next call after it lands serves the rows."""
+    import asyncio as _asyncio
+
+    gate = _asyncio.Event()
+    fetches = 0
+
+    class GatedData(FakeData):
+        async def workspaces(self) -> list[dict]:
+            nonlocal fetches
+            fetches += 1
+            if fetches == 1:
+                await gate.wait()
+            return self.rows
+
+    data = GatedData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: on_main(app))
+        screen = app.screen
+        # The first refresh still awaits its gate: a second
+        # refresh arrives (the interval's tick, a resume) and is
+        # skipped, not queued, not cancelling the first.
+        while not screen.rows_loading:
+            await pilot.pause()
+        screen.refresh_rows()
+        assert fetches == 1  # the gated flight alone
+        gate.set()
+        await wait_for(lambda: list_children(app) == 1)
+        # The flight that landed freed the mark: the next refresh
+        # runs for real.
+        screen.refresh_rows()
+        await wait_for(lambda: fetches == 2)
+        assert screen.rows_widget() is not None

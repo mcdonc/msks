@@ -6,6 +6,16 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Fixed
+
+- **The listing refresh no longer cancels a swap mid-flight (#776).** The
+  workspace list's standing refresh cancelled the running reload when a
+  new one fired, and a cancellation landing inside the list swap left the
+  listing stranded: the old list removed, the fresh one never mounted,
+  and every later refresh skipped against rows recorded as painted. A
+  refresh arriving mid-flight now skips instead; the next standing tick
+  (five seconds) serves the rows.
+
 ### Added
 
 - **`msks clone` (#773).** One stopped workspace copies into a
