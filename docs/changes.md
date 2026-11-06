@@ -33,6 +33,18 @@ tagged `vX.Y.Z`.
   action. The source must be stopped; a running source answers
   the named 409.
 
+- **The images page.** The TUI's image page is now a full page
+  with its key bindings on the footer row. `d` designates the
+  highlighted catalog row the default image (the same POST
+  `msks image default` makes), and a published row whose build
+  the catalog already holds (`[imported]`) skips the
+  re-import. Both groups show each build's 12-character hash
+  prefix beside the ref — the join the `[imported]` and
+  `[local]` markers compare — and the catalog group sorts by
+  ref with the newest import first. The rows align as columns
+  that re-lay on terminal resize, with the description column
+  dropping when the terminal is narrow.
+
 ## \[v0.7.0] - 2026-11-05
 
 ### Fixed
@@ -161,15 +173,6 @@ tagged `vX.Y.Z`.
   untouched.
 
 ### Added
-
-- **The image page's default key and readable columns.** The
-  TUI's image page gained `d`, which designates the highlighted
-  catalog row the default image (the same POST `msks image
-default` makes). Both groups show each build's 12-character
-  hash prefix beside the ref — the join the `[imported]` and
-  `[local]` markers compare — and the catalog group sorts by
-  ref with the newest import first. The rows align as columns
-  that re-lay on terminal resize.
 
 - **The term-popup status row shows the egress mode and the
   popup key (#764).** `msks-term-popup`'s shell window pins
