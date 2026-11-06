@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.7.0] - 2026-11-05
+
 ### Fixed
 
 - **The mounts `applies at next start` note (#756).** The
