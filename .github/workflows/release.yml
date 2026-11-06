@@ -368,8 +368,10 @@ jobs:
             if devenv --quiet -O dotenv.enable:bool false shell -- \
                  msks-build-guest "$flavor" >"$log" 2>&1; then
               echo "$flavor: built ($log: $(wc -l <"$log") lines)"
+              rm -f "$log"
             else
-              echo "::error title=$flavor build failed::the last 80 log lines follow; the full log ships as this job's build-logs artifact"
+              echo "::error title=$flavor build failed::the error lines and the last 80 log lines follow; the full log ships as this job's build-logs artifact"
+              grep -n "error:" "$log" | tail -3
               tail -n 80 "$log"
               exit 1
             fi
@@ -430,10 +432,13 @@ jobs:
           path: rows-${{ matrix.arch }}.json
           retention-days: 1
       # #771: the captured build logs (the kernel compile among
-      # them) ride along only when a flavor failed — the tail in
-      # the step log names the error, this carries the context.
+      # them) ride along when a flavor failed or the job was
+      # cancelled — a timeout cancels through this gate too
+      # (failure() alone skips the cancellation path), and the
+      # log written up to the kill is exactly the evidence the
+      # 240-minute aarch64 kernel build would want.
       - name: Ship the build logs on failure
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: build-logs-${{ matrix.arch }}
