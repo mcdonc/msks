@@ -384,6 +384,32 @@
   
   
     <li class="md-nav__item">
+      <a href="../cloning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Cloning Workspaces
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../networking/" class="md-nav__link">
         
   
@@ -634,6 +660,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         <code>msks create</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#msks-clone" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>msks clone</code>
       </span>
     </span>
   </a>
@@ -1198,6 +1235,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#msks-clone" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>msks clone</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#msks-start" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1483,15 +1531,16 @@
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>msks<span class="w">                         </span><span class="c1"># the workspace tree TUI</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>msks<span class="w"> </span>ls<span class="w">                      </span><span class="c1"># what exists, and what state is it in</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>msks<span class="w"> </span>create<span class="w"> </span>ws<span class="w">                </span><span class="c1"># make a workspace</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>msks<span class="w"> </span>console<span class="w"> </span>ws<span class="w">               </span><span class="c1"># boot it if needed, then work inside it</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>msks<span class="w"> </span>forward<span class="w"> </span>ws<span class="w"> </span><span class="m">22</span><span class="w">            </span><span class="c1"># bridge a guest TCP port to stdio</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>msks<span class="w"> </span>key<span class="w"> </span>ws<span class="w">                   </span><span class="c1"># fetch the workspace's ssh identity</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>msks<span class="w"> </span>ssh<span class="w"> </span>ws<span class="w">                   </span><span class="c1"># log in over the forward (boots it if needed)</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>msks<span class="w"> </span>rsync<span class="w"> </span>ws<span class="w"> </span>--<span class="w"> </span>-av<span class="w"> </span>./src/<span class="w"> </span>root@:/src/<span class="w">  </span><span class="c1"># copy files over the forward</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>ws<span class="w">           </span><span class="c1"># download its /home volume (backup, seed)</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>msks<span class="w"> </span>start<span class="w"> </span>ws<span class="w">                 </span><span class="c1"># boot it without attaching</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>msks<span class="w"> </span>stop<span class="w"> </span>ws<span class="w">                  </span><span class="c1"># power it off</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>msks<span class="w"> </span>rm<span class="w"> </span>ws<span class="w">                    </span><span class="c1"># delete it (and its data)</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>msks<span class="w"> </span>clone<span class="w"> </span>ws<span class="w"> </span>fork<span class="w">            </span><span class="c1"># copy a workspace into a new one</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>msks<span class="w"> </span>console<span class="w"> </span>ws<span class="w">               </span><span class="c1"># boot it if needed, then work inside it</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>msks<span class="w"> </span>forward<span class="w"> </span>ws<span class="w"> </span><span class="m">22</span><span class="w">            </span><span class="c1"># bridge a guest TCP port to stdio</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>msks<span class="w"> </span>key<span class="w"> </span>ws<span class="w">                   </span><span class="c1"># fetch the workspace's ssh identity</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>msks<span class="w"> </span>ssh<span class="w"> </span>ws<span class="w">                   </span><span class="c1"># log in over the forward (boots it if needed)</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>msks<span class="w"> </span>rsync<span class="w"> </span>ws<span class="w"> </span>--<span class="w"> </span>-av<span class="w"> </span>./src/<span class="w"> </span>root@:/src/<span class="w">  </span><span class="c1"># copy files over the forward</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>ws<span class="w">           </span><span class="c1"># download its /home volume (backup, seed)</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>msks<span class="w"> </span>start<span class="w"> </span>ws<span class="w">                 </span><span class="c1"># boot it without attaching</span>
+</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>msks<span class="w"> </span>stop<span class="w"> </span>ws<span class="w">                  </span><span class="c1"># power it off</span>
+</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>msks<span class="w"> </span>rm<span class="w"> </span>ws<span class="w">                    </span><span class="c1"># delete it (and its data)</span>
 </span></code></pre></div>
 <p>The client and the daemon ship in the same Python distribution, but they might
 be run from different installation directories, so daemon and client versions
@@ -2007,11 +2056,37 @@ resolves to that key (<code>identity_file</code> pointing at it). A key that
 resolves nowhere keeps the direct route: <code>ssh -i</code> through a
 forward, or the <code>Host msks-*</code> alias with <code>IdentityFile</code> pointing
 at it. <code>msks ssh</code> exits with a line saying exactly that.</p>
+<h2 id="msks-clone"><code>msks clone</code><a class="headerlink" href="#msks-clone" title="Permanent link">&para;</a></h2>
+<p>Copies one stopped workspace into a new one (<code>POST
+/api/v1/workspaces/{id-or-name}/clone</code>) and prints the new
+workspace's label and id:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>$<span class="w"> </span>msks<span class="w"> </span>clone<span class="w"> </span>seed<span class="w"> </span>task-42
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>cloned<span class="w"> </span>seed<span class="w"> </span>into<span class="w"> </span>task-42<span class="w"> </span><span class="o">(</span>id<span class="w"> </span>9a8b7c6d5e<span class="o">)</span>
+</span></code></pre></div>
+<p>A clone is a full fork. The daemon copies both disks — the root
+overlay and the <code>/home</code> volume. Where the state filesystem can
+share blocks (a reflink), the copy costs its metadata; where it
+cannot, the copy writes the source's allocated bytes. The new
+workspace's row carries the source's create-time config:
+the image and its pin, the sizes and topology, the egress mode,
+the mounts, the login user, and the <code>user_data</code> payload. The clone's own factory reset re-provisions from that
+payload. The <a href="../cloning/">cloning chapter</a> holds the whole
+story: what copies, what stays behind, and the in-guest secrets
+property.</p>
+<p>The source must be stopped. A clone of a running workspace is
+refused with the reason, and the new name follows the create
+grammar (lowercase letters, digits, and dashes).</p>
+<p>The clone's egress allowlist starts empty under the copied
+mode: a <code>static</code> clone answers every name NXDOMAIN until its
+list is set, an <code>interactive</code> one earns each allow. The
+<code>--copy-allowlist</code> flag opts the clone into the source's list
+verbatim. The <a href="../cloning/">cloning chapter</a> holds the whole
+story.</p>
 <h2 id="msks-start"><code>msks start</code><a class="headerlink" href="#msks-start" title="Permanent link">&para;</a></h2>
 <p>Boots one created workspace (<code>POST /api/v1/workspaces/{id-or-name}/start</code>)
 and prints the result:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>$<span class="w"> </span>msks<span class="w"> </span>start<span class="w"> </span>my-workspace
-</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>my-workspace<span class="w"> </span>running
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>$<span class="w"> </span>msks<span class="w"> </span>start<span class="w"> </span>my-workspace
+</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>my-workspace<span class="w"> </span>running
 </span></code></pre></div>
 <p>The start request answers after the VMM finishes booting: a few
 seconds on an idle host, longer under load. The client waits up
@@ -2020,8 +2095,8 @@ notes that the daemon may still finish the boot.</p>
 <h2 id="msks-stop"><code>msks stop</code><a class="headerlink" href="#msks-stop" title="Permanent link">&para;</a></h2>
 <p>Powers one running workspace off (<code>POST /api/v1/workspaces/{id-or-name}/stop</code>)
 and prints the result, mirroring <code>msks start</code>:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>$<span class="w"> </span>msks<span class="w"> </span>stop<span class="w"> </span>my-workspace
-</span><span id="__span-13-2"><a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>my-workspace<span class="w"> </span>stopped
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>$<span class="w"> </span>msks<span class="w"> </span>stop<span class="w"> </span>my-workspace
+</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>my-workspace<span class="w"> </span>stopped
 </span></code></pre></div>
 <p>The stop asks the guest for a graceful, deadline-bounded power-off: the
 daemon presses the ACPI power button and the guest's systemd runs a full
@@ -2041,12 +2116,12 @@ start</code>.</p>
 ceilings its guest sees as quotas, and the cpus and memory it
 boots with) through <code>POST
 /api/v1/workspaces/{id-or-name}/resize</code>:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>$ msks resize ws4 --home-mib 4096
-</span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>resized ws4: root 10240 MiB, home 4096 MiB
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>
-</span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>$ msks resize ws4 --cpus 4 --mem-mib 4096
-</span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>resized ws4: root 10240 MiB, home 4096 MiB, cpus 4, mem 4096 MiB
-</span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>(the new topology applies on its next boot)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>$ msks resize ws4 --home-mib 4096
+</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>resized ws4: root 10240 MiB, home 4096 MiB
+</span><span id="__span-15-3"><a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>
+</span><span id="__span-15-4"><a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>$ msks resize ws4 --cpus 4 --mem-mib 4096
+</span><span id="__span-15-5"><a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>resized ws4: root 10240 MiB, home 4096 MiB, cpus 4, mem 4096 MiB
+</span><span id="__span-15-6"><a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>(the new topology applies on its next boot)
 </span></code></pre></div>
 <ul>
 <li><code>--home-mib</code> grows or shrinks the <code>/home</code> volume. The daemon
@@ -2079,8 +2154,8 @@ required.</p>
 <p>Adds one host share to a workspace's mounts (<code>POST
 /api/v1/workspaces/{id-or-name}/mounts</code>); the spec is the
 create's own <code>--share</code> grammar:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-15-1"><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>$ msks mount ws1 /srv/refs:/srv/refs:ro
-</span><span id="__span-15-2"><a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>ws1 mounts /srv/projects:/mnt/projects:rw, /srv/refs:/srv/refs:ro (next start)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>$ msks mount ws1 /srv/refs:/srv/refs:ro
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>ws1 mounts /srv/projects:/mnt/projects:rw, /srv/refs:/srv/refs:ro (next start)
 </span></code></pre></div>
 <p>The outcome line gives the resulting set, and the next-start note joins it
 while the change is pending: setting mounts never touches a running VM, and
@@ -2097,8 +2172,8 @@ line.</p>
 <h2 id="msks-umount"><code>msks umount</code><a class="headerlink" href="#msks-umount" title="Permanent link">&para;</a></h2>
 <p>Removes a workspace's mounts of one host path, every guest path
 the share occupies:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>$ msks umount ws1 /srv/refs
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>ws1 mounts /srv/projects:/mnt/projects:rw
+<div class="language-text highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>$ msks umount ws1 /srv/refs
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>ws1 mounts /srv/projects:/mnt/projects:rw
 </span></code></pre></div>
 <p>A host path the workspace does not mount is one local line. The
 example returns the list to the shape the last start attached, so
@@ -2114,11 +2189,11 @@ root overlay and the <code>/home</code> volume. The data does not come back. Cre
 workspace under the same name mints a fresh id and starts from the image's
 pristine root, with nothing of the deleted instance left to collide with.
 One workspace or several:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>$<span class="w"> </span>msks<span class="w"> </span>rm<span class="w"> </span>my-workspace
-</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>my-workspace<span class="w"> </span>deleted
-</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>$<span class="w"> </span>msks<span class="w"> </span>rm<span class="w"> </span>scratch-1<span class="w"> </span>scratch-2
-</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>scratch-1<span class="w"> </span>deleted
-</span><span id="__span-17-5"><a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>scratch-2<span class="w"> </span>deleted
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>$<span class="w"> </span>msks<span class="w"> </span>rm<span class="w"> </span>my-workspace
+</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>my-workspace<span class="w"> </span>deleted
+</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>$<span class="w"> </span>msks<span class="w"> </span>rm<span class="w"> </span>scratch-1<span class="w"> </span>scratch-2
+</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>scratch-1<span class="w"> </span>deleted
+</span><span id="__span-18-5"><a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>scratch-2<span class="w"> </span>deleted
 </span></code></pre></div>
 <p>Workspaces are removed one at a time, in the order given. A failure stops
 the run there with the API's one-line error, and the ones already removed
@@ -2135,10 +2210,10 @@ same client environment as the workspace commands.</p>
 chars), the default designation, the kernel facts, and when the
 image entered the catalog) on the measured grid every listing
 shares:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-18-1"><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>$ msks image ls
-</span><span id="__span-18-2"><a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>ref            hash          default  kernel                description                      imported
-</span><span id="__span-18-3"><a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>debian:13.6    9f2c41ab77de  default  6.12.107+deb13 (raw)  Debian 13.6 cloud image, kernel…  2026-09-22 14:03
-</span><span id="__span-18-4"><a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>alpine:3.20    33aa9db1c4ef  -        6.12.7 (raw)          -                                2026-09-19 09:41
+<div class="language-text highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>$ msks image ls
+</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>ref            hash          default  kernel                description                      imported
+</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>debian:13.6    9f2c41ab77de  default  6.12.107+deb13 (raw)  Debian 13.6 cloud image, kernel…  2026-09-22 14:03
+</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>alpine:3.20    33aa9db1c4ef  -        6.12.7 (raw)          -                                2026-09-19 09:41
 </span></code></pre></div>
 <p>The image the daemon designates as default carries the <code>default</code> flag. A
 bare <code>msks create</code> resolves to it. The <code>description</code> column carries the
@@ -2158,14 +2233,14 @@ scripting.</p>
 source is a <strong>daemon-side</strong> path (the daemon reads the file from
 its own filesystem; the command uploads nothing) or an <code>https://</code>
 URL the daemon downloads itself:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-19-1"><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>$ msks image import /srv/images/debian-13.tar
-</span><span id="__span-19-2"><a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>imported debian:13 (9f2c41ab77de)
-</span><span id="__span-19-3"><a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>
-</span><span id="__span-19-4"><a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>$ msks image import https://images.example.com/debian-13.tar
-</span><span id="__span-19-5"><a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a>imported debian:13 (9f2c41ab77de)
-</span><span id="__span-19-6"><a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a>
-</span><span id="__span-19-7"><a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>$ msks image import /srv/images/debian-13.tar --name mine --version 1.0
-</span><span id="__span-19-8"><a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a>imported mine:1.0 (9f2c41ab77de)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>$ msks image import /srv/images/debian-13.tar
+</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>imported debian:13 (9f2c41ab77de)
+</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>
+</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>$ msks image import https://images.example.com/debian-13.tar
+</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>imported debian:13 (9f2c41ab77de)
+</span><span id="__span-20-6"><a id="__codelineno-20-6" name="__codelineno-20-6" href="#__codelineno-20-6"></a>
+</span><span id="__span-20-7"><a id="__codelineno-20-7" name="__codelineno-20-7" href="#__codelineno-20-7"></a>$ msks image import /srv/images/debian-13.tar --name mine --version 1.0
+</span><span id="__span-20-8"><a id="__codelineno-20-8" name="__codelineno-20-8" href="#__codelineno-20-8"></a>imported mine:1.0 (9f2c41ab77de)
 </span></code></pre></div>
 <p>A <code>--name</code>/<code>--version</code> override registers the archive under an
 operator-chosen pair. Either key alone, the other comes from the archive's
@@ -2185,11 +2260,11 @@ reason on one line.</p>
 <p>Changes a cataloged image's registered name/version; the bytes,
 the hash, the manifest origin, and workspaces already booting the
 image stay put:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-20-1"><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a>$ msks image rename debian:13 --name mine --version 1.4
-</span><span id="__span-20-2"><a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a>renamed debian:13 to mine:1.4 (9f2c41ab77de)
-</span><span id="__span-20-3"><a id="__codelineno-20-3" name="__codelineno-20-3" href="#__codelineno-20-3"></a>
-</span><span id="__span-20-4"><a id="__codelineno-20-4" name="__codelineno-20-4" href="#__codelineno-20-4"></a>$ msks image rename mine:1.4 --version 1.5
-</span><span id="__span-20-5"><a id="__codelineno-20-5" name="__codelineno-20-5" href="#__codelineno-20-5"></a>renamed mine:1.4 to mine:1.5 (9f2c41ab77de)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>$ msks image rename debian:13 --name mine --version 1.4
+</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>renamed debian:13 to mine:1.4 (9f2c41ab77de)
+</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>
+</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>$ msks image rename mine:1.4 --version 1.5
+</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>renamed mine:1.4 to mine:1.5 (9f2c41ab77de)
 </span></code></pre></div>
 <p>Either key alone keeps the other at its registered value. Pass at least one.
 The reference forms are the same as <code>image rm</code>'s: <code>name:version</code>, a bare
@@ -2206,14 +2281,14 @@ booting the same bytes.</p>
 point, the pre-import gate <code>docs/images.md</code> describes. The
 command runs on the image author's host: it needs <code>/dev/kvm</code> and
 nothing else from msks (no daemon, no state):</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-21-1"><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a>$ msks image check workspace-mine-1.0.tar
-</span><span id="__span-21-2"><a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>PASS archive        imported mine:1.0 (1d6a5e782fc0), root autologin getty on the console port
-</span><span id="__span-21-3"><a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a>PASS boot           guest answered the console in 3.4s (kernel 6.12.107+deb13-amd64)
-</span><span id="__span-21-4"><a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>PASS console        root autologin getty on the console port
-</span><span id="__span-21-5"><a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a>PASS user-data      seed payload ran on first boot
-</span><span id="__span-21-6"><a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a>PASS acpi-shutdown  clean shutdown within 120s
-</span><span id="__span-21-7"><a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a>PASS root-rw        root is writable and the write survived a stop/start (overlay)
-</span><span id="__span-21-8"><a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a>PASS home-label     /home mounted by label msks-home and its write survived a stop/start (volume)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>$ msks image check workspace-mine-1.0.tar
+</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>PASS archive        imported mine:1.0 (1d6a5e782fc0), root autologin getty on the console port
+</span><span id="__span-22-3"><a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>PASS boot           guest answered the console in 3.4s (kernel 6.12.107+deb13-amd64)
+</span><span id="__span-22-4"><a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>PASS console        root autologin getty on the console port
+</span><span id="__span-22-5"><a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>PASS user-data      seed payload ran on first boot
+</span><span id="__span-22-6"><a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>PASS acpi-shutdown  clean shutdown within 120s
+</span><span id="__span-22-7"><a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a>PASS root-rw        root is writable and the write survived a stop/start (overlay)
+</span><span id="__span-22-8"><a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a>PASS home-label     /home mounted by label msks-home and its write survived a stop/start (volume)
 </span></code></pre></div>
 <p>A broken contract point fails its row and the exit code is 1,
 with the first failure given. <code>--keep</code> preserves the throwaway
@@ -2227,8 +2302,8 @@ form the daemon resolves for workspace create (<code>name:version</code>, a
 bare name (its newest version), <code>name@hash</code> (the full 64-hex
 hash), a full hash) and a unique hash prefix (the 12 chars
 <code>image ls</code> prints):</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-22-1"><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>$ msks image rm debian:12
-</span><span id="__span-22-2"><a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>debian:12 deleted
+<div class="language-text highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>$ msks image rm debian:12
+</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>debian:12 deleted
 </span></code></pre></div>
 <p>The removal is keyed by the image's hash after resolving the reference
 against the listing. An image a workspace still boots is refused (the API's
@@ -2241,15 +2316,15 @@ ambiguity, and only the hash forms still identify one of them.)</p>
 <p>Prints one image's full record from the same listing data:
 reference, the archive's own pair (the origin), hash, kernel
 facts, cmdline, and the default designation:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-23-1"><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>$ msks image info debian:13
-</span><span id="__span-23-2"><a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>ref          mine:1.4
-</span><span id="__span-23-3"><a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>origin       debian:13.6
-</span><span id="__span-23-4"><a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a>hash         9f2c41ab77de0000000000000000000000000000000000000000000000000000
-</span><span id="__span-23-5"><a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>kernel       6.12.107+deb13 (raw)
-</span><span id="__span-23-6"><a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a>description  Debian 13.6 cloud image, kernel 6.12.107+deb13, cloud-init, the egress module set and consent stack
-</span><span id="__span-23-7"><a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a>cmdline      console=ttyS0 root=/dev/vda rw
-</span><span id="__span-23-8"><a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>seed         provisioner - (none declared)
-</span><span id="__span-23-9"><a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a>default      yes
+<div class="language-text highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>$ msks image info debian:13
+</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>ref          mine:1.4
+</span><span id="__span-24-3"><a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a>origin       debian:13.6
+</span><span id="__span-24-4"><a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a>hash         9f2c41ab77de0000000000000000000000000000000000000000000000000000
+</span><span id="__span-24-5"><a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a>kernel       6.12.107+deb13 (raw)
+</span><span id="__span-24-6"><a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a>description  Debian 13.6 cloud image, kernel 6.12.107+deb13, cloud-init, the egress module set and consent stack
+</span><span id="__span-24-7"><a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a>cmdline      console=ttyS0 root=/dev/vda rw
+</span><span id="__span-24-8"><a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a>seed         provisioner - (none declared)
+</span><span id="__span-24-9"><a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a>default      yes
 </span></code></pre></div>
 <p>The reference forms are the same as <code>image rm</code>'s. The <code>description</code> row is
 the identity the build baked into the image's manifest. An image whose
@@ -2257,12 +2332,12 @@ manifest carried none prints <code>- (none baked)</code>.</p>
 <h3 id="msks-image-default"><code>msks image default</code><a class="headerlink" href="#msks-image-default" title="Permanent link">&para;</a></h3>
 <p>Designates the image a bare <code>msks create</code> boots (the row
 <code>image ls</code> marks), or clears the designation with <code>--unset</code>:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-24-1"><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>$ msks image default debian:13.6
-</span><span id="__span-24-2"><a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>designated debian:13.6 (98ccf2e1f2db) as the default image
-</span><span id="__span-24-3"><a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a>
-</span><span id="__span-24-4"><a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a>$ msks image default --unset
-</span><span id="__span-24-5"><a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a>default designation removed; a bare create falls back to the sole
-</span><span id="__span-24-6"><a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a>entry debian:13.6 (98ccf2e1f2db)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>$ msks image default debian:13.6
+</span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>designated debian:13.6 (98ccf2e1f2db) as the default image
+</span><span id="__span-25-3"><a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>
+</span><span id="__span-25-4"><a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a>$ msks image default --unset
+</span><span id="__span-25-5"><a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a>default designation removed; a bare create falls back to the sole
+</span><span id="__span-25-6"><a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a>entry debian:13.6 (98ccf2e1f2db)
 </span></code></pre></div>
 <p>The reference forms are the same as <code>image rm</code>'s: <code>name:version</code>, a bare
 name (its newest version), <code>name@hash</code>, a full hash, a unique hash prefix.
@@ -2280,11 +2355,11 @@ above). On a catalog holding several images, a bare create needs
 <h2 id="msks-home"><code>msks home</code><a class="headerlink" href="#msks-home" title="Permanent link">&para;</a></h2>
 <p>Moves a workspace's <code>/home</code> volume through the daemon, useful for backup,
 migration to another daemon or seeding a fresh workspace with data.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-25-1"><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>my-workspace<span class="w">              </span><span class="c1"># writes my-workspace.ext4</span>
-</span><span id="__span-25-2"><a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>my-workspace<span class="w"> </span>other.ext4<span class="w">   </span><span class="c1"># gives the output file</span>
-</span><span id="__span-25-3"><a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>my-workspace<span class="w"> </span>-<span class="w"> </span><span class="p">|</span><span class="w"> </span>gzip<span class="w"> </span>&gt;<span class="w"> </span>backup.ext4.gz
-</span><span id="__span-25-4"><a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a>msks<span class="w"> </span>home<span class="w"> </span>import<span class="w"> </span>fresh-ws<span class="w"> </span>my-workspace.ext4
-</span><span id="__span-25-5"><a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a>msks<span class="w"> </span>home<span class="w"> </span>import<span class="w"> </span>fresh-ws<span class="w"> </span>-<span class="w"> </span>&lt;<span class="w"> </span>backup.ext4
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>my-workspace<span class="w">              </span><span class="c1"># writes my-workspace.ext4</span>
+</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>my-workspace<span class="w"> </span>other.ext4<span class="w">   </span><span class="c1"># gives the output file</span>
+</span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>msks<span class="w"> </span>home<span class="w"> </span><span class="nb">export</span><span class="w"> </span>my-workspace<span class="w"> </span>-<span class="w"> </span><span class="p">|</span><span class="w"> </span>gzip<span class="w"> </span>&gt;<span class="w"> </span>backup.ext4.gz
+</span><span id="__span-26-4"><a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a>msks<span class="w"> </span>home<span class="w"> </span>import<span class="w"> </span>fresh-ws<span class="w"> </span>my-workspace.ext4
+</span><span id="__span-26-5"><a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a>msks<span class="w"> </span>home<span class="w"> </span>import<span class="w"> </span>fresh-ws<span class="w"> </span>-<span class="w"> </span>&lt;<span class="w"> </span>backup.ext4
 </span></code></pre></div>
 <p>The workspace must be stopped (a volume under a running VM answers <code>409</code>;
 stop it first, <code>msks stop</code> is enough). A boot that arrives during a move
@@ -2315,26 +2390,26 @@ whole <code>/home</code> at once.</p>
 <p>Mint a secret placeholder (daemon-wide by default, scoped with <code>--workspace</code>)
 and the daemon keeps your value as per-recipient ciphertext blobs in its
 database. See also <a href="../secrets/">docs/secrets.md</a>.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-26-1"><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="c1"># from a password manager, nothing touches disk: daemon-wide,</span>
-</span><span id="__span-26-2"><a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="c1"># one sentinel for every workspace on the daemon</span>
-</span><span id="__span-26-3"><a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a>op<span class="w"> </span><span class="nb">read</span><span class="w"> </span><span class="s1">'op://Vault/github/credential'</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-26-4"><a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>msks<span class="w"> </span>secret<span class="w"> </span>mint<span class="w"> </span>--name<span class="w"> </span>github_api<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-26-5"><a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="w">      </span>--dest<span class="w"> </span>api.github.com<span class="w"> </span>--secret-file<span class="w"> </span>-
-</span><span id="__span-26-6"><a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a>
-</span><span id="__span-26-7"><a id="__codelineno-26-7" name="__codelineno-26-7" href="#__codelineno-26-7"></a>msks<span class="w"> </span>secret<span class="w"> </span>mint<span class="w"> </span>--workspace<span class="w"> </span>myws<span class="w"> </span>--name<span class="w"> </span>pypi<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-26-8"><a id="__codelineno-26-8" name="__codelineno-26-8" href="#__codelineno-26-8"></a><span class="w">  </span>--dest<span class="w"> </span>.pypi.org<span class="w"> </span>--dest<span class="w"> </span>pypi.org<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-26-9"><a id="__codelineno-26-9" name="__codelineno-26-9" href="#__codelineno-26-9"></a><span class="w">  </span>--ttl<span class="w"> </span><span class="m">86400</span><span class="w"> </span>--secret-file<span class="w"> </span>./token<span class="w">    </span><span class="c1"># scoped, suffix + exact</span>
-</span><span id="__span-26-10"><a id="__codelineno-26-10" name="__codelineno-26-10" href="#__codelineno-26-10"></a>
-</span><span id="__span-26-11"><a id="__codelineno-26-11" name="__codelineno-26-11" href="#__codelineno-26-11"></a>msks<span class="w"> </span>secret<span class="w"> </span>mint<span class="w"> </span>--workspace<span class="w"> </span>ci,deploy<span class="w"> </span>--name<span class="w"> </span>pypi<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-26-12"><a id="__codelineno-26-12" name="__codelineno-26-12" href="#__codelineno-26-12"></a><span class="w">  </span>--dest<span class="w"> </span>.pypi.org<span class="w"> </span>--secret-file<span class="w"> </span>./token<span class="w">   </span><span class="c1"># one row, two workspaces</span>
-</span><span id="__span-26-13"><a id="__codelineno-26-13" name="__codelineno-26-13" href="#__codelineno-26-13"></a>
-</span><span id="__span-26-14"><a id="__codelineno-26-14" name="__codelineno-26-14" href="#__codelineno-26-14"></a>msks<span class="w"> </span>secret<span class="w"> </span>ls<span class="w">                           </span><span class="c1"># placeholders + coverage + lock state</span>
-</span><span id="__span-26-15"><a id="__codelineno-26-15" name="__codelineno-26-15" href="#__codelineno-26-15"></a>msks<span class="w"> </span>secret<span class="w"> </span>unlock<span class="w">                      </span><span class="c1"># decrypt the pending blobs the</span>
-</span><span id="__span-26-16"><a id="__codelineno-26-16" name="__codelineno-26-16" href="#__codelineno-26-16"></a><span class="w">                                         </span><span class="c1"># configured identity key opens</span>
-</span><span id="__span-26-17"><a id="__codelineno-26-17" name="__codelineno-26-17" href="#__codelineno-26-17"></a>msks<span class="w"> </span>secret<span class="w"> </span>renew<span class="w"> </span>--workspace<span class="w"> </span>myws<span class="w"> </span>--name<span class="w"> </span>pypi<span class="w"> </span>--ttl<span class="w"> </span><span class="m">86400</span>
-</span><span id="__span-26-18"><a id="__codelineno-26-18" name="__codelineno-26-18" href="#__codelineno-26-18"></a>msks<span class="w"> </span>secret<span class="w"> </span>revoke<span class="w"> </span>--name<span class="w"> </span>github_api<span class="w">     </span><span class="c1"># the daemon-wide row of the label</span>
-</span><span id="__span-26-19"><a id="__codelineno-26-19" name="__codelineno-26-19" href="#__codelineno-26-19"></a>msks<span class="w"> </span>secret<span class="w"> </span>revoke<span class="w"> </span>--workspace<span class="w"> </span>ci,deploy<span class="w"> </span>--name<span class="w"> </span>pypi
-</span><span id="__span-26-20"><a id="__codelineno-26-20" name="__codelineno-26-20" href="#__codelineno-26-20"></a>msks<span class="w"> </span>secret<span class="w"> </span>coverage<span class="w"> </span>myws<span class="w"> </span>scoped<span class="w">         </span><span class="c1"># exempt myws from daemon-wide rows</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-27-1"><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="c1"># from a password manager, nothing touches disk: daemon-wide,</span>
+</span><span id="__span-27-2"><a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="c1"># one sentinel for every workspace on the daemon</span>
+</span><span id="__span-27-3"><a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>op<span class="w"> </span><span class="nb">read</span><span class="w"> </span><span class="s1">'op://Vault/github/credential'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-27-4"><a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="w">  </span><span class="p">|</span><span class="w"> </span>msks<span class="w"> </span>secret<span class="w"> </span>mint<span class="w"> </span>--name<span class="w"> </span>github_api<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-27-5"><a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a><span class="w">      </span>--dest<span class="w"> </span>api.github.com<span class="w"> </span>--secret-file<span class="w"> </span>-
+</span><span id="__span-27-6"><a id="__codelineno-27-6" name="__codelineno-27-6" href="#__codelineno-27-6"></a>
+</span><span id="__span-27-7"><a id="__codelineno-27-7" name="__codelineno-27-7" href="#__codelineno-27-7"></a>msks<span class="w"> </span>secret<span class="w"> </span>mint<span class="w"> </span>--workspace<span class="w"> </span>myws<span class="w"> </span>--name<span class="w"> </span>pypi<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-27-8"><a id="__codelineno-27-8" name="__codelineno-27-8" href="#__codelineno-27-8"></a><span class="w">  </span>--dest<span class="w"> </span>.pypi.org<span class="w"> </span>--dest<span class="w"> </span>pypi.org<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-27-9"><a id="__codelineno-27-9" name="__codelineno-27-9" href="#__codelineno-27-9"></a><span class="w">  </span>--ttl<span class="w"> </span><span class="m">86400</span><span class="w"> </span>--secret-file<span class="w"> </span>./token<span class="w">    </span><span class="c1"># scoped, suffix + exact</span>
+</span><span id="__span-27-10"><a id="__codelineno-27-10" name="__codelineno-27-10" href="#__codelineno-27-10"></a>
+</span><span id="__span-27-11"><a id="__codelineno-27-11" name="__codelineno-27-11" href="#__codelineno-27-11"></a>msks<span class="w"> </span>secret<span class="w"> </span>mint<span class="w"> </span>--workspace<span class="w"> </span>ci,deploy<span class="w"> </span>--name<span class="w"> </span>pypi<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-27-12"><a id="__codelineno-27-12" name="__codelineno-27-12" href="#__codelineno-27-12"></a><span class="w">  </span>--dest<span class="w"> </span>.pypi.org<span class="w"> </span>--secret-file<span class="w"> </span>./token<span class="w">   </span><span class="c1"># one row, two workspaces</span>
+</span><span id="__span-27-13"><a id="__codelineno-27-13" name="__codelineno-27-13" href="#__codelineno-27-13"></a>
+</span><span id="__span-27-14"><a id="__codelineno-27-14" name="__codelineno-27-14" href="#__codelineno-27-14"></a>msks<span class="w"> </span>secret<span class="w"> </span>ls<span class="w">                           </span><span class="c1"># placeholders + coverage + lock state</span>
+</span><span id="__span-27-15"><a id="__codelineno-27-15" name="__codelineno-27-15" href="#__codelineno-27-15"></a>msks<span class="w"> </span>secret<span class="w"> </span>unlock<span class="w">                      </span><span class="c1"># decrypt the pending blobs the</span>
+</span><span id="__span-27-16"><a id="__codelineno-27-16" name="__codelineno-27-16" href="#__codelineno-27-16"></a><span class="w">                                         </span><span class="c1"># configured identity key opens</span>
+</span><span id="__span-27-17"><a id="__codelineno-27-17" name="__codelineno-27-17" href="#__codelineno-27-17"></a>msks<span class="w"> </span>secret<span class="w"> </span>renew<span class="w"> </span>--workspace<span class="w"> </span>myws<span class="w"> </span>--name<span class="w"> </span>pypi<span class="w"> </span>--ttl<span class="w"> </span><span class="m">86400</span>
+</span><span id="__span-27-18"><a id="__codelineno-27-18" name="__codelineno-27-18" href="#__codelineno-27-18"></a>msks<span class="w"> </span>secret<span class="w"> </span>revoke<span class="w"> </span>--name<span class="w"> </span>github_api<span class="w">     </span><span class="c1"># the daemon-wide row of the label</span>
+</span><span id="__span-27-19"><a id="__codelineno-27-19" name="__codelineno-27-19" href="#__codelineno-27-19"></a>msks<span class="w"> </span>secret<span class="w"> </span>revoke<span class="w"> </span>--workspace<span class="w"> </span>ci,deploy<span class="w"> </span>--name<span class="w"> </span>pypi
+</span><span id="__span-27-20"><a id="__codelineno-27-20" name="__codelineno-27-20" href="#__codelineno-27-20"></a>msks<span class="w"> </span>secret<span class="w"> </span>coverage<span class="w"> </span>myws<span class="w"> </span>scoped<span class="w">         </span><span class="c1"># exempt myws from daemon-wide rows</span>
 </span></code></pre></div>
 <p><code>--secret-file</code> takes a path or <code>-</code> for a pipe, and the value is
 whitespace-stripped at both ends. The secret is never accepted as a
@@ -2357,10 +2432,10 @@ websocket. This is useful when <code>msks ssh</code> is not working properly, be
 works when the ssh daemon is not responding for whatever reason. The command
 boots the workspace first when the daemon reports it as not running. The
 notices print on stderr while the boot runs, then the session attaches:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-27-1"><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a>$ msks console my-workspace
-</span><span id="__span-27-2"><a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>msks: my-workspace is stopped; starting it
-</span><span id="__span-27-3"><a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>msks: my-workspace running
-</span><span id="__span-27-4"><a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a>(workspace prompt)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>$ msks console my-workspace
+</span><span id="__span-28-2"><a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>msks: my-workspace is stopped; starting it
+</span><span id="__span-28-3"><a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a>msks: my-workspace running
+</span><span id="__span-28-4"><a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a>(workspace prompt)
 </span></code></pre></div>
 <p>The session is a root shell: the console is the failsafe path,
 served by the guest's autologin root getty on the virtio-console
@@ -2368,8 +2443,8 @@ port. It is a raw byte stream over the daemon's authenticated
 websocket, with no user selection and no in-band protocol. Reach
 a workspace user's shell with <code>su - &lt;name&gt;</code> inside the session,
 or over ssh for the full interactive posture:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-28-1"><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a>$ msks console my-workspace
-</span><span id="__span-28-2"><a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a>(workspace prompt, as root)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-29-1"><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>$ msks console my-workspace
+</span><span id="__span-29-2"><a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>(workspace prompt, as root)
 </span></code></pre></div>
 <p>A workspace that is already running attaches with no preamble.
 Two states get special handling:</p>
@@ -2398,8 +2473,8 @@ websocket. The command boots the workspace first when the daemon reports it as
 not running (the same notices as <code>msks console</code>), then bridges bytes unexamined
 in both directions: a tty is not required, and binary protocols (ssh, rsync)
 pass through it cleanly:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-29-1"><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a>msks<span class="w"> </span>forward<span class="w"> </span>my-workspace<span class="w"> </span><span class="m">22</span><span class="w">                  </span><span class="c1"># stdio: ProxyCommand shape</span>
-</span><span id="__span-29-2"><a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>msks<span class="w"> </span>forward<span class="w"> </span>my-workspace<span class="w"> </span><span class="m">8080</span><span class="w"> </span>--local<span class="w"> </span><span class="m">8080</span><span class="w">   </span><span class="c1"># loopback listener</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>msks<span class="w"> </span>forward<span class="w"> </span>my-workspace<span class="w"> </span><span class="m">22</span><span class="w">                  </span><span class="c1"># stdio: ProxyCommand shape</span>
+</span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>msks<span class="w"> </span>forward<span class="w"> </span>my-workspace<span class="w"> </span><span class="m">8080</span><span class="w"> </span>--local<span class="w"> </span><span class="m">8080</span><span class="w">   </span><span class="c1"># loopback listener</span>
 </span></code></pre></div>
 <p><code>--local PORT</code> binds <code>127.0.0.1:PORT</code> instead of stdio. Every accepted
 connection opens its own forward websocket, so parallel clients (a browser
@@ -2413,21 +2488,21 @@ verdicts. A workspace in <code>interactive</code> mode holds each new outbound
 connection's first packet until a decider allows or denies it. <code>static</code>
 workspaces allow only their create-time allowlist. <code>allow</code> workspaces (the
 create default) record off-list destinations and pass them.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-30-1"><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a>msks egress rules ws-dev          # the mode, allowlist, and in-effect verdicts
-</span><span id="__span-30-2"><a id="__codelineno-30-2" name="__codelineno-30-2" href="#__codelineno-30-2"></a>msks egress requests ws-dev       # the consent rows (audit trail), newest first
-</span><span id="__span-30-3"><a id="__codelineno-30-3" name="__codelineno-30-3" href="#__codelineno-30-3"></a>msks egress requests ws-dev --decision pending
-</span><span id="__span-30-4"><a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>msks egress decide ws-dev &lt;request-id&gt; allow --duration 5m
-</span><span id="__span-30-5"><a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a>msks egress decide ws-dev &lt;request-id&gt; deny --duration forever
-</span><span id="__span-30-6"><a id="__codelineno-30-6" name="__codelineno-30-6" href="#__codelineno-30-6"></a>msks egress revoke ws-dev &lt;request-id&gt;
-</span><span id="__span-30-7"><a id="__codelineno-30-7" name="__codelineno-30-7" href="#__codelineno-30-7"></a>msks egress mode ws-dev interactive          # switch the posture;
-</span><span id="__span-30-8"><a id="__codelineno-30-8" name="__codelineno-30-8" href="#__codelineno-30-8"></a>msks egress mode ws-dev static --allow .debian.org   # --allow replaces
-</span><span id="__span-30-9"><a id="__codelineno-30-9" name="__codelineno-30-9" href="#__codelineno-30-9"></a>msks egress mode ws-dev static --offline     # ... the allowlist (--offline
-</span><span id="__span-30-10"><a id="__codelineno-30-10" name="__codelineno-30-10" href="#__codelineno-30-10"></a>                                              # confirms an empty static)
-</span><span id="__span-30-11"><a id="__codelineno-30-11" name="__codelineno-30-11" href="#__codelineno-30-11"></a>msks egress watch ws-dev          # stream frames; registers this client as
-</span><span id="__span-30-12"><a id="__codelineno-30-12" name="__codelineno-30-12" href="#__codelineno-30-12"></a>                                  # a decider (holds wait only while one is
-</span><span id="__span-30-13"><a id="__codelineno-30-13" name="__codelineno-30-13" href="#__codelineno-30-13"></a>                                  # connected)
-</span><span id="__span-30-14"><a id="__codelineno-30-14" name="__codelineno-30-14" href="#__codelineno-30-14"></a>msks egress watch ws-dev --decide --duration forever
-</span><span id="__span-30-15"><a id="__codelineno-30-15" name="__codelineno-30-15" href="#__codelineno-30-15"></a>                                  # the same, prompting y/n per request
+<div class="language-text highlight"><pre><span></span><code><span id="__span-31-1"><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a>msks egress rules ws-dev          # the mode, allowlist, and in-effect verdicts
+</span><span id="__span-31-2"><a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>msks egress requests ws-dev       # the consent rows (audit trail), newest first
+</span><span id="__span-31-3"><a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a>msks egress requests ws-dev --decision pending
+</span><span id="__span-31-4"><a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a>msks egress decide ws-dev &lt;request-id&gt; allow --duration 5m
+</span><span id="__span-31-5"><a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a>msks egress decide ws-dev &lt;request-id&gt; deny --duration forever
+</span><span id="__span-31-6"><a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a>msks egress revoke ws-dev &lt;request-id&gt;
+</span><span id="__span-31-7"><a id="__codelineno-31-7" name="__codelineno-31-7" href="#__codelineno-31-7"></a>msks egress mode ws-dev interactive          # switch the posture;
+</span><span id="__span-31-8"><a id="__codelineno-31-8" name="__codelineno-31-8" href="#__codelineno-31-8"></a>msks egress mode ws-dev static --allow .debian.org   # --allow replaces
+</span><span id="__span-31-9"><a id="__codelineno-31-9" name="__codelineno-31-9" href="#__codelineno-31-9"></a>msks egress mode ws-dev static --offline     # ... the allowlist (--offline
+</span><span id="__span-31-10"><a id="__codelineno-31-10" name="__codelineno-31-10" href="#__codelineno-31-10"></a>                                              # confirms an empty static)
+</span><span id="__span-31-11"><a id="__codelineno-31-11" name="__codelineno-31-11" href="#__codelineno-31-11"></a>msks egress watch ws-dev          # stream frames; registers this client as
+</span><span id="__span-31-12"><a id="__codelineno-31-12" name="__codelineno-31-12" href="#__codelineno-31-12"></a>                                  # a decider (holds wait only while one is
+</span><span id="__span-31-13"><a id="__codelineno-31-13" name="__codelineno-31-13" href="#__codelineno-31-13"></a>                                  # connected)
+</span><span id="__span-31-14"><a id="__codelineno-31-14" name="__codelineno-31-14" href="#__codelineno-31-14"></a>msks egress watch ws-dev --decide --duration forever
+</span><span id="__span-31-15"><a id="__codelineno-31-15" name="__codelineno-31-15" href="#__codelineno-31-15"></a>                                  # the same, prompting y/n per request
 </span></code></pre></div>
 <p><code>decide</code> and <code>revoke</code> identify the request by the id <code>watch</code> and <code>requests</code>
 print (the full id, copy-pasteable). Both act only on the given workspace's
@@ -2464,17 +2539,17 @@ creates carries the public half its create sent, the operator's key, whose line
 the guest's first boot planted into <code>authorized_keys</code> for root and the
 workspace's login user. The fetch takes the same
 <code>MSKSC_URL</code>/<code>MSKSC_TOKEN</code>/<code>MSKSC_CAFILE</code> environment as every other command:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-31-1"><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a>msks<span class="w"> </span>key<span class="w"> </span>my-workspace<span class="w">                    </span><span class="c1"># the public authorized_keys line</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>msks<span class="w"> </span>key<span class="w"> </span>my-workspace<span class="w">                    </span><span class="c1"># the public authorized_keys line</span>
 </span></code></pre></div>
 <p>The command is public-only: the private half is the operator's own key, and
 it never crossed the API to begin with. It lives wherever <code>identity_file</code>
 points, or in the agent that holds it.</p>
 <h2 id="msks-ssh"><code>msks ssh</code><a class="headerlink" href="#msks-ssh" title="Permanent link">&para;</a></h2>
 <p>Use <code>ssh</code> to access a workspace, using a forward.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w">              </span><span class="c1"># as the workspace's login user</span>
-</span><span id="__span-32-2"><a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-l<span class="w"> </span>root<span class="w">   </span><span class="c1"># the recovery login</span>
-</span><span id="__span-32-3"><a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-A<span class="w">        </span><span class="c1"># forward your agent ($SSH_AUTH_SOCK)</span>
-</span><span id="__span-32-4"><a id="__codelineno-32-4" name="__codelineno-32-4" href="#__codelineno-32-4"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-L<span class="w"> </span><span class="m">8080</span>:localhost:80
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w">              </span><span class="c1"># as the workspace's login user</span>
+</span><span id="__span-33-2"><a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-l<span class="w"> </span>root<span class="w">   </span><span class="c1"># the recovery login</span>
+</span><span id="__span-33-3"><a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-A<span class="w">        </span><span class="c1"># forward your agent ($SSH_AUTH_SOCK)</span>
+</span><span id="__span-33-4"><a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-L<span class="w"> </span><span class="m">8080</span>:localhost:80
 </span></code></pre></div>
 <p>Options you pass here win for the invocation. The config file's
 <code>ssh_options</code> key remembers a set for every session instead. See <a href="#ssh_options">its
@@ -2580,9 +2655,9 @@ configuration that hides all of this.</p>
 identity staged in memory: one command does the whole setup
 itself. The workspace boots when needed, the identity stages in
 memory, and the copy opens its own forward:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-av<span class="w"> </span>./site/<span class="w"> </span>root@:/root/site/<span class="w">    </span><span class="c1"># push</span>
-</span><span id="__span-33-2"><a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-av<span class="w"> </span>root@:/root/out.tar<span class="w"> </span>./out.tar<span class="w">  </span><span class="c1"># pull</span>
-</span><span id="__span-33-3"><a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-aP<span class="w"> </span>./src/<span class="w"> </span>:src/<span class="w">         </span><span class="c1"># as the login user</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-34-1"><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-av<span class="w"> </span>./site/<span class="w"> </span>root@:/root/site/<span class="w">    </span><span class="c1"># push</span>
+</span><span id="__span-34-2"><a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-av<span class="w"> </span>root@:/root/out.tar<span class="w"> </span>./out.tar<span class="w">  </span><span class="c1"># pull</span>
+</span><span id="__span-34-3"><a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-aP<span class="w"> </span>./src/<span class="w"> </span>:src/<span class="w">         </span><span class="c1"># as the login user</span>
 </span></code></pre></div>
 <p>Everything after the workspace id (the <code>--</code> is optional) is given to rsync.
 msks parses no rsync flags. The one shaping pass is the empty host: a path
@@ -2629,11 +2704,11 @@ prerequisites are <code>ssh</code> and <code>rsync</code>. The exit code is rsyn
 <h2 id="errors-exit-codes-and-timeouts">Errors, exit codes, and timeouts<a class="headerlink" href="#errors-exit-codes-and-timeouts" title="Permanent link">&para;</a></h2>
 <p>Every command fails with one readable line on stderr and exit
 code 1, never a traceback:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-34-1"><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>msks: set MSKSC_TOKEN to a daemon token (MSKSC_URL for a non-default daemon)
-</span><span id="__span-34-2"><a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>msks: cannot reach https://192.168.77.2:8660: [Errno 113] ...
-</span><span id="__span-34-3"><a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a>msks: 401: invalid or revoked token
-</span><span id="__span-34-4"><a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a>msks: 409: workspace exists
-</span><span id="__span-34-5"><a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a>msks: 422: body.id: String should match pattern '^[a-z0-9][a-z0-9-]*$'
+<div class="language-text highlight"><pre><span></span><code><span id="__span-35-1"><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a>msks: set MSKSC_TOKEN to a daemon token (MSKSC_URL for a non-default daemon)
+</span><span id="__span-35-2"><a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a>msks: cannot reach https://192.168.77.2:8660: [Errno 113] ...
+</span><span id="__span-35-3"><a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a>msks: 401: invalid or revoked token
+</span><span id="__span-35-4"><a id="__codelineno-35-4" name="__codelineno-35-4" href="#__codelineno-35-4"></a>msks: 409: workspace exists
+</span><span id="__span-35-5"><a id="__codelineno-35-5" name="__codelineno-35-5" href="#__codelineno-35-5"></a>msks: 422: body.id: String should match pattern '^[a-z0-9][a-z0-9-]*$'
 </span></code></pre></div>
 <p>The status lines carry the daemon's <code>detail</code> field verbatim. A
 validation failure (422) reports each problem as <code>field:
