@@ -3216,6 +3216,26 @@ async def test_a_long_daemon_url_keeps_the_status_bar_one_line(
         assert status.size.height == 1
 
 
+async def test_a_unix_daemon_url_shows_its_path_decoded(
+    monkeypatch,
+) -> None:
+    """#779: the transport address quotes the socket path into the
+    URL's authority; the status line shows the app's display URL,
+    which decodes it — the operator reads
+    `/run/user/1001/msks/msksd.sock`, not `%2Frun%2Fus…`, on one
+    row within the budget."""
+    monkeypatch.delenv("MSKSC_URL", raising=False)
+    monkeypatch.setenv("MSKSC_SOCKET", "/run/user/1001/msks/msksd.sock")
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        assert "%2F" not in status_text(app)
+        assert "http+unix:///run/user/1001/msks/msksd.sock" in status_text(app)
+        status = app.query_one("#status", Static)
+        assert status.size.height == 1
+
+
 async def test_a_long_flash_keeps_the_status_bar_one_line(
     monkeypatch,
 ) -> None:
