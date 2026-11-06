@@ -5793,7 +5793,7 @@ def test_membership_markers() -> None:
     )
     assert (
         membership({"ref": "debian:13.6", "hash": "z" * 64}, other_build)
-        == "[other build]"
+        == "[local]"
     )
     assert membership({"ref": "alpine:3", "hash": "z" * 64}, other_build) == ""
 

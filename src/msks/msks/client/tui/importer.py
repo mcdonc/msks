@@ -8,7 +8,7 @@ manifest's rows with their descriptions, sizes, and build dates)
 import's catalog hash equals the manifest row's hash
 (``[imported]``), while the same ref under a different hash
 (the pre-channel plain tar, a locally built archive) reads
-``[other build]``. The published group carries the
+``[local]``. The published group carries the
 rows the daemon's own machine can boot (#717): a row declaring
 another architecture stays off the page — the daemon's #638
 import refusal reads the same word in the archive's own
@@ -42,10 +42,11 @@ PICKER_CAP = 44
 #: The column separator's width.
 GAP = 2
 
-#: The description column's floor: a terminal too narrow for a
-#: description keeps a stub rather than an empty column (the row
-#: may overflow and clip; the identity columns never truncate).
-DESC_FLOOR = 12
+#: The description column gives way before the identity
+#: columns: a terminal too narrow for one drops the description
+#: entirely (the ref, size, and marker never truncate — a row
+#: may clip on a very narrow terminal, but it never lies).
+DESC_FLOOR = 0
 
 
 def size_label(size: int | None) -> str:
@@ -70,17 +71,16 @@ def membership(row: dict, catalog: list[dict]) -> str:
     """The published row's marker against the catalog: an exact
     hash match is ``[imported]``; the same ref under a different
     hash (the pre-channel plain tar, a locally built archive) is
-    ``[other build]`` — the ``[imported]`` marker beside it
-    already names the catalog, so the half-match needs only the
-    fact. A rebuild must not make the marker lie. Anything else
-    carries no marker: the page's default date slot names its
-    build day."""
+    ``[local]`` — the build you hold lives in the local catalog,
+    and the word names where, not how it got there. A rebuild
+    must not make the marker lie. Anything else carries no
+    marker: the page's default date slot names its build day."""
     hashes = {image["hash"] for image in catalog}
     if row.get("hash") in hashes:
         return "[imported]"
     refs = {f"{image['name']}:{image['version']}" for image in catalog}
     if row.get("ref") in refs:
-        return "[other build]"
+        return "[local]"
     return ""
 
 
@@ -154,8 +154,9 @@ def marker_cell(row: dict, catalog: list[dict]) -> str:
 
 def desc_column(published: list[dict], budget: int) -> int:
     """The description column's width against the remaining
-    *budget*: the group's longest description caps it, and the
-    floor keeps a stub on a terminal too narrow for one."""
+    *budget*: the group's longest description caps it, and a
+    budget without room drops the column (the identity columns
+    never truncate)."""
     longest = max(
         (len((row.get("description") or "").strip()) for row in published),
         default=1,
