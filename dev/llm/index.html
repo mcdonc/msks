@@ -1044,14 +1044,15 @@ next session logs in the same way.</p>
 claude-code's telemetry hosts (statsig, sentry) and its other
 non-essential calls dial too; exporting
 <code>CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1</code> keeps them from
-asking at all. A <code>static</code> workspace allowlists the two that
+asking at all.</p>
+<p>A <code>static</code> workspace must allowlist the two entries that
 matter:</p>
 <div class="language-console highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="go">msks egress mode myws static --allow api.anthropic.com \</span>
 </span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="go">    --allow platform.claude.com</span>
 </span></code></pre></div>
 <p>The flags replace the whole list; repeat them to keep entries
-the workspace already had. An <code>interactive</code> workspace answers
-the two prompts instead.</p>
+the workspace already had.</p>
+<p>An <code>interactive</code> workspace answers the two prompts instead.</p>
 <h2 id="integration-with-the-pi-coding-agent">Integration with the Pi coding agent<a class="headerlink" href="#integration-with-the-pi-coding-agent" title="Permanent link">&para;</a></h2>
 <p>Each msks VM ships with the <code>pi</code> coding agent installed. Each image bakes
 pinned Node and the pinned <strong>pi</strong> coding agent on every account's default
@@ -1061,7 +1062,7 @@ system profile.</p>
 exports <code>MSKSWS_BASE_URL</code>, built from the DHCP lease's gateway and the daemon's
 port. It also exports <code>MSKSWS_API_KEY</code>, a placeholder the proxy never reads:
 it exists for OpenAI-shaped clients that refuse an empty key.</p>
-<p>A pi extension consumes these envvars so that <code>/models</code> works.</p>
+<p>A pi extension consumes these envvars so that <code>/models</code> within Pi works.</p>
 <p>The pi extension is named <code>llm-models.ts</code>. It exists in <code>/etc/skel</code> and root's
 home. Every account the identity seed provisions copies the skeleton, so each
 login user ends up with the extension in <code>~/.pi/agent/extensions/</code>, where pi
