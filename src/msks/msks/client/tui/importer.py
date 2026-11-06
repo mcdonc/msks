@@ -33,9 +33,19 @@ from ..config import DEFAULT_IMAGE_MANIFEST_URL
 from ..images import fetch_manifest, imported_cell
 from .consent_ui import ConfirmScreen, FailurePanel, panel_safe
 
-#: The published description's cap for the row (the full line is
-#: the detail view's and the manifest's own).
+#: The published description's cap when no width is known (a
+#: caller outside the screen); the screen computes its own cap
+#: from the terminal's width — the description column absorbs
+#: what the ref, size, and marker columns leave.
 PICKER_CAP = 44
+
+#: The column separator's width.
+GAP = 2
+
+#: The description column's floor: a terminal too narrow for a
+#: description keeps a stub rather than an empty column (the row
+#: may overflow and clip; the identity columns never truncate).
+DESC_FLOOR = 12
 
 
 def size_label(size: int | None) -> str:
@@ -47,12 +57,12 @@ def size_label(size: int | None) -> str:
     return f"{size / (1024 * 1024):.0f} MiB"
 
 
-def capped_description(row: dict) -> str:
+def capped_description(row: dict, cap: int = PICKER_CAP) -> str:
     """The row's baked identity, capped for the page's line — the
     full line is the detail view's and the manifest's own."""
     description = (row.get("description") or "").strip() or "-"
-    if len(description) > PICKER_CAP:
-        description = description[: PICKER_CAP - 1] + "…"
+    if len(description) > cap:
+        description = description[: cap - 1] + "…"
     return description
 
 
@@ -107,25 +117,93 @@ def row_serves_arch(row: dict, machine: str | None) -> bool:
     return not row.get("arch") or row["arch"] == machine
 
 
-def published_label(row: dict, catalog: list[dict]) -> str:
-    """One published row's label: ref, capped description, size,
-    then the membership marker or the build date."""
-    label = (
-        f"{row['ref']}  —  {capped_description(row)}  "
-        f"({size_label(row.get('size'))})"
-    )
+def columnar(cells: list[str], widths: list[int]) -> str:
+    """Cells into one column-aligned row: every cell pads to its
+    column's width, two spaces separate the columns, and the
+    line's trailing padding strips. A zero-width column (one
+    every row leaves empty) drops its cell entirely."""
+    parts = [
+        cell.ljust(width) for cell, width in zip(cells, widths) if width > 0
+    ]
+    return (" " * GAP).join(parts).rstrip()
+
+
+def catalog_widths(catalog: list[dict]) -> list[int]:
+    """The catalog group's column widths: the ref column takes
+    the group's longest ref, the default-marker column collapses
+    when no row is the default, and the import-date column is its
+    fixed cell."""
+    refs = [f"{row['name']}:{row['version']}" for row in catalog]
+    tags = ["[default]" if row.get("default") else "" for row in catalog]
+    dates = [f"imported {imported_cell(row)}" for row in catalog]
+    return [
+        max(map(len, refs), default=0),
+        max(map(len, tags), default=0),
+        max(map(len, dates), default=0),
+    ]
+
+
+def marker_cell(row: dict, catalog: list[dict]) -> str:
+    """The published row's last column: the membership marker, or
+    the build date when the catalog holds no relation."""
     marker = membership(row, catalog)
-    if marker:
-        return f"{label}  {marker}"
-    return f"{label}  built {built_label(row)}"
+    return marker or f"built {built_label(row)}"
 
 
-def catalog_label(row: dict) -> str:
-    """One catalog row's label: ref, the default marker, and the
-    import date (#571) — the cell `msks image ls` renders."""
-    default = "[default]" if row.get("default") else ""
-    return f"{row['name']}:{row['version']}  {default}".rstrip() + (
-        f"  imported {imported_cell(row)}"
+def desc_column(published: list[dict], budget: int) -> int:
+    """The description column's width against the remaining
+    *budget*: the group's longest description caps it, and the
+    floor keeps a stub on a terminal too narrow for one."""
+    longest = max(
+        (len((row.get("description") or "").strip()) for row in published),
+        default=1,
+    )
+    return min(max(budget, DESC_FLOOR), longest)
+
+
+def published_widths(
+    published: list[dict], catalog: list[dict], width: int
+) -> list[int]:
+    """The published group's column widths against *width*: the
+    identity columns (ref, size, marker) take their longest
+    cells, and the description column absorbs what remains — a
+    narrower terminal truncates descriptions, a wider one lets
+    them run to their full length."""
+    refs = [row["ref"] for row in published]
+    sizes = [f"({size_label(row.get('size'))})" for row in published]
+    markers = [marker_cell(row, catalog) for row in published]
+    ref_w = max(map(len, refs), default=0)
+    size_w = max(map(len, sizes), default=0)
+    marker_w = max(map(len, markers), default=0)
+    budget = width - ref_w - size_w - marker_w - GAP * 3 - 1  # scrollbar
+    return [ref_w, desc_column(published, budget), size_w, marker_w]
+
+
+def published_label(row: dict, catalog: list[dict], widths: list[int]) -> str:
+    """One published row's label as columns: ref, description,
+    size, then the membership marker or the build date."""
+    return columnar(
+        [
+            row["ref"],
+            capped_description(row, widths[1]),
+            f"({size_label(row.get('size'))})",
+            marker_cell(row, catalog),
+        ],
+        widths,
+    )
+
+
+def catalog_label(row: dict, widths: list[int]) -> str:
+    """One catalog row's label as columns: ref, the default
+    marker, and the import date (#571) — the cell `msks image
+    ls` renders."""
+    return columnar(
+        [
+            f"{row['name']}:{row['version']}",
+            "[default]" if row.get("default") else "",
+            f"imported {imported_cell(row)}",
+        ],
+        widths,
     )
 
 
@@ -336,17 +414,27 @@ class ImageImportScreen(ModalScreen):
         catalog rows (default marker, import date), a spacer, the
         published heading, the published rows (membership marker
         or build date). One source for the entries and their
-        labels — the selection indexes into both."""
+        labels — the selection indexes into both. The columns
+        derive from the screen's current width, so the groups
+        align and the description column contracts and expands
+        with the terminal."""
+        cat_w = catalog_widths(self.catalog)
+        pub_w = published_widths(self.published, self.catalog, self.size.width)
         rows: list[tuple[str, dict | None, str]] = [
             ("heading", None, "In the catalog")
         ]
         rows += [
-            ("catalog", entry, catalog_label(entry)) for entry in self.catalog
+            ("catalog", entry, catalog_label(entry, cat_w))
+            for entry in self.catalog
         ]
         rows.append(("heading", None, ""))
         rows.append(("heading", None, "Published"))
         rows += [
-            ("published", entry, published_label(entry, self.catalog))
+            (
+                "published",
+                entry,
+                published_label(entry, self.catalog, pub_w),
+            )
             for entry in self.published
         ]
         return rows
@@ -387,6 +475,17 @@ class ImageImportScreen(ModalScreen):
             ),
             0,
         )
+
+    def on_resize(self) -> None:
+        """A resized terminal re-lays the columns: the widths
+        derive from the width the screen now has, so the groups
+        re-align and the description column takes what the new
+        width leaves. The operator's place moves with the rows."""
+        options_list = self.query(OptionList)
+        if not options_list:
+            return  # rows not up: the mount lays them out itself
+        options = options_list[0]
+        self.rerender(options.highlighted or 0)
 
     def refresh_rows(self) -> None:
         """Re-read the catalog after an import or a delete: the

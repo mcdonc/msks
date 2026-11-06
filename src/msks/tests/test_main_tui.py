@@ -6743,3 +6743,60 @@ async def test_the_mounts_editor_deletes_through_the_real_api(
             assert str(share) not in mounts_text(tui)
         fresh = await TuiData(transport=transport).workspaces()
         assert fresh[0]["mounts"] == []
+
+
+async def test_the_picker_rows_align_as_columns(monkeypatch) -> None:
+    """Both groups lay their values in columns: rows of differing
+    ref lengths put the next column at the same offset, and a
+    resize re-lays the columns (the description column absorbs
+    the width the terminal gives or takes)."""
+    scripted_manifest(monkeypatch)
+    data = FakeData([])
+    data.images_rows = [
+        {
+            "name": "debian",
+            "version": "13.6",
+            "hash": "a" * 64,
+            "default": True,
+            "imported": "2026-10-27T12:26:00",
+        },
+        {
+            "name": "nixos",
+            "version": "26.05",
+            "hash": "b" * 64,
+            "imported": "2026-10-27T12:26:00",
+        },
+    ]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        options = app.screen.query_one(OptionList)
+        labels = [str(o.prompt) for o in options.options]
+
+        def column_at(label: str, marker: str) -> int:
+            return label.index(marker)
+
+        # The catalog rows: the date column shares its offset
+        # across rows whose refs differ (the published group's
+        # ``[imported]`` marker is not a date cell).
+        cat = [label for label in labels if " imported 20" in label]
+        assert cat, labels
+        offsets = {column_at(label, "imported") for label in cat}
+        assert len(offsets) == 1
+
+        # The published rows: the size column shares its offset
+        # across rows whose refs differ in length.
+        pub = [label for label in labels if "(266" in label or "(621" in label]
+        assert len(pub) == 2
+        assert column_at(pub[0], "(") == column_at(pub[1], "(")
+        before = pub[0]
+
+        # A narrower terminal re-lays the columns: the identity
+        # columns hold, the description column contracts.
+        await pilot.resize_terminal(58, 24)
+        await pilot.pause()
+        labels_after = [str(o.prompt) for o in options.options]
+        after = next(label for label in labels_after if "(266" in label)
+        assert len(after) < len(before)
+        assert "(266" in after  # the identity columns never truncate
