@@ -137,11 +137,12 @@ def columnar(cells: list[str], widths: list[int]) -> str:
 def catalog_widths(catalog: list[dict]) -> list[int]:
     """The catalog group's column widths: the ref column takes
     the group's longest ref, the default-marker column collapses
-    when no row is the default, and the import-date column is its
-    fixed cell."""
+    when no row is the default, and the date column is its fixed
+    cell (the import moment alone — the column's position, not a
+    word, says what it is)."""
     refs = [f"{row['name']}:{row['version']}" for row in catalog]
     tags = ["[default]" if row.get("default") else "" for row in catalog]
-    dates = [f"imported {imported_cell(row)}" for row in catalog]
+    dates = [imported_cell(row) for row in catalog]
     return [
         max(map(len, refs), default=0),
         max(map(len, tags), default=0),
@@ -208,7 +209,7 @@ def catalog_label(row: dict, widths: list[int]) -> str:
         [
             f"{row['name']}:{row['version']}",
             "[default]" if row.get("default") else "",
-            f"imported {imported_cell(row)}",
+            imported_cell(row),
         ],
         widths,
     )
@@ -564,6 +565,12 @@ class ImageImportScreen(ModalScreen):
             # worker): the page stands under the detail view, and
             # its close returns here with nothing to resume.
             self.app.push_screen(ImageDetailScreen(row))
+        elif membership(row, self.catalog) == "[imported]":
+            # The exact build is already in the catalog: no import
+            # runs (the daemon would download the archive again to
+            # verify bytes it already holds), and the flash names
+            # the ref so the skip reads as intentional.
+            self.status(f"{row['ref']} is already in the catalog")
         else:
             self.start_import(row)
 

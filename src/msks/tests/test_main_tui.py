@@ -5771,7 +5771,7 @@ async def test_the_page_shows_both_groups_with_dates(monkeypatch) -> None:
         assert any(
             "debian:13.6" in label
             and "[default]" in label
-            and "imported 2026-10-18" in label
+            and "2026-10-18" in label
             for label in labels
         )
         assert "Published" in labels
@@ -6780,9 +6780,9 @@ async def test_the_picker_rows_align_as_columns(monkeypatch) -> None:
         # The catalog rows: the date column shares its offset
         # across rows whose refs differ (the published group's
         # ``[imported]`` marker is not a date cell).
-        cat = [label for label in labels if " imported 20" in label]
+        cat = [label for label in labels if "2026-10-27" in label]
         assert cat, labels
-        offsets = {column_at(label, "imported") for label in cat}
+        offsets = {column_at(label, "2026-10-27") for label in cat}
         assert len(offsets) == 1
 
         # The published rows: the size column shares its offset
@@ -6800,3 +6800,41 @@ async def test_the_picker_rows_align_as_columns(monkeypatch) -> None:
         after = next(label for label in labels_after if "(266" in label)
         assert len(after) < len(before)
         assert "(266" in after  # the identity columns never truncate
+
+
+async def test_enter_on_an_imported_row_skips_the_import(monkeypatch) -> None:
+    """Enter on a published ``[imported]`` row runs no import: the
+    exact build is already in the catalog, and the daemon would
+    download the archive again just to verify bytes it holds. The
+    flash names the ref so the skip reads as intentional."""
+    scripted_manifest(monkeypatch)
+    data = FakeData([row()])
+    data.images_rows = [
+        {
+            "name": "debian",
+            "version": "13.6",
+            "hash": "a" * 64,
+            "default": True,
+            "imported": "2026-10-27T12:26:00",
+        }
+    ]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await pilot.press("i")
+        await wait_for(lambda: app.screen.query(OptionList) != [])
+        options = app.screen.query_one(OptionList)
+        labels = [str(o.prompt) for o in options.options]
+        assert any("[imported]" in label for label in labels)
+        # Highlight the published row the marker sits on (the
+        # catalog group holds the first actionable row).
+        options.highlighted = labels.index(
+            next(label for label in labels if "[imported]" in label)
+        )
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert data.import_calls == []
+        page_status = str(
+            app.screen.query_one("#import-picker-status", Static).content
+        )
+        assert "already in the catalog" in page_status
