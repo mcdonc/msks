@@ -48,8 +48,7 @@ _msks_ runs on:
     volumes (e.g. capacity).
 15. [**The HTTP API**](api.md): msksd HTTP API surface --
     the endpoints the commands wrap and the authentication model.
-16. [**Development environment**](development.md): the devenv
-    side of a checkout — the dev daemon, the shell's client
-    presets, the worktree identity.
+16. [**Development environment**](development.md): The Nix/devenv development
+    environment.
 17. [**Changelog**](changes.md): what changed, release by
     release.
