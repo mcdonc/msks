@@ -1135,8 +1135,10 @@ import. You can also <a href="../images/#building-your-own">build your own</a>.<
 <p>You can change <code>vcpus</code>, <code>memory</code>, <code>root</code>, and <code>home</code> values after a workspace
 is created. The rest are fixed for the lifetime of the workspace.</p>
 <h2 id="the-secrets-page">The secrets page<a class="headerlink" href="#the-secrets-page" title="Permanent link">&para;</a></h2>
-<p>You can register secret placeholders to use in workspaces instead of
-putting actual secrets into VMs.</p>
+<p>You can register secret placeholders to use in workspaces instead of putting
+actual secrets into VMs. These secrets are kept in an encrypted store, and the
+placeholders are swapped on the wire within HTTP headers sent to external sites
+to actual secret values.</p>
 <p>The <strong>secrets page</strong> lists every placeholder the daemon holds, in columns:
 coverage (<code>*</code> for the daemon-wide row, otherwise its workspace ids), name,
 destinations, remaining lifetime, and created date.</p>
