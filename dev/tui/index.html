@@ -1434,9 +1434,15 @@ tmux's copy mode, where the arrow keys and PageUp/PageDown move through
 it. <code>Shift-PageUp</code> and <code>Shift-PageDown</code> page through it too, one page per
 press, entering copy mode on the way up and returning to the shell at the
 bottom.</p>
-<p>A plain drag selects text in tmux's buffer, and holding Shift while dragging
-selects the terminal's native text (most terminals hand Shift drags to their
-own selection). A consent popup raised while the pane is scrolled still takes
+<p>A plain drag selects text in tmux's buffer and copies it. The copy lands in
+tmux's paste buffer and in the system clipboard, so a paste in another
+window delivers the selection just made. The clipboard half rides an OSC 52
+write, which the outer terminal must take: Konsole builds since 2024, kitty,
+foot, wezterm, ghostty, and alacritty do. VTE terminals (gnome-terminal,
+Ptyxis) leave the sequence untouched, so there a plain drag copies into
+tmux's own buffer only. Holding Shift while dragging selects the terminal's
+native text in every terminal (most terminals hand Shift drags to their own
+selection). A consent popup raised while the pane is scrolled still takes
 its verdict keys: the popup overlays the scrolled pane, and the next keypress
 answers it.</p>
 
