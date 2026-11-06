@@ -302,14 +302,11 @@ PAGE_ACTIONS = (
 
 class CloneNameScreen(ModalScreen[str | None]):
     """The clone's name prompt (#773): one Input — Enter submits
-    the name (the daemon owns the charset rule), Escape or ``q``
-    cancels. The callback given at construction runs as a task
-    with the name (or None), the picker screens' shape."""
+    the name (the daemon owns the charset rule), Escape cancels.
+    The callback given at construction runs as a task with the
+    name (or None), the picker screens' shape."""
 
-    BINDINGS = [
-        Binding("escape", "cancel", "Cancel", show=False),
-        Binding("q", "cancel", "Cancel", show=False),
-    ]
+    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
 
     def __init__(self, source: str, submitted) -> None:
         super().__init__()

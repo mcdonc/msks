@@ -10,9 +10,9 @@ prompt.
 ## What a clone carries
 
 - **Both disks.** The daemon copies the root overlay and the
-  `/home` volume. Everything the guest wrote — installed
-  packages, `/etc` changes, repos and files under `/home` —
-  arrives with the clone. The copy is a reflink where the state
+  `/home` volume. Everything the guest wrote arrives with the
+  clone: installed packages, `/etc` changes, repos and files
+  under `/home`. The copy is a reflink where the state
   filesystem supports one (the blocks are shared, the copy costs
   its metadata); a plain windowed copy serves elsewhere at the
   source's allocated cost, and sparse files stay sparse.
@@ -61,8 +61,8 @@ the guest generated itself. The clone and the source carry the
 same ssh host keys, the same `machine-id`, and the same
 application secrets any first-boot process minted (session
 signing keys, self-signed certificates). Anything that trusts the
-source's identity — a `known_hosts` entry, a deploy key —
-silently trusts the clone too.
+source's identity silently trusts the clone too: a
+`known_hosts` entry, a deploy key.
 
 There is no automatic regeneration. Rotate what matters before
 trusting the clone as a separate machine: regenerate the guest's
@@ -72,11 +72,12 @@ its source.
 
 ## Typical uses
 
-- **Seed to fleet.** Prepare one workspace — toolchain, repos,
-  login state — and clone it per task or per agent with
-  `--copy-allowlist`: the seed's approved destinations propagate,
-  and each clone still re-earns its interactive verdicts.
-- **Experiment fork.** Clone before a risky session; the original
-  keeps its state while the clone takes the risk. Snapshots
+- **Seed to fleet.** Prepare one workspace with the toolchain,
+  repos, and login state, then clone it per task or per agent
+  with `--copy-allowlist`: the seed's approved destinations
+  propagate, and each clone still re-earns its interactive
+  verdicts.
+- **Experiment fork.** Clone before a risky session; the
+  original keeps its state while the clone takes the risk. Snapshots
   (when they land) solve the same worry by rolling a workspace
   back in place; the two share only the disk-copy primitive.

@@ -13,6 +13,7 @@ Workspace-scoped placeholder rows never cover the clone — the
 secret perimeter stays a per-workspace decision.
 """
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -97,21 +98,6 @@ def router(app) -> APIRouter:
         clone_guard(app, source)
         vmm = app.state.settings.vmm
         state_dir = vmm.state_dir
-        # The floor (#184): a clone writes both artifacts onto the
-        # state disk at the source's allocated cost — a reflink
-        # shares the blocks, but the floor cannot promise one
-        # (the filesystem may refuse it), so the worst case sizes
-        # the check and a disk under the floor refuses before any
-        # byte moves.
-        refusal = create_refusal(
-            vmm,
-            "cloning a workspace",
-            file_cost(overlay_path(state_dir, source_id))
-            + file_cost(home_volume_path(state_dir, source_id)),
-            grow_hint=app.state.settings.mounts.disk_grow_hint,
-        )
-        if refusal is not None:
-            raise HTTPException(status_code=507, detail=refusal)
         workspace_id = await mint_workspace_id(app.state.model)
         async with await serialize_create(app, body.name):
             # The name re-check under the lock, the create route's
@@ -143,14 +129,39 @@ def router(app) -> APIRouter:
                             f"cloning it"
                         ),
                     )
+                # The floor (#184), read under the lock so a
+                # resize of the source (a lock holder) cannot move
+                # the cost between the check and the copy: a clone
+                # writes both artifacts onto the state disk at the
+                # source's allocated cost — a reflink shares the
+                # blocks, but the floor cannot promise one (the
+                # filesystem may refuse it), so the worst case
+                # sizes the check and a disk under the floor
+                # refuses before any byte moves.
+                refusal = create_refusal(
+                    vmm,
+                    "cloning a workspace",
+                    file_cost(overlay_path(state_dir, source_id))
+                    + file_cost(home_volume_path(state_dir, source_id)),
+                    grow_hint=app.state.settings.mounts.disk_grow_hint,
+                )
+                if refusal is not None:
+                    raise HTTPException(status_code=507, detail=refusal)
                 # Both disks (#773): a full fork copies the root
                 # overlay and the home volume. The seed is not a
                 # disk to fork — its payload rides the row, and the
                 # clone's first start builds its own seed from its
-                # own spec. A failed copy removes exactly what this
-                # clone installed: pre-existing debris at the
-                # target (a crashed predecessor's leftovers) stays
-                # for the operator, the create route's contract.
+                # own spec. The copy runs on a worker thread: a
+                # windowed copy of a volume-sized file holds the
+                # loop for the whole copy otherwise, the stall the
+                # home stream's to_thread reads exist to avoid. A
+                # failure past the first installed artifact removes
+                # exactly what this clone installed — pre-existing
+                # debris at the target (a crashed predecessor's
+                # leftovers) stays for the operator, the create
+                # route's contract — and the rollback covers the
+                # row build too: a spec or insert that fails after
+                # the copy leaves no orphaned pair behind.
                 copied: list[Path] = []
                 try:
                     for src, dst in (
@@ -163,13 +174,14 @@ def router(app) -> APIRouter:
                             home_volume_path(state_dir, workspace_id),
                         ),
                     ):
-                        clone_file(src, dst)
+                        await asyncio.to_thread(clone_file, src, dst)
                         copied.append(dst)
-                except MicrovmError as exc:
+                except (MicrovmError, OSError) as exc:
                     for dst in copied:
                         dst.unlink(missing_ok=True)
                     raise HTTPException(
-                        status_code=503, detail=str(exc)
+                        status_code=503,
+                        detail=f"the clone's disk copy failed: {exc}",
                     ) from None
                 # The allowlist stays with the source by default
                 # (#773): a clone's posture is the mode it
@@ -182,16 +194,18 @@ def router(app) -> APIRouter:
                     if body.copy_allowlist
                     else ()
                 )
-                spec = spec_for(
-                    {
-                        **source,
-                        "id": workspace_id,
-                        "name": body.name,
-                        "ssh_pubkey": reannotated_pubkey(source, body.name),
-                        "egress_allowlist": allowlist,
-                    }
-                )
                 try:
+                    spec = spec_for(
+                        {
+                            **source,
+                            "id": workspace_id,
+                            "name": body.name,
+                            "ssh_pubkey": reannotated_pubkey(
+                                source, body.name
+                            ),
+                            "egress_allowlist": allowlist,
+                        }
+                    )
                     row = await app.state.model.create_workspace(
                         spec,
                         image_hash=source.get("image_hash"),
@@ -199,17 +213,39 @@ def router(app) -> APIRouter:
                         name=body.name,
                     )
                 except IntegrityError:
-                    # The insert lost a race on the name index. The
-                    # artifacts sit under a fresh random id this
-                    # clone alone touched, so unlike the create's
-                    # loser they are unambiguously ours to remove —
-                    # the row-exists-⇒-artifacts-exist invariant
-                    # keeps its shape and no orphan survives.
-                    remove_overlay(state_dir, workspace_id)
-                    remove_home_volume(state_dir, workspace_id)
+                    # The insert lost the name race: the artifacts
+                    # sit under this clone's fresh id and are ours
+                    # to remove — unless the collision was the id
+                    # itself (two clones minted one id before either
+                    # inserted), where the winner's row owns the
+                    # pair and the loser cleans nothing, the create
+                    # route's own rule.
+                    if (
+                        await app.state.model.get_workspace(workspace_id)
+                        is None
+                    ):
+                        remove_overlay(state_dir, workspace_id)
+                        remove_home_volume(state_dir, workspace_id)
                     raise HTTPException(
                         status_code=409, detail="workspace exists"
                     ) from None
+                except (ValueError, MicrovmError, OSError) as exc:
+                    # The row build failed after the copy (a mounts
+                    # column that no longer parses among them): the
+                    # same rollback, the same named 503.
+                    for dst in copied:
+                        dst.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"the clone's row build failed: {exc}",
+                    ) from None
+                except BaseException:
+                    # An abort between the copy and the insert still
+                    # leaves no orphaned pair (ensure_artifacts'
+                    # rollback rule).
+                    for dst in copied:
+                        dst.unlink(missing_ok=True)
+                    raise
         row["mount_issues"] = issue_payloads(await row_mount_issues(app, row))
         return Response(
             status_code=201,

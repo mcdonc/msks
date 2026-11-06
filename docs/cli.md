@@ -508,9 +508,10 @@ cloned seed into task-42 (id 9a8b7c6d5e)
 ```
 
 A clone is a full fork. The daemon copies both disks — the root
-overlay and the `/home` volume — at the source's allocated cost
-wherever the filesystem can share blocks (a reflink), and the
-new workspace's row carries the source's create-time config:
+overlay and the `/home` volume. Where the state filesystem can
+share blocks (a reflink), the copy costs its metadata; where it
+cannot, the copy writes the source's allocated bytes. The new
+workspace's row carries the source's create-time config:
 the image and its pin, the sizes and topology, the egress mode,
 the mounts, the login user, and the `user_data` payload. The clone's own factory reset re-provisions from that
 payload. The [cloning chapter](cloning.md) holds the whole

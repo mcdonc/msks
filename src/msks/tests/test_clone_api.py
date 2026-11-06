@@ -8,6 +8,7 @@ contract, the refusal contract (a live source, a taken name, a
 foreign host, missing artifacts, the floor), and the CLI surface.
 """
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -365,13 +366,11 @@ async def test_clone_loses_a_name_race_cleanly(clone_api, monkeypatch):
 
     row = await make_source(clone_api)
     model = clone_api.app.state.model
-    real_create = model.create_workspace
 
-    async def racing_create(*args, **kwargs):
-        await real_create(*args, **kwargs)
+    async def refused_create(*args, **kwargs):
         raise IntegrityError("stmt", {}, Exception("unique name"))
 
-    monkeypatch.setattr(model, "create_workspace", racing_create)
+    monkeypatch.setattr(model, "create_workspace", refused_create)
     refused = await clone(clone_api, row["id"], "fork")
     assert refused.status_code == 409
     assert refused.json()["detail"] == "workspace exists"
@@ -382,6 +381,102 @@ async def test_clone_loses_a_name_race_cleanly(clone_api, monkeypatch):
         p.name for p in (state_dir / "vms").glob("*/root.qcow2")
     )
     assert leftovers == ["root.qcow2"]
+
+
+async def test_clone_cleans_nothing_when_the_id_collides(
+    clone_api, monkeypatch
+):
+    """A same-id mint collision's loser cleans nothing: the
+    winner's row owns the pair at the shared id, and the loser's
+    rollback must not delete it (the create route's rule)."""
+    from sqlalchemy.exc import IntegrityError
+
+    row = await make_source(clone_api)
+    model = clone_api.app.state.model
+    real_create = model.create_workspace
+
+    async def winning_create(spec, **kwargs):
+        await real_create(spec, **kwargs)
+        raise IntegrityError("stmt", {}, Exception("same id"))
+
+    monkeypatch.setattr(model, "create_workspace", winning_create)
+    refused = await clone(clone_api, row["id"], "fork")
+    assert refused.status_code == 409
+    state_dir = clone_api.app.state.settings.vmm.state_dir
+    # The winner's pair stays: two overlays, the source's and the
+    # shared id's.
+    overlays = sorted(
+        (state_dir / "vms").glob("*/root.qcow2"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    assert len(overlays) == 2
+    for overlay in overlays:
+        assert overlay.read_bytes() == OVERLAY_BYTES
+
+
+async def test_clone_rolls_back_an_os_error_mid_copy(clone_api, monkeypatch):
+    """A raw OSError past the first artifact (ENOSPC on the
+    second copy among them) answers the named 503 with the first
+    artifact removed — never a bare 500, never an orphan."""
+    import msks.server.api.clone as clone_module
+
+    row = await make_source(clone_api)
+    real_clone_file = clone_module.clone_file
+
+    def failing_second_copy(src, dst):
+        if dst.name.endswith(".ext4"):
+            raise OSError(28, "No space left on device")
+        real_clone_file(src, dst)
+
+    monkeypatch.setattr(clone_module, "clone_file", failing_second_copy)
+    refused = await clone(clone_api, row["id"], "fork")
+    assert refused.status_code == 503
+    assert "disk copy failed" in refused.json()["detail"]
+    assert "No space left" in refused.json()["detail"]
+    state_dir = clone_api.app.state.settings.vmm.state_dir
+    leftovers = sorted(
+        p.name for p in (state_dir / "vms").glob("*/root.qcow2")
+    )
+    assert leftovers == ["root.qcow2"]
+
+
+async def test_clone_keeps_the_event_loop_live_through_the_copy(
+    clone_api, monkeypatch
+):
+    """The disk copy runs on a worker thread (#775 review): a
+    windowed copy of a volume-sized file must not freeze the
+    daemon's loop — every route, the watcher, the console streams.
+    A blocking copy in flight lets a concurrent coroutine keep
+    ticking the whole time."""
+    import time
+
+    import msks.server.api.clone as clone_module
+
+    row = await make_source(clone_api)
+    real_clone_file = clone_module.clone_file
+
+    def blocking_copy(src, dst):
+        real_clone_file(src, dst)
+        time.sleep(0.3)  # the volume-sized copy's stand-in
+
+    monkeypatch.setattr(clone_module, "clone_file", blocking_copy)
+    ticks = 0
+
+    async def heartbeat():
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    beater = asyncio.create_task(heartbeat())
+    try:
+        made = await clone(clone_api, row["id"], "fork")
+        assert made.status_code == 201, made.text
+    finally:
+        beater.cancel()
+    # 0.3 s of copy at a 10 ms beat: the loop turned dozens of
+    # times while the copy held its thread.
+    assert ticks >= 15
 
 
 def test_reannotated_pubkey_covers_the_keyless_and_unusual() -> None:
@@ -396,18 +491,62 @@ def test_reannotated_pubkey_covers_the_keyless_and_unusual() -> None:
 
 
 async def test_clone_serializes_against_the_source_move_lock(clone_api):
-    """A clone holds the source's move-lock: a boot arriving mid-
-    copy waits it out (the lock the start route shares), so the
-    copied pair is consistent without a refused start."""
+    """A clone holds the source's move-lock: with the lock held by
+    another exchange (a boot, a volume move), the clone WAITS — a
+    free row, a stopped seam, no refusal — and completes the
+    moment the holder lets go. The start route shares the same
+    lock, so a boot arriving mid-copy orders against the copy the
+    same way."""
     row = await make_source(clone_api)
     lock = await home_volume_lock(clone_api.app, row["id"])
     assert await lock.acquire() is True
-    try:
-        await clone_api.app.state.model.set_status(row["id"], "running")
-        refused = await clone(clone_api, row["id"], "fork")
-        assert refused.status_code == 409
-    finally:
-        lock.release()
-    await clone_api.app.state.model.set_status(row["id"], "created")
-    made = await clone(clone_api, row["id"], "fork")
+    in_flight = asyncio.create_task(clone(clone_api, row["id"], "fork"))
+    await asyncio.sleep(0.1)
+    assert not in_flight.done()  # blocked on the lock, not refused
+    lock.release()
+    made = await in_flight
     assert made.status_code == 201, made.text
+
+
+async def test_clone_rolls_back_a_failed_row_build(clone_api, monkeypatch):
+    """A row build that fails after the copy (a mounts column that
+    no longer parses among them) answers the named 503 with the
+    copied pair removed."""
+    import msks.server.api.clone as clone_module
+
+    row = await make_source(clone_api)
+
+    def refusing_spec(fields):
+        raise ValueError("stored mounts do not parse")
+
+    monkeypatch.setattr(clone_module, "spec_for", refusing_spec)
+    refused = await clone(clone_api, row["id"], "fork")
+    assert refused.status_code == 503
+    assert "row build failed" in refused.json()["detail"]
+    state_dir = clone_api.app.state.settings.vmm.state_dir
+    leftovers = sorted(
+        p.name for p in (state_dir / "vms").glob("*/root.qcow2")
+    )
+    assert leftovers == ["root.qcow2"]
+
+
+async def test_clone_rolls_back_an_abort_between_copy_and_insert(
+    clone_api, monkeypatch
+):
+    """An unexpected abort between the copy and the insert still
+    leaves no orphaned pair: the rollback runs, the error
+    propagates as itself (not a shaped refusal)."""
+    row = await make_source(clone_api)
+    model = clone_api.app.state.model
+
+    async def exploding_create(*args, **kwargs):
+        raise RuntimeError("database gone dark")
+
+    monkeypatch.setattr(model, "create_workspace", exploding_create)
+    with pytest.raises(RuntimeError, match="database gone dark"):
+        await clone(clone_api, row["id"], "fork")
+    state_dir = clone_api.app.state.settings.vmm.state_dir
+    leftovers = sorted(
+        p.name for p in (state_dir / "vms").glob("*/root.qcow2")
+    )
+    assert leftovers == ["root.qcow2"]

@@ -358,10 +358,17 @@ def created_line(row: dict) -> str:
     """The create confirmation: the label beside the daemon-minted,
     immutable id (#246) — the name is the everyday reference, the
     id is the one no future workspace will ever reuse."""
+    return f"created {label_and_id(row)}"
+
+
+def label_and_id(row: dict) -> str:
+    """The label and id pair the confirmation lines paint: the
+    name with the id beside it, the id alone on a nameless row
+    (or one whose label is the id itself)."""
     name = row.get("name")
     if name and name != row["id"]:
-        return f"created {name} (id {row['id']})"
-    return f"created {row['id']}"
+        return f"{name} (id {row['id']})"
+    return row["id"]
 
 
 def cmd_start(workspace_id: str, transport=None) -> int:
@@ -417,17 +424,8 @@ def cmd_clone(
             transport=transport,
         )
     )
-    print(f"cloned {source} into {clone_target(row)}")
+    print(f"cloned {source} into {label_and_id(row)}")
     return 0
-
-
-def clone_target(row: dict) -> str:
-    """The clone confirmation's target half: the label and id the
-    way :func:`created_line` paints them, without its verb."""
-    name = row.get("name")
-    if name and name != row["id"]:
-        return f"{name} (id {row['id']})"
-    return row["id"]
 
 
 def cmd_rm(workspace_ids: list[str], transport=None) -> int:
