@@ -1,44 +1,41 @@
 # Placeholder secrets
 
-A workspace never holds a real secret. It holds a
-**placeholder**: a sentinel token the operator mints once and
-pastes into the workspace. The daemon swaps the sentinel for the
-real secret on the wire, in flight, only toward the destinations
-the mint gave. The real secret is the operator's own value,
-supplied at mint: a file or stdin on the CLI, a masked field on
-the TUI form. It lives in msksd's **secret store** (the
-database's per-recipient age-encrypted blobs) and in the
-daemon's unlock cache for its window. It is never echoed back;
-the mint reply carries the sentinel alone.
+A workspace need never hold a real secret. Instead, it may hold a
+**placeholder**: a sentinel token the operator mints once and pastes into the
+workspace. The secrets page in the TUI and the `msks secret` command are how
+you interact with secrets.
 
-A mint covers **workspaces**. With no target it is the
-**daemon-wide placeholder**: one row, one sentinel, valid on
-every workspace's tap. An operator running several workspaces
-against one daemon mints the credential once and distributes
-the same sentinel everywhere. A `--workspace` target (one name
-or a comma list, repeatable) scopes the row to exactly those
-workspaces: one row, one sentinel, one coverage set. The
-sentinel's prefix gives its reach from the string alone:
-`mskssec1_…` scopes to its row's workspaces, `mskssec2_…`
-reaches every accepting workspace on the daemon.
+The daemon swaps the sentinel for the real secret on the wire. The real secret
+is the operator's own value, supplied at mint: a file or stdin on the CLI, or a
+masked field on the TUI form.
 
-This chapter is about the store and the mint/revoke/renew
-commands. The in-flight swap itself is the **egress
-interceptor**; the next section covers it.
+The actual secret lives in msksd's **secret store** (the
+database's per-recipient age-encrypted blobs) and in the daemon's unlock cache
+during its window. The secret store is encrypted using the ssh identity.
+
+A mint covers **workspaces**. With no target it is the **daemon-wide
+placeholder** valid on every workspace's tap. An operator running several
+workspaces against one daemon mints the credential once and distributes the
+same sentinel everywhere. A workspace target scopes the row to only
+those workspaces.
+
+The in-flight swap itself is the **egress interceptor**; the next section
+documents it. If you don't care much about how this works, you can safely skip
+it.
 
 ## The interceptor (the swap on the wire)
 
-A workspace covered by at least one live placeholder is
-**armed**. A live placeholder is minted, unrevoked, and
-unexpired; the coverage is the workspace's own scoped
-placeholders, or any daemon-wide placeholder while the
-workspace accepts one. When armed, the daemon redirects that
-workspace's TCP flows toward ports 80 and 443 into an
-in-process HTTPS/HTTP proxy, and the swap happens there. The
-proxy is [mitmproxy](https://mitmproxy.org), embedded in msksd:
-one process serving every armed workspace, one listener per
-workspace's tap, so a guest that spoofs another workspace's
-source address still lands on its own tap's placeholders.
+A workspace covered by at least one live placeholder is **armed**. A live
+placeholder is minted, unrevoked, and unexpired; the coverage is the
+workspace's own scoped placeholders, or any daemon-wide placeholder while the
+workspace accepts one.
+
+When armed, the daemon redirects that workspace's TCP flows toward ports 80 and
+443 into an in-process HTTPS/HTTP proxy, and the swap happens there. The proxy
+is [mitmproxy](https://mitmproxy.org), embedded in msksd. Mitmproxy runs one
+process serving every armed workspace, one listener per workspace's tap, so a
+guest that spoofs another workspace's source address still lands on its own
+tap's placeholders.
 
 What each request gets:
 
@@ -59,10 +56,7 @@ What each request gets:
 - **The splice.** An HTTPS destination no placeholder of this
   workspace covers is relayed undecrypted: the origin's real
   certificate reaches the workspace, pinned clients keep
-  working, and the sentinel travels raw. Detection of
-  off-allowlist sightings is limited to decrypted flows; this
-  blind spot is recorded on the decision doc of the time
-  (`docs/spikes/194-egress-interceptor.md`, since removed).
+  working, and the sentinel travels raw.
 - **The sighting.** A sentinel seen toward a destination its own
   allowlist misses (while another placeholder decrypts the
   flow) passes through unrewritten and publishes a
@@ -86,7 +80,7 @@ Every web connection is decided on the name the wire carries:
 the TLS handshake's SNI on HTTPS, the Host header on plain
 HTTP. The verdict is bound to the address the naming memory
 holds for the connection. A name claiming an address it never
-resolved to keys by the address, so it borrows nothing.
+resolved to keys by the address.
 
 A `static` workspace's allowlist gates its web traffic by that
 name. An `interactive` workspace's web connections hold through
@@ -100,65 +94,44 @@ consent as the reason: the handshake completes against the
 daemon's interception CA, the request refuses, and nothing
 forwards. A client that pins the origin's real certificate
 fails its handshake instead; it is refused closed either way.
-See [egress consent](egress-consent.md) for the gate's
-precedence and its per-connection boundaries. The consent modes
-keep gating every other port at the kernel queue as before.
-The verdict pins and resolver-learned allows they hold in the
-kernel carry across the interceptor's arm/disarm table swaps:
-they are re-pinned with their remaining lifetimes in the same
-transaction that swaps the table.
 
-Each swap publishes a `secret.swap` event; mint, revoke,
-expiry, and unlock publish their own (`secret.mint`,
-`secret.revoke`, `secret.expiry`, `secret.unlock`). All six
-travel the events websocket beside the workspace lifecycle
-events. Each gives the placeholder's row id, its workspace and
-name, and a timestamp. The row id is the durable handle,
-because the row itself retires on revoke and expiry. A swap or
-sighting also gives the destination the wire saw; a mint gives
-the allowlist it was minted with; revoke, expiry, and unlock
-carry the identity alone. The `msks tui` secrets page's audit
-view (`e` from the page) shows every workspace's events newest
-first, daemon-wide. The newest hundred recorded mints,
-revokes, expiries, and unlocks replay onto it when the view
-opens, and swaps and sightings stream in live. The
-off-allowlist sighting is highlighted as the exfil signal, with
-a header line stating the detection boundary above.
-Kind and workspace filters narrow the view; a daemon-wide row's
-events cover every workspace, a scoped row's its members. Each
-lifecycle event carries its audit row's id on both the live
-stream and the replay, so one fact lands once on the screen
-however it arrives. A replayed row keeps no placeholder row-id
-suffix: the audit record holds the identity, not the
-placeholder's id. An empty view says so; the screen never
-renders the header line alone.
+Each swap publishes a `secret.swap` event; mint, revoke, expiry, and unlock
+publish their own (`secret.mint`, `secret.revoke`, `secret.expiry`,
+`secret.unlock`). All six travel the events websocket beside the workspace
+lifecycle events.
 
-Fail-closed on the swap path. A secret the store cannot serve,
-or a row the database cannot read, answers the request locally
+Each gives the placeholder's row id, its workspace and name, and a
+timestamp. The row id is the durable handle, because the row itself retires on
+revoke and expiry. A swap or sighting also gives the destination the wire saw;
+a mint gives the allowlist it was minted with; revoke, expiry, and unlock carry
+the identity alone.
+
+The `msks tui` secrets page's audit view (`e` from the page) shows every
+workspace's events newest first, daemon-wide. The newest hundred recorded
+mints, revokes, expiries, and unlocks replay onto it when the view opens, and
+swaps and sightings stream in live. The off-allowlist sighting is highlighted
+as the exfil signal, with a header line stating the detection boundary above.
+Kind and workspace filters narrow the view; a daemon-wide row's events cover
+every workspace, a scoped row's its members.
+
+We fail-closed on the swap path. A secret the store cannot serve,
+or a row the database cannot read answers the request locally
 with a 502 instead of forwarding it. A request that still
 carries the sentinel never leaves the host.
 
-The interceptor presents each connection a leaf certificate
-signed by the daemon's one interception CA. Every workspace's
-guest trusts the same certificate its seed staged: the identity
-seed writes `/etc/msks/interceptor-ca.crt` at first boot, and
-the trust-store exports and the NixOS fold register it. A
-workspace whose guest already trusts that CA sees HTTPS toward
-allowlisted destinations validate normally from the first
-placeholder. When the daemon's certificate changes under a
-workspace that already booted (the move from an earlier
-per-workspace CA, or a future CA rotation), the next boot
-renews the seed. The seed is rebuilt carrying the daemon's
-certificate with an instance-id suffix keyed to it. cloud-init
-re-provisions (the seed script is idempotent, and the
-operator's payload re-executes with it), and the fold
-re-registers the fresh certificate. The splice leg needs none
-of this: it presents the origin's own certificate.
-
-Arming and disarming swap the workspace's firewall table in
-one nft transaction: the redirect, the widened input rule for
-the listener, and the QUIC drop appear and disappear together,
-with no window in between where the table is absent.
+For TLS connections, the interceptor presents each connection a leaf
+certificate signed by the daemon's one interception CA. Every workspace's guest
+trusts the same certificate its seed staged: the identity seed writes
+`/etc/msks/interceptor-ca.crt` at first boot, and the trust-store exports and
+the NixOS fold register it. A workspace whose guest already trusts that CA sees
+HTTPS toward allowlisted destinations validate normally from the first
+placeholder. When the daemon's certificate changes under a workspace that
+already booted (the move from an earlier per-workspace CA, or a future CA
+rotation), the next boot renews the seed. The seed is rebuilt carrying the
+daemon's certificate with an instance-id suffix keyed to it. cloud-init
+re-provisions (the seed script is idempotent, and the operator's payload
+re-executes with it), and the fold re-registers the fresh certificate. The
+splice leg needs none of this: it presents the origin's own certificate.
 
 The listeners bind one shared port on each armed tap address
 (`interceptor_port`, default 8643; see the
@@ -166,30 +139,7 @@ The listeners bind one shared port on each armed tap address
 against the CA bundle mitmproxy ships (certifi's Mozilla
 list), not the platform's own store; pointing verification at
 the platform bundle is a setting the certification effort
-brings, never a code change. The daemon pins no cipher list of
-its own anywhere: the contexts it builds take mitmproxy's
-curated default list, and any override arrives as a setting
-with the certification effort, never as code. One functional
-limit travels that posture: the client-facing leg negotiates
-HTTP/1.1 only (no ALPN callback is installed), so guests with
-HTTP/2 fall back; the swap, the splice, and the detection
-behave the same over HTTP/1.1.
-
-Two lifecycle facts worth knowing. A workspace whose
-interceptor cannot arm (its listener cannot bind) fails its
-boot with the named cause: an armed workspace is the whole
-point of a placeholder, and half-armed is worse than refused. A
-connection the guest opened before the first placeholder armed
-keeps flowing unintercepted until it ends, because the kernel's
-connection tracking outlives the rule swap. An established
-_redirected_ flow, symmetrically, breaks when the last
-placeholder goes: the listener is gone while its NAT entry
-lingers. Both sit in the same accepted blind-spot class as the
-splice tier. Guest-to-guest web traffic while armed sits there
-too: the redirect takes every tap 80/443 flow, including one
-workspace dialing another's address, and the interceptor dials
-the destination from the host, where the per-VM forward gates
-do not apply.
+brings, never a code change.
 
 ## The seeded probe placeholder
 
@@ -202,28 +152,6 @@ verify interception from inside a workspace with zero minting
 Its sentinel never needs to be treated as a secret: the
 credential it swaps to is public and gates nothing beyond the
 probe's own `ok` page.
-
-Read the seeded sentinel back over the token-gated API:
-`GET /api/v1/probe` answers the row id, the sentinel, and the
-endpoint's recipe. Revoke it like any other placeholder when
-you do not want it. The seed runs exactly when the placeholder
-table is empty. A daemon that already holds rows seeds nothing,
-and a revoked probe row stays gone while the operator's rows
-hold the table. Mint it back by hand instead: `msks secret mint
---name probe --dest secretprobe.msks --secret-file -` with the
-fixed credential blob `bXNrczptc2tz` (the value the probe
-endpoint itself serves). The seed's mint travels the audit
-trail like any other.
-
-Under the unlock window, the probe row is armed for the window
-at every boot and again on every `GET /api/v1/probe` read. The
-credential is public, so the daemon re-arms its own row rather
-than leaving the probe locked after the window expires. That
-is the same rationale that lets the endpoint serve the
-credential at all. Between the window's expiry and the next
-read (or boot, or an operator's unlock with the public value)
-the probe's swap answers the locked refusal like any other
-row.
 
 ## The probe endpoint
 
@@ -272,11 +200,13 @@ gates nothing beyond its own `ok` page. That is also why the
 seeded row's sentinel is served back over the token-gated API
 (`GET /api/v1/probe`): a token holder already owns the daemon.
 
-Two reachability notes. The probe answers only while the
-workspace is **armed**. A workspace scoped against daemon-wide
-placeholders (no covering row of its own) never arms. Its direct dial to
-`secretprobe.msks:443` finds nothing admitted and times out. That posture is the documented way to opt a
-workspace out of interception entirely.
+Two reachability notes. The probe answers only while the workspace is
+**armed**. A workspace scoped against daemon-wide placeholders (no covering row
+of its own) never arms. Its direct dial to `secretprobe.msks:443` finds nothing
+admitted and times out. That posture is the documented way to opt a workspace
+out of interception entirely.
+
+## VM-specific CA configuration
 
 The guest's trust in its own interception CA is installed at
 first boot on both images. Debian guests link it into the
@@ -292,6 +222,8 @@ there.
 
 ## The mint flow
 
+Uses `msks secret mint` to mint a new credential from the command line UI.
+
 ```console
 $ op read 'op://Vault/github/credential' \
     | msks secret mint --name github_api \
@@ -303,7 +235,7 @@ sentinel: mskssec2_9Jm3...kQ
 - The value is the operator's own secret: a file's contents, or
   stdin for `--secret-file -` (the example pipes it from a
   password manager, so it never touches disk). It is
-  whitespace-stripped at both ends (a UTF-8 BOM drops too) and
+  whitespace-stripped at both ends and
   never accepted as a command-line argument, because argv lands
   in process lists and shell history. It is stored as
   ciphertext blobs and never echoed; the mint reply carries the
@@ -348,27 +280,31 @@ sentinel: mskssec2_9Jm3...kQ
   back from the daemon. The operator's value alone is never
   echoed back.
 
+## TUI minting
+
 The `msks tui` secrets page mints too. `c` opens the form:
 name, repeatable destinations, coverage (the daemon-wide row,
 or a multi-select of the workspaces the tree's own list
 offers), the lifetime (`unbounded` by default, an hour to
-thirty days beside it), and the value. The value is a masked
-field the operator types or pastes into, so the form takes the
-secret's bytes directly. The submit checks the store (`msks
-secret check`'s endpoint) before it mints. A refusal (a store
-that cannot answer writes, a name collision on the chosen
-coverage set, a blank value) gives itself on the form, with the
-fields kept for a retry. A successful mint answers with the
-sentinel's panel. The sentinel opens masked, its prefix giving
-the reach and its body rendering as bullets. A Show action
-reveals and hides it again. An OSC 52 clipboard copy works over
-ssh too, where the terminal honors it, and needs no reveal. The
-display ends with the panel.
-Enter (or a click) on a listing row opens the same panel again.
-The page fetches the row's sentinel from the daemon and shows
-it, so the sentinel reads back on demand. The panel is one
-surface for the row, opened at mint and after. Closing the
-panel clears its text.
+thirty days beside it), and the value.
+
+The submit checks the store (`msks secret check`'s endpoint) before it mints. A
+refusal (a store that cannot answer writes, a name collision on the chosen
+coverage set, a blank value) gives itself on the form, with the fields kept for
+a retry.
+
+A successful mint answers with the sentinel's panel. The sentinel opens masked,
+its prefix giving the reach and its body rendering as bullets. A Show action
+reveals and hides it again. An OSC 52 clipboard copy works over ssh too, where
+the terminal honors it, and needs no reveal. The display ends with the panel.
+Enter (or a click) on a listing row opens the same panel again. The page
+fetches the row's sentinel from the daemon and shows it, so the sentinel reads
+back on demand. The panel is one surface for the row, opened at mint and
+after. Closing the panel clears its text.
+
+## Revoking a mint
+
+The TUI allows this via "x".
 
 `msks secret revoke --name github_api` retires the daemon-wide
 row of that label everywhere at once. `msks secret revoke
@@ -434,23 +370,13 @@ Three surfaces run the flow:
   stanza for this key are another operator's and stay
   ciphertext. The command without a configured identity gives
   `identity_file` and exits nonzero.
-- **A cold refusal is a named condition.** The daemon's
-  refusals surface verbatim: the locked swap error (423), and
-  on a zero-window daemon the `422` that answers an unlock
-  while no operator websocket stands. The websocket lives on a
-  workspace page or the secrets page's audit view: open either
-  (the TUI holds none at its root list) and the same flow
-  works; never a retry loop.
 
-The window is `MSKSD_SECRET_STORE_UNLOCK_TIMEOUT_S` (default
-86400 seconds, one day), the `ssh-add -t` pattern. The timer
-resets on an unlock POST itself (an operator action carrying
-plaintext) and on nothing else: websocket traffic, keepalives,
-and scheduled tasks never extend it. Zero holds plaintext only
-while at least one operator websocket stays connected: the last
-disconnect drops it, and an unlock over HTTP alone holds
-nothing past the reply. Expiry flushes the cache, observable
-through the row fetch and the pending list.
+The window is `MSKSD_SECRET_STORE_UNLOCK_TIMEOUT_S` (default 86400 seconds, one
+day). The timer resets on an unlock POST itself (an operator action carrying
+plaintext) and on nothing else: websocket traffic, keepalives, and scheduled
+tasks never extend it. Zero holds plaintext only while at least one operator
+websocket stays connected: the last disconnect drops it, and an unlock over
+HTTP alone holds nothing past the reply.
 
 Until an unlock stands, the interceptor's swap path refuses a
 carried sentinel with a named locked error: HTTP 423, `msks:
@@ -479,7 +405,9 @@ files alongside the daemon's database. A database copy alone
 carries ciphertext nobody can open, and a lost identity file
 means re-minting the values.
 
-### Worked example
+### msksd.yaml examples
+
+You can change the secret store unlock timeout.
 
 ```yaml
 # the unlock window: how long unlocked plaintext lives in the
@@ -499,22 +427,18 @@ posture. The ssh identities, the database, and the token hashes
 keep their own house postures; the blobs give the secrets' one,
 and the blob's recipient list is exactly the row's coverage.
 
-Moving a daemon to another host means moving its database (the
-blobs travel the placeholder rows) while the daemon is stopped.
-
 ## The audit trail
 
 Mint, revoke, expiry, and unlock append a row to the daemon
 database: the placeholder's coverage (the daemon-wide row, or
 the workspace list), name, destination allowlist, and a
 timestamp (`msks secret ls` lists placeholders; the audit view
-is `/api/v1/secrets/audit`). Expiry fires from the status
-watcher's periodic sweep, which publishes a `secret.expiry`
-event and re-evaluates the covered workspaces' redirects in the
-same pass. The last placeholder's retirement stands the
-interception down, and one revoke or expiry retires the whole
-row everywhere at once. The secret value and the sentinel
-appear nowhere in the audit or the events. The value travels
-its mint request alone and is never echoed. The sentinel
-appears only in the mint reply and the on-demand row fetch,
-never in the audit or the event stream.
+is `/api/v1/secrets/audit`).
+
+Expiry fires from the status watcher's periodic sweep, which publishes a
+`secret.expiry` event and re-evaluates the covered workspaces' redirects in the
+same pass. The last placeholder's retirement stands the interception down, and
+one revoke or expiry retires the whole row everywhere at once. The secret value
+and the sentinel appear nowhere in the audit or the events. The value travels
+its mint request alone and is never echoed. The sentinel appears only in the
+mint reply and the on-demand row fetch, never in the audit or the event stream.
