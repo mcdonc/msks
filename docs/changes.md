@@ -152,6 +152,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The image page's default key and readable columns.** The
+  TUI's image page gained `d`, which designates the highlighted
+  catalog row the default image (the same POST `msks image
+default` makes). Both groups show each build's 12-character
+  hash prefix beside the ref — the join the `[imported]` and
+  `[local]` markers compare — and the catalog group sorts by
+  ref with the newest import first. The rows align as columns
+  that re-lay on terminal resize.
+
 - **The term-popup status row shows the egress mode and the
   popup key (#764).** `msks-term-popup`'s shell window pins
   `interactive · C-b p popup` to the right side of its tmux

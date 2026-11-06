@@ -148,7 +148,12 @@ Enter imports a published row through the daemon's URL import or opens
 a catalog row's detail.
 
 `D` deletes a catalog row after a confirmation, the same DELETE `msks
-image rm` makes. The page re-reads the workspace each second, so the
+image rm` makes. `d` designates the highlighted catalog row the default
+image, the same POST `msks image default` makes; the row that already
+holds the designation flashes so. Both groups show the build's hash
+prefix beside the ref, so a published row matches its catalog row by
+eye — the same prefix `msks image ls` prints. The page re-reads the
+workspace each second, so the
 dimming follows a start or stop made anywhere, not only on the page.
 
 ### The egress consent page
