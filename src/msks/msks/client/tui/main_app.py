@@ -166,6 +166,11 @@ class MsksTuiApp(App):
     ConfirmScreen { align: center middle; }
     #question { padding: 1 2; background: $panel;
                 border: round $primary; }
+    CloneNameScreen { align: center middle; }
+    #clone-prompt { width: 48; height: auto; padding: 1 2;
+                     background: $panel; border: round $primary; }
+    #clone-question { height: 1; color: $text-muted; }
+    #clone-input { margin-top: 1; }
     #consent-page { padding: 0 1; }
     #allowlist { height: 1; color: $text-muted;
                  text-wrap: nowrap; text-overflow: ellipsis; }

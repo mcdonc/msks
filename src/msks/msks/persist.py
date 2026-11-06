@@ -55,6 +55,7 @@ the seed's staging directory.
 
 import asyncio
 import contextlib
+import fcntl
 import hashlib
 import itertools
 import json
@@ -697,6 +698,91 @@ def remove_home_volume(state_dir: Path, workspace_id: str) -> None:
     home = home_volume_path(state_dir, workspace_id)
     sweep_tmp_siblings(home)
     home.unlink(missing_ok=True)
+
+
+#: Linux's ``FICLONE`` ioctl (``_IOW(0x94, 9, int)``): one call
+#: that makes the destination share the source's blocks wherever
+#: the filesystem supports reflinks (btrfs, XFS). A filesystem
+#: without reflink support answers ``EOPNOTSUPP``/``EINVAL`` and
+#: the caller takes the windowed fallback — the same request on a
+#: non-Linux host answers the kernel's own refusal, so the
+#: fallback serves there too.
+FICLONE = 0x40049409
+
+
+def clone_file(source: Path, target: Path) -> None:
+    """One artifact's full-fork copy (#773): the target lands with
+    the source's bytes at the source's cost wherever the
+    filesystem can share blocks, and at the source's allocated
+    cost where it cannot.
+
+    Reflink first: one ``FICLONE`` makes the copy share the
+    source's extents (nothing but metadata moves). Where the
+    filesystem refuses, the windowed fallback copies in home-
+    volume windows and leaves all-zero windows as holes, so a
+    sparse artifact stays sparse. Either way the copy builds under
+    a private scratch name and lands with one atomic rename.
+
+    Strict on leftovers, like ``ensure_artifacts``: a target that
+    already exists is a previous workspace's debris, never data
+    to adopt; a source that is missing is named rather than
+    silently skipped (a clone that carried a blank disk would lie
+    about being a fork)."""
+    if target.exists():
+        raise MicrovmError(
+            f"artifact for the clone already exists: {target}; "
+            "remove it (or restore the workspace row) first"
+        )
+    if not source.is_file():
+        raise MicrovmError(
+            f"cannot clone {source}: the file is missing; a start "
+            "of the source would rebuild it blank"
+        )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    scratch = tmp_sibling(target)
+    try:
+        if reflink_copy(source, scratch):
+            install(scratch, target)
+        else:
+            windowed_copy(source, scratch)
+            install(scratch, target)
+    finally:
+        scratch.unlink(missing_ok=True)
+
+
+def reflink_copy(source: Path, scratch: Path) -> bool:
+    """Whether one ``FICLONE`` cloned the whole file (the caller
+    unlinks the empty scratch and takes the windowed fallback
+    when it did not)."""
+    src_fd = os.open(source, os.O_RDONLY)
+    try:
+        dst_fd = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            fcntl.ioctl(dst_fd, FICLONE, src_fd)
+            return True
+        except OSError:
+            return False
+        finally:
+            os.close(dst_fd)
+    finally:
+        os.close(src_fd)
+
+
+def windowed_copy(source: Path, scratch: Path) -> None:
+    """The fallback copy: home-volume windows, all-zero windows
+    left as holes (a hole reads as zeros, so the content is
+    byte-identical for any file), the rest written at its offset,
+    then fsync before the caller's rename."""
+    with open(source, "rb") as reader, open(scratch, "r+b") as writer:
+        offset = 0
+        while window := reader.read(HOME_WINDOW_B):
+            if window.strip(b"\x00"):
+                writer.seek(offset)
+                writer.write(window)
+            offset += len(window)
+        writer.truncate(offset)
+        writer.flush()
+        os.fsync(writer.fileno())
 
 
 def open_sized(path: Path) -> tuple[int, int]:

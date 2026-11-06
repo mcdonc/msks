@@ -9,6 +9,7 @@ Here's an overview of the common command set:
 msks                         # the workspace tree TUI
 msks ls                      # what exists, and what state is it in
 msks create ws                # make a workspace
+msks clone ws fork            # copy a workspace into a new one
 msks console ws               # boot it if needed, then work inside it
 msks forward ws 22            # bridge a guest TCP port to stdio
 msks key ws                   # fetch the workspace's ssh identity
@@ -494,6 +495,39 @@ resolves to that key (`identity_file` pointing at it). A key that
 resolves nowhere keeps the direct route: `ssh -i` through a
 forward, or the `Host msks-*` alias with `IdentityFile` pointing
 at it. `msks ssh` exits with a line saying exactly that.
+
+## `msks clone`
+
+Copies one stopped workspace into a new one (`POST
+/api/v1/workspaces/{id-or-name}/clone`) and prints the new
+workspace's label and id:
+
+```bash
+$ msks clone seed task-42
+cloned seed into task-42 (id 9a8b7c6d5e)
+```
+
+A clone is a full fork. The daemon copies both disks — the root
+overlay and the `/home` volume. Where the state filesystem can
+share blocks (a reflink), the copy costs its metadata; where it
+cannot, the copy writes the source's allocated bytes. The new
+workspace's row carries the source's create-time config:
+the image and its pin, the sizes and topology, the egress mode,
+the mounts, the login user, and the `user_data` payload. The clone's own factory reset re-provisions from that
+payload. The [cloning chapter](cloning.md) holds the whole
+story: what copies, what stays behind, and the in-guest secrets
+property.
+
+The source must be stopped. A clone of a running workspace is
+refused with the reason, and the new name follows the create
+grammar (lowercase letters, digits, and dashes).
+
+The clone's egress allowlist starts empty under the copied
+mode: a `static` clone answers every name NXDOMAIN until its
+list is set, an `interactive` one earns each allow. The
+`--copy-allowlist` flag opts the clone into the source's list
+verbatim. The [cloning chapter](cloning.md) holds the whole
+story.
 
 ## `msks start`
 

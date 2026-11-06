@@ -358,10 +358,17 @@ def created_line(row: dict) -> str:
     """The create confirmation: the label beside the daemon-minted,
     immutable id (#246) — the name is the everyday reference, the
     id is the one no future workspace will ever reuse."""
+    return f"created {label_and_id(row)}"
+
+
+def label_and_id(row: dict) -> str:
+    """The label and id pair the confirmation lines paint: the
+    name with the id beside it, the id alone on a nameless row
+    (or one whose label is the id itself)."""
     name = row.get("name")
     if name and name != row["id"]:
-        return f"created {name} (id {row['id']})"
-    return f"created {row['id']}"
+        return f"{name} (id {row['id']})"
+    return row["id"]
 
 
 def cmd_start(workspace_id: str, transport=None) -> int:
@@ -387,6 +394,37 @@ def cmd_stop(workspace_id: str, transport=None) -> int:
         )
     )
     print(f"{workspace_id} {row['status']}")
+    return 0
+
+
+def cmd_clone(
+    source: str,
+    name: str,
+    copy_allowlist: bool = False,
+    transport=None,
+) -> int:
+    """``msks clone`` (#773): copy a stopped workspace into a new
+    one — both disks and the create-time config. The daemon owns
+    the whole rule set (the stopped-source gate, the full-fork
+    copy, the fresh id); the command sends the name and prints
+    the confirmation.
+
+    ``copy_allowlist`` (#773's one option) opts the clone into
+    the source's egress allowlist; without it the clone starts
+    with an empty list under the copied mode.
+    """
+    body = {"name": name}
+    if copy_allowlist:
+        body["copy_allowlist"] = True
+    row = asyncio.run(
+        call(
+            "POST",
+            f"/api/v1/workspaces/{source}/clone",
+            json_body=body,
+            transport=transport,
+        )
+    )
+    print(f"cloned {source} into {label_and_id(row)}")
     return 0
 
 

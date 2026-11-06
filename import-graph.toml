@@ -240,7 +240,9 @@ events = 4
 # the prelude. #486: the create route's mint went with the daemon
 # mint — one fewer identity import. #500: LEGACY_LOGIN_USER
 # left the route's user field.
-identity = 4
+# #773: the clone route re-annotates the copied public key line
+# (normalize_public_key, module edge beside the name).
+identity = 6
 # #470: the workspace listing joins the catalog — each row's image
 # reference resolves through the imagestore (resolve_hash beside
 # the listing's aliased list_images). #481: the console endpoint's
@@ -257,7 +259,10 @@ microvm = 16
 # #514 retirement: the routes dropped the manifest's
 # placeholder_refs read and the seed's ref probe.
 model = 5
-persist = 12
+# #773: the clone route copies both disks (clone_file), reads the
+# pair's paths, and removes its own half-copied pair on a lost
+# insert race — five names on one statement beside the module.
+persist = 18
 # #423 follow-up: the mint takes the operator's value again, so
 # the route dropped its new_secret_value import (the minter
 # itself is gone with it). #514: the mint's blob helpers joined
@@ -291,8 +296,14 @@ secretcache = 2
 # three names (mount_issues, named_only, validate_against_shares
 # never imported again). #715: the skew row's remedy orders the
 # pair numerically (ordering joins the statement).
-spec = 37
-storage = 13
+# #773: the clone route's two statements — the failure class
+# (MicrovmError) and the seam's truth-guard vocabulary (VmStatus),
+# each the module edge beside its name.
+spec = 41
+# #773: the clone route reads the state-disk floor (create_refusal
+# beside the artifacts' allocated-cost file_cost) before any byte
+# copies.
+storage = 16
 
 [snapshot.settings]
 # #620 part #621: the shares parser pulled the MountShare shape

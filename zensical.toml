@@ -24,6 +24,7 @@ nav = [
   { "First run" = "first-run.md" },
   { "The TUI" = "tui.md" },
   { "Host Share Mounts" = "mounts.md" },
+  { "Cloning Workspaces" = "cloning.md" },
   { "Guest Networking" = "networking.md" },
   { "Egress Consent" = "egress-consent.md" },
   { "LLM Proxy" = "llm.md" },

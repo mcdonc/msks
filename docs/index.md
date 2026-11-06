@@ -31,24 +31,27 @@ _msks_ runs on:
    the daemon's HTTP API, ssh and rsync over a forward.
 6. [**Host share mounts**](mounts.md): the host trees a
    workspace mounts into its guest.
-7. [**Guest networking**](networking.md): details about VM guest networking.
-8. [**Egress consent**](egress-consent.md): the consent
+7. [**Cloning workspaces**](cloning.md): the full-fork copy —
+   what a clone carries, what stays behind, and the in-guest
+   secrets property.
+8. [**Guest networking**](networking.md): details about VM guest networking.
+9. [**Egress consent**](egress-consent.md): the consent
    postures, verdicts and durations, switching modes live.
-9. [**LLM Proxy**](llm.md): how to make use of msksd's built-in
-   LLM proxy.
-10. [**Secrets**](secrets.md): placeholders, the swap on the
+10. [**LLM Proxy**](llm.md): how to make use of msksd's built-in
+    LLM proxy.
+11. [**Secrets**](secrets.md): placeholders, the swap on the
     wire, and the sentinel discipline.
-11. [**Configuration**](config.md): the daemon's settings: every
+12. [**Configuration**](config.md): the daemon's settings: every
     key, its environment variable, and its default.
-12. [**Workspace images**](images.md): the image contract, the
+13. [**Workspace images**](images.md): the image contract, the
     shipped builder, and the published channel: import from a
     manifest URL.
-13. [**Storage**](storage.md): the state disk, the per-workspace
+14. [**Storage**](storage.md): the state disk, the per-workspace
     volumes, and a capacity report.
-14. [**The HTTP API**](api.md): the `/api/v1` surface itself —
+15. [**The HTTP API**](api.md): the `/api/v1` surface itself —
     the endpoints the commands wrap and the authentication model.
-15. [**Development environment**](development.md): the devenv
+16. [**Development environment**](development.md): the devenv
     side of a checkout — the dev daemon, the shell's client
     presets, the worktree identity.
-16. [**Changelog**](changes.md): what changed, release by
+17. [**Changelog**](changes.md): what changed, release by
     release.

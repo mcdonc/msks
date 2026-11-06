@@ -13,6 +13,7 @@ consent page's verdict keys live on that page alone (Textual
 routes keys to the active screen alone).
 """
 
+import asyncio
 import json
 from typing import NamedTuple
 
@@ -22,8 +23,8 @@ from textual.binding import Binding
 from textual.containers import Vertical
 from textual.content import Content, Span
 from textual.css.query import NoMatches
-from textual.screen import Screen
-from textual.widgets import Footer, ListItem, ListView, Static
+from textual.screen import ModalScreen, Screen
+from textual.widgets import Footer, Input, ListItem, ListView, Static
 
 from ..resize import resize_message
 
@@ -288,9 +289,53 @@ PAGE_ACTIONS = (
         "host shares at guest paths",
         "configure",
     ),
+    PageAction(
+        "clone",
+        "Clone",
+        "copy to a new workspace",
+        "configure",
+    ),
     PageAction("start", "Start", "boot the workspace", "power"),
     PageAction("stop", "Stop", "power it off", "power"),
 )
+
+
+class CloneNameScreen(ModalScreen[str | None]):
+    """The clone's name prompt (#773): one Input — Enter submits
+    the name (the daemon owns the charset rule), Escape cancels.
+    The callback given at construction runs as a task with the
+    name (or None), the picker screens' shape."""
+
+    BINDINGS = [Binding("escape", "cancel", "Cancel", show=False)]
+
+    def __init__(self, source: str, submitted) -> None:
+        super().__init__()
+        self.source = source
+        self.submitted = submitted
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="clone-prompt"):
+            yield Static(
+                f"clone {escape(self.source)} into:", id="clone-question"
+            )
+            yield Input(placeholder="new workspace name", id="clone-input")
+
+    def on_mount(self) -> None:
+        self.query_one("#clone-input", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        name = event.value.strip()
+        if not name:
+            return
+        self.dismiss_with(name)
+
+    def action_cancel(self) -> None:
+        self.dismiss_with(None)
+
+    def dismiss_with(self, name: str | None) -> None:
+        """Dismiss and hand the name to the callback."""
+        self.dismiss()
+        self._submit_task = asyncio.create_task(self.submitted(name))
 
 
 class WorkspaceScreen(Screen):
@@ -778,6 +823,7 @@ class WorkspaceScreen(Screen):
             ACTION_SHELL_WINDOW: self.open_shell_window,
             "edit": self.edit_workspace,
             "mounts": self.open_mounts,
+            "clone": self.clone_workspace,
             "start": self.start_workspace,
             "stop": self.stop_workspace,
         }[kind]
@@ -828,6 +874,32 @@ class WorkspaceScreen(Screen):
                 f"opened a shell window for {workspace_label(self.row)}"
             )
         )
+
+    async def clone_workspace(self) -> None:
+        """Push the clone's name prompt (#773) over the page — the
+        daemon owns the stopped-source rule; a refusal names
+        itself on the page's consent line."""
+        self.app.push_screen(
+            CloneNameScreen(workspace_label(self.row), self.cloned)
+        )
+
+    async def cloned(self, name: str | None) -> None:
+        """The name prompt's callback: a name clones this
+        workspace through the daemon — both disks and the
+        create-time config; the new row's label flashes here, and
+        the list names it on its next refresh. A cancel decides
+        nothing."""
+        if name is None:
+            return
+        row = await self.guarded_page_flash(
+            "clone", self.app.data.clone(self.row["id"], name)
+        )
+        if row is not None:
+            self.flash(
+                flash_safe(
+                    f"cloned into {workspace_label(row)} (id {row['id']})"
+                )
+            )
 
     async def start_workspace(self) -> None:
         await self.power_workspace("start")
