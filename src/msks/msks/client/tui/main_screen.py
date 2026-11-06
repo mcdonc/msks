@@ -141,6 +141,9 @@ class MainScreen(Screen):
         # through this one tuple, so their offsets stay shared.
         self.columns = LIST_COLUMNS
         self.shown_once = False
+        # The listing refresh's in-flight mark (#776): a skip, not
+        # a cancel — see refresh_rows.
+        self.rows_loading = False
 
     def compose(self) -> ComposeResult:
         yield Static(id="status")
@@ -192,16 +195,31 @@ class MainScreen(Screen):
     # -- the listing -------------------------------------------------------
 
     def refresh_rows(self) -> None:
-        """Reload the listing; one flight at a time."""
-        self.run_worker(self.load_rows, exclusive=True)
+        """Reload the listing; one flight at a time, a skip and not
+        a cancel. An exclusive worker cancels the running refresh,
+        and a cancellation landing inside the swap (#776's mac-lane
+        data: an interval tick firing while the first build still
+        awaits on a starved runner) strands the tree — the old list
+        removed, the fresh one never mounted — while the rows
+        recorded say the swap finished, so every later refresh
+        skips against a listing that never painted. The in-flight
+        mark skips instead; the standing interval's next tick (five
+        seconds) serves the rows, and an ``r`` that lands mid-flight
+        rides the same next tick.
+        """
+        if self.rows_loading:
+            return
+        self.rows_loading = True
+        self.run_worker(self.load_rows)
 
     async def load_rows(self) -> None:
         try:
             rows = await self.app.data.workspaces()
+            await self.rebuild_rows(rows)
         except (Exception, SystemExit) as exc:
             self.app.flash(f"listing failed: {flash_safe(str(exc))}")
-            return
-        await self.rebuild_rows(rows)
+        finally:
+            self.rows_loading = False
 
     async def rebuild_rows(self, rows: list[dict]) -> None:
         """Swap in a freshly-built list (its mount awaited), the

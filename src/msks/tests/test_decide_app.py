@@ -21,6 +21,7 @@ from msks.client.tui.consent_ui import (
     DurationScreen,
     ModeScreen,
 )
+from test_consent_page import poll
 from textual.widgets import OptionList, Static
 
 SOCKET = "msks-ws1-7"
@@ -143,20 +144,17 @@ class FakeConnect:
         return False
 
 
-async def until(predicate, timeout: float = 5.0) -> None:
+async def until(predicate, timeout: float | None = None) -> None:
     """Await a condition the app's own scheduling settles, or name
-    the wait's failure. A poll that lands mid-mount (a row whose
-    text widget has not joined the tree yet) reads as not-yet,
-    not as failure."""
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        try:
-            if predicate():
-                return
-        except Exception:  # noqa: BLE001 - mid-mount reads not-yet
-            pass
-        await asyncio.sleep(0.02)
-    raise AssertionError("condition did not arrive")
+    the wait's failure. A read that lands mid-mount (a row whose
+    text widget has not joined the tree yet) reads as not-yet, not
+    as failure. The loop is the consent suite's poll (#776): the
+    lane-scaled budget, the overslept-park credit-back, and the
+    timeout's diagnostics line all arrive with it — a read that
+    only ever raised names its own error at the timeout, poll's
+    triage rule. An explicit ``timeout`` (``0`` included) is
+    honored as given."""
+    await poll(predicate, timeout, 0.02)
 
 
 def verdict_seam() -> tuple[list, object]:
