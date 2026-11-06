@@ -108,6 +108,21 @@ class TuiData:
             ssl_ctx=shared_ssl(),
         )
 
+    async def clone(self, workspace_id: str, name: str) -> dict:
+        """POST the clone (#773) — the workspace page's Clone action.
+        The daemon owns the stopped-source rule: a workspace that
+        is not stopped answers the named 409, which the page
+        flashes."""
+        return await api_call(
+            "POST",
+            env_url(),
+            env_token(),
+            f"/api/v1/workspaces/{workspace_id}/clone",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+            json_body={"name": name},
+        )
+
     async def resize(self, workspace_id: str, body: dict) -> dict:
         """POST the resize — the edit dialog's sizes and topology
         (#331), the same exchange ``msks resize`` makes. The daemon

@@ -5674,3 +5674,43 @@ def test_mount_help_names_the_grammar(
     flat = capsys.readouterr().out
     assert "HOST_PATH:GUEST_PATH:MODE" in flat
     assert "next start" in flat.lower()
+
+
+def test_main_clone_dispatch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``msks clone seed task-42`` (#773): the POST carries only
+    the name, addressed at the source's clone route, and the
+    confirmation names the source, the label, and the id."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            201, json={"id": "9a8b7c6d5e", "name": "task-42"}
+        )
+
+    rc = cli.main(["clone", "seed", "task-42"], transport=mock(handler))
+    assert rc == 0
+    assert seen["path"] == "/api/v1/workspaces/seed/clone"
+    assert seen["body"] == {"name": "task-42"}
+    assert "cloned seed into task-42 (id 9a8b7c6d5e)" in (
+        capsys.readouterr().out
+    )
+
+
+def test_main_clone_names_an_id_only_row(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A nameless row (an API clone under a future body shape, or
+    any create without a label) confirms with the id alone."""
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(201, json={"id": "9a8b7c6d5e"})
+
+    rc = cli.main(["clone", "seed", "task-42"], transport=mock(handler))
+    assert rc == 0
+    assert "cloned seed into 9a8b7c6d5e" in capsys.readouterr().out

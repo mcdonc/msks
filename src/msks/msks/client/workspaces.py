@@ -390,6 +390,34 @@ def cmd_stop(workspace_id: str, transport=None) -> int:
     return 0
 
 
+def cmd_clone(source: str, name: str, transport=None) -> int:
+    """``msks clone`` (#773): copy a stopped workspace into a new
+    one — both disks and the create-time config. The daemon owns
+    the whole rule set (the stopped-source gate, the full-fork
+    copy, the fresh id); the command sends the name and prints
+    the confirmation.
+    """
+    row = asyncio.run(
+        call(
+            "POST",
+            f"/api/v1/workspaces/{source}/clone",
+            json_body={"name": name},
+            transport=transport,
+        )
+    )
+    print(f"cloned {source} into {clone_target(row)}")
+    return 0
+
+
+def clone_target(row: dict) -> str:
+    """The clone confirmation's target half: the label and id the
+    way :func:`created_line` paints them, without its verb."""
+    name = row.get("name")
+    if name and name != row["id"]:
+        return f"{name} (id {row['id']})"
+    return row["id"]
+
+
 def cmd_rm(workspace_ids: list[str], transport=None) -> int:
     """``msks rm``: delete workspaces and their persistent data.
 

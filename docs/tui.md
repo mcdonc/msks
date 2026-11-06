@@ -102,6 +102,13 @@ It carries one entry per mount (`projects:/mnt/projects:rw`), a skipped
 mount's kind beside its spec (`refs:/srv/refs:ro · skipped`), and an
 `applies at next start` note while a change is pending.
 
+The page's fixed actions sit in three groups — use, configure, and
+power. The configure group holds the egress consent screen, the
+sizes-and-topology edit dialog, the mounts editor, and **Clone**:
+the full-fork copy of [the cloning chapter](cloning.md), taken
+with a name prompt. The daemon owns the stopped-source rule — a
+refusal names itself on the page's consent line.
+
 ### The mounts page
 
 The **mounts editor** shows the workspace's mounts one row each, in the

@@ -90,6 +90,7 @@ from .volumes import (  # noqa: F401
 )
 from .workspaces import (  # noqa: F401
     CreateFlags,
+    cmd_clone,
     cmd_create,
     cmd_key,
     cmd_ls,
@@ -473,6 +474,35 @@ def stop(
 ) -> int:
     """Power a workspace off."""
     return cmd_stop(workspace_id, transport=ctx.obj)
+
+
+@app.command("clone")
+@one_line_interrupts
+def clone(
+    ctx: typer.Context,
+    source: str = typer.Argument(
+        ..., help="the workspace to copy (name or id); it must be stopped"
+    ),
+    name: str = typer.Argument(
+        ...,
+        help="the new workspace's name: the label you address the "
+        "clone by (DNS-label charset); the daemon mints its own id",
+    ),
+) -> int:
+    """Copy a workspace into a new one (#773).
+
+    A clone is a full fork of a stopped workspace: both disks copy
+    (the root overlay and the /home volume), and the create-time
+    config rides the new row (image, sizes, egress mode and
+    allowlist, mounts, login user, the user_data payload — the
+    clone's own factory reset re-provisions from it). The new
+    workspace mints its own id and starts fresh: in-effect egress
+    verdicts stay with the source, and workspace-scoped secret
+    placeholders do not cover the clone. Everything the guest
+    generated itself (ssh host keys above all) duplicates — rotate
+    what matters before trusting the clone's identity.
+    """
+    return cmd_clone(source, name, transport=ctx.obj)
 
 
 @app.command("resize")

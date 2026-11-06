@@ -942,3 +942,83 @@ async def test_the_timezone_alone_builds_a_seed(tools) -> None:
     log = record.read_text()
     assert "timedatectl set-timezone 'Europe/Berlin'" in log
     assert "ln -nsf /usr/share/zoneinfo/Europe/Berlin /etc/localtime" in log
+
+
+def test_clone_file_copies_content_and_sparseness(
+    tmp_path, monkeypatch
+) -> None:
+    """The full-fork copy (#773) on the windowed fallback: the
+    target carries the source's bytes, a sparse source stays
+    sparse (holes cost nothing), and the source itself is
+    untouched. The fallback is forced — the ioctl refuses — so
+    the copy runs the same path a reflink-less filesystem
+    (ext4, tmpfs) serves."""
+    import msks.persist as persist_mod
+
+    def refusing_ioctl(fd, request, arg):
+        raise OSError("no reflinks here")
+
+    monkeypatch.setattr(persist_mod.fcntl, "ioctl", refusing_ioctl)
+    src = tmp_path / "src.img"
+    with open(src, "wb") as fh:
+        fh.write(b"\x00" * persist.HOME_WINDOW_B * 2)
+        fh.write(b"data")
+        fh.write(b"\x00" * persist.HOME_WINDOW_B)
+    sparse_blocks = src.stat().st_blocks
+
+    dst = tmp_path / "dst.img"
+    persist.clone_file(src, dst)
+
+    assert dst.read_bytes() == src.read_bytes()
+    assert dst.stat().st_size == src.stat().st_size
+    assert dst.stat().st_blocks <= sparse_blocks * 2
+    assert src.read_bytes() == (
+        b"\x00" * persist.HOME_WINDOW_B * 2
+        + b"data"
+        + b"\x00" * persist.HOME_WINDOW_B
+    )
+
+
+def test_clone_file_refuses_an_existing_target(tmp_path: Path) -> None:
+    """The never-adopt contract: debris at the target is a named
+    refusal, and the debris survives it."""
+    src = tmp_path / "src.img"
+    src.write_bytes(b"source")
+    dst = tmp_path / "dst.img"
+    dst.write_bytes(b"predecessor debris")
+    with pytest.raises(MicrovmError) as caught:
+        persist.clone_file(src, dst)
+    assert "already exists" in str(caught.value)
+    assert dst.read_bytes() == b"predecessor debris"
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_clone_file_names_a_missing_source(tmp_path: Path) -> None:
+    src = tmp_path / "absent.img"
+    with pytest.raises(MicrovmError) as caught:
+        persist.clone_file(src, tmp_path / "dst.img")
+    assert "missing" in str(caught.value)
+
+
+def test_clone_file_takes_the_reflink_path(tmp_path, monkeypatch) -> None:
+    """The FICLONE branch: a filesystem that shares blocks (btrfs,
+    XFS) clones in one call — pinned by steering the ioctl to a
+    no-op success and checking the scratch rename installed the
+    (empty) reflink result, the same atomically-installed shape."""
+    import msks.persist as persist_mod
+
+    src = tmp_path / "src.img"
+    src.write_bytes(b"reflinkable")
+    calls: list[tuple[int, int]] = []
+
+    def fake_ioctl(fd, request, arg):
+        calls.append((fd, request, arg))
+        return 0
+
+    monkeypatch.setattr(persist_mod.fcntl, "ioctl", fake_ioctl)
+    dst = tmp_path / "dst.img"
+    persist_mod.clone_file(src, dst)
+    assert len(calls) == 1
+    assert calls[0][1] == persist_mod.FICLONE
+    assert dst.exists()
+    assert list(tmp_path.glob("*.tmp")) == []

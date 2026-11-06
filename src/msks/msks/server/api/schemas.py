@@ -294,3 +294,13 @@ class MountsSet(BaseModel):
     start attaches this set."""
 
     mounts: list[MountIn] = Field(max_length=64)
+
+
+class WorkspaceClone(BaseModel):
+    """The clone route's body (#773): the new workspace's name,
+    under the create grammar — everything else the clone carries
+    reads from the source row."""
+
+    name: str = Field(
+        min_length=1, max_length=64, pattern=WORKSPACE_ID_PATTERN
+    )

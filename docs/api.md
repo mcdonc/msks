@@ -151,6 +151,21 @@ mount`/`umount` and the TUI's editor use this route.
 - `GET`/`PUT …/home`: export and import the home volume as a
   byte stream, the same stream `msks home import`/`export`
   use.
+- `POST …/clone`: copy one stopped workspace into a new one
+  (the [cloning chapter](cloning.md) holds the semantics — both
+  disks, the create-time config, verdicts and scoped
+  placeholders left behind). The body is `{"name": "…"}` and
+  the reply is the new workspace's row:
+
+```bash
+curl -X POST "$MSKSC_URL/api/v1/workspaces/ws1/clone" \
+  -H "Authorization: Bearer $MSKSC_TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{"name": "fork"}'
+```
+
+A running source answers 409, a taken name answers 409, and a
+state disk under its floor answers 507.
 
 The behaviors each verb drives are the CLI chapter's subjects:
 [create](cli.md#msks-create) and its fields, [resize](cli.md#msks-resize),
