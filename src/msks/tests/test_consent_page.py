@@ -11,6 +11,7 @@ direct unit tests in test_consent_tui_helpers.py.
 import asyncio
 import contextlib
 import json
+import math
 import os
 import time
 from types import SimpleNamespace
@@ -516,14 +517,24 @@ DEFAULT_WAIT_S = 10.0
 
 def wait_budget_s() -> float:
     """The wait helpers' default timeout: MSKS_TUI_WAIT_S, else
-    :data:`DEFAULT_WAIT_S`."""
+    :data:`DEFAULT_WAIT_S`. A lane cannot shrink below a tenth of
+    a second, and a value that does not parse — or parses to
+    something not finite (``nan``, ``inf``) — keeps the default:
+    ``nan`` would defeat every deadline comparison and ``inf``
+    every budget, a silent un-timeouted wait. An explicit
+    ``timeout=`` argument skips the whole read, so a caller can
+    still ask for an instant answer with ``0``.
+    """
     raw = os.environ.get("MSKS_TUI_WAIT_S")
     if raw is None:
         return DEFAULT_WAIT_S
     try:
-        return max(float(raw), 0.1)
+        value = float(raw)
     except ValueError:
         return DEFAULT_WAIT_S
+    if not math.isfinite(value):
+        return DEFAULT_WAIT_S
+    return max(value, 0.1)
 
 
 def wait_diagnostics(cycles: int, credited: float, budget: float) -> None:
@@ -545,9 +556,7 @@ def wait_diagnostics(cycles: int, credited: float, budget: float) -> None:
         if app is not None:
             parts.append(f"screen={type(app.screen).__name__}")
             parts.append(f"focused={type(app.focused).__name__}")
-            queue = getattr(app, "_message_queue", None)
-            if queue is not None:
-                parts.append(f"queue={queue.qsize()}")
+            parts.append(f"queue={app._message_queue.qsize()}")
     # fd 2, not sys.stderr: Textual's run_test replaces the
     # stream object for the app's lifetime, and the line exists
     # for timeouts that fire inside one — the descriptor write
@@ -682,12 +691,15 @@ async def open_screen(pilot, app, key: str, name: str) -> None:
     await press_until(pilot, key, lambda: type(app.screen).__name__ == name)
 
 
-async def leave_page(pilot, app, timeout: float = 30.0) -> None:
+async def leave_page(pilot, app, timeout: float | None = None) -> None:
     """Press the back key until the workspace page stands again —
     under a loaded runner a key press can be dropped or land
     unprocessed, and the tests retry as the operator would
-    (#322)."""
-    await press_until(pilot, "q", lambda: on_page(app), timeout=timeout)
+    (#322). The budget rides the lane's wait budget with its own
+    30-second floor (#776): a page exit crosses more frames than
+    a row wait, and a lane scaling its budget scales this too."""
+    budget = max(wait_budget_s(), 30.0) if timeout is None else timeout
+    await press_until(pilot, "q", lambda: on_page(app), timeout=budget)
 
 
 async def decide_the(controller, rid: str, decision: str = "allowed") -> None:
@@ -2766,6 +2778,16 @@ def test_the_wait_budget_reads_the_lane(monkeypatch) -> None:
     assert wait_budget_s() == 30.0
     monkeypatch.setenv("MSKS_TUI_WAIT_S", "junk")
     assert wait_budget_s() == DEFAULT_WAIT_S
+
+
+def test_the_budget_refuses_non_finite_values(monkeypatch) -> None:
+    """``nan`` and ``inf`` parse but poison every comparison they
+    touch (#777 review): ``nan`` makes each deadline check false
+    forever and ``inf`` makes the budget unbounded — both keep the
+    default, never a silent un-timeouted wait."""
+    for bad in ("nan", "inf", "-inf", "infinity"):
+        monkeypatch.setenv("MSKS_TUI_WAIT_S", bad)
+        assert wait_budget_s() == DEFAULT_WAIT_S, bad
 
 
 async def test_a_timeout_prints_its_diagnostics(capfd) -> None:
