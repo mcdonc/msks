@@ -1,11 +1,11 @@
 # Cloning workspaces
 
-`msks clone seed task-42` copies one stopped workspace into a new
-one. A clone is a full fork: the new workspace boots with the
-source's disks and the source's create-time configuration, under
-its own freshly minted id and the name you gave it. The TUI's
-workspace page offers the same action (`Clone`) with a name
-prompt.
+Cloning copies one workspace's state into a new workspace. The new
+workspace boots with a copy of the source's disks and the source's create-time
+configuration, under its own id and a new name.
+
+Use the CLI form `msks clone ws ws2` to clone `ws` into `ws2`. The TUI's
+workspace page offers the same action (`Clone`) with a name prompt.
 
 ## What a clone carries
 
@@ -14,16 +14,11 @@ prompt.
   clone: installed packages, `/etc` changes, repos and files
   under `/home`. The copy is a reflink where the state
   filesystem supports one (the blocks are shared, the copy costs
-  its metadata); a plain windowed copy serves elsewhere at the
-  source's allocated cost, and sparse files stay sparse.
-- **The create-time config.** The image and its catalog pin, the
-  root and home sizes, the CPU and memory topology, the egress
-  mode, the host-share mounts, the login user, and the `user_data`
-  payload all copy. The clone's own factory reset re-provisions
+  its metadata).
+- **The create-time config.** The root and home sizes, the CPU and memory
+  topology, the egress mode, the host-share mounts, the login user, and the
+  `user_data` payload all copy. The clone's own factory reset re-provisions
   from the payload, exactly like the source's would.
-- **The ssh identity's key.** The operator's public key copies
-  verbatim (it is the operator's key, not the workspace's); only
-  the daemon's provenance comment names the clone.
 
 ## What stays behind
 
@@ -44,22 +39,15 @@ prompt.
   or re-scope one for the clone when it needs the credential.
   Daemon-wide placeholders cover the clone with nothing to
   decide, like they cover every workspace.
-- **The egress address slice and the attached-mounts record.**
-  The clone's tap gets its own address at its first attach, and
-  its mounts attach at its first start.
 
 ## The stopped-source rule
 
-The source must be stopped (`created`, `stopped`, or `absent`).
-The daemon refuses a clone of a running workspace with the
-reason, the same refusal shape the home-volume endpoints give.
-The refusal exists because the copy reads both disks at rest: a
-copy taken while the guest writes would be torn, with the overlay
-and the volume disagreeing about what the last write was.
+The source must be stopped to be cloned. The daemon refuses a clone of a
+running workspace.
 
 ## In-guest secrets duplicate
 
-A full fork shares everything the disks carry, including secrets
+A clone copies everything the source's disks carry, including secrets
 the guest generated itself. The clone and the source carry the
 same ssh host keys, the same `machine-id`, and the same
 application secrets any first-boot process minted (session
@@ -75,12 +63,10 @@ its source.
 
 ## Typical uses
 
-- **Seed to fleet.** Prepare one workspace with the toolchain,
+- **Seed workspace.** Prepare one workspace with the toolchain,
   repos, and login state, then clone it per task or per agent
   with `--copy-allowlist`: the seed's approved destinations
   propagate, and each clone still re-earns its interactive
   verdicts.
 - **Experiment fork.** Clone before a risky session; the
-  original keeps its state while the clone takes the risk. Snapshots
-  (when they land) solve the same worry by rolling a workspace
-  back in place; the two share only the disk-copy primitive.
+  original keeps its state while the clone takes the risk.
