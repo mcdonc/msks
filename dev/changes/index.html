@@ -1423,13 +1423,24 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>The listing refresh no longer cancels a swap mid-flight (#776).</strong> The
+<li>
+<p><strong>The listing refresh no longer cancels a swap mid-flight (#776).</strong> The
   workspace list's standing refresh cancelled the running reload when a
   new one fired, and a cancellation landing inside the list swap left the
   listing stranded: the old list removed, the fresh one never mounted,
   and every later refresh skipped against rows recorded as painted. A
   refresh arriving mid-flight now skips instead; the next standing tick
-  (five seconds) serves the rows.</li>
+  (five seconds) serves the rows.</p>
+</li>
+<li>
+<p><strong>The TUI status line shows the unix socket path decoded
+  (#779).</strong> The line printed the daemon's transport address
+  verbatim, so the local socket read
+  <code>http+unix://%2Frun%2Fus…%2Fmsksd.sock</code>. It now decodes the
+  path — <code>http+unix:///run/user/1001/msks/msksd.sock</code> — keeping
+  the quoting where it belongs, in the address the transports
+  dial. A TCP daemon's URL shows unchanged.</p>
+</li>
 </ul>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
