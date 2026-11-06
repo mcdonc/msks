@@ -1558,6 +1558,16 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>The image page's default key and readable columns.</strong> The
+  TUI's image page gained <code>d</code>, which designates the highlighted
+  catalog row the default image (the same POST <code>msks image
+default</code> makes). Both groups show each build's 12-character
+  hash prefix beside the ref — the join the <code>[imported]</code> and
+  <code>[local]</code> markers compare — and the catalog group sorts by
+  ref with the newest import first. The rows align as columns
+  that re-lay on terminal resize.</p>
+</li>
+<li>
 <p><strong>The term-popup status row shows the egress mode and the
   popup key (#764).</strong> <code>msks-term-popup</code>'s shell window pins
   <code>interactive · C-b p popup</code> to the right side of its tmux

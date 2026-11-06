@@ -1217,7 +1217,12 @@ date" src="../screens/image-detail.svg" /></p>
 <p>Enter imports a published row through the daemon's URL import or opens
 a catalog row's detail.</p>
 <p><code>D</code> deletes a catalog row after a confirmation, the same DELETE <code>msks
-image rm</code> makes. The page re-reads the workspace each second, so the
+image rm</code> makes. <code>d</code> designates the highlighted catalog row the default
+image, the same POST <code>msks image default</code> makes; the row that already
+holds the designation flashes so. Both groups show the build's hash
+prefix beside the ref, so a published row matches its catalog row by
+eye — the same prefix <code>msks image ls</code> prints. The page re-reads the
+workspace each second, so the
 dimming follows a start or stop made anywhere, not only on the page.</p>
 <h3 id="the-egress-consent-page">The egress consent page<a class="headerlink" href="#the-egress-consent-page" title="Permanent link">&para;</a></h3>
 <p><img alt="The egress consent page: a held request over the in-effect verdicts" src="../screens/consent-page.svg" /></p>
