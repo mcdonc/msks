@@ -444,6 +444,8 @@ carries. `test -x` on a symlink says nothing about the
 interpreter behind it. The launcher executions turn that class
 of breakage into a build failure.
 
+## Specifics of a Fedora guest
+
 ```bash
 msks-build-guest fedora
 ```
