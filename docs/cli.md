@@ -523,7 +523,9 @@ refused with the reason, and the new name follows the create
 grammar (lowercase letters, digits, and dashes).
 
 The clone's egress allowlist starts empty under the copied
-mode. `--copy-allowlist` opts the clone into the source's list
+mode: a `static` clone answers every name NXDOMAIN until its
+list is set, an `interactive` one earns each allow. The
+`--copy-allowlist` flag opts the clone into the source's list
 verbatim. The [cloning chapter](cloning.md) holds the whole
 story.
 

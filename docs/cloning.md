@@ -29,10 +29,13 @@ prompt.
 
 - **The egress allowlist.** The clone's list starts empty. Its
   posture is the mode it inherited over nothing allowed, so a
-  fork doing different things than its source earns its own
-  destinations. `msks clone seed fork --copy-allowlist` opts the
-  clone into the source's list verbatim, for the seed-to-fleet
-  case where the seed's approved set is meant to propagate.
+  fork under `interactive` mode earns its own destinations. A
+  fork under `static` mode answers every name NXDOMAIN until the
+  operator sets its list — an offline workspace reachable only
+  by ssh, the same posture `msks egress mode static --offline`
+  builds. `msks clone seed fork --copy-allowlist` opts the clone
+  into the source's list verbatim, for the seed-to-fleet case
+  where the seed's approved set is meant to propagate.
 - **In-effect egress verdicts.** Every `allow forever` the source
   earned under `interactive` mode stays with the source. The
   clone re-earns each allow, with or without `--copy-allowlist`.

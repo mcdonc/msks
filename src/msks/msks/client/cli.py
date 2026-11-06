@@ -488,13 +488,14 @@ def clone(
         help="the new workspace's name: the label you address the "
         "clone by (DNS-label charset); the daemon mints its own id",
     ),
-    allow: bool = typer.Option(
+    copy_allowlist: bool = typer.Option(
         False,
         "--copy-allowlist",
         help="carry the source's egress allowlist into the clone "
         "(#773). Without it the clone starts with an empty list "
-        "under the copied mode: everything the source allowed is "
-        "re-earned",
+        "under the copied mode: an interactive clone earns each "
+        "allow anew, a static clone answers every name NXDOMAIN "
+        "until its list is set",
     ),
 ) -> int:
     """Copy a workspace into a new one (#773).
@@ -510,7 +511,7 @@ def clone(
     generated itself (ssh host keys above all) duplicates — rotate
     what matters before trusting the clone's identity.
     """
-    return cmd_clone(source, name, allow, transport=ctx.obj)
+    return cmd_clone(source, name, copy_allowlist, transport=ctx.obj)
 
 
 @app.command("resize")

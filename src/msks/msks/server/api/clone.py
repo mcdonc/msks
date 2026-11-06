@@ -14,6 +14,7 @@ secret perimeter stays a per-workspace decision.
 """
 
 import asyncio
+import contextlib
 import json
 from pathlib import Path
 
@@ -174,7 +175,24 @@ def router(app) -> APIRouter:
                             home_volume_path(state_dir, workspace_id),
                         ),
                     ):
-                        await asyncio.to_thread(clone_file, src, dst)
+                        worker = asyncio.create_task(
+                            asyncio.to_thread(clone_file, src, dst)
+                        )
+                        try:
+                            await asyncio.shield(worker)
+                        except asyncio.CancelledError:
+                            # The request died mid-copy. Join the
+                            # in-flight worker before unwinding: its
+                            # install() rename can land after any
+                            # cleanup that runs now, and the move-lock
+                            # must not release while the thread still
+                            # reads the source's disks. A copy that
+                            # lands joins the rollback list; a copy
+                            # that fails installed nothing.
+                            with contextlib.suppress(BaseException):
+                                await worker
+                                copied.append(dst)
+                            raise
                         copied.append(dst)
                 except (MicrovmError, OSError) as exc:
                     for dst in copied:
@@ -183,6 +201,14 @@ def router(app) -> APIRouter:
                         status_code=503,
                         detail=f"the clone's disk copy failed: {exc}",
                     ) from None
+                except BaseException:
+                    # A cancellation (a client gone, a shutdown) rolls
+                    # back what this clone installed before the locks
+                    # release — the same no-orphan rule the row build
+                    # carries below.
+                    for dst in copied:
+                        dst.unlink(missing_ok=True)
+                    raise
                 # The allowlist stays with the source by default
                 # (#773): a clone's posture is the mode it
                 # inherited over an empty list, and everything the

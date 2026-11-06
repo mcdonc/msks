@@ -550,3 +550,42 @@ async def test_clone_rolls_back_an_abort_between_copy_and_insert(
         p.name for p in (state_dir / "vms").glob("*/root.qcow2")
     )
     assert leftovers == ["root.qcow2"]
+
+
+async def test_clone_joins_the_copy_when_cancelled_mid_flight(
+    clone_api, monkeypatch
+):
+    """A cancellation mid-copy leaves no orphan: the route joins
+    the in-flight worker (its install() can land after the
+    cancel), then rolls back what landed before the locks
+    release."""
+    import threading
+
+    import msks.server.api.clone as clone_module
+
+    row = await make_source(clone_api)
+    real_clone_file = clone_module.clone_file
+    second_started = threading.Event()
+    release = threading.Event()
+
+    def gated_copy(src, dst):
+        if dst.name.endswith(".ext4"):
+            second_started.set()
+            release.wait(5)
+        real_clone_file(src, dst)
+
+    monkeypatch.setattr(clone_module, "clone_file", gated_copy)
+    in_flight = asyncio.create_task(clone(clone_api, row["id"], "fork"))
+    while not second_started.is_set():
+        await asyncio.sleep(0.01)
+    in_flight.cancel()
+    release.set()  # the worker may land its rename now, joined
+    with pytest.raises(asyncio.CancelledError):
+        await in_flight
+    state_dir = clone_api.app.state.settings.vmm.state_dir
+    leftovers = sorted(
+        p.name for p in (state_dir / "vms").glob("*/root.qcow2")
+    )
+    assert leftovers == ["root.qcow2"]
+    homes = sorted(p.name for p in (state_dir / "volumes").glob("*.ext4"))
+    assert len(homes) == 1  # the source's volume alone

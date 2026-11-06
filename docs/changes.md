@@ -14,7 +14,9 @@ tagged `vX.Y.Z`.
   create-time config — image, sizes, egress mode, mounts, login
   user, the `user_data` payload. The egress allowlist, in-effect
   verdicts, and workspace-scoped placeholders stay with the
-  source (`--copy-allowlist` opts into the first); and in-guest-minted secrets (ssh host
+  source. `--copy-allowlist` carries the source's allowlist; a
+  clone without it starts with an empty list under the copied
+  mode. and in-guest-minted secrets (ssh host
   keys above all) duplicate — the cloning chapter names the
   rotation remedy. Also served as `POST
 /api/v1/workspaces/{id}/clone` and the workspace page's Clone
