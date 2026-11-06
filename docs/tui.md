@@ -41,8 +41,10 @@ is created. The rest are fixed for the lifetime of the workspace.
 
 ## The secrets page
 
-You can register secret placeholders to use in workspaces instead of
-putting actual secrets into VMs.
+You can register secret placeholders to use in workspaces instead of putting
+actual secrets into VMs. These secrets are kept in an encrypted store, and the
+placeholders are swapped on the wire within HTTP headers sent to external sites
+to actual secret values.
 
 The **secrets page** lists every placeholder the daemon holds, in columns:
 coverage (`*` for the daemon-wide row, otherwise its workspace ids), name,
