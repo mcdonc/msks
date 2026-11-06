@@ -1204,9 +1204,11 @@ rows</a> describe the behavior. The CLI's <a href="../cli/#msks-mount"><code>msk
 mount</code></a> uses the same route.</p>
 <h3 id="the-images-page">The images page<a class="headerlink" href="#the-images-page" title="Permanent link">&para;</a></h3>
 <p><img alt="The image page: the catalog group, then the published channel" src="../screens/image-page.svg" /></p>
-<p><code>i</code>: the image page. The catalog group comes first, with the default
-marker and each import's date on its rows. Then the published channel's
-rows follow, with their descriptions, sizes, and membership markers.</p>
+<p><code>i</code>: the images page — a full page with its key bindings on the
+footer row. The catalog group comes first, with the default
+marker, each row's hash prefix, and each import's date. Then the
+published channel's rows follow, with their descriptions, sizes,
+hash prefixes, and membership markers.</p>
 <p>The published group lists only the rows this daemon's machine can boot: a
 row that declares another architecture stays off the page. A row that
 declares none is shown (<code>msks image import</code> follows the same rule).
