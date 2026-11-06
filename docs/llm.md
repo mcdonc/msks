@@ -207,7 +207,9 @@ next session logs in the same way.
 claude-code's telemetry hosts (statsig, sentry) and its other
 non-essential calls dial too; exporting
 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` keeps them from
-asking at all. A `static` workspace allowlists the two that
+asking at all.
+
+A `static` workspace must allowlist the two entries that
 matter:
 
 ```console
@@ -216,8 +218,9 @@ msks egress mode myws static --allow api.anthropic.com \
 ```
 
 The flags replace the whole list; repeat them to keep entries
-the workspace already had. An `interactive` workspace answers
-the two prompts instead.
+the workspace already had.
+
+An `interactive` workspace answers the two prompts instead.
 
 ## Integration with the Pi coding agent
 
@@ -231,7 +234,7 @@ exports `MSKSWS_BASE_URL`, built from the DHCP lease's gateway and the daemon's
 port. It also exports `MSKSWS_API_KEY`, a placeholder the proxy never reads:
 it exists for OpenAI-shaped clients that refuse an empty key.
 
-A pi extension consumes these envvars so that `/models` works.
+A pi extension consumes these envvars so that `/models` within Pi works.
 
 The pi extension is named `llm-models.ts`. It exists in `/etc/skel` and root's
 home. Every account the identity seed provisions copies the skeleton, so each
