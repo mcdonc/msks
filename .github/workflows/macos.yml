@@ -123,7 +123,13 @@ jobs:
       - name: Unit tests
         env:
           MSKS_TUI_WAIT_S: "30"
-        run: python -m pytest src/msks/tests --no-cov -n auto -q
+        # The per-test timeout doubles to 120s alongside the 30s
+        # wait budget (#776): the budget is credit-backed time, so
+        # a starved runner can legitimately stretch 30s of budget
+        # past the default 60s of wall — the timeout would kill
+        # the test before the wait's own diagnostics line fires,
+        # the one artifact that names the mechanism.
+        run: python -m pytest src/msks/tests --no-cov -n auto -q --timeout=120
 
       - name: Acceptance harness
         env:
