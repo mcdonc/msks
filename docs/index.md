@@ -21,8 +21,7 @@ _msks_ runs on:
 2. [**The host doctor**](doctor.md): the command that
    checks the host for every tool the daemon and client executes,
    and suggests a fix for each problem found.
-3. [**First run**](first-run.md): configuring identity and creating
-   the first workspace.
+3. [**First run**](first-run.md): configuring identity and importing an image.
 4. [**The TUI**](tui.md): the full-screen workspace tree: the
    workspace, secrets, and image pages, the consent decider, and
    terminal windows.
