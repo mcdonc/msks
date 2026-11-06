@@ -16,10 +16,10 @@
       
       
       
-        <link rel="prev" href="../mounts/">
+        <link rel="prev" href="../secrets/">
       
       
-        <link rel="next" href="../networking/">
+        <link rel="next" href="../cli/">
       
       
         
@@ -381,6 +381,110 @@
       
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../egress-consent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Consent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
     
   
   
@@ -501,110 +605,6 @@
   
 </nav>
       
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../networking/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Guest Networking
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../egress-consent/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Egress Consent
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../llm/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  LLM Proxy
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../secrets/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Secrets
-
-    
-  </span>
-  
-  
-
-      </a>
     </li>
   
 
@@ -907,12 +907,11 @@
 
 
 <h1 id="cloning-workspaces">Cloning workspaces<a class="headerlink" href="#cloning-workspaces" title="Permanent link">&para;</a></h1>
-<p><code>msks clone seed task-42</code> copies one stopped workspace into a new
-one. A clone is a full fork: the new workspace boots with the
-source's disks and the source's create-time configuration, under
-its own freshly minted id and the name you gave it. The TUI's
-workspace page offers the same action (<code>Clone</code>) with a name
-prompt.</p>
+<p>Cloning copies one workspace's state into a new workspace. The new
+workspace boots with a copy of the source's disks and the source's create-time
+configuration, under its own id and a new name.</p>
+<p>Use the CLI form <code>msks clone ws ws2</code> to clone <code>ws</code> into <code>ws2</code>. The TUI's
+workspace page offers the same action (<code>Clone</code>) with a name prompt.</p>
 <h2 id="what-a-clone-carries">What a clone carries<a class="headerlink" href="#what-a-clone-carries" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Both disks.</strong> The daemon copies the root overlay and the
@@ -920,16 +919,11 @@ prompt.</p>
   clone: installed packages, <code>/etc</code> changes, repos and files
   under <code>/home</code>. The copy is a reflink where the state
   filesystem supports one (the blocks are shared, the copy costs
-  its metadata); a plain windowed copy serves elsewhere at the
-  source's allocated cost, and sparse files stay sparse.</li>
-<li><strong>The create-time config.</strong> The image and its catalog pin, the
-  root and home sizes, the CPU and memory topology, the egress
-  mode, the host-share mounts, the login user, and the <code>user_data</code>
-  payload all copy. The clone's own factory reset re-provisions
+  its metadata).</li>
+<li><strong>The create-time config.</strong> The root and home sizes, the CPU and memory
+  topology, the egress mode, the host-share mounts, the login user, and the
+  <code>user_data</code> payload all copy. The clone's own factory reset re-provisions
   from the payload, exactly like the source's would.</li>
-<li><strong>The ssh identity's key.</strong> The operator's public key copies
-  verbatim (it is the operator's key, not the workspace's); only
-  the daemon's provenance comment names the clone.</li>
 </ul>
 <h2 id="what-stays-behind">What stays behind<a class="headerlink" href="#what-stays-behind" title="Permanent link">&para;</a></h2>
 <ul>
@@ -950,19 +944,12 @@ prompt.</p>
   or re-scope one for the clone when it needs the credential.
   Daemon-wide placeholders cover the clone with nothing to
   decide, like they cover every workspace.</li>
-<li><strong>The egress address slice and the attached-mounts record.</strong>
-  The clone's tap gets its own address at its first attach, and
-  its mounts attach at its first start.</li>
 </ul>
 <h2 id="the-stopped-source-rule">The stopped-source rule<a class="headerlink" href="#the-stopped-source-rule" title="Permanent link">&para;</a></h2>
-<p>The source must be stopped (<code>created</code>, <code>stopped</code>, or <code>absent</code>).
-The daemon refuses a clone of a running workspace with the
-reason, the same refusal shape the home-volume endpoints give.
-The refusal exists because the copy reads both disks at rest: a
-copy taken while the guest writes would be torn, with the overlay
-and the volume disagreeing about what the last write was.</p>
+<p>The source must be stopped to be cloned. The daemon refuses a clone of a
+running workspace.</p>
 <h2 id="in-guest-secrets-duplicate">In-guest secrets duplicate<a class="headerlink" href="#in-guest-secrets-duplicate" title="Permanent link">&para;</a></h2>
-<p>A full fork shares everything the disks carry, including secrets
+<p>A clone copies everything the source's disks carry, including secrets
 the guest generated itself. The clone and the source carry the
 same ssh host keys, the same <code>machine-id</code>, and the same
 application secrets any first-boot process minted (session
@@ -976,15 +963,13 @@ external service, or treat the clone as the same trust domain as
 its source.</p>
 <h2 id="typical-uses">Typical uses<a class="headerlink" href="#typical-uses" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Seed to fleet.</strong> Prepare one workspace with the toolchain,
+<li><strong>Seed workspace.</strong> Prepare one workspace with the toolchain,
   repos, and login state, then clone it per task or per agent
   with <code>--copy-allowlist</code>: the seed's approved destinations
   propagate, and each clone still re-earns its interactive
   verdicts.</li>
 <li><strong>Experiment fork.</strong> Clone before a risky session; the
-  original keeps its state while the clone takes the risk. Snapshots
-  (when they land) solve the same worry by rolling a workspace
-  back in place; the two share only the disk-copy primitive.</li>
+  original keeps its state while the clone takes the risk.</li>
 </ul>
 
 
