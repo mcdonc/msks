@@ -511,9 +511,8 @@ A clone is a full fork. The daemon copies both disks — the root
 overlay and the `/home` volume — at the source's allocated cost
 wherever the filesystem can share blocks (a reflink), and the
 new workspace's row carries the source's create-time config:
-the image and its pin, the sizes and topology, the egress mode
-and allowlist, the mounts, the login user, and the `user_data`
-payload. The clone's own factory reset re-provisions from that
+the image and its pin, the sizes and topology, the egress mode,
+the mounts, the login user, and the `user_data` payload. The clone's own factory reset re-provisions from that
 payload. The [cloning chapter](cloning.md) holds the whole
 story: what copies, what stays behind, and the in-guest secrets
 property.
@@ -521,6 +520,11 @@ property.
 The source must be stopped. A clone of a running workspace is
 refused with the reason, and the new name follows the create
 grammar (lowercase letters, digits, and dashes).
+
+The clone's egress allowlist starts empty under the copied
+mode. `--copy-allowlist` opts the clone into the source's list
+verbatim. The [cloning chapter](cloning.md) holds the whole
+story.
 
 ## `msks start`
 

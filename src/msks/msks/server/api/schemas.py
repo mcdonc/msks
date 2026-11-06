@@ -298,9 +298,12 @@ class MountsSet(BaseModel):
 
 class WorkspaceClone(BaseModel):
     """The clone route's body (#773): the new workspace's name,
-    under the create grammar — everything else the clone carries
-    reads from the source row."""
+    under the create grammar — plus the one option the clone
+    carries: ``copy_allowlist`` opts the clone into the source's
+    egress allowlist (the default leaves it with the source, an
+    empty list under the copied mode)."""
 
     name: str = Field(
         min_length=1, max_length=64, pattern=WORKSPACE_ID_PATTERN
     )
+    copy_allowlist: bool = False

@@ -5714,3 +5714,26 @@ def test_main_clone_names_an_id_only_row(
     rc = cli.main(["clone", "seed", "task-42"], transport=mock(handler))
     assert rc == 0
     assert "cloned seed into 9a8b7c6d5e" in capsys.readouterr().out
+
+
+def test_main_clone_with_copy_allowlist_rides_the_body(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--copy-allowlist rides the clone body (#773); omitted, the
+    body carries the name alone (the daemon leaves the source's
+    list with the source)."""
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(
+            201, json={"id": "9a8b7c6d5e", "name": "task-42"}
+        )
+
+    rc = cli.main(
+        ["clone", "seed", "task-42", "--copy-allowlist"],
+        transport=mock(handler),
+    )
+    assert rc == 0
+    assert seen["body"] == {"name": "task-42", "copy_allowlist": True}

@@ -130,13 +130,15 @@ async def test_clone_copies_both_disks_and_row(clone_api):
         "image_hash",
         "egress",
         "egress_mode",
-        "egress_allowlist",
         "user_data",
         "login_user",
         "timezone",
         "mounts",
     ):
         assert fresh[field] == row[field], field
+    # The allowlist stays with the source by default (#773): the
+    # mode copies over an empty list.
+    assert fresh["egress_allowlist"] == []
     # The identity's comment names the clone, not the source.
     assert fresh["ssh_pubkey"].split()[:2] == row["ssh_pubkey"].split()[:2]
     assert fresh["ssh_pubkey"].endswith("msks-client:task-42")
@@ -222,6 +224,36 @@ async def test_clone_validates_the_name(clone_api):
         f"/api/v1/workspaces/{row['id']}/clone", json={}, headers=auth()
     )
     assert nameless.status_code == 422
+
+
+async def test_clone_leaves_the_allowlist_by_default(clone_api):
+    """The allowlist stays with the source (#773): the clone's
+    posture is the copied mode over an empty list, and everything
+    the source allowed is re-earned."""
+    row = await make_source(
+        clone_api, egress_mode="static", egress_allowlist=[".debian.org"]
+    )
+    made = await clone(clone_api, row["id"], "fork")
+    assert made.status_code == 201, made.text
+    fresh = made.json()
+    assert fresh["egress_mode"] == "static"  # the mode copies
+    assert fresh["egress_allowlist"] == []
+    assert row["egress_allowlist"] == [".debian.org"]  # source kept
+
+
+async def test_clone_copies_the_allowlist_when_asked(clone_api):
+    """``copy_allowlist`` opts the clone into the source's list
+    verbatim."""
+    row = await make_source(
+        clone_api, egress_mode="static", egress_allowlist=[".debian.org"]
+    )
+    made = await clone_api.http.post(
+        f"/api/v1/workspaces/{row['id']}/clone",
+        json={"name": "fork", "copy_allowlist": True},
+        headers=auth(),
+    )
+    assert made.status_code == 201, made.text
+    assert made.json()["egress_allowlist"] == [".debian.org"]
 
 
 async def test_clone_names_a_missing_artifact(clone_api):

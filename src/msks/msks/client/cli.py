@@ -488,21 +488,29 @@ def clone(
         help="the new workspace's name: the label you address the "
         "clone by (DNS-label charset); the daemon mints its own id",
     ),
+    allow: bool = typer.Option(
+        False,
+        "--copy-allowlist",
+        help="carry the source's egress allowlist into the clone "
+        "(#773). Without it the clone starts with an empty list "
+        "under the copied mode: everything the source allowed is "
+        "re-earned",
+    ),
 ) -> int:
     """Copy a workspace into a new one (#773).
 
     A clone is a full fork of a stopped workspace: both disks copy
     (the root overlay and the /home volume), and the create-time
-    config rides the new row (image, sizes, egress mode and
-    allowlist, mounts, login user, the user_data payload — the
-    clone's own factory reset re-provisions from it). The new
-    workspace mints its own id and starts fresh: in-effect egress
-    verdicts stay with the source, and workspace-scoped secret
-    placeholders do not cover the clone. Everything the guest
+    config rides the new row (image, sizes, egress mode, mounts,
+    login user, the user_data payload — the clone's own factory
+    reset re-provisions from it). The new workspace mints its own
+    id and starts fresh: the allowlist, in-effect egress verdicts,
+    and workspace-scoped secret placeholders stay with the source
+    (--copy-allowlist opts into the first). Everything the guest
     generated itself (ssh host keys above all) duplicates — rotate
     what matters before trusting the clone's identity.
     """
-    return cmd_clone(source, name, transport=ctx.obj)
+    return cmd_clone(source, name, allow, transport=ctx.obj)
 
 
 @app.command("resize")

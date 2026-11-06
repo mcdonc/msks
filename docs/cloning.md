@@ -18,21 +18,24 @@ prompt.
   source's allocated cost, and sparse files stay sparse.
 - **The create-time config.** The image and its catalog pin, the
   root and home sizes, the CPU and memory topology, the egress
-  mode and the static allowlist, the host-share mounts, the login
-  user, and the `user_data` payload all copy. The clone's own
-  factory reset re-provisions from the payload, exactly like the
-  source's would.
+  mode, the host-share mounts, the login user, and the `user_data`
+  payload all copy. The clone's own factory reset re-provisions
+  from the payload, exactly like the source's would.
 - **The ssh identity's key.** The operator's public key copies
   verbatim (it is the operator's key, not the workspace's); only
   the daemon's provenance comment names the clone.
 
 ## What stays behind
 
+- **The egress allowlist.** The clone's list starts empty. Its
+  posture is the mode it inherited over nothing allowed, so a
+  fork doing different things than its source earns its own
+  destinations. `msks clone seed fork --copy-allowlist` opts the
+  clone into the source's list verbatim, for the seed-to-fleet
+  case where the seed's approved set is meant to propagate.
 - **In-effect egress verdicts.** Every `allow forever` the source
   earned under `interactive` mode stays with the source. The
-  clone inherits the mode and the allowlist, and re-earns each
-  allow. A fork doing different things than its source prompts
-  for its own destinations.
+  clone re-earns each allow, with or without `--copy-allowlist`.
 - **Workspace-scoped secret placeholders.** A placeholder minted
   against the source's id does not swap on the clone's tap. Mint
   or re-scope one for the clone when it needs the credential.
@@ -70,10 +73,9 @@ its source.
 ## Typical uses
 
 - **Seed to fleet.** Prepare one workspace — toolchain, repos,
-  login state — and clone it per task or per agent. Each clone
-  re-earns its own egress verdicts, so a fleet can run under
-  `interactive` mode without inheriting the seed's whole
-  history.
+  login state — and clone it per task or per agent with
+  `--copy-allowlist`: the seed's approved destinations propagate,
+  and each clone still re-earns its interactive verdicts.
 - **Experiment fork.** Clone before a risky session; the original
   keeps its state while the clone takes the risk. Snapshots
   (when they land) solve the same worry by rolling a workspace

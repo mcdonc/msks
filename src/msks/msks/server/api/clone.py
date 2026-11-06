@@ -171,12 +171,24 @@ def router(app) -> APIRouter:
                     raise HTTPException(
                         status_code=503, detail=str(exc)
                     ) from None
+                # The allowlist stays with the source by default
+                # (#773): a clone's posture is the mode it
+                # inherited over an empty list, and everything the
+                # source allowed is re-earned — the same fresh
+                # start the verdict rows take. ``copy_allowlist``
+                # opts the clone into the source's list verbatim.
+                allowlist = (
+                    tuple(source.get("egress_allowlist") or ())
+                    if body.copy_allowlist
+                    else ()
+                )
                 spec = spec_for(
                     {
                         **source,
                         "id": workspace_id,
                         "name": body.name,
                         "ssh_pubkey": reannotated_pubkey(source, body.name),
+                        "egress_allowlist": allowlist,
                     }
                 )
                 try:

@@ -11,10 +11,10 @@ tagged `vX.Y.Z`.
 - **`msks clone` (#773).** One stopped workspace copies into a
   new one: both disks (the root overlay and the `/home` volume,
   reflinked where the filesystem can share blocks) and the
-  create-time config — image, sizes, egress mode and allowlist,
-  mounts, login user, the `user_data` payload. In-effect egress
-  verdicts stay with the source, workspace-scoped placeholders
-  do not cover the clone, and in-guest-minted secrets (ssh host
+  create-time config — image, sizes, egress mode, mounts, login
+  user, the `user_data` payload. The egress allowlist, in-effect
+  verdicts, and workspace-scoped placeholders stay with the
+  source (`--copy-allowlist` opts into the first); and in-guest-minted secrets (ssh host
   keys above all) duplicate — the cloning chapter names the
   rotation remedy. Also served as `POST
 /api/v1/workspaces/{id}/clone` and the workspace page's Clone

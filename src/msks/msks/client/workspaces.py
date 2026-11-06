@@ -390,18 +390,30 @@ def cmd_stop(workspace_id: str, transport=None) -> int:
     return 0
 
 
-def cmd_clone(source: str, name: str, transport=None) -> int:
+def cmd_clone(
+    source: str,
+    name: str,
+    copy_allowlist: bool = False,
+    transport=None,
+) -> int:
     """``msks clone`` (#773): copy a stopped workspace into a new
     one — both disks and the create-time config. The daemon owns
     the whole rule set (the stopped-source gate, the full-fork
     copy, the fresh id); the command sends the name and prints
     the confirmation.
+
+    ``copy_allowlist`` (#773's one option) opts the clone into
+    the source's egress allowlist; without it the clone starts
+    with an empty list under the copied mode.
     """
+    body = {"name": name}
+    if copy_allowlist:
+        body["copy_allowlist"] = True
     row = asyncio.run(
         call(
             "POST",
             f"/api/v1/workspaces/{source}/clone",
-            json_body={"name": name},
+            json_body=body,
             transport=transport,
         )
     )

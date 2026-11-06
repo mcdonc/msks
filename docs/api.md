@@ -154,7 +154,9 @@ mount`/`umount` and the TUI's editor use this route.
 - `POST …/clone`: copy one stopped workspace into a new one
   (the [cloning chapter](cloning.md) holds the semantics — both
   disks, the create-time config, verdicts and scoped
-  placeholders left behind). The body is `{"name": "…"}` and
+  placeholders left behind). The body is `{"name": "…"}`
+  with one option, `copy_allowlist` (true carries the source's
+  egress allowlist; the default leaves it with the source), and
   the reply is the new workspace's row:
 
 ```bash
