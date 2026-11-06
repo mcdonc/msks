@@ -17,7 +17,7 @@ _msks_ runs on:
 ## The reading order
 
 1. [**Installation**](installation.md): install the Python wheel, and the
-   command that prepares a host.
+   commands that prepares hosts.
 2. [**The host doctor**](doctor.md): the command that
    checks the host for every tool the daemon and client executes,
    and suggests the fix for each problem.
@@ -31,9 +31,7 @@ _msks_ runs on:
    the daemon's HTTP API, ssh and rsync over a forward.
 6. [**Host share mounts**](mounts.md): the host trees a
    workspace mounts into its guest.
-7. [**Guest networking**](networking.md): the per-VM tap, the
-   DHCP and DNS the guest sees, the NAT path out, and the
-   forward that carries ssh and rsync.
+7. [**Guest networking**](networking.md): details about VM guest networking.
 8. [**Egress consent**](egress-consent.md): the consent
    postures, verdicts and durations, switching modes live.
 9. [**LLM Proxy**](llm.md): how to make use of msksd's built-in
