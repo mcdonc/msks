@@ -356,8 +356,23 @@ jobs:
               continue
             fi
             echo "$flavor: derivation changed — building"
-            devenv --quiet -O dotenv.enable:bool false shell -- \
-              msks-build-guest "$flavor"
+            # #771: a failed nix-build prints the failing
+            # derivation's whole build log inline, and the NixOS
+            # kernel compile is tens of thousands of lines — the
+            # step log drowned. The build's output lands in a file
+            # instead: success prints one line, failure prints the
+            # last 80 lines (the compiler error sits at the log's
+            # end) and the step artifact below ships the whole
+            # file.
+            log="build-$flavor-$ARCH.log"
+            if devenv --quiet -O dotenv.enable:bool false shell -- \
+                 msks-build-guest "$flavor" >"$log" 2>&1; then
+              echo "$flavor: built ($log: $(wc -l <"$log") lines)"
+            else
+              echo "::error title=$flavor build failed::the last 80 log lines follow; the full log ships as this job's build-logs artifact"
+              tail -n 80 "$log"
+              exit 1
+            fi
             zstd -19 -T0 -q "$dir/$(cat "$dir/image-archive-name")" \
               -o "$flavor.tar.zst"
             hash=$(sha256sum "$flavor.tar.zst" | cut -d' ' -f1)
@@ -414,6 +429,17 @@ jobs:
           name: rows-${{ matrix.arch }}
           path: rows-${{ matrix.arch }}.json
           retention-days: 1
+      # #771: the captured build logs (the kernel compile among
+      # them) ride along only when a flavor failed — the tail in
+      # the step log names the error, this carries the context.
+      - name: Ship the build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ matrix.arch }}
+          path: build-*.log
+          retention-days: 7
+          if-no-files-found: ignore
 
   # The final manifest writer: the legs publish disjoint row
   # sets (each arch's flavors under flavor/arch keys), and this
