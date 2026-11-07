@@ -12,6 +12,8 @@ cancels — no form traps focus.
 """
 
 import asyncio
+import contextlib
+from datetime import UTC, datetime
 
 from rich.markup import escape
 from textual.app import ComposeResult
@@ -89,7 +91,9 @@ class FormWalk:
 #: placeholders name their defaults at mount).
 FORM_FIELDS = (
     ("name", "name", "workspace name"),
-    ("image", "image ref", "the default image"),
+    # The hint rides the expanded list's first row too, so the
+    # asterisk legend sits exactly where the marked rows are
+    ("image", "image ref", "the default image (* marks it)"),
     ("cpus", "vcpus", "default 2"),
     ("mem_mib", "memory", "MiB — 8192"),
     ("root_mib", "root", "MiB"),
@@ -145,23 +149,89 @@ def whole_number(value: str) -> bool:
     return value.isascii() and value.isdigit()
 
 
+#: The sort floor for rows without a usable stamp (#186): the
+#: oldest representable aware moment, so a missing or unparseable
+#: stamp sorts below every dated row inside its distro group.
+FIRST_MOMENT = datetime(1, 1, 1, tzinfo=UTC)
+
+
+def stamp_moment(stamp: str | None) -> datetime | None:
+    """One import stamp as an aware local moment, or ``None`` when
+    the row carries no stamp or a moment the clock cannot parse
+    (#186) — a naive stamp reads as local time, matching the CLI
+    table's own rendering. Distinct from
+    :mod:`msks.client.tui.importer`'s ``imported_moment`` row
+    helper: that one reads a dict and treats a naive stamp as
+    UTC."""
+    # OverflowError rides extreme stamps: a year-1 moment has no
+    # representation in some local zones. TypeError covers a
+    # daemon sending a non-string.
+    with contextlib.suppress(ValueError, TypeError, OverflowError):
+        return datetime.fromisoformat(stamp).astimezone()
+    return None
+
+
+def imported_day(stamp: str | None) -> str:
+    """One import stamp as a local calendar date, ``YYYY-MM-DD``,
+    or ``-`` when the row carries no usable stamp — the column
+    stays aligned at ten characters either way."""
+    moment = stamp_moment(stamp)
+    return moment.strftime("%Y-%m-%d") if moment is not None else "-"
+
+
+def image_plain_refs(rows: list[dict]) -> dict[str, str]:
+    """Each reference's plain-value holder: the first delivered
+    row of the reference. The catalog lists a reference's rows
+    oldest import first, and the daemon's name:version resolution
+    scans that same order and picks the first it meets — so the
+    plain reference and the daemon agree on which build it
+    names. Two imports stamped the same moment tie into the
+    cache directory's own order, and the daemon scans that same
+    order too."""
+    plain: dict[str, str] = {}
+    for row in rows:
+        plain.setdefault(f"{row['name']}:{row['version']}", row["hash"])
+    return plain
+
+
+def ordered_image_rows(rows: list[dict]) -> list[dict]:
+    """The image select's ordering: distro name ascending, then
+    import date descending — the newest build of a distro leads
+    its group, and a row without a usable stamp sorts below every
+    dated row of its group."""
+    newest_first = sorted(
+        rows,
+        key=lambda row: stamp_moment(row.get("imported")) or FIRST_MOMENT,
+        reverse=True,
+    )
+    return sorted(newest_first, key=lambda row: row["name"])
+
+
 def image_options(rows: list[dict]) -> list[tuple[str, str]]:
     """The image select's options from the catalog listing: the
-    reference and the hash as two 12-character columns, the
-    designated default marked after them (the hash column keeps
-    references that clip to the same 12 characters apart). A
-    reference two entries share rides the hash in the option's
-    value (name@hash resolves to exactly that entry — name:version
-    would pick the oldest of the two)."""
+    reference, the hash, and the import date as three columns
+    (the hash keeps references that clip to the same 12 characters
+    apart, the date tells two builds of one release apart), the
+    designated default marked with a trailing asterisk, the rows
+    ordered by :func:`ordered_image_rows`.
+
+    A reference two entries share rides the hash in every value
+    but one: the row the daemon's own name:version resolution
+    picks keeps the plain reference, and every newer build of the
+    same reference rides name@hash to resolve to exactly that
+    entry."""
+    plain = image_plain_refs(rows)
     options: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for row in rows:
+    for row in ordered_image_rows(rows):
         ref = f"{row['name']}:{row['version']}"
-        value = f"{row['name']}@{row['hash']}" if ref in seen else ref
-        seen.add(ref)
-        label = f"{clip(ref)} {clip(row['hash'])}"
+        if plain[ref] == row["hash"]:
+            value = ref
+        else:
+            value = f"{row['name']}@{row['hash']}"
+        day = imported_day(row.get("imported"))
+        label = f"{clip(ref)} {clip(row['hash'])} {day:<10}"
         if row.get("default"):
-            label += " — default"
+            label += " *"
         options.append((label, value))
     return options
 
