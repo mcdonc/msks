@@ -6,6 +6,7 @@ without a token."""
 
 import asyncio
 import contextlib
+import grp
 import os
 import shutil
 import socket as socketlib
@@ -23,6 +24,7 @@ from fastapi import FastAPI, Request, WebSocket
 from msks.server import localsocket, main
 from msks.server.api.deps import authed_accept, require_token
 from msks.spec.sockets import (
+    SYSTEM_SOCKET_PATH,
     default_socket_path,
     find_default_socket,
     is_socket_file,
@@ -71,21 +73,29 @@ def test_default_path_without_xdg_is_no_socket(monkeypatch) -> None:
     assert default_socket_path() is None
 
 
-def test_candidates_are_the_own_runtime_dir_alone(monkeypatch) -> None:
-    """The client looks where the same-user daemon bound: its own
-    runtime root. A socket anywhere else is a deployment choice
-    the client names explicitly, never guesses at."""
+def test_candidates_lead_with_the_own_runtime_dir(monkeypatch) -> None:
+    """The client looks where the same-user daemon bound first,
+    then at the system daemon's path (#799). A socket anywhere
+    else is a deployment choice the client names explicitly,
+    never guesses at."""
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1234")
-    assert socket_candidates() == [Path("/run/user/1234/msks/msksd.sock")]
+    assert socket_candidates() == [
+        Path("/run/user/1234/msks/msksd.sock"),
+        SYSTEM_SOCKET_PATH,
+    ]
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-    assert socket_candidates() == []
+    assert socket_candidates() == [SYSTEM_SOCKET_PATH]
 
 
 def test_candidates_follow_xdg_pointed_at_run(monkeypatch) -> None:
     """A host whose XDG_RUNTIME_DIR is /run itself still resolves
-    one candidate, /run/msks/msksd.sock."""
+    the same-user candidate once, /run/msks/msksd.sock, beside
+    the system path."""
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run")
-    assert socket_candidates() == [Path("/run/msks/msksd.sock")]
+    assert socket_candidates() == [
+        Path("/run/msks/msksd.sock"),
+        SYSTEM_SOCKET_PATH,
+    ]
 
 
 def test_find_default_socket_skips_non_sockets(
@@ -481,6 +491,7 @@ def fake_listener_app(
                     host="127.0.0.1",
                     port=port,
                     socket=socket_setting,
+                    socket_group=None,
                     access_log=False,
                     tls_cert=None,
                     tls_key=None,
@@ -983,3 +994,113 @@ def test_bind_leaves_the_callers_umask_alone(
             localsocket.unlink(path)
     finally:
         os.umask(was)
+
+
+# --- socket_group: the declarative share (#799) ---------------------------
+
+
+def test_chgrp_moves_the_socket_into_the_group(
+    shallow_socket_dir: Path,
+) -> None:
+    """chgrp lands the shared gid on the socket file — the gid the
+    post-bind stat feeds the peer policy, so the group's members
+    connect with no token."""
+    path = shallow_socket_dir / "msksd.sock"
+    sock = localsocket.bind(path)
+    try:
+        group = grp.getgrgid(os.getgid()).gr_name
+        localsocket.chgrp(path, group)
+        assert path.stat().st_gid == os.getgid()
+    finally:
+        sock.close()
+        localsocket.unlink(path)
+
+
+def test_chgrp_refuses_an_unknown_group(tmp_path: Path) -> None:
+    path = tmp_path / "msksd.sock"
+    path.touch()
+    with pytest.raises(OSError, match="no such group"):
+        localsocket.chgrp(path, "msks-no-such-group")
+
+
+def test_chgrp_names_the_membership_fix_on_a_kernel_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A group the daemon does not belong to answers EPERM: the
+    refusal names SupplementaryGroups, the operator's fix."""
+    path = tmp_path / "msksd.sock"
+    path.touch()
+
+    def refuse(*args, **kwargs):
+        raise PermissionError("not the owner's group")
+
+    monkeypatch.setattr(localsocket.os, "chown", refuse)
+    with pytest.raises(OSError, match="SupplementaryGroups"):
+        localsocket.chgrp(path, "wheel")
+
+
+def test_bind_applies_the_group_before_it_answers(
+    shallow_socket_dir: Path,
+) -> None:
+    """bind(path, group) is one step: the socket is born shared,
+    with no window between bind and chgrp for a peer to race."""
+    path = shallow_socket_dir / "shared" / "msksd.sock"
+    group = grp.getgrgid(os.getgid()).gr_name
+    sock = localsocket.bind(path, group)
+    try:
+        assert path.stat().st_gid == os.getgid()
+    finally:
+        sock.close()
+        localsocket.unlink(path)
+
+
+# --- the socket-alone daemon (#799) --------------------------------------
+
+
+async def test_serve_listeners_refuses_both_listeners_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """host empty and socket empty serves nothing: one refusal
+    line, before anything binds."""
+    app = fake_listener_app(monkeypatch, 0, "")
+    app.state.settings.server.host = ""
+    with pytest.raises(OSError, match="refusing to serve nothing"):
+        await main.serve_listeners(app)
+
+
+@needs_peercred
+async def test_serve_socket_only_owns_the_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty host serves the socket alone: the socket answers
+    peer-credential requests, the app's lifespan runs (the socket
+    server owns it), and the socket file leaves on shutdown."""
+    api = FastAPI()
+    api.state.msks_app = fake_msks_app(os.getgid())
+
+    @api.get("/who")
+    async def who(request: Request):
+        return {"client": list(request.scope.get("client") or [])}
+
+    path = tmp_path / "msksd.sock"
+    app = fake_listener_app(monkeypatch, 0, str(path))
+    app.state.settings.server.host = ""
+    group = grp.getgrgid(os.getgid()).gr_name
+    app.state.settings.server.socket_group = group
+    monkeypatch.setattr(main, "build_api", lambda app: api)
+    task = asyncio.create_task(main.serve_listeners(app))
+    deadline = asyncio.get_event_loop().time() + 10
+    while not path.exists() and asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(0.05)
+    assert path.exists(), "the socket-alone listener never bound"
+    assert path.stat().st_gid == os.getgid(), "the share never landed"
+    async with httpx.AsyncClient(
+        base_url="http://unix",
+        transport=httpx.AsyncHTTPTransport(uds=str(path)),
+    ) as client:
+        row = (await client.get("/who")).json()
+    assert row["client"] == ["unix", os.geteuid()]
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=10)
+    assert not path.exists()

@@ -84,12 +84,15 @@ local socket, where the kernel vouches for the client and no token exists to
 read.
 
 An unconfigured client (no `MSKSC_URL`, no `MSKSC_SOCKET`, no
-config-file daemon) looks for the default socket a same-host
-daemon binds (`$XDG_RUNTIME_DIR/msks/msksd.sock`) and connects
-through it with peer credentials alone. Finding none, it exits
-with the paths it looked for and the two settings that pick a
-daemon outright. The client never dials a TCP address
-implicitly: a well-known port could belong to any daemon.
+config-file daemon) looks for the default sockets a same-host
+daemon binds: its own runtime dir's path
+(`$XDG_RUNTIME_DIR/msks/msksd.sock`) first, then the system
+daemon's (`/run/msksd/msksd.sock`, the NixOS module's listener).
+It connects through the first one that exists with peer
+credentials alone. Finding none, it exits with the paths it
+looked for and the two settings that pick a daemon outright. The
+client never dials a TCP address implicitly: a well-known port
+could belong to any daemon.
 
 The daemon serves TLS with a self-signed certificate. Point
 `MSKSC_CAFILE` at the daemon's CA (`msks-ca.pem` under its state

@@ -94,6 +94,7 @@ SETTING_ENV_VARS: tuple[str, ...] = (
     "MSKSD_HOST",
     "MSKSD_PORT",
     "MSKSD_SOCKET",
+    "MSKSD_SOCKET_GROUP",
     "MSKSD_TLS_CERT",
     "MSKSD_TLS_KEY",
     "MSKSD_EVENT_POLL_S",
@@ -326,10 +327,12 @@ def file_env_overrides(path: str) -> dict:
 
 
 #: Variables whose empty string is a real value, not the unset
-#: form (#555 review): the local listener's disable spelling —
-#: everywhere else an empty export means "unset, take the next
-#: layer", and MSKSD_SOCKET="" means "serve TCP alone".
-RAW_EMPTY_VARS = frozenset({"MSKSD_SOCKET"})
+#: form (#555 review): the local listener's disable spelling and
+#: the TCP listener's (#799) — everywhere else an empty export
+#: means "unset, take the next layer", while MSKSD_SOCKET=""
+#: means "serve TCP alone" and MSKSD_HOST="" means "serve the
+#: socket alone".
+RAW_EMPTY_VARS = frozenset({"MSKSD_SOCKET", "MSKSD_HOST"})
 
 
 class LayeredEnv(Mapping):
@@ -499,8 +502,15 @@ def render_template() -> str:
 # --- built-in defaults) ---
 #
 # --- The API listener ---
-# host: 127.0.0.1           # the listener's bind address
+# host: 127.0.0.1           # the listener's bind address; the
+#                           # empty string turns the TCP
+#                           # listener off (#799) and serves the
+#                           # unix socket alone
 # port: 8660                # the listener's port
+# socket_group: operators   # the group the bound socket moves
+#                           # into (#799): its members connect
+#                           # with no token (the daemon must
+#                           # belong to the group)
 # socket: ""                # the local listener's socket path
 #                           # (#555): same-host clients connect
 #                           # through it with peer-credential

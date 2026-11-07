@@ -76,6 +76,13 @@
         };
       };
       inert = evalConfig { enable = false; };
+      # #799: the TCP-enabled shape — socket and TCP both serve
+      # (remote clients need the TLS+token surface).
+      tcp = evalConfig {
+        enable = true;
+        tcp.enable = true;
+        egress.uplink = "eno4";
+      };
       hasTun = c: builtins.any (m: m == "tun") c.boot.kernelModules;
       # Package names compared as strings in the check's build:
       # the enabled eval's PATH must carry the exact package the
@@ -119,6 +126,12 @@
             tunOn = pkgs.lib.boolToString (hasTun on);
             tunOff = pkgs.lib.boolToString (hasTun off);
             fwdOn = on.boot.kernel.sysctl."net.ipv4.ip_forward" or null;
+            # #799: the generated settings file, read from the
+            # store — the yaml the ExecStart names — pins the
+            # listener wiring per branch.
+            cfgOn = on.systemd.services.msksd.serviceConfig.ExecStart;
+            cfgTcp = tcp.systemd.services.msksd.serviceConfig.ExecStart;
+            runtimeDir = on.systemd.services.msksd.serviceConfig.RuntimeDirectory or "";
             inherit pkgOn pathOn pathInert;
           }
           ''
@@ -155,6 +168,32 @@
                 exit 1
                 ;;
             esac
+            # #799: the default branch serves the socket alone —
+            # the yaml names the socket path and an empty host —
+            # and the unit owns /run/msksd for it; the tcp branch
+            # carries the address.
+            cfg_on=''${cfgOn##* --config }
+            grep -qF '"socket":"/run/msksd/msksd.sock"' "$cfg_on" || {
+              echo "fail: default branch lost the socket path in msksd.yaml"
+              exit 1
+            }
+            grep -qF '"host":""' "$cfg_on" || {
+              echo "fail: default branch serves TCP — host must be empty in msksd.yaml"
+              exit 1
+            }
+            test "$runtimeDir" = "msksd" || {
+              echo "fail: the unit lost RuntimeDirectory=msksd for the socket"
+              exit 1
+            }
+            cfg_tcp=''${cfgTcp##* --config }
+            grep -qF '"host":"127.0.0.1"' "$cfg_tcp" || {
+              echo "fail: tcp branch lost the listen address in msksd.yaml"
+              exit 1
+            }
+            grep -qF '"socket":"/run/msksd/msksd.sock"' "$cfg_tcp" || {
+              echo "fail: tcp branch lost the socket path in msksd.yaml"
+              exit 1
+            }
             touch "$out"
           '';
     };

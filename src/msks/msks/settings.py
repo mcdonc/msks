@@ -206,8 +206,14 @@ class VmmSettings:
 
 @dataclass
 class ServerSettings:
-    """The API server's own settings (HTTPS + WSS on one listener)."""
+    """The API server's own settings (HTTPS + WSS on one listener,
+    the unix listener beside it)."""
 
+    # The empty string turns the TCP listener off (#799) — the
+    # mirror of socket's empty string on the local listener. A
+    # socket-only daemon serves peer-credential auth alone: no
+    # TLS material resolves, no token surface answers. Startup-
+    # bound like every listener setting.
     host: str = "127.0.0.1"
     port: int = 8660
     tls_cert: str | None = None
@@ -221,6 +227,12 @@ class ServerSettings:
     # SIGHUP reload naming a new path changes nothing until a
     # restart.
     socket: str | None = None
+    # The group the bound socket file moves into at bind (#799):
+    # the declarative share — the group's members pass the peer
+    # policy with no token. The daemon must belong to the group
+    # (the unit's SupplementaryGroups carries the membership) to
+    # chgrp its own socket. Startup-bound like the path itself.
+    socket_group: str | None = None
     db_path: Path = field(
         default_factory=lambda: Path(
             "~/.local/state/msksd/msks.db"
@@ -909,33 +921,43 @@ def _server_settings_from_env(
     poll = _env_float(env, "MSKSD_EVENT_POLL_S", cls.event_poll_s)
     if poll <= 0:
         raise ValueError(f"MSKSD_EVENT_POLL_S must be positive, got {poll}")
-    bootstrap = optional_env(env, "MSKSD_BOOTSTRAP_TOKEN")
-    if bootstrap is not None:
-        # The same grammar guard minting applies (#116): the token
-        # rides the websocket handshake's Authorization header, so
-        # a plaintext with spaces or separators would seed a token
-        # that fails every websocket authentication. Refused here,
-        # the failure is one startup line naming the variable.
-        try:
-            validate_token_plaintext(bootstrap)
-        except ValueError as exc:
-            raise ValueError(f"MSKSD_BOOTSTRAP_TOKEN: {exc}") from None
+    bootstrap = checked_bootstrap(env)
     # The socket setting keeps its empty string: "" disables the
     # local listener (#555), and optional_env would collapse it
-    # into the default-path bind.
+    # into the default-path bind. host's empty string travels the
+    # same way: MSKSD_HOST="" turns the TCP listener off (#799).
     socket_setting = env["MSKSD_SOCKET"] if "MSKSD_SOCKET" in env else None
+    host_setting = env["MSKSD_HOST"] if "MSKSD_HOST" in env else cls.host
     return cls(
-        host=_env(env, "MSKSD_HOST", cls.host),
+        host=host_setting,
         port=_parse_int(env, "MSKSD_PORT", cls.port),
         tls_cert=optional_env(env, "MSKSD_TLS_CERT"),
         tls_key=optional_env(env, "MSKSD_TLS_KEY"),
         socket=socket_setting,
+        socket_group=optional_env(env, "MSKSD_SOCKET_GROUP"),
         db_path=state / "msks.db",
         event_poll_s=poll,
         bootstrap_token=bootstrap,
         access_log=flag_env(env, "MSKSD_ACCESS_LOG", cls.access_log),
         audit_hmac_key=optional_env(env, "MSKSD_AUDIT_HMAC_KEY"),
     )
+
+
+def checked_bootstrap(env: Mapping[str, str]) -> str | None:
+    """The bootstrap token from the environment, grammar-checked
+    (#116): the token rides the websocket handshake's
+    Authorization header, so a plaintext the HTTP token grammar
+    rejects would seed a credential that fails every websocket
+    authentication. Refused here, the failure is one startup line
+    naming the variable."""
+    bootstrap = optional_env(env, "MSKSD_BOOTSTRAP_TOKEN")
+    if bootstrap is None:
+        return None
+    try:
+        validate_token_plaintext(bootstrap)
+    except ValueError as exc:
+        raise ValueError(f"MSKSD_BOOTSTRAP_TOKEN: {exc}") from None
+    return bootstrap
 
 
 def optional_env(env: Mapping[str, str], name: str) -> str | None:

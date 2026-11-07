@@ -49,6 +49,8 @@ let
     "state_dir"
     "host"
     "port"
+    "socket"
+    "socket_group"
     "cloud_hypervisor"
     "qemu_img"
     "mkfs_ext4"
@@ -88,8 +90,13 @@ let
     lib.generators.toYAML { } (
       {
         state_dir = cfg.stateDir;
-        host = cfg.listenAddress;
+        # #799: the socket is the module's listener; the TCP
+        # listener joins only when tcp.enable names it, and an
+        # empty host keeps it off (the daemon's mirror of the
+        # socket setting's empty string).
+        host = lib.optionalString cfg.tcp.enable cfg.listenAddress;
         port = cfg.port;
+        socket = lib.optionalString cfg.socket.enable "/run/msksd/msksd.sock";
         cloud_hypervisor = "${cfg.cloudHypervisor}/bin/cloud-hypervisor";
         qemu_img = "${pkgs.qemu-utils}/bin/qemu-img";
         mkfs_ext4 = "${pkgs.e2fsprogs}/sbin/mkfs.ext4";
@@ -104,6 +111,9 @@ let
       // (lib.optionalAttrs (cfg.egress.uplink != null) {
         egress_uplink = cfg.egress.uplink;
       })
+      // (lib.optionalAttrs (cfg.socket.group != null) {
+        socket_group = cfg.socket.group;
+      })
       // cfg.settings
     )
   );
@@ -112,14 +122,15 @@ let
   # CAP_NET_ADMIN (taps, per-VM nftables chains, NAT) and
   # CAP_NET_BIND_SERVICE (the egress stack binds DHCP 67 and DNS 53
   # — verified live: dropping it fails workspace start with EPERM);
-  # an API port below 1024 adds CAP_NET_BIND_SERVICE without egress.
-  # Ambient so the tools and the VMM the daemon execs keep them.
+  # a TCP port below 1024 adds CAP_NET_BIND_SERVICE without egress
+  # (#799: only when the TCP listener serves — the socket never
+  # binds one).
   capabilities =
     lib.optionals cfg.egress.enable [
       "CAP_NET_ADMIN"
       "CAP_NET_BIND_SERVICE"
     ]
-    ++ lib.optional (cfg.port < 1024) "CAP_NET_BIND_SERVICE";
+    ++ lib.optional (cfg.tcp.enable && cfg.port < 1024) "CAP_NET_BIND_SERVICE";
 in
 {
   options.services.msksd = {
@@ -148,17 +159,57 @@ in
       type = lib.types.str;
       default = "127.0.0.1";
       description = ''
-        The address the API's HTTPS listener binds. The TLS
-        certificate's name covers exactly this address, and the
-        daemon serves it on every interface when set to a wildcard —
-        pair a wildcard with openFirewall and a bootstrap token.
+        The address the TCP listener binds when tcp.enable is
+        set. The TLS certificate's name covers exactly this
+        address, and the daemon serves it on every interface
+        when set to a wildcard — pair a wildcard with openFirewall
+        and a bootstrap token.
       '';
     };
 
     port = lib.mkOption {
       type = lib.types.port;
       default = 8660;
-      description = "The port the API's HTTPS listener binds (a port below 1024 keeps CAP_NET_BIND_SERVICE even with egress off).";
+      description = "The port the TCP listener binds when tcp.enable is set (a port below 1024 keeps CAP_NET_BIND_SERVICE even with egress off).";
+    };
+
+    socket = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = ''
+          The local listener (#799): the daemon serves
+          /run/msksd/msksd.sock with peer-credential
+          authentication — no TLS, no token. The socket is the
+          module's default listener; same-host clients in its
+          group run the client with no configuration.
+        '';
+      };
+
+      group = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        description = ''
+          The group the socket moves into at bind: its members
+          connect with no token. The module creates the group and
+          adds it to the unit's SupplementaryGroups (the daemon
+          may only chgrp to a group it belongs to). Null keeps the
+          daemon's own group — the msksd user alone connects.
+        '';
+      };
+    };
+
+    tcp = {
+      enable = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          The TCP listener (#799): HTTPS + WSS with TLS and bearer
+          tokens, the shape a remote client needs. Off by default
+          — the socket serves same-host clients — and setting it
+          makes listenAddress, port, and openFirewall apply.
+        '';
+      };
     };
 
     stateDir = lib.mkOption {
@@ -189,7 +240,7 @@ in
     openFirewall = lib.mkOption {
       type = lib.types.bool;
       default = false;
-      description = "Open the API port in the host firewall (only relevant once listenAddress is not loopback).";
+      description = "Open the TCP listener's port in the host firewall (requires tcp.enable; only relevant once listenAddress is not loopback).";
     };
 
     settings = lib.mkOption {
@@ -259,6 +310,14 @@ in
         assertion = cfg.egress.enable -> cfg.egress.uplink != null;
         message = "services.msksd.egress.uplink is required when egress is enabled — set the host's default-route interface (ip route show default).";
       }
+      {
+        assertion = cfg.openFirewall -> cfg.tcp.enable;
+        message = "services.msksd.openFirewall needs services.msksd.tcp.enable — the module's default listener is the socket, and the firewall rule belongs to the TCP listener.";
+      }
+      {
+        assertion = cfg.socket.group != "msksd";
+        message = "services.msksd.socket.group must differ from the daemon's own group — share a group of operators instead (the daemon user always connects).";
+      }
     ]
     ++ map (key: {
       assertion = !builtins.hasAttr key cfg.settings;
@@ -268,8 +327,15 @@ in
     # The service identity (#101, verbatim from the appliance): a
     # dedicated system user; /dev/kvm arrives through the kvm
     # supplementary group (NixOS's udev rule assigns the node to the
-    # group).
-    users.groups.msksd = { };
+    # group). #799: the socket's shared group, when one is named,
+    # exists and rides the unit's SupplementaryGroups too — the
+    # daemon may only chgrp its socket to a group it belongs to.
+    users.groups = {
+      msksd = { };
+    }
+    // lib.optionalAttrs (cfg.socket.group != null) {
+      ${cfg.socket.group} = { };
+    };
     users.users.msksd = {
       isSystemUser = true;
       group = "msksd";
@@ -318,10 +384,16 @@ in
         ExecStart = "${cfg.package}/bin/msksd --config ${settingsFile}";
         User = "msksd";
         Group = "msksd";
-        SupplementaryGroups = "kvm";
+        SupplementaryGroups = lib.concatStringsSep " " (
+          [ "kvm" ] ++ lib.optional (cfg.socket.group != null) cfg.socket.group
+        );
         AmbientCapabilities = lib.concatStringsSep " " capabilities;
         CapabilityBoundingSet = lib.concatStringsSep " " capabilities;
         StateDirectory = "msksd";
+        # The socket's home (#799): the unit's runtime directory,
+        # /run/msksd, owned by the daemon user — the socket binds
+        # inside it.
+        RuntimeDirectory = lib.mkIf cfg.socket.enable "msksd";
         Restart = "always";
         RestartSec = 1;
         StandardInput = "null";

@@ -1089,22 +1089,22 @@ def test_the_environment_cafile_beats_the_files(
     assert "MSKSC_CAFILE" not in conf.env_layer
 
 
-def test_the_unconfigured_refusal_names_the_absent_runtime_dir(
+def test_the_unconfigured_refusal_names_both_candidates(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
-    """A client with no $XDG_RUNTIME_DIR has no candidate to look
-    at: the refusal says that (naming the setting that reaches a
-    socket elsewhere), not an empty looked-for list (#560)."""
+    """The refusal names every path an unconfigured client checks
+    (#560, #799): its runtime dir's socket and the system
+    daemon's path — the latter always, with or without a runtime
+    dir."""
     from msks.client.env import LOOKED_FOR, looked_for
 
     monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/4242")
     assert looked_for() == LOOKED_FOR.format(
-        candidates="/run/user/4242/msks/msksd.sock"
+        candidates=("/run/user/4242/msks/msksd.sock, /run/msksd/msksd.sock")
     )
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-    assert looked_for() == (
-        "no $XDG_RUNTIME_DIR to look in — a socket outside it is a "
-        "path MSKSC_SOCKET names"
+    assert looked_for() == LOOKED_FOR.format(
+        candidates="/run/msksd/msksd.sock"
     )
 
 
