@@ -1497,12 +1497,19 @@ let
         test -x "$root"/usr/bin/rsync
         test -x "$root"/usr/bin/fdfind
         test -x "$root"/usr/bin/rg
-        # The staged apt lists (#783): the trixie index is
-        # present, and the mirrors files its filenames derive
-        # from still exist in the base image — a base image that
-        # dropped them would silently orphan every staged list.
+        # The staged apt lists (#783): both halves of the pair
+        # are present (an index without its InRelease leaves apt
+        # reading lists it cannot attribute). The mirrors files
+        # are canaries for the sources shape: the staged
+        # filenames derive from the mirror+file scheme's own
+        # naming (the `_etc_apt_mirrors_` prefix below is that
+        # scheme baked in), and the security list is checked too
+        # because a base image that reshaped either mirrors file
+        # would silently orphan every staged list.
         test -f \
           "$root"/var/lib/apt/lists/_etc_apt_mirrors_debian.list_dists_trixie_main_binary-${facts.debianArch}_Packages.lz4
+        test -f \
+          "$root"/var/lib/apt/lists/_etc_apt_mirrors_debian.list_dists_trixie_InRelease
         test -f "$root"/etc/apt/mirrors/debian.list
         test -f "$root"/etc/apt/mirrors/debian-security.list
         test -x "$root"/usr/sbin/sshd

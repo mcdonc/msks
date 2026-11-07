@@ -348,9 +348,9 @@ def test_the_debian_image_ships_apt_list_state() -> None:
     guard refuses them in aptSuites."""
     debian = (REPO_ROOT / "nix" / "guest-debian.nix").read_text()
     assert "aptPackagesHashes.trixie" in debian
-    suites_block = debian.split("aptSuites = [")[1].split("]")[0]
     for suite in ["trixie-updates", "trixie-backports", "trixie-security"]:
-        assert suite not in suites_block
+        assert f'suite = "{suite}";' not in debian
+    assert "_etc_apt_mirrors_" in debian
     assert "_etc_apt_mirrors_" in debian
     assert "Packages.lz4" in debian
     assert 'xz -dc "$pkg" | lz4 -q' in debian

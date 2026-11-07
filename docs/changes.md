@@ -6,6 +6,40 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Breaking
+
+- **The `client` flake output is gone (#793).** The flake's
+  `client` package and devenv's `outputs.client` are removed.
+  The wheel installs every console script, so `msksd` (the
+  default flake output) and `outputs.server` carry the client CLI
+  in the daemon closure. Install `.#msksd` (or `.#server` /
+  `devenv build outputs.server`) for everything the `client` output
+  and `outputs.client` used to provide. Wheel installs with pip or
+  uv do not change.
+
+### Added
+
+- **The Debian image ships apt list state; the NixOS guest turns
+  on nix-command and flakes (#783).** A fresh Debian workspace's
+  first `apt-get install` resolves with no update run — the image
+  stages the trixie main InRelease and Packages index under the
+  names apt itself derives. The NixOS guest's nix.conf enables
+  both experimental nix features, so a flake-carrying checkout
+  builds before any per-user override.
+- **Workspace rows read `stopping` through a stop's graceful
+  window (#789).** A stop request now writes `stopping` before
+  the graceful shutdown begins, so `msks ls` and a second TUI
+  see the truth for a window that lasts up to the shutdown
+  timeout. The row lands on `stopped` when the shutdown finishes,
+  and returns to the status it carried before the stop when the
+  shutdown times out. A daemon crash mid-stop heals on the next
+  watcher scan, and the gates that read the status (volume
+  moves, resize, clone) refuse while the row reads `stopping`.
+  The TUI's stop action dims with "workspace is stopping", and
+  the attach commands (`msks ssh`, `msks console`, `msks forward`,
+  `msks rsync`) wait out the window instead of booting into the
+  shutdown.
+
 ### Changed
 
 - **New workspaces default to 4 vCPUs (#791).** A create that
@@ -78,39 +112,7 @@ tagged `vX.Y.Z`.
   the quoting where it belongs, in the address the transports
   dial. A TCP daemon's URL shows unchanged.
 
-### Breaking
-
-- **The `client` flake output is gone (#793).** The flake's
-  `client` package and devenv's `outputs.client` are removed.
-  The wheel installs every console script, so `msksd` (the
-  default flake output) and `outputs.server` carry the client CLI
-  in the daemon closure. Install `.#msksd` (or `.#server` /
-  `devenv build outputs.server`) for everything the `client` output
-  and `outputs.client` used to provide. Wheel installs with pip or
-  uv do not change.
-
 ### Added
-
-- **The Debian image ships apt list state; the NixOS guest turns
-  on nix-command and flakes (#783).** A fresh Debian workspace's
-  first `apt-get install` resolves with no update run — the image
-  stages the trixie main InRelease and Packages index under the
-  names apt itself derives. The NixOS guest's nix.conf enables
-  both experimental nix features, so a flake-carrying checkout
-  builds before any per-user override.
-- **Workspace rows read `stopping` through a stop's graceful
-  window (#789).** A stop request now writes `stopping` before
-  the graceful shutdown begins, so `msks ls` and a second TUI
-  see the truth for a window that lasts up to the shutdown
-  timeout. The row lands on `stopped` when the shutdown finishes,
-  and returns to the status it carried before the stop when the
-  shutdown times out. A daemon crash mid-stop heals on the next
-  watcher scan, and the gates that read the status (volume
-  moves, resize, clone) refuse while the row reads `stopping`.
-  The TUI's stop action dims with "workspace is stopping", and
-  the attach commands (`msks ssh`, `msks console`, `msks forward`,
-  `msks rsync`) wait out the window instead of booting into the
-  shutdown.
 
 - **`msks clone` (#773).** One stopped workspace copies into a
   new one: both disks (the root overlay and the `/home` volume,
