@@ -739,6 +739,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#breaking" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Breaking
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1067,7 +1078,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#breaking" class="md-nav__link">
+  <a href="#breaking_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Breaking
@@ -1165,6 +1176,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#breaking" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Breaking
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1493,7 +1515,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#breaking" class="md-nav__link">
+  <a href="#breaking_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Breaking
@@ -1555,6 +1577,17 @@
 <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>; versions are
 tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h3 id="breaking">Breaking<a class="headerlink" href="#breaking" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>The <code>client</code> flake output is gone (#793).</strong> The flake's
+  <code>client</code> package and devenv's <code>outputs.client</code> are removed.
+  The wheel installs every console script, so <code>msksd</code> (the
+  default flake output) and <code>outputs.server</code> carry the client CLI
+  in the daemon closure. Install <code>.#msksd</code> (or <code>.#server</code> /
+  <code>devenv build outputs.server</code>) for everything the <code>client</code> output
+  and <code>outputs.client</code> used to provide. Wheel installs with pip or
+  uv do not change.</li>
+</ul>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Workspace rows read <code>stopping</code> through a stop's graceful
@@ -2619,7 +2652,7 @@ no</code>, <code>PermitRootLogin prohibit-password</code>) pinned by a config dr
 <p><strong>Workspace shell (#21).</strong> <code>msks shell &lt;workspace-id&gt;</code> gives an interactive shell inside a running workspace microvm, from any host that can reach the daemon: the client speaks the authenticated <code>/api/v1/workspaces/{id}/console</code> websocket (TLS + token, Ctrl-] detach, raw tty mode), and the daemon proxies it over virtio-vsock — the VM's vsock unix socket after a <code>CONNECT &lt;port&gt;</code> handshake — into a per-connection busybox ash on a pty served by static socat in the guest (root shell today, per #5's guest userland; <code>MSKSC_URL</code>/<code>MSKSC_TOKEN</code>/<code>MSKSC_CAFILE</code> configure the client). The guest assets gained the vsock module, <code>/dev/vsock</code> creation, devpts/ptmx setup, and socat; the daemon retries the console handshake across the guest's post-boot bring-up window.</p>
 </li>
 </ul>
-<h3 id="breaking">Breaking<a class="headerlink" href="#breaking" title="Permanent link">&para;</a></h3>
+<h3 id="breaking_1">Breaking<a class="headerlink" href="#breaking_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Dev state moved under <code>.devenv/state/</code> (#156).</strong> The repo-root
   state dirs — <code>.guest/</code>, <code>.msksd/</code> — now live at

@@ -1495,20 +1495,19 @@ after one gated suite run:</p>
 <h3 id="build-outputs">Build outputs<a class="headerlink" href="#build-outputs" title="Permanent link">&para;</a></h3>
 <p>The release artifacts each build on their own store path,
 without evaluating or building the others:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>devenv<span class="w"> </span>build<span class="w"> </span>outputs.server<span class="w">        </span><span class="c1"># msksd with the full daemon closure</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>devenv<span class="w"> </span>build<span class="w"> </span>outputs.client<span class="w">        </span><span class="c1"># the msks CLI/TUI with the client closure alone</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>devenv<span class="w"> </span>build<span class="w"> </span>outputs.guest-image-debian<span class="w">  </span><span class="c1"># the Debian workspace image archive</span>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>devenv<span class="w"> </span>build<span class="w"> </span>outputs.guest-image-nixos<span class="w">  </span><span class="c1"># the NixOS workspace image archive</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>devenv<span class="w"> </span>build<span class="w"> </span>outputs.server<span class="w">        </span><span class="c1"># msksd and the msks CLI/TUI, one closure</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>devenv<span class="w"> </span>build<span class="w"> </span>outputs.guest-image-debian<span class="w">  </span><span class="c1"># the Debian workspace image archive</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>devenv<span class="w"> </span>build<span class="w"> </span>outputs.guest-image-nixos<span class="w">  </span><span class="c1"># the NixOS workspace image archive</span>
 </span></code></pre></div>
-<p>The daemon and client outputs are two dependency closures over the
-one wheel (<code>nix/msks-pkg.nix</code>, <code>nix/msks-client-pkg.nix</code>): the
-server output runs <code>msksd</code>; the client output runs <code>msks</code> and
-<code>msks-term-popup</code>. The same outputs build from the flake with plain
-nix (no devenv in the environment) against the same pinned
-nixpkgs (flake.lock and devenv.lock pin the same revision, so each
-flake attribute is the same store path its <code>devenv build</code> twin
-builds):</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>nix<span class="w"> </span>build<span class="w"> </span>.#server<span class="w"> </span>.#client<span class="w"> </span>.#guest-image-debian<span class="w"> </span>.#guest-image-nixos
+<p><code>outputs.server</code> is one closure over the one wheel
+(<code>nix/msks-pkg.nix</code>). The wheel installs every console script, so
+the closure carries <code>msksd</code> and the client commands (<code>msks</code>,
+<code>msks-term-popup</code>) together (#793). The same outputs build from
+the flake with plain nix (no devenv in the environment) against
+the same pinned nixpkgs (flake.lock and devenv.lock pin the same
+revision, so each flake attribute is the same store path its
+<code>devenv build</code> twin builds):</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>nix<span class="w"> </span>build<span class="w"> </span>.#server<span class="w"> </span>.#guest-image-debian<span class="w"> </span>.#guest-image-nixos
 </span></code></pre></div>
 <h3 id="wheel-installs">Wheel installs<a class="headerlink" href="#wheel-installs" title="Permanent link">&para;</a></h3>
 <p>The msks wheel is pure Python on every platform: nothing
