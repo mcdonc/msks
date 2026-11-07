@@ -6,6 +6,16 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Breaking
+
+- **The `client` flake output is gone (#793).** The flake's
+  `client` package and devenv's `outputs.client` are removed; the
+  wheel installs every console script, so `msksd` (the default
+  flake output) and `outputs.server` carry the client CLI in the
+  daemon closure. Install `.#msksd` (or `.#server` /
+  `devenv build outputs.server`) for everything the two outputs
+  used to provide. Wheel installs with pip or uv do not change.
+
 ### Added
 
 - **Workspace rows read `stopping` through a stop's graceful

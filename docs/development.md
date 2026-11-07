@@ -227,23 +227,22 @@ The release artifacts each build on their own store path,
 without evaluating or building the others:
 
 ```bash
-devenv build outputs.server        # msksd with the full daemon closure
-devenv build outputs.client        # the msks CLI/TUI with the client closure alone
+devenv build outputs.server        # msksd and the msks CLI/TUI, one closure
 devenv build outputs.guest-image-debian  # the Debian workspace image archive
 devenv build outputs.guest-image-nixos  # the NixOS workspace image archive
 ```
 
-The daemon and client outputs are two dependency closures over the
-one wheel (`nix/msks-pkg.nix`, `nix/msks-client-pkg.nix`): the
-server output runs `msksd`; the client output runs `msks` and
-`msks-term-popup`. The same outputs build from the flake with plain
-nix (no devenv in the environment) against the same pinned
-nixpkgs (flake.lock and devenv.lock pin the same revision, so each
-flake attribute is the same store path its `devenv build` twin
-builds):
+`outputs.server` is one closure over the one wheel
+(`nix/msks-pkg.nix`). The wheel installs every console script, so
+the closure carries `msksd` and the client commands (`msks`,
+`msks-term-popup`) together (#793). The same outputs build from
+the flake with plain nix (no devenv in the environment) against
+the same pinned nixpkgs (flake.lock and devenv.lock pin the same
+revision, so each flake attribute is the same store path its
+`devenv build` twin builds):
 
 ```bash
-nix build .#server .#client .#guest-image-debian .#guest-image-nixos
+nix build .#server .#guest-image-debian .#guest-image-nixos
 ```
 
 ### Wheel installs
