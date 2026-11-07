@@ -425,6 +425,28 @@ def test_the_images_ship_git_vim_emacs_and_gh() -> None:
     assert '"flakes"' in nixos
 
 
+def test_the_guest_flavors_share_the_node_pin_bytes() -> None:
+    """The Debian and Fedora files declare the same Node tarball
+    pin twice — and a single flipped base64 letter case (c vs C)
+    once produced two different derivations for "the same" fetch,
+    which surfaced only as a hash mismatch on the arm64 CI leg
+    with nix normalizing both SRIs to identical-looking text. The
+    declared values must be byte-identical across the two files,
+    which is exactly what sharing one pin per file pair means."""
+    debian = (REPO_ROOT / "nix" / "guest-debian.nix").read_text()
+    fedora = (REPO_ROOT / "nix" / "guest-fedora.nix").read_text()
+
+    def pins(text: str) -> dict[str, str]:
+        found: dict[str, str] = {}
+        for line in text.splitlines():
+            parts = line.split()
+            if len(parts) >= 3 and parts[0] in {"nodeTar", "nodeHash"}:
+                found[parts[0]] = parts[2].strip('"')
+        return found
+
+    assert pins(debian) == pins(fedora)
+
+
 def test_the_nixos_image_ships_the_agent_toolchain() -> None:
     """The NixOS flavor's toolchain parity (#268): nixpkgs' own
     Node (the platform's packaging, floor-checked against pi's

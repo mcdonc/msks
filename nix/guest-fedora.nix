@@ -131,7 +131,7 @@ let
       kernelFormat = "Image";
       ociArch = "arm64";
       nodeTar = "arm64";
-      nodeHash = "sha256-XO0tSNHXGYC5t/hoBN4Bca77aCO2hLEjQdMyGvw8sLI=";
+      nodeHash = "sha256-XO0tSNHXGYc5t/hoBN4Bca77aCO2hLEjQdMyGvw8sLI=";
       toolRpmHashes = {
         git-core = "sha256-BWHurQ1vOg7f8xk0ejOBI3+itthZHfvkyzaHSeAQI2o=";
         gh = "sha256-2jo6iPiO8WQMMKAyNZushivjzlLcfScZ7zQUuD19FaU=";
