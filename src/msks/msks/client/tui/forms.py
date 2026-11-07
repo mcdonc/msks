@@ -205,8 +205,8 @@ def image_options(rows: list[dict]) -> list[tuple[str, str]]:
     reference, the hash, and the import date as three columns
     (the hash keeps references that clip to the same 12 characters
     apart, the date tells two builds of one release apart), the
-    designated default marked after them, the rows ordered by
-    :func:`ordered_image_rows`.
+    designated default marked with a trailing asterisk, the rows
+    ordered by :func:`ordered_image_rows`.
 
     A reference two entries share rides the hash in every value
     but one: the row the daemon's own name:version resolution
@@ -224,7 +224,7 @@ def image_options(rows: list[dict]) -> list[tuple[str, str]]:
         day = imported_day(row.get("imported"))
         label = f"{clip(ref)} {clip(row['hash'])} {day:<10}"
         if row.get("default"):
-            label += " — default"
+            label += " *"
         options.append((label, value))
     return options
 

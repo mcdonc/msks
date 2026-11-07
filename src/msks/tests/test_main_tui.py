@@ -1241,7 +1241,7 @@ def assert_image_options_sort():
             "debian-13:2025.12",
         ),
         (
-            "debia…026.01 aaaaa…aaaaaa 2026-01-01 — default",
+            "debia…026.01 aaaaa…aaaaaa 2026-01-01 *",
             "debian-13:2026.01",
         ),
         ("fedor…026.02 eeeee…eeeeee 2026-02-02", "fedora-44:2026.02"),
