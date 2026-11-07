@@ -26,17 +26,20 @@
       # The release artifacts (#537), the flake half of the devenv
       # outputs split: the same wheel builds, the same image
       # archives (Debian and NixOS flavors) — consumable with plain
-      # nix (`nix build .#server`, `.#client`, `.#guest-image-debian`,
+      # nix (`nix build .#server`, `.#guest-image-debian`,
       # `.#guest-image-nixos`), no devenv in the environment. The
       # flake and devenv.lock pin the same nixpkgs revision, so each
       # attribute evaluates to the same derivation its
       # `devenv build outputs.<name>` twin builds.
+      #
+      # One closure for everything (#793): the wheel installs every
+      # console script, so the server output carries the client CLI
+      # in the daemon closure. There is no client-only build: two
+      # buildPythonPackage derivations over the same wheel cannot
+      # coexist in one environment (both would be pname "msks"),
+      # and the lean install had no users — macOS installs the
+      # wheel, a NixOS module host runs the daemon anyway.
       server = pkgs.python314.withPackages (_: [ msksd ]);
-      client = pkgs.python314.withPackages (_: [
-        (pkgs.python314.pkgs.callPackage ./nix/msks-client-pkg.nix {
-          textual = pkgs.python314.pkgs.callPackage ./nix/textual-pkg.nix { };
-        })
-      ]);
       guestImages = import ./nix/guest.nix { inherit pkgs; };
       guest-image-debian = guestImages.image-archive-debian;
       guest-image-nixos = guestImages.image-archive-nixos;
@@ -77,7 +80,6 @@
         msksd = msksd;
         inherit
           server
-          client
           guest-image-debian
           guest-image-nixos
           ;

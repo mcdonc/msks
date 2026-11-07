@@ -56,17 +56,20 @@ let
 
   # The release artifacts (#537), each its own derivation
   # so `devenv build outputs.<name>` builds one without evaluating
-  # or building the others. The daemon and the client are two wheel
-  # builds of the one source (nix/msks-pkg.nix, nix/msks-client-pkg.nix)
-  # — the split is the dependency closure, not the entry points: the
-  # server output runs msksd against the full daemon closure, the
-  # client output runs `msks` / `msks-term-popup` against the client
-  # closure alone. The guest images cover both flavors the guests
-  # come in (#250): the Debian archive is the one
-  # msks-build-guest-archive lands in the daemon state as the
+  # or building the others. `outputs.server` is the one msks wheel
+  # build (nix/msks-pkg.nix) against the full daemon closure (#793):
+  # the wheel installs every console script, so the closure carries
+  # msksd and the client commands (`msks`, `msks-term-popup`) — the
+  # old client output, a second wheel build with a trimmed
+  # dependency list, is gone (two buildPythonPackage derivations
+  # over the same wheel cannot coexist in one environment, and the
+  # lean install had no users). The guest images cover both
+  # flavors the guests come in (#250): the Debian archive is the
+  # one msks-build-guest-archive lands in the daemon state as the
   # default image; the NixOS archive builds standalone the same
-  # way. flake.nix re-exposes the same set for `nix build` — the
-  # devenv-less release path this split is the first step of.
+  # way. flake.nix re-exposes the server output and the Debian and
+  # NixOS image archives for `nix build`, the devenv-less release
+  # path (#537). The Fedora archive is devenv-only.
   # releasePkgs carries the certifi overlay (#606) — the same one
   # flake.nix applies to its pkgs — so both halves build identical
   # store paths while the dev shell's plain pkgs stays untouched.
@@ -75,11 +78,6 @@ let
     (ps.callPackage ./nix/msks-pkg.nix {
       textual = ps.callPackage ./nix/textual-pkg.nix { };
       litellm = ps.callPackage ./nix/litellm-pkg.nix { };
-    })
-  ]);
-  msksClient = releasePkgs.python314.withPackages (ps: [
-    (ps.callPackage ./nix/msks-client-pkg.nix {
-      textual = ps.callPackage ./nix/textual-pkg.nix { };
     })
   ]);
   guestImages = import ./nix/guest.nix { pkgs = releasePkgs; };
@@ -195,7 +193,6 @@ in
   # all; `devenv build outputs.server` builds one.
   outputs = {
     server = msksServer;
-    client = msksClient;
     guest-image-debian = guestImages.image-archive-debian;
     guest-image-fedora = guestImages.image-archive-fedora;
     guest-image-nixos = guestImages.image-archive-nixos;

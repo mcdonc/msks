@@ -1,6 +1,6 @@
 # The pkgs-level overlay that puts nix/certifi-pkg.nix's build under
 # the `certifi` name in the python 3.14 package set (#606) — the one
-# set the msksd and client wheels build against. httpx, mitmproxy,
+# set the msksd wheel builds against. httpx, mitmproxy,
 # and every other dependent in that set resolve this one derivation
 # instead of nixpkgs' older one, so the closure carries a single
 # certifi and both the runtime deps check (the wheel's >=2026.10.23
