@@ -1675,6 +1675,81 @@ async def test_ensure_running_skips_a_running_workspace(api_transport) -> None:
     assert row["status"] == "running"
 
 
+async def test_ensure_running_waits_out_a_concurrent_stop(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#789: a row mid-shutdown reads ``stopping`` — a boot raced
+    into the window would fight the shutdown, so the client waits
+    it out; a stop that timed out lands running and attaches."""
+    statuses = ["stopping", "stopping", "running"]
+    posts: list[str] = []
+
+    async def fast_sleep(seconds: float) -> None:
+        pass
+
+    monkeypatch.setattr(rest.asyncio, "sleep", fast_sleep)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            posts.append(request.url.path)
+            raise AssertionError("no start while a stop runs")
+        return httpx.Response(
+            200, json={"id": "ws1", "status": statuses.pop(0)}
+        )
+
+    booted = await rest.ensure_running(
+        "ws1", "https://d", "t", transport=mock(handler)
+    )
+    assert booted is False  # the stop timed out; the guest never left
+    assert posts == []
+    assert "waiting for the shutdown" in capsys.readouterr().err
+
+
+async def test_ensure_running_boots_after_a_waited_stop_landed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The waited stop landed ``stopped``: the wait falls through
+    and this call starts the workspace itself."""
+    statuses = iter(["stopping", "stopped", "stopped"])
+    posts: list[str] = []
+
+    async def fast_sleep(seconds: float) -> None:
+        pass
+
+    monkeypatch.setattr(rest.asyncio, "sleep", fast_sleep)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            posts.append(request.url.path)
+            return httpx.Response(200, json={"id": "ws1"})
+        return httpx.Response(
+            200, json={"id": "ws1", "status": next(statuses)}
+        )
+
+    booted = await rest.ensure_running(
+        "ws1", "https://d", "t", transport=mock(handler)
+    )
+    assert booted is True
+    assert posts == ["/api/v1/workspaces/ws1/start"]
+
+
+async def test_ensure_running_stop_wait_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fast_sleep(seconds: float) -> None:
+        pass
+
+    monkeypatch.setattr(rest.asyncio, "sleep", fast_sleep)
+    monkeypatch.setattr(rest, "BOOT_WAIT_S", 0.0)
+    transport = mock(
+        lambda req: httpx.Response(
+            200, json={"id": "ws1", "status": "stopping"}
+        )
+    )
+    with pytest.raises(SystemExit, match="still stopping"):
+        await rest.ensure_running("ws1", "https://d", "t", transport=transport)
+
+
 async def test_ensure_running_refuses_paused(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

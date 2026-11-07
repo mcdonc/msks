@@ -270,7 +270,7 @@ The status column speaks the daemon's lifecycle vocabulary:
 `created` (row exists, never booted), `starting`, `running`,
 `paused`, `stopping`, `stopped`, `unknown`, `absent`. A workspace
 reads `stopping` while a stop request's graceful shutdown runs.
-The window lasts up to the shutdown timeout; a shutdown that
+The window lasts up to the shutdown timeout. A shutdown that
 times out returns the row to the status it carried before the
 stop. A workspace whose mounts
 skip carries the count beside its status (`running, 1 mount
@@ -610,7 +610,10 @@ resized ws4: root 10240 MiB, home 4096 MiB, cpus 4, mem 4096 MiB
   topology together.
 
 The workspace must be in a free lifecycle state (`created`,
-`stopped`, `absent`); a running or paused workspace answers `409`.
+`stopped`, `absent`); every other status — a workspace that may
+keep a live volume attached, `running` and `paused` among them,
+and `starting`, `stopping`, and `unknown` with them — answers
+`409`.
 The row follows immediately (`msks ls --json`, `msks storage` show
 the new ceiling), and a completed resize is announced on the
 events channel (`workspace.resized`). At least one flag is

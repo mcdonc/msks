@@ -17,7 +17,9 @@ tagged `vX.Y.Z`.
   shutdown times out. A daemon crash mid-stop heals on the next
   watcher scan, and the gates that read the status (volume
   moves, resize, clone) refuse while the row reads `stopping`.
-  The TUI's stop action dims with "workspace is stopping".
+  The TUI's stop action dims with "workspace is stopping", and
+  attach commands (`msks ssh`, `msks console`) wait out the
+  window instead of booting into the shutdown.
 
 ### Changed
 

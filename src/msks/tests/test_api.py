@@ -16,6 +16,7 @@ from msks.app import build_app
 from msks.microvm.errors import MicrovmError, MicrovmTimeoutError
 from msks.server import api as api_mod
 from msks.server.api import build_api
+from msks.server.watcher import scan_workspace
 from msks.settings import (
     NetSettings,
     SecretStoreSettings,
@@ -342,6 +343,74 @@ async def test_stop_failure_restores_the_prior_status(client) -> None:
     assert refused.status_code == 503
     row = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
     assert row.json()["status"] == "running"
+    assert wid not in app.state.stopping_workspaces
+
+
+async def test_overlapping_stops_heal_to_stopped(client) -> None:
+    """Two stops in one window share one marker (#789 round 1):
+    the second request's ``finally`` discards the id while the
+    first shutdown still runs, so the watcher may publish a
+    transient word mid-window — and the surviving request still
+    lands ``stopped``, the row never wedging at ``stopping``. A
+    failed second stop restores the ``stopping`` it read, the
+    same restore a failed first stop gets."""
+    http, app, stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-2x", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+    await http.post(f"/api/v1/workspaces/{wid}/start", headers=auth())
+
+    class OverlapShutdownStub(StubMicrovm):
+        """The first shutdown holds on a gate; the second raises —
+        the overlapping windows, staged to order."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.gate = asyncio.Event()
+            self.shutdowns = 0
+
+        async def shutdown(
+            self, workspace_id: str, timeout_s: float | None = None
+        ) -> None:
+            self.shutdowns += 1
+            if self.shutdowns == 1:
+                await self.gate.wait()
+                await super().shutdown(workspace_id, timeout_s)
+            else:
+                raise MicrovmError("shutdown timed out")
+
+    overlapped = OverlapShutdownStub()
+    overlapped.statuses.update(stub.statuses)
+    app.state.microvm = overlapped
+    stop_a = asyncio.create_task(
+        http.post(f"/api/v1/workspaces/{wid}/stop", headers=auth())
+    )
+    await wait_for_status(http, wid, "stopping")
+    stop_b = asyncio.create_task(
+        http.post(f"/api/v1/workspaces/{wid}/stop", headers=auth())
+    )
+    refused = await stop_b
+    assert refused.status_code == 503
+    # The failed second stop restored the stopping it read, and its
+    # finally emptied the marker while the first stop still runs —
+    # the window the watcher reconciles on its own (a transient
+    # publish the surviving request's final write heals).
+    assert (await app.state.model.get_workspace(wid))["status"] == "stopping"
+    assert wid not in app.state.stopping_workspaces
+    hub = app.state.hub
+    assert (
+        await scan_workspace(app, hub, {"id": wid, "status": "stopping"})
+        is True
+    )
+    assert (await app.state.model.get_workspace(wid))["status"] == "running"
+    overlapped.gate.set()
+    reply = await stop_a
+    assert reply.json() == {"id": wid, "status": "stopped"}
+    settled = await wait_for_status(http, wid, "stopped")
+    assert settled["status"] == "stopped"
     assert wid not in app.state.stopping_workspaces
 
 

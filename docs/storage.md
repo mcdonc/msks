@@ -255,8 +255,8 @@ VM is down. `created`, `stopped`, and `absent` move freely.
 `starting`, `stopping`, `running`, and `paused` keep the volume: an export
 under a guest mid-write is a torn image, and an import into a
 mounted device would be overwritten or lost. A row reads
-`stopping` only while a stop request's graceful shutdown runs;
-the VM is still live through that window. `unknown` refuses
+`stopping` only while a stop request's graceful shutdown runs.
+The VM is still live through that window. `unknown` refuses
 too. The seam reports it when a live VMM stopped answering its
 API, so a possibly-live VM gets the volume's protection. Stop
 the workspace first (`msks stop`). Under the move's lock the

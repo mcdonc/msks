@@ -947,6 +947,7 @@ async def test_scan_leaves_an_in_flight_stop_alone(tmp_path: Path) -> None:
         for seam, row_word in (
             (VmStatus.STOPPED, "stopped"),
             (VmStatus.UNKNOWN, "unknown"),
+            (VmStatus.ABSENT, "absent"),
         ):
             await app.state.model.set_status("ws-o", "stopping")
             stub.statuses["ws-o"] = seam

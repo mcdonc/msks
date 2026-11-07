@@ -29,8 +29,8 @@ TIMEOUT = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0)
 # control stays responsive on slow links.
 STREAM_WINDOW_B = 1024 * 1024
 
-# Waiting out another client's in-flight boot: the same budget the
-# start call itself gets.
+# Waiting out another client's in-flight boot or stop (#789): the
+# same budget the start and stop calls themselves get.
 BOOT_WAIT_S = 120.0
 BOOT_POLL_S = 1.0
 
@@ -269,6 +269,46 @@ def validation_message(item) -> str:
     return f"{loc}: {msg}" if loc else msg
 
 
+async def settled_row(
+    workspace_id: str,
+    url: str,
+    token: str,
+    ssl_ctx: ssl.SSLContext | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> tuple[dict, bool]:
+    """The row past any in-flight transition (#789), with whether
+    a boot was waited out.
+
+    A row mid-shutdown reads ``stopping``, and a boot raced into
+    the window would fight the shutdown the daemon is already
+    running — the wait stands down for the window and lets the
+    settled row speak (a stop that timed out lands running; a
+    stop that landed leaves the workspace stopped). A waited-out
+    boot counts as this call's own: the caller waits out the
+    guest's first-boot provisioning window, so the flag rides
+    beside the row."""
+    row = await workspace_row(workspace_id, url, token, ssl_ctx, transport)
+    if row["status"] == "stopping":
+        print(
+            f"msks: {workspace_id} is stopping; waiting for the shutdown",
+            file=sys.stderr,
+        )
+        return (
+            await wait_shutdown(workspace_id, url, token, ssl_ctx, transport),
+            False,
+        )
+    if row["status"] == "starting":
+        print(
+            f"msks: {workspace_id} is starting; waiting for the boot",
+            file=sys.stderr,
+        )
+        return (
+            await wait_boot(workspace_id, url, token, ssl_ctx, transport),
+            True,
+        )
+    return row, False
+
+
 async def ensure_running(
     workspace_id: str,
     url: str,
@@ -278,11 +318,13 @@ async def ensure_running(
 ) -> bool:
     """Boot ``workspace_id`` when the daemon reports it not running.
 
-    A concurrent boot is waited out; a paused workspace is refused
-    (the daemon has no resume); a start that loses a race to another
-    boot attaches to the winner instead of failing. The notices
-    print to stderr before the caller enters raw tty mode, where a
-    plain newline would leave the cursor mid-column.
+    A concurrent boot is waited out, and a concurrent stop too
+    (#789 — a row mid-shutdown reads ``stopping``); a paused
+    workspace is refused (the daemon has no resume); a start that
+    loses a race to another boot attaches to the winner instead
+    of failing. The notices print to stderr before the caller
+    enters raw tty mode, where a plain newline would leave the
+    cursor mid-column.
 
     True when this call observed a boot — the workspace was
     ``starting``, or was started here — and False when it was
@@ -292,17 +334,11 @@ async def ensure_running(
     through that window, and its callers that ignore the value see
     no change.
     """
-    row = await workspace_row(workspace_id, url, token, ssl_ctx, transport)
-    if row["status"] == "starting":
-        print(
-            f"msks: {workspace_id} is starting; waiting for the boot",
-            file=sys.stderr,
-        )
-        row = await wait_boot(workspace_id, url, token, ssl_ctx, transport)
-        if row["status"] == "running":
-            return True
+    row, boot_waited = await settled_row(
+        workspace_id, url, token, ssl_ctx, transport
+    )
     if row["status"] == "running":
-        return False
+        return boot_waited
     if row["status"] == "paused":
         raise SystemExit(paused_advice(workspace_id))
     print(
@@ -348,6 +384,28 @@ async def wait_boot(
         await asyncio.sleep(BOOT_POLL_S)
     raise SystemExit(
         f"msks: {workspace_id} still starting after {BOOT_WAIT_S}s"
+    )
+
+
+async def wait_shutdown(
+    workspace_id: str,
+    url: str,
+    token: str,
+    ssl_ctx: ssl.SSLContext | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict:
+    """Poll another client's in-flight stop until it settles
+    (#789): the graceful window lasts up to the daemon's shutdown
+    timeout, and the settled row tells the caller which ladder
+    step applies."""
+    deadline = time.monotonic() + BOOT_WAIT_S
+    while time.monotonic() < deadline:
+        row = await workspace_row(workspace_id, url, token, ssl_ctx, transport)
+        if row["status"] != "stopping":
+            return row
+        await asyncio.sleep(BOOT_POLL_S)
+    raise SystemExit(
+        f"msks: {workspace_id} still stopping after {BOOT_WAIT_S}s"
     )
 
 
