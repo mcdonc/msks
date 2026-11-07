@@ -20,7 +20,10 @@ import pytest
 from msks.app import build_app
 from msks.config import file_env_overrides
 from msks.microvm import VmSpec
-from msks.server.api.rows import starting_workspaces
+from msks.server.api.rows import (
+    starting_workspaces,
+    stopping_workspaces,
+)
 from msks.settings import MountSettings, ServerSettings, Settings
 from msks.spec.mounts import (
     HOST_MODE_IDENTITY,
@@ -448,6 +451,18 @@ async def test_starting_workspaces_installs_when_absent(client) -> None:  # noqa
     installed = starting_workspaces(app)
     installed.add("ws-x")
     assert "ws-x" in starting_workspaces(app)
+
+
+async def test_stopping_workspaces_installs_when_absent(client) -> None:  # noqa: F811
+    """The stop in-flight accessor installs its set when the app
+    lacks one (#789), so the route's add/discard always lands on
+    stored state — a fresh default per call would silently drop
+    the mark."""
+    _http, app, _stub = client
+    delattr(app.state, "stopping_workspaces")
+    installed = stopping_workspaces(app)
+    installed.add("ws-x")
+    assert "ws-x" in stopping_workspaces(app)
 
 
 def mounts_for_guest_seed_tests():

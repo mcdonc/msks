@@ -904,3 +904,59 @@ async def test_scan_leaves_an_in_flight_start_alone(tmp_path: Path) -> None:
         assert (await app.state.model.get_workspace("ws-i"))["status"] == (
             "stopped"
         )
+
+
+async def test_scan_leaves_an_in_flight_stop_alone(tmp_path: Path) -> None:
+    """A stop in flight owns its row (#789): the graceful window
+    still reads running at the seam, and a scan crossing it must
+    not erase the stopping mark (or publish a spurious running
+    transition) while the stop lives in this process. A stopping
+    row with no marker — a daemon died mid-stop — reconciles per
+    the seam: running when the guest never powered off, stopped
+    when it did, unknown for a wedged VMM."""
+    api, app, stub = api_with_stub(tmp_path)
+    async with api.router.lifespan_context(api):
+        await app.state.model.create_workspace(
+            VmSpec(workspace_id="ws-o", kernel=Path("/k"), rootfs=Path("/r"))
+        )
+        await app.state.model.set_status("ws-o", "stopping")
+        stub.statuses["ws-o"] = VmStatus.RUNNING  # mid-window seam read
+        hub = api.state.hub
+        app.state.stopping_workspaces.add("ws-o")
+        assert (
+            await scan_workspace(
+                app, hub, {"id": "ws-o", "status": "stopping"}
+            )
+            is False
+        )
+        assert (await app.state.model.get_workspace("ws-o"))["status"] == (
+            "stopping"
+        )
+        # The crashed-stop shapes: same row, no in-flight marker —
+        # the scan answers whatever the seam says.
+        app.state.stopping_workspaces.discard("ws-o")
+        assert (
+            await scan_workspace(
+                app, hub, {"id": "ws-o", "status": "stopping"}
+            )
+            is True
+        )
+        assert (await app.state.model.get_workspace("ws-o"))["status"] == (
+            "running"
+        )
+        for seam, row_word in (
+            (VmStatus.STOPPED, "stopped"),
+            (VmStatus.UNKNOWN, "unknown"),
+            (VmStatus.ABSENT, "absent"),
+        ):
+            await app.state.model.set_status("ws-o", "stopping")
+            stub.statuses["ws-o"] = seam
+            assert (
+                await scan_workspace(
+                    app, hub, {"id": "ws-o", "status": "stopping"}
+                )
+                is True
+            )
+            assert (await app.state.model.get_workspace("ws-o"))[
+                "status"
+            ] == row_word

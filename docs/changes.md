@@ -6,6 +6,22 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Added
+
+- **Workspace rows read `stopping` through a stop's graceful
+  window (#789).** A stop request now writes `stopping` before
+  the graceful shutdown begins, so `msks ls` and a second TUI
+  see the truth for a window that lasts up to the shutdown
+  timeout. The row lands on `stopped` when the shutdown finishes,
+  and returns to the status it carried before the stop when the
+  shutdown times out. A daemon crash mid-stop heals on the next
+  watcher scan, and the gates that read the status (volume
+  moves, resize, clone) refuse while the row reads `stopping`.
+  The TUI's stop action dims with "workspace is stopping", and
+  the attach commands (`msks ssh`, `msks console`, `msks forward`,
+  `msks rsync`) wait out the window instead of booting into the
+  shutdown.
+
 ### Changed
 
 - **`shutdown_timeout_s` defaults to 90 seconds (#787).** A

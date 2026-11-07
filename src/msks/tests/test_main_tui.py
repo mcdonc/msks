@@ -4084,6 +4084,25 @@ async def test_power_rows_dim_with_the_status(monkeypatch) -> None:
         assert page.row["status"] == "running"
 
 
+async def test_the_stop_row_dims_through_the_stop_window(monkeypatch) -> None:
+    """#789: a row reading ``stopping`` — a stop request's graceful
+    window — dims the stop row with its reason, and the quick
+    letter names the skip instead of calling the daemon."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row(status="stopping")])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 7)
+        await wait_for(lambda: "workspace is stopping" in action_text(app, 6))
+        await pilot.press("S")
+        await wait_for(
+            lambda: "Stop skipped: workspace is stopping" in consent_text(app)
+        )
+        await pilot.pause()
+        assert ("stop", WS) not in data.calls
+
+
 async def test_the_page_follows_a_status_moved_elsewhere(
     monkeypatch,
 ) -> None:
