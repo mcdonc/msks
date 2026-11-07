@@ -735,6 +735,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="[Unreleased]">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Changed
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -839,7 +856,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#changed" class="md-nav__link">
+  <a href="#changed_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Changed
@@ -878,7 +895,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#changed_1" class="md-nav__link">
+  <a href="#changed_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Changed
@@ -939,7 +956,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#changed_2" class="md-nav__link">
+  <a href="#changed_3" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Changed
@@ -1050,7 +1067,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#changed_3" class="md-nav__link">
+  <a href="#changed_4" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Changed
@@ -1133,6 +1150,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="[Unreleased]">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Changed
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1237,7 +1271,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#changed" class="md-nav__link">
+  <a href="#changed_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Changed
@@ -1276,7 +1310,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#changed_1" class="md-nav__link">
+  <a href="#changed_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Changed
@@ -1337,7 +1371,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#changed_2" class="md-nav__link">
+  <a href="#changed_3" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Changed
@@ -1448,7 +1482,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#changed_3" class="md-nav__link">
+  <a href="#changed_4" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Changed
@@ -1499,6 +1533,19 @@
 <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>; versions are
 tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>The create form's image dropdown shows the import date and
+  sorts newest-first (#781).</strong> Each option now carries the import
+  date beside the reference, and the options order by distro name
+  A→Z with each distro's newest build first — the newest build of
+  a release leads instead of the oldest. The designated default
+  row is marked with a trailing asterisk (the blank option's own
+  line names the marker), where it read "— default" before.
+  Options for the same reference still resolve by hash, and the
+  plain reference still names the build the daemon itself
+  resolves it to.</li>
+</ul>
 <h2 id="v081-2026-11-06">[v0.8.1] - 2026-11-06<a class="headerlink" href="#v081-2026-11-06" title="Permanent link">&para;</a></h2>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
@@ -1653,7 +1700,7 @@ tagged <code>vX.Y.Z</code>.</p>
   group loses token-less access at the next request instead of
   at the next daemon restart.</li>
 </ul>
-<h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
+<h3 id="changed_1">Changed<a class="headerlink" href="#changed_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>Workspaces no longer seed the Anthropic pair (#765).</strong>
@@ -1804,7 +1851,7 @@ tagged <code>vX.Y.Z</code>.</p>
 </li>
 </ul>
 <h2 id="v060-2026-11-02">[v0.6.0] - 2026-11-02<a class="headerlink" href="#v060-2026-11-02" title="Permanent link">&para;</a></h2>
-<h3 id="changed_1">Changed<a class="headerlink" href="#changed_1" title="Permanent link">&para;</a></h3>
+<h3 id="changed_2">Changed<a class="headerlink" href="#changed_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong><code>devenv processes up</code> on a macOS host (#707).</strong> The <code>msksd</code>
   process is registered on Linux hosts only, so on a Mac the
@@ -2118,7 +2165,7 @@ tagged <code>vX.Y.Z</code>.</p>
   publishing.</li>
 </ul>
 <h2 id="v05-2026-10-28">[v0.5] - 2026-10-28<a class="headerlink" href="#v05-2026-10-28" title="Permanent link">&para;</a></h2>
-<h3 id="changed_2">Changed<a class="headerlink" href="#changed_2" title="Permanent link">&para;</a></h3>
+<h3 id="changed_3">Changed<a class="headerlink" href="#changed_3" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>virtiofsd 1.13.0 floor for host mounts (#655).</strong> Host mounts
   need virtiofsd 1.13.0 or newer: the uid/gid translation and
@@ -2519,7 +2566,7 @@ no</code>, <code>PermitRootLogin prohibit-password</code>) pinned by a config dr
   gitignored. The devenv shell also prunes its own stale one-shot
   wrappers (<code>.devenv/shell-*.sh</code> older than an hour) automatically.</li>
 </ul>
-<h3 id="changed_3">Changed<a class="headerlink" href="#changed_3" title="Permanent link">&para;</a></h3>
+<h3 id="changed_4">Changed<a class="headerlink" href="#changed_4" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>The NixOS deployment host (#229).</strong> msks ships as a flake
   whose NixOS module runs msksd and cloud-hypervisor directly on a
