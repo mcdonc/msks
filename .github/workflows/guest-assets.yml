@@ -91,6 +91,18 @@ jobs:
           devenv --quiet -O dotenv.enable:bool false shell --
           msks-build-guest
 
+      # The guests outgrew the runner's disk (#783: emacs, git,
+      # and gh ride every flavor): each build's store-side
+      # intermediates — the ext4 rootfs, the packed tree, the
+      # NixOS system closure — are dead weight the moment the
+      # state-dir copies land, and the pinning test below only
+      # reads the state dirs. Collect them between builds so
+      # the next guest starts from free disk (the shared pins
+      # re-fetch cheaply; the next build's own outputs are what
+      # matter).
+      - name: Collect the Debian build's store intermediates
+        run: nix-collect-garbage
+
       # The NixOS guest (#250): the second catalog image, built from
       # the same pinned nixpkgs the Debian guest's toolchain uses.
       # Its closure is all cache.nixos.org downloads on a cold
@@ -102,6 +114,18 @@ jobs:
           devenv --quiet -O dotenv.enable:bool false shell --
           msks-build-guest nixos
 
+      # The NixOS rootfs/initrd/vmlinux state copies are dead
+      # weight too: the pinning test imports the archive alone
+      # (the Debian flavor's test is the one that loads the full
+      # asset set, so its state dir stays whole).
+      - name: Free the NixOS build's intermediates
+        run: >-
+          rm -f .devenv/state/guest-nixos/vmlinux
+          .devenv/state/guest-nixos/initrd
+          .devenv/state/guest-nixos/rootfs.ext4
+          .devenv/state/guest-nixos/guest-manifest.json
+          && nix-collect-garbage
+
       # The Fedora 44 guest (#651): the third catalog image, the
       # btrfs-extraction fetch-and-pack build. Same anti-rot
       # criterion as the two above: a cold runner builds it end to
@@ -110,6 +134,14 @@ jobs:
         run: >-
           devenv --quiet -O dotenv.enable:bool false shell --
           msks-build-guest fedora
+
+      - name: Free the Fedora build's intermediates
+        run: >-
+          rm -f .devenv/state/guest-fedora/vmlinux
+          .devenv/state/guest-fedora/initrd
+          .devenv/state/guest-fedora/rootfs.ext4
+          .devenv/state/guest-fedora/guest-manifest.json
+          && nix-collect-garbage
 
       # The real-artifact pinning test: the ''-escape RepoTag bug
       # shipped precisely because this test skipped everywhere CI
@@ -150,6 +182,14 @@ jobs:
           devenv --quiet -O dotenv.enable:bool false shell --
           msks-build-guest
 
+      # The guests outgrew the arm64 runner's disk too (#783):
+      # collect the Debian build's store intermediates before
+      # the Fedora build starts (and with them any stale store
+      # path a fresh fetch would collide with — the shared Node
+      # tarball pin bit exactly that on consecutive builds).
+      - name: Collect the arm64 Debian build's store intermediates
+        run: nix-collect-garbage
+
       # The Fedora 44 arm64 pins (#651): the aarch64 compose and
       # rpm hashes are otherwise never fetched by any CI leg — a
       # hash typo would surface only at the first human arm64
@@ -159,6 +199,14 @@ jobs:
         run: >-
           devenv --quiet -O dotenv.enable:bool false shell --
           msks-build-guest fedora
+
+      - name: Free the arm64 Fedora build's intermediates
+        run: >-
+          rm -f .devenv/state/guest-fedora/vmlinux
+          .devenv/state/guest-fedora/initrd
+          .devenv/state/guest-fedora/rootfs.ext4
+          .devenv/state/guest-fedora/guest-manifest.json
+          && nix-collect-garbage
 
       - name: Import the built image (pinning test)
         run: >-
