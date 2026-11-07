@@ -89,6 +89,42 @@ let
       kernelFormat = "bzImage";
       nodeTar = "x64";
       nodeHash = "sha256-EISqNhlrukw6Xmmh7jiKbk/3KdrQlEX7zUNLKP48JK8=";
+      # The git/emacs staged-deb pins (#783), per-arch hashes
+      # keyed by the versioned file base (the shared spec list
+      # lives below - toolDebSpecs).
+      toolDebHashes = {
+        "git_2.47.3-0+deb13u1" = "sha256-PjVmL9XEat1WFwPlQDGh2K2d9FgRknaJ8KURIrE75yI=";
+        "gh_2.46.0-3" = "sha256-SvLSQ6EclK3lKqLma7KNigSPwF+V4vfLDg7K0jQ+qHI=";
+        "libcurl3t64-gnutls_8.14.1-2+deb13u7" =
+          "sha256-lHXFkbM4uBhZ7m0GvyqfuwG1LxhMI1r6f25/FlITblU=";
+        "libngtcp2-16_1.11.0-1+deb13u1" =
+          "sha256-Yn7sgeu9SMTmCR9c2dxQcLeStwdQAO7WCrCMfaqWHK8=";
+        "libngtcp2-crypto-gnutls8_1.11.0-1+deb13u1" =
+          "sha256-Kn8QnAxNtqgA5GYcXl404fH4PIFiSCJ2GD0a2p2nyWw=";
+        "emacs-nox_30.1+1-6+deb13u1" =
+          "sha256-/unlvF1MDacW4+Eu7o4bBjvSSlimymdVviUWs3fVA2Q=";
+        "emacs-bin-common_30.1+1-6+deb13u1" =
+          "sha256-hq2I/7jQAk/iKkuVhjkYZV7LEFI8S83RmVQNp19nxNs=";
+        "libasound2t64_1.2.14-1+deb13u1" =
+          "sha256-VJVJYULVflrW1YGsVFbsPIf4csEJor+4FdFUtnPuvGc=";
+        "libgccjit0_14.2.0-19" = "sha256-yrefNB+bHuFKA7xsocHs2y1SsqNG0eARxHaC5fRUU/k=";
+        "libisl23_0.27-1" = "sha256-rIUYBC6BwA3h7/tyu6foisTs1Ij36ouePrxjFZy1OzU=";
+        "liblcms2-2_2.16-2+deb13u2" =
+          "sha256-MuU8IALM6oxgwCd5vqC6SawTL+9wKYijDWSvebZheAY=";
+        "libmpc3_1.3.1-1+b3" = "sha256-KvClwSjgNpSkHAsBG9ipWLcpdDbNs6Fd2teGba6MMAs=";
+        "libmpfr6_4.2.2-1" = "sha256-dd3c4R2rx/xUNxLDPcJ7fy7mahEXY+terGVNAQtCzZI=";
+        "libtree-sitter0.22_0.22.6-6+b1" =
+          "sha256-CiF3BSUbMoCDhcOcm85S3JQbACEBhJ+4e8Z59wvNEuA=";
+      };
+      # The staged apt-list pins (#783): per-suite Packages.xz
+      # indexes, per-arch hashes (the InRelease files are
+      # arch-independent - a shared attrset below).
+      aptPackagesHashes = {
+        trixie = "sha256-d3jT4/MDt924zg/nyNV0c6B2xr8ujyQfdUIdI5Y1JJg=";
+        trixie-updates = "sha256-7qhgxd6hFoDmQpmtsnNsI2fEI1djpm8rcMphzhtRl4o=";
+        trixie-backports = "sha256-Khh+s6JgQWWfgVzpPk9LsfcZWHlvzCBK9YUPIihjJlI=";
+        trixie-security = "sha256-Fkclr8evn8ht/QGcCbhCmdvatoHT8IbJSkEb85Gzv/A=";
+      };
     };
     aarch64 = {
       debianArch = "arm64";
@@ -102,6 +138,36 @@ let
       kernelFormat = "Image";
       nodeTar = "arm64";
       nodeHash = "sha256-XO0tSNHXGYc5t/hoBN4Bca77aCO2hLEjQdMyGvw8sLI=";
+      toolDebHashes = {
+        "git_2.47.3-0+deb13u1" = "sha256-jGselrImIRJg14FEciFaih7TjuN0AMQh1FQ5HBgHy1o=";
+        "gh_2.46.0-3" = "sha256-Txd1W4Ml9gz5cO9lHHEqOfda7ldmuP3rc2oc+inM2vo=";
+        "libcurl3t64-gnutls_8.14.1-2+deb13u7" =
+          "sha256-MTscwyfqAjOxXmAfJnwTpJIoOf7YdY6wKDVT0zXkoKo=";
+        "libngtcp2-16_1.11.0-1+deb13u1" =
+          "sha256-HO0odCKeSlAwYMJEcwuvdeYbHVRERysQ5QIvFZT0q4g=";
+        "libngtcp2-crypto-gnutls8_1.11.0-1+deb13u1" =
+          "sha256-SiICRThexyIvSiDkRFMoCLkBObcOqcfuqxecknons38=";
+        "emacs-nox_30.1+1-6+deb13u1" =
+          "sha256-O6tA9M05z3BuLivipIB4AakU7k54a0LRVJKg0fHdH0U=";
+        "emacs-bin-common_30.1+1-6+deb13u1" =
+          "sha256-QBMDZnlP5hGTD0yqvd2CmGvw91n6ZuchHKXASNNvZbE=";
+        "libasound2t64_1.2.14-1+deb13u1" =
+          "sha256-nICNgZzN3DfHk90xhsLs2Fiy/rJHTOu4g/cDhueJDTk=";
+        "libgccjit0_14.2.0-19" = "sha256-T7wTCRmqkj7+dtabDmqEBaHwhYfxBSpBQg9/u5+QsxM=";
+        "libisl23_0.27-1" = "sha256-IcSQ2z+l8KUXxVCQoZkzTaYWRYl3Lr2SLf8eVpx4UV0=";
+        "liblcms2-2_2.16-2+deb13u2" =
+          "sha256-ZjaZf8SIMnqNCVGgON9uUXilKz9eXMI4bUJlViH1Zy0=";
+        "libmpc3_1.3.1-1+b3" = "sha256-1M/gJqYk5RZByA7yr3c4cYVxT2LztchwNeYtntjZ7sE=";
+        "libmpfr6_4.2.2-1" = "sha256-YopO9YzGgViA9y6dOVOYSjeaAX5AQrxXXx/L85VNeaw=";
+        "libtree-sitter0.22_0.22.6-6+b1" =
+          "sha256-j+bx0pn/HupW8MKv8Ve8stuXW3for2/wq7tKGa0Uz4g=";
+      };
+      aptPackagesHashes = {
+        trixie = "sha256-vhazey90DwZuqT011W8E+U1jaT5aPrQhsFK/hvrnW80=";
+        trixie-updates = "sha256-7qhgxd6hFoDmQpmtsnNsI2fEI1djpm8rcMphzhtRl4o=";
+        trixie-backports = "sha256-fWkAeCm1nA+sISzlSRYk6yZuZ0+7T+h+/GY9RJ7UVbw=";
+        trixie-security = "sha256-wzA4A/dyRBa7x7IAfuCH89GGUNIur07tOjoSnjnK/VI=";
+      };
     };
   };
   facts =
@@ -248,6 +314,202 @@ let
       + "ripgrep_14.1.1-1+b4_${facts.debianArch}.deb";
     hash = facts.rgHash;
   };
+
+  # git and emacs (#783): Debian's own packages, pinned by pool
+  # URL and sha256 like the debs above and staged with the same
+  # linkage guard. The set is the ELF-level closure of
+  # /usr/bin/git and /usr/bin/emacs-nox against the cloud image's
+  # own library set - resolved by walking NEEDED sonames against
+  # the image tree, not by apt's dpkg-level closure (which drags
+  # emacs' native-comp JIT dev chain: binutils, gcc, glibc-dev).
+  # git links the gnutls flavor of libcurl (the image's own
+  # libcurl4t64 is the openssl flavor); emacs-nox links Debian's
+  # libgccjit (native-comp), whose own NEEDED set pulls the gcc
+  # math libraries. The dpkg database never learns about the
+  # staged files - the same unregistered-staging posture rsync,
+  # fd, and rg already carry.
+  allDebHashes = {
+    "emacs-common_30.1+1-6+deb13u1" =
+      "sha256-GiCwZBByCkMr1sgqRVqRm3CDAR4Co8e0YkPmXYWCeRs=";
+    "emacsen-common_3.0.8" = "sha256-ixZJUcEZN+riawUo9l111d2mSYXsjM8MtIYFhCtNVJU=";
+  };
+
+  toolDeb =
+    {
+      name ? null,
+      file,
+      pool,
+      security ? false,
+      all ? false,
+    }:
+    pkgs.fetchurl {
+      url =
+        (
+          if security then
+            "https://deb.debian.org/debian-security/"
+          else
+            "https://deb.debian.org/debian/"
+        )
+        + pool
+        + "/"
+        + file
+        + (if all then "_all.deb" else "_${facts.debianArch}.deb");
+      hash = if all then allDebHashes.${file} else facts.toolDebHashes.${file};
+    };
+
+  # The staged deb list (#783): version-pinned filenames; the
+  # per-arch (or _all) hash rides archFacts/allDebHashes above.
+  # `security` marks debs the trixie-security suite serves (their
+  # pool path lives under debian-security, not debian). The
+  # staging loop in debianRoot picks its payload class off `name`.
+  toolDebSpecs = [
+    {
+      name = "git";
+      file = "git_2.47.3-0+deb13u1";
+      pool = "pool/main/g/git";
+    }
+    {
+      name = "gh";
+      file = "gh_2.46.0-3";
+      pool = "pool/main/g/gh";
+    }
+    {
+      name = "libcurl3t64-gnutls";
+      file = "libcurl3t64-gnutls_8.14.1-2+deb13u7";
+      pool = "pool/updates/main/c/curl";
+      security = true;
+    }
+    {
+      name = "libngtcp2-16";
+      file = "libngtcp2-16_1.11.0-1+deb13u1";
+      pool = "pool/updates/main/n/ngtcp2";
+      security = true;
+    }
+    {
+      name = "libngtcp2-crypto-gnutls8";
+      file = "libngtcp2-crypto-gnutls8_1.11.0-1+deb13u1";
+      pool = "pool/updates/main/n/ngtcp2";
+      security = true;
+    }
+    {
+      name = "emacs-nox";
+      file = "emacs-nox_30.1+1-6+deb13u1";
+      pool = "pool/updates/main/e/emacs";
+      security = true;
+    }
+    {
+      name = "emacs-common";
+      file = "emacs-common_30.1+1-6+deb13u1";
+      pool = "pool/updates/main/e/emacs";
+      security = true;
+      all = true;
+    }
+    {
+      name = "emacs-bin-common";
+      file = "emacs-bin-common_30.1+1-6+deb13u1";
+      pool = "pool/updates/main/e/emacs";
+      security = true;
+    }
+    {
+      name = "emacsen-common";
+      file = "emacsen-common_3.0.8";
+      pool = "pool/main/e/emacsen-common";
+      all = true;
+    }
+    {
+      name = "libasound2t64";
+      file = "libasound2t64_1.2.14-1+deb13u1";
+      pool = "pool/main/a/alsa-lib";
+    }
+    {
+      name = "libgccjit0";
+      file = "libgccjit0_14.2.0-19";
+      pool = "pool/main/g/gcc-14";
+    }
+    {
+      name = "libisl23";
+      file = "libisl23_0.27-1";
+      pool = "pool/main/i/isl";
+    }
+    {
+      name = "liblcms2-2";
+      file = "liblcms2-2_2.16-2+deb13u2";
+      pool = "pool/updates/main/l/lcms2";
+      security = true;
+    }
+    {
+      name = "libmpc3";
+      file = "libmpc3_1.3.1-1+b3";
+      pool = "pool/main/m/mpclib3";
+    }
+    {
+      name = "libmpfr6";
+      file = "libmpfr6_4.2.2-1";
+      pool = "pool/main/m/mpfr4";
+    }
+    {
+      name = "libtree-sitter0.22";
+      file = "libtree-sitter0.22_0.22.6-6+b1";
+      pool = "pool/main/t/tree-sitter";
+    }
+  ];
+
+  # name=storepath pairs for the staging loop in debianRoot.
+  toolDebPairs = lib.concatMapStringsSep " " (
+    spec: "${spec.name}=${toolDeb spec}"
+  ) toolDebSpecs;
+
+  # The staged apt lists (#783): what `apt-get update` would
+  # fetch for the image's own sources (the mirror+file
+  # debian.list / debian-security.list the image carries),
+  # pinned at build time so a fresh workspace's first
+  # `apt-get install` resolves with no update - the update itself
+  # needs egress a fresh workspace may not have. The deb-src
+  # halves of the sources fetch nothing: these lists serve
+  # installing; `apt-get source` still needs a live update. The
+  # InRelease files are arch-independent, the Packages indexes
+  # are per-arch.
+  aptInReleaseHashes = {
+    trixie = "sha256-BYT7oy4T4KuChfsWwnreoewDpzZpwYcCghCU/WyoZnU=";
+    trixie-updates = "sha256-squnxhhOhtcWpFhKJh815Jea+3ZyIWNKZ3NOnnKiPRo=";
+    trixie-backports = "sha256-aZWg8CbjoCUJv8nEQ1lP1AdDBQlsXjcD/7fUKS9S0IQ=";
+    trixie-security = "sha256-mXUpI3i6ntCrEs5dMOZTor1FgO0UsQtR91HGwlHcwOI=";
+  };
+
+  aptSuites = [
+    {
+      suite = "trixie";
+      base = "https://deb.debian.org/debian";
+      mirror = "debian.list";
+    }
+    {
+      suite = "trixie-updates";
+      base = "https://deb.debian.org/debian";
+      mirror = "debian.list";
+    }
+    {
+      suite = "trixie-backports";
+      base = "https://deb.debian.org/debian";
+      mirror = "debian.list";
+    }
+    {
+      suite = "trixie-security";
+      base = "https://deb.debian.org/debian-security";
+      mirror = "debian-security.list";
+    }
+  ];
+
+  aptLists = map (s: {
+    inherit (s) suite mirror;
+    release = pkgs.fetchurl {
+      url = "${s.base}/dists/${s.suite}/InRelease";
+      hash = aptInReleaseHashes.${s.suite};
+    };
+    packages = pkgs.fetchurl {
+      url = "${s.base}/dists/${s.suite}/main/binary-${facts.debianArch}/Packages.xz";
+      hash = facts.aptPackagesHashes.${s.suite};
+    };
+  }) aptSuites;
 
   # The minimal initramfs (#37's shape, #96's module set): busybox,
   # the six modules the generic kernel needs to mount the ext4
@@ -1062,9 +1324,18 @@ let
           pkgs.qemu
           pkgs.e2fsprogs
           pkgs.kmod
+          pkgs.lz4 # the staged apt lists (#783)
           pkgs.util-linux
+          pkgs.xz # the staged apt lists (#783)
           (pkgs.python3.withPackages (ps: [ ]))
         ];
+        # name=storepath pairs for the git/emacs staging loop
+        # below, and suite metadata + fetchurl paths for the apt
+        # lists staging (#783).
+        inherit toolDebPairs;
+        aptListPairs = lib.concatMapStringsSep " " (
+          s: "${s.suite},${s.mirror},${s.release},${s.packages}"
+        ) aptLists;
       }
       ''
         set -eu
@@ -1422,6 +1693,97 @@ let
         deb_elf_guard "$root"/usr/lib/cargo/bin/fd
         deb_elf_guard "$root"/usr/bin/rg
 
+        # git and emacs (#783): Debian's own packages from the
+        # pinned debs above, payload-staged by name - the libs
+        # under the multiarch dir the ELF guard resolves against,
+        # git with its exec and template directories, emacs with
+        # its lisp trees and pdump (binaries alone cannot start:
+        # the dump and the compiled lisp are runtime data). Docs
+        # and git's perl halves stay out (the image ships
+        # perl-base only; core git is C). Unregistered in dpkg,
+        # the same posture rsync, fd, and rg carry.
+        for pair in $toolDebPairs; do
+          name=''${pair%%=*}
+          deb=''${pair#*=}
+          ex=tool-deb/$name
+          mkdir -p "$ex"
+          dpkg-deb -x "$deb" "$ex"
+          case "$name" in
+            lib*)
+              cp -a --no-preserve=ownership "$ex"/usr/lib/. \
+                "$root"/usr/lib/
+              ;;
+            gh)
+              mkdir -p "$root"/usr/bin
+              cp -a --no-preserve=ownership "$ex"/usr/bin/. \
+                "$root"/usr/bin/
+              ;;
+            git)
+              for path in usr/bin usr/lib/git-core usr/share/git-core; do
+                mkdir -p "$root"/"$path"
+                  cp -a --no-preserve=ownership "$ex"/"$path"/. \
+                  "$root"/"$path"/
+              done
+              ;;
+            emacs-nox)
+              for path in usr/bin usr/lib/emacs usr/libexec/emacs \
+                usr/share/emacs; do
+                mkdir -p "$root"/"$path"
+                  cp -a --no-preserve=ownership "$ex"/"$path"/. \
+                  "$root"/"$path"/
+              done
+              ;;
+            emacs-common)
+              for path in etc/emacs usr/share/emacs usr/lib/emacs; do
+                mkdir -p "$root"/"$path"
+                  cp -a --no-preserve=ownership "$ex"/"$path"/. \
+                  "$root"/"$path"/
+              done
+              ;;
+            emacs-bin-common)
+              cp -a --no-preserve=ownership "$ex"/usr/bin \
+                "$root"/usr/
+              ;;
+            emacsen-common)
+              for path in usr/share/emacsen-common usr/lib/emacsen-common; do
+                mkdir -p "$root"/"$path"
+                  cp -a --no-preserve=ownership "$ex"/"$path"/. \
+                  "$root"/"$path"/
+              done
+              ;;
+            *)
+              echo "tool deb $name has no staging class" >&2; exit 1 ;;
+          esac
+        done
+        # The distro names carry the .emacs suffix (alternatives
+        # would rename them); the plain names are image-made
+        # symlinks.
+        ln -sf emacs-nox "$root"/usr/bin/emacs
+        ln -sf emacsclient.emacs "$root"/usr/bin/emacsclient
+        ln -sf etags.emacs "$root"/usr/bin/etags
+        ln -sf ctags.emacs "$root"/usr/bin/ctags
+        deb_elf_guard "$root"/usr/bin/gh
+        deb_elf_guard "$root"/usr/bin/git
+        deb_elf_guard "$root"/usr/lib/git-core/git-remote-https
+        deb_elf_guard "$root"/usr/bin/emacs-nox
+        deb_elf_guard "$root"/usr/bin/emacsclient.emacs
+
+        # The staged apt lists (#783): under the exact names apt
+        # derives from the image's own mirror+file sources, an
+        # InRelease plus the lz4-compressed Packages index per
+        # suite - the byte shape `apt-get update` itself writes
+        # (verified against a live update's output). Staged, a
+        # fresh workspace's `apt-get install` resolves with no
+        # update run.
+        mkdir -p "$root"/var/lib/apt/lists/partial
+        for quad in $aptListPairs; do
+          IFS=, read -r suite mirror rel pkg <<<"$quad"
+          cp "$rel" \
+            "$root"/var/lib/apt/lists/_etc_apt_mirrors_"''${mirror}"_dists_"''${suite}"_InRelease
+          xz -dc "$pkg" | lz4 -q > \
+            "$root"/var/lib/apt/lists/_etc_apt_mirrors_"''${mirror}"_dists_"''${suite}"_main_binary-${facts.debianArch}_Packages.lz4
+        done
+
         # No baked host keys — ever (#110): each workspace generates
         # its own on first boot; an upstream image that started
         # shipping some would give every workspace the same keys.
@@ -1432,6 +1794,19 @@ let
         test -x "$root"/usr/bin/rsync
         test -x "$root"/usr/bin/fdfind
         test -x "$root"/usr/bin/rg
+        # git, vim, emacs on PATH (#783): vim ships with the base
+        # cloud image (the alternatives chain /usr/bin/vim ->
+        # /etc/alternatives/vim -> /usr/bin/vim.basic resolves only
+        # inside the guest; the build sandbox has no /etc/
+        # alternatives, so the assert names the chain's target),
+        # git and emacs stage from the pinned debs.
+        test -x "$root"/usr/bin/gh
+        test -x "$root"/usr/bin/git
+        test -L "$root"/usr/bin/vim
+        test -x "$root"/usr/bin/vim.basic
+        test -x "$root"/usr/bin/emacs
+        test -f \
+          "$root"/var/lib/apt/lists/_etc_apt_mirrors_debian.list_dists_trixie_main_binary-${facts.debianArch}_Packages.lz4
         test -x "$root"/usr/sbin/sshd
         # Sanity: the home-volume mount retry (#688) — the RUN's
         # target exists in the tree, and the rule's load-bearing
@@ -1549,6 +1924,20 @@ let
           | grep -q '^fdfind [0-9]'
         run_tool "$root"/usr/bin/rg --version | head -1 \
           | grep -q '^ripgrep [0-9]'
+
+        # git, vim, and emacs execute (#783): the same
+        # loader-and-library world the guest runs them in. emacs
+        # starts from its pdump; a scratch HOME keeps either from
+        # writing into the build user's home.
+        mkdir emacs-home
+        run_tool "$root"/usr/bin/gh --version \
+          | grep -q '^gh version [0-9]'
+        run_tool "$root"/usr/bin/git --version \
+          | grep -q '^git version [0-9]'
+        run_tool "$root"/usr/bin/vim.basic --version | head -1 \
+          | grep -q '^VIM - Vi IMproved'
+        HOME="$PWD"/emacs-home run_tool "$root"/usr/bin/emacs \
+          --version | head -1 | grep -q '^GNU Emacs [0-9]'
         # The dropin's load-bearing line, not just the file's
         # existence: a typo'd printf must fail the build here, not
         # in the opt-in smoke.

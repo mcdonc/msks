@@ -19,6 +19,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Guest images ship git, vim, emacs, and gh (#783).** Every
+  flavor (Debian, Fedora, NixOS) carries git, an editor, and the
+  GitHub CLI before any package install: Debian and Fedora
+  stage the distro's own packages from pinned debs/RPMs with the
+  usual linkage guards, the NixOS guest rides its system profile
+  (vim was already in the Debian base image). The Debian image
+  also ships apt's list state, so a fresh workspace's first
+  `apt-get install` resolves without an update run. The NixOS
+  guest's nix.conf turns on `nix-command` and `flakes`.
 - **Workspace rows read `stopping` through a stop's graceful
   window (#789).** A stop request now writes `stopping` before
   the graceful shutdown begins, so `msks ls` and a second TUI

@@ -338,6 +338,82 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     assert "gsub(/[\\[\\]]/" in build
 
 
+def test_the_images_ship_git_vim_emacs_and_gh() -> None:
+    """#783: every guest flavor carries git, vim, emacs, and the
+    GitHub CLI before any package install — the first clone, the
+    first file edit, and the first `gh pr view` all run offline.
+    Debian stages the distro's own debs at the ELF level (the
+    dpkg-level closure would drag emacs' JIT dev chain), Fedora
+    the distro's own RPMs the same way, NixOS rides the system
+    profile; the Debian image additionally ships apt's own list
+    state so `apt-get install` resolves without an update run a
+    fresh workspace has no egress for."""
+    debian = (REPO_ROOT / "nix" / "guest-debian.nix").read_text()
+    fedora = (REPO_ROOT / "nix" / "guest-fedora.nix").read_text()
+    nixos = (REPO_ROOT / "nix" / "guest-nixos-configuration.nix").read_text()
+    # Debian: the staged deb pins, both arches carrying hashes
+    # for every spec entry (the key is the versioned file base;
+    # the arch:all entries carry one shared hash).
+    for pin, times in [
+        ('"git_2.47.3-0+deb13u1"', 3),
+        ('"gh_2.46.0-3"', 3),
+        ('"emacs-nox_30.1+1-6+deb13u1"', 3),
+        ('"emacs-common_30.1+1-6+deb13u1"', 2),
+    ]:
+        assert debian.count(pin) >= times, pin
+    # vim ships with the base cloud image (vim, vim-common,
+    # vim-runtime, vim-tiny are installed in the pinned image);
+    # the build asserts the alternatives chain instead of
+    # staging a deb.
+    assert 'test -x "$root"/usr/bin/vim.basic' in debian
+    # The staging classes: git's exec and template trees, emacs'
+    # lisp and pdump payloads, the libraries under the multiarch
+    # dir, and gh's single binary.
+    assert 'name = "git";' in debian
+    assert 'name = "gh";' in debian
+    assert 'name = "emacs-nox";' in debian
+    assert 'dpkg-deb -x "$deb" "$ex"' in debian
+    assert 'ln -sf emacs-nox "$root"/usr/bin/emacs' in debian
+    # The ELF guard covers the staged tools (the #36 drift class).
+    assert 'deb_elf_guard "$root"/usr/bin/git' in debian
+    assert 'deb_elf_guard "$root"/usr/bin/gh' in debian
+    assert 'deb_elf_guard "$root"/usr/bin/emacs-nox' in debian
+    # Every staged launcher executes through the tree's own
+    # loader (#272's class) — the same world the guest runs it
+    # in. emacs' --version proves the pdump loads; deeper batch
+    # runs need the guest root's absolute data dirs.
+    assert 'run_tool "$root"/usr/bin/git --version' in debian
+    assert 'run_tool "$root"/usr/bin/gh --version' in debian
+    assert 'run_tool "$root"/usr/bin/emacs' in debian
+    # The apt list state (#783): staged under the exact names
+    # apt derives from the image's mirror+file sources, one
+    # InRelease plus an lz4 Packages per suite, both arches
+    # carrying index hashes.
+    assert "_etc_apt_mirrors_" in debian
+    assert "Packages.lz4" in debian
+    assert 'xz -dc "$pkg" | lz4 -q' in debian
+    assert "aptPackagesHashes = {" in debian
+    # Fedora: the distro's own RPMs, same pattern.
+    for pin in [
+        'name = "git-core";',
+        'name = "gh";',
+        'name = "emacs-nw";',
+        'name = "vim-enhanced";',
+    ]:
+        assert pin in fedora
+    assert 'rpm_elf_guard "$tree"/usr/bin/git' in fedora
+    assert 'rpm_elf_guard "$tree"/usr/bin/gh' in fedora
+    assert 'run_tool "$tree"/usr/bin/emacs' in fedora
+    assert 'ln -sf emacs-nw "$tree"/usr/bin/emacs' in fedora
+    # NixOS: the system profile carries the set, and the guest's
+    # nix.conf turns both experimental features on ambiently.
+    for pkg in ["pkgs.git", "pkgs.gh", "pkgs.vim", "pkgs.emacs-nox"]:
+        assert pkg in nixos
+    assert "experimental-features = [" in nixos
+    assert '"nix-command"' in nixos
+    assert '"flakes"' in nixos
+
+
 def test_the_nixos_image_ships_the_agent_toolchain() -> None:
     """The NixOS flavor's toolchain parity (#268): nixpkgs' own
     Node (the platform's packaging, floor-checked against pi's

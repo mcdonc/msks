@@ -140,6 +140,19 @@ in
     nix.settings.nix-path = nixSearchPath;
     nix.nixPath = nixSearchPath;
 
+    # The ambient experimental nix features (#783): a checkout
+    # that carries a flake.nix needs `flakes` before its first
+    # `nix build nixpkgs#…`, and the new CLI's installable syntax
+    # needs `nix-command` even for non-flake calls. The setting
+    # rides nix.conf, so every shell and every stripped-env
+    # invocation gets both without a per-user override or a
+    # --extra-experimental-features flag — the same nix.conf
+    # surface the search path uses above.
+    nix.settings.experimental-features = [
+      "nix-command"
+      "flakes"
+    ];
+
     system.stateVersion = lib.versions.majorMinor lib.version;
 
     # cloud-init owns the hostname (#370): the seed's
@@ -575,6 +588,17 @@ in
       # use path fd and rg stay off. The platform's own packaging,
       # like every tool on this profile.
       pkgs.curl
+      # git, vim, and emacs (#783): the first `git clone` and the
+      # first file edit both work before any package install. The
+      # no-X emacs build matches the Debian and Fedora images'
+      # terminal-only editors; vim is the nixpkgs default (no GUI
+      # flags — the workspace console is a serial pty).
+      pkgs.git
+      # gh (#783): the GitHub CLI agents drive PRs and issues
+      # with; nixpkgs' own package, like git beside it.
+      pkgs.gh
+      pkgs.vim
+      pkgs.emacs-nox
     ];
 
     # The model-discovery extension (#266, #268): planted the

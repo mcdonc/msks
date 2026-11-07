@@ -97,6 +97,26 @@ let
       ociArch = "amd64";
       nodeTar = "x64";
       nodeHash = "sha256-EISqNhlrukw6Xmmh7jiKbk/3KdrQlEX7zUNLKP48JK8=";
+      # The git/vim/emacs staged-rpm pins (#783), per-arch hashes
+      # over the shared spec list below (toolRpmSpecs).
+      toolRpmHashes = {
+        git-core = "sha256-tSZJS1GdShI8eiqGAHDxfcfZAFxldZaZDgPsKVR+fgE=";
+        gh = "sha256-VjPlPfLbMAEC3df8ZxTHCi5CQx25RF87yFkWUyZCL/A=";
+        emacs-nw = "sha256-vAcq0ono0iPUjNInPcAdLEZm2tZn+eKR/T7dBeUhLUg=";
+        emacs-common = "sha256-W+FHzdAW0X9mZhI77KGOccfMe+ra6rRfPcwTC1jtosc=";
+        emacsclient = "sha256-mLnTiqOFLPBYya1zRvaRsb0a9OMLoaJ6/eEFTgekcq0=";
+        emacs-filesystem = "sha256-32rbXjzYqV5N9S33JtRADeJ2U4gyjDEqd4DeB+ETCoI=";
+        vim-enhanced = "sha256-dtX9wt1u1eBJM2DZ/PmknCxkFAeijJgt74WZ8OKPMIA=";
+        vim-common = "sha256-R4k7Nik1lHsKFPlIvj7oW7Sj8HPg9pLvpBCUKxJLcFY=";
+        xxd = "sha256-ivEC2nTSR7SZ2ia2sricD+ZbiUyJDXJPdHjfeg6micM=";
+        alsa-lib = "sha256-zwTaL7Pn862Ob5EKSIiQiEvNGuMLkgPnvLitgU6jjbw=";
+        gpm-libs = "sha256-C4Hs71yN0b6xqs64VKqcw040yKQyLurp9HFmZzW1p7U=";
+        lcms2 = "sha256-gjFVPY9Ck0gZjKiM69xLN9lc6UN2deWjWkzdrWbyB0c=";
+        libgccjit = "sha256-CRCSlgY/oSkOG9n1WAFy7udVXAdMNrE1SRDSkLqE7Yo=";
+        libmpc = "sha256-lfHCt55840tSis1MUR+hSZqlxIvoEPzITyioQpGnvpg=";
+        libsodium = "sha256-l1eh4PX/0aXOfwsODwgt0R1xbfb5krmbmuqpsMo0qHE=";
+        libtree-sitter = "sha256-YcwlzPCAM3odPaZp32DgK5L7NyIOFMzc5w5xFE8E35Q=";
+      };
     };
     aarch64 = {
       imageSuffix = "aarch64";
@@ -111,7 +131,25 @@ let
       kernelFormat = "Image";
       ociArch = "arm64";
       nodeTar = "arm64";
-      nodeHash = "sha256-XO0tSNHXGYc5t/hoBN4Bca77aCO2hLEjQdMyGvw8sLI=";
+      nodeHash = "sha256-XO0tSNHXGYC5t/hoBN4Bca77aCO2hLEjQdMyGvw8sLI=";
+      toolRpmHashes = {
+        git-core = "sha256-BWHurQ1vOg7f8xk0ejOBI3+itthZHfvkyzaHSeAQI2o=";
+        gh = "sha256-2jo6iPiO8WQMMKAyNZushivjzlLcfScZ7zQUuD19FaU=";
+        emacs-nw = "sha256-8nHXtqZv2UoZrHguI6KXYdNH4FQL82hmSasLS25CdgY=";
+        emacs-common = "sha256-vvE6+OLpG03qsKvT/IkMIGQNO2pmdeBaAuSbPUfaDKY=";
+        emacsclient = "sha256-u1XHgz1V5lBUwwMr29aNZYa5WtNrHWhW1Mmh8wlCenw=";
+        emacs-filesystem = "sha256-u6d8jlSBn0A0vC0QKBcrhPjff+izVHgHNRWMxu6zrCE=";
+        vim-enhanced = "sha256-xtvlMGCNFP9KI3vUhNMCRsb33lHzaDjcWJjo3LyMN7U=";
+        vim-common = "sha256-C1nYQUJcLP9xzGDgJEvzze0GosC7vwefI3r2jW5ggVY=";
+        xxd = "sha256-njVRPAbG+ecbskJmx0BPCv7lJdRUNg28c+oQcAniBfU=";
+        alsa-lib = "sha256-4WQ3bUitBrVFkp2PHvyCnh2tNClGSN43AnKSe7+2GBQ=";
+        gpm-libs = "sha256-nfWZMKruwML6MPKUK5IIikEEwvdcmwymtZZm/jSqYN4=";
+        lcms2 = "sha256-5mgsnKZ+wvk+eJZQhD+2HtghQHrTEImF1aSVNgE0s8s=";
+        libgccjit = "sha256-RAfs9cihfw5vqpEDv1rXNQy2hf27i/LW/dcOkq2Se1w=";
+        libmpc = "sha256-3kgC0on6wFy8BLGKdUTzsgoFpIcE7ykpA7gXhFHJBc0=";
+        libsodium = "sha256-mTSwWiJLeDT5AxmWPQVhSasflO4Zvn6T9hSb4p0fQec=";
+        libtree-sitter = "sha256-73/1b+Ii6haBKX+VzX+DO1KEdte+QsCarbKwWWlGgoA=";
+      };
     };
   };
   facts =
@@ -228,6 +266,134 @@ let
     url = "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Everything/${facts.imageSuffix}/os/Packages/j/${facts.jemallocRpm}";
     hash = facts.jemallocHash;
   };
+
+  # git, vim, and emacs (#783): the distro's own RPMs from the
+  # F44 Everything repo, pinned by URL and sha256 like fd and rg.
+  # The set is the ELF-level closure of /usr/bin/git (git-core),
+  # /usr/bin/vim (vim-enhanced + vim-common's runtime), and
+  # /usr/bin/emacs-nw against the cloud image's own library set —
+  # resolved by walking NEEDED sonames against the image tree,
+  # not by dnf's rpm-level closure (which drags emacs'
+  # native-comp JIT dev chain: gcc, cpp, binutils, glibc-devel —
+  # and git's full perl stack; core git is C). The rpm database
+  # never learns about the staged files — the same
+  # unregistered-staging posture fd and rg already carry. The
+  # noarch hash is shared across arches.
+  noarchRpmHashes = {
+    vim-filesystem = "sha256-BFcWV8kCUBqCd22yDksJOfShE71/pu9iLJ60jKrF9xQ=";
+  };
+
+  toolRpm =
+    {
+      name,
+      version,
+      release,
+      rpmArch ? facts.imageSuffix,
+    }:
+    pkgs.fetchurl {
+      url = "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Everything/${facts.imageSuffix}/os/Packages/${
+        lib.toLower (builtins.substring 0 1 name)
+      }/${name}-${version}-${release}.${rpmArch}.rpm";
+      hash =
+        if rpmArch == "noarch" then
+          noarchRpmHashes.${name}
+        else
+          facts.toolRpmHashes.${name};
+    };
+
+  toolRpmSpecs = [
+    {
+      name = "git-core";
+      version = "2.53.0";
+      release = "1.fc44";
+    }
+    {
+      name = "gh";
+      version = "2.87.3";
+      release = "1.fc44";
+    }
+    {
+      name = "emacs-nw";
+      version = "30.2";
+      release = "16.fc44";
+    }
+    {
+      name = "emacs-common";
+      version = "30.2";
+      release = "16.fc44";
+    }
+    {
+      name = "emacsclient";
+      version = "30.2";
+      release = "16.fc44";
+    }
+    {
+      name = "emacs-filesystem";
+      version = "30.2";
+      release = "2.fc44";
+    }
+    {
+      name = "vim-enhanced";
+      version = "9.2.240";
+      release = "1.fc44";
+    }
+    {
+      name = "vim-common";
+      version = "9.2.240";
+      release = "1.fc44";
+    }
+    {
+      name = "vim-filesystem";
+      version = "9.2.240";
+      release = "1.fc44";
+      rpmArch = "noarch";
+    }
+    {
+      name = "xxd";
+      version = "9.2.240";
+      release = "1.fc44";
+    }
+    {
+      name = "alsa-lib";
+      version = "1.2.15.3";
+      release = "3.fc44";
+    }
+    {
+      name = "gpm-libs";
+      version = "1.20.7";
+      release = "53.fc44";
+    }
+    {
+      name = "lcms2";
+      version = "2.16";
+      release = "7.fc44";
+    }
+    {
+      name = "libgccjit";
+      version = "16.0.1";
+      release = "0.10.fc44";
+    }
+    {
+      name = "libmpc";
+      version = "1.4.0";
+      release = "1.fc44";
+    }
+    {
+      name = "libsodium";
+      version = "1.0.21";
+      release = "3.fc44";
+    }
+    {
+      name = "libtree-sitter";
+      version = "0.25.10";
+      release = "2.fc44";
+    }
+  ];
+
+  # name=storepath pairs for the staging loop in rootInner.
+  toolRpmPairs = lib.concatMapStringsSep " " (
+    spec: "${spec.name}=${toolRpm spec}"
+  ) toolRpmSpecs;
 
   # The agent toolchain's Node pin (#266): the official standalone
   # release, digest-pinned, that the overlay stages under
@@ -1126,6 +1292,129 @@ let
     rpm_elf_guard "$tree"/usr/bin/fd
     rpm_elf_guard "$tree"/usr/bin/rg
 
+    # git, vim, and emacs (#783): the distro's own RPMs from the
+    # pinned set above, payload-staged by name — the libs under
+    # the tree's library dirs (libDirs, where resolve_lib looks),
+    # git-core with its exec and template directories, vim with
+    # vim-common's runtime, emacs with its lisp trees and pdump
+    # (binaries alone cannot start: the dump and the compiled
+    # lisp are runtime data). Docs stay out; the rpm database
+    # never learns about the staged files.
+    for pair in $toolRpmPairs; do
+      name=''${pair%%=*}
+      rpm=''${pair#*=}
+      ex=tool-rpm/$name
+      mkdir -p "$ex"
+      (cd "$ex" && rpm2cpio "$rpm" | cpio -idm --quiet)
+      case "$name" in
+        alsa-lib|gpm-libs|lcms2|lib*)
+          for d in ${libDirs}; do
+            [ -e "$ex"/"$d" ] || continue
+            mkdir -p "$tree"/"$d"
+            cp -a --no-preserve=ownership "$ex"/"$d"/. \
+              "$tree"/"$d"/
+          done
+          ;;
+        gh)
+          mkdir -p "$tree"/usr/bin
+          cp -a --no-preserve=ownership "$ex"/usr/bin/. \
+            "$tree"/usr/bin/
+          ;;
+        git-core)
+          for path in usr/bin usr/libexec/git-core usr/share/git-core; do
+            mkdir -p "$tree"/"$path"
+              cp -a --no-preserve=ownership "$ex"/"$path"/. \
+              "$tree"/"$path"/
+          done
+          ;;
+        emacs-nw)
+          for path in usr/bin usr/libexec/emacs usr/lib/emacs \
+            usr/lib64/emacs usr/share/emacs; do
+            [ -e "$ex"/"$path" ] || continue
+            mkdir -p "$tree"/"$path"
+              cp -a --no-preserve=ownership "$ex"/"$path"/. \
+              "$tree"/"$path"/
+          done
+          ;;
+        emacs-common)
+          for path in etc usr/bin usr/lib/emacs usr/lib64/emacs \
+            usr/libexec/emacs usr/share/emacs; do
+            [ -e "$ex"/"$path" ] || continue
+            mkdir -p "$tree"/"$path"
+              cp -a --no-preserve=ownership "$ex"/"$path"/. \
+              "$tree"/"$path"/
+          done
+          ;;
+        emacsclient|xxd)
+          cp -a --no-preserve=ownership "$ex"/usr/bin \
+            "$tree"/usr/
+          ;;
+        emacs-filesystem)
+          for d in usr/lib usr/lib64; do
+            [ -e "$ex"/"$d" ] || continue
+            mkdir -p "$tree"/"$d"
+            cp -a --no-preserve=ownership "$ex"/"$d"/. \
+              "$tree"/"$d"/
+          done
+          ;;
+        vim-enhanced)
+          for path in usr/bin etc usr/lib; do
+            [ -e "$ex"/"$path" ] || continue
+            mkdir -p "$tree"/"$path"
+              cp -a --no-preserve=ownership "$ex"/"$path"/. \
+              "$tree"/"$path"/
+          done
+          ;;
+        vim-common)
+          for path in usr/share etc; do
+            [ -e "$ex"/"$path" ] || continue
+            mkdir -p "$tree"/"$path"
+              cp -a --no-preserve=ownership "$ex"/"$path"/. \
+              "$tree"/"$path"/
+          done
+          ;;
+        vim-filesystem)
+          for path in usr/share etc; do
+            [ -e "$ex"/"$path" ] || continue
+            mkdir -p "$tree"/"$path"
+              cp -a --no-preserve=ownership "$ex"/"$path"/. \
+              "$tree"/"$path"/
+          done
+          ;;
+        *)
+          echo "tool rpm $name has no staging class" >&2; exit 1 ;;
+      esac
+    done
+    # The no-X emacs binary is emacs-nw; the plain name is an
+    # image-made symlink.
+    ln -sf emacs-nw "$tree"/usr/bin/emacs
+    rpm_elf_guard "$tree"/usr/bin/gh
+    rpm_elf_guard "$tree"/usr/bin/git
+    rpm_elf_guard "$tree"/usr/libexec/git-core/git-remote-https
+    rpm_elf_guard "$tree"/usr/bin/vim
+    rpm_elf_guard "$tree"/usr/bin/emacs-nw
+    test -x "$tree"/usr/bin/gh
+    test -x "$tree"/usr/bin/git
+    test -x "$tree"/usr/bin/vim
+    test -x "$tree"/usr/bin/emacs
+    # git, vim, and emacs execute (#783): through the tree's own
+    # loader and libraries — the world the guest runs them in.
+    # A scratch HOME keeps emacs from writing into the build
+    # user's home.
+    ldso="$tree"${elfLoader}
+    libpath=""
+    for d in ${libDirs}; do
+      libpath="$libpath:$tree/$d"
+    done
+    run_tool() { "$ldso" --library-path "''${libpath#:}" "$@"; }
+    mkdir emacs-home
+    run_tool "$tree"/usr/bin/gh --version | grep -q '^gh version [0-9]'
+    run_tool "$tree"/usr/bin/git --version | grep -q '^git version [0-9]'
+    HOME="$PWD"/emacs-home run_tool "$tree"/usr/bin/vim \
+      --version | head -1 | grep -q '^VIM - Vi IMproved'
+    HOME="$PWD"/emacs-home run_tool "$tree"/usr/bin/emacs \
+      --version | head -1 | grep -q '^GNU Emacs [0-9]'
+
     # The metadata pins (#169's class, the btrfs cut): restore -m
     # carries the special bits into the fakeroot session's view,
     # and the pins assert they arrived — sudo's setuid grant and
@@ -1330,6 +1619,9 @@ let
   fedoraRoot =
     pkgs.runCommand "msks-fedora-root"
       {
+        # name=storepath pairs for the git/vim/emacs staging loop
+        # in rootInner (#783).
+        inherit toolRpmPairs;
         nativeBuildInputs = [
           pkgs.binutils # readelf: the staged-rpm soname guards
           pkgs.btrfs-progs
