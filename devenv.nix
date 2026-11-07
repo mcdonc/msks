@@ -68,8 +68,8 @@ let
   # one msks-build-guest-archive lands in the daemon state as the
   # default image; the NixOS archive builds standalone the same
   # way. flake.nix re-exposes the server output and the Debian and
-  # NixOS image archives for `nix build` — the devenv-less release
-  # path (#537); the Fedora archive is devenv-only.
+  # NixOS image archives for `nix build`, the devenv-less release
+  # path (#537). The Fedora archive is devenv-only.
   # releasePkgs carries the certifi overlay (#606) — the same one
   # flake.nix applies to its pkgs — so both halves build identical
   # store paths while the dev shell's plain pkgs stays untouched.
