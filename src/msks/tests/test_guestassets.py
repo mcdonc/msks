@@ -380,11 +380,14 @@ def test_the_images_ship_git_vim_emacs_and_gh() -> None:
     assert 'deb_elf_guard "$root"/usr/bin/emacs-nox' in debian
     # Every staged launcher executes through the tree's own
     # loader (#272's class) — the same world the guest runs it
-    # in. emacs' --version proves the pdump loads; deeper batch
-    # runs need the guest root's absolute data dirs.
+    # in. emacs is asserted by its runtime data instead (an
+    # emacs --version passes with the pdump and lisp deleted —
+    # the version string is compiled into the binary).
     assert 'run_tool "$root"/usr/bin/git --version' in debian
     assert 'run_tool "$root"/usr/bin/gh --version' in debian
-    assert 'run_tool "$root"/usr/bin/emacs' in debian
+    assert "emacs-*.pdmp" in debian
+    assert "usr/share/emacs/30.1/lisp" in debian
+    assert "mirrors/debian.list" in debian
     # The apt list state (#783): staged under the exact names
     # apt derives from the image's mirror+file sources, one
     # InRelease plus an lz4 Packages per suite, both arches
@@ -392,7 +395,13 @@ def test_the_images_ship_git_vim_emacs_and_gh() -> None:
     assert "_etc_apt_mirrors_" in debian
     assert "Packages.lz4" in debian
     assert 'xz -dc "$pkg" | lz4 -q' in debian
-    assert "aptPackagesHashes = {" in debian
+    # Only the stable main suite stages (the fast-rotating suites
+    # would rot the pins weekly; a workspace with egress refreshes
+    # itself) — the guard pins that shape.
+    assert "aptPackagesHashes.trixie" in debian
+    assert (
+        "trixie-updates" not in debian.split("aptSuites = [")[1].split("]")[0]
+    )
     # Fedora: the distro's own RPMs, same pattern.
     for pin in [
         'name = "git-core";',
@@ -403,8 +412,10 @@ def test_the_images_ship_git_vim_emacs_and_gh() -> None:
         assert pin in fedora
     assert 'rpm_elf_guard "$tree"/usr/bin/git' in fedora
     assert 'rpm_elf_guard "$tree"/usr/bin/gh' in fedora
-    assert 'run_tool "$tree"/usr/bin/emacs' in fedora
     assert 'ln -sf emacs-nw "$tree"/usr/bin/emacs' in fedora
+    assert "emacs-*.pdmp" in fedora
+    assert "usr/share/emacs/30.2/lisp" in fedora
+    assert "usr/share/vim/vim[0-9]*" in fedora
     # NixOS: the system profile carries the set, and the guest's
     # nix.conf turns both experimental features on ambiently.
     for pkg in ["pkgs.git", "pkgs.gh", "pkgs.vim", "pkgs.emacs-nox"]:

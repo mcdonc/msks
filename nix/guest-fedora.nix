@@ -1328,20 +1328,33 @@ let
           done
           ;;
         emacs-nw)
-          for path in usr/bin usr/libexec/emacs usr/lib/emacs \
-            usr/lib64/emacs usr/share/emacs; do
+          # usr/bin, the pdump under usr/libexec/emacs, and the
+          # lisp under usr/share/emacs are load-bearing: a
+          # missing path fails the build, not a workspace boot
+          # (the [ -e ] guards the lib dirs only, which differ
+          # by arch).
+          for path in usr/bin usr/libexec/emacs usr/share/emacs; do
+            mkdir -p "$tree"/"$path"
+            cp -a --no-preserve=ownership "$ex"/"$path"/. \
+              "$tree"/"$path"/
+          done
+          for path in usr/lib/emacs usr/lib64/emacs; do
             [ -e "$ex"/"$path" ] || continue
             mkdir -p "$tree"/"$path"
-              cp -a --no-preserve=ownership "$ex"/"$path"/. \
+            cp -a --no-preserve=ownership "$ex"/"$path"/. \
               "$tree"/"$path"/
           done
           ;;
         emacs-common)
-          for path in etc usr/bin usr/lib/emacs usr/lib64/emacs \
-            usr/libexec/emacs usr/share/emacs; do
+          for path in etc usr/bin usr/libexec/emacs usr/share/emacs; do
+            mkdir -p "$tree"/"$path"
+            cp -a --no-preserve=ownership "$ex"/"$path"/. \
+              "$tree"/"$path"/
+          done
+          for path in usr/lib/emacs usr/lib64/emacs; do
             [ -e "$ex"/"$path" ] || continue
             mkdir -p "$tree"/"$path"
-              cp -a --no-preserve=ownership "$ex"/"$path"/. \
+            cp -a --no-preserve=ownership "$ex"/"$path"/. \
               "$tree"/"$path"/
           done
           ;;
@@ -1397,10 +1410,20 @@ let
     test -x "$tree"/usr/bin/git
     test -x "$tree"/usr/bin/vim
     test -x "$tree"/usr/bin/emacs
-    # git, vim, and emacs execute (#783): through the tree's own
-    # loader and libraries — the world the guest runs them in.
-    # A scratch HOME keeps emacs from writing into the build
-    # user's home.
+    # emacs' and vim's runtime data (#783): the pdump emacs
+    # starts from, the compiled lisp it loads, and vim's runtime
+    # tree — a staging regression that loses any of them ships
+    # a binary that cannot start (or a vim without syntax), and
+    # nothing else catches it.
+    ls "$tree"/usr/libexec/emacs/30.2/*/emacs-*.pdmp >/dev/null
+    test -d "$tree"/usr/share/emacs/30.2/lisp
+    ls -d "$tree"/usr/share/vim/vim[0-9]* >/dev/null
+    # git, vim, and gh execute (#783): through the tree's own
+    # loader and libraries — the world the guest runs them in,
+    # under a scratch HOME. (emacs' --version passes with its
+    # pdump and lisp tree deleted — the version string is
+    # compiled into the binary — so the emacs half is asserted
+    # by the pdump/lisp/vim-runtime files in the sanity block.)
     ldso="$tree"${elfLoader}
     libpath=""
     for d in ${libDirs}; do
@@ -1412,8 +1435,6 @@ let
     run_tool "$tree"/usr/bin/git --version | grep -q '^git version [0-9]'
     HOME="$PWD"/emacs-home run_tool "$tree"/usr/bin/vim \
       --version | head -1 | grep -q '^VIM - Vi IMproved'
-    HOME="$PWD"/emacs-home run_tool "$tree"/usr/bin/emacs \
-      --version | head -1 | grep -q '^GNU Emacs [0-9]'
 
     # The metadata pins (#169's class, the btrfs cut): restore -m
     # carries the special bits into the fakeroot session's view,

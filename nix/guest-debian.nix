@@ -119,12 +119,7 @@ let
       # The staged apt-list pins (#783): per-suite Packages.xz
       # indexes, per-arch hashes (the InRelease files are
       # arch-independent - a shared attrset below).
-      aptPackagesHashes = {
-        trixie = "sha256-d3jT4/MDt924zg/nyNV0c6B2xr8ujyQfdUIdI5Y1JJg=";
-        trixie-updates = "sha256-7qhgxd6hFoDmQpmtsnNsI2fEI1djpm8rcMphzhtRl4o=";
-        trixie-backports = "sha256-Khh+s6JgQWWfgVzpPk9LsfcZWHlvzCBK9YUPIihjJlI=";
-        trixie-security = "sha256-Fkclr8evn8ht/QGcCbhCmdvatoHT8IbJSkEb85Gzv/A=";
-      };
+      aptPackagesHashes.trixie = "sha256-d3jT4/MDt924zg/nyNV0c6B2xr8ujyQfdUIdI5Y1JJg=";
     };
     aarch64 = {
       debianArch = "arm64";
@@ -162,12 +157,7 @@ let
         "libtree-sitter0.22_0.22.6-6+b1" =
           "sha256-j+bx0pn/HupW8MKv8Ve8stuXW3for2/wq7tKGa0Uz4g=";
       };
-      aptPackagesHashes = {
-        trixie = "sha256-vhazey90DwZuqT011W8E+U1jaT5aPrQhsFK/hvrnW80=";
-        trixie-updates = "sha256-7qhgxd6hFoDmQpmtsnNsI2fEI1djpm8rcMphzhtRl4o=";
-        trixie-backports = "sha256-fWkAeCm1nA+sISzlSRYk6yZuZ0+7T+h+/GY9RJ7UVbw=";
-        trixie-security = "sha256-wzA4A/dyRBa7x7IAfuCH89GGUNIur07tOjoSnjnK/VI=";
-      };
+      aptPackagesHashes.trixie = "sha256-vhazey90DwZuqT011W8E+U1jaT5aPrQhsFK/hvrnW80=";
     };
   };
   facts =
@@ -319,14 +309,14 @@ let
   # URL and sha256 like the debs above and staged with the same
   # linkage guard. The set is the ELF-level closure of
   # /usr/bin/git and /usr/bin/emacs-nox against the cloud image's
-  # own library set - resolved by walking NEEDED sonames against
+  # own library set — resolved by walking NEEDED sonames against
   # the image tree, not by apt's dpkg-level closure (which drags
   # emacs' native-comp JIT dev chain: binutils, gcc, glibc-dev).
   # git links the gnutls flavor of libcurl (the image's own
   # libcurl4t64 is the openssl flavor); emacs-nox links Debian's
   # libgccjit (native-comp), whose own NEEDED set pulls the gcc
   # math libraries. The dpkg database never learns about the
-  # staged files - the same unregistered-staging posture rsync,
+  # staged files — the same unregistered-staging posture rsync,
   # fd, and rg already carry.
   allDebHashes = {
     "emacs-common_30.1+1-6+deb13u1" =
@@ -336,7 +326,6 @@ let
 
   toolDeb =
     {
-      name ? null,
       file,
       pool,
       security ? false,
@@ -454,48 +443,43 @@ let
     }
   ];
 
-  # name=storepath pairs for the staging loop in debianRoot.
+  # name=storepath pairs for the staging loop in debianRoot. The
+  # fetchurl takes the pin fields only — `name` rides the pair
+  # for the staging class, not the URL.
   toolDebPairs = lib.concatMapStringsSep " " (
-    spec: "${spec.name}=${toolDeb spec}"
+    spec: "${spec.name}=${toolDeb (builtins.removeAttrs spec [ "name" ])}"
   ) toolDebSpecs;
 
   # The staged apt lists (#783): what `apt-get update` would
   # fetch for the image's own sources (the mirror+file
   # debian.list / debian-security.list the image carries),
   # pinned at build time so a fresh workspace's first
-  # `apt-get install` resolves with no update - the update itself
+  # `apt-get install` resolves with no update — the update itself
   # needs egress a fresh workspace may not have. The deb-src
   # halves of the sources fetch nothing: these lists serve
   # installing; `apt-get source` still needs a live update. The
   # InRelease files are arch-independent, the Packages indexes
   # are per-arch.
-  aptInReleaseHashes = {
-    trixie = "sha256-BYT7oy4T4KuChfsWwnreoewDpzZpwYcCghCU/WyoZnU=";
-    trixie-updates = "sha256-squnxhhOhtcWpFhKJh815Jea+3ZyIWNKZ3NOnnKiPRo=";
-    trixie-backports = "sha256-aZWg8CbjoCUJv8nEQ1lP1AdDBQlsXjcD/7fUKS9S0IQ=";
-    trixie-security = "sha256-mXUpI3i6ntCrEs5dMOZTor1FgO0UsQtR91HGwlHcwOI=";
-  };
+  # Only the stable `trixie` suite is staged, at the live
+  # mirror: the main index changes at a point release — the same
+  # cadence as the dated cloud image pin this file already
+  # carries, re-pinned deliberately when it moves. The
+  # updates/backports/security indexes rotate on every SRU and
+  # security push (weekly or faster) and would rot between one
+  # build and the next; a workspace that wants current security
+  # fixes runs its own `apt-get update` — and needs egress to
+  # install anything anyway, which is exactly when that update
+  # becomes possible. The deb-src halves of the sources fetch
+  # nothing: these lists serve installing; `apt-get source`
+  # still needs a live update. The InRelease file is
+  # arch-independent, the Packages index is per-arch.
+  aptInReleaseHashes.trixie = "sha256-BYT7oy4T4KuChfsWwnreoewDpzZpwYcCghCU/WyoZnU=";
 
   aptSuites = [
     {
       suite = "trixie";
       base = "https://deb.debian.org/debian";
       mirror = "debian.list";
-    }
-    {
-      suite = "trixie-updates";
-      base = "https://deb.debian.org/debian";
-      mirror = "debian.list";
-    }
-    {
-      suite = "trixie-backports";
-      base = "https://deb.debian.org/debian";
-      mirror = "debian.list";
-    }
-    {
-      suite = "trixie-security";
-      base = "https://deb.debian.org/debian-security";
-      mirror = "debian-security.list";
     }
   ];
 
@@ -1694,7 +1678,7 @@ let
         deb_elf_guard "$root"/usr/bin/rg
 
         # git and emacs (#783): Debian's own packages from the
-        # pinned debs above, payload-staged by name - the libs
+        # pinned debs above, payload-staged by name — the libs
         # under the multiarch dir the ELF guard resolves against,
         # git with its exec and template directories, emacs with
         # its lisp trees and pdump (binaries alone cannot start:
@@ -1771,7 +1755,7 @@ let
         # The staged apt lists (#783): under the exact names apt
         # derives from the image's own mirror+file sources, an
         # InRelease plus the lz4-compressed Packages index per
-        # suite - the byte shape `apt-get update` itself writes
+        # suite — the byte shape `apt-get update` itself writes
         # (verified against a live update's output). Staged, a
         # fresh workspace's `apt-get install` resolves with no
         # update run.
@@ -1805,6 +1789,16 @@ let
         test -L "$root"/usr/bin/vim
         test -x "$root"/usr/bin/vim.basic
         test -x "$root"/usr/bin/emacs
+        # emacs' runtime data (#783): the pdump emacs starts from
+        # and the compiled lisp it loads — a staging regression
+        # that loses either ships a binary that cannot start, and
+        # nothing else catches it. The staged apt lists' names
+        # derive from the image's own mirrors files, so their
+        # presence is load-bearing for the lists below.
+        ls "$root"/usr/libexec/emacs/30.1/*/emacs-*.pdmp >/dev/null
+        test -d "$root"/usr/share/emacs/30.1/lisp
+        test -f "$root"/etc/apt/mirrors/debian.list
+        test -f "$root"/etc/apt/mirrors/debian-security.list
         test -f \
           "$root"/var/lib/apt/lists/_etc_apt_mirrors_debian.list_dists_trixie_main_binary-${facts.debianArch}_Packages.lz4
         test -x "$root"/usr/sbin/sshd
@@ -1925,10 +1919,14 @@ let
         run_tool "$root"/usr/bin/rg --version | head -1 \
           | grep -q '^ripgrep [0-9]'
 
-        # git, vim, and emacs execute (#783): the same
-        # loader-and-library world the guest runs them in. emacs
-        # starts from its pdump; a scratch HOME keeps either from
-        # writing into the build user's home.
+        # git, vim, and gh execute (#783): the same
+        # loader-and-library world the guest runs them in, under a
+        # scratch HOME. (emacs' --version passes with its pdump
+        # and lisp tree deleted — the version string is compiled
+        # into the binary — so the emacs half is asserted by the
+        # pdump/lisp files in the sanity block, not by an
+        # execution the data dirs cannot back at build time: they
+        # resolve against the sandbox root, not the tree.)
         mkdir emacs-home
         run_tool "$root"/usr/bin/gh --version \
           | grep -q '^gh version [0-9]'
@@ -1936,8 +1934,6 @@ let
           | grep -q '^git version [0-9]'
         run_tool "$root"/usr/bin/vim.basic --version | head -1 \
           | grep -q '^VIM - Vi IMproved'
-        HOME="$PWD"/emacs-home run_tool "$root"/usr/bin/emacs \
-          --version | head -1 | grep -q '^GNU Emacs [0-9]'
         # The dropin's load-bearing line, not just the file's
         # existence: a typo'd printf must fail the build here, not
         # in the opt-in smoke.
