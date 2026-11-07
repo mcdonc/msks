@@ -87,8 +87,10 @@ class FormWalk:
 #: The create form's fields (#309): the create body's optional
 #: inputs in walk order — a short label at the left of each
 #: row, the hint riding the input's placeholder (the image
-#: select's hint is its blank prompt; the root/home and user
-#: placeholders name their defaults at mount).
+#: select's hint is its blank prompt; the root/home hints carry
+#: the MiB unit alone, the create-defaults fetch supplying the
+#: number; the user placeholder is the invoking account at
+#: mount).
 FORM_FIELDS = (
     ("name", "name", "workspace name"),
     # The hint rides the expanded list's first row too, so the

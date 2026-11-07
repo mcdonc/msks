@@ -132,8 +132,9 @@ LIMA_FLOOR = (2, 2, 1)
 
 #: The sizing floors (#721): below these the VM cannot hold the
 #: daemon and a workspace (the state dir, the image store, and a
-#: workspace's two disks under 20 GiB of disk; the daemon and a
-#: workspace's guest under 4 GiB of memory; two vCPUs).
+#: workspace's two sparse disks — 40 GiB at the create defaults,
+#: filled on demand; the daemon and a workspace's guest under
+#: 4 GiB of memory; two vCPUs).
 SHAPE_FLOORS = {"cpus": 2, "memory": 4, "disk": 20}
 
 #: Where the wheel installs inside the VM and the paths the unit

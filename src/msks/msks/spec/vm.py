@@ -33,7 +33,7 @@ class VmSpec:
     initrd: Path | None = None
     # Persistent-artifact sizes (#14): the root overlay's virtual
     # size and the home volume's size, both fixed at create.
-    root_mib: int = 10240
+    root_mib: int = 20480
     home_mib: int = 20480
     # Egress networking (#52): the workspace boots with a virtio-net
     # NIC onto a per-VM host tap — the default, so a

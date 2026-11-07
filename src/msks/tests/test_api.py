@@ -227,7 +227,7 @@ async def test_workspace_lifecycle(client) -> None:
     # create, and the row records its host and artifact sizes.
     assert ("prepare", wid) in stub.calls
     assert created.json()["host"]
-    assert created.json()["root_mib"] == 10240
+    assert created.json()["root_mib"] == 20480
     assert created.json()["home_mib"] == 20480
     dup = await http.post(
         "/api/v1/workspaces",
