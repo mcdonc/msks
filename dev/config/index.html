@@ -1355,8 +1355,8 @@ the file itself carries them all at one level.</p>
 <td><code>shutdown_timeout_s</code></td>
 <td><code>MSKSD_SHUTDOWN_TIMEOUT_S</code></td>
 <td>float</td>
-<td><code>20.0</code></td>
-<td>Seconds a workspace stop waits for the guest to power off.</td>
+<td><code>90.0</code></td>
+<td>Seconds a workspace stop waits for the guest to power off before the fallback kill. A CPU-saturated guest can need longer than the old 20s default to service the ACPI power button. The client's own wait for the stop answer is 120s.</td>
 </tr>
 <tr>
 <td><code>console_wait_timeout_s</code></td>

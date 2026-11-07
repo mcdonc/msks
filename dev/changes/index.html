@@ -1536,6 +1536,14 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong><code>shutdown_timeout_s</code> defaults to 90 seconds (#787).</strong> A
+  workspace stop now waits up to 90s for the guest to power off
+  (was 20s). An idle guest still answers in seconds.
+  <code>MSKSD_SHUTDOWN_TIMEOUT_S</code> still overrides. The dev daemon's
+  supervised stop grace moves to 180s to cover the longer stop
+  cycle, matching the product unit's window.</p>
+</li>
+<li>
 <p><strong>New workspaces default to a 20 GiB root overlay (#784).</strong> The
   create default for <code>root_mib</code> moves from 10240 to 20480 on every
   surface (TUI create form, CLI, API) — NixOS guests' nix store
