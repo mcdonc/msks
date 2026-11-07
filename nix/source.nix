@@ -1,7 +1,7 @@
-# The filtered source every msks wheel build compiles from (#537,
-# factored out of msks-pkg.nix so the daemon and client packages
-# share one tree definition — the two closures must not drift to
-# two different source shapes).
+# The filtered source the msks wheel build compiles from (#537,
+# factored out of msks-pkg.nix; nix/module.nix's own callPackage
+# resolves the same tree, so the two builds cannot drift to two
+# different source shapes).
 #
 # Only what hatchling reads: pyproject context at the root plus the
 # package tree. Keeps .devenv/worktree noise out of the hash
