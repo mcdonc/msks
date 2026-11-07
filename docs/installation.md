@@ -64,9 +64,9 @@ Setting `enable = true` does five things:
 - **The service.** `msksd.service` starts at boot as the dedicated
   `msksd` system user. The user reaches `/dev/kvm` through the `kvm`
   group.
-- **The socket listener.** The daemon serves `/run/msksd/msksd.sock`
-  with peer-credential authentication: no TLS, no token. The unit owns
-  `/run/msksd` through its `RuntimeDirectory`.
+- **The TCP listener.** The daemon serves its API on HTTPS + WSS at
+  `listenAddress:port` (the default `127.0.0.1:8660`), with TLS and
+  bearer tokens.
 - **The settings file.** The module generates `msksd.yaml` into the nix
   store at build time, with every tool path pointing into the store. The
   [Configuration](config.md) chapter documents the keys the module
@@ -101,43 +101,52 @@ the PATH binaries come from one derivation either way.
 
 ### Connecting the client
 
-The socket is the daemon's listener, and the client finds it on its
-own: `msks` with no configuration dials `/run/msksd/msksd.sock`. The
-connection authenticates through the kernel's peer credentials, with
-no token and no certificate.
+The daemon's API listens on HTTPS at `127.0.0.1:8660` by default.
+A client exports three variables:
 
-Access is the socket group. The default group is the daemon's own
-(`msksd`), whose only member is the daemon user. Name a group of
-operators to let them use the client:
-
-```nix
-services.msksd.socket.group = "wheel";
+```bash
+export MSKSC_URL=https://127.0.0.1:8660
+export MSKSC_TOKEN=<the bootstrap token from /etc/msksd/env>
+export MSKSC_CAFILE=/var/lib/msksd/msks-ca.pem
 ```
 
-The module creates the group, adds it to the unit's
-`SupplementaryGroups`, and the daemon moves the socket file into it at
-bind. Members of the group run `msks` with no environment. A
-same-host client needs no token.
+The `environmentFile` from the secrets paragraph carries the
+bootstrap token that seeds the first API credential, and clients use
+tokens minted from it. The daemon writes `msks-ca.pem` into its state
+directory on first serve (`/var/lib/msksd` under the module). The
+daemon's TLS certificate covers exactly the address in
+`listenAddress`. A remote client verifies that name, and the hostname
+it dials must match it. The [client
+environment](cli.md#client-environment) table documents each variable,
+and the [API](api.md) chapter documents token minting past the
+bootstrap credential.
 
-A client on another host needs the TCP listener. Turn it on:
+A client on another host needs the listener reachable. Set
+`listenAddress` off loopback and `openFirewall = true`:
 
 ```nix
-services.msksd.tcp.enable = true;
 services.msksd.listenAddress = "0.0.0.0";
 services.msksd.openFirewall = true;
 ```
 
-The TCP listener serves HTTPS + WSS with TLS and bearer tokens beside
-the socket. The `environmentFile` from the secrets paragraph carries
-the bootstrap token that seeds the first API credential, and remote
-clients use tokens minted from it. The daemon's TLS certificate
-covers exactly the address in `listenAddress`. A remote client
-verifies that name, and the hostname it dials must match it. The
-remote client exports `MSKSC_URL`, `MSKSC_TOKEN`, and `MSKSC_CAFILE`.
-The CA file is `msks-ca.pem` under the daemon's state directory. The
-[client environment](cli.md#client-environment) table documents each
-variable, and the [API](api.md) chapter documents token minting past
-the bootstrap credential.
+### The socket listener instead
+
+The daemon can serve same-host clients through a unix socket with
+peer-credential authentication: no TLS, no token. Turn it on beside
+(or instead of) the TCP listener:
+
+```nix
+services.msksd.socket.enable = true;
+services.msksd.socket.group = "wheel";
+services.msksd.tcp.enable = false;   # the socket alone
+```
+
+The unit owns `/run/msksd` through its `RuntimeDirectory`, and the
+socket lands at `/run/msksd/msksd.sock`. Access is the socket group:
+the module creates the group, adds it to the unit's
+`SupplementaryGroups`, and the daemon moves the socket file into it
+at bind. Members of the group run `msks` with no configuration — the
+unconfigured client probes that path on its own.
 
 ## What the setup lands
 

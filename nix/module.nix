@@ -90,10 +90,10 @@ let
     lib.generators.toYAML { } (
       {
         state_dir = cfg.stateDir;
-        # #799: the socket is the module's listener; the TCP
-        # listener joins only when tcp.enable names it, and an
-        # empty host keeps it off (the daemon's mirror of the
-        # socket setting's empty string).
+        # #799: TCP is the module's default listener; the socket
+        # joins when socket.enable names it (and tcp.enable off
+        # leaves it alone — an empty host keeps TCP off, the
+        # daemon's mirror of the socket setting's empty string).
         host = lib.optionalString cfg.tcp.enable cfg.listenAddress;
         port = cfg.port;
         socket = lib.optionalString cfg.socket.enable "/run/msksd/msksd.sock";
@@ -159,30 +159,31 @@ in
       type = lib.types.str;
       default = "127.0.0.1";
       description = ''
-        The address the TCP listener binds when tcp.enable is
-        set. The TLS certificate's name covers exactly this
-        address, and the daemon serves it on every interface
-        when set to a wildcard — pair a wildcard with openFirewall
-        and a bootstrap token.
+        The address the TCP listener binds while tcp.enable is
+        set (the default). The TLS certificate's name covers
+        exactly this address, and the daemon serves it on every
+        interface when set to a wildcard — pair a wildcard with
+        openFirewall and a bootstrap token.
       '';
     };
 
     port = lib.mkOption {
       type = lib.types.port;
       default = 8660;
-      description = "The port the TCP listener binds when tcp.enable is set (a port below 1024 keeps CAP_NET_BIND_SERVICE even with egress off).";
+      description = "The port the TCP listener binds while tcp.enable is set (a port below 1024 keeps CAP_NET_BIND_SERVICE even with egress off).";
     };
 
     socket = {
       enable = lib.mkOption {
         type = lib.types.bool;
-        default = true;
+        default = false;
         description = ''
           The local listener (#799): the daemon serves
           /run/msksd/msksd.sock with peer-credential
-          authentication — no TLS, no token. The socket is the
-          module's default listener; same-host clients in its
-          group run the client with no configuration.
+          authentication — no TLS, no token — beside the TCP
+          listener. Same-host clients in its group run the
+          client with no configuration; turning tcp.enable off
+          makes the socket the only listener.
         '';
       };
 
@@ -202,12 +203,13 @@ in
     tcp = {
       enable = lib.mkOption {
         type = lib.types.bool;
-        default = false;
+        default = true;
         description = ''
-          The TCP listener (#799): HTTPS + WSS with TLS and bearer
-          tokens, the shape a remote client needs. Off by default
-          — the socket serves same-host clients — and setting it
-          makes listenAddress, port, and openFirewall apply.
+          The TCP listener: HTTPS + WSS with TLS and bearer
+          tokens, the shape a remote client needs. The default
+          listener; listenAddress, port, and openFirewall apply
+          while it serves, and turning it off (with the socket
+          on) leaves the socket alone (#799).
         '';
       };
     };

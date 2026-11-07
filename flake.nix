@@ -76,20 +76,25 @@
         };
       };
       inert = evalConfig { enable = false; };
-      # #799: the TCP-enabled shape — socket and TCP both serve
-      # (remote clients need the TLS+token surface).
-      tcp = evalConfig {
+      # #799: the socketed shape — socket alone (tcp off) with
+      # the shared group, and the both-on shape beside it.
+      socketed = evalConfig {
         enable = true;
-        tcp.enable = true;
-        egress.uplink = "eno4";
-      };
-      grouped = evalConfig {
-        enable = true;
-        socket.group = "msksops";
+        socket = {
+          enable = true;
+          group = "msksops";
+        };
+        tcp.enable = false;
         egress = {
           enable = false;
           uplink = null;
         };
+      };
+      both = evalConfig {
+        enable = true;
+        socket.enable = true;
+        tcp.enable = true;
+        egress.uplink = "eno4";
       };
       hasTun = c: builtins.any (m: m == "tun") c.boot.kernelModules;
       # Package names compared as strings in the check's build:
@@ -137,11 +142,13 @@
             # #799: the generated settings file, read from the
             # store — the yaml the ExecStart names — pins the
             # listener wiring per branch.
-            execTcp = tcp.systemd.services.msksd.serviceConfig.ExecStart;
-            execGrouped = grouped.systemd.services.msksd.serviceConfig.ExecStart;
+            execSocketed = socketed.systemd.services.msksd.serviceConfig.ExecStart;
+            execBoth = both.systemd.services.msksd.serviceConfig.ExecStart;
             runtimeDir = on.systemd.services.msksd.serviceConfig.RuntimeDirectory or "";
-            groupExists = pkgs.lib.boolToString (grouped.users.groups ? msksops);
-            suppGroups = grouped.systemd.services.msksd.serviceConfig.SupplementaryGroups;
+            socketRuntimeDir =
+              socketed.systemd.services.msksd.serviceConfig.RuntimeDirectory or "";
+            groupExists = pkgs.lib.boolToString (socketed.users.groups ? msksops);
+            suppGroups = socketed.systemd.services.msksd.serviceConfig.SupplementaryGroups;
             inherit pkgOn pathOn pathInert;
           }
           ''
@@ -178,33 +185,39 @@
                 exit 1
                 ;;
             esac
-            # #799: the default branch serves the socket alone —
-            # the yaml names the socket path and an empty host —
-            # and the unit owns /run/msksd for it; the tcp branch
-            # carries the address.
+            # #799: the default branch serves TCP alone — the
+            # yaml carries the address and the socket's empty
+            # disable spelling, and the unit claims no
+            # RuntimeDirectory; the socketed branch flips both
+            # (the socket path, the empty host, the share, and
+            # /run/msksd), and the both branch carries the two
+            # listeners together.
             cfg_on=''${execOn##* --config }
-            grep -qF '"socket":"/run/msksd/msksd.sock"' "$cfg_on" || {
-              echo "fail: default branch lost the socket path in msksd.yaml"
+            grep -qF '"host":"127.0.0.1"' "$cfg_on" || {
+              echo "fail: default branch lost the listen address in msksd.yaml"
               exit 1
             }
-            grep -qF '"host":""' "$cfg_on" || {
-              echo "fail: default branch serves TCP — host must be empty in msksd.yaml"
+            grep -qF '"socket":""' "$cfg_on" || {
+              echo "fail: default branch bound the socket — socket must be empty in msksd.yaml"
               exit 1
             }
-            test "$runtimeDir" = "msksd" || {
-              echo "fail: the unit lost RuntimeDirectory=msksd for the socket"
+            test "$runtimeDir" = "" || {
+              echo "fail: default branch claimed RuntimeDirectory without the socket"
               exit 1
             }
-            cfg_tcp=''${execTcp##* --config }
-            grep -qF '"host":"127.0.0.1"' "$cfg_tcp" || {
-              echo "fail: tcp branch lost the listen address in msksd.yaml"
+            cfg_socketed=''${execSocketed##* --config }
+            grep -qF '"host":""' "$cfg_socketed" || {
+              echo "fail: socketed branch serves TCP — host must be empty in msksd.yaml"
               exit 1
             }
-            grep -qF '"socket":"/run/msksd/msksd.sock"' "$cfg_tcp" || {
-              echo "fail: tcp branch lost the socket path in msksd.yaml"
+            grep -qF '"socket":"/run/msksd/msksd.sock"' "$cfg_socketed" || {
+              echo "fail: socketed branch lost the socket path in msksd.yaml"
               exit 1
             }
-            cfg_grouped=''${execGrouped##* --config }
+            test "$socketRuntimeDir" = "msksd" || {
+              echo "fail: socketed branch lost RuntimeDirectory=msksd for the socket"
+              exit 1
+            }
             test "$groupExists" = "true" || {
               echo "fail: socket.group never created its group"
               exit 1
@@ -213,8 +226,17 @@
               *" msksops "*) ;;
               *) echo "fail: the unit lost the socket group in SupplementaryGroups"; exit 1 ;;
             esac
-            grep -qF '"socket_group":"msksops"' "$cfg_grouped" || {
-              echo "fail: grouped branch lost socket_group in msksd.yaml"
+            grep -qF '"socket_group":"msksops"' "$cfg_socketed" || {
+              echo "fail: socketed branch lost socket_group in msksd.yaml"
+              exit 1
+            }
+            cfg_both=''${execBoth##* --config }
+            grep -qF '"host":"127.0.0.1"' "$cfg_both" || {
+              echo "fail: both branch lost the listen address in msksd.yaml"
+              exit 1
+            }
+            grep -qF '"socket":"/run/msksd/msksd.sock"' "$cfg_both" || {
+              echo "fail: both branch lost the socket path in msksd.yaml"
               exit 1
             }
             touch "$out"
