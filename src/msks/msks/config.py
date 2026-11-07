@@ -546,7 +546,7 @@ def render_template() -> str:
 # socket_wait_timeout_s: 10.0   # seconds to wait for the VMM API
 #                           # socket at start
 # request_timeout_s: 5.0    # seconds per VMM API request
-# shutdown_timeout_s: 20.0  # seconds a stop waits for guest poweroff
+# shutdown_timeout_s: 90.0  # seconds a stop waits for guest poweroff
 # default_image: ""         # a container-image tar imported and
 #                           # designated default on first boot
 # seed_images: ""           # container-image tars imported into

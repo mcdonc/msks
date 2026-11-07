@@ -135,7 +135,7 @@ class VmmSettings:
     )
     socket_wait_timeout_s: float = 10.0
     request_timeout_s: float = 5.0
-    shutdown_timeout_s: float = 20.0
+    shutdown_timeout_s: float = 90.0
     # Console bring-up wait (#481): the dial retries against the
     # virtio-console socket until this deadline — nested-virt
     # guests can take longer than bare metal to arm the device.
@@ -537,7 +537,7 @@ def vmm_settings_from_env(
             env, "MSKSD_SOCKET_WAIT_TIMEOUT_S", 10.0
         ),
         request_timeout_s=_env_float(env, "MSKSD_REQUEST_TIMEOUT_S", 5.0),
-        shutdown_timeout_s=_env_float(env, "MSKSD_SHUTDOWN_TIMEOUT_S", 20.0),
+        shutdown_timeout_s=_env_float(env, "MSKSD_SHUTDOWN_TIMEOUT_S", 90.0),
         console_wait_timeout_s=_env_float(
             env, "MSKSD_CONSOLE_WAIT_TIMEOUT_S", cls.console_wait_timeout_s
         ),
