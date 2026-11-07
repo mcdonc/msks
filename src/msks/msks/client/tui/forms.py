@@ -159,9 +159,10 @@ def stamp_moment(stamp: str | None) -> datetime | None:
     """One import stamp as an aware local moment, or ``None`` when
     the row carries no stamp or a moment the clock cannot parse
     (#186) — a naive stamp reads as local time, matching the CLI
-    table's own rendering. Not :mod:`msks.client.tui.importer`'s
-    same-named row helper: that one reads a dict and treats a
-    naive stamp as UTC."""
+    table's own rendering. Distinct from
+    :mod:`msks.client.tui.importer`'s ``imported_moment`` row
+    helper: that one reads a dict and treats a naive stamp as
+    UTC."""
     # OverflowError rides extreme stamps: a year-1 moment has no
     # representation in some local zones. TypeError covers a
     # daemon sending a non-string.
