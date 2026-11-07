@@ -1174,56 +1174,104 @@ async def test_the_create_form_fits_the_small_terminal() -> None:
         assert screen.query_one("Footer").region.y == 23
 
 
-def test_image_options_mark_the_default_and_pin_duplicate_refs():
-    # The select offers one row per catalog entry: the reference
-    # and the hash as clipped columns (two refs sharing a clipped
-    # column stay apart in the hash column), the designated
-    # default marked.
+def test_image_options_sort_by_distro_and_date_and_pin_duplicate_refs():
+    # The zone is pinned — a UTC stamp's calendar day depends on
+    # the host's local zone, and the runner's zone is whatever the
+    # CI host carries.
+    old = os.environ.get("TZ")
+    os.environ["TZ"] = "UTC0"
+    time.tzset()
+    try:
+        assert_image_options_sort()
+    finally:
+        if old is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old
+        time.tzset()
+
+
+def assert_image_options_sort():
+    # The select offers one row per catalog entry: the reference,
+    # the hash, and the import date as clipped or fixed columns
+    # (two refs sharing a clipped column stay apart in the hash
+    # column, two builds of one release in the date column), the
+    # designated default marked. The rows sort by distro name
+    # ascending, import date descending — the delivered order
+    # (fedora first, the older debian build first) must not leak
+    # through.
     rows = [
+        {
+            "name": "fedora-44",
+            "version": "2026.02",
+            "hash": "e" * 64,
+            "default": False,
+            "imported": "2026-02-02T10:00:00+00:00",
+        },
         {
             "name": "debian-13",
             "version": "2026.01",
             "hash": "a" * 64,
             "default": True,
+            "imported": "2026-01-01T09:00:00+00:00",
         },
         {
             "name": "debian-13",
             "version": "2025.12",
             "hash": "b" * 64,
             "default": False,
+            "imported": "2026-01-03T09:00:00+00:00",
         },
-    ]
-    assert image_options(rows) == [
-        ("debia…026.01 aaaaa…aaaaaa — default", "debian-13:2026.01"),
-        ("debia…025.12 bbbbb…bbbbbb", "debian-13:2025.12"),
-    ]
-    # Two entries sharing a reference: the second rides its hash
-    # (name@hash resolves to exactly that entry).
-    rows.append(
-        {
-            "name": "debian-13",
-            "version": "2026.01",
-            "hash": "c" * 64,
-            "default": False,
-        }
-    )
-    assert image_options(rows)[2] == (
-        "debia…026.01 ccccc…cccccc",
-        f"debian-13@{'c' * 64}",
-    )
-    # A reference already inside the column stays whole.
-    rows.append(
         {
             "name": "alpine",
             "version": "3.22",
             "hash": "d" * 64,
             "default": False,
-        }
+        },
+    ]
+    assert image_options(rows) == [
+        # Distro names sort ascending; a row without a stamp
+        # renders a dash and sorts below every dated build of its
+        # distro.
+        ("alpine:3.22 ddddd…dddddd -         ", "alpine:3.22"),
+        # The newer debian build leads its group whatever version
+        # it carries; the date column rides the label.
+        (
+            "debia…025.12 bbbbb…bbbbbb 2026-01-03",
+            "debian-13:2025.12",
+        ),
+        (
+            "debia…026.01 aaaaa…aaaaaa 2026-01-01 — default",
+            "debian-13:2026.01",
+        ),
+        ("fedor…026.02 eeeee…eeeeee 2026-02-02", "fedora-44:2026.02"),
+    ]
+    # Two entries sharing a reference: the daemon resolves a plain
+    # name:version to the oldest import, so that row keeps the
+    # plain value and the newer build rides its hash (name@hash
+    # resolves to exactly that entry) — even though the newer
+    # build sorts above it.
+    rows.append(
+        {
+            "name": "debian-13",
+            "version": "2025.12",
+            "hash": "c" * 64,
+            "default": False,
+            "imported": "2026-01-05T09:00:00+00:00",
+        },
     )
-    assert image_options(rows)[3] == (
-        "alpine:3.22 ddddd…dddddd",
-        "alpine:3.22",
+    assert image_options(rows)[1] == (
+        "debia…025.12 ccccc…cccccc 2026-01-05",
+        f"debian-13@{'c' * 64}",
     )
+    # The plain reference stays with the oldest import of the two.
+    assert image_options(rows)[2][1] == "debian-13:2025.12"
+    # A stamp the clock cannot parse renders as "-" — the column
+    # keeps its width — and an unparseable stamp sorts last within
+    # its distro group.
+    rows[-1]["imported"] = "not-a-stamp"
+    assert image_options(rows)[3][0].endswith("cccccc -         ")
+    assert image_options(rows)[1][0].endswith("bbbbbb 2026-01-03")
 
 
 async def test_the_create_form_picks_the_image_from_the_catalog() -> None:
