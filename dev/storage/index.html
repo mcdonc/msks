@@ -1043,7 +1043,7 @@ files and create again.</p>
 <h2 id="sizing">Sizing<a class="headerlink" href="#sizing" title="Permanent link">&para;</a></h2>
 <p>Both sizes are set at workspace create and configurable three
 ways. Per request: <code>root_mib</code> / <code>home_mib</code> on workspace create.
-Per daemon: <code>MSKSD_ROOT_MIB</code>, default 10240, and
+Per daemon: <code>MSKSD_ROOT_MIB</code>, default 20480, and
 <code>MSKSD_HOME_MIB</code>, default 20480. Per image: the catalog's
 manifest carries the cmdline the guest boots, which pairs with
 the sizes. The overlay's virtual size never drops below its
@@ -1257,7 +1257,7 @@ on every boot. Deleting the workspace releases the pin.</p>
 <tbody>
 <tr>
 <td><code>MSKSD_ROOT_MIB</code></td>
-<td><code>10240</code></td>
+<td><code>20480</code></td>
 <td>Default overlay (root) size for new workspaces, MiB.</td>
 </tr>
 <tr>

@@ -1535,7 +1535,20 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>The create form's image dropdown shows the import date and
+<li>
+<p><strong>New workspaces default to a 20 GiB root overlay (#784).</strong> The
+  create default for <code>root_mib</code> moves from 10240 to 20480 on every
+  surface (TUI create form, CLI, API) — NixOS guests' nix store
+  outgrows 10 GiB after a few rebuilds. <code>MSKSD_ROOT_MIB</code> still
+  overrides the default, an explicit size on create still wins
+  over both, and existing workspaces keep the size they were
+  created with. The create form's root placeholder names the
+  daemon's real default on every healthy load (it always did for
+  home), and the first-run config template's <code>home_mib</code> comment
+  now states the real 20480 default (it read 2048).</p>
+</li>
+<li>
+<p><strong>The create form's image dropdown shows the import date and
   sorts newest-first (#781).</strong> Each option now carries the import
   date beside the reference, and the options order by distro name
   A→Z with each distro's newest build first — the newest build of
@@ -1544,7 +1557,8 @@ tagged <code>vX.Y.Z</code>.</p>
   line names the marker), where it read "— default" before.
   Options for the same reference still resolve by hash, and the
   plain reference still names the build the daemon itself
-  resolves it to.</li>
+  resolves it to.</p>
+</li>
 </ul>
 <h2 id="v081-2026-11-06">[v0.8.1] - 2026-11-06<a class="headerlink" href="#v081-2026-11-06" title="Permanent link">&para;</a></h2>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
