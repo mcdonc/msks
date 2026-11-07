@@ -6,19 +6,6 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
-### Breaking
-
-- **The NixOS module's default listener is the unix socket
-  (#799).** `services.msksd` now serves
-  `/run/msksd/msksd.sock` with peer-credential authentication, and
-  the TCP listener serves only when `services.msksd.tcp.enable =
-true` (then `listenAddress`, `port`, and `openFirewall` apply).
-  Operators who had clients dialing the module daemon's HTTPS
-  port must set `tcp.enable = true` on upgrade. A same-host client
-  in the socket group (`services.msksd.socket.group`) needs no
-  URL, token, or CA file: the unconfigured `msks` finds the socket
-  on its own.
-
 ### Added
 
 - **The GUI's opening settle (#1177).** The window's content
@@ -64,21 +51,21 @@ true` (then `listenAddress`, `port`, and `openFirewall` apply).
   disabled until one is selected. The right-click menus stay
   beside them. See [docs/gui.md](gui.md#the-images-tab).
 
-- **`socket_group` shares the daemon's unix socket (#799).** A
-  new daemon setting (`socket_group` / `MSKSD_SOCKET_GROUP`)
-  moves the bound socket file into the named group at bind, and
-  the group's members connect with peer-credential authentication
-  and no token. The daemon may only `chgrp` to a group it belongs
-  to; an unknown name or a missing membership refuses at startup
-  naming the fix.
+- **The NixOS module's socket listener (#799).**
+  `services.msksd.socket.enable = true` has the module's daemon
+  serve a unix socket at `/run/msks/msksd.sock` beside the TCP
+  listener, and `services.msksd.socket.group` names the group
+  whose members connect with no token: the module creates the
+  group and adds it to the unit's `SupplementaryGroups`. The TCP
+  listener stays the module's default, and
+  `services.msksd.tcp.enable = false` leaves the socket alone. An
+  unconfigured `msks` on the host finds the socket on its own.
+  See [docs/installation.md](installation.md#nixos-hosts).
 
 - **An empty `host` turns the TCP listener off (#799).** Setting
   `host` to the empty string (`host: ""` / `MSKSD_HOST=""`)
   serves the unix socket alone: no TLS material resolves, no CA
-  is generated, and both listeners off refuses at startup. The
-  client's unconfigured lookup now also probes the system
-  daemon's path, `/run/msksd/msksd.sock`, beside its runtime
-  dir's own.
+  is generated, and both listeners off refuses at startup.
 
 ### Changed
 
