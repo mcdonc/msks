@@ -133,6 +133,11 @@ def bind(path: Path, group: str | None = None) -> socket.socket:
     path.parent.mkdir(parents=True, exist_ok=True)
     refuse_taken_path(path)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    # Set only after a successful bind: a bind the kernel refused
+    # (EADDRINUSE — a daemon that took the name in the window
+    # after refuse_taken_path) left someone else's file at the
+    # path, and the cleanup below must leave it alone.
+    bound = False
     try:
         # 0777 & ~0o117 = 0o660: the bind creates the file with
         # its final mode in one step. A bare bind creates it
@@ -144,17 +149,20 @@ def bind(path: Path, group: str | None = None) -> socket.socket:
             sock.bind(str(path))
         finally:
             os.umask(was)
+        bound = True
         os.chmod(path, 0o660)
         if group is not None:
             chgrp(path, group)
         sock.listen(128)
     except OSError:
         sock.close()
-        # The path was free or stale before the bind (refuse_taken_path),
-        # and the file it now holds is ours — a failed share or listen
-        # leaves nothing behind for the next start to wonder about.
-        with suppress(FileNotFoundError):
-            path.unlink()
+        # Only our own file leaves: a failed share or listen on a
+        # socket we bound, never the name a competitor won — the
+        # next start binds cleanly instead of replacing what this
+        # one left.
+        if bound:
+            with suppress(FileNotFoundError):
+                path.unlink()
         raise
     return sock
 

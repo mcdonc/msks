@@ -1082,3 +1082,30 @@ def test_arm_tls_no_tls_wins_over_configured_material(
     arm_tls(app, no_tls=True)
     assert app.state.settings.server.tls_cert is None
     assert app.state.settings.server.tls_key is None
+
+
+def test_arm_tls_refuses_a_lone_key_too(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """The refusal's `or` holds for either half alone: a key with
+    no cert is the same contradiction under an empty host."""
+    from types import SimpleNamespace
+
+    from msks.server.main import arm_tls
+
+    state = tmp_path / "state"
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(state))
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            settings=SimpleNamespace(
+                server=SimpleNamespace(
+                    host="",
+                    tls_cert=None,
+                    tls_key="/k.pem",
+                    db_path=state / "msks.db",
+                )
+            )
+        )
+    )
+    with pytest.raises(ValueError, match="host is empty"):
+        arm_tls(app, no_tls=False)

@@ -1136,3 +1136,32 @@ def test_bind_keeps_the_mode_under_the_share(
     finally:
         sock.close()
         localsocket.unlink(path)
+
+
+def test_a_bind_the_kernel_refused_leaves_the_winners_socket(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EADDRINUSE from bind means the name belongs to someone else
+    (the race window after refuse_taken_path): the cleanup must
+    leave the winner's file alone — the loser destroys no
+    listener it failed to take."""
+    winner_path = tmp_path / "msksd.sock"
+    winner = localsocket.bind(winner_path)
+    try:
+        # The race: the winner's bind lands after the loser's
+        # refuse_taken_path saw an empty name, so that check
+        # passes and the kernel's bind is what refuses.
+        monkeypatch.setattr(
+            localsocket, "refuse_taken_path", lambda path: None
+        )
+
+        def losing_bind(self, *args, **kwargs):
+            raise OSError(98, "Address already in use")
+
+        monkeypatch.setattr(localsocket.socket.socket, "bind", losing_bind)
+        with pytest.raises(OSError):
+            localsocket.bind(winner_path)
+        assert winner_path.exists(), "the loser deleted the winner's socket"
+    finally:
+        winner.close()
+        localsocket.unlink(winner_path)
