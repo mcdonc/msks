@@ -8,6 +8,13 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **`shutdown_timeout_s` defaults to 90 seconds (#787).** A
+  workspace stop now waits up to 90s for the guest to power off
+  (was 20s) — a CPU-saturated guest, one running a nix build,
+  could not service the ACPI power button within 20s and the stop
+  escalated past the graceful path. `MSKSD_SHUTDOWN_TIMEOUT_S`
+  still overrides, and an idle guest still powers off in seconds.
+
 - **New workspaces default to a 20 GiB root overlay (#784).** The
   create default for `root_mib` moves from 10240 to 20480 on every
   surface (TUI create form, CLI, API) — NixOS guests' nix store
