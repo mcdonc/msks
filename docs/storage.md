@@ -324,5 +324,5 @@ on every boot. Deleting the workspace releases the pin.
 | `MSKSD_E2FSCK`              | `e2fsck`     | The e2fsck that quiets a volume before a resize.                                                                  |
 | `MSKSD_MKISOFS`             | `mkisofs`    | The mkisofs (genisoimage) that builds `cidata` seed disks.                                                        |
 | `MSKSD_HOST_NAME`           | the hostname | The host recorded as owning locally-created artifacts.                                                            |
-| `MSKSD_SHUTDOWN_TIMEOUT_S`  | `20`         | How long `stop` waits for the guest's clean poweroff before the fallback kill; a stop answers within this bound.  |
+| `MSKSD_SHUTDOWN_TIMEOUT_S`  | `90`         | How long `stop` waits for the guest's clean poweroff before the fallback kill; a stop answers within this bound.  |
 | `MSKSD_MOVE_WAIT_TIMEOUT_S` | `120`        | How long a boot, delete, or volume move waits for the workspace's other volume move before answering a named 409. |

@@ -267,8 +267,12 @@ in
     msksd = {
       exec = ''exec bash "$DEVENV_ROOT/scripts/dev-daemon.sh"'';
       # A workspace's stop cycle needs its window — the
-      # page-cache-only-commit data-loss lesson (#146).
-      shutdown.grace = 90;
+      # page-cache-only-commit data-loss lesson (#146). The grace
+      # covers the stop default (MSKSD_SHUTDOWN_TIMEOUT_S, 90s
+      # since #787) plus the stop's own overhead past the deadline
+      # — the request timeout per poll, the fs-daemon grace, the
+      # net detach — the product unit's TimeoutStopSec=180s window.
+      shutdown.grace = 180;
     };
   };
 
