@@ -1806,7 +1806,11 @@ the digest when the catalog cannot resolve one),</p>
 </span></code></pre></div>
 <p>The status column speaks the daemon's lifecycle vocabulary:
 <code>created</code> (row exists, never booted), <code>starting</code>, <code>running</code>,
-<code>paused</code>, <code>stopped</code>, <code>unknown</code>, <code>absent</code>. A workspace whose mounts
+<code>paused</code>, <code>stopping</code>, <code>stopped</code>, <code>unknown</code>, <code>absent</code>. A workspace
+reads <code>stopping</code> while a stop request's graceful shutdown runs.
+The window lasts up to the shutdown timeout. A shutdown that
+times out returns the row to the status it carried before the
+stop. A workspace whose mounts
 skip carries the count beside its status (<code>running, 1 mount
 skipped</code> above), a standing marker that lasts until the config
 and the row agree again; the <a href="../mounts/#the-skip-behavior">mounts
@@ -2145,7 +2149,9 @@ boots with) through <code>POST
   topology together.</li>
 </ul>
 <p>The workspace must be in a free lifecycle state (<code>created</code>,
-<code>stopped</code>, <code>absent</code>); a running or paused workspace answers <code>409</code>.
+<code>stopped</code>, <code>absent</code>). Every other status answers <code>409</code>:
+<code>running</code>, <code>paused</code>, <code>starting</code>, <code>stopping</code>, and <code>unknown</code> may
+all keep a live volume attached.
 The row follows immediately (<code>msks ls --json</code>, <code>msks storage</code> show
 the new ceiling), and a completed resize is announced on the
 events channel (<code>workspace.resized</code>). At least one flag is

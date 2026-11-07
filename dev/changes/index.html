@@ -739,6 +739,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Added
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -806,7 +817,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#added" class="md-nav__link">
+  <a href="#added_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Added
@@ -867,7 +878,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#added_1" class="md-nav__link">
+  <a href="#added_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Added
@@ -917,7 +928,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#added_2" class="md-nav__link">
+  <a href="#added_3" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Added
@@ -995,7 +1006,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added_3" class="md-nav__link">
+  <a href="#added_4" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Added
@@ -1045,7 +1056,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added_4" class="md-nav__link">
+  <a href="#added_5" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Added
@@ -1154,6 +1165,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#added" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Added
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#changed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1221,7 +1243,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#added" class="md-nav__link">
+  <a href="#added_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Added
@@ -1282,7 +1304,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#added_1" class="md-nav__link">
+  <a href="#added_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Added
@@ -1332,7 +1354,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#added_2" class="md-nav__link">
+  <a href="#added_3" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Added
@@ -1410,7 +1432,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added_3" class="md-nav__link">
+  <a href="#added_4" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Added
@@ -1460,7 +1482,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#added_4" class="md-nav__link">
+  <a href="#added_5" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Added
@@ -1533,6 +1555,22 @@
 <a href="https://keepachangelog.com/en/1.1.0/">Keep a Changelog</a>; versions are
 tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
+<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Workspace rows read <code>stopping</code> through a stop's graceful
+  window (#789).</strong> A stop request now writes <code>stopping</code> before
+  the graceful shutdown begins, so <code>msks ls</code> and a second TUI
+  see the truth for a window that lasts up to the shutdown
+  timeout. The row lands on <code>stopped</code> when the shutdown finishes,
+  and returns to the status it carried before the stop when the
+  shutdown times out. A daemon crash mid-stop heals on the next
+  watcher scan, and the gates that read the status (volume
+  moves, resize, clone) refuse while the row reads <code>stopping</code>.
+  The TUI's stop action dims with "workspace is stopping", and
+  the attach commands (<code>msks ssh</code>, <code>msks console</code>, <code>msks forward</code>,
+  <code>msks rsync</code>) wait out the window instead of booting into the
+  shutdown.</li>
+</ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
@@ -1605,7 +1643,7 @@ tagged <code>vX.Y.Z</code>.</p>
   dial. A TCP daemon's URL shows unchanged.</p>
 </li>
 </ul>
-<h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
+<h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong><code>msks clone</code> (#773).</strong> One stopped workspace copies into a
@@ -1776,7 +1814,7 @@ tagged <code>vX.Y.Z</code>.</p>
   untouched.</p>
 </li>
 </ul>
-<h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
+<h3 id="added_2">Added<a class="headerlink" href="#added_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>The term-popup status row shows the egress mode and the
@@ -1907,7 +1945,7 @@ tagged <code>vX.Y.Z</code>.</p>
   next set (they mount nothing for them at the next start) —
   recreate those mounts with host paths.</li>
 </ul>
-<h3 id="added_2">Added<a class="headerlink" href="#added_2" title="Permanent link">&para;</a></h3>
+<h3 id="added_3">Added<a class="headerlink" href="#added_3" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
 <p><strong>Version skew between the client and the daemon is named
@@ -2213,7 +2251,7 @@ tagged <code>vX.Y.Z</code>.</p>
   Applies at each workspace start.</li>
 </ul>
 <h2 id="v04-2026-10-27">[v0.4] - 2026-10-27<a class="headerlink" href="#v04-2026-10-27" title="Permanent link">&para;</a></h2>
-<h3 id="added_3">Added<a class="headerlink" href="#added_3" title="Permanent link">&para;</a></h3>
+<h3 id="added_4">Added<a class="headerlink" href="#added_4" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Fedora 44 guest image (#651).</strong> A third catalog image family
   builds beside Debian and NixOS: <code>msks-build-guest fedora</code> (and
@@ -2292,7 +2330,7 @@ tagged <code>vX.Y.Z</code>.</p>
 <li>Guest image updates, docs changes.</li>
 </ul>
 <h2 id="v01-2026-10-18">[v0.1] - 2026-10-18<a class="headerlink" href="#v01-2026-10-18" title="Permanent link">&para;</a></h2>
-<h3 id="added_4">Added<a class="headerlink" href="#added_4" title="Permanent link">&para;</a></h3>
+<h3 id="added_5">Added<a class="headerlink" href="#added_5" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>The NixOS workspace guest image (#250).</strong> A second catalog image
   built from the devenv-pinned nixpkgs with

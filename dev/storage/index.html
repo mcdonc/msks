@@ -1194,9 +1194,11 @@ composes with any compressor (<code>msks home export ws - | gzip &gt;
 ws.ext4.gz</code>) because <code>-</code> streams the bytes to stdout.</p>
 <p>Both endpoints answer <code>409</code> unless the workspace's row says its
 VM is down. <code>created</code>, <code>stopped</code>, and <code>absent</code> move freely.
-<code>starting</code>, <code>running</code>, and <code>paused</code> keep the volume: an export
+<code>starting</code>, <code>stopping</code>, <code>running</code>, and <code>paused</code> keep the volume: an export
 under a guest mid-write is a torn image, and an import into a
-mounted device would be overwritten or lost. <code>unknown</code> refuses
+mounted device would be overwritten or lost. A row reads
+<code>stopping</code> only while a stop request's graceful shutdown runs.
+The VM is still live through that window. <code>unknown</code> refuses
 too. The seam reports it when a live VMM stopped answering its
 API, so a possibly-live VM gets the volume's protection. Stop
 the workspace first (<code>msks stop</code>). Under the move's lock the
