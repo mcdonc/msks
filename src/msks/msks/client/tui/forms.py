@@ -91,7 +91,9 @@ class FormWalk:
 #: placeholders name their defaults at mount).
 FORM_FIELDS = (
     ("name", "name", "workspace name"),
-    ("image", "image ref", "the default image"),
+    # The hint rides the expanded list's first row too, so the
+    # asterisk legend sits exactly where the marked rows are
+    ("image", "image ref", "the default image (* marks it)"),
     ("cpus", "vcpus", "default 2"),
     ("mem_mib", "memory", "MiB — 8192"),
     ("root_mib", "root", "MiB"),
@@ -148,16 +150,18 @@ def whole_number(value: str) -> bool:
 
 
 #: The sort floor for rows without a usable stamp (#186): the
-#: oldest possible aware moment, so a missing or unparseable
+#: oldest representable aware moment, so a missing or unparseable
 #: stamp sorts below every dated row inside its distro group.
-EPOCH_MOMENT = datetime(1, 1, 1, tzinfo=UTC)
+FIRST_MOMENT = datetime(1, 1, 1, tzinfo=UTC)
 
 
-def imported_moment(stamp: str | None) -> datetime | None:
+def stamp_moment(stamp: str | None) -> datetime | None:
     """One import stamp as an aware local moment, or ``None`` when
     the row carries no stamp or a moment the clock cannot parse
     (#186) — a naive stamp reads as local time, matching the CLI
-    table's own rendering."""
+    table's own rendering. Not :mod:`msks.client.tui.importer`'s
+    same-named row helper: that one reads a dict and treats a
+    naive stamp as UTC."""
     # OverflowError rides extreme stamps: a year-1 moment has no
     # representation in some local zones. TypeError covers a
     # daemon sending a non-string.
@@ -170,7 +174,7 @@ def imported_day(stamp: str | None) -> str:
     """One import stamp as a local calendar date, ``YYYY-MM-DD``,
     or ``-`` when the row carries no usable stamp — the column
     stays aligned at ten characters either way."""
-    moment = imported_moment(stamp)
+    moment = stamp_moment(stamp)
     return moment.strftime("%Y-%m-%d") if moment is not None else "-"
 
 
@@ -180,7 +184,9 @@ def image_plain_refs(rows: list[dict]) -> dict[str, str]:
     oldest import first, and the daemon's name:version resolution
     scans that same order and picks the first it meets — so the
     plain reference and the daemon agree on which build it
-    names."""
+    names. Two imports stamped the same moment tie into the
+    cache directory's own order, and the daemon scans that same
+    order too."""
     plain: dict[str, str] = {}
     for row in rows:
         plain.setdefault(f"{row['name']}:{row['version']}", row["hash"])
@@ -194,7 +200,7 @@ def ordered_image_rows(rows: list[dict]) -> list[dict]:
     dated row of its group."""
     newest_first = sorted(
         rows,
-        key=lambda row: imported_moment(row.get("imported")) or EPOCH_MOMENT,
+        key=lambda row: stamp_moment(row.get("imported")) or FIRST_MOMENT,
         reverse=True,
     )
     return sorted(newest_first, key=lambda row: row["name"])

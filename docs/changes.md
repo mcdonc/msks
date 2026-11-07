@@ -12,9 +12,12 @@ tagged `vX.Y.Z`.
   sorts newest-first (#781).** Each option now carries the import
   date beside the reference, and the options order by distro name
   A→Z with each distro's newest build first — the newest build of
-  a release leads instead of the oldest. Options for the same
-  reference still resolve by hash, and the plain reference still
-  names the build the daemon itself resolves it to.
+  a release leads instead of the oldest. The designated default
+  row is marked with a trailing asterisk (the blank option's own
+  line names the marker), where it read "— default" before.
+  Options for the same reference still resolve by hash, and the
+  plain reference still names the build the daemon itself
+  resolves it to.
 
 ## \[v0.8.1] - 2026-11-06
 
