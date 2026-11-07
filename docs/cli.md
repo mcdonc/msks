@@ -610,10 +610,9 @@ resized ws4: root 10240 MiB, home 4096 MiB, cpus 4, mem 4096 MiB
   topology together.
 
 The workspace must be in a free lifecycle state (`created`,
-`stopped`, `absent`); every other status — a workspace that may
-keep a live volume attached, `running` and `paused` among them,
-and `starting`, `stopping`, and `unknown` with them — answers
-`409`.
+`stopped`, `absent`). Every other status answers `409`:
+`running`, `paused`, `starting`, `stopping`, and `unknown` may
+all keep a live volume attached.
 The row follows immediately (`msks ls --json`, `msks storage` show
 the new ceiling), and a completed resize is announced on the
 events channel (`workspace.resized`). At least one flag is
