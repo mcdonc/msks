@@ -330,7 +330,7 @@ def create(
         None, "--cmdline", help="explicit kernel cmdline"
     ),
     cpus: int | None = typer.Option(
-        None, "--cpus", help="vcpu count (default 2)"
+        None, "--cpus", help="vcpu count (default 4)"
     ),
     mem_mib: int | None = typer.Option(
         None, "--mem-mib", help="guest memory, MiB (default 8192)"

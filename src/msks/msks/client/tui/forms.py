@@ -96,7 +96,7 @@ FORM_FIELDS = (
     # The hint rides the expanded list's first row too, so the
     # asterisk legend sits exactly where the marked rows are
     ("image", "image ref", "the default image (* marks it)"),
-    ("cpus", "vcpus", "default 2"),
+    ("cpus", "vcpus", "default 4"),
     ("mem_mib", "memory", "MiB — 8192"),
     ("root_mib", "root", "MiB"),
     ("home_mib", "home", "MiB"),

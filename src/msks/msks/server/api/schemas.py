@@ -201,7 +201,7 @@ class WorkspaceCreate(BaseModel):
     initrd: str | None = None
     rootfs: str | None = None
     cmdline: str | None = None
-    cpus: int = Field(default=2, ge=1, le=64)
+    cpus: int = Field(default=4, ge=1, le=64)
     mem_mib: int = Field(default=8192, ge=64, le=1 << 15)
     # Persistent-artifact sizes (#14), fixed at create; unset takes
     # the MSKSD_ROOT_MIB / MSKSD_HOME_MIB defaults.

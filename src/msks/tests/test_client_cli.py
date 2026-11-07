@@ -2209,6 +2209,22 @@ def test_help_folds_long_tokens_instead_of_cutting_them(
     assert "MSKSC_IDENTITY_FILE" in flat or "MSKSC_PUBKEY_FILE" in flat
 
 
+def test_create_help_states_the_vcpu_default(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The --cpus help restates the daemon's create default by
+    hand (the client cannot import the daemon's schema to derive
+    it), so the real help text is pinned: a default change that
+    misses the client's restatement fails here, not in a
+    shipped help string that lies."""
+    monkeypatch.setenv("COLUMNS", "100")
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main(["create", "--help"])
+    assert excinfo.value.code == 0
+    flat = help_flat(capsys.readouterr().out)
+    assert "vcpu count (default 4)" in flat
+
+
 @pytest.mark.parametrize(
     "ref",
     [

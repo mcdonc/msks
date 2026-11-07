@@ -247,7 +247,7 @@ async def test_workspace_lifecycle(client) -> None:
     assert [row["id"] for row in listed.json()] == [wid]
     assert [row["name"] for row in listed.json()] == ["ws-a"]
     one = await http.get("/api/v1/workspaces/ws-a", headers=auth())
-    assert one.json()["cpus"] == 2
+    assert one.json()["cpus"] == 4  # the create default
     assert one.json()["mem_mib"] == 256  # explicit at create
     # The immutable id addresses the same workspace (#246).
     by_id = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
@@ -2622,16 +2622,16 @@ async def test_resize_updates_the_topology(client) -> None:
     wid = created.json()["id"]
     resized = await http.post(
         "/api/v1/workspaces/ws-top/resize",
-        json={"cpus": 4, "mem_mib": 4096},
+        json={"cpus": 6, "mem_mib": 4096},
         headers=auth(),
     )
     assert resized.status_code == 200
     body = resized.json()
-    assert body["cpus"] == 4
+    assert body["cpus"] == 6
     assert body["mem_mib"] == 4096
-    assert body["changes"] == ["cpus set to 4", "mem set to 4096 MiB"]
+    assert body["changes"] == ["cpus set to 6", "mem set to 4096 MiB"]
     row = await app.state.model.get_workspace(wid)
-    assert row["cpus"] == 4
+    assert row["cpus"] == 6
     assert row["mem_mib"] == 4096
     # One side alone keeps the other.
     one_side = await http.post(
@@ -2707,14 +2707,14 @@ async def test_resize_mixes_disks_and_topology(client) -> None:
     await plant_volume(app, wid, 128)
     resized = await http.post(
         "/api/v1/workspaces/ws-mix/resize",
-        json={"home_mib": 256, "cpus": 4},
+        json={"home_mib": 256, "cpus": 6},
         headers=auth(),
     )
     assert resized.status_code == 200
     body = resized.json()
     assert body["home_mib"] == 256
-    assert body["cpus"] == 4
-    assert body["changes"] == ["home grew to 256 MiB", "cpus set to 4"]
+    assert body["cpus"] == 6
+    assert body["changes"] == ["home grew to 256 MiB", "cpus set to 6"]
 
 
 async def test_a_resized_topology_boots(client) -> None:

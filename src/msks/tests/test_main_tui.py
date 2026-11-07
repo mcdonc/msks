@@ -37,6 +37,7 @@ from msks.client.tui.consent_ui import (
 from msks.client.tui.follow import FLOW_SHELL, TuiFollow, run_follow_up
 from msks.client.tui.forms import (
     EDIT_FREE_STATUSES,
+    FORM_FIELDS,
     EditScreen,
     WorkspaceForm,
     edit_seeds,
@@ -998,6 +999,16 @@ async def test_ctrl_shift_c_reaches_no_binding_and_the_tree_keeps_running(
         await pilot.press("ctrl+shift+c")
         await pilot.pause()
         assert app.return_code is None
+
+
+def test_the_create_form_hint_restates_the_vcpu_default() -> None:
+    """The vcpus hint restates the daemon's create default by
+    hand (the client cannot import the daemon's schema to derive
+    it), so the literal cell is pinned: a default change that
+    misses the form's restatement fails here, not on the
+    rendered form."""
+    hints = {field: hint for field, _label, hint in FORM_FIELDS}
+    assert hints["cpus"] == "default 4"
 
 
 async def test_the_create_form_posts_and_the_list_refreshes() -> None:
