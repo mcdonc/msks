@@ -1574,6 +1574,12 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>New workspaces default to 4 vCPUs (#791).</strong> A create that
+  leaves the count unset boots 4 vCPUs, up from 2. The 1–64 bound
+  is unchanged, an explicit <code>--cpus</code> still wins, and existing
+  workspaces keep their stored count.</p>
+</li>
+<li>
 <p><strong><code>shutdown_timeout_s</code> defaults to 90 seconds (#787).</strong> A
   workspace stop now waits up to 90s for the guest to power off
   (was 20s). An idle guest still answers in seconds.
