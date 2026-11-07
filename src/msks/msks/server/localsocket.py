@@ -150,6 +150,11 @@ def bind(path: Path, group: str | None = None) -> socket.socket:
         sock.listen(128)
     except OSError:
         sock.close()
+        # The path was free or stale before the bind (refuse_taken_path),
+        # and the file it now holds is ours — a failed share or listen
+        # leaves nothing behind for the next start to wonder about.
+        with suppress(FileNotFoundError):
+            path.unlink()
         raise
     return sock
 

@@ -97,9 +97,12 @@ def arm_tls(app, no_tls: bool) -> None:
     from inside uvicorn.
     """
     server = app.state.settings.server
-    if no_tls or server.host == "":
+    if no_tls:
         server.tls_cert = None
         server.tls_key = None
+        return
+    if server.host == "":
+        socket_only_tls(server)
         return
     state_dir = Path(server.db_path).parent
     cert, key, ca_fp = load_or_generate(
@@ -111,6 +114,26 @@ def arm_tls(app, no_tls: bool) -> None:
             f"msksd: CA fingerprint (pin on first connect): {ca_fp}",
             file=sys.stderr,
         )
+
+
+def socket_only_tls(server) -> None:
+    """The empty host's TLS resolution (#799).
+
+    No TCP listener exists to serve TLS, so nothing resolves — no
+    CA is generated for a wire that is not there. Material a
+    config nevertheless names is contradictory: a listener that
+    cannot serve it would silently ignore the operator's pair, so
+    the refusal names the fix instead (the same fail-fast shape a
+    half-configured pair takes in :func:`arm_tls`).
+    """
+    if server.tls_cert is not None or server.tls_key is not None:
+        raise ValueError(
+            "tls_cert/tls_key are set but host is empty — the TCP "
+            "listener is off and TLS material cannot serve; unset "
+            "the pair or give host an address"
+        )
+    server.tls_cert = None
+    server.tls_key = None
 
 
 def serve(app, no_tls: bool) -> None:

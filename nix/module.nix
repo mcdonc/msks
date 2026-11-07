@@ -311,8 +311,16 @@ in
         message = "services.msksd.egress.uplink is required when egress is enabled — set the host's default-route interface (ip route show default).";
       }
       {
+        assertion = cfg.socket.enable || cfg.tcp.enable;
+        message = "services.msksd serves nothing — enable the socket listener (services.msksd.socket.enable, the default) or the TCP listener (services.msksd.tcp.enable).";
+      }
+      {
         assertion = cfg.openFirewall -> cfg.tcp.enable;
         message = "services.msksd.openFirewall needs services.msksd.tcp.enable — the module's default listener is the socket, and the firewall rule belongs to the TCP listener.";
+      }
+      {
+        assertion = (cfg.socket.group != null) -> cfg.socket.enable;
+        message = "services.msksd.socket.group needs services.msksd.socket.enable — the share rides the socket listener.";
       }
       {
         assertion = cfg.socket.group != "msksd";

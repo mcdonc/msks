@@ -1104,3 +1104,35 @@ async def test_serve_socket_only_owns_the_process(
     with contextlib.suppress(asyncio.CancelledError):
         await asyncio.wait_for(task, timeout=10)
     assert not path.exists()
+
+
+def test_bind_leaves_no_file_behind_a_failed_share(
+    shallow_socket_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A chgrp the kernel refuses ends the bind with the socket
+    file gone: the next start binds cleanly instead of replacing
+    what this one left."""
+    path = shallow_socket_dir / "msksd.sock"
+
+    def refuse(path, group):
+        raise OSError("not the owner's group")
+
+    monkeypatch.setattr(localsocket, "chgrp", refuse)
+    with pytest.raises(OSError):
+        localsocket.bind(path, "wheel")
+    assert not path.exists()
+
+
+def test_bind_keeps_the_mode_under_the_share(
+    shallow_socket_dir: Path,
+) -> None:
+    """The share widens the group, never the mode: the socket
+    stays 0660 after the chgrp."""
+    path = shallow_socket_dir / "msksd.sock"
+    group = grp.getgrgid(os.getgid()).gr_name
+    sock = localsocket.bind(path, group)
+    try:
+        assert path.stat().st_mode & 0o777 == 0o660
+    finally:
+        sock.close()
+        localsocket.unlink(path)

@@ -14,10 +14,10 @@ tagged `vX.Y.Z`.
   the TCP listener serves only when `services.msksd.tcp.enable =
 true` (then `listenAddress`, `port`, and `openFirewall` apply).
   Operators who had clients dialing the module daemon's HTTPS
-  port must set `tcp.enable = true`; same-host clients in the
-  socket group (`services.msksd.socket.group`) need no URL,
-  token, or CA file — the unconfigured `msks` finds the socket on
-  its own.
+  port must set `tcp.enable = true` on upgrade. A same-host client
+  in the socket group (`services.msksd.socket.group`) needs no
+  URL, token, or CA file: the unconfigured `msks` finds the socket
+  on its own.
 
 - **The `client` flake output is gone (#793).** The flake's
   `client` package and devenv's `outputs.client` are removed.

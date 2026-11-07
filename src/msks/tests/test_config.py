@@ -1000,8 +1000,67 @@ def test_arm_tls_resolves_nothing_when_tcp_is_off(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     """An empty host resolves no TLS material: no CA is generated
-    for a listener that does not exist, and configured cert paths
-    are nulled like --no-tls nulls them."""
+    for a listener that does not exist, and no material was
+    configured to null."""
+    from types import SimpleNamespace
+
+    from msks.server.main import arm_tls
+
+    state = tmp_path / "state"
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(state))
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            settings=SimpleNamespace(
+                server=SimpleNamespace(
+                    host="",
+                    tls_cert=None,
+                    tls_key=None,
+                    db_path=state / "msks.db",
+                )
+            )
+        )
+    )
+    arm_tls(app, no_tls=False)
+    assert app.state.settings.server.tls_cert is None
+    assert app.state.settings.server.tls_key is None
+    assert not (state / "msks-ca.pem").exists()
+
+
+def test_arm_tls_refuses_material_it_cannot_serve(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """TLS material with an empty host is contradictory — no
+    listener exists to serve it — and refuses like the
+    half-configured pair, not silently nulled."""
+    from types import SimpleNamespace
+
+    from msks.server.main import arm_tls
+
+    state = tmp_path / "state"
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(state))
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            settings=SimpleNamespace(
+                server=SimpleNamespace(
+                    host="",
+                    tls_cert="/c.pem",
+                    tls_key=None,
+                    db_path=state / "msks.db",
+                )
+            )
+        )
+    )
+    with pytest.raises(ValueError, match="host is empty"):
+        arm_tls(app, no_tls=False)
+
+
+def test_arm_tls_no_tls_wins_over_configured_material(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """--no-tls is the operator's explicit word: the flag nulls
+    configured material instead of refusing it (the empty-host
+    path refuses, because a file naming both is a mistake the
+    operator has not seen)."""
     from types import SimpleNamespace
 
     from msks.server.main import arm_tls
@@ -1020,7 +1079,6 @@ def test_arm_tls_resolves_nothing_when_tcp_is_off(
             )
         )
     )
-    arm_tls(app, no_tls=False)
+    arm_tls(app, no_tls=True)
     assert app.state.settings.server.tls_cert is None
     assert app.state.settings.server.tls_key is None
-    assert not (state / "msks-ca.pem").exists()

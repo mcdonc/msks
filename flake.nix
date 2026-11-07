@@ -83,6 +83,14 @@
         tcp.enable = true;
         egress.uplink = "eno4";
       };
+      grouped = evalConfig {
+        enable = true;
+        socket.group = "msksops";
+        egress = {
+          enable = false;
+          uplink = null;
+        };
+      };
       hasTun = c: builtins.any (m: m == "tun") c.boot.kernelModules;
       # Package names compared as strings in the check's build:
       # the enabled eval's PATH must carry the exact package the
@@ -129,9 +137,11 @@
             # #799: the generated settings file, read from the
             # store — the yaml the ExecStart names — pins the
             # listener wiring per branch.
-            cfgOn = on.systemd.services.msksd.serviceConfig.ExecStart;
-            cfgTcp = tcp.systemd.services.msksd.serviceConfig.ExecStart;
+            execTcp = tcp.systemd.services.msksd.serviceConfig.ExecStart;
+            execGrouped = grouped.systemd.services.msksd.serviceConfig.ExecStart;
             runtimeDir = on.systemd.services.msksd.serviceConfig.RuntimeDirectory or "";
+            groupExists = pkgs.lib.boolToString (grouped.users.groups ? msksops);
+            suppGroups = grouped.systemd.services.msksd.serviceConfig.SupplementaryGroups;
             inherit pkgOn pathOn pathInert;
           }
           ''
@@ -172,7 +182,7 @@
             # the yaml names the socket path and an empty host —
             # and the unit owns /run/msksd for it; the tcp branch
             # carries the address.
-            cfg_on=''${cfgOn##* --config }
+            cfg_on=''${execOn##* --config }
             grep -qF '"socket":"/run/msksd/msksd.sock"' "$cfg_on" || {
               echo "fail: default branch lost the socket path in msksd.yaml"
               exit 1
@@ -185,13 +195,26 @@
               echo "fail: the unit lost RuntimeDirectory=msksd for the socket"
               exit 1
             }
-            cfg_tcp=''${cfgTcp##* --config }
+            cfg_tcp=''${execTcp##* --config }
             grep -qF '"host":"127.0.0.1"' "$cfg_tcp" || {
               echo "fail: tcp branch lost the listen address in msksd.yaml"
               exit 1
             }
             grep -qF '"socket":"/run/msksd/msksd.sock"' "$cfg_tcp" || {
               echo "fail: tcp branch lost the socket path in msksd.yaml"
+              exit 1
+            }
+            cfg_grouped=''${execGrouped##* --config }
+            test "$groupExists" = "true" || {
+              echo "fail: socket.group never created its group"
+              exit 1
+            }
+            case " $suppGroups " in
+              *" msksops "*) ;;
+              *) echo "fail: the unit lost the socket group in SupplementaryGroups"; exit 1 ;;
+            esac
+            grep -qF '"socket_group":"msksops"' "$cfg_grouped" || {
+              echo "fail: grouped branch lost socket_group in msksd.yaml"
               exit 1
             }
             touch "$out"

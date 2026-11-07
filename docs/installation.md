@@ -116,10 +116,8 @@ services.msksd.socket.group = "wheel";
 
 The module creates the group, adds it to the unit's
 `SupplementaryGroups`, and the daemon moves the socket file into it at
-bind. Members of the group run `msks` with no environment. The
-`environmentFile` from the secrets paragraph carries the bootstrap
-token that seeds the first API credential. A same-host client in the
-socket group needs no token.
+bind. Members of the group run `msks` with no environment. A
+same-host client needs no token.
 
 A client on another host needs the TCP listener. Turn it on:
 
@@ -130,14 +128,16 @@ services.msksd.openFirewall = true;
 ```
 
 The TCP listener serves HTTPS + WSS with TLS and bearer tokens beside
-the socket. The daemon's TLS certificate covers exactly the address in
-`listenAddress`. A remote client verifies that name, and the hostname
-it dials must match it. The remote client exports three variables
-(`MSKSC_URL`, `MSKSC_TOKEN`, `MSKSC_CAFILE` — the CA is `msks-ca.pem`
-under the daemon's state directory): the [client
-environment](cli.md#client-environment) table documents each, and the
-[API](api.md) chapter documents token minting past the bootstrap
-credential.
+the socket. The `environmentFile` from the secrets paragraph carries
+the bootstrap token that seeds the first API credential, and remote
+clients use tokens minted from it. The daemon's TLS certificate
+covers exactly the address in `listenAddress`. A remote client
+verifies that name, and the hostname it dials must match it. The
+remote client exports `MSKSC_URL`, `MSKSC_TOKEN`, and `MSKSC_CAFILE`.
+The CA file is `msks-ca.pem` under the daemon's state directory. The
+[client environment](cli.md#client-environment) table documents each
+variable, and the [API](api.md) chapter documents token minting past
+the bootstrap credential.
 
 ## What the setup lands
 
