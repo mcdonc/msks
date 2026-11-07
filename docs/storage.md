@@ -81,7 +81,7 @@ files and create again.
 
 Both sizes are set at workspace create and configurable three
 ways. Per request: `root_mib` / `home_mib` on workspace create.
-Per daemon: `MSKSD_ROOT_MIB`, default 10240, and
+Per daemon: `MSKSD_ROOT_MIB`, default 20480, and
 `MSKSD_HOME_MIB`, default 20480. Per image: the catalog's
 manifest carries the cmdline the guest boots, which pairs with
 the sizes. The overlay's virtual size never drops below its
@@ -314,7 +314,7 @@ on every boot. Deleting the workspace releases the pin.
 
 | Variable                    | Default      | Meaning                                                                                                           |
 | --------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------- |
-| `MSKSD_ROOT_MIB`            | `10240`      | Default overlay (root) size for new workspaces, MiB.                                                              |
+| `MSKSD_ROOT_MIB`            | `20480`      | Default overlay (root) size for new workspaces, MiB.                                                              |
 | `MSKSD_HOME_MIB`            | `20480`      | Default `/home` volume size, MiB.                                                                                 |
 | `MSKSD_STORAGE_WARN_PCT`    | `90`         | State-disk percentage used that moves pressure to `warn`.                                                         |
 | `MSKSD_STORAGE_FLOOR_MIB`   | `512`        | Free state-disk MiB below which pressure is `critical` and writes answer `507`.                                   |

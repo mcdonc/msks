@@ -559,8 +559,8 @@ def render_template() -> str:
 # mkisofs: mkisofs          # builds the user_data seed disk
 # host_name: ""             # the host recorded as owning created
 #                           # workspaces; empty -> the hostname
-# root_mib: 10240           # default root overlay size (MiB)
-# home_mib: 2048            # default /home volume size (MiB)
+# root_mib: 20480           # default root overlay size (MiB)
+# home_mib: 20480           # default /home volume size (MiB)
 # storage_warn_pct: 90      # state-disk percent used that moves
 #                           # pressure to warn (#184)
 # storage_floor_mib: 512    # free state-disk MiB below which

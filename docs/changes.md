@@ -8,6 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **New workspaces default to a 20 GiB root overlay (#784).** The
+  create default for `root_mib` moves from 10240 to 20480 on every
+  surface (TUI create form, CLI, API) — NixOS guests' nix store
+  outgrows 10 GiB after a few rebuilds. `MSKSD_ROOT_MIB` still
+  overrides the default, an explicit size on create still wins
+  over both, and existing workspaces keep the size they were
+  created with. The create form's root hint names the 20480
+  default, and the first-run config template's `home_mib` comment
+  now states the real 20480 default (it read 2048).
+
 - **The create form's image dropdown shows the import date and
   sorts newest-first (#781).** Each option now carries the import
   date beside the reference, and the options order by distro name
