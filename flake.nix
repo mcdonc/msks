@@ -77,19 +77,22 @@
       };
       inert = evalConfig { enable = false; };
       hasTun = c: builtins.any (m: m == "tun") c.boot.kernelModules;
-      # Store paths compared as strings in the check's build: the
-      # enabled eval's PATH must carry the exact package the unit
-      # execs. The inert eval's PATH is not empty — a minimal
+      # Package names compared as strings in the check's build:
+      # the enabled eval's PATH must carry the exact package the
+      # unit execs. The inert eval's PATH is not empty — a minimal
       # NixOS config carries its own defaults (systemd, sudo,
       # nixos-rebuild) — and inertness means the module adds no
       # msks derivation to it, so the assert matches the wheel's
-      # store-path name instead of the whole list.
-      pkgOn = toString on.services.msksd.package;
+      # package name instead of the whole list. `.name`, not
+      # toString: a name carries no context, so the check's build
+      # inputs stay the handful the ExecStart strings already
+      # pulled in.
+      pkgOn = on.services.msksd.package.name;
       pathOn = pkgs.lib.concatStringsSep " " (
-        map toString on.environment.systemPackages
+        map (p: p.name) on.environment.systemPackages
       );
       pathInert = pkgs.lib.concatStringsSep " " (
-        map toString inert.environment.systemPackages
+        map (p: p.name) inert.environment.systemPackages
       );
     in
     {

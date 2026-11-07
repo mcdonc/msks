@@ -46,15 +46,16 @@ enable the service:
 }
 ```
 
-`egress.uplink` names the host interface workspace egress masquerades out
-of. `ip route show default` prints it. The module requires a name while
-egress is enabled (the default). A wrong name installs cleanly and NAT
-matches nothing. That failure mode is why the module refuses to guess.
+`egress.uplink` is the interface workspace egress masquerades out of.
+Set it to the host's default-route interface. `ip route show default`
+prints it. The module requires a value while egress is enabled (the
+default). A wrong interface installs cleanly and NAT matches nothing.
+That failure mode is why the module refuses to guess.
 
-Importing the module alone installs nothing. Every piece of host
-configuration sits behind `services.msksd.enable`.
+Importing the module alone installs nothing. All of its host
+configuration applies only when `services.msksd.enable` is set.
 
-`enable = true` lands the full host:
+Setting `enable = true` does four things:
 
 - **The binaries on PATH.** The msks console scripts (`msks`, `msksd`,
   `msks-term-popup`, the `msks-setup-*` tools) go on the system PATH for
@@ -70,22 +71,24 @@ configuration sits behind `services.msksd.enable`.
 - **The egress stack.** With egress enabled the unit carries ambient
   `CAP_NET_ADMIN` and `CAP_NET_BIND_SERVICE`, loads the tun and nftables
   kernel modules, and sets `net.ipv4.ip_forward = 1`. With
-  `egress.enable = false` the capability grants and kernel modules stay
-  off, and a workspace boots without a NIC.
+  `egress.enable = false` the egress capability and the kernel modules
+  stay off, and a workspace boots without a NIC. A port below 1024 keeps
+  `CAP_NET_BIND_SERVICE` in both branches.
 
 Secrets stay out of the module's settings. Point
 `services.msksd.environmentFile` at a plain file path such as
 `/etc/msksd/env`, and put `MSKSD_BOOTSTRAP_TOKEN` in that file to seed
-the first API credential. The unit waits for the file to exist before it
-starts. A store path here would copy the secret into the world-readable
+the first API credential. The unit keeps restarting until the file
+exists. A store path here would copy the secret into the world-readable
 store.
 
 ### The package the module runs
 
 The default `services.msksd.package` builds the msks wheel against the
-host's own nixpkgs. The build applies the flake's certifi overlay across
-that python set, and the closure compiles on the host the first time. To
-run the flake's own build instead, pin the package:
+host's own nixpkgs. That nixpkgs must carry `python314` (nixos-26.05
+does). The build applies the flake's certifi overlay across that python
+set, and the closure compiles on the host the first time. To run the
+flake's own build instead, pin the package:
 
 ```nix
 services.msksd.package = msks.packages.x86_64-linux.msksd;
@@ -108,9 +111,12 @@ export MSKSC_CAFILE=/var/lib/msksd/msks-ca.pem
 The daemon writes `msks-ca.pem` into its state directory on first serve
 (`/var/lib/msksd` under the module). A client on another host needs the
 listener reachable: set `services.msksd.listenAddress` off loopback and
-`services.msksd.openFirewall = true`. The [client environment](cli.md#client-environment)
-table documents every variable, and the [API](api.md) chapter documents
-token minting past the bootstrap credential.
+`services.msksd.openFirewall = true`. The daemon's TLS certificate
+covers exactly the address in `listenAddress`. A remote client verifies
+that name, and the hostname it dials must match it. The [client
+environment](cli.md#client-environment) table documents every variable,
+and the [API](api.md) chapter documents token minting past the bootstrap
+credential.
 
 ## What the setup lands
 
