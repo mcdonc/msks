@@ -19,6 +19,13 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The Debian image ships apt list state; the NixOS guest turns
+  on nix-command and flakes (#783).** A fresh Debian workspace's
+  first `apt-get install` resolves with no update run — the image
+  stages the trixie main InRelease and Packages index under the
+  names apt itself derives. The NixOS guest's nix.conf enables
+  both experimental nix features, so a flake-carrying checkout
+  builds before any per-user override.
 - **Workspace rows read `stopping` through a stop's graceful
   window (#789).** A stop request now writes `stopping` before
   the graceful shutdown begins, so `msks ls` and a second TUI

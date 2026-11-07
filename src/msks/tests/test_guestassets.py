@@ -338,6 +338,36 @@ def test_the_image_bakes_the_agent_toolchain() -> None:
     assert "gsub(/[\\[\\]]/" in build
 
 
+def test_the_debian_image_ships_apt_list_state() -> None:
+    """#783: the Debian image carries apt's own list state — an
+    InRelease plus the lz4 Packages index for the stable main
+    suite, under the exact filenames apt derives from the image's
+    mirror+file sources — so a fresh workspace's first
+    `apt-get install` resolves with no update run (the update
+    itself needs egress). The fast-rotating suites stay out: the
+    guard refuses them in aptSuites."""
+    debian = (REPO_ROOT / "nix" / "guest-debian.nix").read_text()
+    assert "aptPackagesHashes.trixie" in debian
+    for suite in ["trixie-updates", "trixie-backports", "trixie-security"]:
+        assert f'suite = "{suite}";' not in debian
+    assert "_etc_apt_mirrors_" in debian
+    assert "_etc_apt_mirrors_" in debian
+    assert "Packages.lz4" in debian
+    assert 'xz -dc "$pkg" | lz4 -q' in debian
+    assert "mirrors/debian.list" in debian
+
+
+def test_the_nixos_guest_enables_the_experimental_nix_features() -> None:
+    """#783: the guest's nix.conf turns on nix-command and flakes
+    ambiently — a checkout with a flake.nix works before its first
+    `nix build nixpkgs#…`, with no per-user override or
+    --extra-experimental-features flag."""
+    nixos = (REPO_ROOT / "nix" / "guest-nixos-configuration.nix").read_text()
+    assert "experimental-features = [" in nixos
+    assert '"nix-command"' in nixos
+    assert '"flakes"' in nixos
+
+
 def test_the_nixos_image_ships_the_agent_toolchain() -> None:
     """The NixOS flavor's toolchain parity (#268): nixpkgs' own
     Node (the platform's packaging, floor-checked against pi's
