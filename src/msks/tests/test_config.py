@@ -23,7 +23,7 @@ from msks.config import (
     render_template,
     resolve_config_path,
 )
-from msks.settings import MountSettings, Settings
+from msks.settings import MountSettings, ServerSettings, Settings
 
 
 def write_config(tmp_path, doc: str) -> str:
@@ -973,3 +973,69 @@ def test_the_socket_group_reads_env_and_file(
     monkeypatch.delenv("MSKSD_SOCKET_GROUP")
     path = dump_config(tmp_path, {"socket_group": "msks"})
     assert load_settings(path).server.socket_group == "msks"
+
+
+# --- the listener off-switches (#799) -------------------------------------
+
+
+def test_an_empty_host_in_the_file_turns_tcp_off(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """host: \"\" is a real value, not the unset form: the daemon
+    reads TCP off, the mirror of socket: \"\"."""
+    monkeypatch.delenv("MSKSD_HOST", raising=False)
+    path = dump_config(tmp_path, {"host": ""})
+    assert load_settings(path).server.host == ""
+
+
+def test_an_empty_host_in_the_environment_wins_over_the_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Precedence holds for the raw-empty form too: an exported
+    MSKSD_HOST=\"\" beats the file's address."""
+    path = dump_config(tmp_path, {"host": "127.0.0.1"})
+    monkeypatch.setenv("MSKSD_HOST", "")
+    assert load_settings(path).server.host == ""
+
+
+def test_a_configured_host_still_wins_over_an_empty_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """The raw-empty export is a real value only for MSKSD_HOST
+    itself: a file address with an empty (unset-form) export of
+    another variable applies unchanged."""
+    monkeypatch.setenv("MSKSD_PORT", "")
+    path = dump_config(tmp_path, {"host": "10.0.0.9"})
+    settings = load_settings(path)
+    assert settings.server.host == "10.0.0.9"
+    assert settings.server.port == ServerSettings.port
+
+
+def test_arm_tls_resolves_nothing_when_tcp_is_off(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """An empty host resolves no TLS material: no CA is generated
+    for a listener that does not exist, and configured cert paths
+    are nulled like --no-tls nulls them."""
+    from types import SimpleNamespace
+
+    from msks.server.main import arm_tls
+
+    state = tmp_path / "state"
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(state))
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            settings=SimpleNamespace(
+                server=SimpleNamespace(
+                    host="",
+                    tls_cert="/c.pem",
+                    tls_key="/k.pem",
+                    db_path=state / "msks.db",
+                )
+            )
+        )
+    )
+    arm_tls(app, no_tls=False)
+    assert app.state.settings.server.tls_cert is None
+    assert app.state.settings.server.tls_key is None
+    assert not (state / "msks-ca.pem").exists()

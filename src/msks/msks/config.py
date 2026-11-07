@@ -330,10 +330,12 @@ def file_env_overrides(path: str) -> dict:
 
 
 #: Variables whose empty string is a real value, not the unset
-#: form (#555 review): the local listener's disable spelling —
-#: everywhere else an empty export means "unset, take the next
-#: layer", and MSKSD_SOCKET="" means "serve TCP alone".
-RAW_EMPTY_VARS = frozenset({"MSKSD_SOCKET"})
+#: form (#555 review): the local listener's disable spelling and
+#: the TCP listener's (#799) — everywhere else an empty export
+#: means "unset, take the next layer", while MSKSD_SOCKET=""
+#: means "serve TCP alone" and MSKSD_HOST="" means "serve the
+#: socket alone".
+RAW_EMPTY_VARS = frozenset({"MSKSD_SOCKET", "MSKSD_HOST"})
 
 
 class LayeredEnv(Mapping):
@@ -503,7 +505,10 @@ def render_template() -> str:
 # --- built-in defaults) ---
 #
 # --- The API listener ---
-# host: 127.0.0.1           # the listener's bind address
+# host: 127.0.0.1           # the listener's bind address; the
+#                           # empty string turns the TCP
+#                           # listener off (#799) and serves the
+#                           # unix socket alone
 # port: 8660                # the listener's port
 # socket: ""                # the local listener's socket path
 #                           # (#555): same-host clients connect

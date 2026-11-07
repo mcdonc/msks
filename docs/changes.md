@@ -6,6 +6,19 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Breaking
+
+- **The NixOS module's default listener is the unix socket
+  (#799).** `services.msksd` now serves
+  `/run/msksd/msksd.sock` with peer-credential authentication, and
+  the TCP listener serves only when `services.msksd.tcp.enable =
+true` (then `listenAddress`, `port`, and `openFirewall` apply).
+  Operators who had clients dialing the module daemon's HTTPS
+  port must set `tcp.enable = true`; same-host clients in the
+  socket group (`services.msksd.socket.group`) need no URL,
+  token, or CA file — the unconfigured `msks` finds the socket on
+  its own.
+
 ### Added
 
 - **The GUI's opening settle (#1177).** The window's content
@@ -50,6 +63,22 @@ tagged `vX.Y.Z`.
   has Import…. The buttons act on the selected row and stand
   disabled until one is selected. The right-click menus stay
   beside them. See [docs/gui.md](gui.md#the-images-tab).
+
+- **`socket_group` shares the daemon's unix socket (#799).** A
+  new daemon setting (`socket_group` / `MSKSD_SOCKET_GROUP`)
+  moves the bound socket file into the named group at bind, and
+  the group's members connect with peer-credential authentication
+  and no token. The daemon may only `chgrp` to a group it belongs
+  to; an unknown name or a missing membership refuses at startup
+  naming the fix.
+
+- **An empty `host` turns the TCP listener off (#799).** Setting
+  `host` to the empty string (`host: ""` / `MSKSD_HOST=""`)
+  serves the unix socket alone: no TLS material resolves, no CA
+  is generated, and both listeners off refuses at startup. The
+  client's unconfigured lookup now also probes the system
+  daemon's path, `/run/msksd/msksd.sock`, beside its runtime
+  dir's own.
 
 ### Changed
 
