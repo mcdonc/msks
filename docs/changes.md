@@ -14,8 +14,9 @@ tagged `vX.Y.Z`.
   outgrows 10 GiB after a few rebuilds. `MSKSD_ROOT_MIB` still
   overrides the default, an explicit size on create still wins
   over both, and existing workspaces keep the size they were
-  created with. The create form's root hint names the 20480
-  default, and the first-run config template's `home_mib` comment
+  created with. The create form's root placeholder names the
+  daemon's real default on every healthy load (it always did for
+  home), and the first-run config template's `home_mib` comment
   now states the real 20480 default (it read 2048).
 
 - **The create form's image dropdown shows the import date and
