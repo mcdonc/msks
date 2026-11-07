@@ -1386,7 +1386,7 @@ async def test_a_defaults_refusal_keeps_the_form_standing() -> None:
             )
         )
         root = screen.query_one("#field-root_mib", Input)
-        assert root.placeholder == "MiB — 20480"
+        assert root.placeholder == "MiB"
         assert screen.query_one("#field-home_mib", Input).placeholder == "MiB"
 
 

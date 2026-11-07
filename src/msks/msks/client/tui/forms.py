@@ -96,7 +96,7 @@ FORM_FIELDS = (
     ("image", "image ref", "the default image (* marks it)"),
     ("cpus", "vcpus", "default 2"),
     ("mem_mib", "memory", "MiB — 8192"),
-    ("root_mib", "root", "MiB — 20480"),
+    ("root_mib", "root", "MiB"),
     ("home_mib", "home", "MiB"),
     ("user", "user", "the account it seeds"),
 )
