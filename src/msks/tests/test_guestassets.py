@@ -345,9 +345,7 @@ def test_the_images_ship_git_vim_emacs_and_gh() -> None:
     Debian stages the distro's own debs at the ELF level (the
     dpkg-level closure would drag emacs' JIT dev chain), Fedora
     the distro's own RPMs the same way, NixOS rides the system
-    profile; the Debian image additionally ships apt's own list
-    state so `apt-get install` resolves without an update run a
-    fresh workspace has no egress for."""
+    profile."""
     debian = (REPO_ROOT / "nix" / "guest-debian.nix").read_text()
     fedora = (REPO_ROOT / "nix" / "guest-fedora.nix").read_text()
     nixos = (REPO_ROOT / "nix" / "guest-nixos-configuration.nix").read_text()
