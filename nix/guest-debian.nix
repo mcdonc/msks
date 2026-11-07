@@ -116,10 +116,6 @@ let
         "libtree-sitter0.22_0.22.6-6+b1" =
           "sha256-CiF3BSUbMoCDhcOcm85S3JQbACEBhJ+4e8Z59wvNEuA=";
       };
-      # The staged apt-list pins (#783): per-suite Packages.xz
-      # indexes, per-arch hashes (the InRelease files are
-      # arch-independent - a shared attrset below).
-      aptPackagesHashes.trixie = "sha256-d3jT4/MDt924zg/nyNV0c6B2xr8ujyQfdUIdI5Y1JJg=";
     };
     aarch64 = {
       debianArch = "arm64";
@@ -157,7 +153,6 @@ let
         "libtree-sitter0.22_0.22.6-6+b1" =
           "sha256-j+bx0pn/HupW8MKv8Ve8stuXW3for2/wq7tKGa0Uz4g=";
       };
-      aptPackagesHashes.trixie = "sha256-vhazey90DwZuqT011W8E+U1jaT5aPrQhsFK/hvrnW80=";
     };
   };
   facts =
@@ -449,43 +444,6 @@ let
   toolDebPairs = lib.concatMapStringsSep " " (
     spec: "${spec.name}=${toolDeb (builtins.removeAttrs spec [ "name" ])}"
   ) toolDebSpecs;
-
-  # The staged apt lists (#783): what `apt-get update` would
-  # fetch for the image's own mirror+file sources, pinned at
-  # build time so a fresh workspace's first `apt-get install`
-  # resolves with no update — the update itself needs egress a
-  # fresh workspace may not have. Only the stable `trixie` suite
-  # stages, at the live
-  # mirror: the main index changes at a point release — the same
-  # cadence as the dated cloud image pin this file already
-  # carries, re-pinned deliberately when it moves. The
-  # updates/backports/security indexes rotate on every SRU and
-  # security push (weekly or faster) and would rot between one
-  # build and the next; a workspace that wants current security
-  # fixes runs its own `apt-get update` — and needs egress to
-  # install anything anyway, which is exactly when that update
-  # becomes possible.
-  aptInReleaseHashes.trixie = "sha256-BYT7oy4T4KuChfsWwnreoewDpzZpwYcCghCU/WyoZnU=";
-
-  aptSuites = [
-    {
-      suite = "trixie";
-      base = "https://deb.debian.org/debian";
-      mirror = "debian.list";
-    }
-  ];
-
-  aptLists = map (s: {
-    inherit (s) suite mirror;
-    release = pkgs.fetchurl {
-      url = "${s.base}/dists/${s.suite}/InRelease";
-      hash = aptInReleaseHashes.${s.suite};
-    };
-    packages = pkgs.fetchurl {
-      url = "${s.base}/dists/${s.suite}/main/binary-${facts.debianArch}/Packages.xz";
-      hash = facts.aptPackagesHashes.${s.suite};
-    };
-  }) aptSuites;
 
   # The minimal initramfs (#37's shape, #96's module set): busybox,
   # the six modules the generic kernel needs to mount the ext4
@@ -1300,18 +1258,12 @@ let
           pkgs.qemu
           pkgs.e2fsprogs
           pkgs.kmod
-          pkgs.lz4 # the staged apt lists (#783)
           pkgs.util-linux
-          pkgs.xz # the staged apt lists (#783)
           (pkgs.python3.withPackages (ps: [ ]))
         ];
         # name=storepath pairs for the git/emacs staging loop
-        # below, and suite metadata + fetchurl paths for the apt
-        # lists staging (#783).
+        # below (#783).
         inherit toolDebPairs;
-        aptListPairs = lib.concatMapStringsSep " " (
-          s: "${s.suite},${s.mirror},${s.release},${s.packages}"
-        ) aptLists;
       }
       ''
         set -eu
@@ -1744,21 +1696,6 @@ let
         deb_elf_guard "$root"/usr/bin/emacs-nox
         deb_elf_guard "$root"/usr/bin/emacsclient.emacs
 
-        # The staged apt lists (#783): under the exact names apt
-        # derives from the image's own mirror+file sources, an
-        # InRelease plus the lz4-compressed Packages index per
-        # suite — the byte shape `apt-get update` itself writes
-        # (verified against a live update's output). Staged, a
-        # fresh workspace's `apt-get install` resolves with no
-        # update run.
-        mkdir -p "$root"/var/lib/apt/lists/partial
-        for quad in $aptListPairs; do
-          IFS=, read -r suite mirror rel pkg <<<"$quad"
-          cp "$rel" \
-            "$root"/var/lib/apt/lists/_etc_apt_mirrors_"''${mirror}"_dists_"''${suite}"_InRelease
-          xz -dc "$pkg" | lz4 -q > \
-            "$root"/var/lib/apt/lists/_etc_apt_mirrors_"''${mirror}"_dists_"''${suite}"_main_binary-${facts.debianArch}_Packages.lz4
-        done
 
         # No baked host keys — ever (#110): each workspace generates
         # its own on first boot; an upstream image that started
@@ -1784,15 +1721,9 @@ let
         # emacs' runtime data (#783): the pdump emacs starts from
         # and the compiled lisp it loads — a staging regression
         # that loses either ships a binary that cannot start, and
-        # nothing else catches it. The staged apt lists' names
-        # derive from the image's own mirrors files, so their
-        # presence is load-bearing for the lists below.
+        # nothing else catches it.
         ls "$root"/usr/libexec/emacs/30.1/*/emacs-*.pdmp >/dev/null
         test -d "$root"/usr/share/emacs/30.1/lisp
-        test -f "$root"/etc/apt/mirrors/debian.list
-        test -f "$root"/etc/apt/mirrors/debian-security.list
-        test -f \
-          "$root"/var/lib/apt/lists/_etc_apt_mirrors_debian.list_dists_trixie_main_binary-${facts.debianArch}_Packages.lz4
         test -x "$root"/usr/sbin/sshd
         # Sanity: the home-volume mount retry (#688) — the RUN's
         # target exists in the tree, and the rule's load-bearing

@@ -387,21 +387,6 @@ def test_the_images_ship_git_vim_emacs_and_gh() -> None:
     assert 'run_tool "$root"/usr/bin/gh --version' in debian
     assert "emacs-*.pdmp" in debian
     assert "usr/share/emacs/30.1/lisp" in debian
-    assert "mirrors/debian.list" in debian
-    # The apt list state (#783): staged under the exact names
-    # apt derives from the image's mirror+file sources, one
-    # InRelease plus an lz4 Packages per suite, both arches
-    # carrying index hashes.
-    assert "_etc_apt_mirrors_" in debian
-    assert "Packages.lz4" in debian
-    assert 'xz -dc "$pkg" | lz4 -q' in debian
-    # Only the stable main suite stages (the fast-rotating suites
-    # would rot the pins weekly; a workspace with egress refreshes
-    # itself) — the guard pins that shape.
-    assert "aptPackagesHashes.trixie" in debian
-    suites_block = debian.split("aptSuites = [")[1].split("]")[0]
-    for suite in ["trixie-updates", "trixie-backports", "trixie-security"]:
-        assert suite not in suites_block
     # Fedora: the distro's own RPMs, same pattern.
     for pin in [
         'name = "git-core";',
@@ -416,13 +401,9 @@ def test_the_images_ship_git_vim_emacs_and_gh() -> None:
     assert "emacs-*.pdmp" in fedora
     assert "usr/share/emacs/30.2/lisp" in fedora
     assert "usr/share/vim/vim[0-9]*" in fedora
-    # NixOS: the system profile carries the set, and the guest's
-    # nix.conf turns both experimental features on ambiently.
+    # NixOS: the system profile carries the set.
     for pkg in ["pkgs.git", "pkgs.gh", "pkgs.vim", "pkgs.emacs-nox"]:
         assert pkg in nixos
-    assert "experimental-features = [" in nixos
-    assert '"nix-command"' in nixos
-    assert '"flakes"' in nixos
 
 
 def test_the_guest_flavors_share_the_node_pin_bytes() -> None:

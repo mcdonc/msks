@@ -140,19 +140,6 @@ in
     nix.settings.nix-path = nixSearchPath;
     nix.nixPath = nixSearchPath;
 
-    # The ambient experimental nix features (#783): a checkout
-    # that carries a flake.nix needs `flakes` before its first
-    # `nix build nixpkgs#…`, and the new CLI's installable syntax
-    # needs `nix-command` even for non-flake calls. The setting
-    # rides nix.conf, so every shell and every stripped-env
-    # invocation gets both without a per-user override or a
-    # --extra-experimental-features flag — the same nix.conf
-    # surface the search path uses above.
-    nix.settings.experimental-features = [
-      "nix-command"
-      "flakes"
-    ];
-
     system.stateVersion = lib.versions.majorMinor lib.version;
 
     # cloud-init owns the hostname (#370): the seed's
