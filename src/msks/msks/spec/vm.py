@@ -28,7 +28,7 @@ class VmSpec:
     kernel: Path
     rootfs: Path
     cmdline: str = "console=ttyS0 root=/dev/vda rw"
-    cpus: int = 2
+    cpus: int = 4
     mem_mib: int = 8192
     initrd: Path | None = None
     # Persistent-artifact sizes (#14): the root overlay's virtual

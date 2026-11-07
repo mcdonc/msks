@@ -24,6 +24,11 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **New workspaces default to 4 vCPUs (#791).** A create that
+  leaves the count unset boots 4 vCPUs, up from 2. The 1–64 bound
+  is unchanged, an explicit `--cpus` still wins, and existing
+  workspaces keep their stored count.
+
 - **`shutdown_timeout_s` defaults to 90 seconds (#787).** A
   workspace stop now waits up to 90s for the guest to power off
   (was 20s). An idle guest still answers in seconds.

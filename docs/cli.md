@@ -370,7 +370,7 @@ below generate theirs):
 | `--initrd`    | `initrd`                | Explicit initrd path                                                               |
 | `--rootfs`    | `rootfs`                | Explicit rootfs path (skips the catalog)                                           |
 | `--cmdline`   | `cmdline`               | Explicit kernel cmdline                                                            |
-| `--cpus`      | `cpus`                  | vcpus, 1–64 (daemon default: 2)                                                    |
+| `--cpus`      | `cpus`                  | vcpus, 1–64 (daemon default: 4)                                                    |
 | `--mem-mib`   | `mem_mib`               | Guest memory MiB, 64–32768 (daemon default: 8192)                                  |
 | `--root-mib`  | `root_mib`              | Persistent root overlay size (daemon default)                                      |
 | `--home-mib`  | `home_mib`              | Persistent /home volume size (daemon default)                                      |
