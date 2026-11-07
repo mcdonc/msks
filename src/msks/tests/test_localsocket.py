@@ -1212,3 +1212,5 @@ async def test_serve_socket_only_owns_the_process(
     with contextlib.suppress(asyncio.CancelledError):
         await asyncio.wait_for(task, timeout=10)
     assert not path.exists()
+
+
