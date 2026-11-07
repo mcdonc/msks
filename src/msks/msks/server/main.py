@@ -51,7 +51,7 @@ def server_config(app, api=None) -> uvicorn.Config:
     )
 
 
-def socket_config(app, api) -> uvicorn.Config:
+def socket_config(app, api, lifespan: str = "off") -> uvicorn.Config:
     """The local listener's uvicorn config (#555).
 
     Same app, no TLS (the kernel vouches for both ends of a unix
@@ -59,7 +59,9 @@ def socket_config(app, api) -> uvicorn.Config:
     application's startup and shutdown, so a shared app runs
     them exactly once. The peer-credential protocol wrap lands on
     this config alone: a TCP connection never carries the local
-    marker.
+    marker. ``lifespan="auto"`` is the socket-alone shape (#799):
+    with no TCP server beside it, the socket server owns the
+    process and runs the app's startup and shutdown itself.
     """
     server = app.state.settings.server
     return uvicorn.Config(
@@ -68,9 +70,17 @@ def socket_config(app, api) -> uvicorn.Config:
         port=server.port,
         log_level="info",
         access_log=server.access_log,
-        lifespan="off",
+        lifespan=lifespan,
         proxy_headers=False,
     )
+
+
+def tcp_enabled(server) -> bool:
+    """The TCP listener's switch: an empty host keeps it off
+    (#799) — the mirror of the socket setting's empty string —
+    and the daemon serves the unix listener alone.
+    """
+    return server.host != ""
 
 
 def arm_tls(app, no_tls: bool) -> None:
@@ -78,15 +88,21 @@ def arm_tls(app, no_tls: bool) -> None:
 
     ``--no-tls`` wins over configured cert paths: an operator asking
     for plain HTTP in development must not get TLS because the
-    environment still carries stale variables. Split out of
-    :func:`serve` so ``main`` can fail fast on unusable material —
-    a half-configured operator pair raises here with the clean
-    one-line error instead of a traceback from inside uvicorn.
+    environment still carries stale variables. An empty host
+    (#799) resolves nothing either: no TCP listener exists to
+    serve TLS, so no CA is generated for a wire that is not
+    there. Split out of :func:`serve` so ``main`` can fail fast
+    on unusable material — a half-configured operator pair raises
+    here with the clean one-line error instead of a traceback
+    from inside uvicorn.
     """
     server = app.state.settings.server
     if no_tls:
         server.tls_cert = None
         server.tls_key = None
+        return
+    if server.host == "":
+        socket_only_tls(server)
         return
     state_dir = Path(server.db_path).parent
     cert, key, ca_fp = load_or_generate(
@@ -98,6 +114,26 @@ def arm_tls(app, no_tls: bool) -> None:
             f"msksd: CA fingerprint (pin on first connect): {ca_fp}",
             file=sys.stderr,
         )
+
+
+def socket_only_tls(server) -> None:
+    """The empty host's TLS resolution (#799).
+
+    No TCP listener exists to serve TLS, so nothing resolves — no
+    CA is generated for a wire that is not there. Material a
+    config nevertheless names is contradictory: a listener that
+    cannot serve it would silently ignore the operator's pair, so
+    the refusal names the fix instead (the same fail-fast shape a
+    half-configured pair takes in :func:`arm_tls`).
+    """
+    if server.tls_cert is not None or server.tls_key is not None:
+        raise ValueError(
+            "tls_cert/tls_key are set but host is empty — the TCP "
+            "listener is off and TLS material cannot serve; unset "
+            "the pair or give host an address"
+        )
+    server.tls_cert = None
+    server.tls_key = None
 
 
 def serve(app, no_tls: bool) -> None:
@@ -126,24 +162,83 @@ async def serve_listeners(app) -> None:
     :class:`~msks.server.localsocket.QuietServer` under
     :func:`local_listener` — no signal handlers of its own — and
     stops when the TCP server stops.
+
+    An empty host (#799) flips the shape: the local listener
+    serves alone and owns the process (signals and lifespan
+    included) through :func:`serve_socket_only`. Both listeners
+    off is a configuration that serves nothing — refused here
+    with the one line that names it, before anything binds.
     """
+    server = app.state.settings.server
     api = build_api(app)
-    tcp_server = uvicorn.Server(server_config(app, api))
-    path = localsocket.enabled(app.state.settings.server.socket)
-    if path is not None and not localsocket.platform_supported():
-        # Non-Linux hosts: the credential plumbing is absent.
+    path = resolved_socket_path(server)
+    if tcp_enabled(server):
+        await serve_tcp_with_optional_socket(app, api, path)
+    elif path is None:
+        raise OSError(
+            "host is empty (the TCP listener is off) and no unix "
+            "socket is set or defaulted — refusing to serve nothing; "
+            "set socket, or give host an address"
+        )
+    else:
+        await serve_socket_only(app, api, path)
+
+
+def resolved_socket_path(server) -> Path | None:
+    """The local listener's path for these settings, or None.
+
+    The ``socket`` setting resolves to its bind path (#555); a
+    host without the credential plumbing (non-Linux) serves TCP
+    alone and says so — the socket setting would refuse there,
+    not surprise at runtime.
+    """
+    path = localsocket.enabled(server.socket)
+    if path is None:
+        return None
+    if not localsocket.platform_supported():
         print(  # pragma: no cover
             "msksd: the unix listener needs Linux peer credentials; "
             "serving TCP only",
             file=sys.stderr,
         )
-        path = None  # pragma: no cover — the platform gate above
+        return None  # pragma: no cover — the platform gate above
+    return path
+
+
+async def serve_tcp_with_optional_socket(app, api, path: Path | None) -> None:
+    """The TCP-owning shapes: TCP alone, or the socket beside it.
+
+    One coroutine — the TCP server's — runs whichever shape the
+    *path* picks; the socket's lifetime rides the TCP server's
+    through :func:`local_listener`.
+    """
+    tcp_server = uvicorn.Server(server_config(app, api))
     if path is None:
         await tcp_server.serve()
         # A clean, signal-driven exit of the plain serve.
         return  # pragma: no cover
     async with local_listener(app, api, path):
         await tcp_server.serve()
+
+
+async def serve_socket_only(app, api, path: Path) -> None:
+    """The socket-alone daemon (#799): the local listener owns
+    the process.
+
+    One server, so the plain :class:`uvicorn.Server` runs it —
+    signals captured, lifespan on, shutdown when the signal says
+    so. The socket file is unlinked on the way out for the same
+    reason the shared shape does it: a restart binds cleanly.
+    """
+    config = socket_config(app, api, lifespan="auto")
+    localsocket.wrap_protocols(config)
+    sock = localsocket.bind(path, app.state.settings.server.socket_group)
+    try:
+        app.state.unix_socket_gid = path.stat().st_gid
+        server = uvicorn.Server(config)
+        await server.serve(sockets=[sock])
+    finally:
+        localsocket.unlink(path)
 
 
 @contextlib.asynccontextmanager
@@ -158,7 +253,7 @@ async def local_listener(app, api, path: Path):
     """
     config = socket_config(app, api)
     localsocket.wrap_protocols(config)
-    sock = localsocket.bind(path)
+    sock = localsocket.bind(path, app.state.settings.server.socket_group)
     app.state.unix_socket_gid = path.stat().st_gid
     server = localsocket.QuietServer(config)
     task = asyncio.create_task(server.serve(sockets=[sock]))
@@ -221,6 +316,7 @@ def keep_startup_bound(old: Settings, new: Settings) -> None:
     if new.server.tls_key is None:
         new.server.tls_key = old.server.tls_key
     new.server.socket = old.server.socket
+    new.server.socket_group = old.server.socket_group
     new.vmm.state_dir = old.vmm.state_dir
     new.server.db_path = old.server.db_path
 

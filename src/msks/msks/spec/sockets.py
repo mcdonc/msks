@@ -17,6 +17,14 @@ SOCKET_NAME = "msksd.sock"
 #: The subdirectory of the runtime root the socket lives in.
 SOCKET_DIR = "msks"
 
+#: The system daemon's socket (#799): the NixOS module's daemon
+#: binds here — ``/run/msksd``, the unit's RuntimeDirectory. The
+#: client probes it after its own runtime dir's path, so an
+#: operator in the socket group runs the client with no
+#: configuration on a module host.
+SYSTEM_SOCKET_DIR = Path("/run/msksd")
+SYSTEM_SOCKET_PATH = SYSTEM_SOCKET_DIR / SOCKET_NAME
+
 
 def runtime_root() -> Path | None:
     """The runtime root a same-user deployment uses:
@@ -47,13 +55,14 @@ def default_socket_path() -> Path | None:
 
 def socket_candidates() -> list[Path]:
     """The paths an unconfigured client checks: its own runtime
-    root's socket, the same path the daemon bound. A client that
-    finds nothing there names the path explicitly (``socket:``,
-    ``MSKSC_SOCKET``, ``--daemon``) — a socket somewhere else is
-    a deployment choice the client does not guess at.
+    root's socket first (the same-user daemon), then the system
+    daemon's path at ``/run/msksd/msksd.sock`` (#799) — a module
+    host's operators find that daemon with no configuration. A
+    client that finds nothing at either names a socket
+    explicitly (``socket:``, ``MSKSC_SOCKET``, ``--daemon``).
     """
     default = default_socket_path()
-    return [default] if default else []
+    return ([default] if default else []) + [SYSTEM_SOCKET_PATH]
 
 
 def is_socket_file(path: Path) -> bool:

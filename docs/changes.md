@@ -19,6 +19,25 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`socket_group` shares the daemon's unix socket (#799).** A
+  new daemon setting (`socket_group` / `MSKSD_SOCKET_GROUP`)
+  moves the bound socket file into the named group at bind, and
+  the group's members connect with peer-credential authentication
+  and no token. The daemon may only `chgrp` to a group it belongs
+  to; an unknown name or a missing membership refuses at startup
+  naming the fix.
+
+- **An empty `host` turns the TCP listener off (#799).** Setting
+  `host` to the empty string (`host: ""` / `MSKSD_HOST=""`)
+  serves the unix socket alone: no TLS material resolves, no CA
+  is generated, and both listeners off refuses at startup. The
+  NixOS module wires the pair through `services.msksd.socket`
+  (`enable`, `group`) beside `services.msksd.tcp.enable`; the
+  TCP listener stays the module's default, and the socket is
+  opt-in. The client's unconfigured lookup now also probes the
+  system daemon's path, `/run/msksd/msksd.sock`, beside its
+  runtime dir's own.
+
 - **Workspace rows read `stopping` through a stop's graceful
   window (#789).** A stop request now writes `stopping` before
   the graceful shutdown begins, so `msks ls` and a second TUI

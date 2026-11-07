@@ -19,6 +19,7 @@ the marker: only the wrapped protocols set it, and they set it
 only when ``getsockopt(SO_PEERCRED)`` answered.
 """
 
+import grp
 import os
 import pwd
 import socket
@@ -108,10 +109,13 @@ def _peer_creds_ws(base: type) -> type:
     return PeerCredsWebSocketProtocol
 
 
-def bind(path: Path) -> socket.socket:
+def bind(path: Path, group: str | None = None) -> socket.socket:
     """Bind the listening unix socket at *path* (mode 0660).
 
-    The parent directory is created when missing. A stale socket
+    *group* (#799) moves the socket file into a shared group at
+    bind time — the declarative spelling of ``chgrp`` an operator
+    would otherwise run after every daemon start. The parent
+    directory is created when missing. A stale socket
     file at the path — a daemon that died without unlinking — is
     replaced; a socket a live daemon still answers is refused (a
     second daemon must not steal the first's listener, #555
@@ -122,13 +126,18 @@ def bind(path: Path) -> socket.socket:
     file is born with it (#742): the umask the bind runs under
     makes creation itself land 0660 — no window sits between the
     file's appearance and its mode — and the chmod pins the mode
-    on a platform whose socket creation ignores umask. An
-    operator widening access to a group chgrps the file, and the
-    credential policy below agrees with whatever group it holds.
+    on a platform whose socket creation ignores umask. The
+    credential policy below agrees with whatever group the file
+    holds, shared or the daemon's own.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     refuse_taken_path(path)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    # Set only after a successful bind: a bind the kernel refused
+    # (EADDRINUSE — a daemon that took the name in the window
+    # after refuse_taken_path) left someone else's file at the
+    # path, and the cleanup below must leave it alone.
+    bound = False
     try:
         # 0777 & ~0o117 = 0o660: the bind creates the file with
         # its final mode in one step. A bare bind creates it
@@ -140,12 +149,49 @@ def bind(path: Path) -> socket.socket:
             sock.bind(str(path))
         finally:
             os.umask(was)
+        bound = True
         os.chmod(path, 0o660)
+        if group is not None:
+            chgrp(path, group)
         sock.listen(128)
     except OSError:
         sock.close()
+        # Only our own file leaves: a failed share or listen on a
+        # socket we bound, never the name a competitor won — the
+        # next start binds cleanly instead of replacing what this
+        # one left.
+        if bound:
+            with suppress(FileNotFoundError):
+                path.unlink()
         raise
     return sock
+
+
+def chgrp(path: Path, group: str) -> None:
+    """Move the socket file at *path* into *group* (#799).
+
+    The group's members pass the peer policy with no token: the
+    caller stats the file's gid after this, and the policy reads
+    membership through the account database. The daemon owns the
+    file and may chgrp only to a group it belongs to (the unit's
+    SupplementaryGroups carries the membership); both failure
+    shapes — a name the host does not know, a group the daemon
+    does not belong to — refuse here, named, rather than serve a
+    socket nobody else can connect through.
+    """
+    try:
+        gid = grp.getgrnam(group).gr_gid
+    except KeyError:
+        raise OSError(
+            f"socket_group {group!r}: no such group on this host"
+        ) from None
+    try:
+        os.chown(path, -1, gid)
+    except PermissionError as exc:
+        raise OSError(
+            f"socket_group {group!r}: the daemon may not chgrp to it — "
+            "add the group to the daemon's SupplementaryGroups"
+        ) from exc
 
 
 def refuse_taken_path(path: Path) -> None:
