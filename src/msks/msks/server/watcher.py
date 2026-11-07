@@ -61,6 +61,16 @@ async def scan_workspace(app, hub: EventHub, row: dict) -> bool:
     in-flight set is process-local: a daemon that died mid-launch leaves
     the row ``starting`` with no in-flight marker, and the next daemon's
     scan reconciles it like any other crashed start.
+
+    A stop in flight owns its row the same way (#789): the stop writes
+    ``stopping`` before the graceful shutdown begins, and the seam keeps
+    answering ``running`` until the VMM exits, so a scan crossing the
+    window would erase the mark (and publish a spurious running
+    transition). The marker is process-local like the start's: a daemon
+    that died mid-stop leaves the row ``stopping`` with no marker, and
+    the next scan reconciles it per the seam — ``running`` when the
+    guest never powered off, ``stopped`` when it did, ``unknown`` for a
+    wedged VMM.
     """
     try:
         info = await app.state.microvm.info(row["id"])
@@ -72,7 +82,7 @@ async def scan_workspace(app, hub: EventHub, row: dict) -> bool:
         return False
     if steady_state(row["status"], status):
         return False
-    if start_in_flight(app, row["id"], row["status"], status):
+    if in_flight_hold(app, row["id"], row["status"], status):
         return False
     return await publish_transition(app, hub, row["id"], status)
 
@@ -101,6 +111,33 @@ def start_in_flight(
         and workspace_id in getattr(app.state, "starting_workspaces", set())
         and seam_status in ("absent", "stopped")
     )
+
+
+def stop_in_flight(
+    app, workspace_id: str, row_status: str, seam_status: str
+) -> bool:
+    """A stop in flight owns its row (#789): the graceful window
+    still reads ``running`` at the seam — the VMM answers Running
+    until it exits — and erasing the mark would publish a
+    spurious running transition while the shutdown runs. The
+    marker is process-local — a daemon that died mid-stop leaves
+    the row stopping with no marker, and the scan reconciles it
+    per the seam."""
+    return (
+        row_status == "stopping"
+        and workspace_id in getattr(app.state, "stopping_workspaces", set())
+        and seam_status == "running"
+    )
+
+
+def in_flight_hold(
+    app, workspace_id: str, row_status: str, seam_status: str
+) -> bool:
+    """A request in flight owns its row (#620 part #621, #789):
+    either marker means the scan stands down for this row."""
+    return start_in_flight(
+        app, workspace_id, row_status, seam_status
+    ) or stop_in_flight(app, workspace_id, row_status, seam_status)
 
 
 async def publish_transition(

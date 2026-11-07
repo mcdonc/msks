@@ -156,20 +156,23 @@ def consent_line(
     return status_line("consent", value, theme_variables)
 
 
-#: The power verbs' dimming rule (#367): the status that
-#: makes each verb pointless — the row dims with its reason
-#: while the workspace sits in it, and Enter names the reason
-#: instead of calling the daemon. Every other status leaves both
-#: rows live: the daemon owns the vocabulary (a workspace may
-#: read paused, starting, created, or a watcher word), and a verb
-#: it would still take stays offered — a refusal names itself on
-#: the page's consent line. The shell action runs in every state
+#: The power verbs' dimming rule (#367): the statuses that
+#: make each verb pointless — the row dims with its reason
+#: while the workspace sits in one of them, and Enter names the
+#: reason instead of calling the daemon. Stop dims beside a
+#: stopped workspace and through a stop's graceful window (#789:
+#: the row reads ``stopping`` until the request lands). Every
+#: other status leaves both rows live: the daemon owns the
+#: vocabulary (a workspace may read paused, starting, created,
+#: or a watcher word), and a verb it would still take stays
+#: offered — a refusal names itself on the page's consent line.
+#: The shell action runs in every state
 #: (#479): the ssh child it opens boots a stopped workspace
 #: itself, so the row never dims — the power pair alone carries
 #: the rule.
 DIMMED_WHEN = {
-    "start": "running",
-    "stop": "stopped",
+    "start": ("running",),
+    "stop": ("stopped", "stopping"),
 }
 
 
@@ -187,9 +190,9 @@ class PageAction(NamedTuple):
 
 
 def action_note(kind: str, status: str) -> str | None:
-    """The reason a power row stands dimmed (#367), or None
-    while its verb runs: the status that makes it pointless."""
-    if DIMMED_WHEN.get(kind) == status:
+    """The reason a power row stands dimmed (#367, #789), or None
+    while its verb runs: a status that makes it pointless."""
+    if status in DIMMED_WHEN.get(kind, ()):
         return f"workspace is {status}"
     return None
 

@@ -107,6 +107,14 @@ def build_api(app) -> FastAPI:
     # launch lives in this process (a crashed daemon leaves no
     # marker, and the next scan reconciles the row).
     app.state.starting_workspaces: set[str] = set()
+    # The stops in flight (#789): a stop writes ``stopping``
+    # before the graceful shutdown begins so the row tells the
+    # truth through a window that lasts up to the shutdown
+    # timeout, and the watcher consults this set to leave the
+    # mark alone while the stop lives in this process (a crashed
+    # daemon leaves no marker, and the next scan reconciles the
+    # row against the seam).
+    app.state.stopping_workspaces: set[str] = set()
     # Catalog mutations serialize daemon-wide (#258, #340): the
     # floor check under concurrent URL imports would each clamp to
     # the same headroom and stream real bytes in parallel — the

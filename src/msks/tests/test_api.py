@@ -44,6 +44,7 @@ class StubMicrovm:
         self.prepared: list[VmSpec] = []
         self.statuses: dict[str, VmStatus] = {}
         self.fail_prepare = False
+        self.fail_shutdown = False
         self.seen_specs: dict[str, VmSpec] = {}
 
     async def prepare(self, spec: VmSpec) -> None:
@@ -65,6 +66,8 @@ class StubMicrovm:
     async def shutdown(
         self, workspace_id: str, timeout_s: float | None = None
     ) -> None:
+        if self.fail_shutdown:
+            raise MicrovmError("shutdown timed out")
         self.calls.append(("shutdown", workspace_id))
         self.statuses[workspace_id] = VmStatus.STOPPED
 
@@ -260,6 +263,107 @@ async def test_workspace_lifecycle(client) -> None:
         "/api/v1/workspaces/ghost/start", headers=auth()
     )
     assert start_missing.status_code == 404
+
+
+class GatedShutdownStub(StubMicrovm):
+    """A stub whose shutdown holds on a gate — the graceful
+    window stretched to the test's order (#789)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gate = asyncio.Event()
+
+    async def shutdown(
+        self, workspace_id: str, timeout_s: float | None = None
+    ) -> None:
+        await self.gate.wait()
+        await super().shutdown(workspace_id, timeout_s)
+
+
+async def wait_for_status(
+    http: httpx.AsyncClient, workspace_id: str, status: str
+) -> dict:
+    """Poll a row until its status reads the named word — the
+    second client's view of an in-flight mark (#789)."""
+    for _ in range(200):
+        row = await http.get(
+            f"/api/v1/workspaces/{workspace_id}", headers=auth()
+        )
+        if row.json()["status"] == status:
+            return row.json()
+        await asyncio.sleep(0.01)
+    pytest.fail(f"{workspace_id} never read {status}")
+
+
+async def test_stop_is_stopping_to_a_second_client(client) -> None:
+    """A stop in flight owns its row (#789): the row reads
+    ``stopping`` through the graceful window — the TUI's tick,
+    ``msks ls``, a second client — then ``stopped`` when the
+    request lands, and the marker goes with it."""
+    http, app, stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-win", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+    await http.post(f"/api/v1/workspaces/{wid}/start", headers=auth())
+    gated = GatedShutdownStub()
+    gated.statuses.update(stub.statuses)
+    app.state.microvm = gated
+    stop_task = asyncio.create_task(
+        http.post(f"/api/v1/workspaces/{wid}/stop", headers=auth())
+    )
+    mid_window = await wait_for_status(http, wid, "stopping")
+    assert mid_window["status"] == "stopping"
+    assert wid in app.state.stopping_workspaces
+    gated.gate.set()
+    reply = await stop_task
+    assert reply.json() == {"id": wid, "status": "stopped"}
+    settled = await wait_for_status(http, wid, "stopped")
+    assert settled["status"] == "stopped"
+    assert wid not in app.state.stopping_workspaces
+
+
+async def test_stop_failure_restores_the_prior_status(client) -> None:
+    """A shutdown that fails leaves the guest alive, so the row
+    returns to the status it carried before the stop (#789) — the
+    mark never outlives a failed request."""
+    http, app, stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-sf", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+    await http.post(f"/api/v1/workspaces/{wid}/start", headers=auth())
+    stub.fail_shutdown = True
+    refused = await http.post(f"/api/v1/workspaces/{wid}/stop", headers=auth())
+    assert refused.status_code == 503
+    row = await http.get(f"/api/v1/workspaces/{wid}", headers=auth())
+    assert row.json()["status"] == "running"
+    assert wid not in app.state.stopping_workspaces
+
+
+async def test_resize_refuses_a_stopping_workspace(client) -> None:
+    """A row mid-stop may keep a live volume attached, so the
+    gates that read the status refuse it (#789): ``stopping`` is
+    not in the free allow-list."""
+    http, app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-sg", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+    await app.state.model.set_status(wid, "stopping")
+    refused = await http.post(
+        "/api/v1/workspaces/ws-sg/resize",
+        json={"home_mib": 128},
+        headers=auth(),
+    )
+    assert refused.status_code == 409
+    assert "stop it before" in refused.json()["detail"]
 
 
 async def test_create_defaults_to_the_real_use_sizes(client) -> None:

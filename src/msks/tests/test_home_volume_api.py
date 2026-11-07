@@ -140,7 +140,7 @@ async def test_move_refused_while_the_vm_is_attached(home_api) -> None:
     wid_ws_live = await create_workspace(home_api, "ws-live")
     planted_volume(home_api, wid_ws_live["id"])
     model = home_api.app.state.model
-    for status in ("starting", "running", "paused", "unknown"):
+    for status in ("starting", "stopping", "running", "paused", "unknown"):
         await model.set_status(wid_ws_live["id"], status)
         for method in ("GET", "PUT"):
             response = await home_api.http.request(

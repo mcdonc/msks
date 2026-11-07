@@ -268,7 +268,11 @@ refs-reader   9c1d2e3f4a  running, 1 mount skipped  allow        2026-06-18  9f2
 
 The status column speaks the daemon's lifecycle vocabulary:
 `created` (row exists, never booted), `starting`, `running`,
-`paused`, `stopped`, `unknown`, `absent`. A workspace whose mounts
+`paused`, `stopping`, `stopped`, `unknown`, `absent`. A workspace
+reads `stopping` while a stop request's graceful shutdown runs.
+The window lasts up to the shutdown timeout; a shutdown that
+times out returns the row to the status it carried before the
+stop. A workspace whose mounts
 skip carries the count beside its status (`running, 1 mount
 skipped` above), a standing marker that lasts until the config
 and the row agree again; the [mounts

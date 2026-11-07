@@ -134,6 +134,18 @@ def starting_workspaces(app) -> set[str]:
     return existing
 
 
+def stopping_workspaces(app) -> set[str]:
+    """The ids with a stop in flight in this process — the
+    process-local half of the ``stopping`` mark (#789). Built at
+    API assembly; an app without the attribute gets one installed,
+    so the caller's add/discard always lands on the stored set."""
+    existing = getattr(app.state, "stopping_workspaces", None)
+    if existing is None:
+        existing = set()
+        setattr(app.state, "stopping_workspaces", existing)
+    return existing
+
+
 async def mount_state(app, row: dict) -> tuple[tuple, tuple]:
     """A row's mounts split into the attachable and the skipped
     (#620, part #621; #672).

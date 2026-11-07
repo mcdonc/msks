@@ -28,6 +28,7 @@ from .rows import (
     serialize_create,
     spec_for,
     starting_workspaces,
+    stopping_workspaces,
     workspace_or_404,
 )
 from .schemas import MountsSet, WorkspaceCreate
@@ -438,7 +439,33 @@ def router(app) -> APIRouter:
             # A stop from a non-owning host cannot reach the VMM; a
             # local no-op would mark a running VM stopped.
             raise HTTPException(status_code=409, detail=mismatch)
-        await app.state.microvm.shutdown(workspace_id)
+        # The stopping mark (#789): the graceful shutdown runs ACPI
+        # presses up to the shutdown timeout inside this request,
+        # and a row reading ``running`` through the whole window
+        # lies to every observer (the TUI tick, ``msks ls``, a
+        # second client). The seam cannot say it — the VMM answers
+        # ``Running`` until it exits — so the daemon owns the word
+        # as request-scoped state, like the start flow's
+        # ``starting``: written before the shutdown, the prior
+        # status restored when the shutdown fails (a timeout
+        # leaves the guest alive), ``stopped`` when it lands. The
+        # watcher leaves the mark alone while the stop lives in
+        # this process; a daemon crash leaves no marker, and the
+        # next scan reconciles the row per the seam.
+        prior_status = row["status"]
+        in_flight = stopping_workspaces(app)
+        in_flight.add(workspace_id)
+        try:
+            await app.state.model.set_status(workspace_id, "stopping")
+            await app.state.microvm.shutdown(workspace_id)
+        except MicrovmError:
+            await app.state.model.set_status(workspace_id, prior_status)
+            raise
+        finally:
+            # The marker dies with the request on every path: a
+            # marker left behind would wedge the row at
+            # ``stopping`` against every scan forever.
+            in_flight.discard(workspace_id)
         await app.state.model.set_status(workspace_id, "stopped")
         return {"id": workspace_id, "status": "stopped"}
 

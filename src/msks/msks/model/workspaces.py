@@ -17,6 +17,7 @@ WORKSPACE_STATUSES = (
     "starting",
     "running",
     "paused",
+    "stopping",
     "stopped",
     "absent",
     "unknown",
