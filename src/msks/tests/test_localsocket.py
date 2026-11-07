@@ -1027,13 +1027,18 @@ def test_chgrp_names_the_membership_fix_on_a_kernel_refusal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A group the daemon does not belong to answers EPERM: the
-    refusal names SupplementaryGroups, the operator's fix."""
+    refusal names SupplementaryGroups, the operator's fix. The
+    group lookup is rigged too — the group database of the test
+    host decides nothing here."""
     path = tmp_path / "msksd.sock"
     path.touch()
 
     def refuse(*args, **kwargs):
         raise PermissionError("not the owner's group")
 
+    monkeypatch.setattr(
+        localsocket.grp, "getgrnam", lambda name: SimpleNamespace(gr_gid=4242)
+    )
     monkeypatch.setattr(localsocket.os, "chown", refuse)
     with pytest.raises(OSError, match="SupplementaryGroups"):
         localsocket.chgrp(path, "wheel")
