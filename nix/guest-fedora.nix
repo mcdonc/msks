@@ -1328,12 +1328,12 @@ let
           done
           ;;
         emacs-nw)
-          # usr/bin, the pdump under usr/libexec/emacs, and the
-          # lisp under usr/share/emacs are load-bearing: a
-          # missing path fails the build, not a workspace boot
-          # (the [ -e ] guards the lib dirs only, which differ
-          # by arch).
-          for path in usr/bin usr/libexec/emacs usr/share/emacs; do
+          # usr/bin and the pdump under usr/libexec/emacs are
+          # this rpm's payload and load-bearing: a missing path
+          # fails the build, not a workspace boot (the lisp is
+          # emacs-common's payload, staged by its own class; the
+          # [ -e ] guards the lib dirs, which differ by arch).
+          for path in usr/bin usr/libexec/emacs; do
             mkdir -p "$tree"/"$path"
             cp -a --no-preserve=ownership "$ex"/"$path"/. \
               "$tree"/"$path"/

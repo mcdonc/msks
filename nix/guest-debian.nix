@@ -451,16 +451,11 @@ let
   ) toolDebSpecs;
 
   # The staged apt lists (#783): what `apt-get update` would
-  # fetch for the image's own sources (the mirror+file
-  # debian.list / debian-security.list the image carries),
-  # pinned at build time so a fresh workspace's first
-  # `apt-get install` resolves with no update — the update itself
-  # needs egress a fresh workspace may not have. The deb-src
-  # halves of the sources fetch nothing: these lists serve
-  # installing; `apt-get source` still needs a live update. The
-  # InRelease files are arch-independent, the Packages indexes
-  # are per-arch.
-  # Only the stable `trixie` suite is staged, at the live
+  # fetch for the image's own mirror+file sources, pinned at
+  # build time so a fresh workspace's first `apt-get install`
+  # resolves with no update — the update itself needs egress a
+  # fresh workspace may not have. Only the stable `trixie` suite
+  # stages, at the live
   # mirror: the main index changes at a point release — the same
   # cadence as the dated cloud image pin this file already
   # carries, re-pinned deliberately when it moves. The
@@ -469,10 +464,7 @@ let
   # build and the next; a workspace that wants current security
   # fixes runs its own `apt-get update` — and needs egress to
   # install anything anyway, which is exactly when that update
-  # becomes possible. The deb-src halves of the sources fetch
-  # nothing: these lists serve installing; `apt-get source`
-  # still needs a live update. The InRelease file is
-  # arch-independent, the Packages index is per-arch.
+  # becomes possible.
   aptInReleaseHashes.trixie = "sha256-BYT7oy4T4KuChfsWwnreoewDpzZpwYcCghCU/WyoZnU=";
 
   aptSuites = [
@@ -1920,14 +1912,13 @@ let
           | grep -q '^ripgrep [0-9]'
 
         # git, vim, and gh execute (#783): the same
-        # loader-and-library world the guest runs them in, under a
-        # scratch HOME. (emacs' --version passes with its pdump
-        # and lisp tree deleted — the version string is compiled
-        # into the binary — so the emacs half is asserted by the
-        # pdump/lisp files in the sanity block, not by an
-        # execution the data dirs cannot back at build time: they
-        # resolve against the sandbox root, not the tree.)
-        mkdir emacs-home
+        # loader-and-library world the guest runs them in. (emacs'
+        # --version passes with its pdump and lisp tree deleted —
+        # the version string is compiled into the binary — so the
+        # emacs half is asserted by the pdump/lisp files in the
+        # sanity block, not by an execution the data dirs cannot
+        # back at build time: they resolve against the sandbox
+        # root, not the tree.)
         run_tool "$root"/usr/bin/gh --version \
           | grep -q '^gh version [0-9]'
         run_tool "$root"/usr/bin/git --version \

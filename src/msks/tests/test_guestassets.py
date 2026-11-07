@@ -399,9 +399,9 @@ def test_the_images_ship_git_vim_emacs_and_gh() -> None:
     # would rot the pins weekly; a workspace with egress refreshes
     # itself) — the guard pins that shape.
     assert "aptPackagesHashes.trixie" in debian
-    assert (
-        "trixie-updates" not in debian.split("aptSuites = [")[1].split("]")[0]
-    )
+    suites_block = debian.split("aptSuites = [")[1].split("]")[0]
+    for suite in ["trixie-updates", "trixie-backports", "trixie-security"]:
+        assert suite not in suites_block
     # Fedora: the distro's own RPMs, same pattern.
     for pin in [
         'name = "git-core";',
