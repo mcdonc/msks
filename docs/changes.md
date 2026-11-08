@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.8.2] - 2026-11-07
+
 ### Breaking
 
 - **The `client` flake output is gone (#793).** The flake's
