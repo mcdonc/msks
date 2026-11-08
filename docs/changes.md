@@ -6,6 +6,16 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Fixed
+
+- **`scripts/cut-release.sh` (#805).** One command pushes a
+  release cut in the order the docs deploy needs: the tag alone
+  first, then main once the tag's versioned docs deploy has
+  finished green. Pushing the tag and main together races the
+  docs workflow's concurrency group, and the release publishes
+  without its versioned docs and the site's `latest` alias keeps
+  the previous version until the cancelled run is re-run by hand.
+
 ## \[v0.8.3] - 2026-11-08
 
 ### Fixed

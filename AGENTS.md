@@ -448,7 +448,7 @@ Right before pushing the tag — do this as its own commit on `main`:
    bare `## [v1.0.5]` would still match, but don't write it that way).
 2. Insert a fresh, empty `## \[Unreleased]` heading directly above it.
 3. Commit, e.g. `chore(changelog): cut vX.Y.Z`.
-4. Tag and push: `devenv --quiet -O dotenv.enable:bool false shell -- git tag vX.Y.Z && devenv --quiet -O dotenv.enable:bool false shell -- git push origin vX.Y.Z`.
+4. Tag and cut: `devenv --quiet -O dotenv.enable:bool false shell -- git tag vX.Y.Z && devenv --quiet -O dotenv.enable:bool false shell -- scripts/cut-release.sh vX.Y.Z`. The script pushes the tag ALONE, waits for its Deploy Docs run to finish green, then pushes main — pushing tag and main together races the docs workflow's concurrency group and silently loses the versioned snapshot (#805). Re-running the script after an interrupted cut is safe.
 
 **Critical sequencing:** `release.yml` checks out `docs/changes.md` at the tagged
 commit, so the `[Unreleased]` → `[vX.Y.Z]` rename **must land in (or before) the
