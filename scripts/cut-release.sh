@@ -50,7 +50,7 @@ git rev-parse -q --verify "refs/tags/$tag" >/dev/null ||
 # retry.
 on_origin=$(git ls-remote origin "refs/tags/$tag" | cut -f1)
 tagged=$(git rev-parse "$tag")
-if [[ $tagged != "$(git rev-parse HEAD)" ]]; then
+if [[ $(git rev-parse "$tag^{commit}") != "$(git rev-parse HEAD)" ]]; then
   # The one legal off-HEAD shape: a retry after main moved past
   # the cut (the version bump lands next), with origin already
   # holding this tag at the cut commit.
@@ -95,12 +95,15 @@ done
 [[ -n $run_id ]] ||
   die "no Deploy Docs run appeared for $tag (check the Actions tab)"
 
-# The slug for run links, from the remote's own spelling: both the
-# scp form (git@github.com:o/r.git) and the URL form
-# (https://github.com/o/r.git) reduce to o/r.
+# The slug for run links, from the remote's own spelling: every
+# form — scp (git@github.com:o/r.git), https, ssh-with-port —
+# reduces to o/r by keeping the last colon-or-slash-separated
+# pair. ($tag above stays the tag-object SHA, so the ls-remote
+# comparison holds for annotated tags too; the HEAD comparison
+# peels to the commit.)
 remote=$(git remote get-url origin)
 remote=${remote%.git}
-slug="$(basename "$(dirname "$remote")")/$(basename "$remote")"
+slug=$(printf "%s" "$remote" | sed -E "s#^.*[:/]([^:/]+/[^:/]+)$#\1#")
 run_url="https://github.com/$slug/actions/runs/$run_id"
 echo "cut-release: watching Deploy Docs run $run_id ($run_url)"
 if ! gh run watch "$run_id" --exit-status --interval 10 >/dev/null 2>&1; then
