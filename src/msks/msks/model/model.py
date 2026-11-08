@@ -516,6 +516,13 @@ class Model:
                 # keys regenerated with the fresh overlay, and the
                 # client rotates its host-key cache on the change.
                 "disk_epoch": row.disk_epoch,
+                # The seed's epoch (#803): a monotonic counter,
+                # one bump per seed bake or renewal. A renewal
+                # re-provisions the guest and the stock cloud-init
+                # ssh module regenerates its host keys, so the
+                # client rotates its host-key cache on a change
+                # here too.
+                "seed_epoch": row.seed_epoch,
             }
 
     async def bump_disk_epoch(self, workspace_id: str) -> bool:
@@ -530,6 +537,22 @@ class Model:
                 update(Workspace)
                 .where(Workspace.id == workspace_id)
                 .values(disk_epoch=Workspace.disk_epoch + 1)
+            )
+            await session.commit()
+            return result.rowcount > 0
+
+    async def bump_seed_epoch(self, workspace_id: str) -> bool:
+        """Advance the workspace's seed epoch by one (#803); False
+        when the row is absent — a bake under a row the daemon
+        does not know (the create flow's prepare, a fixture
+        launch) has no client cache to rotate, so the bump is
+        simply not theirs to record."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            result = await session.execute(
+                update(Workspace)
+                .where(Workspace.id == workspace_id)
+                .values(seed_epoch=Workspace.seed_epoch + 1)
             )
             await session.commit()
             return result.rowcount > 0

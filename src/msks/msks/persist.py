@@ -225,20 +225,40 @@ async def ensure_seed(
     An existing seed renews when its CA drifted (#485) or its
     baked mount set differs from the row's current one (#623) —
     each start runs this, so the guest boots with exactly the
-    mounts this start attached.
+    mounts this start attached. Every bake and renewal is one
+    event on the seed epoch (#803): the caller bumps it on
+    :func:`seed_bake_pending` ahead of this call, so any
+    re-provision the bake triggers rotates the client's host-key
+    cache however the bake's content hashes.
     """
     seed = seed_path(settings.state_dir, spec.workspace_id)
-    if seed.is_file():
-        mounts_fp = mounts_fingerprint(spec.mounts)
-        if seed_needs_renewal(seed.parent, ca_pem) or seed_mounts_stale(
-            seed.parent, mounts_fp
-        ):
-            await renew_seed(spec, settings, llm_port, ca_pem, seed)
+    if not seed_bake_pending(spec, settings, llm_port, ca_pem):
         return
-    if not seed_payload_present(spec, llm_port):
+    if seed.is_file():
+        await renew_seed(spec, settings, llm_port, ca_pem, seed)
         return
     await create_seed(spec, settings, llm_port, ca_pem)
     installed.append(seed)
+
+
+def seed_bake_pending(
+    spec: VmSpec, settings, llm_port: int = 0, ca_pem: str | None = None
+) -> bool:
+    """Whether the next ``ensure_artifacts`` bakes or renews the
+    seed (#803): an existing seed whose CA or baked mount set
+    drifted, or an absent seed a payload rides. The caller bumps
+    the row's seed epoch on this answer *before* the bake — the
+    #697 lesson: a bump the bake never reaches over-counts a
+    monotonic token harmlessly, while a bake the row never
+    recorded is the silent refusal the epoch exists to prevent.
+    The predicate and :func:`ensure_seed` share the decision by
+    construction: the seed's own branch reads it."""
+    seed = seed_path(settings.state_dir, spec.workspace_id)
+    if seed.is_file():
+        return seed_needs_renewal(seed.parent, ca_pem) or seed_mounts_stale(
+            seed.parent, mounts_fingerprint(spec.mounts)
+        )
+    return seed_payload_present(spec, llm_port)
 
 
 def seed_payload_present(spec: VmSpec, llm_port: int) -> bool:
@@ -491,6 +511,11 @@ async def create_seed(
     # rule for private keys).
     stage = tmp_sibling(target)
     stage.mkdir(mode=0o700)
+    suffix = (
+        renewal_suffix(ca_pem, mounts_fingerprint(spec.mounts))
+        if renewing
+        else None
+    )
     try:
         (stage / "user-data").write_text(
             compose_user_data(
@@ -513,11 +538,7 @@ async def create_seed(
                 # renewal path: a fresh seed keeps the plain id, a
                 # renewed one pins the CA and mount set it carries
                 # (#485, #623).
-                instance_suffix=(
-                    renewal_suffix(ca_pem, mounts_fingerprint(spec.mounts))
-                    if renewing
-                    else None
-                ),
+                instance_suffix=suffix,
             ),
             encoding="utf-8",
         )

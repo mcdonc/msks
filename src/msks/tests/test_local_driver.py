@@ -798,6 +798,53 @@ async def test_reset_without_an_overlay_bumps_nothing(
     assert (await app.state.model.get_ssh_key(WID))["disk_epoch"] == 0
 
 
+async def test_launch_bakes_bump_the_seed_epoch(
+    env, fake, tmp_path: Path
+) -> None:
+    """#803: every start that bakes or renews the seed advances the
+    row's seed epoch *ahead* of the bake, and a start that leaves
+    the seed alone advances nothing — the counter the identity
+    endpoint serves and the client rotates its host-key cache on.
+    The first bake here rides the seed-absent branch (this launch
+    never prepared), the second the CA-marker drift (the
+    mounts-stale trigger is the same path, pinned in
+    test_persist)."""
+    app, state_dir, _ = env
+    seeded = replace(spec(tmp_path), ssh_pubkey="ssh-ed25519 AAAA test key")
+    await app.state.model.create_workspace(seeded)
+    await app.state.microvm.launch(seeded)
+    # The first boot baked a seed: event one.
+    assert (await app.state.model.get_ssh_key(WID))["seed_epoch"] == 1
+    await app.state.microvm.kill(WID)
+    # The CA marker beside the seed drifts: the next start renews —
+    # event two, whatever content the bake hashes.
+    persist.seed_ca_mark(state_dir / "vms" / WID).unlink()
+    await app.state.microvm.launch(seeded)
+    assert (await app.state.model.get_ssh_key(WID))["seed_epoch"] == 2
+    await app.state.microvm.kill(WID)
+    # An unchanged seed records nothing: the counter stands as the
+    # last bake left it.
+    await app.state.microvm.launch(seeded)
+    assert (await app.state.model.get_ssh_key(WID))["seed_epoch"] == 2
+    await app.state.microvm.kill(WID)
+
+
+async def test_launch_after_prepare_keeps_the_seed_epoch_zero(
+    env, fake, tmp_path: Path
+) -> None:
+    """The create path's shape, the disk epoch's twin (#697):
+    prepare lands the plain seed before the row exists, so the
+    first start finds a clean seed and bumps nothing — the
+    workspace's first pin lands in the unrotated directory."""
+    app, _state_dir, _ = env
+    seeded = replace(spec(tmp_path), ssh_pubkey="ssh-ed25519 AAAA test key")
+    await app.state.microvm.prepare(seeded)
+    await app.state.model.create_workspace(seeded)
+    await app.state.microvm.launch(seeded)
+    assert (await app.state.model.get_ssh_key(WID))["seed_epoch"] == 0
+    await app.state.microvm.kill(WID)
+
+
 async def test_reset_refuses_a_running_vm(env, fake, tmp_path: Path) -> None:
     app, _state_dir, _ = env
     await app.state.microvm.launch(spec(tmp_path))

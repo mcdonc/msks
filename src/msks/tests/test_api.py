@@ -755,10 +755,11 @@ async def test_workspace_ref_resolution_prefers_the_id(client) -> None:
     assert key.json()["name"] == "ws-ref"
 
 
-async def test_the_ssh_key_answer_is_exactly_the_six_fields(client) -> None:
+async def test_the_ssh_key_answer_is_exactly_the_seven_fields(client) -> None:
     """#499: the unread fields stay gone — the answer carries the
-    id, name, public half, instance stamp, login user, and disk
-    epoch (#697) the client reads, and nothing else."""
+    id, name, public half, instance stamp, login user, disk
+    epoch (#697), and seed epoch (#803) the client reads, and
+    nothing else."""
     http, _app, _stub = client
     from testkeys import mint
 
@@ -782,6 +783,7 @@ async def test_the_ssh_key_answer_is_exactly_the_six_fields(client) -> None:
         "created_at",
         "user",
         "disk_epoch",
+        "seed_epoch",
     }
 
 

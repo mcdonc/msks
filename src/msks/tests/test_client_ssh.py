@@ -605,6 +605,52 @@ def test_cache_key_rotates_on_a_disk_epoch(tmp_path: Path) -> None:
     )
 
 
+def test_cache_key_rotates_on_a_seed_epoch(tmp_path: Path) -> None:
+    """#803: a seed bake or renewal re-provisions the guest under a
+    new instance-id and the stock cloud-init ssh module regenerates
+    its host keys, so the epoch counter rotates the cache directory
+    (``r<N>``) beside the disk epoch's ``e<N>``. The counter, not
+    the bake's content hash, is the marker: a mount set leaving
+    and returning bakes the same content twice and still lands a
+    fresh directory. An unserved epoch (a daemon one version
+    behind) and zero spell the pre-#803 directory, so an upgrade
+    churns nothing."""
+    ident = {"id": "1a2b3c4d5e6f7890", "created_at": "2026-10-04"}
+    assert ssh.cache_key({**ident, "seed_epoch": 3}, "ws") == (
+        "1a2b3c4d5e6f7890",
+        "r3",
+    )
+    assert ssh.cache_key({**ident, "seed_epoch": 0}, "ws") == (
+        "1a2b3c4d5e6f7890",
+        None,
+    )
+    assert ssh.cache_key(dict(ident), "ws") == (
+        "1a2b3c4d5e6f7890",
+        None,
+    )
+    both = {**ident, "disk_epoch": 1, "seed_epoch": 2}
+    assert ssh.cache_key(both, "ws") == (
+        "1a2b3c4d5e6f7890",
+        "e1.r2",
+    )
+
+
+def test_rotation_cause_names_both_markers() -> None:
+    """#803 review: a row carrying both markers cannot say which
+    one moved since the client's last session, so the notice names
+    both — a reset-then-renewed workspace would otherwise read the
+    reset's cause on every later renewal."""
+    assert (
+        ssh.rotation_cause({"disk_epoch": 1, "seed_epoch": 2})
+        == "disks were recreated or the seed renewed"
+    )
+    assert ssh.rotation_cause({"disk_epoch": 1}) == "disks were recreated"
+    assert (
+        ssh.rotation_cause({"seed_epoch": 1})
+        == "re-provisioned (a renewed seed)"
+    )
+
+
 def test_session_pin_prefers_the_served_id() -> None:
     """#697: the ssh hostname and its known_hosts alias come from
     the identity, not from what was typed — the id when the daemon
@@ -1894,6 +1940,49 @@ def test_staged_session_names_recreated_disks(
     with ssh.staged_session("tree") as (_booted, _served, _h, _u, _pin):
         pass
     assert "disks were recreated" not in capsys.readouterr().err
+
+
+def test_staged_session_names_the_renewed_seed(
+    monkeypatch: pytest.MonkeyPatch,
+    client_env: None,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#803: a served seed epoch rotates the known_hosts directory
+    and names the re-provision as the cause — the disk epoch
+    stands at zero, so the disks line would lie."""
+    keyed = {
+        **KEY,
+        "id": "03c31bd241",
+        "name": "tree",
+        "created_at": "2026-10-28 09:00:00",
+        "disk_epoch": 0,
+        "seed_epoch": 1,
+    }
+
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return keyed, False
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    keyed_paths: list[tuple] = []
+
+    def fake_known_hosts(ws, base=None, instance=None):
+        keyed_paths.append((ws, instance))
+        return str(tmp_path / f"{ws}.{instance}")
+
+    monkeypatch.setattr(ssh, "known_hosts_path", fake_known_hosts)
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    with ssh.staged_session("tree") as (booted, served, hosts, user, pin):
+        assert (booted, pin) == (False, "03c31bd241")
+    assert keyed_paths == [("03c31bd241", "r1")]
+    err = capsys.readouterr().err
+    assert "re-provisioned (a renewed seed)" in err
+    assert "disks were recreated" not in err
 
 
 def test_run_workspace_ssh_names_a_missing_binary(

@@ -16,7 +16,7 @@ covered by the faked-transport unit suites).
 This module is the suite's shared harness: the env-tunable constants,
 the skip markers, and the helpers every area module uses. The tests
 live in one module per area beside this one — test_boot_lifecycle,
-test_user_data, test_console, test_egress,
+test_user_data, test_console, test_egress, test_hostkey_rotation,
 test_dev_workspace, test_ssh_forward, and test_identity — and
 import what they need from here. The harness
 lives in the package `__init__` itself rather than a harness.py the

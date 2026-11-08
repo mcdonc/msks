@@ -36,6 +36,7 @@ from ..persist import (
     overlay_path,
     remove_home_volume,
     remove_overlay,
+    seed_bake_pending,
     seed_path,
 )
 from ..spec.egress import EgressPolicy
@@ -703,7 +704,22 @@ class LocalCloudHypervisor(MicrovmDriver):
         volume carries no guest identity, so its heal bumps
         nothing. A heal under no row (the create flow prepares
         artifacts before the row lands; a fixture launch) records
-        nothing — there is no cache to rotate."""
+        nothing — there is no cache to rotate.
+
+        A baked or renewed seed is a recorded event too (#803):
+        the new instance-id makes the guest re-provision, and the
+        stock cloud-init ssh module regenerates its host keys
+        (Debian, Fedora; NixOS omits the module). The row's seed
+        epoch — a monotonic counter, one bump per bake — advances
+        *before* the bake for the same reason the disk epoch
+        precedes its heal: a daemon death between bump and bake
+        over-counts harmlessly, while a bake the row never
+        recorded is the silent refusal both counters exist to
+        prevent. The counter (not the bake's content) is what the
+        client rotates on, so a mount set leaving and returning
+        — the same content hash twice — still lands a fresh
+        cache. The same no-row carve-out applies, and a seed
+        left alone records nothing."""
         overlay = overlay_path(vmm.state_dir, spec.workspace_id)
         healed_overlay = not overlay.is_file()
         if healed_overlay:
@@ -719,11 +735,16 @@ class LocalCloudHypervisor(MicrovmDriver):
         # Boots heal their artifacts (#14): a workspace row whose
         # overlay or volume is missing (a crash mid-create, or a row
         # that predates #14) gets them back before the VM starts.
+        # The seed's bump rides the same review lesson ahead of
+        # the bake (#803).
+        ca_pem = await self.interceptor_ca_pem()
+        if seed_bake_pending(spec, vmm, self._settings().llm.port, ca_pem):
+            await self.app.state.model.bump_seed_epoch(spec.workspace_id)
         await ensure_artifacts(
             spec,
             vmm,
             self._settings().llm.port,
-            await self.interceptor_ca_pem(),
+            ca_pem,
         )
         # The share daemons spawn before the VMM (#620, part #622):
         # cloud-hypervisor opens each vhost-user socket at

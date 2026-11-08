@@ -756,10 +756,13 @@ async def test_a_seed_is_renewed_when_its_ca_marker_drifts(tools) -> None:
     first = seed.stat().st_mtime_ns
 
     # A match: no rebuild, no re-provision.
+    assert persist.seed_bake_pending(spec_a, settings, 8770, CA_A) is False
     await persist.ensure_artifacts(spec_a, settings, 8770, CA_A)
     assert seed.stat().st_mtime_ns == first
 
-    # A drift (the marker missing is the pre-#485 shape): renewed.
+    # A drift (the marker missing is the pre-#485 shape): renewed,
+    # and the pending check the row's bump keys on says so (#803).
+    assert persist.seed_bake_pending(spec_a, settings, 8770, CA_B) is True
     marker.unlink()
     await persist.ensure_artifacts(spec_a, settings, 8770, CA_B)
     assert marker.read_text() == persist.ca_fingerprint(CA_B)
