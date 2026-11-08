@@ -98,12 +98,12 @@ done
 # The slug for run links, from the remote's own spelling: every
 # form — scp (git@github.com:o/r.git), https, ssh-with-port —
 # reduces to o/r by keeping the last colon-or-slash-separated
-# pair. ($tag above stays the tag-object SHA, so the ls-remote
+# pair. ($tagged above stays the tag-object SHA, so the ls-remote
 # comparison holds for annotated tags too; the HEAD comparison
 # peels to the commit.)
 remote=$(git remote get-url origin)
 remote=${remote%.git}
-slug=$(printf "%s" "$remote" | sed -E "s#^.*[:/]([^:/]+/[^:/]+)$#\1#")
+slug=$(printf "%s" "$remote" | sed -E 's#^.*[:/]([^:/]+/[^:/]+)$#\1#')
 run_url="https://github.com/$slug/actions/runs/$run_id"
 echo "cut-release: watching Deploy Docs run $run_id ($run_url)"
 if ! gh run watch "$run_id" --exit-status --interval 10 >/dev/null 2>&1; then
