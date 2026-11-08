@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.8.3] - 2026-11-08
+
 ### Fixed
 
 - **`msks ssh` after a host-share change (#803).** A changed mount
