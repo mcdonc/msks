@@ -4,9 +4,10 @@ side and the row the client reads.
 A changed mount set renews the seed at the next start; the
 renewal's new instance-id makes cloud-init re-provision the guest,
 and the stock ssh module on Debian and Fedora regenerates the ssh
-host keys there. The row records the renewal token the bake
-pinned, the identity endpoint serves it, and the client rotates
-its host-key cache on it instead of refusing the re-keyed guest.
+host keys there. The row counts the bake on its seed epoch ahead
+of the bake, the identity endpoint serves the counter, and the
+client rotates its host-key cache on it instead of refusing the
+re-keyed guest.
 
 The image this suite boots is the Debian default, whose stock
 cloud.cfg runs the ssh module — the re-key is the behavior under
@@ -23,7 +24,6 @@ from pathlib import Path
 
 from msks.app import build_app
 from msks.microvm import VmSpec
-from msks.persist import mounts_fingerprint, renewal_suffix
 from msks.settings import (
     MountSettings,
     ServerSettings,
@@ -64,8 +64,8 @@ def spec_of(wid: str, mounts: tuple) -> VmSpec:
 async def test_local_mount_renewal_rotates_the_host_key_pin() -> None:
     """#803's done-when, live: a restart with a changed mount set
     renews the seed, the guest re-provisions and its ssh host key
-    regenerates, and the row carries the renewal token the bake
-    pinned — the token the identity endpoint serves and the client
+    regenerates, and the row counts the bake on its seed epoch —
+    the counter the identity endpoint serves and the client
     rotates its host-key cache on, so the next session re-pins
     instead of refusing."""
     state_dir = Path(f"/tmp/msks-smoke-{uuid.uuid4().hex[:8]}")
@@ -87,8 +87,9 @@ async def test_local_mount_renewal_rotates_the_host_key_pin() -> None:
     mounted = (MountSpec(host=str(share), guest="/mnt/share"),)
     changed = (MountSpec(host=str(share), guest="/srv/moved"),)
     try:
-        # First boot: the seed bakes plain (no renewal token on the
-        # row), and the guest writes its first host key.
+        # First boot: the seed bakes (event one on the seed epoch —
+        # this launch never ran prepare), and the guest writes its
+        # first host key.
         await model.create_workspace(spec_of(wid, mounted))
         await model.set_mounts(wid, [m.as_dict() for m in mounted])
         await microvm.launch(spec_of(wid, mounted))
@@ -96,7 +97,7 @@ async def test_local_mount_renewal_rotates_the_host_key_pin() -> None:
         await run_in_console(
             microvm, wid, "cloud-init status --wait", "done", hostname=wid
         )
-        assert (await model.get_ssh_key(wid))["seed_rev"] is None
+        assert (await model.get_ssh_key(wid))["seed_epoch"] == 1
         await run_in_console(
             microvm,
             wid,
@@ -109,7 +110,7 @@ async def test_local_mount_renewal_rotates_the_host_key_pin() -> None:
         await microvm.shutdown(wid, timeout_s=SHUTDOWN_TIMEOUT_S)
 
         # The mount set changes; the next start renews the seed and
-        # re-provisions the guest.
+        # re-provisions the guest (event two).
         serial_log.unlink(missing_ok=True)
         await model.set_mounts(wid, [m.as_dict() for m in changed])
         await microvm.launch(spec_of(wid, changed))
@@ -117,10 +118,9 @@ async def test_local_mount_renewal_rotates_the_host_key_pin() -> None:
         await run_in_console(
             microvm, wid, "cloud-init status --wait", "done", hostname=wid
         )
-        # The row carries exactly the token the renewal baked.
-        ca = await microvm.local.interceptor_ca_pem()
-        expected = renewal_suffix(ca, mounts_fingerprint(changed))
-        assert (await model.get_ssh_key(wid))["seed_rev"] == expected
+        # The row counts the renewal: the counter the client
+        # rotates on, whatever content the bake hashed.
+        assert (await model.get_ssh_key(wid))["seed_epoch"] == 2
         # The guest re-keyed: the stock cloud-init ssh module ran
         # again under the new instance-id.
         await run_in_console(

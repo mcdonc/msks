@@ -605,19 +605,22 @@ def test_cache_key_rotates_on_a_disk_epoch(tmp_path: Path) -> None:
     )
 
 
-def test_cache_key_rotates_on_a_seed_revision(tmp_path: Path) -> None:
-    """#803: a renewed seed re-provisions the guest under a new
-    instance-id and the stock cloud-init ssh module regenerates
-    its host keys, so the revision token rotates the cache
-    directory (``r<token>``) beside the disk epoch's ``e<N>``. An
-    unserved token (a daemon one version behind) and an empty one
-    spell the pre-#803 directory, so an upgrade churns nothing."""
+def test_cache_key_rotates_on_a_seed_epoch(tmp_path: Path) -> None:
+    """#803: a seed bake or renewal re-provisions the guest under a
+    new instance-id and the stock cloud-init ssh module regenerates
+    its host keys, so the epoch counter rotates the cache directory
+    (``r<N>``) beside the disk epoch's ``e<N>``. The counter, not
+    the bake's content hash, is the marker: a mount set leaving
+    and returning bakes the same content twice and still lands a
+    fresh directory. An unserved epoch (a daemon one version
+    behind) and zero spell the pre-#803 directory, so an upgrade
+    churns nothing."""
     ident = {"id": "1a2b3c4d5e6f7890", "created_at": "2026-10-04"}
-    assert ssh.cache_key({**ident, "seed_rev": "3f2a91c0b7d2"}, "ws") == (
+    assert ssh.cache_key({**ident, "seed_epoch": 3}, "ws") == (
         "1a2b3c4d5e6f7890",
-        "r3f2a91c0b7d2",
+        "r3",
     )
-    assert ssh.cache_key({**ident, "seed_rev": ""}, "ws") == (
+    assert ssh.cache_key({**ident, "seed_epoch": 0}, "ws") == (
         "1a2b3c4d5e6f7890",
         None,
     )
@@ -625,10 +628,33 @@ def test_cache_key_rotates_on_a_seed_revision(tmp_path: Path) -> None:
         "1a2b3c4d5e6f7890",
         None,
     )
-    both = {**ident, "disk_epoch": 1, "seed_rev": "3f2a91c0b7d2"}
+    both = {**ident, "disk_epoch": 1, "seed_epoch": 2}
     assert ssh.cache_key(both, "ws") == (
         "1a2b3c4d5e6f7890",
-        "e1.r3f2a91c0b7d2",
+        "e1.r2",
+    )
+    # The recurrence the counter exists for: the same bake content
+    # twice is still two events, and the second lands its own
+    # directory.
+    assert (
+        ssh.cache_key({**ident, "seed_epoch": 4}, "ws")[1]
+        != (ssh.cache_key({**ident, "seed_epoch": 3}, "ws")[1])
+    )
+
+
+def test_rotation_cause_names_both_markers() -> None:
+    """#803 review: a row carrying both markers cannot say which
+    one moved since the client's last session, so the notice names
+    both — a reset-then-renewed workspace would otherwise read the
+    reset's cause on every later renewal."""
+    assert (
+        ssh.rotation_cause({"disk_epoch": 1, "seed_epoch": 2})
+        == "disks were recreated or the seed renewed"
+    )
+    assert ssh.rotation_cause({"disk_epoch": 1}) == "disks were recreated"
+    assert (
+        ssh.rotation_cause({"seed_epoch": 1})
+        == "re-provisioned (a renewed seed)"
     )
 
 
@@ -1929,8 +1955,8 @@ def test_staged_session_names_the_renewed_seed(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """#803: a served seed revision rotates the known_hosts
-    directory and names the re-provision as the cause — the epoch
+    """#803: a served seed epoch rotates the known_hosts directory
+    and names the re-provision as the cause — the disk epoch
     stands at zero, so the disks line would lie."""
     keyed = {
         **KEY,
@@ -1938,7 +1964,7 @@ def test_staged_session_names_the_renewed_seed(
         "name": "tree",
         "created_at": "2026-10-28 09:00:00",
         "disk_epoch": 0,
-        "seed_rev": "3f2a91c0b7d2",
+        "seed_epoch": 1,
     }
 
     async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
@@ -1960,7 +1986,7 @@ def test_staged_session_names_the_renewed_seed(
     monkeypatch.setattr(ssh.agent, "serve", fake_serve)
     with ssh.staged_session("tree") as (booted, served, hosts, user, pin):
         assert (booted, pin) == (False, "03c31bd241")
-    assert keyed_paths == [("03c31bd241", "r3f2a91c0b7d2")]
+    assert keyed_paths == [("03c31bd241", "r1")]
     err = capsys.readouterr().err
     assert "re-provisioned (a renewed seed)" in err
     assert "disks were recreated" not in err

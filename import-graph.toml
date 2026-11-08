@@ -179,7 +179,11 @@ hostshares = 2
 # interceptor: the local driver mints the workspace CA at create
 # so the seed carries it (#424/#200)
 interceptor = 2
-persist = 7
+# #697: the boot path bumps the disk epoch when a heal recreates
+# the overlay. #803: one more name — seed_bake_pending, the
+# predicate whose answer bumps the seed epoch ahead of the bake
+# it precedes.
+persist = 8
 # #620 part #622: the local driver reads the mount vocabulary
 # (MODE_RW for the readonly composition) beside the fs-daemon
 # module it already owns. #672: one more name — mount_tag, the

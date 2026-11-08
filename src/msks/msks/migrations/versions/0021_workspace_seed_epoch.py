@@ -1,4 +1,4 @@
-"""The workspace seed revision token (#803).
+"""The workspace seed epoch (#803).
 
 Revision ID: 0021
 Revises: 0020
@@ -17,9 +17,11 @@ depends_on = None
 def upgrade() -> None:
     op.add_column(
         "workspaces",
-        sa.Column("seed_rev", sa.String(), nullable=True),
+        sa.Column(
+            "seed_epoch", sa.Integer(), nullable=False, server_default="0"
+        ),
     )
 
 
 def downgrade() -> None:
-    op.drop_column("workspaces", "seed_rev")
+    op.drop_column("workspaces", "seed_epoch")

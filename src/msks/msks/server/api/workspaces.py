@@ -267,11 +267,11 @@ def router(app) -> APIRouter:
         before per-workspace users answers ``null``; the guest
         carries the key for root and its own ``msks`` account
         either way, and the client dials root for it (#500).
-        ``seed_rev`` (#803) is the renewal token the current seed's
-        cloud-init instance-id carries — ``null`` for a plain
-        seed. A renewal re-provisions the guest and the stock
-        cloud-init ssh module regenerates its host keys, so the
-        client rotates its host-key cache on a change here.
+        ``seed_epoch`` (#803) is a monotonic counter, one bump per
+        seed bake or renewal — 0 from create. A renewal
+        re-provisions the guest and the stock cloud-init ssh
+        module regenerates its host keys, so the client rotates
+        its host-key cache on a change here.
         """
         key = await app.state.model.get_ssh_key(workspace_id)
         if key is None:
@@ -288,7 +288,7 @@ def router(app) -> APIRouter:
             "created_at": key["created_at"],
             "user": key["login_user"],
             "disk_epoch": key["disk_epoch"],
-            "seed_rev": key["seed_rev"],
+            "seed_epoch": key["seed_epoch"],
         }
 
     # The #41 immutability contract, said out loud: the create-time

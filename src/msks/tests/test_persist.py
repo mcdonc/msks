@@ -749,31 +749,31 @@ async def test_a_seed_is_renewed_when_its_ca_marker_drifts(tools) -> None:
     seed alone."""
     settings, record, base = tools
     spec_a = spec(base, ssh_pubkey="key-one")
-    assert await persist.create_seed(spec_a, settings, 8770, CA_A) == ""
+    await persist.create_seed(spec_a, settings, 8770, CA_A)
     seed = persist.seed_path(settings.state_dir, WID)
     marker = persist.seed_ca_mark(seed.parent)
     assert marker.read_text() == persist.ca_fingerprint(CA_A)
     first = seed.stat().st_mtime_ns
 
-    # A match: no rebuild, no re-provision, no revision reported.
-    assert await persist.ensure_artifacts(spec_a, settings, 8770, CA_A) is None
+    # A match: no rebuild, no re-provision.
+    assert persist.seed_bake_pending(spec_a, settings, 8770, CA_A) is False
+    await persist.ensure_artifacts(spec_a, settings, 8770, CA_A)
     assert seed.stat().st_mtime_ns == first
 
     # A drift (the marker missing is the pre-#485 shape): renewed,
-    # and the renewal reports the revision it baked (#803).
+    # and the pending check the row's bump keys on says so (#803).
+    assert persist.seed_bake_pending(spec_a, settings, 8770, CA_B) is True
     marker.unlink()
-    suffix = persist.renewal_suffix(
-        CA_B, persist.mounts_fingerprint(spec_a.mounts)
-    )
-    assert (
-        await persist.ensure_artifacts(spec_a, settings, 8770, CA_B) == suffix
-    )
+    await persist.ensure_artifacts(spec_a, settings, 8770, CA_B)
     assert marker.read_text() == persist.ca_fingerprint(CA_B)
     log = record.read_text()
     assert CA_B in log  # the new cert staged
     # The renewal bumped instance-id: the recorded meta-data carries
     # the fingerprint suffix, so cloud-init re-provisions the
     # already-booted guest.
+    suffix = persist.renewal_suffix(
+        CA_B, persist.mounts_fingerprint(spec_a.mounts)
+    )
     assert f"instance-id: {WID}-{suffix}" in log
 
 

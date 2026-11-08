@@ -149,18 +149,21 @@ class Workspace(Base):
     disk_epoch: Mapped[int] = mapped_column(
         Integer, default=0, server_default="0"
     )
-    # The seed's revision token (#803): the renewal suffix the
-    # current seed's cloud-init instance-id carries — None for a
-    # plain seed, the 12-hex token for a renewed one. A renewal
-    # re-provisions the guest (the new instance-id re-runs
-    # cloud-init's per-instance modules, and the stock ssh module
-    # on Debian and Fedora regenerates the ssh host keys there),
-    # so the identity endpoint serves the token and the client
-    # rotates its host-key cache on a change, re-pinning instead
-    # of refusing. NixOS omits the ssh module from its
+    # The seed's epoch (#803): a monotonic counter, one bump per
+    # seed bake or renewal — 0 from create. A new instance-id
+    # makes the guest re-provision, and the stock cloud-init ssh
+    # module on Debian and Fedora regenerates the ssh host keys
+    # there, so the identity endpoint serves the counter and the
+    # client rotates its host-key cache on a change, re-pinning
+    # instead of refusing. The counter (not the bake's content
+    # hash) is what rotates: a mount set leaving and returning
+    # bakes the same content twice, and the second bake still
+    # re-keys the guest. NixOS omits the ssh module from its
     # cloud_init_modules; the rotation is correct and inert there
     # (accept-new re-pins the unchanged key).
-    seed_rev: Mapped[str | None] = mapped_column(String, nullable=True)
+    seed_epoch: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0"
+    )
     status: Mapped[str] = mapped_column(String, default="created")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(

@@ -458,7 +458,7 @@ async def fetch_ssh_key(
     """GET the workspace's identity: the public half alone (#486,
     #497 — the answer carries no private field at all), with the
     row's id, name, instance stamp, login user, disk epoch
-    (#697), and seed revision (#803) beside it — the seven fields
+    (#697), and seed epoch (#803) beside it — the seven fields
     the client reads (#499).
 
     ``msks key`` prints it; ``msks ssh`` (#112) stages the session

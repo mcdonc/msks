@@ -177,15 +177,8 @@ def sweep_tmp_siblings(target: Path) -> None:
 
 async def ensure_artifacts(
     spec: VmSpec, settings, llm_port: int = 0, ca_pem: str | None = None
-) -> str | None:
+) -> None:
     """Create the workspace's overlay and home volume when absent.
-
-    The answer names the seed revision this call baked (#803):
-    ``None`` when it left the seed alone (or baked none), the
-    empty string for a fresh plain seed, the renewal token for a
-    re-baked one — the caller records it in the row, where the
-    identity endpoint serves it and the client rotates its
-    host-key cache on a change.
 
     Each artifact is installed atomically (private scratch file, one
     rename), and a failure rolls back what *this call* installed: a
@@ -205,7 +198,7 @@ async def ensure_artifacts(
         if not overlay.is_file():
             await create_overlay(spec, settings, overlay)
             installed.append(overlay)
-        return await ensure_seed(spec, settings, installed, llm_port, ca_pem)
+        await ensure_seed(spec, settings, installed, llm_port, ca_pem)
     except BaseException:
         for artifact in installed:
             artifact.unlink(missing_ok=True)
@@ -218,7 +211,7 @@ async def ensure_seed(
     installed: list[Path],
     llm_port: int = 0,
     ca_pem: str | None = None,
-) -> str | None:
+) -> None:
     """Build the #41 seed when the workspace carries a payload — its
     own, the supplied ssh key's (#111, #486), its host-share
     mounts (#620, part #623), or its captured timezone (#633) —
@@ -227,29 +220,45 @@ async def ensure_seed(
     fresh build joins the rollback list. The proxy-environment leg
     (#259, #483) rides the same condition: a workspace whose tap
     will serve an LLM listener gets its MSKSWS_* exports even with
-    no key and no payload of its own. The answer is the seed
-    revision this call baked (#803): ``None`` when the seed was
-    left alone or none was built, ``''`` for a fresh plain seed,
-    the renewal token for a re-baked one.
+    no key and no payload of its own.
 
     An existing seed renews when its CA drifted (#485) or its
     baked mount set differs from the row's current one (#623) —
     each start runs this, so the guest boots with exactly the
-    mounts this start attached.
+    mounts this start attached. Every bake and renewal is one
+    event on the seed epoch (#803): the caller bumps it on
+    :func:`seed_bake_pending` ahead of this call, so any
+    re-provision the bake triggers rotates the client's host-key
+    cache however the bake's content hashes.
     """
     seed = seed_path(settings.state_dir, spec.workspace_id)
+    if not seed_bake_pending(spec, settings, llm_port, ca_pem):
+        return
     if seed.is_file():
-        mounts_fp = mounts_fingerprint(spec.mounts)
-        if seed_needs_renewal(seed.parent, ca_pem) or seed_mounts_stale(
-            seed.parent, mounts_fp
-        ):
-            return await renew_seed(spec, settings, llm_port, ca_pem, seed)
-        return None
-    if not seed_payload_present(spec, llm_port):
-        return None
-    rev = await create_seed(spec, settings, llm_port, ca_pem)
+        await renew_seed(spec, settings, llm_port, ca_pem, seed)
+        return
+    await create_seed(spec, settings, llm_port, ca_pem)
     installed.append(seed)
-    return rev
+
+
+def seed_bake_pending(
+    spec: VmSpec, settings, llm_port: int = 0, ca_pem: str | None = None
+) -> bool:
+    """Whether the next ``ensure_artifacts`` bakes or renews the
+    seed (#803): an existing seed whose CA or baked mount set
+    drifted, or an absent seed a payload rides. The caller bumps
+    the row's seed epoch on this answer *before* the bake — the
+    #697 lesson: a bump the bake never reaches over-counts a
+    monotonic token harmlessly, while a bake the row never
+    recorded is the silent refusal the epoch exists to prevent.
+    The predicate and :func:`ensure_seed` share the decision by
+    construction: the seed's own branch reads it."""
+    seed = seed_path(settings.state_dir, spec.workspace_id)
+    if seed.is_file():
+        return seed_needs_renewal(seed.parent, ca_pem) or seed_mounts_stale(
+            seed.parent, mounts_fingerprint(spec.mounts)
+        )
+    return seed_payload_present(spec, llm_port)
 
 
 def seed_payload_present(spec: VmSpec, llm_port: int) -> bool:
@@ -322,7 +331,7 @@ def renewal_suffix(ca_pem: str | None, mounts_fp: str) -> str:
 
 async def renew_seed(
     spec: VmSpec, settings, llm_port: int, ca_pem: str | None, seed: Path
-) -> str:
+) -> None:
     """Rebuild a seed whose staged CA drifted, so the guest
     re-provisions onto the daemon's certificate (#485).
 
@@ -335,10 +344,9 @@ async def renew_seed(
     re-provision. The renewal also sweeps the pre-#485
     per-workspace CA pair from the workspace's directory — its key
     stays interception-capable against a guest that still trusts
-    its certificate. The answer is the suffix baked (#803)."""
-    rev = await create_seed(spec, settings, llm_port, ca_pem, renewing=True)
+    its certificate."""
+    await create_seed(spec, settings, llm_port, ca_pem, renewing=True)
     sweep_legacy_ca(seed.parent)
-    return rev
 
 
 async def create_home_volume(target: Path, spec: VmSpec, settings) -> None:
@@ -475,7 +483,7 @@ async def create_seed(
     ca_pem: str | None = None,
     *,
     renewing: bool = False,
-) -> str:
+) -> None:
     """Build and install the workspace's #41 seed disk.
 
     mkisofs packs the staged ``user-data``/``meta-data`` into a
@@ -486,9 +494,7 @@ async def create_seed(
     the operator's payload beside the identity's seeding
     script when a key was supplied (#111, #486), the operator's
     payload
-    verbatim otherwise. The answer is the revision the meta-data
-    pinned: the renewal token, or the empty string for a plain
-    seed (#803).
+    verbatim otherwise.
     """
     target = seed_path(settings.state_dir, spec.workspace_id)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -505,10 +511,10 @@ async def create_seed(
     # rule for private keys).
     stage = tmp_sibling(target)
     stage.mkdir(mode=0o700)
-    rev = (
+    suffix = (
         renewal_suffix(ca_pem, mounts_fingerprint(spec.mounts))
         if renewing
-        else ""
+        else None
     )
     try:
         (stage / "user-data").write_text(
@@ -532,7 +538,7 @@ async def create_seed(
                 # renewal path: a fresh seed keeps the plain id, a
                 # renewed one pins the CA and mount set it carries
                 # (#485, #623).
-                instance_suffix=(rev or None),
+                instance_suffix=suffix,
             ),
             encoding="utf-8",
         )
@@ -563,7 +569,6 @@ async def create_seed(
         install_marker(
             seed_mounts_mark(target.parent), mounts_fingerprint(spec.mounts)
         )
-        return rev
     finally:
         shutil.rmtree(stage, ignore_errors=True)
 

@@ -36,6 +36,7 @@ from ..persist import (
     overlay_path,
     remove_home_volume,
     remove_overlay,
+    seed_bake_pending,
     seed_path,
 )
 from ..spec.egress import EgressPolicy
@@ -701,18 +702,24 @@ class LocalCloudHypervisor(MicrovmDriver):
         and the client rotates its host-key cache on the next
         identity fetch instead of refusing the new keys. The home
         volume carries no guest identity, so its heal bumps
-        nothing. A healed under no row (the create flow prepares
+        nothing. A heal under no row (the create flow prepares
         artifacts before the row lands; a fixture launch) records
         nothing — there is no cache to rotate.
 
         A baked or renewed seed is a recorded event too (#803):
-        the renewal's new instance-id makes the guest re-provision,
-        the stock cloud-init ssh module regenerates its host keys
-        (Debian, Fedora; NixOS omits the module), and the revision
-        token lands in the row ahead of the boot — the client
-        rotates its host-key cache for the keys this boot writes.
-        The same no-row carve-out applies, and a seed left alone
-        records nothing."""
+        the new instance-id makes the guest re-provision, and the
+        stock cloud-init ssh module regenerates its host keys
+        (Debian, Fedora; NixOS omits the module). The row's seed
+        epoch — a monotonic counter, one bump per bake — advances
+        *before* the bake for the same reason the disk epoch
+        precedes its heal: a daemon death between bump and bake
+        over-counts harmlessly, while a bake the row never
+        recorded is the silent refusal both counters exist to
+        prevent. The counter (not the bake's content) is what the
+        client rotates on, so a mount set leaving and returning
+        — the same content hash twice — still lands a fresh
+        cache. The same no-row carve-out applies, and a seed
+        left alone records nothing."""
         overlay = overlay_path(vmm.state_dir, spec.workspace_id)
         healed_overlay = not overlay.is_file()
         if healed_overlay:
@@ -728,21 +735,17 @@ class LocalCloudHypervisor(MicrovmDriver):
         # Boots heal their artifacts (#14): a workspace row whose
         # overlay or volume is missing (a crash mid-create, or a row
         # that predates #14) gets them back before the VM starts.
-        # The answer names the seed revision this boot's bake
-        # pinned (#803): None when the seed stood untouched, the
-        # empty string for a plain (re)build, the renewal token
-        # for a re-baked one — recorded before the VM spawns, so
-        # the row never lags the guest the client will dial.
-        seed_rev = await ensure_artifacts(
+        # The seed's bump rides the same review lesson ahead of
+        # the bake (#803).
+        ca_pem = await self.interceptor_ca_pem()
+        if seed_bake_pending(spec, vmm, self._settings().llm.port, ca_pem):
+            await self.app.state.model.bump_seed_epoch(spec.workspace_id)
+        await ensure_artifacts(
             spec,
             vmm,
             self._settings().llm.port,
-            await self.interceptor_ca_pem(),
+            ca_pem,
         )
-        if seed_rev is not None:
-            await self.app.state.model.set_seed_rev(
-                spec.workspace_id, seed_rev or None
-            )
         # The share daemons spawn before the VMM (#620, part #622):
         # cloud-hypervisor opens each vhost-user socket at
         # vm.create, so the daemon behind it must already serve.

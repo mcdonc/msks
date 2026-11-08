@@ -404,16 +404,19 @@ def instance_token(key: dict) -> str | None:
 
 def rotation_token(key: dict) -> str | None:
     """The cache rotation suffix the row's markers compose (#697,
-    #803): ``e<N>`` for a recreated disk set, ``r<token>`` for a
-    renewed seed, both when both. None when the row carries
+    #803): ``e<N>`` for a recreated disk set, ``r<N>`` for a
+    re-baked seed, both when both. None when the row carries
     neither marker — the directory the pre-rotation clients used,
     so an unserved marker (a daemon one version behind) churns
-    nothing on upgrade."""
+    nothing on upgrade. The seed's marker is a counter, not the
+    bake's content hash: a mount set leaving and returning bakes
+    the same content twice and still lands a fresh directory,
+    because the guest re-keys on the *change*, not the value."""
     parts = []
     if key.get("disk_epoch"):
         parts.append(f"e{key['disk_epoch']}")
-    if key.get("seed_rev"):
-        parts.append(f"r{key['seed_rev']}")
+    if key.get("seed_epoch"):
+        parts.append(f"r{key['seed_epoch']}")
     if not parts:
         return None
     return ".".join(parts)
@@ -428,12 +431,12 @@ def cache_key(key: dict, ref: str) -> tuple[str, str | None]:
     disk epoch (#697) joins the key as a suffix: the daemon
     recreated the workspace's root overlay, the guest's ssh host
     keys regenerated with it, and the rotated directory re-pins
-    fresh instead of refusing. A seed revision (#803) joins the
-    same way: a renewal re-provisions the guest under a new
-    instance-id and the stock cloud-init ssh module regenerates
-    its host keys, so the token rotates the directory; both
-    markers compose (a reset workspace that then renews carries
-    both suffixes).
+    fresh instead of refusing. A seed epoch (#803) joins the
+    same way: a bake or renewal re-provisions the guest under a
+    new instance-id and the stock cloud-init ssh module
+    regenerates its host keys, so the counter rotates the
+    directory; both markers compose (a reset workspace that then
+    renews carries both suffixes).
     """
     if key.get("id"):
         return key["id"], rotation_token(key)
@@ -453,10 +456,14 @@ def session_pin(key: dict, ref: str) -> str:
 
 
 def rotation_cause(key: dict) -> str:
-    """The re-pin notice's cause half (#697, #803): the marker the
-    row carries names why the guest's host keys differ from any
-    earlier pin — a recreated disk set when the epoch moved, the
-    seed's renewal otherwise."""
+    """The re-pin notice's cause half (#697, #803): the markers the
+    row carries name why the guest's host keys may differ from any
+    earlier pin. Both markers present names both — the client
+    cannot know which one moved since its last session, and a
+    reset-then-renewed workspace would otherwise read the reset's
+    cause on every later renewal."""
+    if key.get("disk_epoch") and key.get("seed_epoch"):
+        return "disks were recreated or the seed renewed"
     if key.get("disk_epoch"):
         return "disks were recreated"
     return "re-provisioned (a renewed seed)"
@@ -470,7 +477,7 @@ def repin_notice(key: dict, pin: str, hosts: str) -> None:
     quiet. The cause names itself: a renewed seed re-provisions
     the guest and the stock cloud-init ssh module regenerates its
     host keys there."""
-    if not (key.get("disk_epoch") or key.get("seed_rev")):
+    if not (key.get("disk_epoch") or key.get("seed_epoch")):
         return
     if Path(hosts).is_file():
         return
