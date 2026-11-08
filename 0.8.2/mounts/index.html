@@ -1,0 +1,1245 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Microvm workspaces for AI coding agents">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/msks/0.8.2/mounts/">
+      
+      
+      
+        <link rel="prev" href="../tui/">
+      
+      
+        <link rel="next" href="../networking/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.71">
+    
+    
+      
+        <title>Host Share Mounts - msks</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.e442bf79.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.b60ce83d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="msks" class="md-header__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            msks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Host Share Mounts
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="msks" class="md-nav__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    msks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The host doctor
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  First run
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Host Share Mounts
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Host Share Mounts
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-mount-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a mount is
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-mount-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The mount gates
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-skip-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The skip behavior
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#coherence-between-guests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Coherence between guests
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#shares-on-a-macos-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Shares on a macOS host
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Shares on a macOS host">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#macos-watchers-poll" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        macOS: Watchers poll
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#macos-case-and-normalization-follow-the-mac-volume" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        macOS: Case and normalization follow the Mac volume
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#macos-the-rw-single-writer-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        macOS: The rw single-writer contract
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#macos-external-volumes-stay-busy-while-shared" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        macOS: External volumes stay busy while shared
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-plumbing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The plumbing
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../egress-consent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Consent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cloning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Cloning Workspaces
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Daemon Configuration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development environment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-mount-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a mount is
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-mount-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The mount gates
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-skip-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The skip behavior
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#coherence-between-guests" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Coherence between guests
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#shares-on-a-macos-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Shares on a macOS host
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Shares on a macOS host">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#macos-watchers-poll" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        macOS: Watchers poll
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#macos-case-and-normalization-follow-the-mac-volume" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        macOS: Case and normalization follow the Mac volume
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#macos-the-rw-single-writer-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        macOS: The rw single-writer contract
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#macos-external-volumes-stay-busy-while-shared" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        macOS: External volumes stay busy while shared
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-plumbing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The plumbing
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="host-share-mounts">Host share mounts<a class="headerlink" href="#host-share-mounts" title="Permanent link">&para;</a></h1>
+<p>A workspace can mount host directory trees into its guest. The daemon's config
+gives the allowed roots a guest's mounts must sit under via
+<code>mount_host_roots</code>, and -- on a VM-hosted daemon -- the trees its own VM
+carries. On the guest side, each workspace gives a host path, the absolute
+guest path it lands at, and a mode (<code>ro</code> or <code>rw</code>, defaulting to <code>rw</code>).</p>
+<p>You can motify <code>mount_host_roots</code> Within the daemon hosts's
+<code>~/.config/msksd/msksd.yaml</code>:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># the operator allows the roots (msksd.yaml; reloadable on SIGHUP)</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>mount_host_roots:
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>-<span class="w"> </span>/srv/projects
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>-<span class="w"> </span>/srv/refs
+</span></code></pre></div>
+<p>With this configuration active in the msksd daemon, you can successfully mount
+files from the host's <code>/srv/projects</code> and <code>/srv/ref</code> locations:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># a workspace mounts host paths (applies at its next start)</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>msks<span class="w"> </span>create<span class="w"> </span>ws1<span class="w"> </span>--share<span class="w"> </span>/srv/projects:/mnt/projects
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>msks<span class="w"> </span>mount<span class="w"> </span>ws1<span class="w"> </span>/srv/refs:/mnt/refs:ro
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>msks<span class="w"> </span>umount<span class="w"> </span>ws1<span class="w"> </span>/srv/refs
+</span></code></pre></div>
+<h2 id="what-a-mount-is">What a mount is<a class="headerlink" href="#what-a-mount-is" title="Permanent link">&para;</a></h2>
+<p>A workspace's mount gives a host path, an absolute guest path, and a mode. The
+guest path becomes a root-owned mount point inside the VM. The location must
+be absolute, below the filesystem root, outside the pseudo-filesystems
+(<code>/proc</code>, <code>/sys</code>, <code>/dev</code>, <code>/run</code>) and outside <code>/home</code>.</p>
+<p>Two mounts of one workspace never overlap, and a host path appears once per
+workspace. Mounts follow next-start semantics, like resize: setting them never
+touches a running VM, and the next start attaches the current set. A restart
+after a change lands the new set and prunes the dropped one.</p>
+<h2 id="the-mount-gates">The mount gates<a class="headerlink" href="#the-mount-gates" title="Permanent link">&para;</a></h2>
+<p>Each host path checks two gates at set time:</p>
+<ol>
+<li><strong>The policy gate</strong> (every host): the path, resolved against
+   symlink escapes, must sit under one of the allowed roots
+   under <code>mount_host_roots</code>. A path outside them is refused with the
+   instruction to add it or a parent to the daemon's config. A
+   symlink that resolves outside its allowed root is refused
+   the same way.</li>
+<li><strong>The mount gate</strong> (VM-hosted daemons, <code>mount_host_mode: prefix</code>): the
+   path, translated under <code>/mnt/msks</code>, must sit under a root the daemon's VM
+   actually has mounted. A path whose root is not mounted is refused with the
+   instruction to recreate the VM from a template that mounts it. vz mounts are
+   fixed at VM start, so a config edit cannot add one. This knob
+   is typically only used on MacOS, to account for double-mounting
+   under the Lima VM filesystem.</li>
+</ol>
+<p>The spec grammar splits its fields on colons, so a host path
+containing one is inexpressible on the wire. <code>--share</code> and the
+TUI editor both refuse it, giving the field that the colon broke.</p>
+<p>A mount attaches read-write unless it says <code>ro</code>: the trust
+decision is made before the mode matters (the root is allowed),
+and a mount that wants less says <code>ro</code>. Read-write mounts hold no
+exclusivity: any number of workspaces may attach the same tree.</p>
+<h2 id="the-skip-behavior">The skip behavior<a class="headerlink" href="#the-skip-behavior" title="Permanent link">&para;</a></h2>
+<p>A start proceeds when a mount cannot attach caused by a root the reload removed
+from the allowed list, a path whose root the daemon's VM no longer mounts, a
+symlink that moved out from under its allowed root, or a path that vanished
+since the set. Each publishes an event (<code>mount.skipped</code>) giving the mount and
+the reason, and the row carries the standing marker (<code>msks ls</code> prints <code>running,
+1 mount skipped</code>) until the config and the row agree again. The workspace's
+other mounts attach.</p>
+<h2 id="coherence-between-guests">Coherence between guests<a class="headerlink" href="#coherence-between-guests" title="Permanent link">&para;</a></h2>
+<p>A host tree attaches read-write to any number of workspaces at once, and every
+attach forces virtiofs <code>cache=never</code>. This means data writes become coherent
+through the host page cache, and lockfile coordination (<code>O_EXCL</code> creates: git,
+cargo) works because the host kernel serializes it. Things that do not
+coordinate between guests on the same share: <code>flock</code>/<code>fcntl</code> locks (each attach
+is its own virtiofsd), and <code>mmap</code> coherence.</p>
+<h2 id="shares-on-a-macos-host">Shares on a macOS host<a class="headerlink" href="#shares-on-a-macos-host" title="Permanent link">&para;</a></h2>
+<p>On a Mac the daemon runs inside its own Linux VM (Lima over
+Apple's Virtualization.framework, on an M3-or-newer Mac), and a
+shared Mac folder crosses two hops to reach a workspace: vz
+virtiofs carries it from macOS into the daemon's VM under the
+reserved prefix and one virtiofsd per attached share
+carries it from there into the workspace guest.</p>
+<p>The client speaks Mac paths throughout (<code>--share ~/code:/mnt/code</code>), and the
+daemon's <code>prefix</code> host mode does the translation before the <a href="#the-mount-gates">two
+gates</a> run. The Lima template mounts the invoking user's home
+under the prefix at VM creation, writable, so the common case needs no edit. A
+share root outside it (another user's home, a <code>/Volumes</code> tree) is a template
+edit plus VM recreation, and the mount gate's refusal suggests a remedy.</p>
+<p>The far end of the share is the Mac's own volume, and its
+behaviors cross with the tree. Four of them are contract, not
+configuration:</p>
+<h3 id="macos-watchers-poll">macOS: Watchers poll<a class="headerlink" href="#macos-watchers-poll" title="Permanent link">&para;</a></h3>
+<p>File events do not cross virtiofs. Changes made on the Mac (an editor's
+save, a build's output) reach every attached workspace as data, promptly
+coherent the way <a href="#coherence-between-guests">coherence between guests</a>
+describes, but no inotify event follows them: the share carries data, not
+notifications.</p>
+<p>Watchers on shared trees run in polling mode (Vite's <code>server.watch.usePolling</code>
+setting, jest's <code>--watchAll</code>, or the tool's own poll option), and a tool that
+can watch only through events cannot watch a share at all. Signaling built on
+the same polling takes one care: a file's existence becomes visible before its
+content does (a writer creates empty, then fills). A poller therefore waits for
+a completion marker the writer emits after the data, never for the file itself.</p>
+<h3 id="macos-case-and-normalization-follow-the-mac-volume">macOS: Case and normalization follow the Mac volume<a class="headerlink" href="#macos-case-and-normalization-follow-the-mac-volume" title="Permanent link">&para;</a></h3>
+<p>The tree a workspace mounts is a Mac volume, and its naming rules cross
+with it. A Mac's default volume matches names case-insensitively, storing them
+as typed (case-preserving), and compares them
+Unicode-normalization-insensitively: a name typed composed (NFC) and the same
+name decomposed (NFD) are one file.</p>
+<p>Tools inside the workspace that expect Linux naming can fail on the share. Two
+names differing only in case cannot coexist in one directory (a checkout
+holding both <code>README</code> and <code>readme</code> collapses them), and a tool comparing
+filename bytes sees NFD where the Mac accepted NFC.</p>
+<p>Archive and package tooling that hashes or compares names byte-for-byte can
+report a mismatch against a Linux-built expectation. A tree that must keep
+Linux naming rules exactly must live in the workspace's own storage, not on a
+mount.</p>
+<h3 id="macos-the-rw-single-writer-contract">macOS: The rw single-writer contract<a class="headerlink" href="#macos-the-rw-single-writer-contract" title="Permanent link">&para;</a></h3>
+<p>An <code>rw</code> share allows the workspace as a writer. Locks taken inside the
+workspace hold there and stop there: <code>flock</code> and <code>fcntl</code> locks end at the
+workspace's own virtiofsd, and the Mac side honors none of them.</p>
+<p>Finder, an open editor, or a Mac-side build writes past any lock the workspace
+took. Between workspaces, <a href="#coherence-between-guests">coherence between
+guests</a> governs: lockfile creates (<code>O_EXCL</code>: git,
+cargo) serialize through the host kernel and work cross-workspace;
+<code>flock</code>/<code>fcntl</code> do not cross an attach.</p>
+<p>Trees whose tools lock and treat the lock as the whole story (a cargo or bazel
+cache, a SQLite database, anything with a journal on disk) take one writer at a
+time: the workspace's, or the Mac's. A Mac that only reads the share (browsing
+in Finder, opening a file) travels the coherence contract. A Mac-side writer
+into a lock-using tree races the workspace.</p>
+<h3 id="macos-external-volumes-stay-busy-while-shared">macOS: External volumes stay busy while shared<a class="headerlink" href="#macos-external-volumes-stay-busy-while-shared" title="Permanent link">&para;</a></h3>
+<p>A file the stack holds open keeps its Mac volume mounted. A disk whose tree
+is shared into a running workspace therefore refuses to eject (the Finder
+reports the volume in use) until the workspace stops and its files close.</p>
+<p>To allow the volume to unmount, <code>msks stop</code> on the workspace and eject the
+disk.</p>
+<h2 id="the-plumbing">The plumbing<a class="headerlink" href="#the-plumbing" title="Permanent link">&para;</a></h2>
+<p>Each attached share is one virtiofsd process using the platform's own
+<code>virtiofsd</code> package, spawned before the VM and stopped with it.</p>
+<p>The default <code>virtiofsd</code> binary name resolves on PATH first and then the
+package's install locations off PATH, so the daemon finds it without
+configuration. <code>MSKSD_VIRTIOFSD</code> gives a different binary.</p>
+<p>The mounts need virtiofsd <strong>1.13.0 or newer</strong>: the identity translation and the
+read-only enforcement both landed upstream there, and an older binary refuses
+the daemon's arguments at start.</p>
+<p>File ownership translates in both directions. Writes from the guest land on
+the host as the daemon's own user, whatever guest account made them. Host-side ownership stays advisory, as with a typical bind mount.</p>
+<p>Files read back inside the guest present as the workspace's own user: the login
+user the workspace gives, or the image's built-in <code>msks</code> account when it gives
+none. The share's tree therefore reads as the logged-in user's files, and a
+file the guest creates stays writable by the account that created it.</p>
+<p>Extended attributes remap under one host prefix (<code>user.virtiofs.</code>), so a guest
+cannot write host security labels or root-owned namespaces through the
+share.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a2388154.min.js"></script>
+      
+    
+  </body>
+</html>
