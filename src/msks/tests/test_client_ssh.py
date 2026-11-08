@@ -605,6 +605,33 @@ def test_cache_key_rotates_on_a_disk_epoch(tmp_path: Path) -> None:
     )
 
 
+def test_cache_key_rotates_on_a_seed_revision(tmp_path: Path) -> None:
+    """#803: a renewed seed re-provisions the guest under a new
+    instance-id and the stock cloud-init ssh module regenerates
+    its host keys, so the revision token rotates the cache
+    directory (``r<token>``) beside the disk epoch's ``e<N>``. An
+    unserved token (a daemon one version behind) and an empty one
+    spell the pre-#803 directory, so an upgrade churns nothing."""
+    ident = {"id": "1a2b3c4d5e6f7890", "created_at": "2026-10-04"}
+    assert ssh.cache_key({**ident, "seed_rev": "3f2a91c0b7d2"}, "ws") == (
+        "1a2b3c4d5e6f7890",
+        "r3f2a91c0b7d2",
+    )
+    assert ssh.cache_key({**ident, "seed_rev": ""}, "ws") == (
+        "1a2b3c4d5e6f7890",
+        None,
+    )
+    assert ssh.cache_key(dict(ident), "ws") == (
+        "1a2b3c4d5e6f7890",
+        None,
+    )
+    both = {**ident, "disk_epoch": 1, "seed_rev": "3f2a91c0b7d2"}
+    assert ssh.cache_key(both, "ws") == (
+        "1a2b3c4d5e6f7890",
+        "e1.r3f2a91c0b7d2",
+    )
+
+
 def test_session_pin_prefers_the_served_id() -> None:
     """#697: the ssh hostname and its known_hosts alias come from
     the identity, not from what was typed — the id when the daemon
@@ -1894,6 +1921,49 @@ def test_staged_session_names_recreated_disks(
     with ssh.staged_session("tree") as (_booted, _served, _h, _u, _pin):
         pass
     assert "disks were recreated" not in capsys.readouterr().err
+
+
+def test_staged_session_names_the_renewed_seed(
+    monkeypatch: pytest.MonkeyPatch,
+    client_env: None,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#803: a served seed revision rotates the known_hosts
+    directory and names the re-provision as the cause — the epoch
+    stands at zero, so the disks line would lie."""
+    keyed = {
+        **KEY,
+        "id": "03c31bd241",
+        "name": "tree",
+        "created_at": "2026-10-28 09:00:00",
+        "disk_epoch": 0,
+        "seed_rev": "3f2a91c0b7d2",
+    }
+
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return keyed, False
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    keyed_paths: list[tuple] = []
+
+    def fake_known_hosts(ws, base=None, instance=None):
+        keyed_paths.append((ws, instance))
+        return str(tmp_path / f"{ws}.{instance}")
+
+    monkeypatch.setattr(ssh, "known_hosts_path", fake_known_hosts)
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    with ssh.staged_session("tree") as (booted, served, hosts, user, pin):
+        assert (booted, pin) == (False, "03c31bd241")
+    assert keyed_paths == [("03c31bd241", "r3f2a91c0b7d2")]
+    err = capsys.readouterr().err
+    assert "re-provisioned (a renewed seed)" in err
+    assert "disks were recreated" not in err
 
 
 def test_run_workspace_ssh_names_a_missing_binary(

@@ -402,6 +402,23 @@ def instance_token(key: dict) -> str | None:
     return hashlib.sha1(created_at.encode()).hexdigest()[:8]
 
 
+def rotation_token(key: dict) -> str | None:
+    """The cache rotation suffix the row's markers compose (#697,
+    #803): ``e<N>`` for a recreated disk set, ``r<token>`` for a
+    renewed seed, both when both. None when the row carries
+    neither marker — the directory the pre-rotation clients used,
+    so an unserved marker (a daemon one version behind) churns
+    nothing on upgrade."""
+    parts = []
+    if key.get("disk_epoch"):
+        parts.append(f"e{key['disk_epoch']}")
+    if key.get("seed_rev"):
+        parts.append(f"r{key['seed_rev']}")
+    if not parts:
+        return None
+    return ".".join(parts)
+
+
 def cache_key(key: dict, ref: str) -> tuple[str, str | None]:
     """The host-key cache's directory key: the workspace's immutable
     id when the daemon serves it (#246 — the id names the instance,
@@ -411,13 +428,15 @@ def cache_key(key: dict, ref: str) -> tuple[str, str | None]:
     disk epoch (#697) joins the key as a suffix: the daemon
     recreated the workspace's root overlay, the guest's ssh host
     keys regenerated with it, and the rotated directory re-pins
-    fresh instead of refusing — epoch 0 and an unserved epoch
-    (a daemon one version behind) spell the same directory the
-    pre-#697 client used, so nothing churns on upgrade.
+    fresh instead of refusing. A seed revision (#803) joins the
+    same way: a renewal re-provisions the guest under a new
+    instance-id and the stock cloud-init ssh module regenerates
+    its host keys, so the token rotates the directory; both
+    markers compose (a reset workspace that then renews carries
+    both suffixes).
     """
     if key.get("id"):
-        epoch = key.get("disk_epoch") or 0
-        return key["id"], None if epoch == 0 else f"e{epoch}"
+        return key["id"], rotation_token(key)
     return ref, instance_token(key)
 
 
@@ -431,6 +450,35 @@ def session_pin(key: dict, ref: str) -> str:
     known_hosts alias come from here, never from what was typed.
     """
     return key.get("id") or ref
+
+
+def rotation_cause(key: dict) -> str:
+    """The re-pin notice's cause half (#697, #803): the marker the
+    row carries names why the guest's host keys differ from any
+    earlier pin — a recreated disk set when the epoch moved, the
+    seed's renewal otherwise."""
+    if key.get("disk_epoch"):
+        return "disks were recreated"
+    return "re-provisioned (a renewed seed)"
+
+
+def repin_notice(key: dict, pin: str, hosts: str) -> None:
+    """The one-line notice a rotated cache directory prints once
+    (#697, #803): the rotated directory starts empty and the first
+    successful connect writes the entry, so the notice rides the
+    one session that re-pins and every later session keeps
+    quiet. The cause names itself: a renewed seed re-provisions
+    the guest and the stock cloud-init ssh module regenerates its
+    host keys there."""
+    if not (key.get("disk_epoch") or key.get("seed_rev")):
+        return
+    if Path(hosts).is_file():
+        return
+    label = key.get("name") or pin
+    print(
+        f"msks: {label}'s {rotation_cause(key)}; pinning fresh host keys",
+        file=sys.stderr,
+    )
 
 
 def known_hosts_path(
@@ -1298,16 +1346,7 @@ def staged_session(workspace_id: str, transport=None):
     pin = session_pin(key, workspace_id)
     cache_ref, instance = cache_key(key, workspace_id)
     hosts = known_hosts_path(cache_ref, instance=instance)
-    if key.get("disk_epoch") and not Path(hosts).is_file():
-        # Once per rotation (#697 review): the rotated directory
-        # starts empty and the first successful connect writes the
-        # entry, so the notice rides the one session that re-pins
-        # and every later session keeps quiet.
-        label = key.get("name") or pin
-        print(
-            f"msks: {label}'s disks were recreated; pinning fresh host keys",
-            file=sys.stderr,
-        )
+    repin_notice(key, pin, hosts)
     with session_identity(key, workspace_id) as served:
         yield (
             booted,

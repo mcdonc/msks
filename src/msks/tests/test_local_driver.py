@@ -798,6 +798,38 @@ async def test_reset_without_an_overlay_bumps_nothing(
     assert (await app.state.model.get_ssh_key(WID))["disk_epoch"] == 0
 
 
+async def test_launch_renewal_records_the_seed_revision(
+    env, fake, tmp_path: Path
+) -> None:
+    """#803: a start that renews the seed records the renewal token
+    the bake pinned in the row — the token the identity endpoint
+    serves and the client rotates its host-key cache on. The
+    renewal here rides the CA-marker drift (the mounts-stale
+    trigger is the same code path, pinned in test_persist); a
+    first boot's plain seed records None, and a start that leaves
+    the seed alone records nothing."""
+    app, state_dir, _ = env
+    seeded = replace(spec(tmp_path), ssh_pubkey="ssh-ed25519 AAAA test key")
+    await app.state.model.create_workspace(seeded)
+    await app.state.microvm.launch(seeded)
+    # The first boot baked a plain seed: no renewal token.
+    assert (await app.state.model.get_ssh_key(WID))["seed_rev"] is None
+    await app.state.microvm.kill(WID)
+    # The CA marker beside the seed drifts: the next start renews,
+    # and the row records exactly the token the bake pinned.
+    persist.seed_ca_mark(state_dir / "vms" / WID).unlink()
+    await app.state.microvm.launch(seeded)
+    ca = await app.state.microvm.local.interceptor_ca_pem()
+    expected = persist.renewal_suffix(ca, persist.mounts_fingerprint(()))
+    assert (await app.state.model.get_ssh_key(WID))["seed_rev"] == expected
+    await app.state.microvm.kill(WID)
+    # An unchanged seed records nothing: the token stands as the
+    # last bake pinned it.
+    await app.state.microvm.launch(seeded)
+    assert (await app.state.model.get_ssh_key(WID))["seed_rev"] == expected
+    await app.state.microvm.kill(WID)
+
+
 async def test_reset_refuses_a_running_vm(env, fake, tmp_path: Path) -> None:
     app, _state_dir, _ = env
     await app.state.microvm.launch(spec(tmp_path))

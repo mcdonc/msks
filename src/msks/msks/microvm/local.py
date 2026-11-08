@@ -701,9 +701,18 @@ class LocalCloudHypervisor(MicrovmDriver):
         and the client rotates its host-key cache on the next
         identity fetch instead of refusing the new keys. The home
         volume carries no guest identity, so its heal bumps
-        nothing. A heal under no row (the create flow prepares
+        nothing. A healed under no row (the create flow prepares
         artifacts before the row lands; a fixture launch) records
-        nothing — there is no cache to rotate."""
+        nothing — there is no cache to rotate.
+
+        A baked or renewed seed is a recorded event too (#803):
+        the renewal's new instance-id makes the guest re-provision,
+        the stock cloud-init ssh module regenerates its host keys
+        (Debian, Fedora; NixOS omits the module), and the revision
+        token lands in the row ahead of the boot — the client
+        rotates its host-key cache for the keys this boot writes.
+        The same no-row carve-out applies, and a seed left alone
+        records nothing."""
         overlay = overlay_path(vmm.state_dir, spec.workspace_id)
         healed_overlay = not overlay.is_file()
         if healed_overlay:
@@ -719,12 +728,21 @@ class LocalCloudHypervisor(MicrovmDriver):
         # Boots heal their artifacts (#14): a workspace row whose
         # overlay or volume is missing (a crash mid-create, or a row
         # that predates #14) gets them back before the VM starts.
-        await ensure_artifacts(
+        # The answer names the seed revision this boot's bake
+        # pinned (#803): None when the seed stood untouched, the
+        # empty string for a plain (re)build, the renewal token
+        # for a re-baked one — recorded before the VM spawns, so
+        # the row never lags the guest the client will dial.
+        seed_rev = await ensure_artifacts(
             spec,
             vmm,
             self._settings().llm.port,
             await self.interceptor_ca_pem(),
         )
+        if seed_rev is not None:
+            await self.app.state.model.set_seed_rev(
+                spec.workspace_id, seed_rev or None
+            )
         # The share daemons spawn before the VMM (#620, part #622):
         # cloud-hypervisor opens each vhost-user socket at
         # vm.create, so the daemon behind it must already serve.

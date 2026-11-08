@@ -313,6 +313,7 @@ async def test_migration_0015_drops_the_private_half_column(
         "created_at": row["created_at"],
         "login_user": None,
         "disk_epoch": 0,
+        "seed_rev": None,
     }
     # The torn shape: DDL committed, stamp rewound — the guard
     # inspects the live columns and lands as a no-op.
@@ -425,6 +426,7 @@ async def test_get_ssh_key_serves_the_public_half_alone(app_for) -> None:
         "created_at": key["created_at"],  # the instance stamp (#245)
         "login_user": "alice",
         "disk_epoch": 0,  # the disks have not been recreated (#697)
+        "seed_rev": None,  # the seed has not been renewed (#803)
     }
     assert key["created_at"]  # present, non-empty, per-instance
     # A recreated overlay advances the epoch (#697); the client
@@ -432,6 +434,18 @@ async def test_get_ssh_key_serves_the_public_half_alone(app_for) -> None:
     assert await app.state.model.bump_disk_epoch("ws1") is True
     assert (await app.state.model.get_ssh_key("ws1"))["disk_epoch"] == 1
     assert await app.state.model.bump_disk_epoch("nope") is False
+    # A renewed seed records its revision token (#803); the client
+    # rotates its host-key cache on the change. A plain re-bake
+    # (a healed seed) records None, and an absent row records
+    # nothing.
+    assert (await app.state.model.get_ssh_key("ws1"))["seed_rev"] is None
+    assert await app.state.model.set_seed_rev("ws1", "3f2a91c0b7d2") is True
+    assert (await app.state.model.get_ssh_key("ws1"))[
+        "seed_rev"
+    ] == "3f2a91c0b7d2"
+    assert await app.state.model.set_seed_rev("ws1", None) is True
+    assert (await app.state.model.get_ssh_key("ws1"))["seed_rev"] is None
+    assert await app.state.model.set_seed_rev("nope", "3f2a91c0b7d2") is False
 
 
 async def test_get_ssh_key_without_identity_and_absent(app_for) -> None:
@@ -450,6 +464,7 @@ async def test_get_ssh_key_without_identity_and_absent(app_for) -> None:
         "created_at": key["created_at"],
         "login_user": None,
         "disk_epoch": 0,
+        "seed_rev": None,
     }
     assert await app.state.model.get_ssh_key("nope") is None
 

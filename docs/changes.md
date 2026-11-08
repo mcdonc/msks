@@ -6,6 +6,15 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Fixed
+
+- **`msks ssh` after a host-share change (#803).** A changed mount
+  set renews the workspace's seed at the next start, and the
+  re-provisioning guest regenerates its ssh host keys. The
+  workspace's identity row now serves the seed's revision token,
+  and the client rotates its host-key pin on it, so the next
+  session re-pins the new key instead of refusing it.
+
 ## \[v0.8.2] - 2026-11-07
 
 ### Breaking

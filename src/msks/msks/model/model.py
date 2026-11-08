@@ -516,6 +516,13 @@ class Model:
                 # keys regenerated with the fresh overlay, and the
                 # client rotates its host-key cache on the change.
                 "disk_epoch": row.disk_epoch,
+                # The seed's revision token (#803): the renewal
+                # suffix the current seed's instance-id carries.
+                # A renewal re-provisions the guest and the stock
+                # cloud-init ssh module regenerates its host keys,
+                # so the client rotates its host-key cache on a
+                # change here too.
+                "seed_rev": row.seed_rev,
             }
 
     async def bump_disk_epoch(self, workspace_id: str) -> bool:
@@ -530,6 +537,22 @@ class Model:
                 update(Workspace)
                 .where(Workspace.id == workspace_id)
                 .values(disk_epoch=Workspace.disk_epoch + 1)
+            )
+            await session.commit()
+            return result.rowcount > 0
+
+    async def set_seed_rev(self, workspace_id: str, rev: str | None) -> bool:
+        """Record the seed revision the current boot's bake pinned
+        (#803); False when the row is absent — a bake under a row
+        the daemon does not know (the create flow's prepare, a
+        fixture launch) has no client cache to rotate, so the
+        token is simply not theirs to record."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            result = await session.execute(
+                update(Workspace)
+                .where(Workspace.id == workspace_id)
+                .values(seed_rev=rev)
             )
             await session.commit()
             return result.rowcount > 0
