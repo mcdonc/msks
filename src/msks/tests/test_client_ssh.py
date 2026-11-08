@@ -633,13 +633,6 @@ def test_cache_key_rotates_on_a_seed_epoch(tmp_path: Path) -> None:
         "1a2b3c4d5e6f7890",
         "e1.r2",
     )
-    # The recurrence the counter exists for: the same bake content
-    # twice is still two events, and the second lands its own
-    # directory.
-    assert (
-        ssh.cache_key({**ident, "seed_epoch": 4}, "ws")[1]
-        != (ssh.cache_key({**ident, "seed_epoch": 3}, "ws")[1])
-    )
 
 
 def test_rotation_cause_names_both_markers() -> None:

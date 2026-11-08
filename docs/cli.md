@@ -1172,12 +1172,12 @@ under a live workspace (a healed loss, a factory reset), the guest regenerates
 its host keys: the daemon advances the workspace's disk epoch, the cache
 rotates with it, and the next connection pins the fresh keys with a notice
 marking the recreation instead of refusing. A renewed seed rotates the same
-cache the same way: the renewal's new cloud-init instance-id re-provisions the
-guest (a changed mount set, a rotated interception CA), the stock cloud-init
-ssh module regenerates the guest's host keys with it, and the workspace's seed
-epoch — one count per bake or renewal — names the rotated directory
-(`<id>.r1/`, and `<id>.e1.r2/` beside a disk rotation) so the next connection
-re-pins instead of refusing. A rotation leaves the previous
+cache the same way. A changed mount set or a rotated interception CA renews
+the seed. The renewal's new cloud-init instance-id re-provisions the guest,
+and the stock cloud-init ssh module regenerates the guest's host keys. The
+workspace's seed epoch counts every bake and renewal, and the cache directory
+rotates with the count: `<id>.r1/`, and `<id>.e1.r2/` beside a disk rotation.
+The next connection re-pins instead of refusing. A rotation leaves the previous
 cache behind (the `<id>/` directory, then `<id>.e1/`, `<id>.r1/`,
 `<id>.e1.r2/`, ... as rotations accumulate); those directories are dead: delete them at
 will. The alias block keeps its own known_hosts under
