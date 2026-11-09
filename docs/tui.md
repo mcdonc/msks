@@ -152,8 +152,8 @@ mount`](cli.md#msks-mount) uses the same route.
 
 Each workspace owns its **proxies page**: the workspace's page opens it
 with its action row or `p`. The page manages that workspace's
-persisted proxies ([the networking chapter](networking.md) describes
-what a proxy is) and no other's. The rows carry the spec in the CLI's
+persisted proxies ([the proxies chapter](proxies.md) describes what a
+proxy is) and no other's. The rows carry the spec in the CLI's
 own grammar (`-L 2201:localhost:22`), the label, and the live status —
 a row the guest cannot reach names its reason beside the word.
 

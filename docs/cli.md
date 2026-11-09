@@ -1038,6 +1038,8 @@ service closed, stdin EOF) leaves exit code 0.
 The daemon's persisted workspace proxies: listeners the daemon owns, rows in
 its database, re-established at every workspace start. (`msks forward` is the
 ephemeral session — stdio or a client-side bind that dies with the command.)
+[The proxies chapter](proxies.md) walks the concept and the usual work; this
+section is the reference.
 
 Two directions, written the way ssh writes them. `listen : target`, left to
 right; the flag letter says which side listens:
@@ -1055,8 +1057,9 @@ msks proxy add my-workspace -R 5432:db.internal:5432 --label db
 # the gateway's 5432 bridges to db.internal:5432, dialed by the daemon
 ```
 
-Both specs are ssh's own shape, `[BIND:]PORT:HOST:PORT`, and the host field plays
-the same role it plays in ssh: it names the end that makes the connection. In
+The `-L` spec is `[BIND:]PORT:HOST:PORT`; the `-R` spec is `RPORT:HOST:TPORT`
+(its bind is the workspace's tap, a runtime fact). The host field plays the
+same role it plays in ssh: it names the end that makes the connection. In
 `-L` that end is the workspace itself, so the field accepts exactly two
 spellings — `localhost` or `127.0.0.1` — and anything else refuses:
 
@@ -1083,9 +1086,12 @@ remote row therefore reaches its target without a verdict.
 
 `add` is declarative. Asking twice for the same spec returns the standing
 row. A different spec on the same bind is refused with the row that holds it.
-Creating a proxy on a running workspace opens its listener at once. A proxy
-whose bind fails (the port is taken) records the failure as its status with
-the cause, and every later start retries it. A remote proxy whose firewall
+A forward proxy binds at once, on a stopped workspace too; each connection
+refuses until the guest runs. A remote proxy on a stopped workspace records
+the row, and the workspace's next start brings its listener up. A stop
+closes every listener the workspace owns. A proxy whose bind fails (the
+port is taken) records the failure as its status with the cause, and every
+later start retries it. A remote proxy whose firewall
 swap fails stays unreachable from the guest, and its status carries the cause
 until a later swap lands.
 

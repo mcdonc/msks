@@ -13,7 +13,7 @@ bind that fails while the page stands paints itself without a
 keypress.
 
 Spatial navigation: the arrows walk the rows, ``a`` opens the add
-form, ``r`` or Enter removes the focused row behind a
+form, ``D`` or Enter removes the focused row behind a
 confirmation, ``q`` or Escape returns to the workspace page — no
 screen traps focus.
 """
