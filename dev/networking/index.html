@@ -1131,6 +1131,13 @@ dropped unread, so a spoofed-source datagram cannot turn the daemon into a
 reflection amplifier. The resolver also grows the naming layer: query cache,
 name learning for prompts, and the lockout that keeps DNS from being routed
 around, all behind that same offered resolver.</p>
+<p>Two names the resolver answers itself, in every consent mode. The first is
+<code>secretprobe.msks</code>, the interception probe (#424). The second is <code>host.msks</code>
+(#816), the guest's name for its own gateway: it resolves to the tap's
+address, so a <code>-R</code> proxy is dialed by name instead of discovered through
+<code>ip route show default</code>. A well-formed internet-class (IN) query for either name never reaches
+an upstream, records a policy row, or pins an address. Both are the
+daemon's own services.</p>
 <h2 id="what-the-chain-enforces">What the chain enforces<a class="headerlink" href="#what-the-chain-enforces" title="Permanent link">&para;</a></h2>
 <p>The per-VM table hooks two places, both scoped to the workspace's
 tap:</p>

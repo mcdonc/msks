@@ -1739,6 +1739,12 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong><code>host.msks</code> (#816).</strong> Every egress workspace's resolver answers the
+  name with its own tap address, so a guest dials the gateway by name
+  (<code>https://host.msks:8660</code> with a <code>-R 8660:localhost:8660</code> proxy stored)
+  instead of discovering it through <code>ip route show default</code>. The name
+  answers in every consent mode, feeds no policy row or address pin, and
+  a well-formed internet-class query for it is never sent upstream.</li>
 <li><strong>The proxies docs chapter (#814).</strong> <code>docs/proxies.md</code> owns the whole
   proxies story in one place: the persistent proxy port concept, the
   <code>-L</code>/<code>-R</code> directions in ssh's grammar, the live status vocabulary, and

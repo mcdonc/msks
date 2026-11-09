@@ -1105,8 +1105,9 @@ loopback. A name like <code>db.internal</code> resolves through the daemon host'
 resolver.</p>
 <p>A remote proxy's listen address is fixed by the workspace's tap, so the
 grammar carries no bind field for <code>-R</code>.</p>
-<p>Inside the guest, dial the DHCP gateway address to reach it. That address is
-printed by <code>ip route show default</code>:</p>
+<p>Inside the guest, dial <code>host.msks</code>. Every workspace's resolver answers the
+name with its own tap address. <code>ip route show default</code> prints the same
+address when a name is unavailable:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>http://<span class="k">$(</span>ip<span class="w"> </span>route<span class="w"> </span>show<span class="w"> </span>default<span class="w"> </span><span class="p">|</span><span class="w"> </span>awk<span class="w"> </span><span class="s1">'{print $3}'</span><span class="k">)</span>:9200
 </span></code></pre></div>
 <p>A workspace created without egress has no NIC. Adding a proxy to it is
@@ -1153,9 +1154,12 @@ daemon's, so the firewall rules of the daemon host govern the reach.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>msks<span class="w"> </span>proxy<span class="w"> </span>add<span class="w"> </span>my-workspace<span class="w"> </span>-R<span class="w"> </span><span class="m">5432</span>:localhost:5432<span class="w"> </span>--label<span class="w"> </span>db
 </span></code></pre></div>
 <p>The workspace's gateway listens on 5432. Inside the guest, an application
-connects to the DHCP gateway on that port:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>psql<span class="w"> </span>-h<span class="w"> </span><span class="k">$(</span>ip<span class="w"> </span>route<span class="w"> </span>show<span class="w"> </span>default<span class="w"> </span><span class="p">|</span><span class="w"> </span>awk<span class="w"> </span><span class="s1">'{print $3}'</span><span class="k">)</span><span class="w"> </span>-p<span class="w"> </span><span class="m">5432</span>
+connects to <code>host.msks</code> on that port:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>psql<span class="w"> </span>-h<span class="w"> </span>host.msks<span class="w"> </span>-p<span class="w"> </span><span class="m">5432</span>
 </span></code></pre></div>
+<p>While <a href="../secrets/">secret interception</a> is armed, the tap's 80 and 443
+answer the interceptor; a <code>-R</code> proxy on either port stays unreachable from
+the guest until interception stands down.</p>
 <p>The daemon dials <code>localhost:5432</code> on its own host for every guest
 connection. A target on another host works the same way
 (<code>-R 5432:db.internal:5432</code>). The daemon host's resolver resolves it.</p>
