@@ -1998,10 +1998,11 @@ async def test_attach_admits_the_workspace_remote_proxy_ports(
     # the admission logic, not the kernel's interface table.
     from msks import proxies as proxies_mod
 
+    real_bind = proxies_mod.bind_point
     monkeypatch_bind = lambda row, attachment: (  # noqa: E731
         ("127.0.0.1", row["listen_port"])
         if row["direction"] == "remote"
-        else proxies_mod.bind_point(row, attachment)
+        else real_bind(row, attachment)
     )
     monkeypatch.setattr(proxies_mod, "bind_point", monkeypatch_bind)
     # The squatted port: the row exists, its bind will fail.
@@ -2090,10 +2091,12 @@ async def test_admission_failure_never_fails_the_boot(
         "ws-a", "forward", "127.0.0.1", await free_bind_port(), None, 22, None
     )
 
+    real_bind = proxies_mod.bind_point
+
     def bind_on_loopback(row, attachment):
         if row["direction"] == "remote":
             return ("127.0.0.1", row["listen_port"])
-        return proxies_mod.bind_point(row, attachment)
+        return real_bind(row, attachment)
 
     monkeypatch.setattr(proxies_mod, "bind_point", bind_on_loopback)
 
@@ -2108,3 +2111,5 @@ async def test_admission_failure_never_fails_the_boot(
     status, reason = app.state.proxies.status(rows[0])
     assert status == "listening"
     assert "admission refresh failed" in reason
+    # The forward row beside them bound and took no note.
+    assert app.state.proxies.status(rows[2]) == ("listening", None)
