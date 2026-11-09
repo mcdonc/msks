@@ -25,6 +25,7 @@ nav = [
   { "The TUI" = "tui.md" },
   { "Host Share Mounts" = "mounts.md" },
   { "Guest Networking" = "networking.md" },
+  { "Workspace Proxies" = "proxies.md" },
   { "Egress Consent" = "egress-consent.md" },
   { "LLM Proxy" = "llm.md" },
   { "Secrets" = "secrets.md" },

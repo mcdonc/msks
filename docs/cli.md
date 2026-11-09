@@ -1038,6 +1038,8 @@ service closed, stdin EOF) leaves exit code 0.
 The daemon's persisted workspace proxies: listeners the daemon owns, rows in
 its database, re-established at every workspace start. (`msks forward` is the
 ephemeral session — stdio or a client-side bind that dies with the command.)
+[The proxies chapter](proxies.md) walks the concept and the usual work; this
+section is the reference.
 
 Two directions, written the way ssh writes them. `listen : target`, left to
 right; the flag letter says which side listens:

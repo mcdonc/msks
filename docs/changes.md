@@ -8,6 +8,11 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The proxies docs chapter (#814).** `docs/proxies.md` owns the whole
+  proxies story in one place: the persistent proxy port concept, the
+  `-L`/`-R` directions in ssh's grammar, the live status vocabulary, and
+  worked examples for both the CLI and the TUI. The networking, CLI, and
+  TUI chapters link to it where they introduce proxies.
 - **The TUI's proxies page (#809, part of #807).** Each workspace's
   page opens its own proxies page (the action row, or `p`), which adds
   and removes that workspace's persisted `-L`/`-R` proxies with the
