@@ -6590,7 +6590,7 @@ async def test_the_mounts_editor_adds_edits_and_removes(
         )
         # Remove the skipped one: focus the second row, remove.
         await pilot.press("down")
-        await pilot.press("r")
+        await pilot.press("D")
         await wait_for(
             lambda: (
                 (
@@ -6654,7 +6654,7 @@ async def test_the_mounts_editor_names_a_refusal(monkeypatch) -> None:
         await wait_for(
             lambda: len(app.screen.query_one("#mount-rows").children) == 2
         )
-        await pilot.press("r")
+        await pilot.press("D")
         calls = [c for c in data.calls if c[0] == "set-mounts"]
         # The later save carries the original set minus the row
         # remove dropped — the refused mount rides nothing.
@@ -6836,7 +6836,7 @@ async def test_the_mounts_editor_empty_list_names_the_add_key(
         )
         assert "no mounts" in content
         calls_before = list(data.calls)
-        await pilot.press("r")  # the placeholder: nothing to remove
+        await pilot.press("D")  # the placeholder: nothing to remove
         await pilot.press("enter")  # nothing to edit
         await pilot.pause()
         assert data.calls == calls_before
@@ -6857,7 +6857,7 @@ async def test_the_mounts_editor_close_hands_back_the_row(monkeypatch) -> None:
         await press_until(
             pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
         )
-        await pilot.press("r")  # remove the focused healthy mount
+        await pilot.press("D")  # remove the focused healthy mount
         await wait_for(lambda: len(data.calls) >= 1)
         await press_until(pilot, "escape", lambda: on_page(app))
         assert "gone:/mnt/gone:rw · skipped" in mounts_text(app)
@@ -6888,7 +6888,7 @@ async def test_the_mounts_editor_names_its_keys(monkeypatch) -> None:
         shown = {
             binding.key for binding in app.screen.BINDINGS if binding.show
         }
-        assert shown == {"a", "r", "escape"}
+        assert shown == {"a", "D", "escape"}
         assert footer in app.screen.children
 
 
@@ -6954,7 +6954,7 @@ async def test_the_mounts_editor_deletes_through_the_real_api(
             await press_until(
                 pilot, "enter", lambda: isinstance(tui.screen, MountsScreen)
             )
-            await pilot.press("r")
+            await pilot.press("D")
             # The removal leaves nothing pending — the workspace
             # never started, so the mountless reply agrees with
             # the empty attached set: the note names the save

@@ -401,7 +401,8 @@ class ProxiesScreen(Screen):
     """One workspace's proxies page (#809, part #807): the
     workspace's proxy rows with their live status, opened from
     its page (the action row, or ``p``). ``a`` opens the add form,
-    ``r`` or Enter removes the focused row behind a confirmation;
+    ``D`` or Enter removes the focused row behind a confirmation
+    (``D``, the workspaces list's own remove letter);
     every proxy transition the daemon publishes pokes a refresh
     beside the standing interval, so a bind that fails while the
     page stands paints itself without a keypress. Arrows walk the
@@ -410,7 +411,7 @@ class ProxiesScreen(Screen):
 
     BINDINGS = [
         Binding("a", "add", "Add"),
-        Binding("r", "remove", "Rm"),
+        Binding("D", "remove", "Del"),
         Binding("enter", "remove", show=False, priority=True),
         Binding("q", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
@@ -650,7 +651,7 @@ class ProxiesScreen(Screen):
             self.refresh_rows()
 
     def action_remove(self) -> None:
-        """``r`` or Enter: ask first (a remove closes the listener
+        """``D`` or Enter: ask first (a remove closes the listener
         at once), then delete through the data seam."""
         row = self.focused_row()
         if row is None:

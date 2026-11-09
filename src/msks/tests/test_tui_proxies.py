@@ -419,7 +419,7 @@ async def test_a_markup_carrying_bind_removes_whole(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await open_proxies(pilot, app)
         await wait_for(lambda: proxy_children(app) == 1)
-        await pilot.press("r")
+        await pilot.press("D")
         await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
         assert r"x\[/y]" in str(app.screen.question)  # the tag, escaped
         await pilot.press("n")
@@ -439,7 +439,7 @@ async def test_the_page_removes_behind_a_confirmation(
     async with app.run_test() as pilot:
         await open_proxies(pilot, app)
         await wait_for(lambda: proxy_children(app) == 1)
-        await pilot.press("r")
+        await pilot.press("D")
         await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
         assert "-L 8888:localhost:8889" in app.screen.question
         await pilot.press("y")
@@ -463,7 +463,7 @@ async def test_the_page_refuses_a_remove_gently(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await open_proxies(pilot, app)
         await wait_for(lambda: proxy_children(app) == 1)
-        await pilot.press("r")
+        await pilot.press("D")
         await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
         await pilot.press("y")
         await wait_for(lambda: "remove failed" in proxy_status(app))
@@ -691,7 +691,7 @@ async def test_the_page_names_an_unfocused_remove(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await open_proxies(pilot, app)
         await wait_for(lambda: proxy_children(app) == 0)
-        await pilot.press("r")
+        await pilot.press("D")
         await wait_for(lambda: "no proxy focused" in proxy_status(app))
         assert data.proxy_removes == []
 
@@ -707,7 +707,7 @@ async def test_a_refused_confirm_keeps_the_row(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await open_proxies(pilot, app)
         await wait_for(lambda: proxy_children(app) == 1)
-        await pilot.press("r")
+        await pilot.press("D")
         await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
         await pilot.press("n")
         await wait_for(lambda: isinstance(app.screen, ProxiesScreen))

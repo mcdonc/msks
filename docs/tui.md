@@ -132,7 +132,7 @@ the proxies page from the workspace page.
 The **mounts editor** shows the workspace's mounts one row each, in the
 CLI's `HOST_PATH:GUEST_PATH:MODE` grammar with the mode always shown.
 `a` adds a row (a single-line input), Enter edits the focused row
-(seeded with its current spec), `r` removes it, and Escape closes the
+(seeded with its current spec), `D` removes it, and Escape closes the
 editor with the last saved set.
 
 Every change posts the whole list to the daemon's mounts route. The reply
@@ -165,7 +165,7 @@ stands paints itself without a keypress.
 name), the direction (`forward (-L)` or `reverse (-R)`), the spec in
 the same grammar `msks proxy add` reads, and a label. A spec the CLI's own parser refuses keeps the
 form standing with the rule on its note line — a `-L` spec naming a
-host besides the workspace itself says so and points at `-R`. `r` or
+host besides the workspace itself says so and points at `-R`. `D` or
 Enter removes the focused row after a confirmation; the listener
 closes at once. `q` or Escape returns to the workspace page.
 
