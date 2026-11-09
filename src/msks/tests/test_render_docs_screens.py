@@ -167,9 +167,71 @@ async def test_the_workspace_page(monkeypatch) -> None:
     app, _ = make_app(FakeData([row(status="running")]))
     async with app.run_test(size=(80, 24)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 7)
+        await wait_for(lambda: action_children(app) == 8)
         await pilot.pause()
         await export(app, "workspace-page")
+
+
+async def test_the_proxies_page(monkeypatch) -> None:
+    """The workspace's proxy rows: the spec in the CLI's grammar,
+    the labels, and the live status — one pair the guest cannot
+    reach among them."""
+    from msks.client.tui.proxies import ProxiesScreen, ProxyLink
+
+    monkeypatch.setattr(
+        ProxiesScreen,
+        "make_link",
+        lambda self: ProxyLink(lambda: None, ws_factory=FakeFactory([])),
+    )
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row(status="running")])
+    data.proxy_rows = [
+        {
+            "id": 1,
+            "workspace_id": row()["id"],
+            "direction": "forward",
+            "listen_port": 2201,
+            "target_port": 22,
+            "label": "ssh",
+            "status": "listening",
+            "reason": None,
+        },
+        {
+            "id": 2,
+            "workspace_id": row()["id"],
+            "direction": "remote",
+            "listen_port": 9200,
+            "target_host": "localhost",
+            "target_port": 9200,
+            "label": None,
+            "status": "listening",
+            "reason": "tap admission failed",
+        },
+    ]
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        await press_until(pilot, "p", lambda: on_proxies(app))
+        await wait_for(lambda: on_proxies(app) and proxies_settled(app))
+        await pilot.pause()
+        await export(app, "proxies-page")
+
+
+def on_proxies(app) -> bool:
+    """The proxies page owns the terminal."""
+    from msks.client.tui.proxies import ProxiesScreen
+
+    return isinstance(app.screen, ProxiesScreen)
+
+
+def proxies_settled(app) -> bool:
+    """The page's rows carry the fixture's proxies."""
+    try:
+        rows = app.screen.query_one("#proxy-rows")
+    except Exception:
+        return False
+    return len(rows.children) == 2
 
 
 async def test_the_edit_dialog(monkeypatch) -> None:
@@ -178,7 +240,7 @@ async def test_the_edit_dialog(monkeypatch) -> None:
     app, _ = make_app(FakeData([row()]))
     async with app.run_test(size=(80, 24)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 7)
+        await wait_for(lambda: action_children(app) == 8)
         await open_edit(pilot, app)
         await pilot.pause()
         await export(app, "edit-dialog")
@@ -191,7 +253,7 @@ async def test_the_consent_page(monkeypatch) -> None:
     app, _ = make_app(FakeData([row()]))
     async with app.run_test(size=(80, 24)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 7)
+        await wait_for(lambda: action_children(app) == 8)
         await press_until(pilot, "e", lambda: on_consent(app))
         await wait_for(lambda: on_consent(app) and holds_settled(app))
         await export(app, "consent-page")
@@ -212,7 +274,7 @@ async def test_the_consent_page_with_several_holds(monkeypatch) -> None:
     app, _ = make_app(FakeData([row()]))
     async with app.run_test(size=(80, 24)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 7)
+        await wait_for(lambda: action_children(app) == 8)
         await press_until(pilot, "e", lambda: on_consent(app))
         await wait_for(lambda: on_consent(app) and holds_settled(app, count=3))
         await export(app, "consent-holds")
@@ -225,7 +287,7 @@ async def test_the_duration_picker(monkeypatch) -> None:
     app, _ = make_app(FakeData([row()]))
     async with app.run_test(size=(80, 24)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 7)
+        await wait_for(lambda: action_children(app) == 8)
         await press_until(pilot, "e", lambda: on_consent(app))
         await wait_for(lambda: on_consent(app) and holds_settled(app))
         await pilot.press("A")
@@ -241,7 +303,7 @@ async def test_the_mode_picker(monkeypatch) -> None:
     app, _ = make_app(FakeData([row()]))
     async with app.run_test(size=(80, 24)) as pilot:
         await open_page(pilot, app)
-        await wait_for(lambda: action_children(app) == 7)
+        await wait_for(lambda: action_children(app) == 8)
         await press_until(pilot, "e", lambda: on_consent(app))
         await pilot.press("m")
         await wait_for(lambda: screen_name(app) == "ModeScreen")

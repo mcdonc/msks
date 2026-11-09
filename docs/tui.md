@@ -148,6 +148,8 @@ mount`](cli.md#msks-mount) uses the same route.
 
 ### The proxies page
 
+![The proxies page: two rows, one the guest cannot reach](screens/proxies-page.svg)
+
 Each workspace owns its **proxies page**: the workspace's page opens it
 with its action row or `p`. The page manages that workspace's
 persisted proxies ([the networking chapter](networking.md) describes
