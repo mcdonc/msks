@@ -177,6 +177,13 @@ async def test_create_refuses_duplicate_binds(client) -> None:
         headers=auth(),
     )
     assert same_tap.status_code == 409
+    # A different port on the same address is a different bind.
+    other_port = await http.post(
+        f"/api/v1/workspaces/{first}/proxies",
+        json={"direction": "forward", "listen_port": 2202, "target_port": 22},
+        headers=auth(),
+    )
+    assert other_port.status_code == 200
 
 
 async def test_daemon_wide_listing_and_delete(client) -> None:
@@ -266,4 +273,39 @@ async def test_create_on_attached_workspace_listens_at_once(client) -> None:
             headers=auth(),
         )
         assert removed.status_code == 200
+    net._attachments.pop(wid, None)
+
+
+async def test_remote_lifecycle_on_an_attached_workspace(client) -> None:
+    """A remote proxy on a running workspace binds its tap port at
+    once, the admission swap rides the create and the delete, and
+    the workspace-scoped delete closes the listener."""
+    http, app, _stub = client
+    wid = await make_workspace(http, "ws-remote")
+    net = app.state.net
+    net._attachments[wid] = attachment("127.0.0.1")
+    created = await http.post(
+        f"/api/v1/workspaces/{wid}/proxies",
+        json={
+            "direction": "remote",
+            "listen_port": 9200,
+            "target_port": 9200,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 200
+    assert created.json()["status"] == "listening"
+    proxy_id = created.json()["id"]
+    # A same-port forward on another workspace is a different bind.
+    other = await make_workspace(http, "ws-other")
+    port_ok = await http.post(
+        f"/api/v1/workspaces/{other}/proxies",
+        json={"direction": "forward", "listen_port": 2202, "target_port": 22},
+        headers=auth(),
+    )
+    assert port_ok.status_code == 200
+    removed = await http.delete(
+        f"/api/v1/workspaces/{wid}/proxies/{proxy_id}", headers=auth()
+    )
+    assert removed.status_code == 200
     net._attachments.pop(wid, None)

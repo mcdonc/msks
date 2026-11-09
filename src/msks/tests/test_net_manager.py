@@ -1982,3 +1982,46 @@ async def test_the_default_probe_path_wires_the_service_material(
     assert calls["material"] is True
     assert calls["listener_for"] == ("10.9.9.9", "cert.pem", "key.pem")
     app.state.probe = real_probe
+
+
+async def test_attach_admits_the_workspace_remote_proxy_ports(net_app) -> None:
+    """The admission and the listener agree (#807): a workspace's
+    remote proxy rows gain one accept line each in the table the
+    attach installs, and a live add swaps the admission in one
+    transaction."""
+    app, _ip_log, nft_log = net_app
+    manager = await ready(app)
+    await app.state.model.create_proxy(
+        "ws-a", "remote", None, 9200, "127.0.0.1", 9200, None
+    )
+    attachment = await manager.attach("ws-a", want=True)
+    applied = applied_rulesets(nft_log)[-1]
+    assert (
+        f"ip saddr {attachment.guest_ip} ip daddr {attachment.tap_ip} "
+        "tcp dport 9200 accept" in applied
+    )
+    # A live add re-applies the table with the fresh port set.
+    await app.state.model.create_proxy(
+        "ws-a", "remote", None, 9443, "127.0.0.1", 9443, None
+    )
+    await manager.refresh_proxies("ws-a")
+    refreshed = applied_rulesets(nft_log)[-1]
+    assert "tcp dport 9200 accept" in refreshed
+    assert "tcp dport 9443 accept" in refreshed
+
+
+async def test_start_proxies_survives_a_subsystem_failure(
+    net_app, monkeypatch, capsys
+) -> None:
+    """The boot-proceeds posture (#807): a proxy row read that
+    raises names itself on stdout and the attach keeps going."""
+    app, _ip_log, _nft_log = net_app
+    manager = await ready(app)
+
+    async def refusing(workspace_id, attachment):
+        raise RuntimeError("row read refused")
+
+    monkeypatch.setattr(app.state.proxies, "start_workspace", refusing)
+    attachment = await manager.attach("ws-a", want=True)
+    assert attachment is not None
+    assert "did not start (row read refused)" in capsys.readouterr().out

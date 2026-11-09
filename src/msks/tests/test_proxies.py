@@ -353,3 +353,54 @@ def test_manager_constructs_plain() -> None:
     # The manager caches only the app (the ownership rule).
     manager = ProxyManager(object())
     assert manager.status({"id": 1}) == ("stopped", None)
+
+
+async def test_stop_one_on_a_failed_entry_just_drops_it(proxies) -> None:
+    manager, model, _net, queue, _app = proxies
+    port = await free_port()
+    squatter = await asyncio.start_server(lambda r, w: None, "127.0.0.1", port)
+    row = await create_forward_row(model, port)
+    live = await manager.start_one(row, ATTACHMENT)
+    assert live["status"] == "failed"
+    assert manager.status(row) == ("failed", live["reason"])
+    assert next_event_ok(await next_event(queue), "proxy.failed")
+    # The failed entry has no listener: stopping it drops the
+    # record without a proxy.closed event.
+    await manager.stop_one(row["id"])
+    assert manager.status(row) == ("stopped", None)
+    assert queue.empty()
+    squatter.close()
+    await squatter.wait_closed()
+
+
+async def test_stop_all_ends_every_listener(proxies) -> None:
+    manager, model, _net, _queue, _app = proxies
+    one, two = await free_port(), await free_port()
+    await create_forward_row(model, one)
+    await create_forward_row(model, two)
+    await manager.start_workspace("ws-a", ATTACHMENT)
+    await manager.stop_all()
+    for port in (one, two):
+        with pytest.raises(OSError):
+            await exchange(port, b"late\n")
+
+
+async def test_publish_skips_a_hubless_app() -> None:
+    # The shutdown-time shape: a state whose hub is absent
+    # publishes nothing and raises nothing.
+    from types import SimpleNamespace
+
+    manager = ProxyManager(SimpleNamespace(state=SimpleNamespace(hub=None)))
+    await manager.publish({"workspace_id": "ws", "id": 1}, "proxy.listening")
+
+
+def test_bind_point_shapes() -> None:
+    from msks.proxies import bind_point
+
+    forward = {"direction": "forward", "listen_host": None, "listen_port": 1}
+    assert bind_point(forward, None) == ("127.0.0.1", 1)
+    named = {**forward, "listen_host": "0.0.0.0"}
+    assert bind_point(named, None) == ("0.0.0.0", 1)
+    remote = {"direction": "remote", "listen_host": None, "listen_port": 2}
+    assert bind_point(remote, None) is None
+    assert bind_point(remote, ATTACHMENT) == ("127.0.0.1", 2)

@@ -504,6 +504,29 @@ def run_persist_remote(
     return 0
 
 
+def row_status(row: dict) -> str:
+    """One row's status cell: a failure carries its cause."""
+    if row.get("status") == "failed" and row.get("reason"):
+        return f"failed ({row['reason']})"
+    return row.get("status", "stopped")
+
+
+def proxy_table_rows(rows: list[dict]) -> list[list[str]]:
+    """The listing's rows: id, workspace, direction, both
+    endpoints, the label, and the live status."""
+    return [
+        [
+            str(row["id"]),
+            row["workspace_id"],
+            row["direction"],
+            *proxy_endpoint(row),
+            row.get("label") or "",
+            row_status(row),
+        ]
+        for row in rows
+    ]
+
+
 def run_proxy_list(as_json: bool, transport=None) -> int:
     """``msks forward --list``: every proxy row the daemon holds,
     with live status."""
@@ -511,29 +534,10 @@ def run_proxy_list(as_json: bool, transport=None) -> int:
     if as_json:
         print(json.dumps(rows, indent=2))
         return 0
-    lines = []
-    for row in rows:
-        listen, target = proxy_endpoint(row)
-        reason = (
-            f"failed ({row['reason']})"
-            if row.get("status") == "failed" and row.get("reason")
-            else row.get("status", "stopped")
-        )
-        lines.append(
-            [
-                str(row["id"]),
-                row["workspace_id"],
-                row["direction"],
-                listen,
-                target,
-                row.get("label") or "",
-                reason,
-            ]
-        )
     print(
         listing_text(
             ["ID", "WORKSPACE", "DIR", "LISTEN", "TARGET", "LABEL", "STATUS"],
-            lines,
+            proxy_table_rows(rows),
         )
     )
     return 0

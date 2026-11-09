@@ -140,31 +140,32 @@ class ProxyManager:
     async def start_one(self, row: dict, attachment) -> dict:
         """Bind one proxy's listener; returns the row with its
         status. Idempotent: a listener already up stays up, a
-        recorded failure gets its retry. A remote proxy without a
-        live attachment records nothing — its status is stopped,
-        and the next start brings it up."""
+        recorded failure gets its retry."""
         existing = self._live.get(row["id"])
         if existing is not None and existing.server is not None:
             return with_status(row, "listening", None)
         self._live.pop(row["id"], None)
-        if row["direction"] == "remote":
-            if attachment is None:
-                return with_status(row, "stopped", None)
-            host, port = attachment.tap_ip, row["listen_port"]
-        else:
-            host = row.get("listen_host") or DEFAULT_LISTEN_HOST
-            port = row["listen_port"]
+        point = bind_point(row, attachment)
+        if point is None:
+            # A remote proxy without a live attachment records
+            # nothing — its status is stopped, and the next start
+            # brings it up.
+            return with_status(row, "stopped", None)
+        return await self.bind_listener(row, point)
+
+    async def bind_listener(self, row: dict, point) -> dict:
+        """Bind one proxy's listener at its ``(host, port)``,
+        recording the failure as the row's status when the bind
+        refuses (a taken port, an address the host cannot bind)."""
         try:
             server = await asyncio.start_server(
-                self.connect_handler(row), host, port
+                self.connect_handler(row), *point
             )
         except OSError as exc:
-            self._live[row["id"]] = LiveProxy(
-                row=row, failure=str(exc) or type(exc).__name__
-            )
-            await self.publish(row, "proxy.failed", detail=str(exc))
-            live = self._live[row["id"]]
-            return with_status(row, "failed", live.failure)
+            cause = str(exc) or type(exc).__name__
+            self._live[row["id"]] = LiveProxy(row=row, failure=cause)
+            await self.publish(row, "proxy.failed", detail=cause)
+            return with_status(row, "failed", cause)
         self._live[row["id"]] = LiveProxy(row=row, server=server)
         await self.publish(row, "proxy.listening")
         return with_status(row, "listening", None)
@@ -237,28 +238,39 @@ class ProxyManager:
         for the next one, the same contract the forward client's
         ``--local`` listener keeps."""
         if row["direction"] == "remote":
-            try:
-                target_reader, target_writer = await asyncio.open_connection(
-                    row.get("target_host") or DEFAULT_TARGET_HOST,
-                    row["target_port"],
-                )
-            except OSError as exc:
-                logger.info(
-                    "proxy %s: dial %s:%s refused: %s",
-                    row["id"],
-                    row.get("target_host") or DEFAULT_TARGET_HOST,
-                    row["target_port"],
-                    exc,
-                )
-                return
-            session = pump(reader, writer, target_reader, target_writer)
-            try:
-                await session
-            finally:
-                target_writer.close()
-                with contextlib.suppress(Exception):
-                    await target_writer.wait_closed()
+            await self.bridge_remote(row, reader, writer)
+        else:
+            await self.bridge_forward(row, reader, writer)
+
+    async def bridge_remote(self, row: dict, reader, writer) -> None:
+        """The remote direction: dial the daemon-side service and
+        pump bytes both ways until either end finishes."""
+        host = row.get("target_host") or DEFAULT_TARGET_HOST
+        try:
+            target_reader, target_writer = await asyncio.open_connection(
+                host, row["target_port"]
+            )
+        except OSError as exc:
+            logger.info(
+                "proxy %s: dial %s:%s refused: %s",
+                row["id"],
+                host,
+                row["target_port"],
+                exc,
+            )
             return
+        session = pump(reader, writer, target_reader, target_writer)
+        try:
+            await session
+        finally:
+            target_writer.close()
+            with contextlib.suppress(Exception):
+                await target_writer.wait_closed()
+
+    async def bridge_forward(self, row: dict, reader, writer) -> None:
+        """The forward direction: one guest TCP connection through
+        the same dial the forward websocket rides, tracked so a
+        detach ends it with the tap."""
         net = self.app.state.net
         guest_writer = None
         try:
@@ -301,6 +313,24 @@ class ProxyManager:
         if detail is not None:
             payload["reason"] = detail
         await hub.publish(event, payload)
+
+
+def bind_point(row: dict, attachment) -> tuple[str, int] | None:
+    """One row's ``(host, port)`` bind, or None when nothing can
+    bind yet: a forward proxy binds the daemon-side address its
+    row names (loopback by default), a remote one binds its
+    workspace's tap — an address that exists only while the
+    workspace runs."""
+    if row["direction"] == "remote":
+        return (
+            None
+            if attachment is None
+            else (
+                attachment.tap_ip,
+                row["listen_port"],
+            )
+        )
+    return row.get("listen_host") or DEFAULT_LISTEN_HOST, row["listen_port"]
 
 
 def with_status(row: dict, status: str, reason: str | None) -> dict:

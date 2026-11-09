@@ -617,6 +617,71 @@ def console(
     return run_workspace_shell(workspace_id)
 
 
+def proxy_flag_refusal(
+    proxy_list: bool, proxy_rm: int | None, as_json: bool
+) -> str | None:
+    """The named refusal when the management flags disagree, or
+    None when they form one coherent ask."""
+    if proxy_list and proxy_rm is not None:
+        return "pass --list or --rm, not both"
+    if not proxy_list and proxy_rm is None:
+        return "--json goes with --list"
+    return None
+
+
+def no_management_flags(
+    proxy_list: bool, proxy_rm: int | None, as_json: bool
+) -> bool:
+    """Whether the invocation asked for no stored-row management."""
+    return not proxy_list and proxy_rm is None and not as_json
+
+
+def proxy_command(
+    workspace_id: str,
+    proxy_list: bool,
+    proxy_rm: int | None,
+    as_json: bool,
+    transport,
+) -> int | None:
+    """The stored-row management half of ``msks forward``: a
+    flag-combo refusal, the command's result, or None when no
+    management flag rode the invocation."""
+    if no_management_flags(proxy_list, proxy_rm, as_json):
+        return None
+    refusal = proxy_flag_refusal(proxy_list, proxy_rm, as_json)
+    if refusal is not None:
+        raise UsageError(refusal)
+    if proxy_rm is not None:
+        return run_proxy_remove(workspace_id, proxy_rm, transport)
+    return run_proxy_list(as_json, transport)
+
+
+def persist_command(
+    workspace_id: str,
+    port: int,
+    local: int | None,
+    persist: bool,
+    bind: str | None,
+    remote: str | None,
+    transport,
+) -> int | None:
+    """The persisted-proxy half of ``msks forward``: the stored
+    row's result, or None when the invocation wants a session."""
+    if remote is not None:
+        if not persist:
+            raise UsageError(
+                "--remote creates a daemon-side proxy; add --persist"
+            )
+        return run_persist_remote(workspace_id, port, remote, transport)
+    if not persist:
+        return None
+    if local is None:
+        raise UsageError(
+            "--persist needs --local PORT (the daemon-side listen port)"
+        )
+    return run_persist_forward(workspace_id, port, local, bind, transport)
+
+
 @app.command("forward")
 @one_line_interrupts
 def forward(
@@ -666,28 +731,18 @@ def forward(
     ),
 ) -> int:
     """Bridge a workspace TCP port to stdio or a local port."""
-    if proxy_list or proxy_rm is not None or as_json:
-        if proxy_list and proxy_rm is not None:
-            raise UsageError("pass --list or --rm, not both")
-        if not proxy_list and proxy_rm is None:
-            raise UsageError("--json goes with --list")
-        if proxy_rm is not None:
-            return run_proxy_remove(workspace_id, proxy_rm, ctx.obj)
-        return run_proxy_list(as_json, ctx.obj)
+    managed = proxy_command(
+        workspace_id, proxy_list, proxy_rm, as_json, ctx.obj
+    )
+    if managed is not None:
+        return managed
     if port is None:
         raise UsageError("forward needs a port (or --list / --rm ID)")
-    if remote is not None:
-        if not persist:
-            raise UsageError(
-                "--remote creates a daemon-side proxy; add --persist"
-            )
-        return run_persist_remote(workspace_id, port, remote, ctx.obj)
-    if persist:
-        if local is None:
-            raise UsageError(
-                "--persist needs --local PORT (the daemon-side listen port)"
-            )
-        return run_persist_forward(workspace_id, port, local, bind, ctx.obj)
+    stored = persist_command(
+        workspace_id, port, local, persist, bind, remote, ctx.obj
+    )
+    if stored is not None:
+        return stored
     return run_workspace_forward(workspace_id, port, local)
 
 

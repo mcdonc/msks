@@ -881,19 +881,26 @@ def test_proxy_list_prints_table_and_json(
     from msks.client import cli
 
     client_env(monkeypatch)
+    failed = {
+        **ROW,
+        "status": "failed",
+        "reason": "address in use",
+        "label": None,
+    }
     transport = httpx.MockTransport(
-        lambda req: httpx.Response(200, json=[ROW])
+        lambda req: httpx.Response(200, json=[ROW, failed])
     )
     rc = cli.main(["forward", "alpha", "--list"], transport=transport)
     assert rc == 0
     table = capsys.readouterr().out
     assert "guest:22" in table
     assert "listening" in table
+    assert "failed (address in use)" in table
     rc = cli.main(
         ["forward", "alpha", "--list", "--json"], transport=transport
     )
     assert rc == 0
-    assert json.loads(capsys.readouterr().out) == [ROW]
+    assert json.loads(capsys.readouterr().out) == [ROW, failed]
 
 
 def test_proxy_remove_deletes_on_workspace_route(

@@ -33,6 +33,19 @@ def direction_refusal(body: ProxyCreate) -> str | None:
     return None
 
 
+def binds_same(row: dict, body: ProxyCreate, listen_host: str) -> bool:
+    """Whether one stored row's bind is the bind a create names:
+    same direction and port, and — for the forward direction —
+    the same daemon-side address."""
+    if row["direction"] != body.direction:
+        return False
+    if row["listen_port"] != body.listen_port:
+        return False
+    if body.direction == "forward":
+        return (row.get("listen_host") or DEFAULT_LISTEN_HOST) == (listen_host)
+    return True
+
+
 def duplicate_conflict(rows: list[dict], body: ProxyCreate) -> str | None:
     """The 409 detail when a new row would squat a live bind.
 
@@ -42,20 +55,12 @@ def duplicate_conflict(rows: list[dict], body: ProxyCreate) -> str | None:
     workspace's port collides."""
     listen_host = body.listen_host or DEFAULT_LISTEN_HOST
     for row in rows:
-        if row["direction"] != body.direction:
-            continue
-        if row["listen_port"] != body.listen_port:
-            continue
-        if (
-            body.direction == "forward"
-            and (row.get("listen_host") or DEFAULT_LISTEN_HOST) != listen_host
-        ):
-            continue
-        return (
-            f"a {body.direction} proxy on port {body.listen_port}"
-            f" already exists (workspace {row['workspace_id']}, "
-            f"proxy {row['id']})"
-        )
+        if binds_same(row, body, listen_host):
+            return (
+                f"a {body.direction} proxy on port {body.listen_port}"
+                f" already exists (workspace {row['workspace_id']}, "
+                f"proxy {row['id']})"
+            )
     return None
 
 

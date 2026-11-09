@@ -254,9 +254,7 @@ class NetManager:
         its workspace's attachment, and shutdown ends it too."""
         for workspace_id in list(self._attachments):
             await self.detach(workspace_id)
-        proxies = getattr(self.app.state, "proxies", None)
-        if proxies is not None:
-            await proxies.stop_all()
+        await self.app.state.proxies.stop_all()
         self._state = "init"
 
     async def attach(
@@ -353,21 +351,14 @@ class NetManager:
 
     async def remote_ports(self, workspace_id: str) -> list[int]:
         """The workspace's remote proxy listen ports (#807): the
-        admission set every table install carries for this tap.
-        Reads the proxy subsystem's rows — an absent subsystem
-        (a net test's stub app) admits nothing."""
-        proxies = getattr(self.app.state, "proxies", None)
-        if proxies is None:
-            return []
-        return await proxies.remote_ports(workspace_id)
+        admission set every table install carries for this tap."""
+        return await self.app.state.proxies.remote_ports(workspace_id)
 
     async def stop_proxies(self, workspace_id: str) -> None:
-        """End the workspace's live proxy listeners when the
-        subsystem serves (#807): unconditional and idempotent, the
-        same contract stop_llm and stop_probe carry."""
-        proxies = getattr(self.app.state, "proxies", None)
-        if proxies is not None:
-            await proxies.stop_workspace(workspace_id)
+        """End the workspace's live proxy listeners (#807):
+        unconditional and idempotent, the same contract stop_llm
+        and stop_probe carry."""
+        await self.app.state.proxies.stop_workspace(workspace_id)
 
     async def start_proxies(self, attachment: NetAttachment) -> None:
         """Bring up the workspace's persisted proxy listeners
@@ -375,11 +366,10 @@ class NetManager:
         listeners carry: a subsystem-level failure (the row read)
         logs loudly and the boot proceeds; a single proxy's bind
         failure is the manager's own per-row concern."""
-        proxies = getattr(self.app.state, "proxies", None)
-        if proxies is None:
-            return
         try:
-            await proxies.start_workspace(attachment.workspace_id, attachment)
+            await self.app.state.proxies.start_workspace(
+                attachment.workspace_id, attachment
+            )
         except Exception as exc:
             print(
                 f"msksd: proxies for {attachment.workspace_id} "
