@@ -843,6 +843,35 @@ def test_persist_forward_posts_and_prints(
     assert "forward proxy 3" in capsys.readouterr().out
 
 
+def test_persist_forward_passes_the_bind_address(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from msks.client import cli
+
+    client_env(monkeypatch)
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(req.content)
+        return httpx.Response(200, json=ROW)
+
+    rc = cli.main(
+        [
+            "forward",
+            "alpha",
+            "22",
+            "--local",
+            "2201",
+            "--persist",
+            "--bind",
+            "0.0.0.0",
+        ],
+        transport=httpx.MockTransport(handler),
+    )
+    assert rc == 0
+    assert seen["body"]["listen_host"] == "0.0.0.0"
+
+
 def test_persist_remote_posts_target_host(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

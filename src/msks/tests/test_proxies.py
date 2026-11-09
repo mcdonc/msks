@@ -404,3 +404,22 @@ def test_bind_point_shapes() -> None:
     remote = {"direction": "remote", "listen_host": None, "listen_port": 2}
     assert bind_point(remote, None) is None
     assert bind_point(remote, ATTACHMENT) == ("127.0.0.1", 2)
+
+
+async def test_stop_ends_in_flight_connections(proxies) -> None:
+    """A stop cancels the sessions still bridging: two idle
+    connections close with the listener, and the per-task cleanup
+    (the tracked guest streams, the discarded task records) runs
+    for both."""
+    manager, model, _net, _queue, _app = proxies
+    port = await free_port()
+    row = await create_forward_row(model, port)
+    await manager.start_one(row, ATTACHMENT)
+    held = []
+    for _ in range(2):
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        held.append((reader, writer))
+        await asyncio.sleep(0.05)  # the handler task registers itself
+    await manager.stop_one(row["id"])
+    for reader, _writer in held:
+        assert await reader.read(100) == b""
