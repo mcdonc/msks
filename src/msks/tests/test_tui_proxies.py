@@ -396,7 +396,7 @@ async def test_a_markup_carrying_bind_removes_whole(monkeypatch) -> None:
         await wait_for(lambda: proxy_children(app) == 1)
         await pilot.press("r")
         await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
-        assert "x\[/y]" in str(app.screen.question)  # the tag, escaped
+        assert r"x\[/y]" in str(app.screen.question)  # the tag, escaped
         await pilot.press("n")
         await wait_for(lambda: isinstance(app.screen, ProxiesScreen))
 
