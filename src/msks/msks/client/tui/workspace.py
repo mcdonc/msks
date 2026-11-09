@@ -53,7 +53,7 @@ from .follow import FLOW_SHELL
 from .forms import EDIT_FREE_STATUSES, EditScreen, edit_stop_question
 from .link import CONNECTED, REJECTED, UNUSABLE_TOKEN, DeciderLink
 from .mounts import MountsScreen, mounts_line
-from .proxies import ProxiesScreen, proxies_line
+from .proxies import PROXY_REFRESH_S, ProxiesScreen, proxies_line
 from .rows import (
     header_meta,
     header_name,
@@ -393,9 +393,9 @@ class WorkspaceScreen(Screen):
         self.flash_line = FlashLine()
         # The workspace's proxy rows (#809): the compact line's
         # data, fetched at page start, on each proxy transition
-        # the link lands, and on the editor's close — not on the
-        # tick (a per-second listing is the page's one heavy call,
-        # and the events own the immediacy).
+        # the link lands, and on a slow standing backstop — not on
+        # the tick (the events own the immediacy; the backstop
+        # covers a link that cannot connect).
         self.proxy_rows: list[dict] | None = None
         # The edit waiting on the stop-and-resize answer (#380):
         # the body a running workspace's Apply parked while the
@@ -453,6 +453,11 @@ class WorkspaceScreen(Screen):
         self.app.follow.reopen = self.row["id"]
         self.link_or_stub().start()
         self.set_interval(1.0, self.tick)
+        # The compact proxies line's backstop (#809): the events
+        # own the live path, and this fetch covers a link that
+        # cannot connect (the proxies page's own rule, at its own
+        # cadence).
+        self.set_interval(PROXY_REFRESH_S, self.refresh_proxies)
         # The UI rebuilds wait for the compose stream to settle (a
         # worker racing it queries widgets not mounted yet); the
         # link starts now — frames land in the controller either
@@ -468,9 +473,12 @@ class WorkspaceScreen(Screen):
 
     def refresh_proxies(self) -> None:
         """Reload the workspace's proxy rows for the compact line
-        (#809); one flight at a time, in its own worker group so a
-        page's row refresh cannot cancel it mid-flight."""
-        self.run_worker(self.load_proxies, group="page-proxies")
+        (#809); one flight at a time, exclusive in its own worker
+        group — a stale fetch cannot paint over a fresh one, and
+        the page's row refresh runs beside it untouched."""
+        self.run_worker(
+            self.load_proxies, group="page-proxies", exclusive=True
+        )
 
     async def load_proxies(self) -> None:
         """Fetch the rows; a refusal keeps the line as it was — the

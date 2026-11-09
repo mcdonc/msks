@@ -46,7 +46,7 @@ from .consent_ui import (
     focus_attr,
     focused_attr,
 )
-from .forms import FormWalk
+from .forms import FormSelect, FormWalk
 from .link import AuditLink, proxy_frame
 from .rows import (
     COLUMN_GAP,
@@ -140,36 +140,43 @@ def status_text(row: dict) -> str:
     return status
 
 
-def pair_spans(rows: list[dict], offset: int) -> tuple[list[Span], int]:
-    """The pairs' color spans and the offset after the last one:
-    each pair colored by its reachability, the separators left in
-    the line's own foreground."""
+def display_order(rows: list[dict]) -> list[dict]:
+    """The rows in the compact line's display order (#807): the
+    forwards first, then the remotes — whatever order the daemon
+    served them in."""
+    return [row for row in rows if row["direction"] == "forward"] + [
+        row for row in rows if row["direction"] == "remote"
+    ]
+
+
+def pair_separator(before: dict | None, after: dict) -> str:
+    """The separator two printed pairs join with: nothing before
+    the first, a comma inside a half, the bar across the divide."""
+    if before is None:
+        return ""
+    if before["direction"] != after["direction"]:
+        return " | "
+    return ", "
+
+
+def value_and_spans(rows: list[dict], base: int) -> tuple[str, list[Span]]:
+    """The compact line's value and its colored spans, one pass in
+    display order: each pair's span starts where the separators
+    actually emitted put it — a comma inside a half, the bar
+    across the divide."""
+    value = ""
     spans: list[Span] = []
-    for row in rows:
-        arrow = pair_text(row)
+    before: dict | None = None
+    for row in display_order(rows):
+        sep = pair_separator(before, row)
+        start = base + len(value) + len(sep)
+        pair = pair_text(row)
         color = pair_color(row.get("status") or "")
         if color is not None:
-            spans.append(Span(offset, offset + len(arrow), color))
-        offset += len(arrow) + len(", ")
-    return spans, offset
-
-
-def half_text(rows: list[dict], direction: str) -> str:
-    """One direction's pairs, comma-joined."""
-    return ", ".join(
-        pair_text(row) for row in rows if row["direction"] == direction
-    )
-
-
-def halves_value(rows: list[dict]) -> str:
-    """The compact line's value (#807): the forwards' pairs before
-    the bar, the remotes' after it — one half alone paints without
-    the bar."""
-    halves = (
-        half_text(rows, "forward"),
-        half_text(rows, "remote"),
-    )
-    return " | ".join(part for part in halves if part)
+            spans.append(Span(start, start + len(pair), color))
+        value += sep + pair
+        before = row
+    return value, spans
 
 
 def proxies_line(rows: list[dict], theme_variables=None) -> Content:
@@ -178,16 +185,22 @@ def proxies_line(rows: list[dict], theme_variables=None) -> Content:
     after it, ``8888 -> 8889, 9111 -> 9115 | 8881 <- 8882`` — each
     pair colored by its reachability, in the status lines' own
     grammar (the ``proxies`` label muted in the label column).
-    Empty when the workspace holds no rows."""
+    Empty when the workspace holds no rows.
+
+    The text and the spans build in one pass over the display
+    order, each separator counted as it is emitted — the pairs sit
+    wherever the daemon's serve order and the halves' join put
+    them, and a span computed any other way would color the
+    neighbor's cells."""
     if not rows:
         return Content("")
     pad = " " * max(1, STATUS_LABEL_W - len("proxies"))
-    text = f" proxies{pad}{halves_value(rows)}"
-    label_end = 1 + len("proxies") + len(pad)
-    spans, _end = pair_spans(rows, label_end)
+    head = f" proxies{pad}"
+    value, spans = value_and_spans(rows, len(head))
+    style = muted_style(theme_variables or {})
     return Content(
-        text,
-        [Span(1, label_end, muted_style(theme_variables or {})), *spans],
+        head + value,
+        [Span(1, 1 + len("proxies") + len(pad), style), *spans],
     )
 
 
@@ -311,7 +324,7 @@ class ProxyAddScreen(FormWalk, ModalScreen[dict | None]):
                 )
             with Horizontal(classes="form-row"):
                 yield Static("direction", classes="form-label")
-                yield Select(
+                yield FormSelect(
                     [
                         (FORWARD_CHOICE, FORWARD_CHOICE),
                         (REMOTE_CHOICE, REMOTE_CHOICE),
@@ -362,7 +375,9 @@ class ProxyAddScreen(FormWalk, ModalScreen[dict | None]):
         try:
             body = parsed_body(direction, raw)
         except SystemExit as exc:
-            self.note(str(exc).replace("msks: ", "refused: "))
+            # The parser's message embeds the raw spec; a markup
+            # tag in it must not crash the note's Static.
+            self.note(flash_safe(str(exc).replace("msks: ", "refused: ")))
             return
         label = self.query_one("#field-proxy-label", Input).value.strip()
         if label:
@@ -556,11 +571,10 @@ class ProxiesScreen(Screen):
             return None
 
     def sync_status(self) -> None:
-        """The status line: the row count beside the page's scope
-        (every workspace, or the one it names); a flash owns the
-        line until its TTL lapses. The empty state names the add
-        key. A teardown race leaves the queries empty — noise, not
-        a crash."""
+        """The status line: the row count beside the workspace's
+        name; a flash owns the line until its TTL lapses. The
+        empty state names the add key. A teardown race leaves the
+        queries empty — noise, not a crash."""
         try:
             count = len(self.rows)
             scope = workspace_label(self.workspace)
@@ -638,10 +652,12 @@ class ProxiesScreen(Screen):
         if row is None:
             self.flash("no proxy focused")
             return
+        label = (
+            f" [{flash_safe(str(row['label']))}]" if row.get("label") else ""
+        )
         question = (
-            f"remove {spec_text(row)}"
-            f"{' [' + row['label'] + ']' if row.get('label') else ''}"
-            f" (workspace {workspace_label(row)})?"
+            f"remove {spec_text(row)}{label}"
+            f" (workspace {flash_safe(str(workspace_label(row)))})?"
         )
         self.app.push_screen(
             ConfirmScreen(question, self.remove_answered(row))

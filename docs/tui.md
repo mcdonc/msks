@@ -125,7 +125,7 @@ and **Clone**:
 the full-fork copy of [the cloning chapter](cloning.md), taken
 with a name prompt. The daemon owns the stopped-source rule — a
 refusal names itself on the page's consent line. The `p` key opens
-the proxies page from either screen.
+the proxies page from the workspace page.
 
 ### The mounts page
 

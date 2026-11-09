@@ -212,13 +212,6 @@ class FakeData:
         mirrored."""
         return 1 + len(self.proxy_rows) + len(self.proxy_removes)
 
-    async def proxies(self) -> list[dict]:
-        """Every workspace's proxy rows with live status (#809) —
-        the page's daemon-wide listing."""
-        if "proxies" in self.fail:
-            raise RuntimeError(self.refusal)
-        return [dict(r) for r in self.proxy_rows]
-
     async def workspace_proxies(self, workspace_id: str) -> list[dict]:
         """One workspace's proxy rows (#809) — the page's scoped
         listing and the workspace page's compact line."""

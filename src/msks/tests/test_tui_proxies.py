@@ -114,28 +114,40 @@ def test_status_text_carries_its_reason() -> None:
     )
 
 
+def colored_pairs(line) -> dict[str, str]:
+    """The line's colored spans as pair-text -> style: the extents
+    are the claim — a span computed off the display order colors
+    the neighbor's cells, so the plain text each span covers is
+    pinned, not just its style."""
+    out = {}
+    for span in line.spans:
+        out[line.plain[span.start : span.end]] = span.style
+    return out
+
+
 def test_the_compact_line_paints_the_spec_shape() -> None:
     """#807's compact row: the forwards before the bar, the
     remotes after it, one ``·``-free comma join inside each half —
     each pair green while it listens, red while its bind refused,
     the label column muted. Empty paints nothing."""
-    listening = proxy_row(listen_port=8888, target_port=8889)
-    second = proxy_row(
-        id=2, listen_port=9111, target_port=9115, status="stopped"
-    )
-    failed = proxy_row(
-        id=3,
+    failed = proxy_row(  # served first: a remote, failed
+        id=1,
         direction="remote",
         listen_port=8881,
         target_port=8882,
         status="failed",
         reason="bind refused",
     )
-    line = proxies_line([listening, second, failed])
+    listening = proxy_row(id=2, listen_port=8888, target_port=8889)
+    second = proxy_row(
+        id=3, listen_port=9111, target_port=9115, status="stopped"
+    )
+    line = proxies_line([failed, listening, second])
     assert line.plain == (" proxies 8888 -> 8889, 9111 -> 9115 | 8881 <- 8882")
-    styles = {span.style for span in line.spans}
-    assert "$success" in styles  # the listening pair, green
-    assert "$error" in styles  # the failed pair, red
+    pairs = colored_pairs(line)
+    assert pairs["8888 -> 8889"] == "$success"  # the listening pair
+    assert pairs["8881 <- 8882"] == "$error"  # the failed pair
+    assert pairs["proxies "] == "$text 60%"  # the muted label
     # The stopped pair paints the line's own foreground: no span.
     assert proxies_line([]).plain == ""
 
@@ -472,10 +484,10 @@ async def test_the_workspace_page_paints_the_compact_line(
             )
         )
         line = app.screen.query_one("#proxy-line", Static).content
-        assert {span.style for span in line.spans} == {
-            "$text 60%",
-            "$success",
-            "$error",
+        assert colored_pairs(line) == {
+            "proxies ": "$text 60%",
+            "8888 -> 8889": "$success",
+            "8881 <- 8882": "$error",
         }
         # The teardown race the per-second repaint can hit: a line
         # already unmounted under the timer paints nothing.
@@ -518,11 +530,62 @@ def test_the_proxies_line_handles_one_half() -> None:
         [proxy_row(direction="remote", target_port=8882)]
     )
     assert only_remote.plain == " proxies 8888 <- 8882"
+    assert colored_pairs(only_remote) == {
+        "proxies ": "$text 60%",
+        "8888 <- 8882": "$success",
+    }
     only_forward = proxies_line([proxy_row()])
     assert only_forward.plain == " proxies 8888 -> 8889"
 
 
 # -- the coverage the pilot walks above do not reach ------------------------
+
+
+async def test_a_markup_carrying_spec_refusal_crashes_nothing(
+    monkeypatch,
+) -> None:
+    """The parser's refusal embeds the raw spec; one carrying a
+    closing markup tag lands on the note escaped — the form
+    stands, the TUI with it."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app)
+        await pilot.press("a")
+        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        form = app.screen
+        form.query_one("#field-spec", Input).value = "2201:local[/host:22"
+        form.query_one("#do-add").press()
+        await pilot.pause()
+        assert isinstance(app.screen, ProxyAddScreen)  # still standing
+        note = str(form.query_one("#form-note", Static).content)
+        assert "use -R" in note and "local" in note
+
+
+async def test_the_walk_crosses_the_direction_select(monkeypatch) -> None:
+    """The direction select is the form walk's own: Down from it
+    reaches the spec field with the overlay closed, and Up returns
+    — arrows alone cross every control, the tree's
+    spatial-navigation rule."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app)
+        await pilot.press("a")
+        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        form = app.screen
+        form.query_one("#field-direction").focus()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is form.query_one("#field-spec", Input)
+        await pilot.press("up")
+        await pilot.pause()
+        assert app.focused is form.query_one("#field-direction")
 
 
 async def test_a_blank_spec_names_the_one_required_field(
