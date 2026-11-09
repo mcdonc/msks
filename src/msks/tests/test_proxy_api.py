@@ -49,6 +49,19 @@ def attachment(tap_ip: str) -> NetAttachment:
     )
 
 
+async def free_port() -> int:
+    """A port the kernel confirms free (bound then released).
+
+    The suite runs under xdist: a fixed port two workers bind at
+    once is a failed bind, and a proxy whose bind fails reports a
+    status the test did not ask for."""
+    server = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    server.close()
+    await server.wait_closed()
+    return port
+
+
 async def make_workspace(http, name: str, egress: bool = True) -> str:
     created = await http.post(
         "/api/v1/workspaces",
@@ -67,9 +80,14 @@ async def make_workspace(http, name: str, egress: bool = True) -> str:
 async def test_create_forward_on_stopped_workspace(client) -> None:
     http, _app, _stub = client
     wid = await make_workspace(http, "ws-a")
+    listen_port = await free_port()
     created = await http.post(
         f"/api/v1/workspaces/{wid}/proxies",
-        json={"direction": "forward", "listen_port": 2201, "target_port": 22},
+        json={
+            "direction": "forward",
+            "listen_port": listen_port,
+            "target_port": 22,
+        },
         headers=auth(),
     )
     assert created.status_code == 200
@@ -143,7 +161,11 @@ async def test_create_refuses_duplicate_binds(client) -> None:
     http, _app, _stub = client
     first = await make_workspace(http, "ws-one")
     second = await make_workspace(http, "ws-two")
-    body = {"direction": "forward", "listen_port": 2201, "target_port": 22}
+    body = {
+        "direction": "forward",
+        "listen_port": await free_port(),
+        "target_port": 22,
+    }
     assert (
         await http.post(
             f"/api/v1/workspaces/{first}/proxies", json=body, headers=auth()
@@ -161,7 +183,7 @@ async def test_create_refuses_duplicate_binds(client) -> None:
         f"/api/v1/workspaces/{second}/proxies",
         json={
             "direction": "remote",
-            "listen_port": 2201,
+            "listen_port": body["listen_port"],
             "target_port": 22,
         },
         headers=auth(),
@@ -171,7 +193,7 @@ async def test_create_refuses_duplicate_binds(client) -> None:
         f"/api/v1/workspaces/{second}/proxies",
         json={
             "direction": "remote",
-            "listen_port": 2201,
+            "listen_port": body["listen_port"],
             "target_port": 80,
         },
         headers=auth(),
@@ -180,7 +202,11 @@ async def test_create_refuses_duplicate_binds(client) -> None:
     # A different port on the same address is a different bind.
     other_port = await http.post(
         f"/api/v1/workspaces/{first}/proxies",
-        json={"direction": "forward", "listen_port": 2202, "target_port": 22},
+        json={
+            "direction": "forward",
+            "listen_port": await free_port(),
+            "target_port": 22,
+        },
         headers=auth(),
     )
     assert other_port.status_code == 200
@@ -300,7 +326,11 @@ async def test_remote_lifecycle_on_an_attached_workspace(client) -> None:
     other = await make_workspace(http, "ws-other")
     port_ok = await http.post(
         f"/api/v1/workspaces/{other}/proxies",
-        json={"direction": "forward", "listen_port": 2202, "target_port": 22},
+        json={
+            "direction": "forward",
+            "listen_port": await free_port(),
+            "target_port": 22,
+        },
         headers=auth(),
     )
     assert port_ok.status_code == 200
