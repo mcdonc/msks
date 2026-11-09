@@ -2064,3 +2064,47 @@ async def free_bind_port() -> int:
     server.close()
     await server.wait_closed()
     return port
+
+
+async def test_admission_failure_never_fails_the_boot(
+    net_app, monkeypatch, capsys
+) -> None:
+    """The boot-proceeds posture (#807 review round 2): an nft
+    refusal while admitting a boot's proxy binds fails closed and
+    names itself per row — the workspace still runs."""
+    from msks import proxies as proxies_mod
+
+    app, _ip_log, _nft_log = net_app
+    manager = await ready(app)
+    port = await free_bind_port()
+    second = await free_bind_port()
+    await app.state.model.create_proxy(
+        "ws-a", "remote", None, port, "127.0.0.1", port, None
+    )
+    await app.state.model.create_proxy(
+        "ws-a", "remote", None, second, "127.0.0.1", second, None
+    )
+    # A live forward row beside them: the sweep skips what is not
+    # a remote bind of this workspace.
+    await app.state.model.create_proxy(
+        "ws-a", "forward", "127.0.0.1", await free_bind_port(), None, 22, None
+    )
+
+    def bind_on_loopback(row, attachment):
+        if row["direction"] == "remote":
+            return ("127.0.0.1", row["listen_port"])
+        return proxies_mod.bind_point(row, attachment)
+
+    monkeypatch.setattr(proxies_mod, "bind_point", bind_on_loopback)
+
+    async def refusing(workspace_id):
+        raise RuntimeError("nft refused")
+
+    monkeypatch.setattr(manager, "refresh_proxies", refusing)
+    attachment = await manager.attach("ws-a", want=True)
+    assert attachment is not None
+    assert "did not apply (nft refused)" in capsys.readouterr().out
+    rows = await app.state.model.list_proxies("ws-a")
+    status, reason = app.state.proxies.status(rows[0])
+    assert status == "listening"
+    assert "admission refresh failed" in reason

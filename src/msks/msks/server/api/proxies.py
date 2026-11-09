@@ -33,39 +33,70 @@ def direction_refusal(body: ProxyCreate) -> str | None:
     return None
 
 
-def binds_same(row: dict, body: ProxyCreate, listen_host: str) -> bool:
+def binds_same(
+    row: dict, body: ProxyCreate, workspace_id: str, listen_host: str
+) -> bool:
     """Whether one stored row's bind is the bind a create names:
-    same direction and port, and — for the forward direction —
-    the same daemon-side address."""
+    same direction and port, the same daemon-side address for the
+    forward direction (its bind is daemon-wide), and the same
+    workspace for the remote direction (its bind is its own tap).
+
+    The check is lexical on purpose: spellings the comparison
+    cannot see (`localhost` against `127.0.0.1`, a wildcard
+    against a specific address) degrade to a failed bind at
+    runtime — the named status and cause — instead of a silent
+    double-serve."""
     if row["direction"] != body.direction:
         return False
     if row["listen_port"] != body.listen_port:
         return False
     if body.direction == "forward":
         return (row.get("listen_host") or DEFAULT_LISTEN_HOST) == (listen_host)
-    return True
+    return row["workspace_id"] == workspace_id
 
 
-def duplicate_conflict(rows: list[dict], body: ProxyCreate) -> str | None:
-    """The 409 detail when a new row would squat a live bind.
-
-    A forward proxy's bind is daemon-wide: any workspace's row on
-    the same address and port collides, so the check spans every
-    row. A remote proxy's bind is its own tap, so only the same
-    workspace's port collides. The check is lexical on purpose:
-    spellings the comparison cannot see (`localhost` against
-    `127.0.0.1`, a wildcard against a specific address) degrade
-    to a failed bind at runtime — the named status and cause —
-    instead of a silent double-serve."""
-    listen_host = body.listen_host or DEFAULT_LISTEN_HOST
+def conflicting_row(
+    rows: list[dict], body: ProxyCreate, workspace_id: str
+) -> dict | None:
+    """The row whose bind the create would squat, None when none
+    does."""
+    listen_host = effective_listen(body.model_dump())
     for row in rows:
-        if binds_same(row, body, listen_host):
-            return (
-                f"a {body.direction} proxy on port {body.listen_port}"
-                f" already exists (workspace {row['workspace_id']}, "
-                f"proxy {row['id']})"
-            )
+        if binds_same(row, body, workspace_id, listen_host):
+            return row
     return None
+
+
+def effective_listen(entry: dict) -> str:
+    """The listen address a row or create names, loopback when it
+    does not."""
+    return entry.get("listen_host") or DEFAULT_LISTEN_HOST
+
+
+def effective_target(entry: dict) -> str:
+    """The target address a row or create names, loopback when it
+    does not."""
+    return entry.get("target_host") or DEFAULT_TARGET_HOST
+
+
+def identical_row(row: dict, body: ProxyCreate) -> bool:
+    """Whether a conflicting row IS the create's spec. The bind
+    fields already agree (conflicting_row matched); the target
+    port and the direction's host field decide."""
+    if row["target_port"] != body.target_port:
+        return False
+    if body.direction == "forward":
+        return effective_listen(row) == effective_listen(body.model_dump())
+    return effective_target(row) == effective_target(body.model_dump())
+
+
+def conflict_detail(row: dict, body: ProxyCreate) -> str:
+    """The 409 detail naming the row that holds the bind."""
+    return (
+        f"a {body.direction} proxy on port {body.listen_port} "
+        f"already exists (workspace {row['workspace_id']}, "
+        f"proxy {row['id']})"
+    )
 
 
 def with_live_status(proxies, row: dict) -> dict:
@@ -118,11 +149,18 @@ def router(app, hub) -> APIRouter:
         refusal = direction_refusal(body)
         if refusal is not None:
             raise HTTPException(status_code=400, detail=refusal)
-        conflict = duplicate_conflict(
-            await app.state.model.list_proxies(), body
+        holder = conflicting_row(
+            await app.state.model.list_proxies(), body, workspace_id
         )
-        if conflict is not None:
-            raise HTTPException(status_code=409, detail=conflict)
+        if holder is not None:
+            # An identical spec is the declarative ask over again
+            # (#807): the row stands, its live status answers. A
+            # different spec on the same bind is the refusal.
+            if identical_row(holder, body):
+                return with_live_status(app.state.proxies, holder)
+            raise HTTPException(
+                status_code=409, detail=conflict_detail(holder, body)
+            )
         created = await app.state.model.create_proxy(
             workspace_id,
             body.direction,
@@ -159,14 +197,21 @@ def router(app, hub) -> APIRouter:
         # a live bind gains one (#807 review), and the swap rides
         # the same one-transaction install every live change uses.
         # A failed swap leaves the row and its listener standing:
-        # the reason the response carries names the unreachable
-        # half, and the next table install (the workspace's next
+        # the note the status carries says the guest cannot reach
+        # it, and the next table install (the workspace's next
         # start, a later proxy change) retries the admission.
         if body.direction == "remote" and live["status"] == "listening":
+            proxy_id = created["id"]
             try:
                 await app.state.net.refresh_proxies(workspace_id)
+                app.state.proxies.clear_admission(proxy_id)
             except Exception as exc:
-                live["reason"] = f"admission refresh failed: {exc}"
+                app.state.proxies.note_admission(
+                    proxy_id, f"admission refresh failed: {exc}"
+                )
+            # The answer the create reads back carries the note a
+            # later listing would show, not the pre-swap snapshot.
+            live = with_live_status(app.state.proxies, created)
         return live
 
     @api.delete(

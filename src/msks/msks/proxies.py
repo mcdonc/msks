@@ -116,6 +116,11 @@ class ProxyManager:
     def __init__(self, app) -> None:
         self.app = app
         self._live: dict[int, LiveProxy] = {}
+        # Per-row admission notes (#807 review round 2): a remote
+        # proxy whose nft swap failed is listening but unreachable
+        # from the guest, and the listings must keep saying so
+        # until a later swap lands.
+        self._admission_notes: dict[int, str] = {}
 
     # --- lifecycle hooks (the net manager calls these) ---------------
 
@@ -187,6 +192,7 @@ class ProxyManager:
         live = self._live.pop(proxy_id, None)
         if live is None:
             return
+        self.clear_admission(proxy_id)
         if live.server is None:
             return
         for task in live.tasks:
@@ -199,6 +205,11 @@ class ProxyManager:
             await asyncio.wait_for(
                 live.server.wait_closed(), timeout=STOP_GRACE_S
             )
+        # A peer that stalled past the grace leaves its handler
+        # parked in the finally's own wait_closed; a second cancel
+        # ends it so nothing lingers off the guard.
+        for task in live.tasks:
+            task.cancel()
         await self.publish(live.row, "proxy.closed")
 
     # --- reads ---------------------------------------------------------
@@ -209,13 +220,37 @@ class ProxyManager:
         row binds without its workspace running (each connection
         refuses until the guest does); ``stopped`` is a remote
         row whose workspace is not up, or a row no listener
-        serves."""
+        serves. A listening remote row whose admission swap failed
+        carries the cause — the listener serves, the guest cannot
+        reach it."""
         live = self._live.get(row["id"])
         if live is None:
             return "stopped", None
         if live.server is not None:
-            return "listening", None
+            note = self._admission_notes.get(row["id"])
+            return "listening", note
         return "failed", live.failure
+
+    def note_admission(self, proxy_id: int, cause: str) -> None:
+        """Record a failed admission swap against one listening
+        row, so reads after the create still show it."""
+        self._admission_notes[proxy_id] = cause
+
+    def note_admission_failure(self, workspace_id: str, cause: str) -> None:
+        """Record one failed swap against every live remote row a
+        workspace owns (the boot path's form: one nft refusal
+        blocks the tap's whole admission set at once)."""
+        for live in self._live.values():
+            if (
+                live.workspace_id == workspace_id
+                and live.server is not None
+                and live.row["direction"] == "remote"
+            ):
+                self.note_admission(live.row["id"], cause)
+
+    def clear_admission(self, proxy_id: int) -> None:
+        """Drop one row's admission note (a swap landed)."""
+        self._admission_notes.pop(proxy_id, None)
 
     async def bound_remote_ports(self, workspace_id: str) -> list[int]:
         """The workspace's remote listen ports that carry a live

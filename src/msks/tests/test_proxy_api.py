@@ -166,17 +166,24 @@ async def test_create_refuses_duplicate_binds(client) -> None:
         "listen_port": await free_port(),
         "target_port": 22,
     }
-    assert (
-        await http.post(
-            f"/api/v1/workspaces/{first}/proxies", json=body, headers=auth()
-        )
-    ).status_code == 200
-    # A forward bind is daemon-wide: another workspace's row on the
-    # same address and port collides.
+    created = await http.post(
+        f"/api/v1/workspaces/{first}/proxies", json=body, headers=auth()
+    )
+    assert created.status_code == 200
+    # A forward bind is daemon-wide: another workspace asking the
+    # identical spec gets the standing row (the declarative ask),
+    # and a different spec on the same bind is the refusal.
     dup = await http.post(
         f"/api/v1/workspaces/{second}/proxies", json=body, headers=auth()
     )
-    assert dup.status_code == 409
+    assert dup.status_code == 200
+    assert dup.json()["id"] == created.json()["id"]
+    other_spec = await http.post(
+        f"/api/v1/workspaces/{second}/proxies",
+        json={**body, "target_port": 80},
+        headers=auth(),
+    )
+    assert other_spec.status_code == 409
     # A remote bind is its own tap: the same port on another
     # workspace is a different listener.
     remote = await http.post(
@@ -358,34 +365,102 @@ async def test_remote_create_annotates_a_failed_admission_refresh(
         raise RuntimeError("nft refused")
 
     monkeypatch.setattr(net, "refresh_proxies", failing)
-    port = await free_port()
-    created = await http.post(
+    try:
+        port = await free_port()
+        created = await http.post(
+            f"/api/v1/workspaces/{wid}/proxies",
+            json={
+                "direction": "remote",
+                "listen_port": port,
+                "target_port": port,
+            },
+            headers=auth(),
+        )
+        assert created.status_code == 200
+        row = created.json()
+        assert row["status"] == "listening"
+        assert "admission refresh failed" in row["reason"]
+        assert calls == [wid]
+        # The note survives reads after the create (#807 review
+        # round 2): the listing keeps showing it.
+        listed = await http.get("/api/v1/proxies", headers=auth())
+        assert listed.json()[0]["reason"] == row["reason"]
+        # A bind that fails gains no admission, so it triggers no
+        # swap.
+        squatted = await asyncio.start_server(
+            lambda r, w: None, "127.0.0.1", 0
+        )
+        taken = squatted.sockets[0].getsockname()[1]
+        failed = await http.post(
+            f"/api/v1/workspaces/{wid}/proxies",
+            json={
+                "direction": "remote",
+                "listen_port": taken,
+                "target_port": taken,
+            },
+            headers=auth(),
+        )
+        assert failed.json()["status"] == "failed"
+        assert calls == [wid]
+        squatted.close()
+    finally:
+        net._attachments.pop(wid, None)
+
+
+async def test_add_is_idempotent_for_an_identical_spec(client) -> None:
+    """``msks proxy add`` is declarative (#807): the same spec
+    returns the standing row; a different spec on the same bind
+    is the refusal."""
+    http, _app, _stub = client
+    wid = await make_workspace(http, "ws-idem")
+    body = {"direction": "forward", "listen_port": 2201, "target_port": 22}
+    first = await http.post(
+        f"/api/v1/workspaces/{wid}/proxies", json=body, headers=auth()
+    )
+    assert first.status_code == 200
+    again = await http.post(
+        f"/api/v1/workspaces/{wid}/proxies", json=body, headers=auth()
+    )
+    assert again.status_code == 200
+    assert again.json()["id"] == first.json()["id"]
+    changed = await http.post(
         f"/api/v1/workspaces/{wid}/proxies",
+        json={**body, "target_port": 80},
+        headers=auth(),
+    )
+    assert changed.status_code == 409
+
+
+async def test_remote_same_port_across_workspaces_is_no_conflict(
+    client,
+) -> None:
+    """A remote bind is its own tap: the same port on another
+    workspace is a different listener."""
+    http, _app, _stub = client
+    one = await make_workspace(http, "tap-one")
+    two = await make_workspace(http, "tap-two")
+    body = {
+        "direction": "remote",
+        "listen_port": 9200,
+        "target_port": 9200,
+    }
+    first = await http.post(
+        f"/api/v1/workspaces/{one}/proxies", json=body, headers=auth()
+    )
+    assert first.status_code == 200
+    second = await http.post(
+        f"/api/v1/workspaces/{two}/proxies", json=body, headers=auth()
+    )
+    assert second.status_code == 200
+    assert second.json()["id"] != first.json()["id"]
+    # Re-asking the identical remote spec returns the standing row.
+    repeat = await http.post(
+        f"/api/v1/workspaces/{two}/proxies",
         json={
-            "direction": "remote",
-            "listen_port": port,
-            "target_port": port,
+            **body,
+            "target_host": body.get("target_host") or "127.0.0.1",
         },
         headers=auth(),
     )
-    assert created.status_code == 200
-    row = created.json()
-    assert row["status"] == "listening"
-    assert "admission refresh failed" in row["reason"]
-    assert calls == [wid]
-    # A bind that fails gains no admission, so it triggers no swap.
-    squatted = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
-    taken = squatted.sockets[0].getsockname()[1]
-    failed = await http.post(
-        f"/api/v1/workspaces/{wid}/proxies",
-        json={
-            "direction": "remote",
-            "listen_port": taken,
-            "target_port": taken,
-        },
-        headers=auth(),
-    )
-    assert failed.json()["status"] == "failed"
-    assert calls == [wid]
-    squatted.close()
-    net._attachments.pop(wid, None)
+    assert repeat.status_code == 200
+    assert repeat.json()["id"] == second.json()["id"]

@@ -186,9 +186,8 @@ before any dial, and its console is the virtio-console getty.
 ### Persisted proxies (the other direction too)
 
 The forward websocket lives as long as the command holding it. A persisted
-proxy (`msks forward ... --persist`, issue #807) lives in the daemon's
-database instead: the daemon owns the listener, and every workspace start
-re-establishes it. A forward proxy binds a port on the daemon's host and
+proxy (`msks proxy add`, issue #807) lives in the daemon's database instead:
+the daemon owns the listener, and every workspace start re-establishes it. A forward proxy binds a port on the daemon's host and
 bridges each connection to the guest through the same dial the forward
 websocket uses. A remote proxy binds a port on the workspace's own tap
 address: a guest process dials its DHCP gateway on that port, and the

@@ -343,9 +343,10 @@ def vm_ruleset(
         if llm_port is not None
         else ""
     )
-    # The remote proxies' admissions (#807): one line per port the
-    # workspace's rows carry — a listener binds under the same
-    # condition, so the rule and the service agree.
+    # The remote proxies' admissions (#807): present only for the
+    # ports the caller's set carries — the caller passes the
+    # ports whose listeners are up, so the rule and the service
+    # agree.
     proxy_rules = proxy_admissions(tap, guest_ip, tap_ip, proxy_ports or [])
     return (
         f"table inet {table_name(workspace_id)} {{\n"

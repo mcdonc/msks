@@ -757,10 +757,26 @@ class NetManager:
 
     async def admit_bound_proxies(self, workspace_id: str) -> None:
         """Swap the table when a boot's proxy binds came up (#807
-        review): nothing to swap when none did — the table the
-        attach installed already matches."""
-        if await self.remote_ports(workspace_id):
+        review): nothing to swap when none did. Best-effort like
+        every proxy step in a boot — an nft refusal here cannot
+        make the workspace unbootable. The refusal is fail-closed
+        (no admission means the guest cannot reach the port) and
+        named per row, so the listings keep showing it until a
+        later swap lands."""
+        if not await self.remote_ports(workspace_id):
+            return
+        try:
             await self.refresh_proxies(workspace_id)
+        except Exception as exc:
+            print(
+                f"msksd: proxy admissions for {workspace_id} "
+                f"did not apply ({exc}); the workspace boots without "
+                "them",
+                flush=True,
+            )
+            self.app.state.proxies.note_admission_failure(
+                workspace_id, f"admission refresh failed: {exc}"
+            )
 
     async def refresh_proxies(self, workspace_id: str) -> None:
         """Re-apply the workspace's table with its current remote

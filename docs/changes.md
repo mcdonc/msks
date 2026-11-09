@@ -8,14 +8,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
-- **Persisted workspace proxies (#808).** `msks forward` gains
-  `--persist`: the daemon owns the listener, the row lives in its
-  database, and every workspace start re-establishes it. A forward
-  proxy binds a port on the daemon's host (`--local`, `--bind`);
-  `--remote [HOST:]PORT` stores the reverse direction, where the
-  workspace's gateway listens and bridges to a daemon-side service.
-  `msks forward --list` and `--rm ID` manage the rows, each showing
-  live status. Part of #807.
+- **`msks proxy` (#808).** A new command manages the daemon's
+  persisted workspace proxies: `add` with ssh-shaped specs (`-L
+  [BIND:]PORT:GUESTPORT` binds the daemon host and bridges to the
+  workspace; `-R RPORT:HOST:TPORT` binds the workspace's gateway
+  and bridges to a daemon-side service), `ls` with live status,
+  and `rm`. The daemon owns every listener, rows live in its
+  database, every workspace start re-establishes them, and `add`
+  is idempotent for an identical spec. Part of #807.
 
 ### Fixed
 

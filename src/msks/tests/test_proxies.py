@@ -11,7 +11,7 @@ import pytest
 from msks.app import build_app
 from msks.microvm import VmSpec
 from msks.net.manager import NetAttachment
-from msks.proxies import ProxyManager, with_status
+from msks.proxies import LiveProxy, ProxyManager, with_status
 from msks.settings import NetSettings, ServerSettings, Settings
 
 
@@ -487,3 +487,35 @@ async def test_stop_workspace_spares_other_workspaces(proxies) -> None:
         await exchange(mine, b"late\n")
     assert await exchange(theirs, b"still here\n") == b"STILL HERE\n"
     await manager.stop_workspace("ws-b")
+
+
+async def test_stop_one_is_bounded_by_grace(monkeypatch) -> None:
+    """A stalled close cannot hold the stop past STOP_GRACE_S: the
+    wait gives up, the handlers take a second cancel, and the
+    stop returns (#807 review round 2)."""
+    from types import SimpleNamespace
+
+    from msks import proxies as proxies_mod
+
+    monkeypatch.setattr(proxies_mod, "STOP_GRACE_S", 0.1)
+    manager = ProxyManager(SimpleNamespace(state=SimpleNamespace(hub=None)))
+
+    class StalledServer:
+        def close(self):
+            return None
+
+        async def wait_closed(self):
+            await asyncio.sleep(60)
+
+    task = asyncio.create_task(asyncio.sleep(60))
+    row = {
+        "id": 1,
+        "workspace_id": "ws-a",
+        "direction": "forward",
+        "listen_port": 1,
+        "target_port": 2,
+    }
+    manager._live[1] = LiveProxy(row=row, server=StalledServer(), tasks={task})
+    await asyncio.wait_for(manager.stop_one(1), timeout=3.0)
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=1.0)
