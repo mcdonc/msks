@@ -368,3 +368,57 @@ class TuiData:
             transport=self.transport,
             ssl_ctx=shared_ssl(),
         )
+
+    async def proxies(self) -> list[dict]:
+        """GET every workspace's proxy rows with live status (#807,
+        #809) — the proxies page's daemon-wide listing, the same
+        exchange ``msks proxy ls`` makes."""
+        return await api_call(
+            "GET",
+            env_url(),
+            env_token(),
+            "/api/v1/proxies",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+        )
+
+    async def workspace_proxies(self, workspace_id: str) -> list[dict]:
+        """GET one workspace's proxy rows with live status (#809) —
+        the page's scoped listing and the workspace page's compact
+        line, the same exchange ``GET
+        /api/v1/workspaces/<id>/proxies`` serves."""
+        return await api_call(
+            "GET",
+            env_url(),
+            env_token(),
+            f"/api/v1/workspaces/{workspace_id}/proxies",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+        )
+
+    async def create_proxy(self, workspace_id: str, body: dict) -> dict:
+        """POST one proxy row (#809) — the proxies page's add form,
+        the same exchange ``msks proxy add`` makes: the answer
+        carries the row with its live status."""
+        return await api_call(
+            "POST",
+            env_url(),
+            env_token(),
+            f"/api/v1/workspaces/{workspace_id}/proxies",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+            json_body=body,
+        )
+
+    async def remove_proxy(self, workspace_id: str, proxy_id: int) -> dict:
+        """DELETE one proxy row (#809) — the proxies page's remove,
+        the same exchange ``msks proxy rm`` makes: the listener
+        closes at once."""
+        return await api_call(
+            "DELETE",
+            env_url(),
+            env_token(),
+            f"/api/v1/workspaces/{workspace_id}/proxies/{proxy_id}",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+        )

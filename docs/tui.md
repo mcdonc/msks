@@ -17,7 +17,8 @@ my-workspace` opens that workspace's page directly.
 The tree is rooted at the **workspaces list**: one row per workspace,
 newest first. The CREATED column's arrow shows the sort direction. The
 list's keys: `c` creates a workspace, `s` starts it, `S` stops it, `D`
-removes it (after a confirmation), `e` opens the secrets page, and `r`
+removes it (after a confirmation), `e` opens the secrets page, `p` opens
+the proxies page, and `r`
 refreshes. `/` jumps to the first workspace whose name starts with what
 you type. Enter opens the workspace's page.
 
@@ -105,12 +106,27 @@ It carries one entry per mount (`projects:/mnt/projects:rw`), a skipped
 mount's kind beside its spec (`refs:/srv/refs:ro · skipped`), and an
 `applies at next start` note while a change is pending.
 
+When the workspace holds proxies, a proxies line follows the mounts line.
+It carries one port pair per proxy, the forwards before a bar and the
+remotes after it:
+
+```text
+8888 -> 8889, 9111 -> 9115 | 8881 <- 8882, 8866 <- 8762
+```
+
+Each pair reads `listen -> target` (or `<-` for a remote). A listening
+pair shows green, a pair whose bind refused shows red, and a pair on a
+stopped workspace shows the line's own color. The line refetches on every
+proxy transition the daemon publishes, so it moves without a keypress.
+
 The page's fixed actions sit in three groups — use, configure, and
 power. The configure group holds the egress consent screen, the
-sizes-and-topology edit dialog, the mounts editor, and **Clone**:
+sizes-and-topology edit dialog, the mounts editor, the proxies page,
+and **Clone**:
 the full-fork copy of [the cloning chapter](cloning.md), taken
 with a name prompt. The daemon owns the stopped-source rule — a
-refusal names itself on the page's consent line.
+refusal names itself on the page's consent line. The `p` key opens
+the proxies page from either screen.
 
 ### The mounts page
 
@@ -130,6 +146,29 @@ under a root the daemon's VM does not mount, is refused with the remedy
 stated. The [mounts chapter](mounts.md) and the [configuration
 rows](config.md#host-share-mounts) describe the behavior. The CLI's [`msks
 mount`](cli.md#msks-mount) uses the same route.
+
+### The proxies page
+
+The **proxies page** manages the daemon's persisted workspace proxies
+([the networking chapter](networking.md) describes what a proxy is).
+From the workspaces list, `p` opens it with every workspace's rows; from
+a workspace's page, the action row or `p` opens it scoped to that
+workspace. The rows carry the workspace, the spec in the CLI's own
+grammar (`-L 2201:localhost:22`), the label, and the live status — a
+row the guest cannot reach names its reason beside the word.
+
+The page re-reads the listing every five seconds and on every proxy
+transition the daemon publishes, so a bind that fails while the page
+stands paints itself without a keypress.
+
+`a` opens the add form: the workspace (fixed when the page holds a
+scope, a select otherwise), the direction (`-L` or `-R`), the spec in
+the same grammar `msks proxy add` reads, and a label. A spec the CLI's
+own parser refuses keeps the form standing with the rule on its note
+line — a `-L` spec naming a host besides the workspace itself says so
+and points at `-R`. `r` or Enter removes the focused row after a
+confirmation; the listener closes at once. `q` or Escape returns to
+the screen that opened the page.
 
 ### The images page
 

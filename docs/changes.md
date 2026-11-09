@@ -8,6 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The TUI's proxies page (#809, part of #807).** The workspaces
+  list's `p` opens every workspace's proxy rows; a workspace's page
+  opens it scoped to that workspace. The page adds and removes the
+  daemon's persisted `-L`/`-R` proxies with the same spec grammar
+  `msks proxy add` reads, and shows live status — refreshed on every
+  proxy transition the daemon publishes beside a five-second standing
+  re-read. The workspace page carries a compact port-pair line
+  (`8888 -> 8889 | 8881 <- 8882`), each pair green while it listens
+  and red while its bind refused.
 - **`msks proxy` (#808).** A new command manages the daemon's
   persisted workspace proxies: `add` with ssh's own spec shape
   (`-L [BIND:]PORT:HOST:PORT` binds the daemon host and bridges to

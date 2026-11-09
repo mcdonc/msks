@@ -27,6 +27,7 @@ from .consent_ui import (
 )
 from .forms import CreateScreen
 from .importer import ImagesScreen
+from .proxies import ProxiesScreen
 from .rows import (
     LIST_COLUMNS,
     LIST_FRAME_CELLS,
@@ -127,6 +128,7 @@ class MainScreen(Screen):
         Binding("S", "stop", "Stp"),
         Binding("D", "remove", "Del"),
         Binding("e", "secrets", "Scrts"),
+        Binding("p", "proxies_page", "Prxy"),
         Binding("r", "refresh", "Rload"),
         Binding("q", "quit", "Quit"),
         Binding("escape", "quit", show=False),
@@ -388,6 +390,12 @@ class MainScreen(Screen):
     def action_secrets(self) -> None:
         """`e`: the secrets page (#431)."""
         self.app.push_screen(SecretsScreen())
+
+    def action_proxies_page(self) -> None:
+        """`p`: the proxies page (#809) — every workspace's proxy
+        rows with their live status; a workspace's own page opens
+        it scoped to that workspace."""
+        self.app.push_screen(ProxiesScreen())
 
     def action_start(self) -> None:
         """`s`: start the focused workspace."""

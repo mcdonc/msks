@@ -5,7 +5,8 @@ sibling modules (the listing here in
 :mod:`msks.client.tui.main_screen`, the workspace page in
 :mod:`msks.client.tui.workspace`, the egress consent page in
 :mod:`msks.client.tui.consent_ui`, the secrets
-page in :mod:`msks.client.tui.secrets`, the forms in
+page in :mod:`msks.client.tui.secrets`, the proxies page in
+:mod:`msks.client.tui.proxies`, the forms in
 :mod:`msks.client.tui.forms`) and this module composes them.
 
 The tree's one leaf that needs the whole terminal — a console
@@ -137,7 +138,7 @@ class MsksTuiApp(App):
     #header-meta { height: 1; padding: 0 1; background: $panel;
                    color: $text-muted; text-wrap: nowrap;
                    text-overflow: ellipsis; }
-    #consent, #mounts { height: 1; padding: 0 1;
+    #consent, #mounts, #proxy-line { height: 1; padding: 0 1;
                         text-wrap: nowrap;
                         text-overflow: ellipsis; }
     #page { height: 1fr; align: center middle; }
@@ -193,6 +194,14 @@ class MsksTuiApp(App):
     #secret-rows ListItem { height: 1; padding: 0 1; }
     #secret-rows ListItem Static { text-wrap: nowrap; }
     #secret-empty { padding: 1 2; color: $text-muted; }
+    #proxy-status { height: 1; padding: 0 1; background: $panel;
+                    color: $text-muted; text-wrap: nowrap;
+                    text-overflow: ellipsis; }
+    #proxies-listing { border: round $primary; background: $panel; }
+    #proxy-columns { padding: 0 1; color: $text-muted; }
+    #proxy-rows ListItem { height: 1; padding: 0 1; }
+    #proxy-rows ListItem Static { text-wrap: nowrap; }
+    #proxy-empty { padding: 1 2; color: $text-muted; }
     #audit-note { padding: 0 1; color: $text-muted; }
     #audit-status { height: 1; padding: 0 1; color: $text-muted;
                     text-wrap: nowrap; text-overflow: ellipsis; }
@@ -200,6 +209,7 @@ class MsksTuiApp(App):
     #audit-rows ListItem { height: 1; }
     #audit-rows ListItem.sighting { color: $warning; text-style: bold; }
     MintScreen { align: center middle; }
+    ProxyAddScreen { align: center middle; }
     .form-row.tall { height: auto; }
     .form-row.tall SelectionList { width: 1fr; height: 4;
                                    border: none; padding: 0;

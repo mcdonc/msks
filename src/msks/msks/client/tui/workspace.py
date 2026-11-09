@@ -53,6 +53,7 @@ from .follow import FLOW_SHELL
 from .forms import EDIT_FREE_STATUSES, EditScreen, edit_stop_question
 from .link import CONNECTED, REJECTED, UNUSABLE_TOKEN, DeciderLink
 from .mounts import MountsScreen, mounts_line
+from .proxies import ProxiesScreen, proxies_line
 from .rows import (
     header_meta,
     header_name,
@@ -293,6 +294,12 @@ PAGE_ACTIONS = (
         "configure",
     ),
     PageAction(
+        "proxies",
+        "Proxies",
+        "persisted -L and -R port forwards",
+        "configure",
+    ),
+    PageAction(
         "clone",
         "Clone",
         "copy to a new workspace",
@@ -360,6 +367,7 @@ class WorkspaceScreen(Screen):
     BINDINGS = [
         Binding("enter", "run", "Run", priority=True),
         Binding("e", "consent", "Egress"),
+        Binding("p", "proxies_page", "Proxies"),
         Binding("s", "quick_start", "Start"),
         Binding("S", "quick_stop", "Stop"),
         Binding("q", "back", "Back"),
@@ -383,6 +391,12 @@ class WorkspaceScreen(Screen):
         # hides (#343) — a page-raised failure names itself here,
         # where the operator reads it.
         self.flash_line = FlashLine()
+        # The workspace's proxy rows (#809): the compact line's
+        # data, fetched at page start, on each proxy transition
+        # the link lands, and on the editor's close — not on the
+        # tick (a per-second listing is the page's one heavy call,
+        # and the events own the immediacy).
+        self.proxy_rows: list[dict] | None = None
         # The edit waiting on the stop-and-resize answer (#380):
         # the body a running workspace's Apply parked while the
         # confirmation asks. None when no question stands.
@@ -417,6 +431,12 @@ class WorkspaceScreen(Screen):
         yield Static(
             mounts_line(self.row, self.app.theme_variables), id="mounts"
         )
+        # The compact proxies line (#809): the workspace's port
+        # pairs with their reachability, repainted with the mounts.
+        yield Static(
+            proxies_line(self.proxy_rows or [], self.app.theme_variables),
+            id="proxy-line",
+        )
         # The action list mounts on the first rebuild (compose
         # yields the container alone).
         yield Vertical(id="page")
@@ -444,6 +464,25 @@ class WorkspaceScreen(Screen):
         fresh row for the header."""
         self.rebuilds.request()
         self.refresh_row()
+        self.refresh_proxies()
+
+    def refresh_proxies(self) -> None:
+        """Reload the workspace's proxy rows for the compact line
+        (#809); one flight at a time, in its own worker group so a
+        page's row refresh cannot cancel it mid-flight."""
+        self.run_worker(self.load_proxies, group="page-proxies")
+
+    async def load_proxies(self) -> None:
+        """Fetch the rows; a refusal keeps the line as it was — the
+        daemon's named refusal lands on the editor's own surface
+        when one is open, and the page's line stays honest."""
+        try:
+            self.proxy_rows = await self.app.data.workspace_proxies(
+                self.row["id"]
+            )
+        except Exception, SystemExit:
+            return
+        self.paint_proxies()
 
     def on_resize(self) -> None:
         """The terminal's width moved (#752): the meta line's
@@ -476,10 +515,12 @@ class WorkspaceScreen(Screen):
         teardown noise, not a crash."""
         try:
             self.watch_holds()
+            self.watch_proxies()
             if self.is_mounted:
                 self.refresh_row()
             self.paint_consent()
             self.paint_mounts()
+            self.paint_proxies()
             self.paint_header()
             self.sync_actions()
         except NoMatches:
@@ -496,6 +537,16 @@ class WorkspaceScreen(Screen):
             return
         self.drain_sightings()
         self.flash_new_holds()
+
+    def watch_proxies(self) -> None:
+        """The per-tick watch over the link's proxy transitions
+        (#809): each one refetches the compact line's rows — the
+        same immediacy the events socket gives the proxies page,
+        on the connection the page already holds."""
+        if self.link is None:
+            return
+        if self.link.take_proxy_events():
+            self.refresh_proxies()
 
     def flash_new_holds(self) -> None:
         """Flash each hold the queue has not named yet (#454): the
@@ -608,6 +659,18 @@ class WorkspaceScreen(Screen):
         try:
             self.query_one("#mounts", Static).update(
                 mounts_line(self.row, self.app.theme_variables)
+            )
+        except NoMatches:
+            pass  # teardown unmounted the line under the timer
+
+    def paint_proxies(self) -> None:
+        """Repaint the compact proxies line (#809): the port pairs
+        with their reachability — the link's transitions and the
+        editor's close land it immediately, and the tick's repaint
+        keeps it beside the mounts line."""
+        try:
+            self.query_one("#proxy-line", Static).update(
+                proxies_line(self.proxy_rows or [], self.app.theme_variables)
             )
         except NoMatches:
             pass  # teardown unmounted the line under the timer
@@ -826,6 +889,7 @@ class WorkspaceScreen(Screen):
             ACTION_SHELL_WINDOW: self.open_shell_window,
             "edit": self.edit_workspace,
             "mounts": self.open_mounts,
+            "proxies": self.open_proxies,
             "clone": self.clone_workspace,
             "start": self.start_workspace,
             "stop": self.stop_workspace,
@@ -960,6 +1024,17 @@ class WorkspaceScreen(Screen):
             return
         self.row = row
         self.paint_mounts()
+
+    def open_proxies(self) -> None:
+        """Push the proxies page (#809) over this one, scoped to
+        the workspace — the same rows the compact line paints,
+        with the add form and the remove behind it."""
+        self.app.push_screen(ProxiesScreen(self.row))
+
+    def action_proxies_page(self) -> None:
+        """``p``: the proxies page one key away — the action row's
+        own destination."""
+        self.open_proxies()
 
     # -- the edit dialog (#331) ---------------------------------------
 

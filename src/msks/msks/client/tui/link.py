@@ -76,6 +76,12 @@ class DeciderLink:
         #: host last drained them (#201 over #358): the page's tick
         #: takes them to flash whichever surface owns the terminal.
         self.sightings: list[SecretEvent] = []
+        #: The proxy transitions the frames landed since the host
+        #: last drained them (#809): the page's tick takes them to
+        #: refetch the compact proxies line. Buffer of booleans —
+        #: the count is the fact, the frames carry no state the
+        #: page paints (the listing owns it).
+        self.proxy_events: list[bool] = []
         self.reconnect_delays = reconnect_delays
         self._ws_factory = ws_factory or default_ws_factory
         self._task: asyncio.Task | None = None
@@ -92,6 +98,14 @@ class DeciderLink:
         buffer starts empty for the next burst."""
         taken, self.sightings = self.sightings, []
         return taken
+
+    def take_proxy_events(self) -> int:
+        """The proxy transitions that landed since the last drain,
+        counted and cleared (#809): the caller refetches the
+        listing the transitions moved."""
+        count = len(self.proxy_events)
+        self.proxy_events.clear()
+        return count
 
     def start(self) -> None:
         """Run the connection loop, once (a second call is a
@@ -176,7 +190,15 @@ class DeciderLink:
         daemon's registration refusal (the loop's stop signal). An
         off-allowlist sighting lands in the sightings buffer beside
         its controller state: the flash belongs to whichever surface
-        owns the terminal, and the link's host decides that."""
+        owns the terminal, and the link's host decides that. A
+        proxy transition (#809) lands in its own buffer — the
+        controller has no applier for it, and the host's tick
+        refetches the listing the frame moved."""
+        msg = decode_frame(raw)
+        if msg is not None and str(msg.get("event") or "").startswith(
+            "proxy."
+        ):
+            self.proxy_events.append(True)
         outcome, payload = self.controller.apply_frame(raw)
         self.notify_frame(outcome, payload)
         if outcome == SECRET_EVENT and payload.kind == "sighting":
