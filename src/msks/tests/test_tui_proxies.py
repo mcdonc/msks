@@ -381,6 +381,26 @@ async def test_the_form_picks_the_remote_parser(monkeypatch) -> None:
         }
 
 
+async def test_a_markup_carrying_bind_removes_whole(monkeypatch) -> None:
+    """The -L parser leaves the bind field's charset open, so a
+    stored bind can carry a closing markup tag: the add form takes
+    it, and the remove question renders it escaped — the confirm
+    stands, the TUI with it."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    data.proxy_rows = [proxy_row(listen_host="x[/y]", status="stopped")]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app)
+        await wait_for(lambda: proxy_children(app) == 1)
+        await pilot.press("r")
+        await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
+        assert "x\[/y]" in str(app.screen.question)  # the tag, escaped
+        await pilot.press("n")
+        await wait_for(lambda: isinstance(app.screen, ProxiesScreen))
+
+
 async def test_the_page_removes_behind_a_confirmation(
     monkeypatch,
 ) -> None:

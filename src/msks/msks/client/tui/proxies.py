@@ -655,8 +655,11 @@ class ProxiesScreen(Screen):
         label = (
             f" [{flash_safe(str(row['label']))}]" if row.get("label") else ""
         )
+        # The spec embeds the stored bind address, whose charset
+        # the parser leaves open — the same escape every flash
+        # path here applies.
         question = (
-            f"remove {spec_text(row)}{label}"
+            f"remove {flash_safe(spec_text(row))}{label}"
             f" (workspace {flash_safe(str(workspace_label(row)))})?"
         )
         self.app.push_screen(

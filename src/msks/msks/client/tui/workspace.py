@@ -673,9 +673,9 @@ class WorkspaceScreen(Screen):
 
     def paint_proxies(self) -> None:
         """Repaint the compact proxies line (#809): the port pairs
-        with their reachability — the link's transitions and the
-        editor's close land it immediately, and the tick's repaint
-        keeps it beside the mounts line."""
+        with their reachability — page start, the link's
+        transitions, and the slow backstop land it, and the tick's
+        repaint keeps it beside the mounts line."""
         try:
             self.query_one("#proxy-line", Static).update(
                 proxies_line(self.proxy_rows or [], self.app.theme_variables)
