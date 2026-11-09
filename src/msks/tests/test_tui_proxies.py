@@ -471,7 +471,7 @@ async def test_the_workspace_page_paints_the_compact_line(
     ]
     app, _ = make_app(data)
     async with app.run_test() as pilot:
-        await open_page(pilot, app)
+        page = await open_page(pilot, app)
         await wait_for(
             lambda: (
                 "8888 -> 8889 | 8881 <- 8882"
@@ -484,6 +484,10 @@ async def test_the_workspace_page_paints_the_compact_line(
             "$success",
             "$error",
         }
+        # The teardown race the per-second repaint can hit: a line
+        # already unmounted under the timer paints nothing.
+        await page.query_one("#proxy-line").remove()
+        page.paint_proxies()  # swallowed: the next tick heals
 
 
 async def test_the_workspace_page_refetches_on_a_frame(
@@ -636,6 +640,33 @@ async def test_a_refused_confirm_keeps_the_row(monkeypatch) -> None:
         assert proxy_children(app) == 1
 
 
+async def test_a_refused_create_flashes_on_the_status_line(
+    monkeypatch,
+) -> None:
+    """A refused add — the daemon's named 409 among them — flashes
+    on the page's status line; the form's fields are gone with the
+    form and the listing stands."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    data.proxy_refusal = (
+        "a forward proxy on port 2201 already exists (workspace "
+        f"{WS}, proxy 7)"
+    )
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app, scoped=True)
+        await pilot.press("a")
+        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        form = app.screen
+        form.query_one("#field-spec", Input).value = "2201:localhost:22"
+        await press_until(
+            pilot, "enter", lambda: not isinstance(app.screen, ProxyAddScreen)
+        )
+        await wait_for(lambda: "add failed" in proxy_status(app))
+        assert proxy_children(app) == 0
+
+
 async def test_a_refused_listing_names_itself(monkeypatch) -> None:
     """A listing that will not come flashes on the page's status
     line — the empty state names the add key."""
@@ -708,10 +739,14 @@ async def test_a_wider_terminal_widens_the_columns(monkeypatch) -> None:
 
 def test_the_default_link_is_the_pages_own_poke() -> None:
     """The unpatched link factory wires the page's refresh as the
-    poke — the tests' quiet seam replaces this one connection."""
+    poke — the tests' quiet seam replaces this one connection. A
+    bare page unmounts without its link: the close is the quiet
+    no-op."""
     from msks.client.tui.proxies import ProxyLink
 
-    assert isinstance(ProxiesScreen().make_link(), ProxyLink)
+    bare = ProxiesScreen()
+    assert isinstance(bare.make_link(), ProxyLink)
+    bare.on_unmount()  # no link was made: nothing to stop
 
 
 async def test_the_data_seam_makes_the_daemons_exchanges(

@@ -153,6 +153,17 @@ def pair_spans(rows: list[dict], offset: int) -> tuple[list[Span], int]:
     return spans, offset
 
 
+def halves_value(rows: list[dict]) -> str:
+    """The compact line's value (#807): the forwards' pairs before
+    the bar, the remotes' after it — one half alone paints without
+    the bar."""
+    halves = [
+        ", ".join(pair_text(row) for row in rows if row["direction"] == way)
+        for way in ("forward", "remote")
+    ]
+    return " | ".join(part for part in halves if part)
+
+
 def proxies_line(rows: list[dict], theme_variables=None) -> Content:
     """The workspace page's compact proxies line (#807, #809): one
     port pair per row — the forwards before the bar, the remotes
@@ -162,15 +173,8 @@ def proxies_line(rows: list[dict], theme_variables=None) -> Content:
     Empty when the workspace holds no rows."""
     if not rows:
         return Content("")
-    forwards = [row for row in rows if row["direction"] == "forward"]
-    remotes = [row for row in rows if row["direction"] == "remote"]
-    halves = [
-        ", ".join(pair_text(row) for row in half)
-        for half in (forwards, remotes)
-    ]
-    value = " | ".join(part for part in halves if part)
     pad = " " * max(1, STATUS_LABEL_W - len("proxies"))
-    text = f" proxies{pad}{value}"
+    text = f" proxies{pad}{halves_value(rows)}"
     label_end = 1 + len("proxies") + len(pad)
     spans, _end = pair_spans(rows, label_end)
     return Content(

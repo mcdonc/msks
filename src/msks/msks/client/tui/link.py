@@ -202,18 +202,28 @@ class DeciderLink:
         proxy transition (#809) lands in its own buffer — the
         controller has no applier for it, and the host's tick
         refetches the listing the frame moved."""
-        msg = decode_frame(raw)
-        if msg is not None and proxy_frame(msg):
-            self.proxy_events.append(True)
+        self.note_proxy_event(decode_frame(raw))
         outcome, payload = self.controller.apply_frame(raw)
         self.notify_frame(outcome, payload)
-        if outcome == SECRET_EVENT and payload.kind == "sighting":
-            self.sightings.append(payload)
+        self.note_sighting(outcome, payload)
         if outcome != FRAME_REJECTED:
             return False
         self.state = REJECTED
         self.reject_reason = payload or "registration rejected"
         return True
+
+    def note_proxy_event(self, msg) -> None:
+        """One decoded frame into the proxy buffer (#809) when it
+        is a proxy transition — the host's tick refetches the
+        listing the frame moved."""
+        if msg is not None and proxy_frame(msg):
+            self.proxy_events.append(True)
+
+    def note_sighting(self, outcome: str, payload) -> None:
+        """One frame's secret sighting into the sightings buffer
+        beside its controller state (#201 over #358)."""
+        if outcome == SECRET_EVENT and payload.kind == "sighting":
+            self.sightings.append(payload)
 
     def notify_frame(self, outcome: str, payload: object) -> None:
         """Hand one frame's outcome to the hook, when one is set —
