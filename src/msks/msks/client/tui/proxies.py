@@ -153,14 +153,21 @@ def pair_spans(rows: list[dict], offset: int) -> tuple[list[Span], int]:
     return spans, offset
 
 
+def half_text(rows: list[dict], direction: str) -> str:
+    """One direction's pairs, comma-joined."""
+    return ", ".join(
+        pair_text(row) for row in rows if row["direction"] == direction
+    )
+
+
 def halves_value(rows: list[dict]) -> str:
     """The compact line's value (#807): the forwards' pairs before
     the bar, the remotes' after it — one half alone paints without
     the bar."""
-    halves = [
-        ", ".join(pair_text(row) for row in rows if row["direction"] == way)
-        for way in ("forward", "remote")
-    ]
+    halves = (
+        half_text(rows, "forward"),
+        half_text(rows, "remote"),
+    )
     return " | ".join(part for part in halves if part)
 
 
