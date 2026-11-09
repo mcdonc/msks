@@ -347,6 +347,17 @@ async def test_local_hosts_answer_nodata_for_non_a(pair, name) -> None:
     assert int.from_bytes(data[6:8], "big") == 0  # no answer records
 
 
+def test_nodata_for_a_malformed_query_is_the_bare_header() -> None:
+    """A NODATA reply to a query with no decodable question is the
+    bare header shape — the same fail-closed direction the
+    NXDOMAIN builder takes."""
+    from msks.net import dnsmsg
+
+    reply = dnsmsg.nodata_for(b"junkjunk")
+    assert reply[2:4] == b"\x81\x80"  # QR + RD + RA, RCODE 0
+    assert int.from_bytes(reply[4:6], "big") == 0  # no question copied
+
+
 @pytest.mark.parametrize(
     "name", [dns.PROBE_HOST, dns.GATEWAY_HOST], ids=["probe", "gateway"]
 )
