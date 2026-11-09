@@ -156,14 +156,15 @@ class MountEditScreen(ModalScreen[str | None]):
 
 class MountsScreen(ModalScreen[dict | None]):
     """The mounts list editor (#620, part #624): the workspace's
-    mounts one row each, add (``a``), edit (Enter), remove (``r``)
+    mounts one row each, add (``a``), edit (Enter),
+    remove (``D`` — the workspaces list's own remove letter)
     — every change posts the whole list and the daemon's reply
     repaints the rows with their derived state. Escape closes;
     the page behind takes the refreshed row."""
 
     BINDINGS = [
         Binding("a", "add", "Add"),
-        Binding("r", "remove", "Remove"),
+        Binding("D", "remove", "Del"),
         Binding("enter", "edit", "Edit", show=False),
         Binding("escape", "close", "Close"),
         Binding("q", "close", "Close", show=False),
@@ -314,8 +315,8 @@ class MountsScreen(ModalScreen[dict | None]):
         self.run_worker(partial(self.post, before), exclusive=True)
 
     def action_remove(self) -> None:
-        """Remove the focused row's mount — the remaining list
-        posts whole."""
+        """``D``: remove the focused row's mount — the remaining
+        list posts whole."""
         mount = self.focused_mount()
         if mount is None:
             return

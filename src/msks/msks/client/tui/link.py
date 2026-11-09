@@ -43,6 +43,14 @@ REJECTED = "rejected"
 UNUSABLE_TOKEN = "unusable token"
 
 
+def proxy_frame(msg: dict) -> bool:
+    """Whether one decoded frame is a proxy transition (#809) —
+    the events the proxy subsystem publishes: ``proxy.created``,
+    ``proxy.listening``, ``proxy.failed``, ``proxy.closed``,
+    ``proxy.removed``."""
+    return str(msg.get("event") or "").startswith("proxy.")
+
+
 class DeciderLink:
     """One workspace's events connection feeding a
     :class:`ConsentController`; start/stop bracket a screen's
@@ -76,6 +84,12 @@ class DeciderLink:
         #: host last drained them (#201 over #358): the page's tick
         #: takes them to flash whichever surface owns the terminal.
         self.sightings: list[SecretEvent] = []
+        #: The proxy transitions the frames landed since the host
+        #: last drained them (#809): the page's tick takes them to
+        #: refetch the compact proxies line. Buffer of booleans —
+        #: the count is the fact, the frames carry no state the
+        #: page paints (the listing owns it).
+        self.proxy_events: list[bool] = []
         self.reconnect_delays = reconnect_delays
         self._ws_factory = ws_factory or default_ws_factory
         self._task: asyncio.Task | None = None
@@ -92,6 +106,14 @@ class DeciderLink:
         buffer starts empty for the next burst."""
         taken, self.sightings = self.sightings, []
         return taken
+
+    def take_proxy_events(self) -> int:
+        """The proxy transitions that landed since the last drain,
+        counted and cleared (#809): the caller refetches the
+        listing the transitions moved."""
+        count = len(self.proxy_events)
+        self.proxy_events.clear()
+        return count
 
     def start(self) -> None:
         """Run the connection loop, once (a second call is a
@@ -176,16 +198,32 @@ class DeciderLink:
         daemon's registration refusal (the loop's stop signal). An
         off-allowlist sighting lands in the sightings buffer beside
         its controller state: the flash belongs to whichever surface
-        owns the terminal, and the link's host decides that."""
+        owns the terminal, and the link's host decides that. A
+        proxy transition (#809) lands in its own buffer — the
+        controller has no applier for it, and the host's tick
+        refetches the listing the frame moved."""
+        self.note_proxy_event(decode_frame(raw))
         outcome, payload = self.controller.apply_frame(raw)
         self.notify_frame(outcome, payload)
-        if outcome == SECRET_EVENT and payload.kind == "sighting":
-            self.sightings.append(payload)
+        self.note_sighting(outcome, payload)
         if outcome != FRAME_REJECTED:
             return False
         self.state = REJECTED
         self.reject_reason = payload or "registration rejected"
         return True
+
+    def note_proxy_event(self, msg) -> None:
+        """One decoded frame into the proxy buffer (#809) when it
+        is a proxy transition — the host's tick refetches the
+        listing the frame moved."""
+        if msg is not None and proxy_frame(msg):
+            self.proxy_events.append(True)
+
+    def note_sighting(self, outcome: str, payload) -> None:
+        """One frame's secret sighting into the sightings buffer
+        beside its controller state (#201 over #358)."""
+        if outcome == SECRET_EVENT and payload.kind == "sighting":
+            self.sightings.append(payload)
 
     def notify_frame(self, outcome: str, payload: object) -> None:
         """Hand one frame's outcome to the hook, when one is set —
