@@ -422,20 +422,26 @@ class DnsForwarder:
         endpoint and the tap gateway. The A query resolves to this
         forwarder's own tap address — the guest's route to the
         daemon-side service, and to the remote proxies the same
-        address serves — and every other type answers NXDOMAIN so
-        a dual-stack client falls back to A. The local answer
-        stands ahead of the gate in every consent mode: these are
-        the daemon's own services, not egress, so nothing records
-        a name, pins an address, or asks an upstream. Any other
-        name returns False and takes the relay path unchanged.
+        address serves — and every other IN type answers NODATA
+        (the name exists, the record does not), so a dual-stack
+        client falls back to A without the name being negatively
+        cached. The local answer stands ahead of the gate in every
+        consent mode: these are the daemon's own services, not
+        egress, so nothing records a name, pins an address, or
+        asks an upstream. Any other name returns False and takes
+        the relay path unchanged.
         """
         parsed = dnsmsg.parse_query(query)
-        if parsed is None or parsed.name not in LOCAL_HOSTS:
+        if (
+            parsed is None
+            or parsed.name not in LOCAL_HOSTS
+            or parsed.qclass != dnsmsg.CLASS_IN
+        ):
             return False
         if parsed.qtype == dnsmsg.TYPE_A:
             sendto(sock, dnsmsg.a_answer_for(query, self._bind[0]), client)
         else:
-            sendto(sock, dnsmsg.nxdomain_for(query), client)
+            sendto(sock, dnsmsg.nodata_for(query), client)
         return True
 
     async def relay_verbatim(

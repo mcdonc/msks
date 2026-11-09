@@ -50,8 +50,8 @@ resolver.
 A remote proxy's listen address is fixed by the workspace's tap, so the
 grammar carries no bind field for `-R`.
 
-Inside the guest, dial `host.msks` — the name every workspace's resolver
-answers with its own tap address. `ip route show default` prints the same
+Inside the guest, dial `host.msks`. Every workspace's resolver answers the
+name with its own tap address. `ip route show default` prints the same
 address when a name is unavailable:
 
 ```bash
@@ -130,6 +130,10 @@ connects to `host.msks` on that port:
 ```bash
 psql -h host.msks -p 5432
 ```
+
+While [secret interception](secrets.md) is armed, the tap's 80 and 443
+answer the interceptor; a `-R` proxy on either port stays unreachable from
+the guest until interception stands down.
 
 The daemon dials `localhost:5432` on its own host for every guest
 connection. A target on another host works the same way

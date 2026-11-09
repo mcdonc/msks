@@ -70,7 +70,7 @@ LOCAL_FORM = (
 #: The spellings the -L host field admits. Both name the same
 #: endpoint — the workspace itself, the far end of the tunnel —
 #: the way ssh's -L target names the far end.
-LOCAL_HOSTS = ("localhost", "127.0.0.1")
+LOOPBACK_HOSTS = ("localhost", "127.0.0.1")
 
 LOCAL_HOST_RULE = (
     "-L's host field names the workspace itself; only localhost "
@@ -84,7 +84,7 @@ def local_host(raw: str) -> None:
     either way. Anything else is the ask ssh would send to the
     far end's dialer — the workspace has none — so it refuses
     with the rule and the direction that serves it."""
-    if raw not in LOCAL_HOSTS:
+    if raw not in LOOPBACK_HOSTS:
         raise SystemExit(f"msks: {LOCAL_HOST_RULE} (got {raw!r})")
 
 

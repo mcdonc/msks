@@ -329,9 +329,12 @@ async def test_local_hosts_answer_with_the_tap_address(pair, name) -> None:
 @pytest.mark.parametrize(
     "name", [dns.PROBE_HOST, dns.GATEWAY_HOST], ids=["probe", "gateway"]
 )
-async def test_local_hosts_answer_nxdomain_for_non_a(pair, name) -> None:
-    """AAAA for a local name answers NXDOMAIN, so a dual-stack
-    client falls back to A (#424, #816)."""
+async def test_local_hosts_answer_nodata_for_non_a(pair, name) -> None:
+    """AAAA for a local name answers NODATA — the name exists, the
+    record does not — so a dual-stack client falls back to A and a
+    stub negatively caches the type, never the name (#424, #816:
+    a browser's HTTPS/SVCB query before a dial must not cache the
+    name away)."""
     forwarder, client, _upstream = pair
     await asyncio.to_thread(
         client.sendto,
@@ -339,5 +342,32 @@ async def test_local_hosts_answer_nxdomain_for_non_a(pair, name) -> None:
         forwarder._sock.getsockname(),
     )
     data, _server = await asyncio.to_thread(client.recvfrom, 4096)
-    # RCODE 3 in the flags word.
-    assert int.from_bytes(data[2:4], "big") & 0x0F == 3
+    flags = int.from_bytes(data[2:4], "big")
+    assert flags & 0x0F == 0  # NOERROR
+    assert int.from_bytes(data[6:8], "big") == 0  # no answer records
+
+
+@pytest.mark.parametrize(
+    "name", [dns.PROBE_HOST, dns.GATEWAY_HOST], ids=["probe", "gateway"]
+)
+async def test_local_hosts_ignore_a_foreign_qclass(pair, name) -> None:
+    """A CH-class query for a local name is not the guest's
+    resolution: it takes the relay path unchanged (a local answer
+    serves the internet class alone)."""
+    forwarder, client, _upstream = pair
+    qname = (
+        b"".join(
+            bytes([len(label)]) + label.encode() for label in name.split(".")
+        )
+        + b"\x00"
+    )
+    header = struct.pack("!HHHHHH", 0x0100, 0x0100, 1, 0, 0, 0)
+    query = header + qname + struct.pack("!HH", 1, 3)  # qclass CH
+    await asyncio.to_thread(
+        client.sendto, query, forwarder._sock.getsockname()
+    )
+    # The local path would answer at once; the relay path's
+    # upstream is the fixture's dead socket, so the client times
+    # out — the quiet itself proves the query took the relay.
+    with pytest.raises(TimeoutError):
+        await asyncio.to_thread(client.recvfrom, 4096)
