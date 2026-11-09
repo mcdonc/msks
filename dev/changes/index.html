@@ -1713,6 +1713,14 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>The TUI's proxies page (#809, part of #807).</strong> Each workspace's
+  page opens its own proxies page (the action row, or <code>p</code>), which adds
+  and removes that workspace's persisted <code>-L</code>/<code>-R</code> proxies with the
+  same spec grammar <code>msks proxy add</code> reads, and shows live status —
+  refreshed on every proxy transition the daemon publishes beside a
+  five-second standing re-read. The workspace page carries a compact
+  port-pair line (<code>8888 -&gt; 8889 | 8881 &lt;- 8882</code>), each pair green
+  while it listens and red while its bind refused.</li>
 <li><strong><code>msks proxy</code> (#808).</strong> A new command manages the daemon's
   persisted workspace proxies: <code>add</code> with ssh's own spec shape
   (<code>-L [BIND:]PORT:HOST:PORT</code> binds the daemon host and bridges to

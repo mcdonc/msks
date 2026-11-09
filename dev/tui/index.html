@@ -447,6 +447,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-proxies-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The proxies page
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-images-page" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -988,6 +999,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-proxies-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The proxies page
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-images-page" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1184,17 +1206,28 @@ listed on the workspace's egress consent screen.</p>
 It carries one entry per mount (<code>projects:/mnt/projects:rw</code>), a skipped
 mount's kind beside its spec (<code>refs:/srv/refs:ro · skipped</code>), and an
 <code>applies at next start</code> note while a change is pending.</p>
+<p>When the workspace holds proxies, a proxies line follows the mounts line.
+It carries one port pair per proxy, the forwards before a bar and the
+remotes after it:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>8888 -&gt; 8889, 9111 -&gt; 9115 | 8881 &lt;- 8882, 8866 &lt;- 8762
+</span></code></pre></div>
+<p>Each pair reads <code>listen -&gt; target</code> (or <code>&lt;-</code> for a remote). A listening
+pair shows green, a pair whose bind refused shows red, and a pair on a
+stopped workspace shows the line's own color. The line refetches on every
+proxy transition the daemon publishes, so it moves without a keypress.</p>
 <p>The page's fixed actions sit in three groups — use, configure, and
 power. The configure group holds the egress consent screen, the
-sizes-and-topology edit dialog, the mounts editor, and <strong>Clone</strong>:
+sizes-and-topology edit dialog, the mounts editor, the proxies page,
+and <strong>Clone</strong>:
 the full-fork copy of <a href="../cloning/">the cloning chapter</a>, taken
 with a name prompt. The daemon owns the stopped-source rule — a
-refusal names itself on the page's consent line.</p>
+refusal names itself on the page's consent line. The <code>p</code> key opens
+the proxies page from the workspace page.</p>
 <h3 id="the-mounts-page">The mounts page<a class="headerlink" href="#the-mounts-page" title="Permanent link">&para;</a></h3>
 <p>The <strong>mounts editor</strong> shows the workspace's mounts one row each, in the
 CLI's <code>HOST_PATH:GUEST_PATH:MODE</code> grammar with the mode always shown.
 <code>a</code> adds a row (a single-line input), Enter edits the focused row
-(seeded with its current spec), <code>r</code> removes it, and Escape closes the
+(seeded with its current spec), <code>D</code> removes it, and Escape closes the
 editor with the last saved set.</p>
 <p>Every change posts the whole list to the daemon's mounts route. The reply
 repaints each row with its derived state (<code>healthy</code>, or the skip's kind and
@@ -1205,6 +1238,24 @@ under a root the daemon's VM does not mount, is refused with the remedy
 stated. The <a href="../mounts/">mounts chapter</a> and the <a href="../config/#host-share-mounts">configuration
 rows</a> describe the behavior. The CLI's <a href="../cli/#msks-mount"><code>msks
 mount</code></a> uses the same route.</p>
+<h3 id="the-proxies-page">The proxies page<a class="headerlink" href="#the-proxies-page" title="Permanent link">&para;</a></h3>
+<p><img alt="The proxies page: two rows, one the guest cannot reach" src="../screens/proxies-page.svg" /></p>
+<p>Each workspace owns its <strong>proxies page</strong>: the workspace's page opens it
+with its action row or <code>p</code>. The page manages that workspace's
+persisted proxies (<a href="../networking/">the networking chapter</a> describes
+what a proxy is) and no other's. The rows carry the spec in the CLI's
+own grammar (<code>-L 2201:localhost:22</code>), the label, and the live status —
+a row the guest cannot reach names its reason beside the word.</p>
+<p>The page re-reads the listing every five seconds and on every proxy
+transition the daemon publishes, so a bind that fails while the page
+stands paints itself without a keypress.</p>
+<p><code>a</code> opens the add form: the workspace (the page's own, shown as its
+name), the direction (<code>forward (-L)</code> or <code>reverse (-R)</code>), the spec in
+the same grammar <code>msks proxy add</code> reads, and a label. A spec the CLI's own parser refuses keeps the
+form standing with the rule on its note line — a <code>-L</code> spec naming a
+host besides the workspace itself says so and points at <code>-R</code>. <code>D</code> or
+Enter removes the focused row after a confirmation; the listener
+closes at once. <code>q</code> or Escape returns to the workspace page.</p>
 <h3 id="the-images-page">The images page<a class="headerlink" href="#the-images-page" title="Permanent link">&para;</a></h3>
 <p><img alt="The image page: the catalog group, then the published channel" src="../screens/image-page.svg" /></p>
 <p><code>i</code>: the images page — a full page with its key bindings on the
@@ -1314,17 +1365,17 @@ action uses to open workspace shells in new terminal windows. It is the opt-in
 for hosts that want windows beside the running tree isntead of within. The msks
 invocation is appended after it, the way most terminals take a command after
 <code>-e</code> / <code>--</code>:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">konsole --hold -e</span><span class="w">   </span><span class="c1"># string form (shell-split)</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w">                     </span><span class="c1"># Linux (list form, no shell quoting)</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghostty</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">+wait</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-e</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w">                     </span><span class="c1"># macOS (open launches Ghostty.app)</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">open</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-na</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ghostty.app</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">--args</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-e</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">konsole --hold -e</span><span class="w">   </span><span class="c1"># string form (shell-split)</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w">                     </span><span class="c1"># Linux (list form, no shell quoting)</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghostty</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">+wait</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-e</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w">                     </span><span class="c1"># macOS (open launches Ghostty.app)</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">open</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-na</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ghostty.app</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">--args</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-e</span>
 </span></code></pre></div>
 <p>Any terminal is supported, but let's explain the options to the Ghostty
 terminal examples anove. On Linux, Ghostty's <code>-e</code> takes the appended
@@ -1346,7 +1397,7 @@ page's shell action opens through a configured launcher. <code>{workspace}</code
 resolves to the workspace's id (the token <code>msks ssh</code> addresses; that is
 what the TUI appends to the launcher), or to <code>shell</code> when the appended
 command addresses no workspace:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">terminal_title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">msks — {workspace}</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">terminal_title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">msks — {workspace}</span>
 </span></code></pre></div>
 <p>A launcher that runs <code>msks-term-popup</code> writes the title before it attaches
 tmux, and the launch's own tmux server pins <code>set-titles</code> off. The title stays
@@ -1368,10 +1419,10 @@ shell inside a local tmux session and answers the workspace's egress
 consent prompts right there.</p>
 <p>To use, it change your <code>msks.yaml</code> config file such that it's the program
 opened by <code>terminal_open_cmd</code>. For example:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">konsole -e msks-term-popup</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">xterm -e msks-term-popup</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghostty +wait -e msks-term-popup</span><span class="w">       </span><span class="c1"># Linux</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">open -na Ghostty.app --args -e msks-term-popup</span><span class="w">  </span><span class="c1"># macOS</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">konsole -e msks-term-popup</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">xterm -e msks-term-popup</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghostty +wait -e msks-term-popup</span><span class="w">       </span><span class="c1"># Linux</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">open -na Ghostty.app --args -e msks-term-popup</span><span class="w">  </span><span class="c1"># macOS</span>
 </span></code></pre></div>
 <p>The launch also starts the consent-decider
 app in a hidden tmux session on the same socket, where it holds the
