@@ -23,6 +23,7 @@ from test_consent_page import FakeFactory, press_until, wait_for
 from test_main_tui import (
     WS,
     FakeData,
+    action_children,
     make_app,
     open_page,
     row,
@@ -268,6 +269,28 @@ async def test_the_page_lists_only_the_workspaces_rows(
         assert "listening" in text
         assert "alpha" in proxy_status(app)
         assert page.workspace == data.rows[0]
+
+
+async def test_the_action_row_opens_the_page(monkeypatch) -> None:
+    """The configure group's Proxies row opens the page — the
+    awaited path the ``p`` key shares, walked with the arrows the
+    way the spatial rules read (a regression here cost the row's
+    Enter its screen)."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    data.proxy_rows = [proxy_row()]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        # Down four times lands on the Proxies row (the shell,
+        # egress, edit, and mounts rows before it).
+        await pilot.press("down", "down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, ProxiesScreen)
+        )
+        await wait_for(lambda: proxy_children(app) == 1)
 
 
 async def test_the_page_returns_to_the_workspace_page(

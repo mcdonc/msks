@@ -1033,16 +1033,16 @@ class WorkspaceScreen(Screen):
         self.row = row
         self.paint_mounts()
 
-    def open_proxies(self) -> None:
+    async def open_proxies(self) -> None:
         """Push the workspace's proxies page (#809) over this one
         — the same rows the compact line paints, with the add form
         and the remove behind it."""
         self.app.push_screen(ProxiesScreen(self.row))
 
-    def action_proxies_page(self) -> None:
+    async def action_proxies_page(self) -> None:
         """``p``: the proxies page one key away — the action row's
         own destination."""
-        self.open_proxies()
+        await self.open_proxies()
 
     # -- the edit dialog (#331) ---------------------------------------
 
