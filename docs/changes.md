@@ -13,7 +13,7 @@ tagged `vX.Y.Z`.
   (`https://host.msks:8660` with a `-R 8660:localhost:8660` proxy stored)
   instead of discovering it through `ip route show default`. The name
   answers in every consent mode, feeds no policy row or address pin, and
-  is never sent upstream.
+  a well-formed internet-class query for it is never sent upstream.
 - **The proxies docs chapter (#814).** `docs/proxies.md` owns the whole
   proxies story in one place: the persistent proxy port concept, the
   `-L`/`-R` directions in ssh's grammar, the live status vocabulary, and

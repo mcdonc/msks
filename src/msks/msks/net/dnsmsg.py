@@ -27,8 +27,8 @@ A_RDATA_LEN = 4
 # The record type an A answer carries.
 TYPE_A = 1
 #: The one query class a local answer serves (IN, the
-#: internet class; a CH-class query is not the guest's
-#: resolution and relays like any other name).
+#: internet class; a query in another class is not the guest's
+#: resolution and takes the relay path like any other name).
 CLASS_IN = 1
 
 # A name decoder bound: compression-pointer chains are capped so a

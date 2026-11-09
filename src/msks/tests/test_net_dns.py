@@ -335,20 +335,27 @@ async def test_local_hosts_answer_nodata_for_non_a(pair, name) -> None:
     stub negatively caches the type, never the name (#424, #816:
     a browser's HTTPS/SVCB query before a dial must not cache the
     name away)."""
-    forwarder, client, _upstream = pair
-    await asyncio.to_thread(
-        client.sendto,
-        local_query(name, qtype=28),
-        forwarder._sock.getsockname(),
-    )
+    forwarder, client, upstream = pair
+
+    async def nothing_may_arrive_upstream() -> None:
+        loop = asyncio.get_running_loop()
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(loop.sock_recvfrom(upstream, 4096), 0.3)
+
+    guard = asyncio.create_task(nothing_may_arrive_upstream())
+    sent = local_query(name, qtype=28)
+    await asyncio.to_thread(client.sendto, sent, forwarder._sock.getsockname())
     data, _server = await asyncio.to_thread(client.recvfrom, 4096)
+    await guard
     flags = int.from_bytes(data[2:4], "big")
+    assert flags & 0x8000  # a reply (QR)
     assert flags & 0x0F == 0  # NOERROR
+    assert int.from_bytes(data[4:6], "big") == 1  # the one question
     assert int.from_bytes(data[6:8], "big") == 0  # no answer records
+    assert data[:2] == sent[:2]  # the query's id echoed
     # The question copies verbatim — a reply whose question section
     # carries the query's flags (a wire[2:] slice) makes a
     # question-comparing stub discard it and time out.
-    sent = local_query(name, qtype=28)
     assert data[12:] == sent[12:]
 
 
