@@ -527,7 +527,14 @@ class ProxiesScreen(Screen):
     async def rebuild_rows(self, rows: list[dict]) -> None:
         """Swap in a freshly-built list (its mount awaited),
         preserving the focused row by key (the top when it left)
-        — the consent queue's rebuild rule, carried to the page."""
+        — the consent queue's rebuild rule, carried to the page.
+        An unchanged listing repaints nothing (the workspaces
+        list's own rule): the standing interval's read of the same
+        rows keeps its list, so focus and scroll never blip and
+        the page never flickers on the clock."""
+        if rows == self.rows and self.rows_widget() is not None:
+            self.sync_status()
+            return
         self.rows = rows
         listing = self.query_one("#proxies-listing", Vertical)
         old = self.rows_widget()

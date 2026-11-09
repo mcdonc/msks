@@ -470,6 +470,28 @@ async def test_the_page_refuses_a_remove_gently(monkeypatch) -> None:
         assert proxy_children(app) == 1
 
 
+async def test_an_unchanged_listing_keeps_its_list(monkeypatch) -> None:
+    """The standing interval's read of the same rows repaints
+    nothing (the workspaces list's own rule): the list widget
+    stands — no swap, no flicker on the clock — and a listing that
+    did move still swaps."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    data.proxy_rows = [proxy_row()]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app)
+        await wait_for(lambda: proxy_children(app) == 1)
+        standing = app.screen.rows_widget()
+        app.screen.refresh_rows()  # the interval's read: same rows
+        await wait_for(lambda: app.screen.rows_widget() is standing)
+        data.proxy_rows = [proxy_row(), proxy_row(id=2)]
+        app.screen.refresh_rows()  # a listing that moved: swap
+        await wait_for(lambda: proxy_children(app) == 2)
+        assert app.screen.rows_widget() is not standing
+
+
 async def test_a_frame_poke_refreshes_the_listing(monkeypatch) -> None:
     """A proxy transition on the subscriber pokes the page's
     refresh, so a row another surface removed leaves the listing
