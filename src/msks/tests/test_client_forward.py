@@ -767,10 +767,14 @@ async def test_the_probe_times_out_silent_but_open(monkeypatch) -> None:
 
 def test_parse_remote_target_forms() -> None:
     # A bare port targets the daemon's loopback; a host part rides
-    # through unchanged.
+    # through unchanged; an IPv6 literal arrives bracketed and a
+    # bare one refuses.
     assert fwd.parse_remote_target("9200") == ("127.0.0.1", 9200)
     assert fwd.parse_remote_target("10.1.2.3:80") == ("10.1.2.3", 80)
     assert fwd.parse_remote_target("localhost:5432") == ("localhost", 5432)
+    assert fwd.parse_remote_target("[::1]:80") == ("::1", 80)
+    with pytest.raises(SystemExit):
+        fwd.parse_remote_target("::1:80")
     with pytest.raises(SystemExit):
         fwd.parse_remote_target("not-a-port")
     with pytest.raises(SystemExit):
@@ -919,7 +923,9 @@ def test_proxy_list_prints_table_and_json(
     transport = httpx.MockTransport(
         lambda req: httpx.Response(200, json=[ROW, failed])
     )
-    rc = cli.main(["forward", "alpha", "--list"], transport=transport)
+    # The management flags need no workspace: the listing reads
+    # every workspace's rows (#807 review).
+    rc = cli.main(["forward", "--list"], transport=transport)
     assert rc == 0
     table = capsys.readouterr().out
     assert "guest:22" in table
@@ -970,6 +976,27 @@ def test_forward_flag_combinations_refuse(
         transport=transport,
     )
     assert rc == 2
+    # --local and --bind shape a forward proxy, not a remote one.
+    rc = cli.main(
+        [
+            "forward",
+            "alpha",
+            "9200",
+            "--persist",
+            "--remote",
+            "9200",
+            "--local",
+            "9200",
+        ],
+        transport=transport,
+    )
+    assert rc == 2
+    # --bind rides a persisted forward alone.
+    rc = cli.main(
+        ["forward", "alpha", "22", "--local", "2201", "--bind", "0.0.0.0"],
+        transport=transport,
+    )
+    assert rc == 2
     # --persist names a daemon-side listen port.
     rc = cli.main(["forward", "alpha", "22", "--persist"], transport=transport)
     assert rc == 2
@@ -981,6 +1008,16 @@ def test_forward_flag_combinations_refuse(
         ["forward", "alpha", "--list", "--rm", "3"], transport=transport
     )
     assert rc == 2
-    # --json goes with --list.
+    # --json goes with --list, not with --rm.
     rc = cli.main(["forward", "alpha", "--json"], transport=transport)
+    assert rc == 2
+    rc = cli.main(
+        ["forward", "alpha", "--rm", "3", "--json"], transport=transport
+    )
+    assert rc == 2
+    # --rm needs the workspace whose row it removes.
+    rc = cli.main(["forward", "--rm", "3"], transport=transport)
+    assert rc == 2
+    # A bare session path needs a workspace.
+    rc = cli.main(["forward"], transport=transport)
     assert rc == 2

@@ -275,13 +275,21 @@ async def test_status_of_unknown_row_is_stopped(proxies) -> None:
     assert manager.status({"id": 999}) == ("stopped", None)
 
 
-async def test_remote_ports_lists_only_remote(proxies) -> None:
+async def test_bound_remote_ports_tracks_live_binds(proxies) -> None:
+    """Rows alone never qualify (#807 review): only a remote
+    listener that is up carries an admission, so a failed bind
+    admits nothing."""
     manager, model, _net, _queue, _app = proxies
-    await create_forward_row(model, 2201)
+    await create_forward_row(model, await free_port())
+    remote_port = await free_port()
     await model.create_proxy(
-        "ws-a", "remote", None, 9200, "127.0.0.1", 9200, None
+        "ws-a", "remote", None, remote_port, "127.0.0.1", remote_port, None
     )
-    assert await manager.remote_ports("ws-a") == [9200]
+    assert await manager.bound_remote_ports("ws-a") == []
+    await manager.start_workspace("ws-a", ATTACHMENT)
+    assert await manager.bound_remote_ports("ws-a") == [remote_port]
+    await manager.stop_workspace("ws-a")
+    assert await manager.bound_remote_ports("ws-a") == []
 
 
 async def test_events_publish_on_listener_transitions(proxies) -> None:

@@ -1984,30 +1984,60 @@ async def test_the_default_probe_path_wires_the_service_material(
     app.state.probe = real_probe
 
 
-async def test_attach_admits_the_workspace_remote_proxy_ports(net_app) -> None:
-    """The admission and the listener agree (#807): a workspace's
-    remote proxy rows gain one accept line each in the table the
-    attach installs, and a live add swaps the admission in one
+async def test_attach_admits_the_workspace_remote_proxy_ports(
+    net_app, monkeypatch
+) -> None:
+    """The admission and the listener agree (#807): a bind that
+    comes up gains its accept line, a row whose bind fails admits
+    nothing, and a live add swaps the admission in one
     transaction."""
     app, _ip_log, nft_log = net_app
     manager = await ready(app)
+    # The stub ip tool creates no real tap, so the manager's
+    # remote bind is re-pointed at loopback — the test exercises
+    # the admission logic, not the kernel's interface table.
+    from msks import proxies as proxies_mod
+
+    monkeypatch_bind = lambda row, attachment: (  # noqa: E731
+        ("127.0.0.1", row["listen_port"])
+        if row["direction"] == "remote"
+        else proxies_mod.bind_point(row, attachment)
+    )
+    monkeypatch.setattr(proxies_mod, "bind_point", monkeypatch_bind)
+    # The squatted port: the row exists, its bind will fail.
+    squatter = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
+    taken = squatter.sockets[0].getsockname()[1]
+    healthy = await free_bind_port()
     await app.state.model.create_proxy(
-        "ws-a", "remote", None, 9200, "127.0.0.1", 9200, None
+        "ws-a", "remote", None, healthy, "127.0.0.1", healthy, None
+    )
+    await app.state.model.create_proxy(
+        "ws-a", "remote", None, taken, "127.0.0.1", taken, None
     )
     attachment = await manager.attach("ws-a", want=True)
     applied = applied_rulesets(nft_log)[-1]
     assert (
         f"ip saddr {attachment.guest_ip} ip daddr {attachment.tap_ip} "
-        "tcp dport 9200 accept" in applied
+        f"tcp dport {healthy} accept" in applied
     )
+    assert f"tcp dport {taken} accept" not in applied
+    squatter.close()
     # A live add re-applies the table with the fresh port set.
+    later = await free_bind_port()
     await app.state.model.create_proxy(
-        "ws-a", "remote", None, 9443, "127.0.0.1", 9443, None
+        "ws-a", "remote", None, later, "127.0.0.1", later, None
     )
+    rows = await app.state.model.list_proxies("ws-a")
+    started = await app.state.proxies.start_one(
+        rows[-1],
+        manager.attachment("ws-a"),
+    )
+    assert started["status"] == "listening"
     await manager.refresh_proxies("ws-a")
     refreshed = applied_rulesets(nft_log)[-1]
-    assert "tcp dport 9200 accept" in refreshed
-    assert "tcp dport 9443 accept" in refreshed
+    assert f"tcp dport {healthy} accept" in refreshed
+    assert f"tcp dport {later} accept" in refreshed
+    assert f"tcp dport {taken} accept" not in refreshed
 
 
 async def test_start_proxies_survives_a_subsystem_failure(
@@ -2025,3 +2055,12 @@ async def test_start_proxies_survives_a_subsystem_failure(
     attachment = await manager.attach("ws-a", want=True)
     assert attachment is not None
     assert "did not start (row read refused)" in capsys.readouterr().out
+
+
+async def free_bind_port() -> int:
+    """A port the kernel confirms free (bound then released)."""
+    server = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    server.close()
+    await server.wait_closed()
+    return port

@@ -389,11 +389,15 @@ def run_workspace_forward(
 
 def parse_remote_target(raw: str) -> tuple[str, int]:
     """``--remote``'s ``[HOST:]PORT``: the daemon-side service a
-    remote proxy bridges to, loopback when the host part is absent.
+    remote proxy bridges to, loopback when the host part is
+    absent. An IPv6 literal arrives bracketed (``[::1]:80``); a
+    bare colon-ridden form refuses, because it cannot split into
+    host and port unambiguously.
     """
     host, separator, port_text = raw.rpartition(":")
     if not separator:
         host, port_text = "", raw
+    host = unbracketed_host(host, raw)
     try:
         port = int(port_text)
     except ValueError:
@@ -402,6 +406,20 @@ def parse_remote_target(raw: str) -> tuple[str, int]:
         ) from None
     check_port(port)
     return host or "127.0.0.1", port
+
+
+def unbracketed_host(host: str, raw: str) -> str:
+    """The host part with an IPv6 literal's brackets stripped; a
+    bare colon-ridden form refuses, because it cannot split into
+    host and port unambiguously."""
+    if host.startswith("[") and host.endswith("]"):
+        return host[1:-1]
+    if ":" in host:
+        raise SystemExit(
+            f"msks: --remote wants [HOST:]PORT with an IPv6 host "
+            f"bracketed, got {raw!r}"
+        )
+    return host
 
 
 def proxy_endpoint(row: dict) -> tuple[str, str]:

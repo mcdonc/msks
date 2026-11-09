@@ -617,6 +617,14 @@ def console(
     return run_workspace_shell(workspace_id)
 
 
+def misplaced_json(
+    as_json: bool, proxy_rm: int | None, proxy_list: bool
+) -> bool:
+    """Whether --json rides an ask it does not shape: with --rm,
+    or alone (it belongs to --list)."""
+    return as_json and (proxy_rm is not None or not proxy_list)
+
+
 def proxy_flag_refusal(
     proxy_list: bool, proxy_rm: int | None, as_json: bool
 ) -> str | None:
@@ -624,7 +632,7 @@ def proxy_flag_refusal(
     None when they form one coherent ask."""
     if proxy_list and proxy_rm is not None:
         return "pass --list or --rm, not both"
-    if not proxy_list and proxy_rm is None:
+    if misplaced_json(as_json, proxy_rm, proxy_list):
         return "--json goes with --list"
     return None
 
@@ -637,7 +645,7 @@ def no_management_flags(
 
 
 def proxy_command(
-    workspace_id: str,
+    workspace_id: str | None,
     proxy_list: bool,
     proxy_rm: int | None,
     as_json: bool,
@@ -645,13 +653,17 @@ def proxy_command(
 ) -> int | None:
     """The stored-row management half of ``msks forward``: a
     flag-combo refusal, the command's result, or None when no
-    management flag rode the invocation."""
+    management flag rode the invocation. ``--list`` reads every
+    workspace's rows; ``--rm`` needs the workspace whose row it
+    removes."""
     if no_management_flags(proxy_list, proxy_rm, as_json):
         return None
     refusal = proxy_flag_refusal(proxy_list, proxy_rm, as_json)
     if refusal is not None:
         raise UsageError(refusal)
     if proxy_rm is not None:
+        if workspace_id is None:
+            raise UsageError("--rm needs the workspace whose proxy it removes")
         return run_proxy_remove(workspace_id, proxy_rm, transport)
     return run_proxy_list(as_json, transport)
 
@@ -668,29 +680,60 @@ def persist_command(
     """The persisted-proxy half of ``msks forward``: the stored
     row's result, or None when the invocation wants a session."""
     if remote is not None:
-        if not persist:
-            raise UsageError(
-                "--remote creates a daemon-side proxy; add --persist"
-            )
+        refusal = remote_refusal(persist, local, bind)
+        if refusal is not None:
+            raise UsageError(refusal)
         return run_persist_remote(workspace_id, port, remote, transport)
+    refusal = forward_refusal(persist, local, bind)
+    if refusal is not None:
+        raise UsageError(refusal)
     if not persist:
         return None
-    if local is None:
-        raise UsageError(
-            "--persist needs --local PORT (the daemon-side listen port)"
-        )
     return run_persist_forward(workspace_id, port, local, bind, transport)
+
+
+def remote_refusal(
+    persist: bool, local: int | None, bind: str | None
+) -> str | None:
+    """The named refusal when --remote rides the wrong company: it
+    needs --persist, and the forward-shaping flags cannot ride
+    with it."""
+    if not persist:
+        return "--remote creates a daemon-side proxy; add --persist"
+    if local is not None or bind is not None:
+        return (
+            "--local and --bind shape a forward proxy; --remote "
+            "names its target instead"
+        )
+    return None
+
+
+def forward_refusal(
+    persist: bool, local: int | None, bind: str | None
+) -> str | None:
+    """The named refusal when the forward-shaping flags ride
+    without --persist, or --persist arrives with no listen
+    port."""
+    if bind is not None and not persist:
+        return "--bind shapes a persisted forward; add --persist"
+    if persist and local is None:
+        return "--persist needs --local PORT (the daemon-side listen port)"
+    return None
 
 
 @app.command("forward")
 @one_line_interrupts
 def forward(
     ctx: typer.Context,
-    workspace_id: str = typer.Argument(
-        ..., help="the workspace to reach (name or id)"
+    workspace_id: str | None = typer.Argument(
+        None,
+        help="the workspace to reach (name or id); the management "
+        "flags alone need no workspace",
     ),
     port: int | None = typer.Argument(
-        None, help="the guest TCP port to reach"
+        None,
+        help="the guest TCP port to reach (with --remote: the "
+        "gateway port the workspace listens on)",
     ),
     local: int | None = typer.Option(
         None,
@@ -736,6 +779,8 @@ def forward(
     )
     if managed is not None:
         return managed
+    if workspace_id is None:
+        raise UsageError("forward needs a workspace (or --list / --rm ID)")
     if port is None:
         raise UsageError("forward needs a port (or --list / --rm ID)")
     stored = persist_command(

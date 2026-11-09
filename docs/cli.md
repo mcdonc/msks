@@ -1037,8 +1037,8 @@ service closed, stdin EOF) leaves exit code 0.
 
 `--persist` stores the forward with the daemon instead of holding it in
 this command's process. The daemon owns the listener, the row lives in its
-database, and every workspace start re-establishes it (a workspace created
-without egress holds no proxies: its row has no NIC to reach):
+database, and every workspace start re-establishes it. A workspace created
+without egress holds no proxies: its row has no NIC to reach.
 
 ```bash
 msks forward my-workspace 22 --local 2201 --persist
@@ -1053,12 +1053,17 @@ msks forward my-workspace 9200 --persist --remote 127.0.0.1:9200
 ```
 
 A remote proxy is the reverse of a forward one. The guest dials its
-DHCP gateway address (the same address its DNS resolver answers on —
-`ip route show default` inside the workspace names it) on the listen
-port, and the daemon bridges the connection to the daemon-side service
-the target names. Inside the workspace,
-`curl http://$(ip route show default | awk '{print $3}'):9200` reaches
-the host service the example stores.
+DHCP gateway address on the listen port. That is the same address its
+DNS resolver answers on; `ip route show default` inside the workspace
+prints it. The daemon bridges the connection to the daemon-side service
+the target names. With the example stored, `curl
+http://$(ip route show default | awk '{print $3}'):9200` inside the
+workspace reaches the host service.
+
+The daemon dials a remote proxy's target itself. The consent machinery
+gates the guest's traffic through the tap; it does not gate the
+daemon's own connections, so a remote row reaches its target without a
+verdict.
 
 Creating a proxy on a running workspace opens its listener at once. A
 proxy whose bind fails (the port is taken) records the failure as its

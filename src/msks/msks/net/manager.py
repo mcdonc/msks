@@ -350,9 +350,14 @@ class NetManager:
         return self._attachments.get(workspace_id)
 
     async def remote_ports(self, workspace_id: str) -> list[int]:
-        """The workspace's remote proxy listen ports (#807): the
-        admission set every table install carries for this tap."""
-        return await self.app.state.proxies.remote_ports(workspace_id)
+        """The workspace's remote proxy listen ports that carry a
+        LIVE listener (#807 review): the admission set every table
+        install carries for the tap. A row whose bind failed
+        admits nothing — the accept line would open the port to
+        whatever squats it (the probe listener, the interceptor,
+        the daemon's own API on a wildcard bind), the one hole the
+        ingress chain exists to prevent."""
+        return await self.app.state.proxies.bound_remote_ports(workspace_id)
 
     async def stop_proxies(self, workspace_id: str) -> None:
         """End the workspace's live proxy listeners (#807):
@@ -750,6 +755,13 @@ class NetManager:
             elements=elements,
         )
 
+    async def admit_bound_proxies(self, workspace_id: str) -> None:
+        """Swap the table when a boot's proxy binds came up (#807
+        review): nothing to swap when none did — the table the
+        attach installed already matches."""
+        if await self.remote_ports(workspace_id):
+            await self.refresh_proxies(workspace_id)
+
     async def refresh_proxies(self, workspace_id: str) -> None:
         """Re-apply the workspace's table with its current remote
         proxy ports (#807): a proxy added or removed on a running
@@ -1057,6 +1069,12 @@ class NetManager:
             # table's redirect half appear together, only when a
             # placeholder wants them.
             await self.app.state.interceptor.refresh(workspace_id)
+            # The proxies' admissions land after their binds (#807
+            # review): the table above installed with the ports
+            # already listening (an attach starts from none), and
+            # this swap adds exactly the binds that came up. A
+            # failed bind stays unadmitted.
+            await self.admit_bound_proxies(workspace_id)
             return attachment
         except BaseException:
             self._used_slices.discard(slice_)

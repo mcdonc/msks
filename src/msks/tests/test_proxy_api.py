@@ -339,3 +339,53 @@ async def test_remote_lifecycle_on_an_attached_workspace(client) -> None:
     )
     assert removed.status_code == 200
     net._attachments.pop(wid, None)
+
+
+async def test_remote_create_annotates_a_failed_admission_refresh(
+    client, monkeypatch
+) -> None:
+    """A remote create whose nft swap fails still answers with its
+    row and listener (#807 review): the reason names the missing
+    admission, and a later bind that fails refreshes nothing."""
+    http, app, _stub = client
+    wid = await make_workspace(http, "ws-adj")
+    net = app.state.net
+    net._attachments[wid] = attachment("127.0.0.1")
+    calls = []
+
+    async def failing(workspace_id):
+        calls.append(workspace_id)
+        raise RuntimeError("nft refused")
+
+    monkeypatch.setattr(net, "refresh_proxies", failing)
+    port = await free_port()
+    created = await http.post(
+        f"/api/v1/workspaces/{wid}/proxies",
+        json={
+            "direction": "remote",
+            "listen_port": port,
+            "target_port": port,
+        },
+        headers=auth(),
+    )
+    assert created.status_code == 200
+    row = created.json()
+    assert row["status"] == "listening"
+    assert "admission refresh failed" in row["reason"]
+    assert calls == [wid]
+    # A bind that fails gains no admission, so it triggers no swap.
+    squatted = await asyncio.start_server(lambda r, w: None, "127.0.0.1", 0)
+    taken = squatted.sockets[0].getsockname()[1]
+    failed = await http.post(
+        f"/api/v1/workspaces/{wid}/proxies",
+        json={
+            "direction": "remote",
+            "listen_port": taken,
+            "target_port": taken,
+        },
+        headers=auth(),
+    )
+    assert failed.json()["status"] == "failed"
+    assert calls == [wid]
+    squatted.close()
+    net._attachments.pop(wid, None)

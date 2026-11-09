@@ -46,6 +46,13 @@ DEFAULT_TARGET_HOST = "127.0.0.1"
 #: forward client and console pump move.
 READ_CHUNK = 4096
 
+#: How long a listener's close waits its stalled peers (#807
+#: review): the stop paths run under the workspace's net guard,
+#: and a peer that never ACKs the FIN must not hold it. The
+#: handlers are cancelled first, so the wait normally lands at
+#: once.
+STOP_GRACE_S = 5.0
+
 
 @dataclass
 class LiveProxy:
@@ -172,7 +179,11 @@ class ProxyManager:
 
     async def stop_one(self, proxy_id: int) -> None:
         """Close one live listener and end its in-flight
-        connections; a recorded failure just leaves. Idempotent."""
+        connections; a recorded failure just leaves. Idempotent.
+        The close is bounded: a peer that stalls the graceful
+        teardown cannot hold the workspace guard this stop runs
+        under (#807 review; the same reason close_forwards closes
+        without waiting)."""
         live = self._live.pop(proxy_id, None)
         if live is None:
             return
@@ -185,15 +196,20 @@ class ProxyManager:
             # wait_closed also gathers the cancelled handlers'
             # cleanup (their finally closes the local writer and
             # drops their task records).
-            await live.server.wait_closed()
+            await asyncio.wait_for(
+                live.server.wait_closed(), timeout=STOP_GRACE_S
+            )
         await self.publish(live.row, "proxy.closed")
 
     # --- reads ---------------------------------------------------------
 
     def status(self, row: dict) -> tuple[str, str | None]:
         """One row's live state: ``(listening, None)``,
-        ``(failed, cause)``, or ``(stopped, None)`` — a workspace
-        that is not running owns no live listeners."""
+        ``(failed, cause)``, or ``(stopped, None)``. A forward
+        row binds without its workspace running (each connection
+        refuses until the guest does); ``stopped`` is a remote
+        row whose workspace is not up, or a row no listener
+        serves."""
         live = self._live.get(row["id"])
         if live is None:
             return "stopped", None
@@ -201,13 +217,19 @@ class ProxyManager:
             return "listening", None
         return "failed", live.failure
 
-    async def remote_ports(self, workspace_id: str) -> list[int]:
-        """The workspace's remote listen ports — the admission set
-        the net manager's ingress chain carries for the tap."""
-        rows = await self.app.state.model.list_proxies(workspace_id)
-        return [
-            row["listen_port"] for row in rows if row["direction"] == "remote"
-        ]
+    async def bound_remote_ports(self, workspace_id: str) -> list[int]:
+        """The workspace's remote listen ports that carry a live
+        listener — the admission set the net manager's ingress
+        chain carries for the tap. Rows alone never qualify: a
+        row whose bind failed would admit a port something else
+        squats (#807 review)."""
+        return sorted(
+            live.row["listen_port"]
+            for live in self._live.values()
+            if live.workspace_id == workspace_id
+            and live.server is not None
+            and live.row["direction"] == "remote"
+        )
 
     # --- internals ------------------------------------------------------
 

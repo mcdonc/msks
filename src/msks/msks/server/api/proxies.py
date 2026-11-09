@@ -52,7 +52,11 @@ def duplicate_conflict(rows: list[dict], body: ProxyCreate) -> str | None:
     A forward proxy's bind is daemon-wide: any workspace's row on
     the same address and port collides, so the check spans every
     row. A remote proxy's bind is its own tap, so only the same
-    workspace's port collides."""
+    workspace's port collides. The check is lexical on purpose:
+    spellings the comparison cannot see (`localhost` against
+    `127.0.0.1`, a wildcard against a specific address) degrade
+    to a failed bind at runtime — the named status and cause —
+    instead of a silent double-serve."""
     listen_host = body.listen_host or DEFAULT_LISTEN_HOST
     for row in rows:
         if binds_same(row, body, listen_host):
@@ -141,8 +145,6 @@ def router(app, hub) -> APIRouter:
         live = await app.state.proxies.start_one(
             created, app.state.net.attachment(workspace_id)
         )
-        if body.direction == "remote" and live["status"] != "stopped":
-            await app.state.net.refresh_proxies(workspace_id)
         await hub.publish(
             "proxy.created",
             {
@@ -153,6 +155,18 @@ def router(app, hub) -> APIRouter:
                 "target_port": created["target_port"],
             },
         )
+        # A listening remote proxy takes its admission now — only
+        # a live bind gains one (#807 review), and the swap rides
+        # the same one-transaction install every live change uses.
+        # A failed swap leaves the row and its listener standing:
+        # the reason the response carries names the unreachable
+        # half, and the next table install (the workspace's next
+        # start, a later proxy change) retries the admission.
+        if body.direction == "remote" and live["status"] == "listening":
+            try:
+                await app.state.net.refresh_proxies(workspace_id)
+            except Exception as exc:
+                live["reason"] = f"admission refresh failed: {exc}"
         return live
 
     @api.delete(
