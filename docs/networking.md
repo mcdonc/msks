@@ -183,6 +183,28 @@ refusing the first instance's. A workspace without egress carries the same
 image unchanged: its forward is refused at the API with close code 4501
 before any dial, and its console is the virtio-console getty.
 
+### Persisted proxies (the other direction too)
+
+The forward websocket lives as long as the command holding it. A persisted
+proxy (`msks proxy add`, issue #807) lives in the daemon's database instead:
+the daemon owns the listener, and every workspace start re-establishes it. A forward proxy binds a port on the daemon's host and
+bridges each connection to the guest through the same dial the forward
+websocket uses. A remote proxy binds a port on the workspace's own tap
+address: a guest process dials its DHCP gateway on that port, and the
+daemon bridges the connection to a daemon-side service (the ssh `-R`
+shape).
+
+The tap's ingress chain admits a remote port only while its listener is
+up. Each accept line is pinned to that tap's address and that guest's
+source, the same scoping the resolver and LLM proxy rules carry. A live
+add or removal swaps the admission in one nft transaction. A bind that
+fails admits nothing, so the rule and the service always agree.
+
+The daemon dials a remote proxy's target itself, and the consent machinery
+gates the guest's traffic through the tap, not the daemon's own
+connections. A remote row therefore reaches its target without a verdict
+— the one msks connection class the consent chapter does not cover.
+
 ### The workspace ssh identity
 
 A workspace created through the client carries the operator's

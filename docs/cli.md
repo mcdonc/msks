@@ -1033,6 +1033,73 @@ line (the daemon's close codes give the cause: no NIC, not running, service
 not listening, still booting), while a clean end of stream (the guest
 service closed, stdin EOF) leaves exit code 0.
 
+## `msks proxy`
+
+The daemon's persisted workspace proxies: listeners the daemon owns, rows in
+its database, re-established at every workspace start. (`msks forward` is the
+ephemeral session — stdio or a client-side bind that dies with the command.)
+
+Two directions, written the way ssh writes them. `listen : target`, left to
+right; the flag letter says which side listens:
+
+```bash
+msks proxy add my-workspace -L 2201:localhost:22
+# the daemon binds 127.0.0.1:2201 on its own host and bridges every
+# connection to the workspace's port 22
+msks proxy add my-workspace -L 0.0.0.0:2201:localhost:22
+# same, listening on every interface of the daemon's host
+msks proxy add my-workspace -R 9200:localhost:9200
+# reverse: the workspace's gateway listens on 9200, and every guest
+# connection bridges to port 9200 on the daemon's host
+msks proxy add my-workspace -R 5432:db.internal:5432 --label db
+# the gateway's 5432 bridges to db.internal:5432, dialed by the daemon
+```
+
+Both specs are ssh's own shape, `[BIND:]PORT:HOST:PORT`, and the host field plays
+the same role it plays in ssh: it names the end that makes the connection. In
+`-L` that end is the workspace itself, so the field accepts exactly two
+spellings — `localhost` or `127.0.0.1` — and anything else refuses:
+
+```text
+msks: -L's host field names the workspace itself; only localhost or
+127.0.0.1 is allowed — to reach a daemon-side service, use -R
+```
+
+The workspace cannot dial out on a forward's behalf (no agent runs inside it),
+so a forward always lands on the workspace itself. Reaching a daemon-side
+service is the `-R` direction.
+
+A remote proxy is the reverse of a forward one. The guest dials its DHCP
+gateway address on the listen port. That is the same address its DNS resolver
+answers on; `ip route show default` inside the workspace prints it. The daemon
+bridges the connection to the daemon-side service the spec names. With the
+example stored, `curl http://$(ip route show default | awk '{print $3}'):9200`
+inside the workspace reaches the host service. A workspace created without
+egress holds no proxies: its row has no NIC to reach.
+
+The daemon dials a remote proxy's target itself. The consent machinery gates
+the guest's traffic through the tap, not the daemon's own connections. A
+remote row therefore reaches its target without a verdict.
+
+`add` is declarative. Asking twice for the same spec returns the standing
+row. A different spec on the same bind is refused with the row that holds it.
+Creating a proxy on a running workspace opens its listener at once. A proxy
+whose bind fails (the port is taken) records the failure as its status with
+the cause, and every later start retries it. A remote proxy whose firewall
+swap fails stays unreachable from the guest, and its status carries the cause
+until a later swap lands.
+
+```bash
+msks proxy ls            # every stored proxy, with live status
+msks proxy ls --json     # the same rows as JSON
+msks proxy rm my-workspace 3   # remove one (listener closes at once)
+```
+
+The listing shows each row's direction, listen and target endpoints, and live
+status (`listening`, `stopped`, `failed` with the cause). Removing a proxy
+closes its listener when one serves and drops the row from the daemon's
+database.
+
 ## `msks egress`
 
 Decide, watch, and inspect a workspace's outbound-destination egress consent

@@ -249,9 +249,12 @@ class NetManager:
         self._state = "ready"
 
     async def stop(self) -> None:
-        """Detach every workspace (daemon shutdown; idempotent)."""
+        """Detach every workspace (daemon shutdown; idempotent).
+        The proxy sweep runs after: a forward listener can outlive
+        its workspace's attachment, and shutdown ends it too."""
         for workspace_id in list(self._attachments):
             await self.detach(workspace_id)
+        await self.app.state.proxies.stop_all()
         self._state = "init"
 
     async def attach(
@@ -340,6 +343,46 @@ class NetManager:
         for writer in self._forwards.pop(workspace_id, []):
             writer.close()
 
+    def attachment(self, workspace_id: str) -> NetAttachment | None:
+        """The workspace's live attachment, None when not attached —
+        the read the proxy subsystem (#807) makes to decide a
+        remote listener's bind address."""
+        return self._attachments.get(workspace_id)
+
+    async def remote_ports(self, workspace_id: str) -> list[int]:
+        """The workspace's remote proxy listen ports that carry a
+        LIVE listener (#807 review): the admission set every table
+        install carries for the tap. A row whose bind failed
+        admits nothing — the accept line would open the port to
+        whatever squats it (the probe listener, the interceptor,
+        the daemon's own API on a wildcard bind), the one hole the
+        ingress chain exists to prevent."""
+        return await self.app.state.proxies.bound_remote_ports(workspace_id)
+
+    async def stop_proxies(self, workspace_id: str) -> None:
+        """End the workspace's live proxy listeners (#807):
+        unconditional and idempotent, the same contract stop_llm
+        and stop_probe carry."""
+        await self.app.state.proxies.stop_workspace(workspace_id)
+
+    async def start_proxies(self, attachment: NetAttachment) -> None:
+        """Bring up the workspace's persisted proxy listeners
+        (#807) — the same best-effort posture the LLM and probe
+        listeners carry: a subsystem-level failure (the row read)
+        logs loudly and the boot proceeds; a single proxy's bind
+        failure is the manager's own per-row concern."""
+        try:
+            await self.app.state.proxies.start_workspace(
+                attachment.workspace_id, attachment
+            )
+        except Exception as exc:
+            print(
+                f"msksd: proxies for {attachment.workspace_id} "
+                f"did not start ({exc}); the workspace boots "
+                "without them",
+                flush=True,
+            )
+
     async def stop_llm(self, workspace_id: str) -> None:
         """Stop the workspace's LLM listener when one serves (#259).
         Unconditional and idempotent: the services' own stop is the
@@ -378,6 +421,8 @@ class NetManager:
                 await self.stop_llm(workspace_id)
             with contextlib.suppress(Exception):
                 await self.stop_probe(workspace_id)
+            with contextlib.suppress(Exception):
+                await self.stop_proxies(workspace_id)
             if attachment is None:
                 return
             await self.app.state.consent.on_workspace_stop(workspace_id)
@@ -617,6 +662,7 @@ class NetManager:
             policy=policy,
             queue_num=queue_num,
             interceptor_port=self.interceptor_port(workspace_id),
+            proxy_ports=await self.remote_ports(workspace_id),
             elements=elements,
         )
 
@@ -705,8 +751,49 @@ class NetManager:
             policy=services.policy,
             queue_num=services.queue_num,
             interceptor_port=port,
+            proxy_ports=await self.remote_ports(workspace_id),
             elements=elements,
         )
+
+    async def admit_bound_proxies(self, workspace_id: str) -> None:
+        """Swap the table when a boot's proxy binds came up (#807
+        review): nothing to swap when none did. Best-effort like
+        every proxy step in a boot — an nft refusal here cannot
+        make the workspace unbootable. The refusal is fail-closed
+        (no admission means the guest cannot reach the port) and
+        named per row, so the listings keep showing it until a
+        later swap lands."""
+        if not await self.remote_ports(workspace_id):
+            return
+        try:
+            await self.refresh_proxies(workspace_id)
+        except Exception as exc:
+            print(
+                f"msksd: proxy admissions for {workspace_id} "
+                f"did not apply ({exc}); the workspace boots without "
+                "them",
+                flush=True,
+            )
+            self.app.state.proxies.note_admission_failure(
+                workspace_id, f"admission refresh failed: {exc}"
+            )
+
+    async def refresh_proxies(self, workspace_id: str) -> None:
+        """Re-apply the workspace's table with its current remote
+        proxy ports (#807): a proxy added or removed on a running
+        workspace swaps its admission in the one-transaction shape
+        every other live change uses. The interceptor's armed half
+        stays exactly as it stands, and the consent elements ride
+        across the swap like every other one does.
+
+        Under the workspace's net guard, the same serialization
+        the interception swap holds: an install landing between an
+        attach's table and its services would clobber one of them.
+        """
+        async with self.workspace_guard(workspace_id):
+            await self.swap_interception(
+                workspace_id, self.interceptor_port(workspace_id)
+            )
 
     async def consent_snapshot(self, workspace_id: str, services) -> dict:
         """The consent elements a swap must carry: gated modes only —
@@ -985,6 +1072,7 @@ class NetManager:
                     attachment.tap_ip,
                     policy=policy,
                     queue_num=queue_num,
+                    proxy_ports=await self.remote_ports(workspace_id),
                 )
             except BaseException:
                 if consumer is not None:
@@ -997,6 +1085,12 @@ class NetManager:
             # table's redirect half appear together, only when a
             # placeholder wants them.
             await self.app.state.interceptor.refresh(workspace_id)
+            # The proxies' admissions land after their binds (#807
+            # review): the table above installed with the ports
+            # already listening (an attach starts from none), and
+            # this swap adds exactly the binds that came up. A
+            # failed bind stays unadmitted.
+            await self.admit_bound_proxies(workspace_id)
             return attachment
         except BaseException:
             self._used_slices.discard(slice_)
@@ -1084,6 +1178,7 @@ class NetManager:
         ]
         await self.start_llm(services, attachment)
         await self.start_probe(attachment)
+        await self.start_proxies(attachment)
 
     async def start_llm(
         self, services: NetServices, attachment: NetAttachment
@@ -1175,6 +1270,8 @@ class NetManager:
             await self.stop_llm(workspace_id)
         with contextlib.suppress(Exception):
             await self.stop_probe(workspace_id)
+        with contextlib.suppress(Exception):
+            await self.stop_proxies(workspace_id)
         services = self._services.pop(workspace_id, None)
         if services is not None:
             await stop_services(services)

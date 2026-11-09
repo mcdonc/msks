@@ -6,6 +6,17 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Added
+
+- **`msks proxy` (#808).** A new command manages the daemon's
+  persisted workspace proxies: `add` with ssh's own spec shape
+  (`-L [BIND:]PORT:HOST:PORT` binds the daemon host and bridges to
+  the workspace; `-R RPORT:HOST:TPORT` binds the workspace's
+  gateway and bridges to a daemon-side service), `ls` with live
+  status, and `rm`. The daemon owns every listener, rows live in its
+  database, every workspace start re-establishes them, and `add`
+  is idempotent for an identical spec. Part of #807.
+
 ### Fixed
 
 - **`scripts/cut-release.sh` (#805).** One command pushes a

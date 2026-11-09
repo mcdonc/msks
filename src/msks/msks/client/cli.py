@@ -61,6 +61,7 @@ from .images import (  # noqa: F401
     remove_image,
     unset_default_image,
 )
+from .proxies import app as proxy_app
 from .resize import display_name  # noqa: F401 — the tests' seam
 from .rsync import run_workspace_rsync
 from .secrets import (  # noqa: F401
@@ -222,6 +223,7 @@ secret_app = typer.Typer(
 )
 app.add_typer(egress_app, name="egress")
 app.add_typer(image_app, name="image")
+app.add_typer(proxy_app, name="proxy")
 app.add_typer(home_app, name="home")
 app.add_typer(secret_app, name="secret")
 

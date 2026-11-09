@@ -88,6 +88,8 @@ ALLOWED_EDGES = {
     ("app", "microvm"),
     ("app", "model"),
     ("app", "net"),
+    # #808: the proxy subsystem's composition seam
+    ("app", "proxies"),
     ("app", "secretstore"),
     ("app", "settings"),
     # client: the REST consumer — only the shared-leaf allowlist
@@ -168,6 +170,9 @@ ALLOWED_EDGES = {
     ("server", "microvm"),
     ("server", "model"),
     ("server", "persist"),
+    # #808: the proxy routes read the direction-shaped bind and
+    # target defaults the create path applies
+    ("server", "proxies"),
     # #514: the pending/unlock routes and the lock indicators
     # read the unlock-cache leaf's error vocabulary.
     ("server", "secretcache"),

@@ -16,6 +16,7 @@ from .llm import LlmProxy
 from .microvm import Microvm
 from .model import Model
 from .net import NetManager
+from .proxies import ProxyManager
 from .secretstore import SecretStore
 from .settings import Settings
 
@@ -42,6 +43,9 @@ class AppState:
         # The probe service (#424): the emulated external HTTPS
         # endpoint each per-tap listener serves.
         self.probe: ProbeService | None = None
+        # The workspace proxy subsystem (#807, #808): the persisted
+        # forward and remote TCP proxies the daemon owns.
+        self.proxies: ProxyManager | None = None
 
 
 class App:
@@ -59,6 +63,7 @@ class App:
         self.state.interceptor = Interceptor(self)
         self.state.llm = LlmProxy(self)
         self.state.probe = ProbeService(self)
+        self.state.proxies = ProxyManager(self)
 
 
 def build_app(settings: Settings | None = None) -> App:

@@ -1,0 +1,244 @@
+"""The workspace proxy routes (#807, #808): create, list, and
+remove the persisted forward and remote TCP proxies, with each
+row's live status.
+
+Routes stay thin: the model layer owns the rows, the proxy
+subsystem owns the listeners, and the net manager owns the
+admission swap a remote proxy's live change drives."""
+
+from fastapi import APIRouter, Depends, HTTPException
+
+from ...proxies import DEFAULT_LISTEN_HOST, DEFAULT_TARGET_HOST
+from .deps import require_token
+from .rows import workspace_or_404
+from .schemas import ProxyCreate
+
+
+def direction_refusal(body: ProxyCreate) -> str | None:
+    """The named refusal when a direction's host fields disagree
+    with it: a forward row carries the daemon-side listen host and
+    no target host (its target is the guest); a remote row carries
+    the daemon-side target host and no listen host (its bind is
+    the workspace's tap address, a runtime fact)."""
+    if body.direction == "forward" and body.target_host is not None:
+        return (
+            "a forward proxy reaches the guest's port; "
+            "target_host names nothing"
+        )
+    if body.direction == "remote" and body.listen_host is not None:
+        return (
+            "a remote proxy binds the workspace's tap; "
+            "listen_host names nothing"
+        )
+    return None
+
+
+def binds_same(
+    row: dict, body: ProxyCreate, workspace_id: str, listen_host: str
+) -> bool:
+    """Whether one stored row's bind is the bind a create names:
+    same direction and port, the same daemon-side address for the
+    forward direction (its bind is daemon-wide), and the same
+    workspace for the remote direction (its bind is its own tap).
+
+    The check is lexical on purpose: spellings the comparison
+    cannot see (`localhost` against `127.0.0.1`, a wildcard
+    against a specific address) degrade to a failed bind at
+    runtime — the named status and cause — instead of a silent
+    double-serve."""
+    if row["direction"] != body.direction:
+        return False
+    if row["listen_port"] != body.listen_port:
+        return False
+    if body.direction == "forward":
+        return (row.get("listen_host") or DEFAULT_LISTEN_HOST) == (listen_host)
+    return row["workspace_id"] == workspace_id
+
+
+def conflicting_row(
+    rows: list[dict], body: ProxyCreate, workspace_id: str
+) -> dict | None:
+    """The row whose bind the create would squat, None when none
+    does."""
+    listen_host = effective_listen(body.model_dump())
+    for row in rows:
+        if binds_same(row, body, workspace_id, listen_host):
+            return row
+    return None
+
+
+def effective_listen(entry: dict) -> str:
+    """The listen address a row or create names, loopback when it
+    does not."""
+    return entry.get("listen_host") or DEFAULT_LISTEN_HOST
+
+
+def effective_target(entry: dict) -> str:
+    """The target address a row or create names, loopback when it
+    does not."""
+    return entry.get("target_host") or DEFAULT_TARGET_HOST
+
+
+def identical_row(row: dict, body: ProxyCreate) -> bool:
+    """Whether a conflicting row IS the create's spec. The bind
+    fields already agree (conflicting_row matched); the target
+    port and the direction's host field decide."""
+    if row["target_port"] != body.target_port:
+        return False
+    if body.direction == "forward":
+        return effective_listen(row) == effective_listen(body.model_dump())
+    return effective_target(row) == effective_target(body.model_dump())
+
+
+def conflict_detail(row: dict, body: ProxyCreate) -> str:
+    """The 409 detail naming the row that holds the bind."""
+    return (
+        f"a {body.direction} proxy on port {body.listen_port} "
+        f"already exists (workspace {row['workspace_id']}, "
+        f"proxy {row['id']})"
+    )
+
+
+def with_live_status(proxies, row: dict) -> dict:
+    """One row dict with its live status fields attached."""
+    status, reason = proxies.status(row)
+    return {**row, "status": status, "reason": reason}
+
+
+def router(app, hub) -> APIRouter:
+    """The proxy routes."""
+    api = APIRouter()
+
+    @api.get(
+        "/api/v1/workspaces/{workspace_id}/proxies",
+        dependencies=[Depends(require_token)],
+    )
+    async def list_workspace_proxies(workspace_id: str) -> list[dict]:
+        row = await workspace_or_404(app, workspace_id)
+        rows = await app.state.model.list_proxies(row["id"])
+        return [with_live_status(app.state.proxies, proxy) for proxy in rows]
+
+    @api.get(
+        "/api/v1/proxies",
+        dependencies=[Depends(require_token)],
+    )
+    async def list_proxies() -> list[dict]:
+        """Every workspace's proxy rows with live status — the
+        daemon-wide read the TUI's proxies page (#809) serves."""
+        rows = await app.state.model.list_proxies()
+        return [with_live_status(app.state.proxies, proxy) for proxy in rows]
+
+    @api.post(
+        "/api/v1/workspaces/{workspace_id}/proxies",
+        dependencies=[Depends(require_token)],
+    )
+    async def create_proxy(workspace_id: str, body: ProxyCreate) -> dict:
+        row = await workspace_or_404(app, workspace_id)
+        workspace_id = row["id"]
+        if not row.get("egress"):
+            # The same refusal the forward websocket carries: a
+            # workspace without a NIC has neither the guest dial a
+            # forward needs nor the tap a remote one binds.
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"workspace {workspace_id} has no NIC "
+                    "(created without egress)"
+                ),
+            )
+        refusal = direction_refusal(body)
+        if refusal is not None:
+            raise HTTPException(status_code=400, detail=refusal)
+        holder = conflicting_row(
+            await app.state.model.list_proxies(), body, workspace_id
+        )
+        if holder is not None:
+            # An identical spec is the declarative ask over again
+            # (#807): the row stands, its live status answers. A
+            # different spec on the same bind is the refusal.
+            if identical_row(holder, body):
+                return with_live_status(app.state.proxies, holder)
+            raise HTTPException(
+                status_code=409, detail=conflict_detail(holder, body)
+            )
+        created = await app.state.model.create_proxy(
+            workspace_id,
+            body.direction,
+            (
+                body.listen_host or DEFAULT_LISTEN_HOST
+                if body.direction == "forward"
+                else None
+            ),
+            body.listen_port,
+            (
+                body.target_host or DEFAULT_TARGET_HOST
+                if body.direction == "remote"
+                else None
+            ),
+            body.target_port,
+            body.label,
+        )
+        # A running workspace takes the listener at once; a stopped
+        # one records the row and its next start brings it up.
+        live = await app.state.proxies.start_one(
+            created, app.state.net.attachment(workspace_id)
+        )
+        await hub.publish(
+            "proxy.created",
+            {
+                "id": workspace_id,
+                "proxy": created["id"],
+                "direction": created["direction"],
+                "listen_port": created["listen_port"],
+                "target_port": created["target_port"],
+            },
+        )
+        # A listening remote proxy takes its admission now — only
+        # a live bind gains one (#807 review), and the swap rides
+        # the same one-transaction install every live change uses.
+        # A failed swap leaves the row and its listener standing:
+        # the note the status carries says the guest cannot reach
+        # it, and the next table install (the workspace's next
+        # start, a later proxy change) retries the admission.
+        if body.direction == "remote" and live["status"] == "listening":
+            proxy_id = created["id"]
+            try:
+                await app.state.net.refresh_proxies(workspace_id)
+                app.state.proxies.clear_admission(proxy_id)
+            except Exception as exc:
+                app.state.proxies.note_admission(
+                    proxy_id, f"admission refresh failed: {exc}"
+                )
+            # The answer the create reads back carries the note a
+            # later listing would show, not the pre-swap snapshot.
+            live = with_live_status(app.state.proxies, created)
+        return live
+
+    @api.delete(
+        "/api/v1/workspaces/{workspace_id}/proxies/{proxy_id}",
+        dependencies=[Depends(require_token)],
+    )
+    async def delete_proxy(workspace_id: str, proxy_id: int) -> dict:
+        row = await workspace_or_404(app, workspace_id)
+        workspace_id = row["id"]
+        proxy = await app.state.model.get_proxy(workspace_id, proxy_id)
+        if proxy is None:
+            raise HTTPException(status_code=404, detail="no such proxy")
+        attachment = app.state.net.attachment(workspace_id)
+        await app.state.proxies.stop_one(proxy_id)
+        if proxy["direction"] == "remote" and attachment is not None:
+            await app.state.net.refresh_proxies(workspace_id)
+        await app.state.model.delete_proxy(workspace_id, proxy_id)
+        await hub.publish(
+            "proxy.removed",
+            {
+                "id": workspace_id,
+                "proxy": proxy_id,
+                "direction": proxy["direction"],
+                "listen_port": proxy["listen_port"],
+                "target_port": proxy["target_port"],
+            },
+        )
+        return {"id": proxy_id, "workspace_id": workspace_id, "removed": True}
+
+    return api
