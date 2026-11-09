@@ -410,6 +410,32 @@
   
   
     <li class="md-nav__item">
+      <a href="../proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Proxies
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../egress-consent/" class="md-nav__link">
         
   
@@ -2513,7 +2539,9 @@ service closed, stdin EOF) leaves exit code 0.</p>
 <h2 id="msks-proxy"><code>msks proxy</code><a class="headerlink" href="#msks-proxy" title="Permanent link">&para;</a></h2>
 <p>The daemon's persisted workspace proxies: listeners the daemon owns, rows in
 its database, re-established at every workspace start. (<code>msks forward</code> is the
-ephemeral session — stdio or a client-side bind that dies with the command.)</p>
+ephemeral session — stdio or a client-side bind that dies with the command.)
+<a href="../proxies/">The proxies chapter</a> walks the concept and the usual work; this
+section is the reference.</p>
 <p>Two directions, written the way ssh writes them. <code>listen : target</code>, left to
 right; the flag letter says which side listens:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-31-1"><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a>msks<span class="w"> </span>proxy<span class="w"> </span>add<span class="w"> </span>my-workspace<span class="w"> </span>-L<span class="w"> </span><span class="m">2201</span>:localhost:22
@@ -2527,8 +2555,9 @@ right; the flag letter says which side listens:</p>
 </span><span id="__span-31-9"><a id="__codelineno-31-9" name="__codelineno-31-9" href="#__codelineno-31-9"></a>msks<span class="w"> </span>proxy<span class="w"> </span>add<span class="w"> </span>my-workspace<span class="w"> </span>-R<span class="w"> </span><span class="m">5432</span>:db.internal:5432<span class="w"> </span>--label<span class="w"> </span>db
 </span><span id="__span-31-10"><a id="__codelineno-31-10" name="__codelineno-31-10" href="#__codelineno-31-10"></a><span class="c1"># the gateway's 5432 bridges to db.internal:5432, dialed by the daemon</span>
 </span></code></pre></div>
-<p>Both specs are ssh's own shape, <code>[BIND:]PORT:HOST:PORT</code>, and the host field plays
-the same role it plays in ssh: it names the end that makes the connection. In
+<p>The <code>-L</code> spec is <code>[BIND:]PORT:HOST:PORT</code>; the <code>-R</code> spec is <code>RPORT:HOST:TPORT</code>
+(its bind is the workspace's tap, a runtime fact). The host field plays the
+same role it plays in ssh: it names the end that makes the connection. In
 <code>-L</code> that end is the workspace itself, so the field accepts exactly two
 spellings — <code>localhost</code> or <code>127.0.0.1</code> — and anything else refuses:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>msks: -L's host field names the workspace itself; only localhost or
@@ -2549,9 +2578,12 @@ the guest's traffic through the tap, not the daemon's own connections. A
 remote row therefore reaches its target without a verdict.</p>
 <p><code>add</code> is declarative. Asking twice for the same spec returns the standing
 row. A different spec on the same bind is refused with the row that holds it.
-Creating a proxy on a running workspace opens its listener at once. A proxy
-whose bind fails (the port is taken) records the failure as its status with
-the cause, and every later start retries it. A remote proxy whose firewall
+A forward proxy binds at once, on a stopped workspace too; each connection
+refuses until the guest runs. A remote proxy on a stopped workspace records
+the row, and the workspace's next start brings its listener up. A stop
+closes every listener the workspace owns. A proxy whose bind fails (the
+port is taken) records the failure as its status with the cause, and every
+later start retries it. A remote proxy whose firewall
 swap fails stays unreachable from the guest, and its status carries the cause
 until a later swap lands.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>msks<span class="w"> </span>proxy<span class="w"> </span>ls<span class="w">            </span><span class="c1"># every stored proxy, with live status</span>

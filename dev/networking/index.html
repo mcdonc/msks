@@ -19,7 +19,7 @@
         <link rel="prev" href="../mounts/">
       
       
-        <link rel="next" href="../egress-consent/">
+        <link rel="next" href="../proxies/">
       
       
         
@@ -573,6 +573,32 @@
   
 </nav>
       
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Proxies
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1240,10 +1266,10 @@ image unchanged: its forward is refused at the API with close code 4501
 before any dial, and its console is the virtio-console getty.</p>
 <h3 id="persisted-proxies-the-other-direction-too">Persisted proxies (the other direction too)<a class="headerlink" href="#persisted-proxies-the-other-direction-too" title="Permanent link">&para;</a></h3>
 <p>The forward websocket lives as long as the command holding it. A persisted
-proxy (<code>msks proxy add</code>, issue #807) lives in the daemon's database instead:
-the daemon owns the listener, and every workspace start re-establishes it. A forward proxy binds a port on the daemon's host and
-bridges each connection to the guest through the same dial the forward
-websocket uses. A remote proxy binds a port on the workspace's own tap
+proxy (<code>msks proxy add</code>) lives in the daemon's database instead: the daemon
+owns the listener, and every workspace start re-establishes it. A forward
+proxy binds a port on the daemon's host and bridges each connection to the
+guest through the same dial the forward websocket uses. A remote proxy binds a port on the workspace's own tap
 address: a guest process dials its DHCP gateway on that port, and the
 daemon bridges the connection to a daemon-side service (the ssh <code>-R</code>
 shape).</p>
@@ -1254,8 +1280,10 @@ add or removal swaps the admission in one nft transaction. A bind that
 fails admits nothing, so the rule and the service always agree.</p>
 <p>The daemon dials a remote proxy's target itself, and the consent machinery
 gates the guest's traffic through the tap, not the daemon's own
-connections. A remote row therefore reaches its target without a verdict
-— the one msks connection class the consent chapter does not cover.</p>
+connections. A remote row therefore reaches its target without a verdict:
+the consent chapter covers the guest's connections, and this dial is the
+daemon's own. <a href="../proxies/">The proxies chapter</a> owns the concept and the
+worked examples for both surfaces.</p>
 <h3 id="the-workspace-ssh-identity">The workspace ssh identity<a class="headerlink" href="#the-workspace-ssh-identity" title="Permanent link">&para;</a></h3>
 <p>A workspace created through the client carries the operator's
 key as its ssh identity (issues). <code>identity_file</code> (or

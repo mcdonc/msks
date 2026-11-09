@@ -408,6 +408,32 @@
   
   
     <li class="md-nav__item">
+      <a href="../proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Proxies
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../egress-consent/" class="md-nav__link">
         
   
@@ -1713,6 +1739,11 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>The proxies docs chapter (#814).</strong> <code>docs/proxies.md</code> owns the whole
+  proxies story in one place: the persistent proxy port concept, the
+  <code>-L</code>/<code>-R</code> directions in ssh's grammar, the live status vocabulary, and
+  worked examples for both the CLI and the TUI. The networking, CLI, and
+  TUI chapters link to it where they introduce proxies.</li>
 <li><strong>The TUI's proxies page (#809, part of #807).</strong> Each workspace's
   page opens its own proxies page (the action row, or <code>p</code>), which adds
   and removes that workspace's persisted <code>-L</code>/<code>-R</code> proxies with the
