@@ -461,3 +461,21 @@ async def test_stop_workspace_ends_each_listener(proxies) -> None:
     for port in (one, two):
         with pytest.raises(OSError):
             await exchange(port, b"late\n")
+
+
+async def test_stop_workspace_spares_other_workspaces(proxies) -> None:
+    """The sweep skips another workspace's listener: only the
+    named workspace's rows come down."""
+    manager, model, _net, _queue, _app = proxies
+    mine, theirs = await free_port(), await free_port()
+    await create_forward_row(model, mine)
+    await model.create_proxy(
+        "ws-b", "forward", "127.0.0.1", theirs, None, 22, None
+    )
+    await manager.start_workspace("ws-a", ATTACHMENT)
+    await manager.start_workspace("ws-b", ATTACHMENT)
+    await manager.stop_workspace("ws-a")
+    with pytest.raises(OSError):
+        await exchange(mine, b"late\n")
+    assert await exchange(theirs, b"still here\n") == b"STILL HERE\n"
+    await manager.stop_workspace("ws-b")
