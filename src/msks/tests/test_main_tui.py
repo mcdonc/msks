@@ -4940,10 +4940,10 @@ async def test_every_footer_fits_the_smallest_terminal(monkeypatch) -> None:
         return len(footer.children) == shown and footer.max_scroll_x == 0
 
     async with app.run_test(size=(80, 24)) as pilot:
-        # eleven keys now (#565's Img, #809's Prxy); the settled
-        # footer still scrolls nowhere at 80 columns
+        # ten keys now (#565's Img); the settled footer still
+        # scrolls nowhere at 80 columns
         await wait_for(lambda: footer_settled(app))
-        assert len(app.screen.query_one("Footer").children) == 11
+        assert len(app.screen.query_one("Footer").children) == 10
         # #581's words render, not just fit: the five that
         # shortened are the ones the footer shows.
         labels = {
@@ -4951,7 +4951,7 @@ async def test_every_footer_fits_the_smallest_terminal(monkeypatch) -> None:
             for _, binding, _, _ in app.screen.active_bindings.values()
             if binding.show
         }
-        assert {"Jmp", "Strt", "Stp", "Scrts", "Rload", "Prxy"} <= labels
+        assert {"Jmp", "Strt", "Stp", "Scrts", "Rload"} <= labels
         await open_page(pilot, app)
         await wait_for(lambda: footer_settled(app))  # the page
         await pilot.press("e")

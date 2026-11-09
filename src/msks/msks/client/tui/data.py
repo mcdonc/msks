@@ -369,19 +369,6 @@ class TuiData:
             ssl_ctx=shared_ssl(),
         )
 
-    async def proxies(self) -> list[dict]:
-        """GET every workspace's proxy rows with live status (#807,
-        #809) — the proxies page's daemon-wide listing, the same
-        exchange ``msks proxy ls`` makes."""
-        return await api_call(
-            "GET",
-            env_url(),
-            env_token(),
-            "/api/v1/proxies",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-        )
-
     async def workspace_proxies(self, workspace_id: str) -> list[dict]:
         """GET one workspace's proxy rows with live status (#809) —
         the page's scoped listing and the workspace page's compact

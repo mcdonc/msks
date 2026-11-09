@@ -1026,9 +1026,9 @@ class WorkspaceScreen(Screen):
         self.paint_mounts()
 
     def open_proxies(self) -> None:
-        """Push the proxies page (#809) over this one, scoped to
-        the workspace — the same rows the compact line paints,
-        with the add form and the remove behind it."""
+        """Push the workspace's proxies page (#809) over this one
+        — the same rows the compact line paints, with the add form
+        and the remove behind it."""
         self.app.push_screen(ProxiesScreen(self.row))
 
     def action_proxies_page(self) -> None:

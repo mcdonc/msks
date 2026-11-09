@@ -1,10 +1,11 @@
-"""The tree's proxies surfaces (#809, part #807): the proxies
-page, its add form, and the workspace page's compact proxies line.
+"""The tree's proxies surfaces (#809, part #807): the workspace's
+proxies page, its add form, and the workspace page's compact
+proxies line.
 
 The page rides the same REST surface the ``msks proxy`` commands
-make — every workspace's rows (``GET /api/v1/proxies``) when it
-opens from the workspaces list, one workspace's when it opens from
-the page's action row. Every proxy transition the daemon publishes
+make, scoped to one workspace — its rows are that workspace's
+alone, and it opens from the workspace page (the action row, or
+``p``). Every proxy transition the daemon publishes
 (``proxy.created``, ``proxy.listening``, ``proxy.failed``,
 ``proxy.closed``, ``proxy.removed``) pokes a refresh through a
 plain-subscriber connection beside the standing interval, so a
@@ -13,8 +14,8 @@ keypress.
 
 Spatial navigation: the arrows walk the rows, ``a`` opens the add
 form, ``r`` or Enter removes the focused row behind a
-confirmation, ``q`` or Escape returns to the surface that pushed
-the page — no screen traps focus.
+confirmation, ``q`` or Escape returns to the workspace page — no
+screen traps focus.
 """
 
 import asyncio
@@ -192,27 +193,21 @@ def proxies_line(rows: list[dict], theme_variables=None) -> Content:
 
 #: The proxies page's columns (#809): the header's label and the
 #: column's width, in row order — the workspaces listing's own
-#: shape. The fixed widths hold an 80-column terminal: the
-#: widest spec (``-L 0.0.0.0:2201:localhost:22``) clips its
-#: middle at the SPEC minimum and reads whole on a wider one.
+#: shape. The workspace's own page names the workspace in its
+#: status line, so the rows spend no column on it. The fixed
+#: widths hold an 80-column terminal: the widest spec
+#: (``-L 0.0.0.0:2201:localhost:22``) clips its middle at the
+#: SPEC minimum and reads whole on a wider one.
 PROXY_COLUMNS = (
-    ("WORKSPACE", 12),
-    ("SPEC", 26),
-    ("LABEL", 8),
-    ("STATUS", 16),
+    ("SPEC", 28),
+    ("LABEL", 10),
+    ("STATUS", 18),
 )
 
 #: The columns the page's spare width flows into when the
-#: terminal runs wider than the fixed span: the workspace names
-#: and the specs — the two columns whose content runs long.
-PROXY_GROWING_LABELS = frozenset({"WORKSPACE", "SPEC"})
-
-
-def workspace_cell(row: dict) -> str:
-    """One row's workspace cell: the workspace's id — the proxy
-    rows carry ids the way the CLI's own table reads them (the
-    workspaces' names live on the workspace rows, not here)."""
-    return row.get("workspace_id") or "-"
+#: terminal runs wider than the fixed span: the specs — the one
+#: column whose content runs long.
+PROXY_GROWING_LABELS = frozenset({"SPEC"})
 
 
 def proxy_cells(row: dict, columns=PROXY_COLUMNS) -> tuple[str, ...]:
@@ -220,10 +215,9 @@ def proxy_cells(row: dict, columns=PROXY_COLUMNS) -> tuple[str, ...]:
     to its column whatever the daemon's vocabulary grows."""
     widths = [width for _label, width in columns]
     return (
-        clip(workspace_cell(row), widths[0]),
-        clip(spec_text(row), widths[1]),
-        clip(row.get("label") or "", widths[2]),
-        clip(status_text(row), widths[3]),
+        clip(spec_text(row), widths[0]),
+        clip(row.get("label") or "", widths[1]),
+        clip(status_text(row), widths[2]),
     )
 
 
@@ -235,12 +229,13 @@ def proxy_row_content(
     rule carried to the column). The cells ride a Content's plain
     text, so a markup-carrying label cannot shift the columns."""
     cells = proxy_cells(row, columns)
-    workspace, _spec, _label, status = cells
+    spec, _label, status = cells
     line = COLUMN_GAP.join(
         cell_pad(cell, width)
         for cell, (_label, width) in zip(cells, columns, strict=True)
     ).rstrip()
-    offset = len(cell_pad(workspace, columns[0][1])) + len(COLUMN_GAP)
+    offset = len(cell_pad(spec, columns[0][1])) + len(COLUMN_GAP) * 2
+    offset += len(cell_pad(cells[1], columns[1][1]))
     color = pair_color(row.get("status") or "")
     if color is None:
         return Content(line)
@@ -278,17 +273,15 @@ class ProxyLink(AuditLink):
         return False
 
 
-class ProxyAddScreen(FormWalk, ModalScreen[tuple[str, dict] | None]):
+class ProxyAddScreen(FormWalk, ModalScreen[dict | None]):
     """The add form (#809): the create form's pattern over the
-    proxy's own fields — the workspace (fixed when the page holds
-    a scope, a select seeded from the tree's list otherwise), the
-    direction (ssh's two letters), the spec in the CLI's own
-    grammar, and a label. The spec parses with the CLI's own
-    parser, so a refusal here names itself on the note in the
-    same words the command prints and the daemon never sees a
-    half-parsed body. A body that lands dismisses with the
-    workspace id and the parsed body; the pushing page owns the
-    exchange."""
+    proxy's own fields — the workspace fixed at the page that
+    opened it, the direction (ssh's two letters), the spec in the
+    CLI's own grammar, and a label. The spec parses with the
+    CLI's own parser, so a refusal here names itself on the note
+    in the same words the command prints and the daemon never
+    sees a half-parsed body. A body that lands dismisses with it;
+    the pushing page owns the exchange."""
 
     # The walk's keys: named here, not on FormWalk — Textual
     # merges BINDINGS from DOMNode bases alone (the mixin's
@@ -300,8 +293,8 @@ class ProxyAddScreen(FormWalk, ModalScreen[tuple[str, dict] | None]):
         Binding("q", "cancel", show=False),
     ]
 
-    def __init__(self, scope: dict | None, submitted=None) -> None:
-        super().__init__(submitted or self.no_submit)
+    def __init__(self, scope: dict, submitted) -> None:
+        super().__init__(submitted)
         self.scope = scope
 
     def compose(self) -> ComposeResult:
@@ -310,17 +303,11 @@ class ProxyAddScreen(FormWalk, ModalScreen[tuple[str, dict] | None]):
             with Horizontal(classes="form-row"):
                 yield Static("workspace", classes="form-label")
                 yield Select(
-                    []
-                    if self.scope is None
-                    else [(workspace_label(self.scope), self.scope["id"])],
-                    **(
-                        {}
-                        if self.scope is None
-                        else {"value": self.scope["id"]}
-                    ),
+                    [(workspace_label(self.scope), self.scope["id"])],
+                    value=self.scope["id"],
                     id="field-workspace",
                     compact=True,
-                    disabled=self.scope is not None,
+                    disabled=True,
                 )
             with Horizontal(classes="form-row"):
                 yield Static("direction", classes="form-label")
@@ -356,45 +343,17 @@ class ProxyAddScreen(FormWalk, ModalScreen[tuple[str, dict] | None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        if self.scope is not None:
-            self.query_one("#field-spec", Input).focus()
-            return
-        self.query_one("#field-workspace", Select).focus()
-        self.run_worker(self.load_workspaces, exclusive=True)
-
-    async def load_workspaces(self) -> None:
-        """Seed the workspace select from the tree's own list —
-        the mint form's rule; a refusal names itself on the note
-        and the form stands (the scope-free form cannot submit
-        without a pick either way)."""
-        try:
-            rows = await self.app.data.workspaces()
-        except (Exception, SystemExit) as exc:
-            self.note(f"workspace list failed: {flash_safe(str(exc))}")
-            return
-        self.query_one("#field-workspace", Select).set_options(
-            [(workspace_label(row), row["id"]) for row in rows]
-        )
+        self.query_one("#field-spec", Input).focus()
 
     def note(self, text: str) -> None:
         """The form's note line: its standing rule, or the local
         refusal that keeps a half-parsed body home."""
         self.query_one("#form-note", Static).update(text)
 
-    def workspace_value(self) -> str | None:
-        """The picked workspace's id — None while the select holds
-        no pick (a listing still loading, a refusal)."""
-        select = self.query_one("#field-workspace", Select)
-        return None if select.is_blank() else str(select.value)
-
     def submit(self) -> None:
         """Hand the parsed body to the callback, or keep the form
         on a local refusal — the CLI's own parser and its words
         (the ``msks: `` prefix aside, the note owns the line)."""
-        workspace = self.workspace_value()
-        if workspace is None:
-            self.note("pick a workspace first")
-            return
         raw = self.query_one("#field-spec", Input).value.strip()
         if not raw:
             self.note("the spec is the form's one required field")
@@ -408,7 +367,7 @@ class ProxyAddScreen(FormWalk, ModalScreen[tuple[str, dict] | None]):
         label = self.query_one("#field-proxy-label", Input).value.strip()
         if label:
             body["label"] = label
-        self.dismiss_with((workspace, body))
+        self.dismiss_with(body)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "do-add":
@@ -425,22 +384,17 @@ class ProxyAddScreen(FormWalk, ModalScreen[tuple[str, dict] | None]):
         # mid-await.
         self._task = asyncio.create_task(self.submitted(answer))
 
-    async def no_submit(self, answer) -> None:
-        """The no-callback default — the tests construct the form
-        bare, and a submitted body lands nowhere."""
-
 
 class ProxiesScreen(Screen):
-    """The proxies page (#809, part #807): the daemon's proxy rows
-    with their live status — every workspace's when it opens from
-    the workspaces list (``p``), one workspace's when it opens
-    from the workspace page's action row. ``a`` opens the add
-    form, ``r`` or Enter removes the focused row behind a
-    confirmation; every proxy transition the daemon publishes
-    pokes a refresh beside the standing interval, so a bind that
-    fails while the page stands paints itself without a keypress.
-    Arrows walk the rows; ``q`` or Escape returns to the surface
-    that pushed the page — no trap."""
+    """One workspace's proxies page (#809, part #807): the
+    workspace's proxy rows with their live status, opened from
+    its page (the action row, or ``p``). ``a`` opens the add form,
+    ``r`` or Enter removes the focused row behind a confirmation;
+    every proxy transition the daemon publishes pokes a refresh
+    beside the standing interval, so a bind that fails while the
+    page stands paints itself without a keypress. Arrows walk the
+    rows; ``q`` or Escape returns to the workspace page — no
+    trap."""
 
     BINDINGS = [
         Binding("a", "add", "Add"),
@@ -450,7 +404,7 @@ class ProxiesScreen(Screen):
         Binding("escape", "back", "Back", show=False),
     ]
 
-    def __init__(self, workspace: dict | None = None) -> None:
+    def __init__(self, workspace: dict) -> None:
         super().__init__()
         self.workspace = workspace
         self.rows: list[dict] = []
@@ -550,12 +504,7 @@ class ProxiesScreen(Screen):
 
     async def load_rows(self) -> None:
         try:
-            if self.workspace is not None:
-                rows = await self.app.data.workspace_proxies(
-                    self.workspace["id"]
-                )
-            else:
-                rows = await self.app.data.proxies()
+            rows = await self.app.data.workspace_proxies(self.workspace["id"])
         except (Exception, SystemExit) as exc:
             self.flash(f"listing failed: {flash_safe(str(exc))}")
         else:
@@ -614,11 +563,7 @@ class ProxiesScreen(Screen):
         a crash."""
         try:
             count = len(self.rows)
-            scope = (
-                "every workspace"
-                if self.workspace is None
-                else workspace_label(self.workspace)
-            )
+            scope = workspace_label(self.workspace)
             head = f" {count} prox{'y' if count == 1 else 'ies'} · {scope}"
             self.query_one("#proxy-status", Static).update(
                 self.flash_line.text(Content(head))
@@ -666,21 +611,21 @@ class ProxiesScreen(Screen):
         )
 
     def action_add(self) -> None:
-        """``a``: the add form over the page, scoped when the page
-        holds a scope — the form's own callback runs the exchange
+        """``a``: the add form over the page, the workspace fixed
+        to the page's own — the form's callback runs the exchange
         (async, the mint form's rule)."""
         self.app.push_screen(ProxyAddScreen(self.workspace, self.added))
 
-    async def added(self, answer) -> None:
+    async def added(self, body: dict | None) -> None:
         """The add form's callback: a body lands through the data
         seam — the daemon owns every gate (a squatted bind names
         its holder) — and the outcome names the row the way the
         CLI's own output does; a cancel decides nothing."""
-        if answer is None:
+        if body is None:
             return
-        workspace, body = answer
         row = await self.guarded(
-            "add", self.app.data.create_proxy(workspace, body)
+            "add",
+            self.app.data.create_proxy(self.workspace["id"], body),
         )
         if row is not None:
             self.flash(f"added {flash_safe(spec_text(row))}")

@@ -17,8 +17,7 @@ my-workspace` opens that workspace's page directly.
 The tree is rooted at the **workspaces list**: one row per workspace,
 newest first. The CREATED column's arrow shows the sort direction. The
 list's keys: `c` creates a workspace, `s` starts it, `S` stops it, `D`
-removes it (after a confirmation), `e` opens the secrets page, `p` opens
-the proxies page, and `r`
+removes it (after a confirmation), `e` opens the secrets page, and `r`
 refreshes. `/` jumps to the first workspace whose name starts with what
 you type. Enter opens the workspace's page.
 
@@ -149,26 +148,24 @@ mount`](cli.md#msks-mount) uses the same route.
 
 ### The proxies page
 
-The **proxies page** manages the daemon's persisted workspace proxies
-([the networking chapter](networking.md) describes what a proxy is).
-From the workspaces list, `p` opens it with every workspace's rows; from
-a workspace's page, the action row or `p` opens it scoped to that
-workspace. The rows carry the workspace, the spec in the CLI's own
-grammar (`-L 2201:localhost:22`), the label, and the live status — a
-row the guest cannot reach names its reason beside the word.
+Each workspace owns its **proxies page**: the workspace's page opens it
+with its action row or `p`. The page manages that workspace's
+persisted proxies ([the networking chapter](networking.md) describes
+what a proxy is) and no other's. The rows carry the spec in the CLI's
+own grammar (`-L 2201:localhost:22`), the label, and the live status —
+a row the guest cannot reach names its reason beside the word.
 
 The page re-reads the listing every five seconds and on every proxy
 transition the daemon publishes, so a bind that fails while the page
 stands paints itself without a keypress.
 
-`a` opens the add form: the workspace (fixed when the page holds a
-scope, a select otherwise), the direction (`-L` or `-R`), the spec in
-the same grammar `msks proxy add` reads, and a label. A spec the CLI's
-own parser refuses keeps the form standing with the rule on its note
-line — a `-L` spec naming a host besides the workspace itself says so
-and points at `-R`. `r` or Enter removes the focused row after a
-confirmation; the listener closes at once. `q` or Escape returns to
-the screen that opened the page.
+`a` opens the add form: the workspace (the page's own, shown fixed),
+the direction (`-L` or `-R`), the spec in the same grammar `msks proxy
+add` reads, and a label. A spec the CLI's own parser refuses keeps the
+form standing with the rule on its note line — a `-L` spec naming a
+host besides the workspace itself says so and points at `-R`. `r` or
+Enter removes the focused row after a confirmation; the listener
+closes at once. `q` or Escape returns to the workspace page.
 
 ### The images page
 
