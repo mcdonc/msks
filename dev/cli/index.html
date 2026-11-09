@@ -882,6 +882,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#msks-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>msks proxy</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#msks-egress" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1443,6 +1454,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         <code>msks forward</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#msks-proxy" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>msks proxy</code>
       </span>
     </span>
   </a>
@@ -2488,27 +2510,79 @@ and a curl, two ssh sessions) are independent sessions. Refusals print one
 line (the daemon's close codes give the cause: no NIC, not running, service
 not listening, still booting), while a clean end of stream (the guest
 service closed, stdin EOF) leaves exit code 0.</p>
+<h2 id="msks-proxy"><code>msks proxy</code><a class="headerlink" href="#msks-proxy" title="Permanent link">&para;</a></h2>
+<p>The daemon's persisted workspace proxies: listeners the daemon owns, rows in
+its database, re-established at every workspace start. (<code>msks forward</code> is the
+ephemeral session — stdio or a client-side bind that dies with the command.)</p>
+<p>Two directions, written the way ssh writes them. <code>listen : target</code>, left to
+right; the flag letter says which side listens:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-31-1"><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a>msks<span class="w"> </span>proxy<span class="w"> </span>add<span class="w"> </span>my-workspace<span class="w"> </span>-L<span class="w"> </span><span class="m">2201</span>:localhost:22
+</span><span id="__span-31-2"><a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a><span class="c1"># the daemon binds 127.0.0.1:2201 on its own host and bridges every</span>
+</span><span id="__span-31-3"><a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a><span class="c1"># connection to the workspace's port 22</span>
+</span><span id="__span-31-4"><a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a>msks<span class="w"> </span>proxy<span class="w"> </span>add<span class="w"> </span>my-workspace<span class="w"> </span>-L<span class="w"> </span><span class="m">0</span>.0.0.0:2201:localhost:22
+</span><span id="__span-31-5"><a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a><span class="c1"># same, listening on every interface of the daemon's host</span>
+</span><span id="__span-31-6"><a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a>msks<span class="w"> </span>proxy<span class="w"> </span>add<span class="w"> </span>my-workspace<span class="w"> </span>-R<span class="w"> </span><span class="m">9200</span>:localhost:9200
+</span><span id="__span-31-7"><a id="__codelineno-31-7" name="__codelineno-31-7" href="#__codelineno-31-7"></a><span class="c1"># reverse: the workspace's gateway listens on 9200, and every guest</span>
+</span><span id="__span-31-8"><a id="__codelineno-31-8" name="__codelineno-31-8" href="#__codelineno-31-8"></a><span class="c1"># connection bridges to port 9200 on the daemon's host</span>
+</span><span id="__span-31-9"><a id="__codelineno-31-9" name="__codelineno-31-9" href="#__codelineno-31-9"></a>msks<span class="w"> </span>proxy<span class="w"> </span>add<span class="w"> </span>my-workspace<span class="w"> </span>-R<span class="w"> </span><span class="m">5432</span>:db.internal:5432<span class="w"> </span>--label<span class="w"> </span>db
+</span><span id="__span-31-10"><a id="__codelineno-31-10" name="__codelineno-31-10" href="#__codelineno-31-10"></a><span class="c1"># the gateway's 5432 bridges to db.internal:5432, dialed by the daemon</span>
+</span></code></pre></div>
+<p>Both specs are ssh's own shape, <code>[BIND:]PORT:HOST:PORT</code>, and the host field plays
+the same role it plays in ssh: it names the end that makes the connection. In
+<code>-L</code> that end is the workspace itself, so the field accepts exactly two
+spellings — <code>localhost</code> or <code>127.0.0.1</code> — and anything else refuses:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>msks: -L's host field names the workspace itself; only localhost or
+</span><span id="__span-32-2"><a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>127.0.0.1 is allowed — to reach a daemon-side service, use -R
+</span></code></pre></div>
+<p>The workspace cannot dial out on a forward's behalf (no agent runs inside it),
+so a forward always lands on the workspace itself. Reaching a daemon-side
+service is the <code>-R</code> direction.</p>
+<p>A remote proxy is the reverse of a forward one. The guest dials its DHCP
+gateway address on the listen port. That is the same address its DNS resolver
+answers on; <code>ip route show default</code> inside the workspace prints it. The daemon
+bridges the connection to the daemon-side service the spec names. With the
+example stored, <code>curl http://$(ip route show default | awk '{print $3}'):9200</code>
+inside the workspace reaches the host service. A workspace created without
+egress holds no proxies: its row has no NIC to reach.</p>
+<p>The daemon dials a remote proxy's target itself. The consent machinery gates
+the guest's traffic through the tap, not the daemon's own connections. A
+remote row therefore reaches its target without a verdict.</p>
+<p><code>add</code> is declarative. Asking twice for the same spec returns the standing
+row. A different spec on the same bind is refused with the row that holds it.
+Creating a proxy on a running workspace opens its listener at once. A proxy
+whose bind fails (the port is taken) records the failure as its status with
+the cause, and every later start retries it. A remote proxy whose firewall
+swap fails stays unreachable from the guest, and its status carries the cause
+until a later swap lands.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>msks<span class="w"> </span>proxy<span class="w"> </span>ls<span class="w">            </span><span class="c1"># every stored proxy, with live status</span>
+</span><span id="__span-33-2"><a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>msks<span class="w"> </span>proxy<span class="w"> </span>ls<span class="w"> </span>--json<span class="w">     </span><span class="c1"># the same rows as JSON</span>
+</span><span id="__span-33-3"><a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a>msks<span class="w"> </span>proxy<span class="w"> </span>rm<span class="w"> </span>my-workspace<span class="w"> </span><span class="m">3</span><span class="w">   </span><span class="c1"># remove one (listener closes at once)</span>
+</span></code></pre></div>
+<p>The listing shows each row's direction, listen and target endpoints, and live
+status (<code>listening</code>, <code>stopped</code>, <code>failed</code> with the cause). Removing a proxy
+closes its listener when one serves and drops the row from the daemon's
+database.</p>
 <h2 id="msks-egress"><code>msks egress</code><a class="headerlink" href="#msks-egress" title="Permanent link">&para;</a></h2>
 <p>Decide, watch, and inspect a workspace's outbound-destination egress consent
 verdicts. A workspace in <code>interactive</code> mode holds each new outbound
 connection's first packet until a decider allows or denies it. <code>static</code>
 workspaces allow only their create-time allowlist. <code>allow</code> workspaces (the
 create default) record off-list destinations and pass them.</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-31-1"><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a>msks egress rules ws-dev          # the mode, allowlist, and in-effect verdicts
-</span><span id="__span-31-2"><a id="__codelineno-31-2" name="__codelineno-31-2" href="#__codelineno-31-2"></a>msks egress requests ws-dev       # the consent rows (audit trail), newest first
-</span><span id="__span-31-3"><a id="__codelineno-31-3" name="__codelineno-31-3" href="#__codelineno-31-3"></a>msks egress requests ws-dev --decision pending
-</span><span id="__span-31-4"><a id="__codelineno-31-4" name="__codelineno-31-4" href="#__codelineno-31-4"></a>msks egress decide ws-dev &lt;request-id&gt; allow --duration 5m
-</span><span id="__span-31-5"><a id="__codelineno-31-5" name="__codelineno-31-5" href="#__codelineno-31-5"></a>msks egress decide ws-dev &lt;request-id&gt; deny --duration forever
-</span><span id="__span-31-6"><a id="__codelineno-31-6" name="__codelineno-31-6" href="#__codelineno-31-6"></a>msks egress revoke ws-dev &lt;request-id&gt;
-</span><span id="__span-31-7"><a id="__codelineno-31-7" name="__codelineno-31-7" href="#__codelineno-31-7"></a>msks egress mode ws-dev interactive          # switch the posture;
-</span><span id="__span-31-8"><a id="__codelineno-31-8" name="__codelineno-31-8" href="#__codelineno-31-8"></a>msks egress mode ws-dev static --allow .debian.org   # --allow replaces
-</span><span id="__span-31-9"><a id="__codelineno-31-9" name="__codelineno-31-9" href="#__codelineno-31-9"></a>msks egress mode ws-dev static --offline     # ... the allowlist (--offline
-</span><span id="__span-31-10"><a id="__codelineno-31-10" name="__codelineno-31-10" href="#__codelineno-31-10"></a>                                              # confirms an empty static)
-</span><span id="__span-31-11"><a id="__codelineno-31-11" name="__codelineno-31-11" href="#__codelineno-31-11"></a>msks egress watch ws-dev          # stream frames; registers this client as
-</span><span id="__span-31-12"><a id="__codelineno-31-12" name="__codelineno-31-12" href="#__codelineno-31-12"></a>                                  # a decider (holds wait only while one is
-</span><span id="__span-31-13"><a id="__codelineno-31-13" name="__codelineno-31-13" href="#__codelineno-31-13"></a>                                  # connected)
-</span><span id="__span-31-14"><a id="__codelineno-31-14" name="__codelineno-31-14" href="#__codelineno-31-14"></a>msks egress watch ws-dev --decide --duration forever
-</span><span id="__span-31-15"><a id="__codelineno-31-15" name="__codelineno-31-15" href="#__codelineno-31-15"></a>                                  # the same, prompting y/n per request
+<div class="language-text highlight"><pre><span></span><code><span id="__span-34-1"><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>msks egress rules ws-dev          # the mode, allowlist, and in-effect verdicts
+</span><span id="__span-34-2"><a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>msks egress requests ws-dev       # the consent rows (audit trail), newest first
+</span><span id="__span-34-3"><a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a>msks egress requests ws-dev --decision pending
+</span><span id="__span-34-4"><a id="__codelineno-34-4" name="__codelineno-34-4" href="#__codelineno-34-4"></a>msks egress decide ws-dev &lt;request-id&gt; allow --duration 5m
+</span><span id="__span-34-5"><a id="__codelineno-34-5" name="__codelineno-34-5" href="#__codelineno-34-5"></a>msks egress decide ws-dev &lt;request-id&gt; deny --duration forever
+</span><span id="__span-34-6"><a id="__codelineno-34-6" name="__codelineno-34-6" href="#__codelineno-34-6"></a>msks egress revoke ws-dev &lt;request-id&gt;
+</span><span id="__span-34-7"><a id="__codelineno-34-7" name="__codelineno-34-7" href="#__codelineno-34-7"></a>msks egress mode ws-dev interactive          # switch the posture;
+</span><span id="__span-34-8"><a id="__codelineno-34-8" name="__codelineno-34-8" href="#__codelineno-34-8"></a>msks egress mode ws-dev static --allow .debian.org   # --allow replaces
+</span><span id="__span-34-9"><a id="__codelineno-34-9" name="__codelineno-34-9" href="#__codelineno-34-9"></a>msks egress mode ws-dev static --offline     # ... the allowlist (--offline
+</span><span id="__span-34-10"><a id="__codelineno-34-10" name="__codelineno-34-10" href="#__codelineno-34-10"></a>                                              # confirms an empty static)
+</span><span id="__span-34-11"><a id="__codelineno-34-11" name="__codelineno-34-11" href="#__codelineno-34-11"></a>msks egress watch ws-dev          # stream frames; registers this client as
+</span><span id="__span-34-12"><a id="__codelineno-34-12" name="__codelineno-34-12" href="#__codelineno-34-12"></a>                                  # a decider (holds wait only while one is
+</span><span id="__span-34-13"><a id="__codelineno-34-13" name="__codelineno-34-13" href="#__codelineno-34-13"></a>                                  # connected)
+</span><span id="__span-34-14"><a id="__codelineno-34-14" name="__codelineno-34-14" href="#__codelineno-34-14"></a>msks egress watch ws-dev --decide --duration forever
+</span><span id="__span-34-15"><a id="__codelineno-34-15" name="__codelineno-34-15" href="#__codelineno-34-15"></a>                                  # the same, prompting y/n per request
 </span></code></pre></div>
 <p><code>decide</code> and <code>revoke</code> identify the request by the id <code>watch</code> and <code>requests</code>
 print (the full id, copy-pasteable). Both act only on the given workspace's
@@ -2545,17 +2619,17 @@ creates carries the public half its create sent, the operator's key, whose line
 the guest's first boot planted into <code>authorized_keys</code> for root and the
 workspace's login user. The fetch takes the same
 <code>MSKSC_URL</code>/<code>MSKSC_TOKEN</code>/<code>MSKSC_CAFILE</code> environment as every other command:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-32-1"><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a>msks<span class="w"> </span>key<span class="w"> </span>my-workspace<span class="w">                    </span><span class="c1"># the public authorized_keys line</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-35-1"><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a>msks<span class="w"> </span>key<span class="w"> </span>my-workspace<span class="w">                    </span><span class="c1"># the public authorized_keys line</span>
 </span></code></pre></div>
 <p>The command is public-only: the private half is the operator's own key, and
 it never crossed the API to begin with. It lives wherever <code>identity_file</code>
 points, or in the agent that holds it.</p>
 <h2 id="msks-ssh"><code>msks ssh</code><a class="headerlink" href="#msks-ssh" title="Permanent link">&para;</a></h2>
 <p>Use <code>ssh</code> to access a workspace, using a forward.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w">              </span><span class="c1"># as the workspace's login user</span>
-</span><span id="__span-33-2"><a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-l<span class="w"> </span>root<span class="w">   </span><span class="c1"># the recovery login</span>
-</span><span id="__span-33-3"><a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-A<span class="w">        </span><span class="c1"># forward your agent ($SSH_AUTH_SOCK)</span>
-</span><span id="__span-33-4"><a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-L<span class="w"> </span><span class="m">8080</span>:localhost:80
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-36-1"><a id="__codelineno-36-1" name="__codelineno-36-1" href="#__codelineno-36-1"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w">              </span><span class="c1"># as the workspace's login user</span>
+</span><span id="__span-36-2"><a id="__codelineno-36-2" name="__codelineno-36-2" href="#__codelineno-36-2"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-l<span class="w"> </span>root<span class="w">   </span><span class="c1"># the recovery login</span>
+</span><span id="__span-36-3"><a id="__codelineno-36-3" name="__codelineno-36-3" href="#__codelineno-36-3"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-A<span class="w">        </span><span class="c1"># forward your agent ($SSH_AUTH_SOCK)</span>
+</span><span id="__span-36-4"><a id="__codelineno-36-4" name="__codelineno-36-4" href="#__codelineno-36-4"></a>msks<span class="w"> </span>ssh<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-L<span class="w"> </span><span class="m">8080</span>:localhost:80
 </span></code></pre></div>
 <p>Options you pass here win for the invocation. The config file's
 <code>ssh_options</code> key remembers a set for every session instead. See <a href="#ssh_options">its
@@ -2667,9 +2741,9 @@ configuration that hides all of this.</p>
 identity staged in memory: one command does the whole setup
 itself. The workspace boots when needed, the identity stages in
 memory, and the copy opens its own forward:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-34-1"><a id="__codelineno-34-1" name="__codelineno-34-1" href="#__codelineno-34-1"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-av<span class="w"> </span>./site/<span class="w"> </span>root@:/root/site/<span class="w">    </span><span class="c1"># push</span>
-</span><span id="__span-34-2"><a id="__codelineno-34-2" name="__codelineno-34-2" href="#__codelineno-34-2"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-av<span class="w"> </span>root@:/root/out.tar<span class="w"> </span>./out.tar<span class="w">  </span><span class="c1"># pull</span>
-</span><span id="__span-34-3"><a id="__codelineno-34-3" name="__codelineno-34-3" href="#__codelineno-34-3"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-aP<span class="w"> </span>./src/<span class="w"> </span>:src/<span class="w">         </span><span class="c1"># as the login user</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-37-1"><a id="__codelineno-37-1" name="__codelineno-37-1" href="#__codelineno-37-1"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-av<span class="w"> </span>./site/<span class="w"> </span>root@:/root/site/<span class="w">    </span><span class="c1"># push</span>
+</span><span id="__span-37-2"><a id="__codelineno-37-2" name="__codelineno-37-2" href="#__codelineno-37-2"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-av<span class="w"> </span>root@:/root/out.tar<span class="w"> </span>./out.tar<span class="w">  </span><span class="c1"># pull</span>
+</span><span id="__span-37-3"><a id="__codelineno-37-3" name="__codelineno-37-3" href="#__codelineno-37-3"></a>msks<span class="w"> </span>rsync<span class="w"> </span>my-workspace<span class="w"> </span>--<span class="w"> </span>-aP<span class="w"> </span>./src/<span class="w"> </span>:src/<span class="w">         </span><span class="c1"># as the login user</span>
 </span></code></pre></div>
 <p>Everything after the workspace id (the <code>--</code> is optional) is given to rsync.
 msks parses no rsync flags. The one shaping pass is the empty host: a path
@@ -2716,11 +2790,11 @@ prerequisites are <code>ssh</code> and <code>rsync</code>. The exit code is rsyn
 <h2 id="errors-exit-codes-and-timeouts">Errors, exit codes, and timeouts<a class="headerlink" href="#errors-exit-codes-and-timeouts" title="Permanent link">&para;</a></h2>
 <p>Every command fails with one readable line on stderr and exit
 code 1, never a traceback:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-35-1"><a id="__codelineno-35-1" name="__codelineno-35-1" href="#__codelineno-35-1"></a>msks: set MSKSC_TOKEN to a daemon token (MSKSC_URL for a non-default daemon)
-</span><span id="__span-35-2"><a id="__codelineno-35-2" name="__codelineno-35-2" href="#__codelineno-35-2"></a>msks: cannot reach https://192.168.77.2:8660: [Errno 113] ...
-</span><span id="__span-35-3"><a id="__codelineno-35-3" name="__codelineno-35-3" href="#__codelineno-35-3"></a>msks: 401: invalid or revoked token
-</span><span id="__span-35-4"><a id="__codelineno-35-4" name="__codelineno-35-4" href="#__codelineno-35-4"></a>msks: 409: workspace exists
-</span><span id="__span-35-5"><a id="__codelineno-35-5" name="__codelineno-35-5" href="#__codelineno-35-5"></a>msks: 422: body.id: String should match pattern '^[a-z0-9][a-z0-9-]*$'
+<div class="language-text highlight"><pre><span></span><code><span id="__span-38-1"><a id="__codelineno-38-1" name="__codelineno-38-1" href="#__codelineno-38-1"></a>msks: set MSKSC_TOKEN to a daemon token (MSKSC_URL for a non-default daemon)
+</span><span id="__span-38-2"><a id="__codelineno-38-2" name="__codelineno-38-2" href="#__codelineno-38-2"></a>msks: cannot reach https://192.168.77.2:8660: [Errno 113] ...
+</span><span id="__span-38-3"><a id="__codelineno-38-3" name="__codelineno-38-3" href="#__codelineno-38-3"></a>msks: 401: invalid or revoked token
+</span><span id="__span-38-4"><a id="__codelineno-38-4" name="__codelineno-38-4" href="#__codelineno-38-4"></a>msks: 409: workspace exists
+</span><span id="__span-38-5"><a id="__codelineno-38-5" name="__codelineno-38-5" href="#__codelineno-38-5"></a>msks: 422: body.id: String should match pattern '^[a-z0-9][a-z0-9-]*$'
 </span></code></pre></div>
 <p>The status lines carry the daemon's <code>detail</code> field verbatim. A
 validation failure (422) reports each problem as <code>field:
