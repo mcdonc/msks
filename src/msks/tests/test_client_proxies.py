@@ -28,37 +28,50 @@ def client_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_local_spec_forms() -> None:
-    # Two fields: loopback bind and the guest port. Three: a named
-    # bind address, an IPv6 one bracketed.
-    assert px.parse_local_spec("2201:22") == {
+    # ssh's own literal shape: PORT:HOST:PORT with HOST naming the
+    # workspace itself, either spelling; a leading bind address,
+    # IPv6 bracketed.
+    assert px.parse_local_spec("2201:localhost:22") == {
         "direction": "forward",
         "listen_port": 2201,
         "target_port": 22,
     }
-    assert px.parse_local_spec("0.0.0.0:2201:22") == {
+    assert px.parse_local_spec("2201:127.0.0.1:22") == {
+        "direction": "forward",
+        "listen_port": 2201,
+        "target_port": 22,
+    }
+    assert px.parse_local_spec("0.0.0.0:2201:localhost:22") == {
         "direction": "forward",
         "listen_host": "0.0.0.0",
         "listen_port": 2201,
         "target_port": 22,
     }
-    assert px.parse_local_spec("[::1]:2201:22") == {
+    assert px.parse_local_spec("[::1]:2201:localhost:22") == {
         "direction": "forward",
         "listen_host": "::1",
         "listen_port": 2201,
         "target_port": 22,
     }
+    # A host the workspace cannot name refuses with the rule and
+    # the direction that serves it.
+    with pytest.raises(SystemExit, match="use -R"):
+        px.parse_local_spec("2201:db.internal:22")
+    # The shorthand is gone: the host field is part of the shape.
+    with pytest.raises(SystemExit):
+        px.parse_local_spec("2201:22")
     with pytest.raises(SystemExit):
         px.parse_local_spec("2201")
     with pytest.raises(SystemExit):
-        px.parse_local_spec("[::1]:2201")
+        px.parse_local_spec("[::1]:2201:localhost")
     with pytest.raises(SystemExit):
-        px.parse_local_spec("[::1:2201:22")
+        px.parse_local_spec("[::1:2201:localhost:22")
     with pytest.raises(SystemExit):
-        px.parse_local_spec("::1:2201:22")
+        px.parse_local_spec("::1:2201:localhost:22")
     with pytest.raises(SystemExit):
-        px.parse_local_spec("abc:22")
+        px.parse_local_spec("abc:localhost:22")
     with pytest.raises(SystemExit):
-        px.parse_local_spec("2201:0")
+        px.parse_local_spec("2201:localhost:0")
 
 
 def test_remote_spec_forms() -> None:
@@ -115,7 +128,7 @@ def test_add_posts_the_spec_on_the_workspace_route(
         return httpx.Response(200, json=ROW)
 
     rc = cli.main(
-        ["proxy", "add", "alpha", "-L", "2201:22", "--label", "ssh"],
+        ["proxy", "add", "alpha", "-L", "2201:localhost:22", "--label", "ssh"],
         transport=httpx.MockTransport(handler),
     )
     assert rc == 0
@@ -171,7 +184,15 @@ def test_add_refuses_zero_and_both_directions(
     assert cli.main(["proxy", "add", "alpha"], transport=transport) == 2
     assert (
         cli.main(
-            ["proxy", "add", "alpha", "-L", "2201:22", "-R", "9200:h:9200"],
+            [
+                "proxy",
+                "add",
+                "alpha",
+                "-L",
+                "2201:localhost:22",
+                "-R",
+                "9200:h:9200",
+            ],
             transport=transport,
         )
         == 2

@@ -1043,10 +1043,10 @@ Two directions, written the way ssh writes them. `listen : target`, left to
 right; the flag letter says which side listens:
 
 ```bash
-msks proxy add my-workspace -L 2201:22
+msks proxy add my-workspace -L 2201:localhost:22
 # the daemon binds 127.0.0.1:2201 on its own host and bridges every
 # connection to the workspace's port 22
-msks proxy add my-workspace -L 0.0.0.0:2201:22
+msks proxy add my-workspace -L 0.0.0.0:2201:localhost:22
 # same, listening on every interface of the daemon's host
 msks proxy add my-workspace -R 9200:localhost:9200
 # reverse: the workspace's gateway listens on 9200, and every guest
@@ -1054,6 +1054,20 @@ msks proxy add my-workspace -R 9200:localhost:9200
 msks proxy add my-workspace -R 5432:db.internal:5432 --label db
 # the gateway's 5432 bridges to db.internal:5432, dialed by the daemon
 ```
+
+Both specs are ssh's own shape, `[BIND:]PORT:HOST:PORT`, and the host field plays
+the same role it plays in ssh: it names the end that makes the connection. In
+`-L` that end is the workspace itself, so the field accepts exactly two
+spellings — `localhost` or `127.0.0.1` — and anything else refuses:
+
+```text
+msks: -L's host field names the workspace itself; only localhost or
+127.0.0.1 is allowed — to reach a daemon-side service, use -R
+```
+
+The workspace cannot dial out on a forward's behalf (no agent runs inside it),
+so a forward always lands on the workspace itself. Reaching a daemon-side
+service is the `-R` direction.
 
 A remote proxy is the reverse of a forward one. The guest dials its DHCP
 gateway address on the listen port. That is the same address its DNS resolver

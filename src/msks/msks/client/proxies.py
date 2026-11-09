@@ -5,10 +5,14 @@ A proxy row is one listener the daemon holds for a workspace. Two
 directions, named with ssh's letters and ssh's spec grammar
 (``listen : target``, left to right):
 
-- ``-L [BIND:]PORT:GUESTPORT`` (the ssh ``-L`` shape): the daemon
+- ``-L [BIND:]PORT:HOST:PORT`` (ssh's own shape): the daemon
   binds ``PORT`` (loopback, or ``BIND`` — every interface with
   ``0.0.0.0``) on its own host, and every accepted connection
-  bridges to the workspace's ``GUESTPORT``.
+  bridges to the workspace's port. ``HOST`` names the workspace
+  itself, the far end — exactly the role it plays in ssh's
+  ``-L`` — and admits two spellings: ``localhost`` and
+  ``127.0.0.1``. Anything else refuses; a daemon-side service is
+  the ``-R`` direction's job.
 - ``RPORT:HOST:TPORT`` (the ssh ``-R`` shape): the workspace's
   gateway listens on ``RPORT``, and every guest connection bridges
   to the daemon-side service ``HOST:TPORT``.
@@ -58,32 +62,63 @@ def split_leading_host(raw: str, flag: str) -> tuple[str | None, str]:
     return raw[1:end], raw[end + 2 :]
 
 
-LOCAL_FORM = "-L wants [BIND:]PORT:GUESTPORT (an IPv6 bind arrives bracketed)"
+LOCAL_FORM = (
+    "-L wants [BIND:]PORT:HOST:PORT with HOST localhost "
+    "(an IPv6 bind arrives bracketed)"
+)
+
+#: The spellings the -L host field admits. Both name the same
+#: endpoint — the workspace itself, the far end of the tunnel —
+#: the way ssh's -L target names the far end.
+LOCAL_HOSTS = ("localhost", "127.0.0.1")
+
+LOCAL_HOST_RULE = (
+    "-L's host field names the workspace itself; only localhost "
+    "or 127.0.0.1 is allowed — to reach a daemon-side service, "
+    "use -R"
+)
+
+
+def local_host(raw: str) -> None:
+    """The -L spec's host field: the workspace itself, spelled
+    either way. Anything else is the ask ssh would send to the
+    far end's dialer — the workspace has none — so it refuses
+    with the rule and the direction that serves it."""
+    if raw not in LOCAL_HOSTS:
+        raise SystemExit(f"msks: {LOCAL_HOST_RULE} (got {raw!r})")
 
 
 def local_fields(rest: str) -> tuple:
     """(bind, listen, guest) for a spec with no bracketed lead:
-    two fields bind loopback, three name the address."""
+    three fields are PORT:HOST:PORT, four name the bind address
+    first."""
     fields = rest.split(":")
-    if len(fields) == 2:
-        return None, fields[0], fields[1]
     if len(fields) == 3:
-        return fields[0], fields[1], fields[2]
+        listen, host, guest = fields
+        local_host(host)
+        return None, listen, guest
+    if len(fields) == 4:
+        bind, listen, host, guest = fields
+        local_host(host)
+        return bind, listen, guest
     raise SystemExit(f"msks: {LOCAL_FORM}, got {rest!r}")
 
 
 def bracketed_local(host: str, rest: str) -> tuple:
     """(bind, listen, guest) for a spec whose lead is bracketed:
-    the host is the bind, the rest is PORT:GUESTPORT."""
+    the host is the bind, the rest is PORT:HOST:PORT."""
     fields = rest.split(":")
-    if len(fields) != 2:
+    if len(fields) != 3:
         raise SystemExit(f"msks: {LOCAL_FORM}, got {host!r}:{rest}")
-    return host, fields[0], fields[1]
+    listen, target, guest = fields
+    local_host(target)
+    return host, listen, guest
 
 
 def parse_local_spec(raw: str) -> dict:
-    """``-L [BIND:]PORT:GUESTPORT``: the daemon-side listener and
-    the guest port it reaches."""
+    """``-L [BIND:]PORT:HOST:PORT`` — ssh's own shape: the
+    daemon-side listener and the workspace port it reaches, the
+    host field naming the workspace (localhost)."""
     host, rest = split_leading_host(raw, "L")
     if host is None:
         bind, listen, guest = local_fields(rest)
@@ -204,9 +239,10 @@ def cmd_proxy_add(
         None,
         "-L",
         "--local",
-        metavar="[BIND:]PORT:GUESTPORT",
+        metavar="[BIND:]PORT:HOST:PORT",
         help="forward: the daemon binds PORT (loopback, or BIND) and "
-        "bridges to the workspace's GUESTPORT",
+        "bridges to the workspace's port — HOST names the workspace "
+        "itself (localhost)",
     ),
     remote: str | None = typer.Option(
         None,
