@@ -46,7 +46,7 @@ from .consent_ui import (
     focused_attr,
 )
 from .forms import FormWalk
-from .link import AuditLink
+from .link import AuditLink, proxy_frame
 from .rows import (
     COLUMN_GAP,
     LIST_FRAME_CELLS,
@@ -139,6 +139,20 @@ def status_text(row: dict) -> str:
     return status
 
 
+def pair_spans(rows: list[dict], offset: int) -> tuple[list[Span], int]:
+    """The pairs' color spans and the offset after the last one:
+    each pair colored by its reachability, the separators left in
+    the line's own foreground."""
+    spans: list[Span] = []
+    for row in rows:
+        arrow = pair_text(row)
+        color = pair_color(row.get("status") or "")
+        if color is not None:
+            spans.append(Span(offset, offset + len(arrow), color))
+        offset += len(arrow) + len(", ")
+    return spans, offset
+
+
 def proxies_line(rows: list[dict], theme_variables=None) -> Content:
     """The workspace page's compact proxies line (#807, #809): one
     port pair per row — the forwards before the bar, the remotes
@@ -150,27 +164,19 @@ def proxies_line(rows: list[dict], theme_variables=None) -> Content:
         return Content("")
     forwards = [row for row in rows if row["direction"] == "forward"]
     remotes = [row for row in rows if row["direction"] == "remote"]
-    halves = []
-    for half in (forwards, remotes):
-        halves.append(", ".join(pair_text(row) for row in half))
+    halves = [
+        ", ".join(pair_text(row) for row in half)
+        for half in (forwards, remotes)
+    ]
     value = " | ".join(part for part in halves if part)
     pad = " " * max(1, STATUS_LABEL_W - len("proxies"))
     text = f" proxies{pad}{value}"
-    spans = [
-        Span(
-            1,
-            1 + len("proxies") + len(pad),
-            muted_style(theme_variables or {}),
-        )
-    ]
-    offset = 1 + len("proxies") + len(pad)
-    for row in rows:
-        arrow = pair_text(row)
-        color = pair_color(row.get("status") or "")
-        if color is not None:
-            spans.append(Span(offset, offset + len(arrow), color))
-        offset += len(arrow) + len(", ")
-    return Content(text, spans)
+    label_end = 1 + len("proxies") + len(pad)
+    spans, _end = pair_spans(rows, label_end)
+    return Content(
+        text,
+        [Span(1, label_end, muted_style(theme_variables or {})), *spans],
+    )
 
 
 #: The proxies page's columns (#809): the header's label and the
@@ -230,6 +236,14 @@ def proxy_row_content(
     return Content(line, [Span(offset, offset + len(status), color)])
 
 
+def parsed_body(direction: str, raw: str) -> dict:
+    """One spec as the create body — the CLI's own parser for the
+    picked direction, its refusal raised for the note line."""
+    if direction == FORWARD_CHOICE:
+        return parse_local_spec(raw)
+    return parse_remote_spec(raw)
+
+
 class ProxyLink(AuditLink):
     """The proxies page's plain-subscriber connection (#809): the
     events socket without registration, the audit view's own
@@ -248,9 +262,7 @@ class ProxyLink(AuditLink):
         refresh; the rest is not this page's state, and no
         registration was sent, so no rejection can arrive."""
         msg = decode_frame(raw)
-        if msg is not None and str(msg.get("event") or "").startswith(
-            "proxy."
-        ):
+        if msg is not None and proxy_frame(msg):
             self.on_event()
         return False
 
@@ -290,7 +302,11 @@ class ProxyAddScreen(FormWalk, ModalScreen[tuple[str, dict] | None]):
                     []
                     if self.scope is None
                     else [(workspace_label(self.scope), self.scope["id"])],
-                    value=(None if self.scope is None else self.scope["id"]),
+                    **(
+                        {}
+                        if self.scope is None
+                        else {"value": self.scope["id"]}
+                    ),
                     id="field-workspace",
                     compact=True,
                     disabled=self.scope is not None,
@@ -369,16 +385,12 @@ class ProxyAddScreen(FormWalk, ModalScreen[tuple[str, dict] | None]):
             self.note("pick a workspace first")
             return
         raw = self.query_one("#field-spec", Input).value.strip()
-        direction = str(self.query_one("#field-direction", Select).value)
         if not raw:
             self.note("the spec is the form's one required field")
             return
+        direction = str(self.query_one("#field-direction", Select).value)
         try:
-            body = (
-                parse_local_spec(raw)
-                if direction == FORWARD_CHOICE
-                else parse_remote_spec(raw)
-            )
+            body = parsed_body(direction, raw)
         except SystemExit as exc:
             self.note(str(exc).replace("msks: ", "refused: "))
             return

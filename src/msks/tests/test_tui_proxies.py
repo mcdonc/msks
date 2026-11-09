@@ -523,3 +523,239 @@ def test_the_proxies_line_handles_one_half() -> None:
     assert only_remote.plain == " proxies 8888 <- 8882"
     only_forward = proxies_line([proxy_row()])
     assert only_forward.plain == " proxies 8888 -> 8889"
+
+
+# -- the coverage the pilot walks above do not reach ------------------------
+
+
+async def test_the_scope_free_form_seeds_the_workspaces(
+    monkeypatch,
+) -> None:
+    """Opened from the list, the add form seeds its workspace
+    select from the tree's own list and a body lands on the picked
+    workspace; a listing that will not come names itself on the
+    note and the form stands."""
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app, scoped=False)
+        await pilot.press("a")
+        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        form = app.screen
+        select = form.query_one("#field-workspace", Select)
+
+        def seeded() -> bool:
+            return bool(select._options)  # noqa: SLF001
+
+        await wait_for(seeded)
+        select.value = WS  # the operator's pick
+        spec = form.query_one("#field-spec", Input)
+        spec.value = "2201:localhost:22"
+        spec.focus()  # the walk starts where the operator stands
+        await press_until(
+            pilot, "enter", lambda: not isinstance(app.screen, ProxyAddScreen)
+        )
+        await wait_for(lambda: len(data.proxy_calls) == 1)
+        # A listing that will not come: the note names it, the form
+        # stands, and a submit names the missing pick.
+        data.fail.add("workspaces")
+        app.screen.action_add()
+        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        form = app.screen
+        await wait_for(
+            lambda: (
+                "workspace list failed"
+                in str(form.query_one("#form-note", Static).content)
+            )
+        )
+        form.query_one("#do-add").press()
+        await pilot.pause()
+        assert "pick a workspace first" in str(
+            form.query_one("#form-note", Static).content
+        )
+
+
+async def test_a_blank_spec_names_the_one_required_field(
+    monkeypatch,
+) -> None:
+    """A blank spec keeps the form standing with the rule on the
+    note; the Cancel button decides nothing and the page keeps its
+    rows."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app, scoped=True)
+        await pilot.press("a")
+        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        form = app.screen
+        form.query_one("#do-add").press()
+        await pilot.pause()
+        assert "one required field" in str(
+            form.query_one("#form-note", Static).content
+        )
+        form.query_one("#do-cancel").press()
+        await pilot.pause()
+        assert not isinstance(app.screen, ProxyAddScreen)
+        assert data.proxy_calls == []
+
+
+async def test_the_page_names_an_unfocused_remove(monkeypatch) -> None:
+    """``r`` with nothing focused (the empty page) names itself on
+    the status line and calls nothing."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app, scoped=True)
+        await wait_for(lambda: proxy_children(app) == 0)
+        await pilot.press("r")
+        await wait_for(lambda: "no proxy focused" in proxy_status(app))
+        assert data.proxy_removes == []
+
+
+async def test_a_refused_confirm_keeps_the_row(monkeypatch) -> None:
+    """A ``no`` at the confirmation decides nothing — the row
+    stands and the daemon sees no delete."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    data.proxy_rows = [proxy_row()]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app, scoped=True)
+        await wait_for(lambda: proxy_children(app) == 1)
+        await pilot.press("r")
+        await wait_for(lambda: type(app.screen).__name__ == "ConfirmScreen")
+        await pilot.press("n")
+        await wait_for(lambda: isinstance(app.screen, ProxiesScreen))
+        assert data.proxy_removes == []
+        assert proxy_children(app) == 1
+
+
+async def test_a_refused_listing_names_itself(monkeypatch) -> None:
+    """A listing that will not come flashes on the page's status
+    line — the empty state names the add key."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    data.fail.add("workspace-proxies")
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app, scoped=True)
+        await wait_for(lambda: "listing failed" in proxy_status(app))
+
+
+async def test_the_page_heals_its_swap_windows(monkeypatch) -> None:
+    """The page's paint paths swallow missing widgets (the tree's
+    own rule): a row that lost its Static skips alone, a missing
+    list is the quiet return, the status line's own guard swallows
+    its teardown race, and the next refresh heals."""
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    data.proxy_rows = [proxy_row()]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        page = await open_proxies(pilot, app, scoped=False)
+        await wait_for(lambda: proxy_children(app) == 1)
+        rows = page.rows_widget()
+        await rows.children[0].query_one(Static).remove()
+        page.paint_rows()  # swallowed: a row lost its Static
+        await rows.remove()
+        page.paint_rows()  # no list mounted: the quiet return
+        assert page.focused_row() is None  # the swap window decides nothing
+        await page.query_one("#proxy-status").remove()
+        await page.query_one("#proxy-columns").remove()
+        await page.query_one("#proxy-empty").remove()
+        page.sync_status()  # swallowed: the refresh self-heals
+        page.refresh_rows()
+        await wait_for(lambda: proxy_children(app) == 1)
+
+
+async def test_a_wider_terminal_widens_the_columns(monkeypatch) -> None:
+    """A resize re-widths the page's columns and repaints the
+    standing rows in place — identity and focus stay put; a bare
+    page (compose not built) keeps the widths for the first
+    build."""
+    from msks.client.tui.proxies import PROXY_COLUMNS
+    from textual.events import Resize
+    from textual.geometry import Size
+
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    data.proxy_rows = [proxy_row(listen_host="0.0.0.0")]
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        page = await open_proxies(pilot, app, scoped=False)
+        await wait_for(lambda: proxy_children(app) == 1)
+        before = page.columns
+        await pilot.resize_terminal(120, 24)
+        await pilot.pause()
+        assert page.columns != before  # the growing columns took the spare
+        text = str(page.rows_widget().children[0].query_one(Static).content)
+        assert (
+            "-L 0.0.0.0:8888:localhost:8889" in text
+        )  # whole at the wider frame
+    # The bare page: no compose has built, the resize keeps the
+    # widths and the first rows build at them.
+    bare = ProxiesScreen()
+    bare.on_resize(Resize(Size(120, 24), Size(80, 24)))
+    assert bare.columns != PROXY_COLUMNS
+
+
+def test_the_default_link_is_the_pages_own_poke() -> None:
+    """The unpatched link factory wires the page's refresh as the
+    poke — the tests' quiet seam replaces this one connection."""
+    from msks.client.tui.proxies import ProxyLink
+
+    assert isinstance(ProxiesScreen().make_link(), ProxyLink)
+
+
+async def test_the_data_seam_makes_the_daemons_exchanges(
+    monkeypatch,
+) -> None:
+    """The page's data seam rides the daemon's own routes: the
+    daemon-wide and per-workspace listings, the create, and the
+    remove — one MockTransport exchange each."""
+    import httpx
+    from msks.client.tui import data as data_mod
+
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        if request.method == "GET":
+            if request.url.path == "/api/v1/proxies":
+                return httpx.Response(200, json=[proxy_row()])
+            return httpx.Response(200, json=[proxy_row()])
+        if request.method == "POST":
+            return httpx.Response(
+                200, json=proxy_row(listen_port=2201, target_port=22)
+            )
+        return httpx.Response(
+            200, json={"id": 1, "workspace_id": WS, "removed": True}
+        )
+
+    monkeypatch.setenv("MSKSC_URL", "https://api.test")
+    monkeypatch.setenv("MSKSC_TOKEN", "tok")
+    data = data_mod.TuiData(transport=httpx.MockTransport(handler))
+    rows = await data.proxies()
+    assert rows[0]["workspace_id"] == WS
+    mine = await data.workspace_proxies(WS)
+    assert mine[0]["listen_port"] == 8888
+    created = await data.create_proxy(
+        WS,
+        {"direction": "forward", "listen_port": 2201, "target_port": 22},
+    )
+    assert created["status"] == "listening"
+    removed = await data.remove_proxy(WS, 1)
+    assert removed["removed"] is True
+    assert seen == [
+        ("GET", "/api/v1/proxies"),
+        ("GET", f"/api/v1/workspaces/{WS}/proxies"),
+        ("POST", f"/api/v1/workspaces/{WS}/proxies"),
+        ("DELETE", f"/api/v1/workspaces/{WS}/proxies/1"),
+    ]

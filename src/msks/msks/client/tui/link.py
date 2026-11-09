@@ -43,6 +43,14 @@ REJECTED = "rejected"
 UNUSABLE_TOKEN = "unusable token"
 
 
+def proxy_frame(msg: dict) -> bool:
+    """Whether one decoded frame is a proxy transition (#809) —
+    the events the proxy subsystem publishes: ``proxy.created``,
+    ``proxy.listening``, ``proxy.failed``, ``proxy.closed``,
+    ``proxy.removed``."""
+    return str(msg.get("event") or "").startswith("proxy.")
+
+
 class DeciderLink:
     """One workspace's events connection feeding a
     :class:`ConsentController`; start/stop bracket a screen's
@@ -195,9 +203,7 @@ class DeciderLink:
         controller has no applier for it, and the host's tick
         refetches the listing the frame moved."""
         msg = decode_frame(raw)
-        if msg is not None and str(msg.get("event") or "").startswith(
-            "proxy."
-        ):
+        if msg is not None and proxy_frame(msg):
             self.proxy_events.append(True)
         outcome, payload = self.controller.apply_frame(raw)
         self.notify_frame(outcome, payload)
