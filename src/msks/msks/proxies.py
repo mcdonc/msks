@@ -182,10 +182,10 @@ class ProxyManager:
             task.cancel()
         live.server.close()
         with contextlib.suppress(Exception):
+            # wait_closed also gathers the cancelled handlers'
+            # cleanup (their finally closes the local writer and
+            # drops their task records).
             await live.server.wait_closed()
-        for task in live.tasks:
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
         await self.publish(live.row, "proxy.closed")
 
     # --- reads ---------------------------------------------------------

@@ -423,3 +423,41 @@ async def test_stop_ends_in_flight_connections(proxies) -> None:
     await manager.stop_one(row["id"])
     for reader, _writer in held:
         assert await reader.read(100) == b""
+
+
+async def test_handler_closes_its_stream_without_a_live_entry(proxies) -> None:
+    """A connection the listener accepted after its entry left
+    (a stop landing mid-accept) still gets its cleanup: the
+    handler bridges and closes with no task record to keep."""
+    manager, model, net, _queue, _app = proxies
+    row = await create_forward_row(model, await free_port())
+    handler = manager.connect_handler(row)
+    reader = asyncio.StreamReader()
+    reader.feed_eof()  # nothing to bridge: the pump ends at once
+
+    # A minimal writer stand-in: records the close.
+    class Sink:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+        async def wait_closed(self):
+            return None
+
+    sink = Sink()
+    net.refusal = RuntimeError("no live network attachment")
+    await handler(reader, sink)
+    assert sink.closed
+
+
+async def test_stop_workspace_ends_each_listener(proxies) -> None:
+    manager, model, _net, _queue, _app = proxies
+    one, two = await free_port(), await free_port()
+    await create_forward_row(model, one)
+    await create_forward_row(model, two)
+    await manager.start_workspace("ws-a", ATTACHMENT)
+    await manager.stop_workspace("ws-a")
+    for port in (one, two):
+        with pytest.raises(OSError):
+            await exchange(port, b"late\n")
