@@ -74,7 +74,14 @@ from textual.containers import Vertical
 from textual.content import Content, Span
 from textual.css.query import NoMatches
 from textual.geometry import Size
-from textual.widgets import Button, Input, OptionList, Select, Static
+from textual.widgets import (
+    Button,
+    Input,
+    ListView,
+    OptionList,
+    Select,
+    Static,
+)
 
 WS = "ws-a"
 
@@ -763,10 +770,25 @@ async def test_a_refresh_keeps_the_focused_workspace_row() -> None:
             child = before.highlighted_child
             return getattr(child, "row_key", None) if child else None
 
-        # The first press takes the focus; the walk needs a
-        # highlight to move (the operator's own path).
+        # The walk onto ws-b converges from either startup order
+        # (#811). A fast runner captures the list before the
+        # startup queue settles: presses swallow while nothing
+        # owns the focus (the screen carries no down binding),
+        # and the mount itself sets the initial highlight, ws-b.
+        # The down-loop's check reads that highlight and fails —
+        # its target is ws-a — and the loop presses on until the
+        # rebuild's focus call lands and a real press steps to
+        # ws-a. A starved runner drains the queue first: the list
+        # owns the focus and that same initial highlight stands,
+        # so a lone down-press steps PAST ws-b onto ws-a, where
+        # the bottom edge sticks and no later down can return.
+        # The walk crosses to the second row and back — a path
+        # that lands on ws-b from either start.
         await press_until(
-            pilot, "down", lambda: focused_key() == ("workspace", "ws-b")
+            pilot, "down", lambda: focused_key() == ("workspace", "ws-a")
+        )
+        await press_until(
+            pilot, "up", lambda: focused_key() == ("workspace", "ws-b")
         )
         # An unchanged listing keeps its list — the daemon serves
         # oldest-first and the display is newest-first, so the
@@ -4595,6 +4617,50 @@ async def test_the_listing_sorts_newest_first(monkeypatch) -> None:
         assert "mid" in row_text(app, 1)
         assert "old" in row_text(app, 2)
         assert "CREATED ↓" in str(app.query_one("#columns", Static).content)
+
+
+async def test_the_settled_listing_opens_on_the_newest_row(
+    monkeypatch,
+) -> None:
+    """#811: once the startup queue settles, the listing's
+    highlight stands on the first row — the newest workspace —
+    and the list owns the focus. The mount sets the initial
+    highlight; the rebuild's focus call lands the focus on the
+    list. A fast lane reads the list before the queue settles —
+    its presses swallow while nothing owns the focus, and the
+    highlight arrives by the mount alone — but a starved lane
+    drains the whole queue before the test's first read, and
+    every later walk starts from this state: a key walk must
+    converge onto its row from either order, because a lone
+    down-press from here steps past the newest row onto the one
+    below."""
+    scripted_link(monkeypatch, [])
+    data = FakeData(
+        [
+            stamp(row(id="old", name="old"), "2026-01-01T00:00:00"),
+            stamp(row(id="new", name="new"), "2026-01-03T00:00:00"),
+        ]
+    )
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        # The starved lane's shape: the whole startup queue
+        # drains before the test's first read. The gate waits for
+        # the highlight and the focus together: the mount sets
+        # the highlight before the rebuild's focus call lands on
+        # the list, and a read gated on the highlight alone can
+        # catch the focus still unset (#519's single-shot
+        # lesson).
+        await pilot.pause()
+        await wait_for(
+            lambda: listing_settled(app) and isinstance(app.focused, ListView)
+        )
+        rows = app.query_one("#rows", ListView)
+        assert rows.index == 0
+        assert getattr(rows.highlighted_child, "row_key", None) == (
+            "workspace",
+            "new",
+        )
+        assert app.focused is rows
 
 
 async def test_the_listing_refreshes_while_it_stands(monkeypatch) -> None:
