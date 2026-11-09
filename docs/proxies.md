@@ -1,19 +1,18 @@
 # Workspace proxies
 
-A proxy is a TCP port that stays where you put it. You define it once, the
-daemon owns the listener, and every start of the workspace brings it back.
-This chapter shows the two directions a proxy bridges, and how to manage
-proxies from the [CLI](cli.md#msks-proxy) and the [TUI](tui.md#the-proxies-page).
+A proxy is a TCP port that can connect the daemon host to a guest or one that
+connect a guest to the daemon host or another location.
 
-The commands and the pages work on the same daemon rows. Whatever one
-surface changes, the other sees.
+It is defined once. The daemon owns the listener, and every start of the
+workspace brings it back. This chapter shows the two directions a proxy
+bridges, and how to manage proxies from the [CLI](cli.md#msks-proxy) and the
+[TUI](tui.md#the-proxies-page).
 
 ## What a persistent proxy is
 
 The daemon holds every proxy definition as a row in its database. The row
 survives a daemon restart and a workspace stop. Each time the workspace
-starts, the daemon binds the row's listener again. You define the reach once,
-and later boots keep it.
+starts, the daemon binds the row's listener again.
 
 Two directions exist, and both borrow ssh's letters and ssh's spec grammar.
 The spec reads `listen : target`, left to right. The flag letter says which
@@ -33,7 +32,7 @@ The contrast with [`msks forward`](cli.md#msks-forward) is ownership. A
 forward's listener lives as long as the command holding it, and it binds on
 the machine the command runs on. A proxy's listener lives in the daemon. Use
 a forward for a one-off pipe during a session. Use a proxy for a port you
-want there tomorrow.
+want there more permanently.
 
 ### What each side dials
 
@@ -49,9 +48,10 @@ loopback. A name like `db.internal` resolves through the daemon host's
 resolver.
 
 A remote proxy's listen address is fixed by the workspace's tap, so the
-grammar carries no bind field for `-R`. Inside the guest, dial the DHCP
-gateway address to reach it. That address is printed by `ip route show
-default`:
+grammar carries no bind field for `-R`.
+
+Inside the guest, dial the DHCP gateway address to reach it. That address is
+printed by `ip route show default`:
 
 ```bash
 curl http://$(ip route show default | awk '{print $3}'):9200
@@ -62,11 +62,11 @@ refused: `workspace … has no NIC (created without egress)`.
 
 ### Reach and consent
 
-The daemon dials a remote proxy's target itself. The consent machinery gates
-the guest's traffic through the tap; it never sees the daemon's own
-connections. A remote row therefore reaches its target without a verdict.
-[The consent chapter](egress-consent.md) covers the guest's connections;
-this dial is the daemon's own.
+The daemon connects to a remote proxy's target itself. The consent machinery
+gates the guest's traffic through the tap; it never sees the daemon's own
+connections. A remote row therefore reaches its target without a verdict. [The
+consent chapter](egress-consent.md) covers the guest's connections; this dial
+is the daemon's own.
 
 The tap's ingress chain admits a remote port only while its listener is up.
 Each accept line is pinned to that tap's address and that guest's source. A
@@ -176,10 +176,11 @@ the daemon publishes, without a refresh.
 
 Press `p` (or Enter on the Proxies action row) for the workspace's proxies
 page. The page lists that workspace's rows with the spec in the CLI's
-grammar, the label, and the live status. Press `a` to add one. The form
-holds the direction (`forward (-L)` or `reverse (-R)`), the spec in the same
-grammar `msks proxy add` reads, and a label. A spec the parser refuses keeps
-the form standing, with the rule on the note line. `D` (or Enter, on the
+grammar, the label, and the live status. Press `a` to add one.
+
+The form holds the direction (`forward (-L)` or `reverse (-R)`), the spec in
+the same grammar `msks proxy add` reads, and a label. A spec the parser refuses
+keeps the form standing, with the rule on the note line. `D` (or Enter, on the
 focused row) removes it behind a confirmation. `q` or Escape returns to the
 workspace page.
 
