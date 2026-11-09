@@ -1067,17 +1067,16 @@
 
 
 <h1 id="workspace-proxies">Workspace proxies<a class="headerlink" href="#workspace-proxies" title="Permanent link">&para;</a></h1>
-<p>A proxy is a TCP port that stays where you put it. You define it once, the
-daemon owns the listener, and every start of the workspace brings it back.
-This chapter shows the two directions a proxy bridges, and how to manage
-proxies from the <a href="../cli/#msks-proxy">CLI</a> and the <a href="../tui/#the-proxies-page">TUI</a>.</p>
-<p>The commands and the pages work on the same daemon rows. Whatever one
-surface changes, the other sees.</p>
+<p>A proxy is a TCP port that can connect the daemon host to a guest or one that
+connect a guest to the daemon host or another location.</p>
+<p>It is defined once. The daemon owns the listener, and every start of the
+workspace brings it back. This chapter shows the two directions a proxy
+bridges, and how to manage proxies from the <a href="../cli/#msks-proxy">CLI</a> and the
+<a href="../tui/#the-proxies-page">TUI</a>.</p>
 <h2 id="what-a-persistent-proxy-is">What a persistent proxy is<a class="headerlink" href="#what-a-persistent-proxy-is" title="Permanent link">&para;</a></h2>
 <p>The daemon holds every proxy definition as a row in its database. The row
 survives a daemon restart and a workspace stop. Each time the workspace
-starts, the daemon binds the row's listener again. You define the reach once,
-and later boots keep it.</p>
+starts, the daemon binds the row's listener again.</p>
 <p>Two directions exist, and both borrow ssh's letters and ssh's spec grammar.
 The spec reads <code>listen : target</code>, left to right. The flag letter says which
 side listens.</p>
@@ -1093,7 +1092,7 @@ shape: a port on the far end reaching a service on your side.</p>
 forward's listener lives as long as the command holding it, and it binds on
 the machine the command runs on. A proxy's listener lives in the daemon. Use
 a forward for a one-off pipe during a session. Use a proxy for a port you
-want there tomorrow.</p>
+want there more permanently.</p>
 <h3 id="what-each-side-dials">What each side dials<a class="headerlink" href="#what-each-side-dials" title="Permanent link">&para;</a></h3>
 <p>A forward proxy's target is the workspace itself. The spec's host field names
 the workspace, the way ssh's <code>-L</code> host names the far end, and it accepts
@@ -1105,19 +1104,19 @@ the spec <code>-R 9200:localhost:9200</code>, the <code>localhost</code> is the 
 loopback. A name like <code>db.internal</code> resolves through the daemon host's
 resolver.</p>
 <p>A remote proxy's listen address is fixed by the workspace's tap, so the
-grammar carries no bind field for <code>-R</code>. Inside the guest, dial the DHCP
-gateway address to reach it. That address is printed by <code>ip route show
-default</code>:</p>
+grammar carries no bind field for <code>-R</code>.</p>
+<p>Inside the guest, dial the DHCP gateway address to reach it. That address is
+printed by <code>ip route show default</code>:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>http://<span class="k">$(</span>ip<span class="w"> </span>route<span class="w"> </span>show<span class="w"> </span>default<span class="w"> </span><span class="p">|</span><span class="w"> </span>awk<span class="w"> </span><span class="s1">'{print $3}'</span><span class="k">)</span>:9200
 </span></code></pre></div>
 <p>A workspace created without egress has no NIC. Adding a proxy to it is
 refused: <code>workspace … has no NIC (created without egress)</code>.</p>
 <h3 id="reach-and-consent">Reach and consent<a class="headerlink" href="#reach-and-consent" title="Permanent link">&para;</a></h3>
-<p>The daemon dials a remote proxy's target itself. The consent machinery gates
-the guest's traffic through the tap; it never sees the daemon's own
-connections. A remote row therefore reaches its target without a verdict.
-<a href="../egress-consent/">The consent chapter</a> covers the guest's connections;
-this dial is the daemon's own.</p>
+<p>The daemon connects to a remote proxy's target itself. The consent machinery
+gates the guest's traffic through the tap; it never sees the daemon's own
+connections. A remote row therefore reaches its target without a verdict. <a href="../egress-consent/">The
+consent chapter</a> covers the guest's connections; this dial
+is the daemon's own.</p>
 <p>The tap's ingress chain admits a remote port only while its listener is up.
 Each accept line is pinned to that tap's address and that guest's source. A
 bind that fails admits nothing. A live add or removal swaps the admission in
@@ -1190,10 +1189,10 @@ pair whose bind refused shows red. The line moves on every proxy transition
 the daemon publishes, without a refresh.</p>
 <p>Press <code>p</code> (or Enter on the Proxies action row) for the workspace's proxies
 page. The page lists that workspace's rows with the spec in the CLI's
-grammar, the label, and the live status. Press <code>a</code> to add one. The form
-holds the direction (<code>forward (-L)</code> or <code>reverse (-R)</code>), the spec in the same
-grammar <code>msks proxy add</code> reads, and a label. A spec the parser refuses keeps
-the form standing, with the rule on the note line. <code>D</code> (or Enter, on the
+grammar, the label, and the live status. Press <code>a</code> to add one.</p>
+<p>The form holds the direction (<code>forward (-L)</code> or <code>reverse (-R)</code>), the spec in
+the same grammar <code>msks proxy add</code> reads, and a label. A spec the parser refuses
+keeps the form standing, with the rule on the note line. <code>D</code> (or Enter, on the
 focused row) removes it behind a confirmation. <code>q</code> or Escape returns to the
 workspace page.</p>
 <p>The page re-reads the listing every five seconds and on every proxy
