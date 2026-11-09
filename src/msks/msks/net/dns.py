@@ -51,6 +51,23 @@ from .loopio import recvfrom, sendto
 
 DNS_PORT = 53
 
+#: The well-known name for the tap's own address (#816): every
+#: tap's resolver answers it locally, so a guest dials
+#: ``host.msks`` instead of discovering the DHCP gateway's address
+#: (``ip route show default``). The address is where the resolver
+#: itself listens and where a remote proxy's listener binds — with
+#: ``-R 8660:localhost:8660`` stored, ``https://host.msks:8660``
+#: reaches the daemon-side service. Vocabulary, not configuration:
+#: every deployment serves the name, in every consent mode.
+GATEWAY_HOST = "host.msks"
+
+#: The names this resolver answers itself, ahead of the gate and
+#: the relay: the daemon's own services, not egress. The probe
+#: endpoint (#424) and the tap gateway (#816) share the one local
+#: path; nothing here records a name, pins an address, or asks an
+#: upstream.
+LOCAL_HOSTS = (PROBE_HOST, GATEWAY_HOST)
+
 # A full-size DNS datagram: the biggest answer UDP carries.
 MAX_DATAGRAM = 65535
 
@@ -391,34 +408,40 @@ class DnsForwarder:
     async def _relay(
         self, sock: socket.socket, query: bytes, client: tuple[str, int]
     ) -> None:
-        if self.answer_probe_host(sock, query, client):
+        if self.answer_local_host(sock, query, client):
             return
         if self._gate is None:
             await self.relay_verbatim(sock, query, client)
             return
         await self.relay_gated(sock, query, client)
 
-    def answer_probe_host(
+    def answer_local_host(
         self, sock: socket.socket, query: bytes, client: tuple[str, int]
     ) -> bool:
-        """Answer the well-known probe name locally (#424): the A
-        query resolves to this forwarder's own tap address — the
-        guest's route to the daemon-side service — and every other
-        type answers NXDOMAIN so a dual-stack client falls back to
-        A. The local answer stands ahead of the gate in every
-        consent mode: the probe is the daemon's own service, and
-        its reachability is exactly what an operator verifies.
-        Whether the request PASSES is interception's question, not
-        the resolver's. Any other name returns False and takes the
-        relay path unchanged.
+        """Answer a well-known local name (#424, #816): the probe
+        endpoint and the tap gateway. The A query resolves to this
+        forwarder's own tap address — the guest's route to the
+        daemon-side service, and to the remote proxies the same
+        address serves — and every other IN type answers NODATA
+        (the name exists, the record does not), so a dual-stack
+        client falls back to A without the name being negatively
+        cached. The local answer stands ahead of the gate in every
+        consent mode: these are the daemon's own services, not
+        egress, so nothing records a name, pins an address, or
+        asks an upstream. Any other name returns False and takes
+        the relay path unchanged.
         """
         parsed = dnsmsg.parse_query(query)
-        if parsed is None or parsed.name != PROBE_HOST:
+        if (
+            parsed is None
+            or parsed.name not in LOCAL_HOSTS
+            or parsed.qclass != dnsmsg.CLASS_IN
+        ):
             return False
         if parsed.qtype == dnsmsg.TYPE_A:
             sendto(sock, dnsmsg.a_answer_for(query, self._bind[0]), client)
         else:
-            sendto(sock, dnsmsg.nxdomain_for(query), client)
+            sendto(sock, dnsmsg.nodata_for(query), client)
         return True
 
     async def relay_verbatim(

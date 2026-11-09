@@ -50,8 +50,9 @@ resolver.
 A remote proxy's listen address is fixed by the workspace's tap, so the
 grammar carries no bind field for `-R`.
 
-Inside the guest, dial the DHCP gateway address to reach it. That address is
-printed by `ip route show default`:
+Inside the guest, dial `host.msks`. Every workspace's resolver answers the
+name with its own tap address. `ip route show default` prints the same
+address when a name is unavailable:
 
 ```bash
 curl http://$(ip route show default | awk '{print $3}'):9200
@@ -124,11 +125,15 @@ msks proxy add my-workspace -R 5432:localhost:5432 --label db
 ```
 
 The workspace's gateway listens on 5432. Inside the guest, an application
-connects to the DHCP gateway on that port:
+connects to `host.msks` on that port:
 
 ```bash
-psql -h $(ip route show default | awk '{print $3}') -p 5432
+psql -h host.msks -p 5432
 ```
+
+While [secret interception](secrets.md) is armed, the tap's 80 and 443
+answer the interceptor; a `-R` proxy on either port stays unreachable from
+the guest until interception stands down.
 
 The daemon dials `localhost:5432` on its own host for every guest
 connection. A target on another host works the same way

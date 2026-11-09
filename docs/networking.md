@@ -73,6 +73,14 @@ reflection amplifier. The resolver also grows the naming layer: query cache,
 name learning for prompts, and the lockout that keeps DNS from being routed
 around, all behind that same offered resolver.
 
+Two names the resolver answers itself, in every consent mode. The first is
+`secretprobe.msks`, the interception probe (#424). The second is `host.msks`
+(#816), the guest's name for its own gateway: it resolves to the tap's
+address, so a `-R` proxy is dialed by name instead of discovered through
+`ip route show default`. A well-formed internet-class (IN) query for either name never reaches
+an upstream, records a policy row, or pins an address. Both are the
+daemon's own services.
+
 ## What the chain enforces
 
 The per-VM table hooks two places, both scoped to the workspace's

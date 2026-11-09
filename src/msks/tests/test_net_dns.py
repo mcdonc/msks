@@ -289,12 +289,11 @@ async def test_relay_drops_a_failed_reply_send() -> None:
 # --- the probe name's local answer (#424) -----------------------------------
 
 
-def probe_query(qtype: int = 1) -> bytes:
-    """A query datagram for the well-known probe host."""
+def local_query(name: str, qtype: int = 1) -> bytes:
+    """A query datagram for one of the resolver's local names."""
     qname = (
         b"".join(
-            bytes([len(label)]) + label.encode()
-            for label in dns.PROBE_HOST.split(".")
+            bytes([len(label)]) + label.encode() for label in name.split(".")
         )
         + b"\x00"
     )
@@ -302,12 +301,13 @@ def probe_query(qtype: int = 1) -> bytes:
     return header + qname + struct.pack("!HH", qtype, 1)
 
 
-async def test_probe_host_answers_locally_with_the_tap_address(
-    pair,
-) -> None:
-    """The A query for the probe host never reaches the upstream:
-    the forwarder answers with its own bind address (#424) — the
-    address whose 443 the redirect owns."""
+@pytest.mark.parametrize(
+    "name", [dns.PROBE_HOST, dns.GATEWAY_HOST], ids=["probe", "gateway"]
+)
+async def test_local_hosts_answer_with_the_tap_address(pair, name) -> None:
+    """The A query for a local name never reaches the upstream:
+    the forwarder answers with its own bind address (#424 for the
+    probe, #816 for the gateway)."""
     from msks.net import dnsmsg
 
     forwarder, client, upstream = pair
@@ -319,20 +319,78 @@ async def test_probe_host_answers_locally_with_the_tap_address(
 
     guard = asyncio.create_task(nothing_may_arrive_upstream())
     await asyncio.to_thread(
-        client.sendto, probe_query(), forwarder._sock.getsockname()
+        client.sendto, local_query(name), forwarder._sock.getsockname()
     )
     data, _server = await asyncio.to_thread(client.recvfrom, 4096)
     await guard
     assert [ip for ip, _ttl in dnsmsg.parse_a_records(data)] == ["127.0.0.1"]
 
 
-async def test_probe_host_answers_nxdomain_for_non_a(pair) -> None:
-    """AAAA for the probe host answers NXDOMAIN, so a dual-stack
-    client falls back to A (#424)."""
-    forwarder, client, _upstream = pair
-    await asyncio.to_thread(
-        client.sendto, probe_query(qtype=28), forwarder._sock.getsockname()
-    )
+@pytest.mark.parametrize(
+    "name", [dns.PROBE_HOST, dns.GATEWAY_HOST], ids=["probe", "gateway"]
+)
+async def test_local_hosts_answer_nodata_for_non_a(pair, name) -> None:
+    """AAAA for a local name answers NODATA — the name exists, the
+    record does not — so a dual-stack client falls back to A and a
+    stub negatively caches the type, never the name (#424, #816:
+    a browser's HTTPS/SVCB query before a dial must not cache the
+    name away)."""
+    forwarder, client, upstream = pair
+
+    async def nothing_may_arrive_upstream() -> None:
+        loop = asyncio.get_running_loop()
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(loop.sock_recvfrom(upstream, 4096), 0.3)
+
+    guard = asyncio.create_task(nothing_may_arrive_upstream())
+    sent = local_query(name, qtype=28)
+    await asyncio.to_thread(client.sendto, sent, forwarder._sock.getsockname())
     data, _server = await asyncio.to_thread(client.recvfrom, 4096)
-    # RCODE 3 in the flags word.
-    assert int.from_bytes(data[2:4], "big") & 0x0F == 3
+    await guard
+    flags = int.from_bytes(data[2:4], "big")
+    assert flags & 0x8000  # a reply (QR)
+    assert flags & 0x0F == 0  # NOERROR
+    assert int.from_bytes(data[4:6], "big") == 1  # the one question
+    assert int.from_bytes(data[6:8], "big") == 0  # no answer records
+    assert data[:2] == sent[:2]  # the query's id echoed
+    # The question copies verbatim — a reply whose question section
+    # carries the query's flags (a wire[2:] slice) makes a
+    # question-comparing stub discard it and time out.
+    assert data[12:] == sent[12:]
+
+
+def test_nodata_for_a_malformed_query_is_the_bare_header() -> None:
+    """A NODATA reply to a query with no decodable question is the
+    bare header shape — the same fail-closed direction the
+    NXDOMAIN builder takes."""
+    from msks.net import dnsmsg
+
+    reply = dnsmsg.nodata_for(b"junkjunk")
+    assert reply[2:4] == b"\x81\x80"  # QR + RD + RA, RCODE 0
+    assert int.from_bytes(reply[4:6], "big") == 0  # no question copied
+
+
+@pytest.mark.parametrize(
+    "name", [dns.PROBE_HOST, dns.GATEWAY_HOST], ids=["probe", "gateway"]
+)
+async def test_local_hosts_ignore_a_foreign_qclass(pair, name) -> None:
+    """A CH-class query for a local name is not the guest's
+    resolution: it takes the relay path unchanged (a local answer
+    serves the internet class alone)."""
+    forwarder, client, _upstream = pair
+    qname = (
+        b"".join(
+            bytes([len(label)]) + label.encode() for label in name.split(".")
+        )
+        + b"\x00"
+    )
+    header = struct.pack("!HHHHHH", 0x0100, 0x0100, 1, 0, 0, 0)
+    query = header + qname + struct.pack("!HH", 1, 3)  # qclass CH
+    await asyncio.to_thread(
+        client.sendto, query, forwarder._sock.getsockname()
+    )
+    # The local path would answer at once; the relay path's
+    # upstream is the fixture's dead socket, so the client times
+    # out — the quiet itself proves the query took the relay.
+    with pytest.raises(TimeoutError):
+        await asyncio.to_thread(client.recvfrom, 4096)

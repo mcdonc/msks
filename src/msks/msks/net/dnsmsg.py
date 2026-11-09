@@ -26,6 +26,10 @@ A_RDATA_LEN = 4
 
 # The record type an A answer carries.
 TYPE_A = 1
+#: The one query class a local answer serves (IN, the
+#: internet class; a query in another class is not the guest's
+#: resolution and takes the relay path like any other name).
+CLASS_IN = 1
 
 # A name decoder bound: compression-pointer chains are capped so a
 # hostile answer cannot loop the decoder through crafted pointers.
@@ -266,6 +270,36 @@ def a_record(
         return None
     raw = wire[rdata_at : rdata_at + A_RDATA_LEN]
     return (".".join(str(b) for b in raw), ttl)
+
+
+def nodata_for(query: bytes) -> bytes:
+    """A NODATA reply for ``query``: the name exists, no record of
+    the asked type does (NOERROR, an empty answer). The shape a
+    local name's non-A queries take (#816): a dual-stack client
+    falls back to A exactly as an upstream resolver's empty answer
+    makes it, and a stub negatively caches the *type*, never the
+    name — an NXDOMAIN here would assert the name itself is gone,
+    and a browser's HTTPS/SVCB query (type 65) before every dial
+    would cache that for the name the dial is about to use.
+
+    Copies the question verbatim, QR and RD kept, RCODE 0. A
+    malformed query gets the bare header shape — the same
+    fail-closed direction ``nxdomain_for`` takes.
+    """
+    question = parse_query(query)
+    flags = 0x8180  # QR + RD + RA
+    if question is None:
+        return query[:2] + struct.pack("!HHHHH", flags, 0, 0, 0, 0)
+    header = struct.pack(
+        "!HHHHHH",
+        question.id,
+        flags,
+        1,  # qdcount: the copied question
+        0,
+        0,
+        0,
+    )
+    return header + question.wire[HEADER_LEN:]
 
 
 def nxdomain_for(query: bytes) -> bytes:

@@ -8,6 +8,12 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`host.msks` (#816).** Every egress workspace's resolver answers the
+  name with its own tap address, so a guest dials the gateway by name
+  (`https://host.msks:8660` with a `-R 8660:localhost:8660` proxy stored)
+  instead of discovering it through `ip route show default`. The name
+  answers in every consent mode, feeds no policy row or address pin, and
+  a well-formed internet-class query for it is never sent upstream.
 - **The proxies docs chapter (#814).** `docs/proxies.md` owns the whole
   proxies story in one place: the persistent proxy port concept, the
   `-L`/`-R` directions in ssh's grammar, the live status vocabulary, and
