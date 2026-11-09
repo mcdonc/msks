@@ -1072,9 +1072,10 @@ The workspace cannot dial out on a forward's behalf (no agent runs inside it),
 so a forward always lands on the workspace itself. Reaching a daemon-side
 service is the `-R` direction.
 
-A remote proxy is the reverse of a forward one. The guest dials its DHCP
-gateway address on the listen port. That is the same address its DNS resolver
-answers on; `ip route show default` inside the workspace prints it. The daemon
+A remote proxy is the reverse of a forward one. The guest dials `host.msks`
+on the listen port — the name the workspace's resolver answers with its DHCP
+gateway address (`ip route show default` inside the workspace prints the same
+address). The daemon
 bridges the connection to the daemon-side service the spec names. With the
 example stored, `curl http://$(ip route show default | awk '{print $3}'):9200`
 inside the workspace reaches the host service. A workspace created without

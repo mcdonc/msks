@@ -284,6 +284,61 @@ async def test_forwarder_relay_with_a_gate(gated) -> None:
         upstream.close()
 
 
+async def test_the_gateway_name_answers_ahead_of_the_gate(gated) -> None:
+    """The tap gateway's name (#816) answers even where the gate
+    refuses everything else: static mode NXDOMAINs off-list names,
+    and the gateway is the daemon's own service, not egress. The
+    answer carries the forwarder's own address, no pin lands, no
+    policy row records the name, and the naming memory stays
+    empty — the local path feeds nothing."""
+    app, net = gated
+    upstream = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    upstream.bind(("127.0.0.1", 0))
+    upstream.setblocking(False)
+    gate = gate_for(app, net, "ws-static", MODE_STATIC, (".debian.org",))
+    forwarder = dns.DnsForwarder(
+        upstream.getsockname(),
+        1.0,
+        bind=("127.0.0.1", 0),
+        client_ip="127.0.0.1",
+        gate=gate,
+    )
+    await forwarder.start()
+    client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client.settimeout(2.0)
+    serve = asyncio.create_task(forwarder.serve())
+
+    async def ask(name: str) -> bytes:
+        await asyncio.to_thread(
+            client.sendto, query_for(name), forwarder._sock.getsockname()
+        )
+        reply, _addr = await asyncio.to_thread(client.recvfrom, 65535)
+        return bytes(reply)
+
+    try:
+        # The gateway name: the local A answer, the forwarder's own
+        # address, ahead of the static gate.
+        reply = await ask(dns.GATEWAY_HOST)
+        assert reply[2:4] == b"\x81\x80"
+        assert dnsmsg.parse_a_records(reply) == [("127.0.0.1", 60)]
+        # Nothing fed: no pin, no policy row, no naming memory.
+        assert net.pins == []
+        assert (
+            await app.state.model.egress_consent.list_requests("ws-static")
+            == []
+        )
+        assert forwarder.host_for("127.0.0.1") is None
+        # An off-list name on the same forwarder still NXDOMAINs:
+        # the local answer widened nothing.
+        nxdomain = await ask("off.list.example")
+        assert nxdomain[2:4] == b"\x81\x83"
+    finally:
+        serve.cancel()
+        forwarder.stop()
+        client.close()
+        upstream.close()
+
+
 async def test_coresident_resolution_retracts_address_pins(gated) -> None:
     """#304, end to end through real sockets: a session-covered name
     resolves and its address pins; a SECOND name resolving to the

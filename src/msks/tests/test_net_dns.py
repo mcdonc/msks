@@ -289,12 +289,11 @@ async def test_relay_drops_a_failed_reply_send() -> None:
 # --- the probe name's local answer (#424) -----------------------------------
 
 
-def probe_query(qtype: int = 1) -> bytes:
-    """A query datagram for the well-known probe host."""
+def local_query(name: str, qtype: int = 1) -> bytes:
+    """A query datagram for one of the resolver's local names."""
     qname = (
         b"".join(
-            bytes([len(label)]) + label.encode()
-            for label in dns.PROBE_HOST.split(".")
+            bytes([len(label)]) + label.encode() for label in name.split(".")
         )
         + b"\x00"
     )
@@ -302,12 +301,13 @@ def probe_query(qtype: int = 1) -> bytes:
     return header + qname + struct.pack("!HH", qtype, 1)
 
 
-async def test_probe_host_answers_locally_with_the_tap_address(
-    pair,
-) -> None:
-    """The A query for the probe host never reaches the upstream:
-    the forwarder answers with its own bind address (#424) — the
-    address whose 443 the redirect owns."""
+@pytest.mark.parametrize(
+    "name", [dns.PROBE_HOST, dns.GATEWAY_HOST], ids=["probe", "gateway"]
+)
+async def test_local_hosts_answer_with_the_tap_address(pair, name) -> None:
+    """The A query for a local name never reaches the upstream:
+    the forwarder answers with its own bind address (#424 for the
+    probe, #816 for the gateway)."""
     from msks.net import dnsmsg
 
     forwarder, client, upstream = pair
@@ -319,19 +319,24 @@ async def test_probe_host_answers_locally_with_the_tap_address(
 
     guard = asyncio.create_task(nothing_may_arrive_upstream())
     await asyncio.to_thread(
-        client.sendto, probe_query(), forwarder._sock.getsockname()
+        client.sendto, local_query(name), forwarder._sock.getsockname()
     )
     data, _server = await asyncio.to_thread(client.recvfrom, 4096)
     await guard
     assert [ip for ip, _ttl in dnsmsg.parse_a_records(data)] == ["127.0.0.1"]
 
 
-async def test_probe_host_answers_nxdomain_for_non_a(pair) -> None:
-    """AAAA for the probe host answers NXDOMAIN, so a dual-stack
-    client falls back to A (#424)."""
+@pytest.mark.parametrize(
+    "name", [dns.PROBE_HOST, dns.GATEWAY_HOST], ids=["probe", "gateway"]
+)
+async def test_local_hosts_answer_nxdomain_for_non_a(pair, name) -> None:
+    """AAAA for a local name answers NXDOMAIN, so a dual-stack
+    client falls back to A (#424, #816)."""
     forwarder, client, _upstream = pair
     await asyncio.to_thread(
-        client.sendto, probe_query(qtype=28), forwarder._sock.getsockname()
+        client.sendto,
+        local_query(name, qtype=28),
+        forwarder._sock.getsockname(),
     )
     data, _server = await asyncio.to_thread(client.recvfrom, 4096)
     # RCODE 3 in the flags word.
