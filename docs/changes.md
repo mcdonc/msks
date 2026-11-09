@@ -10,7 +10,7 @@ tagged `vX.Y.Z`.
 
 - **`msks proxy` (#808).** A new command manages the daemon's
   persisted workspace proxies: `add` with ssh-shaped specs (`-L
-  [BIND:]PORT:GUESTPORT` binds the daemon host and bridges to the
+[BIND:]PORT:GUESTPORT` binds the daemon host and bridges to the
   workspace; `-R RPORT:HOST:TPORT` binds the workspace's gateway
   and bridges to a daemon-side service), `ls` with live status,
   and `rm`. The daemon owns every listener, rows live in its
