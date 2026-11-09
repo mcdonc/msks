@@ -299,7 +299,7 @@ def nodata_for(query: bytes) -> bytes:
         0,
         0,
     )
-    return header + question.wire[2:]
+    return header + question.wire[HEADER_LEN:]
 
 
 def nxdomain_for(query: bytes) -> bytes:

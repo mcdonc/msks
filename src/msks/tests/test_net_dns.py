@@ -345,6 +345,11 @@ async def test_local_hosts_answer_nodata_for_non_a(pair, name) -> None:
     flags = int.from_bytes(data[2:4], "big")
     assert flags & 0x0F == 0  # NOERROR
     assert int.from_bytes(data[6:8], "big") == 0  # no answer records
+    # The question copies verbatim — a reply whose question section
+    # carries the query's flags (a wire[2:] slice) makes a
+    # question-comparing stub discard it and time out.
+    sent = local_query(name, qtype=28)
+    assert data[12:] == sent[12:]
 
 
 def test_nodata_for_a_malformed_query_is_the_bare_header() -> None:
