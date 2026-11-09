@@ -34,6 +34,7 @@ from . import (
     events,
     forward,
     images,
+    proxies,
     secrets,
     tokens,
     volumes,
@@ -198,6 +199,7 @@ def build_api(app) -> FastAPI:
         volumes.router(app, hub),
         console.router(app),
         forward.router(app, hub),
+        proxies.router(app, hub),
         events.router(app, hub),
         egress.router(app),
     ):

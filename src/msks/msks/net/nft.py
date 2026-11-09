@@ -265,6 +265,21 @@ def armed_rules(
     )
 
 
+def proxy_admissions(
+    tap: str, guest_ip: str, tap_ip: str, ports: list[int]
+) -> str:
+    """The remote proxies' input admissions (#807): one accept
+    line per listen port, each pinned to this tap's address and
+    this guest's source — the same scoping the LLM proxy's rule
+    carries, so a remote proxy's port on the tap answers this
+    workspace's connections and nothing else."""
+    return "".join(
+        f'    iifname "{tap}" ip saddr {guest_ip} ip daddr {tap_ip} '
+        f"tcp dport {port} accept\n"
+        for port in ports
+    )
+
+
 def established_accept(tap: str, policy: EgressPolicy) -> str:
     """The outbound established accept (gated modes): a flow that
     passed the gates once (its SYN carried a verdict, or it hit a
@@ -286,6 +301,7 @@ def vm_ruleset(
     queue_num: int | None = None,
     interceptor_port: int | None = None,
     llm_port: int | None = None,
+    proxy_ports: list[int] | None = None,
 ) -> str:
     """One workspace's enforcement tables.
 
@@ -298,8 +314,9 @@ def vm_ruleset(
       which is also what blocks guest-to-guest hops across taps.
     - ``ingress`` (input): the guest may reach a fixed set of
       ports on the host through this tap — DHCP (67), the resolver
-      (53), the LLM proxy port when one is configured (#259), and
-      the interceptor's listener while armed (#199) — and
+      (53), the LLM proxy port when one is configured (#259), the
+      interceptor's listener while armed (#199), and the workspace's
+      remote proxy ports (#807) — and
       the replies to connections the host itself
       opened into the guest (the forward endpoint's dial, #109)
       return on their conntrack state. Everything else from the tap
@@ -326,6 +343,10 @@ def vm_ruleset(
         if llm_port is not None
         else ""
     )
+    # The remote proxies' admissions (#807): one line per port the
+    # workspace's rows carry — a listener binds under the same
+    # condition, so the rule and the service agree.
+    proxy_rules = proxy_admissions(tap, guest_ip, tap_ip, proxy_ports or [])
     return (
         f"table inet {table_name(workspace_id)} {{\n"
         f"{consent_sets(mode)}"
@@ -357,6 +378,7 @@ def vm_ruleset(
         f'    iifname "{tap}" ip saddr {guest_ip} ip daddr {tap_ip} '
         f"udp dport 53 accept\n"
         f"{llm_rules}"
+        f"{proxy_rules}"
         # The forward's dial is host-originated: its replies —
         # and only those, per conntrack — come home here (#109).
         f'    iifname "{tap}" ip saddr {guest_ip} '
@@ -771,6 +793,7 @@ async def install_vm(
     policy: EgressPolicy | None = None,
     queue_num: int | None = None,
     interceptor_port: int | None = None,
+    proxy_ports: list[int] | None = None,
     elements: str = "",
 ) -> None:
     """Install one workspace's tables as **one nft transaction**
@@ -781,7 +804,8 @@ async def install_vm(
     A failed transaction aborts whole, leaving the previous table
     enforcing. The LLM proxy port is admitted only when a model
     list is configured — the same condition that binds a listener,
-    so the rule and the service agree.
+    so the rule and the service agree; the remote proxies' ports
+    (#807) arrive as the caller's set, under the same agreement.
 
     ``elements`` (pre-rendered ``add element`` statements — the
     consent carry, #260 review) rides the same transaction: the
@@ -798,6 +822,7 @@ async def install_vm(
         policy=policy,
         queue_num=queue_num,
         interceptor_port=interceptor_port,
+        proxy_ports=proxy_ports,
         llm_port=settings.llm.port if settings.llm.models else None,
     )
     prior = ""

@@ -1033,6 +1033,48 @@ line (the daemon's close codes give the cause: no NIC, not running, service
 not listening, still booting), while a clean end of stream (the guest
 service closed, stdin EOF) leaves exit code 0.
 
+### Persisted proxies
+
+`--persist` stores the forward with the daemon instead of holding it in
+this command's process. The daemon owns the listener, the row lives in its
+database, and every workspace start re-establishes it (a workspace created
+without egress holds no proxies: its row has no NIC to reach):
+
+```bash
+msks forward my-workspace 22 --local 2201 --persist
+# the daemon binds 127.0.0.1:2201 (its own host) and bridges
+# every connection to the guest's port 22
+msks forward my-workspace 22 --local 2201 --persist --bind 0.0.0.0
+# same, listening on every interface of the daemon's host
+msks forward my-workspace 9200 --persist --remote 127.0.0.1:9200
+# reverse direction: the workspace's gateway listens on 9200,
+# and every guest connection bridges to 127.0.0.1:9200 on the
+# daemon's host
+```
+
+A remote proxy is the reverse of a forward one. The guest dials its
+DHCP gateway address (the same address its DNS resolver answers on —
+`ip route show default` inside the workspace names it) on the listen
+port, and the daemon bridges the connection to the daemon-side service
+the target names. Inside the workspace,
+`curl http://$(ip route show default | awk '{print $3}'):9200` reaches
+the host service the example stores.
+
+Creating a proxy on a running workspace opens its listener at once. A
+proxy whose bind fails (the port is taken) records the failure as its
+status with the cause, and every later start retries it.
+
+```bash
+msks forward --list            # every stored proxy, with live status
+msks forward --list --json     # the same rows as JSON
+msks forward my-workspace --rm 3   # remove one (listener closes at once)
+```
+
+The listing shows each row's direction, listen and target endpoints, and
+live status (`listening`, `stopped`, `failed` with the cause). Removing a
+proxy closes its listener when one serves and drops the row from the
+daemon's database.
+
 ## `msks egress`
 
 Decide, watch, and inspect a workspace's outbound-destination egress consent

@@ -105,6 +105,23 @@ class WorkspaceResize(BaseModel):
     mem_mib: int | None = Field(default=None, ge=64, le=1 << 15)
 
 
+class ProxyCreate(BaseModel):
+    """A proxy create request (#807, #808). The host fields are
+    direction-shaped: a forward row names the daemon-side listen
+    host (default loopback) and reaches the guest's
+    ``target_port``; a remote row names the daemon-side target
+    host (default loopback) and binds the workspace's own tap on
+    ``listen_port``. The route refuses the fields the direction
+    does not carry."""
+
+    direction: str = Field(pattern="^(forward|remote)$")
+    listen_port: int = Field(ge=1, le=65535)
+    target_port: int = Field(ge=1, le=65535)
+    listen_host: str | None = Field(default=None, max_length=255)
+    target_host: str | None = Field(default=None, max_length=255)
+    label: str | None = Field(default=None, max_length=200)
+
+
 class EgressDecide(BaseModel):
     """A decider's verdict on a held request (#69)."""
 

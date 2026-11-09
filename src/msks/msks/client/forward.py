@@ -11,10 +11,18 @@ booted first, exactly as ``msks console`` does.
 The forward is not a console: bytes pass unexamined both ways, so
 binary protocols (ssh, rsync) ride it cleanly, and the command works
 with pipes — a tty is not required on either end.
+
+The same command manages the daemon-owned, persisted proxies
+(#807, #808): ``--persist`` stores one in the daemon's database
+(where it survives stops and re-establishes at every workspace
+start), ``--remote`` creates the reverse direction — a listener on
+the workspace's own gateway that bridges into a daemon-side
+service — and ``--list`` / ``--rm`` manage the stored rows.
 """
 
 import asyncio
 import contextlib
+import json
 import ssl
 import sys
 from urllib.parse import quote
@@ -22,6 +30,7 @@ from urllib.parse import quote
 import websockets
 
 from . import stdio, wsauth, wsdial
+from .context import call
 from .env import (
     env_token,
     env_url,
@@ -29,6 +38,7 @@ from .env import (
     ssl_context,
 )
 from .rest import ensure_running
+from .tabular import listing_text
 
 #: Input is read up to this many bytes per websocket frame.
 READ_CHUNK = 4096
@@ -372,3 +382,166 @@ def run_workspace_forward(
                 f"msks: cannot bind 127.0.0.1:{local}: {exc}"
             ) from exc
     return asyncio.run(stdio_session(address, token, ssl_ctx))
+
+
+# --- persisted proxies (#807, #808) ---------------------------------
+
+
+def parse_remote_target(raw: str) -> tuple[str, int]:
+    """``--remote``'s ``[HOST:]PORT``: the daemon-side service a
+    remote proxy bridges to, loopback when the host part is absent.
+    """
+    host, separator, port_text = raw.rpartition(":")
+    if not separator:
+        host, port_text = "", raw
+    try:
+        port = int(port_text)
+    except ValueError:
+        raise SystemExit(
+            f"msks: --remote wants [HOST:]PORT, got {raw!r}"
+        ) from None
+    check_port(port)
+    return host or "127.0.0.1", port
+
+
+def proxy_endpoint(row: dict) -> tuple[str, str]:
+    """One row's (listen, target) display pair: a forward proxy
+    listens on the daemon host and reaches the guest; a remote one
+    listens on the workspace's gateway and reaches the daemon's
+    side."""
+    if row["direction"] == "remote":
+        return (
+            f"gateway:{row['listen_port']}",
+            f"{row.get('target_host') or '127.0.0.1'}:{row['target_port']}",
+        )
+    return (
+        f"{row.get('listen_host') or '127.0.0.1'}:{row['listen_port']}",
+        f"guest:{row['target_port']}",
+    )
+
+
+def proxy_line(row: dict) -> str:
+    """One row's one-line summary for create and remove output."""
+    listen, target = proxy_endpoint(row)
+    status = row.get("status", "stopped")
+    reason = f" ({row['reason']})" if row.get("reason") else ""
+    label = f" [{row['label']}]" if row.get("label") else ""
+    return (
+        f"{row['direction']} proxy {row['id']}: {listen} -> "
+        f"{target}{label} — {status}{reason}"
+    )
+
+
+async def create_persisted(
+    workspace_id: str, body: dict, transport=None
+) -> dict:
+    """POST one proxy row on its workspace's route — a name ref
+    rides through and the daemon resolves it; the answer carries
+    the row with its live status."""
+    return await call(
+        "POST",
+        f"/api/v1/workspaces/{quote(workspace_id, safe='')}/proxies",
+        json_body=body,
+        transport=transport,
+    )
+
+
+async def persisted_rows(transport=None) -> list[dict]:
+    """Every proxy row the daemon holds, live status attached."""
+    return await call("GET", "/api/v1/proxies", transport=transport)
+
+
+async def remove_persisted(
+    workspace_id: str, proxy_id: int, transport=None
+) -> dict:
+    """DELETE one proxy row by id, on its workspace's route."""
+    return await call(
+        "DELETE",
+        f"/api/v1/workspaces/{quote(workspace_id, safe='')}"
+        f"/proxies/{proxy_id}",
+        transport=transport,
+    )
+
+
+def run_persist_forward(
+    workspace_id: str,
+    port: int,
+    listen: int,
+    bind: str | None,
+    transport=None,
+) -> int:
+    """``msks forward WS PORT --local LISTEN --persist [--bind]``:
+    store a daemon-side forward — the daemon binds, the row
+    survives, every workspace start re-establishes it."""
+    body = {
+        "direction": "forward",
+        "listen_port": listen,
+        "target_port": port,
+    }
+    if bind is not None:
+        body["listen_host"] = bind
+    row = asyncio.run(create_persisted(workspace_id, body, transport))
+    print(f"msks: {proxy_line(row)}")
+    return 0
+
+
+def run_persist_remote(
+    workspace_id: str, listen_port: int, target: str, transport=None
+) -> int:
+    """``msks forward WS LISTEN --persist --remote [HOST:]PORT``:
+    store a reverse proxy — the workspace's gateway listens on
+    LISTEN, and every guest connection bridges to the daemon-side
+    service the target names."""
+    host, port = parse_remote_target(target)
+    body = {
+        "direction": "remote",
+        "listen_port": listen_port,
+        "target_host": host,
+        "target_port": port,
+    }
+    row = asyncio.run(create_persisted(workspace_id, body, transport))
+    print(f"msks: {proxy_line(row)}")
+    return 0
+
+
+def run_proxy_list(as_json: bool, transport=None) -> int:
+    """``msks forward --list``: every proxy row the daemon holds,
+    with live status."""
+    rows = asyncio.run(persisted_rows(transport))
+    if as_json:
+        print(json.dumps(rows, indent=2))
+        return 0
+    lines = []
+    for row in rows:
+        listen, target = proxy_endpoint(row)
+        reason = (
+            f"failed ({row['reason']})"
+            if row.get("status") == "failed" and row.get("reason")
+            else row.get("status", "stopped")
+        )
+        lines.append(
+            [
+                str(row["id"]),
+                row["workspace_id"],
+                row["direction"],
+                listen,
+                target,
+                row.get("label") or "",
+                reason,
+            ]
+        )
+    print(
+        listing_text(
+            ["ID", "WORKSPACE", "DIR", "LISTEN", "TARGET", "LABEL", "STATUS"],
+            lines,
+        )
+    )
+    return 0
+
+
+def run_proxy_remove(workspace_id: str, proxy_id: int, transport=None) -> int:
+    """``msks forward WS --rm ID``: remove one stored proxy (its
+    listener closes at once when one serves)."""
+    asyncio.run(remove_persisted(workspace_id, proxy_id, transport))
+    print(f"msks: removed proxy {proxy_id}")
+    return 0

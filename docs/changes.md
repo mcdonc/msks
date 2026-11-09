@@ -6,6 +6,17 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Added
+
+- **Persisted workspace proxies (#808).** `msks forward` gains
+  `--persist`: the daemon owns the listener, the row lives in its
+  database, and every workspace start re-establishes it. A forward
+  proxy binds a port on the daemon's host (`--local`, `--bind`);
+  `--remote [HOST:]PORT` stores the reverse direction, where the
+  workspace's gateway listens and bridges to a daemon-side service.
+  `msks forward --list` and `--rm ID` manage the rows, each showing
+  live status. Part of #807.
+
 ### Fixed
 
 - **`scripts/cut-release.sh` (#805).** One command pushes a

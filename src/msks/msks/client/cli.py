@@ -44,7 +44,13 @@ from . import egress as egress_mod
 from .config import ClientConfig, bootstrap
 from .console import run_workspace_shell
 from .create import read_pubkey  # noqa: F401 — the tests' seam
-from .forward import run_workspace_forward
+from .forward import (
+    run_persist_forward,
+    run_persist_remote,
+    run_proxy_list,
+    run_proxy_remove,
+    run_workspace_forward,
+)
 from .images import (  # noqa: F401
     cmd_image_check,
     cmd_image_default,
@@ -614,19 +620,74 @@ def console(
 @app.command("forward")
 @one_line_interrupts
 def forward(
+    ctx: typer.Context,
     workspace_id: str = typer.Argument(
         ..., help="the workspace to reach (name or id)"
     ),
-    port: int = typer.Argument(..., help="the guest TCP port to reach"),
+    port: int | None = typer.Argument(
+        None, help="the guest TCP port to reach"
+    ),
     local: int | None = typer.Option(
         None,
         "--local",
         metavar="PORT",
-        help="bind 127.0.0.1:PORT instead of stdio; every accepted "
-        "connection gets its own forward",
+        help="bind 127.0.0.1:PORT instead of stdio; with --persist, "
+        "the port the daemon binds",
+    ),
+    persist: bool = typer.Option(
+        False,
+        "--persist",
+        help="store the proxy with the daemon: it owns the listener, "
+        "and every workspace start re-establishes it",
+    ),
+    bind: str | None = typer.Option(
+        None,
+        "--bind",
+        metavar="HOST",
+        help="with --persist --local: the address the daemon binds "
+        "(default 127.0.0.1)",
+    ),
+    remote: str | None = typer.Option(
+        None,
+        "--remote",
+        metavar="[HOST:]PORT",
+        help="with --persist: reverse direction — the workspace's "
+        "gateway listens on PORT and bridges to this daemon-side "
+        "service",
+    ),
+    proxy_list: bool = typer.Option(
+        False, "--list", help="list the daemon's stored proxies"
+    ),
+    as_json: bool = typer.Option(
+        False, "--json", help="with --list: print rows as JSON"
+    ),
+    proxy_rm: int | None = typer.Option(
+        None, "--rm", metavar="ID", help="remove one stored proxy"
     ),
 ) -> int:
     """Bridge a workspace TCP port to stdio or a local port."""
+    if proxy_list or proxy_rm is not None or as_json:
+        if proxy_list and proxy_rm is not None:
+            raise UsageError("pass --list or --rm, not both")
+        if not proxy_list and proxy_rm is None:
+            raise UsageError("--json goes with --list")
+        if proxy_rm is not None:
+            return run_proxy_remove(workspace_id, proxy_rm, ctx.obj)
+        return run_proxy_list(as_json, ctx.obj)
+    if port is None:
+        raise UsageError("forward needs a port (or --list / --rm ID)")
+    if remote is not None:
+        if not persist:
+            raise UsageError(
+                "--remote creates a daemon-side proxy; add --persist"
+            )
+        return run_persist_remote(workspace_id, port, remote, ctx.obj)
+    if persist:
+        if local is None:
+            raise UsageError(
+                "--persist needs --local PORT (the daemon-side listen port)"
+            )
+        return run_persist_forward(workspace_id, port, local, bind, ctx.obj)
     return run_workspace_forward(workspace_id, port, local)
 
 

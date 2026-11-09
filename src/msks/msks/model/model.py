@@ -20,6 +20,7 @@ from ..spec.tokens import validate_token_plaintext
 from ..spec.vm import VmSpec
 from .db import Base, engine_for, sessionmaker_for, tighten_db_mode, utcnow
 from .egress_consent import EgressConsentModel
+from .proxies import WorkspaceProxy
 from .secrets import (
     AUDIT_KINDS,
     Placeholder,
@@ -558,9 +559,10 @@ class Model:
             return result.rowcount > 0
 
     async def delete_workspace(self, workspace_id: str) -> bool:
-        """Remove a workspace row and its consent rows; False when
-        absent."""
+        """Remove a workspace row, its consent rows, and its proxy
+        rows; False when absent."""
         await self.egress_consent.delete_for_workspace(workspace_id)
+        await self.delete_proxies_for_workspace(workspace_id)
         maker = sessionmaker_for(self.engine())
         async with maker() as session:
             row = await session.get(Workspace, workspace_id)
@@ -569,6 +571,87 @@ class Model:
             await session.delete(row)
             await session.commit()
             return True
+
+    # --- workspace proxies (#807, #808) -------------------------------
+
+    async def create_proxy(
+        self,
+        workspace_id: str,
+        direction: str,
+        listen_host: str | None,
+        listen_port: int,
+        target_host: str | None,
+        target_port: int,
+        label: str | None = None,
+    ) -> dict:
+        """Insert one proxy row for a workspace (#808). The caller
+        has validated the fields against the direction's rules; the
+        row is the whole definition the daemon reads at every
+        workspace start."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            row = WorkspaceProxy(
+                workspace_id=workspace_id,
+                direction=direction,
+                listen_host=listen_host,
+                listen_port=listen_port,
+                target_host=target_host,
+                target_port=target_port,
+                label=label,
+            )
+            session.add(row)
+            await session.commit()
+            return proxy_dict(row)
+
+    async def list_proxies(
+        self, workspace_id: str | None = None
+    ) -> list[dict]:
+        """Proxy rows, insertion order — one workspace's when its id
+        is given, every workspace's when None (#809's TUI page reads
+        the daemon-wide form)."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            query = select(WorkspaceProxy).order_by(WorkspaceProxy.id)
+            if workspace_id is not None:
+                query = query.where(
+                    WorkspaceProxy.workspace_id == workspace_id
+                )
+            rows = await session.scalars(query)
+            return [proxy_dict(row) for row in rows]
+
+    async def get_proxy(self, workspace_id: str, proxy_id: int) -> dict | None:
+        """One workspace's proxy row, None when absent — a proxy id
+        from another workspace answers None, not its row."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            row = await session.get(WorkspaceProxy, proxy_id)
+            if row is None or row.workspace_id != workspace_id:
+                return None
+            return proxy_dict(row)
+
+    async def delete_proxy(self, workspace_id: str, proxy_id: int) -> bool:
+        """Remove one proxy row; False when the workspace does not
+        own it."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            row = await session.get(WorkspaceProxy, proxy_id)
+            if row is None or row.workspace_id != workspace_id:
+                return False
+            await session.delete(row)
+            await session.commit()
+            return True
+
+    async def delete_proxies_for_workspace(self, workspace_id: str) -> None:
+        """Remove every proxy row a workspace owns (workspace
+        delete's cascade)."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            await session.execute(
+                delete(WorkspaceProxy).where(
+                    WorkspaceProxy.workspace_id == workspace_id
+                )
+            )
+            await session.commit()
 
     # --- placeholders (#198) ------------------------------------------
 
@@ -949,6 +1032,26 @@ def workspace_fields(
         # NULL (a pre-#620 row and a mountless row read the same).
         "mounts": dump_mounts(spec.mounts),
         "status": "created",
+    }
+
+
+def proxy_dict(row: WorkspaceProxy) -> dict:
+    """The API-facing dict for a proxy row. The two hosts are
+    direction-shaped: a forward row carries ``listen_host`` (the
+    daemon-side bind) and no ``target_host`` (the target is the
+    guest); a remote row carries ``target_host`` (the daemon-side
+    dial) and no ``listen_host`` (the bind is the workspace's tap
+    address, a runtime fact the row cannot pin)."""
+    return {
+        "id": row.id,
+        "workspace_id": row.workspace_id,
+        "direction": row.direction,
+        "listen_host": row.listen_host,
+        "listen_port": row.listen_port,
+        "target_host": row.target_host,
+        "target_port": row.target_port,
+        "label": row.label,
+        "created_at": row.created_at.isoformat(),
     }
 
 

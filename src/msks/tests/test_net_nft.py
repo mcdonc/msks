@@ -256,6 +256,33 @@ async def test_install_vm_admits_the_llm_port_with_models_configured(
     assert "tcp dport 8770 accept" in applied
 
 
+async def test_install_vm_admits_the_remote_proxy_ports(tools) -> None:
+    """The admission and the listener agree (#807): each remote
+    proxy port the caller's set carries gains one accept line,
+    pinned to the tap's address and the guest's source; an empty
+    set admits nothing beyond the standing services."""
+    settings, log = tools
+    await nft.install_vm(
+        settings,
+        "ws-px",
+        "msks-tap",
+        "172.31.0.1",
+        "172.31.0.2",
+        proxy_ports=[9200, 9443],
+    )
+    applied = log.with_name(log.name + ".stdin").read_text()
+    assert (
+        'iifname "msks-tap" ip saddr 172.31.0.1 ip daddr 172.31.0.2 '
+        "tcp dport 9200 accept" in applied
+    )
+    assert "tcp dport 9443 accept" in applied
+    await nft.install_vm(
+        settings, "ws-px", "msks-tap", "172.31.0.1", "172.31.0.2"
+    )
+    applied = log.with_name(log.name + ".stdin").read_text()
+    assert "tcp dport 9200" not in applied.split("delete table")[-1]
+
+
 # --- consent chain shapes and flow elements (#69) ----------------------------
 
 

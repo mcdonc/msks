@@ -72,6 +72,10 @@ hostshares = 1
 identity = 0
 llm = 0
 msks = 0
+# #808: the workspace proxy subsystem — the persisted forward and
+# remote TCP listeners the daemon owns; a root leaf the composer
+# and the net manager (by attribute) reach.
+proxies = 0
 # #514: the unlock-time plaintext cache + the named locked error
 # — a leaf the interceptor, the store, and the API all reach.
 secretcache = 0
@@ -98,6 +102,10 @@ conformance = 5
 [snapshot.app]
 consent = 4
 events = 2
+# #808: the proxy subsystem's composition seam — the manager the
+# net manager's attach/detach hooks and the proxy routes reach
+# (module edge + the ProxyManager name).
+proxies = 2
 # interceptor: the composer seam + the probe service (#424)
 interceptor = 4
 llm = 2
@@ -263,6 +271,10 @@ microvm = 16
 # #514 retirement: the routes dropped the manifest's
 # placeholder_refs read and the seed's ref probe.
 model = 5
+# #808: the proxy routes read the two direction-shaped bind and
+# target defaults the create path applies (module edge + both
+# names).
+proxies = 3
 # #773: the clone route copies both disks (clone_file), reads the
 # pair's paths, and removes its own half-copied pair on a lost
 # insert race — five names on one statement beside the module.
