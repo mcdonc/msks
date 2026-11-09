@@ -492,6 +492,45 @@ async def test_an_unchanged_listing_keeps_its_list(monkeypatch) -> None:
         assert app.screen.rows_widget() is not standing
 
 
+async def test_a_refresh_never_takes_the_loading_state(
+    monkeypatch,
+) -> None:
+    """The refresh's in-flight mark is a plain flag, never the
+    widget's own ``loading`` reactive — setting that would replace
+    the page with Textual's loading indicator on every cycle (the
+    five-second flash). A fetch held mid-flight proves the page
+    itself stays painted."""
+    import asyncio
+
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    release = asyncio.Event()
+
+    class Gated(FakeData):
+        armed = False
+
+        async def workspace_proxies(self, workspace_id):
+            if Gated.armed:
+                await release.wait()
+            return await super().workspace_proxies(workspace_id)
+
+    data = Gated([row()])
+    data.proxy_rows = [proxy_row()]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        page = await open_proxies(pilot, app)
+        await wait_for(lambda: proxy_children(app) == 1)
+        standing = page.rows_widget()
+        Gated.armed = True  # the next read holds mid-flight
+        page.refresh_rows()
+        await pilot.pause()
+        await pilot.pause()
+        assert page.loading is False  # the reactive, never tripped
+        assert page.rows_widget() is standing  # the page stays painted
+        release.set()
+        await wait_for(lambda: page.rows_loading is False)
+
+
 async def test_a_frame_poke_refreshes_the_listing(monkeypatch) -> None:
     """A proxy transition on the subscriber pokes the page's
     refresh, so a row another surface removed leaves the listing

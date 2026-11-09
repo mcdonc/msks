@@ -425,7 +425,12 @@ class ProxiesScreen(Screen):
         self.flash_line = FlashLine()
         self.shown_once = False
         self.link: ProxyLink | None = None
-        self.loading = False
+        # The refresh's in-flight mark (#809): a skip, not a
+        # cancel — and never the widget's own ``loading`` reactive,
+        # which would replace the page with Textual's loading
+        # indicator on every cycle (the workspaces list's own
+        # name, carried here).
+        self.rows_loading = False
 
     # -- the page's frame ---------------------------------------------
 
@@ -510,9 +515,9 @@ class ProxiesScreen(Screen):
         """Reload the listing; one flight at a time, a skip and
         not a cancel — the workspaces list's own rule (a cancel
         landing inside the swap strands the page)."""
-        if self.loading:
+        if self.rows_loading:
             return
-        self.loading = True
+        self.rows_loading = True
         self.run_worker(self.load_rows)
 
     async def load_rows(self) -> None:
@@ -523,7 +528,7 @@ class ProxiesScreen(Screen):
         else:
             await self.rebuild_rows(rows)
         finally:
-            self.loading = False
+            self.rows_loading = False
 
     async def rebuild_rows(self, rows: list[dict]) -> None:
         """Swap in a freshly-built list (its mount awaited),
