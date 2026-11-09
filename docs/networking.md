@@ -187,11 +187,9 @@ before any dial, and its console is the virtio-console getty.
 
 The forward websocket lives as long as the command holding it. A persisted
 proxy (`msks proxy add`) lives in the daemon's database instead: the daemon
-owns the listener, and every workspace start re-establishes it. [The
-proxies chapter](proxies.md) owns the concept and the worked examples for
-both surfaces; this section keeps the networking view. A forward proxy binds a port on the daemon's host and
-bridges each connection to the guest through the same dial the forward
-websocket uses. A remote proxy binds a port on the workspace's own tap
+owns the listener, and every workspace start re-establishes it. A forward
+proxy binds a port on the daemon's host and bridges each connection to the
+guest through the same dial the forward websocket uses. A remote proxy binds a port on the workspace's own tap
 address: a guest process dials its DHCP gateway on that port, and the
 daemon bridges the connection to a daemon-side service (the ssh `-R`
 shape).
@@ -204,8 +202,10 @@ fails admits nothing, so the rule and the service always agree.
 
 The daemon dials a remote proxy's target itself, and the consent machinery
 gates the guest's traffic through the tap, not the daemon's own
-connections. A remote row therefore reaches its target without a verdict
-— the one msks connection class the consent chapter does not cover.
+connections. A remote row therefore reaches its target without a verdict:
+the consent chapter covers the guest's connections, and this dial is the
+daemon's own. [The proxies chapter](proxies.md) owns the concept and the
+worked examples for both surfaces.
 
 ### The workspace ssh identity
 

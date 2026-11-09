@@ -5,8 +5,8 @@ daemon owns the listener, and every start of the workspace brings it back.
 This chapter shows the two directions a proxy bridges, and how to manage
 proxies from the [CLI](cli.md#msks-proxy) and the [TUI](tui.md#the-proxies-page).
 
-The commands and the pages ride the same daemon rows. Whatever one surface
-changes, the other sees.
+The commands and the pages work on the same daemon rows. Whatever one
+surface changes, the other sees.
 
 ## What a persistent proxy is
 
@@ -49,23 +49,24 @@ loopback. A name like `db.internal` resolves through the daemon host's
 resolver.
 
 A remote proxy's listen address is fixed by the workspace's tap, so the
-grammar carries no bind field for `-R`. Inside the guest, the DHCP gateway
-address reaches it. That address is printed by `ip route show default`:
+grammar carries no bind field for `-R`. Inside the guest, dial the DHCP
+gateway address to reach it. That address is printed by `ip route show
+default`:
 
 ```bash
 curl http://$(ip route show default | awk '{print $3}'):9200
 ```
 
-A workspace created without egress has no NIC, so it holds no proxies: the
-create refuses with the reason.
+A workspace created without egress has no NIC. Adding a proxy to it is
+refused: `workspace … has no NIC (created without egress)`.
 
 ### Reach and consent
 
 The daemon dials a remote proxy's target itself. The consent machinery gates
 the guest's traffic through the tap; it never sees the daemon's own
 connections. A remote row therefore reaches its target without a verdict.
-This is the one msks connection class [the consent
-chapter](egress-consent.md) does not cover.
+[The consent chapter](egress-consent.md) covers the guest's connections;
+this dial is the daemon's own.
 
 The tap's ingress chain admits a remote port only while its listener is up.
 Each accept line is pinned to that tap's address and that guest's source. A
@@ -75,7 +76,7 @@ one nft transaction, so the rule and the service always agree.
 ### Status and events
 
 Every proxy carries a live status. `listening` means the daemon holds the
-listener. `failed` means the bind refused, and the cause rides beside the
+listener. `failed` means the bind refused, and the cause follows the
 word (a taken port, an address the host cannot bind). `stopped` means
 nothing serves the row: a remote proxy on a workspace that is not running,
 for example. A `listening` remote row whose admission swap failed carries
@@ -83,7 +84,7 @@ the cause the same way. The listener serves, and the guest cannot reach it.
 
 Each transition publishes an event on the daemon's hub (`proxy.created`,
 `proxy.listening`, `proxy.failed`, `proxy.closed`, `proxy.removed`). The TUI
-subscribes, so its proxies surfaces move without a refresh.
+subscribes, so its proxy surfaces move without a keypress.
 
 ## Managing proxies from the CLI
 
@@ -131,7 +132,7 @@ psql -h $(ip route show default | awk '{print $3}') -p 5432
 
 The daemon dials `localhost:5432` on its own host for every guest
 connection. A target on another host works the same way
-(`-R 5432:db.internal:5432`); the daemon host's resolver names it.
+(`-R 5432:db.internal:5432`). The daemon host's resolver resolves it.
 
 ### Reading and removing
 
@@ -145,10 +146,15 @@ The listing shows each row's direction, listen and target endpoints, label,
 and live status. A removal closes the listener at once and drops the row.
 
 `add` is declarative. Asking twice for the same spec returns the standing
-row. A different spec on the same bind is refused, and the refusal names the
-row that holds it. A create on a running workspace opens its listener at
-once. A proxy whose bind fails records the failure as its status with the
-cause, and every later start retries it.
+row. A different spec on the same bind is refused with the row that holds
+it.
+
+A forward proxy binds at once, on a stopped workspace too; each connection
+refuses until the guest runs. A remote proxy on a stopped workspace records
+the row, and the workspace's next start brings its listener up. A stop
+closes every listener the workspace owns. Each start binds them again. A
+proxy whose bind fails records the failure as its status with the cause,
+and every later start retries it.
 
 ## Managing proxies from the TUI
 
@@ -173,8 +179,9 @@ page. The page lists that workspace's rows with the spec in the CLI's
 grammar, the label, and the live status. Press `a` to add one. The form
 holds the direction (`forward (-L)` or `reverse (-R)`), the spec in the same
 grammar `msks proxy add` reads, and a label. A spec the parser refuses keeps
-the form standing, with the rule on the note line. `D` removes the focused
-row behind a confirmation. `q` returns to the workspace page.
+the form standing, with the rule on the note line. `D` (or Enter, on the
+focused row) removes it behind a confirmation. `q` or Escape returns to the
+workspace page.
 
 The page re-reads the listing every five seconds and on every proxy
 transition, so a bind that fails while the page stands paints itself without
