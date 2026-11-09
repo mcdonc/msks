@@ -325,10 +325,12 @@ async def test_the_page_adds_through_the_form(monkeypatch) -> None:
         await open_proxies(pilot, app)
         await pilot.press("a")
         await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
-        # The scope fixes the workspace: the select carries one
-        # choice, and the walk starts at the spec.
+        # The scope fixes the workspace: the field is the name it
+        # reads, and the walk starts at the spec.
         form = app.screen
-        assert form.query_one("#field-workspace", Select).is_disabled
+        assert (
+            str(form.query_one("#field-workspace", Static).content) == "alpha"
+        )
         form.query_one("#field-spec", Input).value = "2201:localhost:22"
         form.query_one("#field-proxy-label", Input).value = "ssh"
         await pilot.press("enter")  # the label field's submit walks on

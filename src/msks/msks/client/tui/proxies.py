@@ -315,19 +315,16 @@ class ProxyAddScreen(FormWalk, ModalScreen[dict | None]):
             yield Static(ADD_NOTE, id="form-note")
             with Horizontal(classes="form-row"):
                 yield Static("workspace", classes="form-label")
-                yield Select(
-                    [(workspace_label(self.scope), self.scope["id"])],
-                    value=self.scope["id"],
-                    id="field-workspace",
-                    compact=True,
-                    disabled=True,
-                )
+                # The workspace is the page's own, shown as the
+                # name it reads — no control, so the walk starts at
+                # the direction and never visits a fixed field.
+                yield Static(workspace_label(self.scope), id="field-workspace")
             with Horizontal(classes="form-row"):
                 yield Static("direction", classes="form-label")
                 yield FormSelect(
                     [
-                        (FORWARD_CHOICE, FORWARD_CHOICE),
-                        (REMOTE_CHOICE, REMOTE_CHOICE),
+                        ("forward (-L)", FORWARD_CHOICE),
+                        ("reverse (-R)", REMOTE_CHOICE),
                     ],
                     value=FORWARD_CHOICE,
                     allow_blank=False,

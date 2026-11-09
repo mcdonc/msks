@@ -159,9 +159,9 @@ The page re-reads the listing every five seconds and on every proxy
 transition the daemon publishes, so a bind that fails while the page
 stands paints itself without a keypress.
 
-`a` opens the add form: the workspace (the page's own, shown fixed),
-the direction (`-L` or `-R`), the spec in the same grammar `msks proxy
-add` reads, and a label. A spec the CLI's own parser refuses keeps the
+`a` opens the add form: the workspace (the page's own, shown as its
+name), the direction (`forward (-L)` or `reverse (-R)`), the spec in
+the same grammar `msks proxy add` reads, and a label. A spec the CLI's own parser refuses keeps the
 form standing with the rule on its note line — a `-L` spec naming a
 host besides the workspace itself says so and points at `-R`. `r` or
 Enter removes the focused row after a confirmation; the listener
