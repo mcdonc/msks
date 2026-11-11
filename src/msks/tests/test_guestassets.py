@@ -678,10 +678,25 @@ def test_the_images_wire_the_sshd_address_wait_under_their_own_names() -> None:
     # The Fedora build asserts the named units exist in the
     # extracted tree (#819): the wiring cannot again attach to a
     # unit the image does not ship. The Debian tree carries its
-    # units under the same paths (openssh-server ships both).
+    # units under the same paths (openssh-server ships both),
+    # pinned by its build for the same reason.
     assert 'test -e "$tree"/usr/lib/systemd/system/sshd.service' in fedora
     assert 'test -e "$tree"/usr/lib/systemd/system/sshd.socket' in fedora
     assert 'test ! -e "$tree"/etc/systemd/system/ssh.service.d' in fedora
+    assert 'test -e "$root"/usr/lib/systemd/system/ssh.service' in debian
+    assert 'test -e "$root"/usr/lib/systemd/system/ssh.socket' in debian
+    # Enablement, not just existence (#819 review): the wants
+    # entry is what puts the wiring into the boot transaction —
+    # a compose that stopped preset-enabling sshd.service would
+    # leave every existence assert green with a dropin nothing
+    # pulls in, the failure shape this build guard exists for.
+    # test -L, not test -e: preset enablement is a symlink with
+    # an absolute target, which test -e resolves against the
+    # build host's root instead of the tree.
+    assert (
+        'test -L "$tree"/etc/systemd/system/multi-user.target.wants/'
+        "sshd.service" in fedora
+    )
 
 
 def test_the_extension_bounds_its_single_fetch() -> None:

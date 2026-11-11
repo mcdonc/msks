@@ -1169,6 +1169,19 @@ let
     # fail the build here, not a workspace boot.
     test -e "$tree"/usr/lib/systemd/system/sshd.service
     test -e "$tree"/usr/lib/systemd/system/sshd.socket
+    # Enablement, not just existence (#819 review): the wiring
+    # lives only while the boot transaction queues sshd.service —
+    # a compose that stopped preset-enabling it (or flipped to
+    # socket activation) would leave every assert above green
+    # with a Wants= dropin nothing ever pulls in, the exact
+    # silent-death shape this guard exists to catch. test -L, not
+    # test -e: the preset's wants entry is a symlink with an
+    # ABSOLUTE target (/usr/lib/systemd/system/sshd.service),
+    # which test -e resolves against the build host's root, not
+    # the tree — on a host without that path every tree would
+    # fail the assert. -L pins the entry itself; the target is
+    # the unit the assert above already pinned.
+    test -L "$tree"/etc/systemd/system/multi-user.target.wants/sshd.service
     test -d "$tree"/etc/systemd/system/sshd.service.d
     test ! -e "$tree"/etc/systemd/system/ssh.service.d
     grep -q '^Before=sshd.service sshd.socket$' \
