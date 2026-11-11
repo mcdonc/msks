@@ -45,6 +45,14 @@ tagged `vX.Y.Z`.
   workspace and sshd listens once the NIC has its address. The image
   build fails when the wiring names a unit the image does not ship.
 
+- **The NixOS guest's arch-dependent module set (#821).** The
+  runtime module list and the nested-KVM unit's modprobe line now
+  follow the evaluating architecture: aarch64 loads `crc32c-generic`
+  and the `gpio_keys` power-button driver and probes the plain `kvm`
+  module; x86_64 keeps `crc32c-intel` and the `kvm-intel`/`kvm-amd`
+  pair. An aarch64 NixOS workspace now exposes `/dev/kvm` on hosts
+  that pass nested virtualization, and `stop` runs through the
+  guest's own shutdown. The image build pins the split per arch.
 - **`scripts/cut-release.sh` (#805).** One command pushes a
   release cut in the order the docs deploy needs: the tag alone
   first, then main once the tag's versioned docs deploy has

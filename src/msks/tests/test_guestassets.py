@@ -551,6 +551,71 @@ def test_the_nixos_image_is_rebuild_ready() -> None:
     assert 'console = "ttyAMA0"' in build
 
 
+def test_the_nixos_guest_splits_the_module_set_by_arch() -> None:
+    """#821: the NixOS module's runtime module set and nested-KVM
+    unit pick the evaluating arch's names. The x86-only set it
+    used to carry unconditionally never resolved on aarch64:
+    crc32c-intel and the kvm-intel/kvm-amd pair are modules the
+    arm64 tree lacks, so the crc32c and nested-KVM loads no-oped
+    (no /dev/kvm), and the gpio-keys power button stayed unnamed
+    (logind never saw the host's press, and stop killed the
+    workspace at the deadline) — all silent: nixpkgs maps
+    systemd-modules-load's failure exit to success, so nothing
+    showed failed. aarch64 takes crc32c-generic, gpio_keys, and
+    plain kvm; the Debian and Fedora builds carry the same
+    split (their archModules/kvmModprobe, with the KVM names on
+    the unit here — modules-load has no fallback-chain form)."""
+    configuration = (
+        REPO_ROOT / "nix" / "guest-nixos-configuration.nix"
+    ).read_text()
+    build = (REPO_ROOT / "nix" / "guest-nixos.nix").read_text()
+    # The arch pick follows the evaluating platform — the same
+    # idiom the console device uses — so a guest's own rebuilds
+    # resolve the same set its image baked.
+    assert "archModules =" in configuration
+    assert "if pkgs.stdenv.hostPlatform.isAarch64 then" in configuration
+    assert '"crc32c-generic"' in configuration
+    assert '"gpio_keys"' in configuration
+    assert '"crc32c-intel"' in configuration
+    # The property the split exists for: the arch-specific
+    # names live ONLY in the arch branches — the shared runtime
+    # list (the region between `boot.kernelModules = [` and the
+    # `++ archModules` append) carries none of them. #821 was
+    # exactly an arch name riding the shared list.
+    shared_list = configuration.split("boot.kernelModules = [", 1)[1].split(
+        "]\n    ++ archModules;", 1
+    )[0]
+    for name in ("crc32c-generic", "crc32c-intel", "gpio_keys", "kvm"):
+        assert f'"{name}"' not in shared_list, (
+            f'"{name}" rides the shared kernelModules list — the '
+            "arch split (#821) puts it in archModules or the KVM "
+            "unit, never both surfaces"
+        )
+    assert "]\n    ++ archModules;" in configuration
+    # The KVM unit's modprobe line picks the arch's module: the
+    # x86 pair with its fallback, plain kvm on arm64 — the
+    # fallback chain is why these ride the unit and not
+    # boot.kernelModules.
+    assert '"${pkgs.kmod}/bin/modprobe kvm || true"' in configuration
+    assert (
+        '"${pkgs.kmod}/bin/modprobe kvm-intel '
+        '|| ${pkgs.kmod}/bin/modprobe kvm-amd || true"'
+    ) in configuration
+    assert (
+        'ExecStart = "${pkgs.runtimeShell} -c \\"${kvmModprobe}\\"";'
+        in configuration
+    )
+    # The build guard: the image build pins the split on the
+    # modules-load file and the unit the built system carries —
+    # the arm64 closure has no CI leg, so the build wherever it
+    # runs is what catches a regression.
+    assert "grep -qx 'crc32c-generic' \"$modulesLoad\"" in build
+    assert "grep -qx 'gpio_keys' \"$modulesLoad\"" in build
+    assert "! grep -qx 'crc32c-intel' \"$modulesLoad\"" in build
+    assert "grep -q 'modprobe kvm ' \"$kvmUnit\"" in build
+    assert "aarch64-linux)" in build
+
+
 def test_the_nixos_image_folds_the_interceptor_ca() -> None:
     """The #427 fold: the guest module reads the seed-staged
     workspace CA into the system trust bundle at rebuild time, a
