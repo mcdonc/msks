@@ -1674,7 +1674,11 @@ let
         # -, [A-Za-z0-9_.] pass, a leading . and every other
         # character escape — a mount point this cheap form cannot
         # spell fails the build rather than silently skipping its
-        # check (#272's class).
+        # check (#272's class). Two generator-minted shapes fail
+        # loud by the same rule and want a case arm the day
+        # someone orders against them: -.mount (the root mount
+        # comes from the root= cmdline, not the fstab) and a
+        # .automount (x-systemd.automount options).
         unit_search_paths="etc/systemd/system lib/systemd/system \
           usr/lib/systemd/system"
         unit_in_tree() {
@@ -1714,6 +1718,9 @@ let
         while read -r spec mountpoint fstype options; do
           [ -n "$spec" ] || continue
           case $spec in '#'*) continue ;; esac
+          # A swap line names no mount point ("none"); its unit is
+          # a .swap the generator names from the device.
+          [ "$fstype" = swap ] && continue
           munit=$(fstab_mount_unit "$mountpoint") || exit 1
           fstab_mount_units="$fstab_mount_units $munit"
         done < "$root"/etc/fstab
@@ -1732,9 +1739,16 @@ let
         check_ordering_names() {
           for unitname in $(awk '
               /\\$/ { sub(/\\$/, ""); acc = acc $0; next }
-              { line = acc $0; acc = "" }
-              /^(After|Before)=/ {
-                sub(/^(After|Before)=/, "")
+              # Rebuild $0 (not a spare variable): the assigned
+              # record is what the pattern below re-tests, so a
+              # backslash-continued directive checks every name it
+              # carries — the silent-skip form this gate exists to
+              # end. Leading whitespace and case fold the way the
+              # unit parser accepts them; the char classes spell
+              # the two names case-insensitively for the sub.
+              { $0 = acc $0; acc = "" }
+              toupper($0) ~ /^[ \t]*(AFTER|BEFORE)=/ {
+                sub(/^[ \t]*([Aa][Ff][Tt][Ee][Rr]|[Bb][Ee][Ff][Oo][Rr][Ee])=/, "")
                 count = split($0, words, /[ \t]+/)
                 for (i = 1; i <= count; i++)
                   if (words[i] != "") print words[i]
@@ -1747,7 +1761,8 @@ let
         }
         while IFS= read -r file; do
           check_ordering_names "$file"
-        done < <(find "$root"/etc/systemd/system -type f -path '*.d/*.conf'
+        done < <(find "$root"/etc/systemd/system -regextype posix-extended \
+            -type f -regex '.*/etc/systemd/system/[^/]+\.d/[^/]+\.conf'
             find "$root"/etc/systemd/system -maxdepth 1 -type f)
         # A dropin directory whose own unit resolves to nothing is
         # the same silence (#818's Fedora case: ssh.service.d on an
