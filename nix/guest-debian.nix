@@ -1497,6 +1497,13 @@ let
         test -x "$root"/usr/bin/rsync
         test -x "$root"/usr/bin/fdfind
         test -x "$root"/usr/bin/rg
+        # The sshd address-wait wiring's own units (#819's class):
+        # the overlay's Before= and dropin name ssh.service and
+        # ssh.socket, Debian's own names for them — the same
+        # existence guard the Fedora build pins, so an upstream
+        # rename or split fails the build here, not the ordering.
+        test -e "$root"/usr/lib/systemd/system/ssh.service
+        test -e "$root"/usr/lib/systemd/system/ssh.socket
         # The staged apt lists (#783): both halves of the pair
         # are present (an index without its InRelease leaves apt
         # reading lists it cannot attribute). The mirrors files

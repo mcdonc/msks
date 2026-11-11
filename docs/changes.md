@@ -38,6 +38,13 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **Fedora guest's sshd address-wait wiring (#819).** The Fedora
+  image's sshd ordering dropin now lands in `sshd.service.d` (Fedora's
+  own unit names) instead of Debian's `ssh.service.d`, so
+  `msks-wait-address.service` actually runs on a Fedora egress
+  workspace and sshd listens once the NIC has its address. The image
+  build fails when the wiring names a unit the image does not ship.
+
 - **`scripts/cut-release.sh` (#805).** One command pushes a
   release cut in the order the docs deploy needs: the tag alone
   first, then main once the tag's versioned docs deploy has
