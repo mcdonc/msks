@@ -479,7 +479,7 @@ async def test_launch_reconciles_untracked_share_daemons_after_a_self_exit(
     await app.state.microvm.launch(mounted)
     assert await local_mod.pid_dead_by(daemon.pid, 5.0)  # swept, not orphaned
     pidfile = fs_pidfile_path(vm_dir, tag)
-    assert pidfile.read_text().strip() == str(  # names the fresh pair
+    assert pidfile.read_text().strip() == str(  # names the fresh daemon
         driver._fs_procs[WID][0].pid
     )
     assert (await app.state.microvm.info(WID)).status is VmStatus.RUNNING
