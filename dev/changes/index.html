@@ -1778,14 +1778,22 @@ tagged <code>vX.Y.Z</code>.</p>
   build fails when the wiring names a unit the image does not ship.</p>
 </li>
 <li>
-<p><strong><code>scripts/cut-release.sh</code> (#805).</strong> One command pushes a
+<p><strong>The NixOS guest's arch-dependent module set (#821).</strong> The
+  runtime module list and the nested-KVM unit's modprobe line now
+  follow the evaluating architecture: aarch64 loads <code>crc32c-generic</code>
+  and the <code>gpio_keys</code> power-button driver and probes the plain <code>kvm</code>
+  module; x86_64 keeps <code>crc32c-intel</code> and the <code>kvm-intel</code>/<code>kvm-amd</code>
+  pair. An aarch64 NixOS workspace now exposes <code>/dev/kvm</code> on hosts
+  that pass nested virtualization, and <code>stop</code> runs through the
+  guest's own shutdown. The image build pins the split per arch.</p>
+</li>
+<li><strong><code>scripts/cut-release.sh</code> (#805).</strong> One command pushes a
   release cut in the order the docs deploy needs: the tag alone
   first, then main once the tag's versioned docs deploy has
   finished green. Pushing the tag and main together races the
   docs workflow's concurrency group, and the release publishes
   without its versioned docs and the site's <code>latest</code> alias keeps
-  the previous version until the cancelled run is re-run by hand.</p>
-</li>
+  the previous version until the cancelled run is re-run by hand.</li>
 </ul>
 <h2 id="v083-2026-11-08">[v0.8.3] - 2026-11-08<a class="headerlink" href="#v083-2026-11-08" title="Permanent link">&para;</a></h2>
 <h3 id="fixed_1">Fixed<a class="headerlink" href="#fixed_1" title="Permanent link">&para;</a></h3>
