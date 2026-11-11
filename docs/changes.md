@@ -38,6 +38,14 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **Workspace starts after a guest-initiated poweroff (#825).** A
+  VMM that exited outside the stop flow — the guest's own `poweroff`,
+  or a guest landing its shutdown just past a stop deadline — left a
+  stale entry that refused every later `msks start` with "VM already
+  exists" until an operator passed a `stop`. The start now reconciles
+  the dead VMM's residue (its tracked entry, share daemons, and tap)
+  and boots.
+
 - **Fedora guest's sshd address-wait wiring (#819).** The Fedora
   image's sshd ordering dropin now lands in `sshd.service.d` (Fedora's
   own unit names) instead of Debian's `ssh.service.d`, so

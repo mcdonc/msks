@@ -32,9 +32,16 @@ from msks.microvm.local import disk_entries, map_ch_state, vm_config
 from msks.net import alloc
 from msks.net import manager as manager_mod
 from msks.net.manager import NetManager
-from msks.settings import NetSettings, Settings, VmmSettings
+from msks.settings import (
+    MountSettings,
+    NetSettings,
+    Settings,
+    VmmSettings,
+)
+from msks.spec.mounts import MountSpec
 from msks.spec.vm import VmStatus
 from netstubs import stub_ip, stub_nft
+from test_fsdaemons import FakeProc, socket_from_args
 from test_net_manager import FakeService
 
 from msks import persist
@@ -344,6 +351,84 @@ async def test_launch_rejects_double_launch(env, fake, tmp_path: Path) -> None:
     await app.state.microvm.launch(spec(tmp_path))
     with pytest.raises(MicrovmError, match="already exists"):
         await app.state.microvm.launch(spec(tmp_path))
+    await app.state.microvm.kill(WID)
+
+
+async def test_launch_refuses_a_live_untracked_vmm(
+    env, tmp_path: Path
+) -> None:
+    """The #56 shape through the launch path: a restarted daemon
+    finds a live VMM by its pidfile, and the start refuses — the
+    launch reconciliation adopts residue, never a live VMM."""
+    app, state_dir, _ = env
+    stub = await spawn_stub_vmm(app)
+    (state_dir / "vms" / WID / "ch.pid").write_text(str(stub.pid))
+    try:
+        with pytest.raises(MicrovmError, match="already exists"):
+            await app.state.microvm.launch(spec(tmp_path))
+    finally:
+        stub.kill()
+        await stub.wait()
+
+
+async def test_launch_reconciles_a_self_exited_vmm(
+    env, fake, tmp_path: Path
+) -> None:
+    """#825: a VMM that exited outside the stop flow — the guest's
+    own poweroff at a console, or a guest landing its shutdown
+    just past a stop deadline — wedged every later start on the
+    stale tracked entry (503 "already exists") until an operator
+    passed a stop. The start now reaps the entry and boots."""
+    app, _, _ = env
+    driver = app.state.microvm.local
+    await app.state.microvm.launch(spec(tmp_path))
+    dead = driver._procs[WID]
+    dead.kill()  # the guest powered itself off; the VMM exited
+    await dead.wait()  # reaped: returncode recorded, entry stale
+    assert WID in driver._procs  # the wedge: no stop flow ran
+    await app.state.microvm.launch(spec(tmp_path))  # was the 503
+    assert (await app.state.microvm.info(WID)).status is VmStatus.RUNNING
+    assert driver._procs[WID] is not dead  # the fresh spawn is tracked
+    await app.state.microvm.kill(WID)
+
+
+async def test_launch_reconciles_share_daemons_after_a_self_exit(
+    env, fake, tmp_path: Path, monkeypatch
+) -> None:
+    """#825's mounts half: a VMM that exits on its own leaves its
+    share daemons behind, and the relaunch must stop them — the
+    tracked pair is never orphaned behind the fresh spawn, and a
+    daemon still serving never refuses the restart."""
+    app, _, _ = env
+    driver = app.state.microvm.local
+    share = tmp_path / "proj"
+    share.mkdir()
+    app.state.settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+
+    async def at_floor(binary: str) -> tuple[int, ...]:
+        return (1, 13, 3)
+
+    monkeypatch.setattr(driver, "_virtiofsd_version", at_floor)
+
+    async def fake_spawn_fs(binary, args, log_path):
+        proc = FakeProc()  # alive until terminate, like a daemon
+        socket_from_args(args).touch()  # serving its socket at once
+        return proc
+
+    monkeypatch.setattr(driver, "_spawn_fs", fake_spawn_fs)
+    mounted = replace(
+        spec(tmp_path), mounts=(MountSpec(host=str(share), guest="/mnt/proj"),)
+    )
+    await app.state.microvm.launch(mounted)
+    first = driver._fs_procs[WID]
+    dead = driver._procs[WID]
+    dead.kill()  # the guest powered itself off; the VMM exited
+    await dead.wait()
+    assert first[0].returncode is None  # its daemons outlived it
+    await app.state.microvm.launch(mounted)  # was the 503
+    assert [proc.terminated for proc in first] == [True]
+    assert driver._fs_procs[WID] is not first  # the fresh pair serves
+    assert (await app.state.microvm.info(WID)).status is VmStatus.RUNNING
     await app.state.microvm.kill(WID)
 
 
@@ -1469,6 +1554,37 @@ async def test_launch_failure_unwinds_egress(
         line.startswith("link del dev")
         for line in ip_log.read_text().splitlines()
     )
+
+
+async def test_launch_reconciles_egress_after_a_self_exit(
+    egress_env, fake, tmp_path: Path
+) -> None:
+    """#825's egress half: the relaunch tears the dead run's tap
+    down and arms a fresh one — a live net device reaches the new
+    VM on the workspace's own address, not a 503."""
+    app, _ip_log = egress_env
+    driver = app.state.microvm.local
+
+    def create_taps() -> list[str]:
+        return [
+            body["net"][0]["tap"]
+            for _method, path, body in fake.requests
+            if path == "/api/v1/vm.create"
+        ]
+
+    await app.state.microvm.launch(spec(tmp_path, egress=True))
+    armed = app.state.net._attachments[WID]
+    taps = create_taps()
+    dead = driver._procs[WID]
+    dead.kill()  # the guest powered itself off; the VMM exited
+    await dead.wait()
+    await app.state.microvm.launch(spec(tmp_path, egress=True))  # was a 503
+    assert create_taps() == taps + [taps[0]]  # the same tap serves
+    fresh = app.state.net._attachments[WID]
+    assert fresh is not armed  # the dead run's plumbing was re-armed
+    assert fresh.tap == armed.tap
+    assert (await app.state.microvm.info(WID)).status is VmStatus.RUNNING
+    await app.state.microvm.kill(WID)
 
 
 async def test_launch_refuses_egress_without_the_plumbing(
