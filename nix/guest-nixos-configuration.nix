@@ -78,6 +78,43 @@ let
     "nixos-system=/nix/var/nix/profiles/per-user/root/channels/nixos/nixos"
     "/nix/var/nix/profiles/per-user/root/channels"
   ];
+  # The per-arch entries of the runtime module set (#821): the
+  # crc32c module ext4's metadata_csum asks the crypto API for
+  # (x86's hardware implementation; arm64's generic one — the
+  # CRC32 instructions are the platform's own), and arm64's
+  # power-button driver: cloud-hypervisor's aarch64 power button
+  # is a device-tree gpio-keys device, so the graceful shutdown's
+  # host-side press reaches logind only with gpio_keys loaded.
+  # The x86 ACPI button module rides the shared list below on
+  # both arches — the kernel accepts it as a no-op on a
+  # device-tree boot. The same split the Debian and Fedora
+  # builds carry (their archModules). The pick follows the
+  # evaluating platform, so an aarch64 guest's own rebuilds
+  # resolve the same set its image baked — an x86-only name in
+  # an arm64 modules-load entry resolves nowhere, and #821
+  # records those boots degraded.
+  archModules =
+    if pkgs.stdenv.hostPlatform.isAarch64 then
+      [
+        "crc32c-generic"
+        "gpio_keys"
+      ]
+    else
+      [
+        "crc32c-intel"
+      ];
+
+  # The nested-KVM unit's modprobe line (#821): the x86 pair
+  # with its fallbacks; the arm64 module alone. Both stay OUT of
+  # boot.kernelModules — the flavor depends on the host CPU, and
+  # a failed modules-load entry leaves a degraded boot, while
+  # the unit swallows a host without nested virt.
+  kvmModprobe =
+    if pkgs.stdenv.hostPlatform.isAarch64 then
+      "${pkgs.kmod}/bin/modprobe kvm || true"
+    else
+      "${pkgs.kmod}/bin/modprobe kvm-intel || ${pkgs.kmod}/bin/modprobe kvm-amd || true";
+
   # The console getty's per-instance drop-in (#481), shipped as a
   # systemd.packages entry: package drop-in dirs are lndir-merged
   # into the unit collection by nixpkgs' assembly — the one route
@@ -254,21 +291,19 @@ in
     boot.initrd.compressor = "gzip";
 
     # The runtime module set — the same closure the Debian image
-    # ships (#96, #82): the egress NIC driver (#52), the
-    # egress NIC driver (#52), the ACPI button pair logind
-    # answers the graceful shutdown with (#25), isofs (the
-    # NoCloud seed disk is iso9660), crc32c-intel (ext4's
-    # metadata_csum asks the crypto API for it), and the L3
+    # ships (#96, #82): the egress NIC driver (#52), the ACPI
+    # button pair logind answers the graceful shutdown with
+    # (#25), isofs (the NoCloud seed disk is iso9660), the L3
     # recursion stack (tun + the nftables/NAT modules a
-    # workspace hosting workspaces itself needs). KVM rides its
-    # own unit: the flavor depends on the host CPU, and a failed
-    # modules-load entry leaves a degraded boot.
+    # workspace hosting workspaces itself needs), and the
+    # per-arch entries above (#821). KVM rides its own unit: the
+    # flavor depends on the host CPU, and a failed modules-load
+    # entry leaves a degraded boot.
     boot.kernelModules = [
       "virtio_net"
       "button"
       "evdev"
       "isofs"
-      "crc32c-intel"
       "tun"
       "nf_tables"
       "nft_chain_nat"
@@ -276,7 +311,8 @@ in
       "nft_ct"
       "nf_nat"
       "nf_conntrack"
-    ];
+    ]
+    ++ archModules;
 
     # The console (#481): ttyS0 carries both the kernel console
     # (console=ttyS0 above) and an autologin root getty — the daemon
@@ -339,10 +375,11 @@ in
       '';
     };
 
-    # Nested KVM (#82): the flavor depends on the host CPU; a
-    # workspace booted where vmx does not reach still boots — the
-    # unit stays active (exited) and /dev/kvm simply never
-    # appears.
+    # Nested KVM (#82, #821): the arch's own module (the x86
+    # intel/amd pair; plain kvm on arm64), and the flavor still
+    # depends on the host CPU — a workspace booted where nested
+    # virt does not reach still boots: the unit stays active
+    # (exited) and /dev/kvm simply never appears.
     systemd.services.msks-kvm = {
       description = "msks nested-KVM module (inner workspace VMs)";
       after = [ "systemd-modules-load.service" ];
@@ -350,7 +387,7 @@ in
       serviceConfig = {
         Type = "oneshot";
         RemainAfterExit = true;
-        ExecStart = "${pkgs.runtimeShell} -c \"${pkgs.kmod}/bin/modprobe kvm-intel || ${pkgs.kmod}/bin/modprobe kvm-amd || true\"";
+        ExecStart = "${pkgs.runtimeShell} -c \"${kvmModprobe}\"";
       };
     };
 

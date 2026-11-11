@@ -462,6 +462,41 @@ let
           "$toplevel"/etc/udev/rules.d/ \
           || { echo "the #688 home-mount retry rule lost its start " \
                "verb" >&2; exit 1; }
+        # The arch module split (#821): the modules-load file and
+        # the KVM unit the built system carries must name only
+        # modules the evaluating arch's kernel tree answers — the
+        # x86-only crc32c-intel and kvm-intel/kvm-amd pair never
+        # resolve on aarch64 (so the crc32c and nested-KVM loads
+        # no-op) and gpio_keys was named nowhere, leaving the
+        # arm64 power button dead. The arm64 closure builds
+        # nowhere in CI (a cold build owns a whole job's budget),
+        # so the build itself is the guard wherever it runs.
+        modulesLoad="$toplevel"/etc/modules-load.d/nixos.conf
+        kvmUnit="$toplevel"/etc/systemd/system/msks-kvm.service
+        case "${system}" in
+          aarch64-linux)
+            grep -qx 'crc32c-generic' "$modulesLoad" \
+              || { echo "aarch64 kernelModules lost crc32c-generic (#821)" >&2; exit 1; }
+            grep -qx 'gpio_keys' "$modulesLoad" \
+              || { echo "aarch64 kernelModules lost gpio_keys (#821)" >&2; exit 1; }
+            ! grep -qx 'crc32c-intel' "$modulesLoad" \
+              || { echo "crc32c-intel is x86-only; it degrades an aarch64 boot (#821)" >&2; exit 1; }
+            grep -q 'modprobe kvm ' "$kvmUnit" \
+              || { echo "the KVM unit must modprobe plain kvm on aarch64 (#821)" >&2; exit 1; }
+            ! grep -q 'kvm-intel' "$kvmUnit" \
+              || { echo "kvm-intel is x86-only; the aarch64 unit never finds it (#821)" >&2; exit 1; }
+            ;;
+          x86_64-linux)
+            grep -qx 'crc32c-intel' "$modulesLoad" \
+              || { echo "x86_64 kernelModules lost crc32c-intel (#821)" >&2; exit 1; }
+            ! grep -qx 'crc32c-generic' "$modulesLoad" \
+              || { echo "crc32c-generic belongs to the aarch64 set only (#821)" >&2; exit 1; }
+            ! grep -qx 'gpio_keys' "$modulesLoad" \
+              || { echo "gpio_keys belongs to the aarch64 set only (#821)" >&2; exit 1; }
+            grep -q 'kvm-intel' "$kvmUnit" \
+              || { echo "the KVM unit must carry the x86 pair (#821)" >&2; exit 1; }
+            ;;
+        esac
         grep -q 'guest-pi-extension' "$closureInfo"/store-paths
         # The launchers must execute (#272): a profile link proves
         # presence, not a working interpreter — the bug this closes
