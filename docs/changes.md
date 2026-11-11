@@ -53,6 +53,16 @@ tagged `vX.Y.Z`.
   pair. An aarch64 NixOS workspace now exposes `/dev/kvm` on hosts
   that pass nested virtualization, and `stop` runs through the
   guest's own shutdown. The image build pins the split per arch.
+
+- **The console's first prompt carries the workspace's name
+  (#818).** Both guests' console getty now orders after
+  `cloud-init-network.service`, the cloud-init stage that sets
+  the seed's hostname, so the first prompt and an interactive
+  root session's `$HOSTNAME` show the workspace's name instead of
+  the image default `msks-guest`. The image builds now fail when
+  a systemd dropin names a unit the image does not ship — the
+  same dead-ordering class #819 fixed by hand, caught here for
+  every dropin the images carry.
 - **`scripts/cut-release.sh` (#805).** One command pushes a
   release cut in the order the docs deploy needs: the tag alone
   first, then main once the tag's versioned docs deploy has

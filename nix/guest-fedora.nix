@@ -600,14 +600,20 @@ let
         # the dropin applies the moment the generator creates the
         # unit. The After= mirrors the Debian image's console
         # drop-in: the prompt is the readiness signal, so it waits
-        # for cloud-init's init stage (Fedora names it
-        # cloud-init-main.service; the seed's hostname — an
+        # for cloud-init's init stage (the seed's hostname — an
         # interactive bash freezes $HOSTNAME at startup) and for
         # home.mount to settle (a write before the volume mounts
         # lands on the overlay and disappears behind the mount).
+        # The init stage's completion unit is
+        # cloud-init-network.service. cloud-init-main.service
+        # would hold nothing back (#818): the single-process
+        # layout's orchestrator is Type=notify and sends READY=1
+        # to systemd before any stage runs, so an After= keyed on
+        # it is satisfied at boot start. The unit-existence check
+        # at the end of this build keeps the ordering honest.
         printf '%s\n' \
           '[Unit]' \
-          'After=cloud-init-main.service home.mount' \
+          'After=cloud-init-network.service home.mount' \
           '[Service]' \
           'Environment=TERM=xterm' \
           'ExecStart=' \
@@ -1325,6 +1331,113 @@ let
     # must match the Fedora this tree actually is.
     grep -q '^Fedora release ${imageVersion} ' \
       "$tree"/etc/fedora-release
+
+    # Every unit an ordering directive names must exist in the
+    # tree (#818): systemd silently drops an After= that names
+    # a missing unit — the console getty's hostname ordering
+    # held nothing back against cloud-init-main.service (the
+    # notify-ready orchestrator signals systemd before any
+    # stage runs), and the boot raced on undetected. A rename now
+    # fails the build, not the boot. The walk covers every dropin
+    # below /etc/systemd/system (the overlay's and the base
+    # image's own) plus the regular unit files there (all ours;
+    # the base image ships only symlinks and wants directories).
+    # Three name shapes never sit in a search path as a file and
+    # resolve their own way: an instance name (serial-getty@
+    # ttyS0.service) through its @.template file, an
+    # fstab-generated .mount through the fstab line itself, and
+    # a udev .device — minted at runtime, invisible to a tree. A
+    # % specifier resolves per instance and is skipped for the
+    # same reason. The fstab naming is systemd-escape's: /
+    # becomes -, [A-Za-z0-9_.] pass, a leading . and every other
+    # character escape — a mount point this cheap form cannot
+    # spell fails the build rather than silently skipping its
+    # check (#272's class).
+    unit_search_paths="etc/systemd/system lib/systemd/system \
+      usr/lib/systemd/system"
+    unit_in_tree() {
+      for dir in $unit_search_paths; do
+        [ -e "$tree/$dir/$1" ] && return 0
+      done
+      case $1 in
+        *@*)
+          template=''${1%%@*}@.''${1##*.}
+          for dir in $unit_search_paths; do
+            [ -e "$tree/$dir/$template" ] && return 0
+          done ;;
+      esac
+      return 1
+    }
+    fstab_mount_unit() {
+      case $1 in
+        /) printf '%s\n' '-.mount'; return 0 ;;
+        /*/) fstab_mount_unit "''${1%/}"; return $? ;;
+      esac
+      case $1 in
+        /*[!A-Za-z0-9_./]*)
+          echo "fstab mount point $1 needs escaped unit-name characters" >&2
+          return 1 ;;
+        /*) ;;
+        *) echo "relative fstab mount point: $1" >&2; return 1 ;;
+      esac
+      name=''${1#/}
+      case $name in
+        .*)
+          echo "fstab mount point $1 needs escaped unit-name characters" >&2
+          return 1 ;;
+      esac
+      printf '%s\n' "''${name//\//-}.mount"
+    }
+    fstab_mount_units=""
+    while read -r spec mountpoint fstype options; do
+      [ -n "$spec" ] || continue
+      case $spec in '#'*) continue ;; esac
+      munit=$(fstab_mount_unit "$mountpoint") || exit 1
+      fstab_mount_units="$fstab_mount_units $munit"
+    done < "$tree"/etc/fstab
+    ordering_name_resolves() {
+      case $1 in
+        *.device|*%*) return 0 ;;
+        *.mount)
+          unit_in_tree "$1" && return 0
+          for munit in $fstab_mount_units; do
+            [ "$munit" = "$1" ] && return 0
+          done
+          return 1 ;;
+      esac
+      unit_in_tree "$1"
+    }
+    check_ordering_names() {
+      for unitname in $(awk '
+          /\\$/ { sub(/\\$/, ""); acc = acc $0; next }
+          { line = acc $0; acc = "" }
+          /^(After|Before)=/ {
+            sub(/^(After|Before)=/, "")
+            count = split($0, words, /[ \t]+/)
+            for (i = 1; i <= count; i++)
+              if (words[i] != "") print words[i]
+          }
+        ' "$1"); do
+        ordering_name_resolves "$unitname" \
+          || { echo "$1 orders against $unitname: no such unit in the tree" \
+               >&2; exit 1; }
+      done
+    }
+    while IFS= read -r file; do
+      check_ordering_names "$file"
+    done < <(find "$tree"/etc/systemd/system -type f -path '*.d/*.conf'
+        find "$tree"/etc/systemd/system -maxdepth 1 -type f)
+    # A dropin directory whose own unit resolves to nothing is
+    # the same silence (#818's Fedora case: ssh.service.d on an
+    # image whose ssh unit is sshd.service) — systemd ignores
+    # dropins below a name it cannot load, and every directive
+    # they carry never exists.
+    while IFS= read -r dropdir; do
+      dropunit=''${dropdir##*/}
+      ordering_name_resolves "''${dropunit%.d}" \
+        || { echo "$dropdir: no such unit in the tree" >&2; exit 1; }
+    done < <(find "$tree"/etc/systemd/system -maxdepth 1 -type d \
+        -name '*.d')
 
     # The kernel bits beside the tar: the pack stages and the
     # archive's boot tree copy them.

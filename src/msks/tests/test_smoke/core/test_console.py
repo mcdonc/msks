@@ -67,6 +67,24 @@ async def test_local_console_identity_drop() -> None:
             )
         )
         await await_guest_up(microvm, wid, hostname=wid)
+        # The ordering the first prompt depends on, proven live in
+        # the booted guest (#818): the getty's resolved After set
+        # must carry cloud-init's network-stage unit — the stage
+        # that runs set_hostname. A dropin whose After= names a
+        # unit missing from the image never lands in that set
+        # (systemd drops the directive silently), and the prompt
+        # races the seed's hostname again — the guest-up needle
+        # above would still pass, its retries re-rendering PS1's
+        # \h until the name lands.
+        await run_in_console(
+            microvm,
+            wid,
+            "systemctl show -p After serial-getty@ttyS0.service "
+            "| grep -q cloud-init-network.service "
+            "&& echo O-$((6*7))",
+            "O-42",
+            hostname=wid,
+        )
         # The identity seed made the home before any console connect
         # (#171): owned by the user — and cloud-init created no
         # `debian` account alongside the shipped msks one. The
