@@ -1416,21 +1416,29 @@ let
     }
     check_ordering_names() {
       for unitname in $(awk '
-          /\\$/ { sub(/\\$/, ""); acc = acc $0; next }
-          # Rebuild $0 (not a spare variable): the assigned
-          # record is what the pattern below re-tests, so a
-          # backslash-continued directive checks every name it
-          # carries — the silent-skip form this gate exists to
-          # end. Leading whitespace and case fold the way the
-          # unit parser accepts them; the char classes spell
-          # the two names case-insensitively for the sub.
-          { $0 = acc $0; acc = "" }
-          toupper($0) ~ /^[ \t]*(AFTER|BEFORE)=/ {
-            sub(/^[ \t]*([Aa][Ff][Tt][Ee][Rr]|[Bb][Ee][Ff][Oo][Rr][Ee])=/, "")
-            count = split($0, words, /[ \t]+/)
-            for (i = 1; i <= count; i++)
-              if (words[i] != "") print words[i]
+          # The join mirrors the unit parser: a trailing
+          # backslash becomes a space, so a name that ended
+          # flush against it stays two names. Leading
+          # whitespace and case fold the way the parser
+          # accepts them; the char classes spell the two
+          # names case-insensitively for the sub. Rebuilding
+          # $0 (not a spare variable) is what makes the
+          # joined record re-test — a backslash-continued
+          # directive checks every name it carries, the
+          # silent-skip form this gate exists to end. END
+          # flushes a chunk left pending by a file that ends
+          # mid-continuation.
+          function emit(rec) {
+            if (toupper(rec) ~ /^[ \t]*(AFTER|BEFORE)=/) {
+              sub(/^[ \t]*([Aa][Ff][Tt][Ee][Rr]|[Bb][Ee][Ff][Oo][Rr][Ee])=/, "", rec)
+              count = split(rec, words, /[ \t]+/)
+              for (i = 1; i <= count; i++)
+                if (words[i] != "") print words[i]
+            }
           }
+          /\\$/ { sub(/\\$/, ""); acc = acc $0 " "; next }
+          { $0 = acc $0; acc = ""; emit($0) }
+          END { emit(acc) }
         ' "$1"); do
         ordering_name_resolves "$unitname" \
           || { echo "$1 orders against $unitname: no such unit in the tree" \
