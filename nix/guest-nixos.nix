@@ -467,10 +467,12 @@ let
         # modules the evaluating arch's kernel tree answers — the
         # x86-only crc32c-intel and kvm-intel/kvm-amd pair never
         # resolve on aarch64 (so the crc32c and nested-KVM loads
-        # no-op) and gpio_keys was named nowhere, leaving the
-        # arm64 power button dead. The arm64 closure builds
-        # nowhere in CI (a cold build owns a whole job's budget),
-        # so the build itself is the guard wherever it runs.
+        # no-op, silently — nixpkgs maps modules-load's failure
+        # exit to success, so nothing shows failed either way)
+        # and gpio_keys was named nowhere, leaving the arm64
+        # power button dead. The arm64 closure builds nowhere in
+        # CI (a cold build owns a whole job's budget), so the
+        # build itself is the guard wherever it runs.
         modulesLoad="$toplevel"/etc/modules-load.d/nixos.conf
         kvmUnit="$toplevel"/etc/systemd/system/msks-kvm.service
         case "${system}" in
@@ -480,7 +482,7 @@ let
             grep -qx 'gpio_keys' "$modulesLoad" \
               || { echo "aarch64 kernelModules lost gpio_keys (#821)" >&2; exit 1; }
             ! grep -qx 'crc32c-intel' "$modulesLoad" \
-              || { echo "crc32c-intel is x86-only; it degrades an aarch64 boot (#821)" >&2; exit 1; }
+              || { echo "crc32c-intel is x86-only; its load no-ops silently on aarch64 (#821)" >&2; exit 1; }
             grep -q 'modprobe kvm ' "$kvmUnit" \
               || { echo "the KVM unit must modprobe plain kvm on aarch64 (#821)" >&2; exit 1; }
             ! grep -q 'kvm-intel' "$kvmUnit" \

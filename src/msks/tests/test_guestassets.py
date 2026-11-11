@@ -559,9 +559,12 @@ def test_the_nixos_guest_splits_the_module_set_by_arch() -> None:
     arm64 tree lacks, so the crc32c and nested-KVM loads no-oped
     (no /dev/kvm), and the gpio-keys power button stayed unnamed
     (logind never saw the host's press, and stop killed the
-    workspace at the deadline). aarch64 takes crc32c-generic,
-    gpio_keys, and plain kvm; the Debian and Fedora builds carry
-    the same split (their archModules/kvmModprobe)."""
+    workspace at the deadline) — all silent: nixpkgs maps
+    systemd-modules-load's failure exit to success, so nothing
+    showed failed. aarch64 takes crc32c-generic, gpio_keys, and
+    plain kvm; the Debian and Fedora builds carry the same
+    split (their archModules/kvmModprobe, with the KVM names on
+    the unit here — modules-load has no fallback-chain form)."""
     configuration = (
         REPO_ROOT / "nix" / "guest-nixos-configuration.nix"
     ).read_text()
@@ -570,31 +573,30 @@ def test_the_nixos_guest_splits_the_module_set_by_arch() -> None:
     # idiom the console device uses — so a guest's own rebuilds
     # resolve the same set its image baked.
     assert "archModules =" in configuration
-    assert (
-        "if pkgs.stdenv.hostPlatform.isAarch64 then\n"
-        "      [\n"
-        '        "crc32c-generic"\n'
-        '        "gpio_keys"\n'
-        "      ]\n"
-        "    else\n"
-        "      [\n"
-        '        "crc32c-intel"\n'
-        "      ];"
-    ) in configuration
-    # The shared runtime list carries no arch-specific name of
-    # its own anymore; the arch entries append to it.
+    assert "if pkgs.stdenv.hostPlatform.isAarch64 then" in configuration
+    assert '"crc32c-generic"' in configuration
+    assert '"gpio_keys"' in configuration
+    assert '"crc32c-intel"' in configuration
+    # The property the split exists for: the arch-specific
+    # names live ONLY in the arch branches — the shared runtime
+    # list (the region between `boot.kernelModules = [` and the
+    # `++ archModules` append) carries none of them. #821 was
+    # exactly an arch name riding the shared list.
+    shared_list = configuration.split("boot.kernelModules = [", 1)[1].split(
+        "]\n    ++ archModules;", 1
+    )[0]
+    for name in ("crc32c-generic", "crc32c-intel", "gpio_keys", "kvm"):
+        assert f'"{name}"' not in shared_list, (
+            f'"{name}" rides the shared kernelModules list — the '
+            "arch split (#821) puts it in archModules or the KVM "
+            "unit, never both surfaces"
+        )
     assert "]\n    ++ archModules;" in configuration
     # The KVM unit's modprobe line picks the arch's module: the
-    # x86 pair with its fallback, plain kvm on arm64 — and both
-    # stay out of boot.kernelModules (a failed modules-load entry
-    # leaves a degraded boot; the unit swallows a host without
-    # nested virt).
-    assert (
-        "kvmModprobe =\n"
-        "    if pkgs.stdenv.hostPlatform.isAarch64 then\n"
-        '      "${pkgs.kmod}/bin/modprobe kvm || true"\n'
-        "    else\n"
-    ) in configuration
+    # x86 pair with its fallback, plain kvm on arm64 — the
+    # fallback chain is why these ride the unit and not
+    # boot.kernelModules.
+    assert '"${pkgs.kmod}/bin/modprobe kvm || true"' in configuration
     assert (
         '"${pkgs.kmod}/bin/modprobe kvm-intel '
         '|| ${pkgs.kmod}/bin/modprobe kvm-amd || true"'

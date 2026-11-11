@@ -88,11 +88,16 @@ let
   # The x86 ACPI button module rides the shared list below on
   # both arches — the kernel accepts it as a no-op on a
   # device-tree boot. The same split the Debian and Fedora
-  # builds carry (their archModules). The pick follows the
+  # builds carry (their archModules; theirs also lists the KVM
+  # names, which ride the msks-kvm unit here — modules-load
+  # has no fallback-chain form). The pick follows the
   # evaluating platform, so an aarch64 guest's own rebuilds
-  # resolve the same set its image baked — an x86-only name in
-  # an arm64 modules-load entry resolves nowhere, and #821
-  # records those boots degraded.
+  # resolve the same set its image baked. An x86-only name in
+  # an arm64 modules-load entry resolves nowhere and the load
+  # no-ops silently — no crc32c, no /dev/kvm, a dead power
+  # button, and no failed unit to show for it (#821; nixpkgs
+  # maps systemd-modules-load's failure exit to success, so
+  # even a load that fails outright stays invisible).
   archModules =
     if pkgs.stdenv.hostPlatform.isAarch64 then
       [
@@ -105,10 +110,11 @@ let
       ];
 
   # The nested-KVM unit's modprobe line (#821): the x86 pair
-  # with its fallbacks; the arm64 module alone. Both stay OUT of
-  # boot.kernelModules — the flavor depends on the host CPU, and
-  # a failed modules-load entry leaves a degraded boot, while
-  # the unit swallows a host without nested virt.
+  # with its fallbacks; the arm64 module alone. The KVM names
+  # stay OUT of boot.kernelModules — which flavor loads
+  # depends on the host CPU, and only a unit can express the
+  # fallback chain (and swallow, quietly, a host that passes
+  # no nested virt at all).
   kvmModprobe =
     if pkgs.stdenv.hostPlatform.isAarch64 then
       "${pkgs.kmod}/bin/modprobe kvm || true"
@@ -296,9 +302,9 @@ in
     # (#25), isofs (the NoCloud seed disk is iso9660), the L3
     # recursion stack (tun + the nftables/NAT modules a
     # workspace hosting workspaces itself needs), and the
-    # per-arch entries above (#821). KVM rides its own unit: the
-    # flavor depends on the host CPU, and a failed modules-load
-    # entry leaves a degraded boot.
+    # per-arch entries above (#821). KVM rides its own unit:
+    # the flavor depends on the host CPU, and only a unit can
+    # express the fallback chain.
     boot.kernelModules = [
       "virtio_net"
       "button"
