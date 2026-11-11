@@ -1358,7 +1358,7 @@ class LocalCloudHypervisor(MicrovmDriver):
         proc = self._procs.get(workspace_id)
         if proc is not None:
             return proc.returncode is None
-        return pid is not None and self._pid_alive(pid, workspace_id)
+        return self._pid_alive(pid, workspace_id)
 
     async def _terminate(self, workspace_id: str, deadline: float) -> None:
         """SIGTERM the VMM daemon and wait for exit (guest already down)."""
