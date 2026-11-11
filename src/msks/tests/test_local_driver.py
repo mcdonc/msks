@@ -28,7 +28,13 @@ from msks.microvm import (
 )
 from msks.microvm import local as local_mod
 from msks.microvm.driver import MicrovmDriver
-from msks.microvm.local import disk_entries, map_ch_state, vm_config
+from msks.microvm.local import (
+    disk_entries,
+    fs_pidfile_path,
+    fs_socket_path,
+    map_ch_state,
+    vm_config,
+)
 from msks.net import alloc
 from msks.net import manager as manager_mod
 from msks.net.manager import NetManager
@@ -38,10 +44,10 @@ from msks.settings import (
     Settings,
     VmmSettings,
 )
-from msks.spec.mounts import MountSpec
+from msks.spec.mounts import MountSpec, mount_tag
 from msks.spec.vm import VmStatus
 from netstubs import stub_ip, stub_nft
-from test_fsdaemons import FakeProc, socket_from_args
+from test_fsdaemons import FakeProc, socket_from_args, socket_sleeper
 from test_net_manager import FakeService
 
 from msks import persist
@@ -428,6 +434,54 @@ async def test_launch_reconciles_share_daemons_after_a_self_exit(
     await app.state.microvm.launch(mounted)  # was the 503
     assert [proc.terminated for proc in first] == [True]
     assert driver._fs_procs[WID] is not first  # the fresh pair serves
+    assert (await app.state.microvm.info(WID)).status is VmStatus.RUNNING
+    await app.state.microvm.kill(WID)
+
+
+async def test_launch_reconciles_untracked_share_daemons_after_a_self_exit(
+    env, fake, tmp_path: Path, monkeypatch
+) -> None:
+    """The restarted-daemon half of #825's mounts story: the new
+    daemon tracks neither the VMM (it exited before the restart)
+    nor the share daemons still alive behind their pidfiles. The
+    relaunch sweeps them by pidfile — the old code orphaned them
+    behind the fresh spawn, leaving daemons no stop could find."""
+    app, state_dir, _ = env
+    driver = app.state.microvm.local
+    share = tmp_path / "proj"
+    share.mkdir()
+    app.state.settings.mounts = MountSettings(host_roots=(str(tmp_path),))
+
+    async def at_floor(binary: str) -> tuple[int, ...]:
+        return (1, 13, 3)
+
+    monkeypatch.setattr(driver, "_virtiofsd_version", at_floor)
+
+    async def fake_spawn_fs(binary, args, log_path):
+        socket_from_args(args).touch()  # serving its socket at once
+        return FakeProc()
+
+    monkeypatch.setattr(driver, "_spawn_fs", fake_spawn_fs)
+    mounted = replace(
+        spec(tmp_path), mounts=(MountSpec(host=str(share), guest="/mnt/proj"),)
+    )
+    vm_dir = state_dir / "vms" / WID
+    vm_dir.mkdir(parents=True, exist_ok=True)
+    tag = mount_tag(mounted.mounts[0])
+    # A predecessor daemon's leftovers: a share daemon whose argv
+    # names its socket (so the pidfile kill accepts it) beside a
+    # dead VMM's pidfile — nothing is tracked.
+    daemon = await socket_sleeper(fs_socket_path(vm_dir, tag), vm_dir / "up")
+    fs_pidfile_path(vm_dir, tag).write_text(str(daemon.pid))
+    dead_vmm = await asyncio.create_subprocess_exec("sleep", "0.1")
+    (vm_dir / "ch.pid").write_text(str(dead_vmm.pid))
+    await dead_vmm.wait()
+    await app.state.microvm.launch(mounted)
+    assert await local_mod.pid_dead_by(daemon.pid, 5.0)  # swept, not orphaned
+    pidfile = fs_pidfile_path(vm_dir, tag)
+    assert pidfile.read_text().strip() == str(  # names the fresh pair
+        driver._fs_procs[WID][0].pid
+    )
     assert (await app.state.microvm.info(WID)).status is VmStatus.RUNNING
     await app.state.microvm.kill(WID)
 
