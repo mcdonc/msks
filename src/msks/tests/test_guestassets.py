@@ -652,6 +652,38 @@ def test_the_images_retry_the_home_volume_mount() -> None:
     assert 'test -x "$tree"/usr/bin/systemctl' in fedora
 
 
+def test_the_images_wire_the_sshd_address_wait_under_their_own_names() -> None:
+    """The sshd address-wait ordering (#110, #819): each overlay
+    attaches msks-wait-address.service to the sshd unit its own
+    distro names — Debian's openssh package names the unit
+    ssh.service, Fedora's names it sshd.service (with sshd.socket
+    beside it, and no ssh alias) — and the Fedora build fails when
+    the wiring names a unit the extracted tree does not carry."""
+    debian = (REPO_ROOT / "nix" / "guest-debian.nix").read_text()
+    fedora = (REPO_ROOT / "nix" / "guest-fedora.nix").read_text()
+    # The wait unit orders itself ahead of the image's own names
+    # for the sshd service and socket.
+    assert "Before=ssh.service ssh.socket" in debian
+    assert "Before=sshd.service sshd.socket" in fedora
+    # The dropin that pulls the wait unit in lands beside the unit
+    # it modifies, under the distro's own name for it.
+    assert (
+        "> $out/etc/systemd/system/ssh.service.d/10-after-address.conf"
+        in debian
+    )
+    assert (
+        "> $out/etc/systemd/system/sshd.service.d/10-after-address.conf"
+        in fedora
+    )
+    # The Fedora build asserts the named units exist in the
+    # extracted tree (#819): the wiring cannot again attach to a
+    # unit the image does not ship. The Debian tree carries its
+    # units under the same paths (openssh-server ships both).
+    assert 'test -e "$tree"/usr/lib/systemd/system/sshd.service' in fedora
+    assert 'test -e "$tree"/usr/lib/systemd/system/sshd.socket' in fedora
+    assert 'test ! -e "$tree"/etc/systemd/system/ssh.service.d' in fedora
+
+
 def test_the_extension_bounds_its_single_fetch() -> None:
     """The startup fetch posture (#266 review): one attempt, bounded
     by an abort signal — no retry loop, no sleeps. The environment

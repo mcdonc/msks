@@ -330,7 +330,7 @@ let
           $out/etc/ssh/sshd_config.d \
           $out/etc/udev/rules.d \
           $out/etc/systemd/system/serial-getty@${facts.console}.service.d \
-          $out/etc/systemd/system/ssh.service.d \
+          $out/etc/systemd/system/sshd.service.d \
           $out/etc/systemd/system/multi-user.target.wants \
           $out/etc/modules-load.d
 
@@ -434,12 +434,18 @@ let
         # stall those boots at network-online.target. The NIC check
         # lives in ExecCondition: with no NIC beyond lo the unit is
         # skipped and sshd listens immediately; the 15s ceiling never
-        # blocks the port beyond a slow DHCP.
+        # blocks the port beyond a slow DHCP. The unit names are
+        # Fedora's own (#819): openssh's package names the daemon
+        # sshd.service and the socket sshd.socket, and Fedora ships
+        # no ssh alias — Debian's names would attach the wiring to
+        # units that do not exist, leaving the wait unit never
+        # pulled in and the ordering dead. The sanity block below
+        # asserts both units exist in the extracted tree.
         cat > $out/etc/systemd/system/msks-wait-address.service <<'WAITUNIT'
         [Unit]
         Description=msks: sshd listens once the NIC has its address
         After=NetworkManager.service
-        Before=ssh.service ssh.socket
+        Before=sshd.service sshd.socket
 
         [Service]
         Type=oneshot
@@ -451,7 +457,7 @@ let
           '[Unit]' \
           'Wants=msks-wait-address.service' \
           'After=msks-wait-address.service' \
-          > $out/etc/systemd/system/ssh.service.d/10-after-address.conf
+          > $out/etc/systemd/system/sshd.service.d/10-after-address.conf
 
         # cloud-init (#41): the workspace's cidata seed is NoCloud's own
         # format. Two dropins pin the behavior the msks contract needs:
@@ -1152,6 +1158,25 @@ let
     test -x "$tree"/sbin/init
     test -x "$tree"/usr/bin/rsync
     test -x "$tree"/usr/sbin/sshd
+    # Sanity: the sshd address-wait wiring (#819) — the units the
+    # overlay names must exist in the extracted tree, and the
+    # wiring itself must name them: Fedora's openssh package
+    # names the daemon sshd.service and the socket sshd.socket,
+    # with no ssh alias, so a Debian-shaped name lands on units
+    # that do not exist (the wait unit never runs, sshd races
+    # DHCP). The dropin's and the unit's load-bearing lines are
+    # pinned, not just the files' existence — a typo'd printf must
+    # fail the build here, not a workspace boot.
+    test -e "$tree"/usr/lib/systemd/system/sshd.service
+    test -e "$tree"/usr/lib/systemd/system/sshd.socket
+    test -d "$tree"/etc/systemd/system/sshd.service.d
+    test ! -e "$tree"/etc/systemd/system/ssh.service.d
+    grep -q '^Before=sshd.service sshd.socket$' \
+      "$tree"/etc/systemd/system/msks-wait-address.service
+    grep -q '^Wants=msks-wait-address.service$' \
+      "$tree"/etc/systemd/system/sshd.service.d/10-after-address.conf
+    grep -q '^After=msks-wait-address.service$' \
+      "$tree"/etc/systemd/system/sshd.service.d/10-after-address.conf
     # Sanity: the home-volume mount retry (#688) — the RUN's
     # target exists in the tree, and the rule's load-bearing
     # lines, not just the file's existence: a rule whose match
