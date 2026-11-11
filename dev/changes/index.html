@@ -1769,13 +1769,23 @@ tagged <code>vX.Y.Z</code>.</p>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong><code>scripts/cut-release.sh</code> (#805).</strong> One command pushes a
+<li>
+<p><strong>Fedora guest's sshd address-wait wiring (#819).</strong> The Fedora
+  image's sshd ordering dropin now lands in <code>sshd.service.d</code> (Fedora's
+  own unit names) instead of Debian's <code>ssh.service.d</code>, so
+  <code>msks-wait-address.service</code> actually runs on a Fedora egress
+  workspace and sshd listens once the NIC has its address. The image
+  build fails when the wiring names a unit the image does not ship.</p>
+</li>
+<li>
+<p><strong><code>scripts/cut-release.sh</code> (#805).</strong> One command pushes a
   release cut in the order the docs deploy needs: the tag alone
   first, then main once the tag's versioned docs deploy has
   finished green. Pushing the tag and main together races the
   docs workflow's concurrency group, and the release publishes
   without its versioned docs and the site's <code>latest</code> alias keeps
-  the previous version until the cancelled run is re-run by hand.</li>
+  the previous version until the cancelled run is re-run by hand.</p>
+</li>
 </ul>
 <h2 id="v083-2026-11-08">[v0.8.3] - 2026-11-08<a class="headerlink" href="#v083-2026-11-08" title="Permanent link">&para;</a></h2>
 <h3 id="fixed_1">Fixed<a class="headerlink" href="#fixed_1" title="Permanent link">&para;</a></h3>
