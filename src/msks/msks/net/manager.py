@@ -221,6 +221,12 @@ class NetManager:
         self.dialer = dialer or asyncio.open_connection
         self._attachments: dict[str, NetAttachment] = {}
         self._services: dict[str, NetServices] = {}
+        # Attachments a failed detach left behind (#828): the slice
+        # released, but the table and tap deletes raised — keyed for
+        # the next detach's retry, superseded by a fresh attach.
+        self._residues: dict[
+            str, tuple[NetAttachment, NetServices | None]
+        ] = {}
         self._guards: dict[str, WorkspaceGuard] = {}
         self._forwards: dict[str, list] = {}
         self._used_slices: set[int] = set()
@@ -251,9 +257,18 @@ class NetManager:
     async def stop(self) -> None:
         """Detach every workspace (daemon shutdown; idempotent).
         The proxy sweep runs after: a forward listener can outlive
-        its workspace's attachment, and shutdown ends it too."""
+        its workspace's attachment, and shutdown ends it too. Each
+        workspace's teardown is its own failure (#828 review): one
+        raising detach stashes its residue for the retry pass below
+        and the loop moves on, so a single broken workspace cannot
+        skip the proxy sweep, the interceptor's stop, or the model's
+        close."""
         for workspace_id in list(self._attachments):
-            await self.detach(workspace_id)
+            with contextlib.suppress(Exception):
+                await self.detach(workspace_id)
+        for workspace_id in list(self._residues):
+            with contextlib.suppress(Exception):
+                await self.detach(workspace_id)
         await self.app.state.proxies.stop_all()
         self._state = "init"
 
@@ -402,17 +417,20 @@ class NetManager:
 
         Releasing the slice keeps the workspace on its own /30 across
         stop/start cycles — the address derives from it, and nothing
-        else remembers the pairing. The consent stop hook runs first
-        (holds fail-close while the table still exists to receive
-        their drops), the consumer unbinds before the table delete
-        (an unbound queue drops — fail-closed), and the plumbing
-        subprocesses run before the service sockets close, so a
-        closed-socket fd number is never reused by a fresh
-        subprocess pipe underneath a stale selector entry.
+        else remembers the pairing. The claim holds until the
+        teardown completes (#828): a raise in the teardown stashes
+        the popped attachment as residue and the claim stays, so no
+        other workspace can take the /30 while its tap lingers. The
+        workspace's next stop retries the residue's teardown, and a
+        fresh start retries or supersedes it (the launch path
+        detaches before it attaches; the manager's own attach stops
+        the residue's services, transfers its claim without
+        releasing it, and rebuilds the plumbing).
         """
         async with self.workspace_guard(workspace_id):
             attachment = self._attachments.pop(workspace_id, None)
             services = self._services.pop(workspace_id, None)
+            residue = self._residues.pop(workspace_id, None)
             self.close_forwards(workspace_id)
             with contextlib.suppress(Exception):
                 # Best-effort like the rest of the teardown: a listener
@@ -423,22 +441,48 @@ class NetManager:
                 await self.stop_probe(workspace_id)
             with contextlib.suppress(Exception):
                 await self.stop_proxies(workspace_id)
-            if attachment is None:
+            if attachment is None and residue is None:
                 return
-            await self.app.state.consent.on_workspace_stop(workspace_id)
-            # The interceptor's listener drops before the table dies: an
-            # armed workspace's redirected flows must not reach a proxy
-            # whose entries are already gone (the table deletion below
-            # needs no swap of its own).
-            await self.app.state.interceptor.on_detach(workspace_id)
-            if services is not None:
-                services.stop_consumer()
-            settings = self.app.state.settings
-            await nft.delete_vm_table(settings, workspace_id)
-            await taps.remove_tap(attachment.tap, settings)
-            if services is not None:
-                await stop_services(services)
+            if attachment is None:
+                attachment, services = residue
+            try:
+                await self.teardown_plumbing(
+                    workspace_id, attachment, services
+                )
+            except BaseException:
+                self._residues[workspace_id] = (attachment, services)
+                raise
             self._used_slices.discard(attachment.slice)
+
+    async def teardown_plumbing(
+        self,
+        workspace_id: str,
+        attachment: NetAttachment,
+        services: NetServices | None,
+    ) -> None:
+        """The teardown steps a detach runs below its pops (#828) —
+        and the same steps a residue retry runs. The consent stop
+        hook runs first (holds fail-close while the table still
+        exists to receive their drops), the consumer unbinds before
+        the table delete (an unbound queue drops — fail-closed), and
+        the plumbing subprocesses run before the service sockets
+        close, so a closed-socket fd number is never reused by a
+        fresh subprocess pipe underneath a stale selector entry.
+        Every step is idempotent: a retry re-runs the whole body.
+        """
+        await self.app.state.consent.on_workspace_stop(workspace_id)
+        # The interceptor's listener drops before the table dies: an
+        # armed workspace's redirected flows must not reach a proxy
+        # whose entries are already gone (the table deletion below
+        # needs no swap of its own).
+        await self.app.state.interceptor.on_detach(workspace_id)
+        if services is not None:
+            services.stop_consumer()
+        settings = self.app.state.settings
+        await nft.delete_vm_table(settings, workspace_id)
+        await taps.remove_tap(attachment.tap, settings)
+        if services is not None:
+            await stop_services(services)
 
     def require_ready(self, workspace_id: str) -> None:
         """Refuse an egress boot unless the plumbing is armed."""
@@ -471,13 +515,21 @@ class NetManager:
         return slice_
 
     def _claim_live(self, slice_: int, workspace_id: str) -> None:
-        """Mark a recorded slice live, refusing a conflicting holder."""
-        if slice_ in self._used_slices:
-            raise MicrovmError(
-                f"egress slice {slice_} recorded for {workspace_id} is "
-                "held by another live workspace; delete one of them"
-            )
-        self._used_slices.add(slice_)
+        """Mark a recorded slice live, refusing a conflicting holder.
+        A slice the workspace's own residue still holds transfers
+        through a superseding build: releasing and re-claiming it
+        would be two steps with a steal window between them, and the
+        residue's dead tap still addresses the /30."""
+        if slice_ not in self._used_slices:
+            self._used_slices.add(slice_)
+            return
+        residue = self._residues.get(workspace_id)
+        if residue is not None and residue[0].slice == slice_:
+            return
+        raise MicrovmError(
+            f"egress slice {slice_} recorded for {workspace_id} is "
+            "held by another live workspace; delete one of them"
+        )
 
     def free_slice(self, workspace_id: str) -> int:
         """Pick and claim a fresh slice (stable start, walked forward
@@ -1034,6 +1086,7 @@ class NetManager:
         workspace."""
         settings = self.app.state.settings
         await self.ensure_base_guard()
+        await self.stop_residue_services(workspace_id)
         slice_ = await self.claim_slice(workspace_id)
         consumer = None
         try:
@@ -1080,6 +1133,11 @@ class NetManager:
                 raise
             await self._start_services(attachment, policy, consumer, queue_num)
             self._attachments[workspace_id] = attachment
+            # The live attachment supersedes any residue (#828): the
+            # build swept its leftover tap, replaced its leftover
+            # table, stopped its services, and its claim transferred
+            # above — nothing of the residue is left to clean.
+            self._residues.pop(workspace_id, None)
             await self.replay_boot_verdicts(workspace_id, policy)
             # The interceptor arms last (#199): its listener and the
             # table's redirect half appear together, only when a
@@ -1093,9 +1151,39 @@ class NetManager:
             await self.admit_bound_proxies(workspace_id)
             return attachment
         except BaseException:
-            self._used_slices.discard(slice_)
-            await self._unwind(workspace_id)
+            await self.unwind_failed_build(workspace_id, slice_)
             raise
+
+    async def unwind_failed_build(
+        self, workspace_id: str, slice_: int
+    ) -> None:
+        """A failed build's unwind (#828 review): the claim releases
+        unless the workspace's own residue still holds it — that
+        record is still there to retry, and its leftover plumbing
+        may still address the /30 — and the half-built plumbing
+        tears down best-effort (the residue's leftovers carry the
+        same names, so one sweep cleans both)."""
+        residue = self._residues.get(workspace_id)
+        if residue is None or residue[0].slice != slice_:
+            self._used_slices.discard(slice_)
+        await self._unwind(workspace_id)
+
+    async def stop_residue_services(self, workspace_id: str) -> None:
+        """Stop a residue's still-live services before a superseding
+        build binds its own (#828 review): the raise that stashed
+        the residue preceded the services' stop, and a forwarder
+        still bound to this slice's address would refuse the fresh
+        services their bind. The record and the claim stay — the
+        build's claim below transfers without releasing, and a
+        failed build leaves the residue retryable. A cancellation
+        here changes nothing the record did not already say: the
+        services stop is idempotent, so the next attempt re-runs
+        it."""
+        residue = self._residues.get(workspace_id)
+        if residue is None or residue[1] is None:
+            return
+        with contextlib.suppress(Exception):
+            await stop_services(residue[1])
 
     async def ensure_base_guard(self) -> None:
         """Re-apply the base table when its loopback guard's shape
