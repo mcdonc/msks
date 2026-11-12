@@ -1796,6 +1796,17 @@ tagged <code>vX.Y.Z</code>.</p>
   that pass nested virtualization, and <code>stop</code> runs through the
   guest's own shutdown. The image build pins the split per arch.</p>
 </li>
+<li>
+<p><strong>The console's first prompt carries the workspace's name
+  (#818).</strong> Both guests' console getty now orders after
+  <code>cloud-init-network.service</code>, the cloud-init stage that sets
+  the seed's hostname, so the first prompt and an interactive
+  root session's <code>$HOSTNAME</code> show the workspace's name instead of
+  the image default <code>msks-guest</code>. The image builds now fail when
+  a systemd dropin names a unit the image does not ship — the
+  same dead-ordering class #819 fixed by hand, caught here for
+  every dropin the images carry.</p>
+</li>
 <li><strong><code>scripts/cut-release.sh</code> (#805).</strong> One command pushes a
   release cut in the order the docs deploy needs: the tag alone
   first, then main once the tag's versioned docs deploy has
