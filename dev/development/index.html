@@ -1570,9 +1570,12 @@ The repack runs under
 fakeroot so the image is root-owned with sane password-file modes,
 and the setuid binaries the workspace user's sudo needs pass
 through the same fakeroot session as uid-0 inodes.
-Stopping a workspace presses the ACPI power button
+Stopping a workspace presses the guest's power button
 (<code>vm.power-button</code>): the guest's systemd-logind runs the clean
-poweroff that flushes its persistent disks.</p>
+poweroff that flushes its persistent disks. The button is the ACPI
+event on x86_64 and the device-tree gpio key on arm64. On arm64
+cloud-hypervisor's pulse is one-way (#826): every re-press is a
+no-op, and the deadline carries a stop whose first press was lost.</p>
 <p>Every step of the build runs inside the repo on any Linux host with
 nix:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-13-1"><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>devenv<span class="w"> </span>--quiet<span class="w"> </span>-O<span class="w"> </span>dotenv.enable:bool<span class="w"> </span><span class="nb">false</span><span class="w"> </span>shell<span class="w"> </span>--<span class="w"> </span>msks-build-guest

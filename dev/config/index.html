@@ -1382,7 +1382,7 @@ the file itself carries them all at one level.</p>
 <td><code>MSKSD_SHUTDOWN_TIMEOUT_S</code></td>
 <td>float</td>
 <td><code>90.0</code></td>
-<td>Seconds a workspace stop waits for the guest to power off before the fallback kill. A CPU-saturated guest can need longer than the old 20s default to service the ACPI power button. The client's own wait for the stop answer is 120s.</td>
+<td>Seconds a workspace stop waits for the guest to power off before the fallback kill. A CPU-saturated guest can need longer than the old 20s default to service the power button (the ACPI event on x86_64, the device-tree gpio button on arm64). On arm64 the stop's five-second re-press delivers nothing (cloud-hypervisor's gpio pulse is one-way, #826). A lost first press leaves the deadline as the only safety net, so size it for the guest's slowest clean shutdown. The client waits at most 120s for the stop answer. A value above 120s outlives that wait: the client reports a timeout while the daemon still finishes the stop.</td>
 </tr>
 <tr>
 <td><code>console_wait_timeout_s</code></td>
