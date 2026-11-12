@@ -786,10 +786,15 @@ let
         # hostname — an interactive bash freezes $HOSTNAME at
         # startup) and for home.mount to settle (a write before
         # the volume mounts lands on the overlay and disappears
-        # behind the mount).
+        # behind the mount). The init stage's completion unit is
+        # cloud-init-network.service: Debian 13's cloud-init
+        # ships no cloud-init.service (the name died with the
+        # 24.x repackaging), and systemd silently drops an After=
+        # that names a missing unit (#818) — the unit-existence
+        # check at the end of this build catches a rename now.
         printf '%s\n' \
           '[Unit]' \
-          'After=cloud-init.service home.mount' \
+          'After=cloud-init-network.service home.mount' \
           '[Service]' \
           'Environment=TERM=xterm' \
           'ExecStart=' \
@@ -1648,6 +1653,136 @@ let
         # a cloud-image default account either (#171).
         ! test -e "$root"/home/msks
         ! test -e "$root"/home/debian
+
+        # Every unit an ordering directive names must exist in the
+        # tree (#818): systemd silently drops an After= that names
+        # a missing unit — the console getty's hostname ordering
+        # died that way when Debian's cloud-init dropped the
+        # cloud-init.service name, and the boot raced on
+        # undetected. A rename now fails the build, not the boot.
+        # The walk covers every dropin below /etc/systemd/system
+        # (the overlay's and the base image's own) plus the
+        # regular unit files there (all ours; the base image
+        # ships only symlinks and wants directories). Three name
+        # shapes never sit in a search path as a file and resolve
+        # their own way: an instance name (serial-getty@ttyS0.
+        # service) through its @.template file, an fstab-generated
+        # .mount through the fstab line itself, and a udev .device
+        # — minted at runtime, invisible to a tree. A % specifier
+        # resolves per instance and is skipped for the same
+        # reason. The fstab naming is systemd-escape's: / becomes
+        # -, [A-Za-z0-9_.] pass, a leading . and every other
+        # character escape — a mount point this cheap form cannot
+        # spell fails the build rather than silently skipping its
+        # check (#272's class). Two generator-minted shapes fail
+        # loud by the same rule and want a case arm the day
+        # someone orders against them: -.mount (the root mount
+        # comes from the root= cmdline, not the fstab) and a
+        # .automount (x-systemd.automount options).
+        unit_search_paths="etc/systemd/system lib/systemd/system \
+          usr/lib/systemd/system"
+        unit_in_tree() {
+          for dir in $unit_search_paths; do
+            [ -e "$root/$dir/$1" ] && return 0
+          done
+          case $1 in
+            *@*)
+              template=''${1%%@*}@.''${1##*.}
+              for dir in $unit_search_paths; do
+                [ -e "$root/$dir/$template" ] && return 0
+              done ;;
+          esac
+          return 1
+        }
+        fstab_mount_unit() {
+          case $1 in
+            /) printf '%s\n' '-.mount'; return 0 ;;
+            /*/) fstab_mount_unit "''${1%/}"; return $? ;;
+          esac
+          case $1 in
+            /*[!A-Za-z0-9_./]*)
+              echo "fstab mount point $1 needs escaped unit-name characters" >&2
+              return 1 ;;
+            /*) ;;
+            *) echo "relative fstab mount point: $1" >&2; return 1 ;;
+          esac
+          name=''${1#/}
+          case $name in
+            .*)
+              echo "fstab mount point $1 needs escaped unit-name characters" >&2
+              return 1 ;;
+          esac
+          printf '%s\n' "''${name//\//-}.mount"
+        }
+        fstab_mount_units=""
+        while read -r spec mountpoint fstype options; do
+          [ -n "$spec" ] || continue
+          case $spec in '#'*) continue ;; esac
+          # A swap line names no mount point ("none"); its unit is
+          # a .swap the generator names from the device.
+          [ "$fstype" = swap ] && continue
+          munit=$(fstab_mount_unit "$mountpoint") || exit 1
+          fstab_mount_units="$fstab_mount_units $munit"
+        done < "$root"/etc/fstab
+        ordering_name_resolves() {
+          case $1 in
+            *.device|*%*) return 0 ;;
+            *.mount)
+              unit_in_tree "$1" && return 0
+              for munit in $fstab_mount_units; do
+                [ "$munit" = "$1" ] && return 0
+              done
+              return 1 ;;
+          esac
+          unit_in_tree "$1"
+        }
+        check_ordering_names() {
+          for unitname in $(awk '
+              # The join mirrors the unit parser: a trailing
+              # backslash becomes a space, so a name that ended
+              # flush against it stays two names. Leading
+              # whitespace and case fold the way the parser
+              # accepts them; the char classes spell the two
+              # names case-insensitively for the sub. Rebuilding
+              # $0 (not a spare variable) is what makes the
+              # joined record re-test — a backslash-continued
+              # directive checks every name it carries, the
+              # silent-skip form this gate exists to end. END
+              # flushes a chunk left pending by a file that ends
+              # mid-continuation.
+              function emit(rec) {
+                if (toupper(rec) ~ /^[ \t]*(AFTER|BEFORE)=/) {
+                  sub(/^[ \t]*([Aa][Ff][Tt][Ee][Rr]|[Bb][Ee][Ff][Oo][Rr][Ee])=/, "", rec)
+                  count = split(rec, words, /[ \t]+/)
+                  for (i = 1; i <= count; i++)
+                    if (words[i] != "") print words[i]
+                }
+              }
+              /\\$/ { sub(/\\$/, ""); acc = acc $0 " "; next }
+              { $0 = acc $0; acc = ""; emit($0) }
+              END { emit(acc) }
+            ' "$1"); do
+            ordering_name_resolves "$unitname" \
+              || { echo "$1 orders against $unitname: no such unit in the tree" \
+                   >&2; exit 1; }
+          done
+        }
+        while IFS= read -r file; do
+          check_ordering_names "$file"
+        done < <(find "$root"/etc/systemd/system -regextype posix-extended \
+            -type f -regex '.*/etc/systemd/system/[^/]+\.d/[^/]+\.conf'
+            find "$root"/etc/systemd/system -maxdepth 1 -type f)
+        # A dropin directory whose own unit resolves to nothing is
+        # the same silence (#818's Fedora case: ssh.service.d on an
+        # image whose ssh unit is sshd.service) — systemd ignores
+        # dropins below a name it cannot load, and every directive
+        # they carry never exists.
+        while IFS= read -r dropdir; do
+          dropunit=''${dropdir##*/}
+          ordering_name_resolves "''${dropunit%.d}" \
+            || { echo "$dropdir: no such unit in the tree" >&2; exit 1; }
+        done < <(find "$root"/etc/systemd/system -maxdepth 1 -type d \
+            -name '*.d')
 
         # Size the final image from the tree (content-derived, no
         # magic constant): Debian unpacks to ~600M plus headroom.
