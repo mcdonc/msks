@@ -9,7 +9,9 @@ The card is addressed to the harness persona: the machine that
 operates msks from the host. It groups commands by task, carries the
 status vocabulary and the exit-code table (#841) whole, and names
 only invocations that parse — a test re-parses every ``msks`` line
-against the CLI.
+against the CLI. The text is prettier-stable (the commit hook's
+formatting pass is a no-op on it) and every line fits the ruff limit
+the module carries.
 """
 
 AGENT_CARD_MD = """\
@@ -18,8 +20,10 @@ AGENT_CARD_MD = """\
 This card is for a coding harness that operates msks from the host.
 Given only this text, a harness can enumerate workspaces, create and
 boot one, run commands inside it, sync files, consent to egress, and
-interpret every status and exit code it sees. Every command below
-takes `--json`. `msks agent-card` prints this card. The full
+interpret every status and exit code it sees. Every report command
+below takes `--json`. Three commands stream instead: `msks ssh` and
+`msks rsync` stream the child's own output, and `msks egress watch`
+streams daemon lines. `msks agent-card` prints this card. The full
 references are [the CLI chapter](cli.md) and [the HTTP API
 chapter](api.md).
 
@@ -38,16 +42,18 @@ The lifecycle verbs block until the transition settles. When a verb
 exits, the status it reports is the workspace's status.
 
 ```bash
-msks create ws --image debian:13 --mem-mib 2048 --start
+msks create ws --pubkey key.pub --image debian:13 --start
 msks start ws
 msks stop ws
 msks clone ws fork
 msks rm ws           # takes several workspaces, removed in order
 ```
 
-`create` plants your ssh identity into the workspace. The first
-`msks` run wrote the client config that carries it. A name is unique
-per daemon: a create over a live name exits 4.
+`create` plants an ssh identity into the workspace. msks generates
+no key: pass `--pubkey` with your public key file, or configure
+`identity_file` once in the client config. An unconfigured client
+refuses the create. A name is unique per daemon: a create over a
+name another workspace already holds exits 4.
 
 A workspace's `status` is one of these values:
 
@@ -67,26 +73,39 @@ A workspace's `status` is one of these values:
 ```bash
 msks ssh ws -- whoami
 msks ssh ws -- python3 -m pip list
-msks rsync -av ./src ws:/src
+msks rsync -av ./src :/src
+msks rsync -av :/src ./src
 ```
 
 Everything after the workspace reaches ssh or rsync verbatim. The
-command exits with the child's own exit code. In an rsync path the
-empty host (`ws:/src`) is this workspace.
+command exits with the child's own exit code. An rsync path with an
+empty host (`:/src`, `user@:/src`) targets this workspace; the push
+and pull examples above are the pair.
 
 ## Egress consent from a script
 
+A workspace in the `allow` posture (the default) needs no consent:
+flows pass. Consent exists in the `interactive` posture, where each
+new flow's first packet holds until a verdict. A held flow with no
+connected decider is denied at once, so the decider must be
+connected while the flow fires.
+
 ```bash
+msks create ws --egress-mode interactive --pubkey key.pub
+msks egress mode ws interactive
+msks egress watch ws
 msks egress requests ws --decision pending --json
 msks egress decide ws REQID allow --duration 15m
 msks egress rules ws
-msks egress watch
 ```
 
-`watch` streams one line per request: the request id, the
-destination, the decision, and the requested-at epoch. The id
-prints in full; `decide` takes it as REQID above. `--duration` is
-one of `once`, `5m`, `15m`, `tilrestart`, `forever`.
+`watch ws` registers this client as that workspace's decider and
+stays connected. It prints three line shapes: a new request
+(`<id>  <destination>  <decision>  <epoch>`), a verdict landing
+(`<id>  resolved: <decision>`), and a rules block when the rules
+change. The request id prints in full; `decide` takes it as REQID
+above, from the stream or from `requests`. `--duration` is one of
+`once`, `5m`, `15m`, `tilrestart`, `forever`.
 
 ## Exit codes
 
@@ -96,16 +115,19 @@ one of `once`, `5m`, `15m`, `tilrestart`, `forever`.
 | 1    | a failure no other row covers: network, timeout, other refusals |
 | 2    | bad invocation                                                  |
 | 3    | not found                                                       |
-| 4    | name conflict: a create or clone over a live name               |
+| 4    | name conflict: a create or clone over a held name               |
 | 5    | wrong state: the row's state or placement refuses the action    |
 | 130  | interrupted                                                     |
 
-Under `--json` a failure prints one object on stderr and nothing on
-stdout:
+Under `--json` a failure prints one object on stderr:
 
 ```json
 { "error": { "status": 404, "detail": "no such workspace" } }
 ```
+
+`rm` is the exception: it prints one JSON line per removed
+workspace as the removals land, so a failure mid-sequence keeps the
+earlier confirmations on stdout.
 
 ## The daemon connection
 

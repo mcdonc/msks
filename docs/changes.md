@@ -13,8 +13,8 @@ tagged `vX.Y.Z`.
   lifecycle, run inside, egress consent) with the status vocabulary
   and the exit-code table whole. The same text is the
   [Agent Reference Card](https://mcdonc.github.io/msks/agents/)
-  docs chapter; a test keeps the two identical and re-parses every
-  invocation the card names against the CLI.
+  docs chapter. The card covers the status vocabulary, the exit-code
+  table, and the non-interactive egress-consent flow.
 
 - **Machine-readable CLI (#841).** Every printing `msks` command takes
   `--json`: the mutating commands emit the affected workspace row as one

@@ -8,6 +8,7 @@ card names parses against the real CLI — a card that names a flag
 the parser refuses, or stops naming one it takes, fails here.
 """
 
+import itertools
 import re
 import shlex
 from pathlib import Path
@@ -16,6 +17,7 @@ import click
 import pytest
 import typer
 from msks.client import agentcard, cli
+from test_client_cli import client_env
 
 DOCS_CARD = Path(__file__).parents[3] / "docs" / "agents.md"
 
@@ -26,17 +28,25 @@ class CardBodyReached(Exception):
 
 def card_invocations() -> list[list[str]]:
     """Every ``msks`` line in the card's fenced blocks, tokens
-    split; a trailing comment drops (the card keeps its comments
-    after the command, space-separated)."""
+    split. A comment cuts at the token that starts it (a ``#`` in
+    the middle of a token is content, not a comment); a
+    backslash-continued line is refused here rather than silently
+    mis-split."""
     invocations: list[list[str]] = []
     in_fence = False
     for line in agentcard.AGENT_CARD_MD.splitlines():
+        assert not line.rstrip().endswith("\\"), (
+            "the card grew a continued line; teach the extractor"
+        )
         if line.lstrip().startswith("```"):
             in_fence = not in_fence
             continue
         if in_fence and line.lstrip().startswith("msks "):
-            stripped = line.split("#", 1)[0].strip()
-            invocations.append(shlex.split(stripped))
+            tokens = shlex.split(line)
+            kept = list(
+                itertools.takewhile(lambda t: not t.startswith("#"), tokens)
+            )
+            invocations.append(kept)
     return invocations
 
 
@@ -88,6 +98,35 @@ def test_the_agent_card_command_prints_the_card(
     rc = cli.agent_card()
     assert rc == 0
     assert capsys.readouterr().out == agentcard.AGENT_CARD_MD
+
+
+def test_card_requested_wants_the_first_positional() -> None:
+    """The exemption keys on the first positional token: no
+    positional (a bare option scan) or a ``--`` barrier means no
+    card, and only ``agent-card`` itself is the card."""
+    assert cli.card_requested(["agent-card"]) is True
+    assert cli.card_requested([]) is False
+    assert cli.card_requested(["--daemon", "url"]) is False
+    assert cli.card_requested(["--", "agent-card"]) is False
+
+
+def test_agent_card_prints_without_a_bootstrap(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The card is reference text read offline (#842 review): the
+    root callback skips the config bootstrap for it, and the full
+    main() path (parse, root callback, body) prints it whole."""
+    client_env(monkeypatch)
+
+    def refused(*args, **kwargs):
+        raise AssertionError("the bootstrap ran for agent-card")
+
+    monkeypatch.setattr(cli, "bootstrap", refused)
+    rc = cli.main(["agent-card"])
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert captured.out == agentcard.AGENT_CARD_MD
+    assert captured.err == ""
 
 
 def test_the_card_carries_the_whole_status_vocabulary() -> None:

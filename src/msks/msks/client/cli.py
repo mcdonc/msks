@@ -258,9 +258,12 @@ def root(
     # the file's and the flag's winners are in the environment by
     # the time any reader looks — except on a help screen, where
     # the operator is reading, not connecting, and a broken config
-    # file must not hide the help.
+    # file must not hide the help; and except on agent-card, whose
+    # reference text is read the same way (#842 review).
     global invoked_conf
-    if not help_requested(invocation_tokens):
+    if not help_requested(invocation_tokens) and not card_requested(
+        invocation_tokens
+    ):
         invoked_conf = bootstrap(daemon, config)
         # The version-skew notice (#706): one best-effort /health
         # roundtrip per invocation, on the conditions
@@ -1285,6 +1288,20 @@ def secret_unlock(
     (rows the key cannot open stay ciphertext)."""
     set_json_mode(as_json)
     return cmd_secret_unlock(as_json, transport=ctx.obj)
+
+
+def card_requested(argv: list[str]) -> bool:
+    """Whether the invocation prints the agent reference card
+    (#842): the first positional token. The card is reference text
+    a harness reads offline — a broken client config must not hide
+    it, the same exemption the help screens carry."""
+    for token in argv:
+        if token == "--":
+            return False
+        if token in ("-h", "--help") or token.startswith("-"):
+            continue
+        return token == "agent-card"
+    return False
 
 
 def help_requested(argv: list[str]) -> bool:
