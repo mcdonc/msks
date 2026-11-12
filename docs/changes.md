@@ -49,6 +49,12 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **`msks doctor` cloud-hypervisor install hint (#831).** The
+  hint now names this host's release assets: the `-aarch64`
+  builds on an aarch64 host, the unsuffixed x86-64 builds
+  elsewhere. The installation chapter states the same
+  architecture distinction beside its install block.
+
 - **Egress slice release on a failed teardown (#828).** A `detach`
   whose table or tap delete raised left the workspace's slice
   claimed with no retry path, so the next `msks start` was refused

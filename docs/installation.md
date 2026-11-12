@@ -295,6 +295,10 @@ The daemon's workspace machinery execs `cloud-hypervisor` (the VMM).
 
 Cloud Hypervisor's static release binary is the
 sanctioned VMM install — Debian's archive does not carry it.
+The release ships one static build per architecture. The asset
+names below are the x86-64 ones. On an aarch64 host, append
+`-aarch64` to each asset name (`cloud-hypervisor-static-aarch64`,
+`ch-remote-static-aarch64`) in the curl and install lines alike.
 
 ```console
 curl -L -o cloud-hypervisor-static \

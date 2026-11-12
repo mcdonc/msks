@@ -58,7 +58,9 @@ from ..microvm.fsdaemons import (
 )
 from ..settings import Settings
 from .hostsetup import (
+    CLOUD_HYPERVISOR_RELEASE,
     PATH_EXTRA_DIRS,
+    cloud_hypervisor_assets,
     executing_user,
     group_present,
     in_group,
@@ -134,32 +136,37 @@ def detect_package_manager() -> str | None:
 # Package hints and install hints
 # ---------------------------------------------------------------------------
 
+
+def cloud_hypervisor_hint(machine: str) -> str:
+    """The paste-able upstream sequence (#557) for one machine's
+    architecture (#831): the static cloud-hypervisor and
+    ch-remote pair its release ships, each installed under its
+    unsuffixed command name — every line a host command, nothing
+    to look up, no tarball that upstream does not ship."""
+    vmm_asset, remote_asset = cloud_hypervisor_assets(machine)
+    return "\n".join(
+        [
+            f"curl -LO {CLOUD_HYPERVISOR_RELEASE}/{vmm_asset}",
+            f"curl -LO {CLOUD_HYPERVISOR_RELEASE}/{remote_asset}",
+            f"sudo install -m755 {vmm_asset} /usr/local/bin/cloud-hypervisor",
+            f"sudo install -m755 {remote_asset} /usr/local/bin/ch-remote",
+        ]
+    )
+
+
 # Checks whose fix is not a distro package, so every manager
 # gets the same hint: the upstream source itself. Doctor runs on
 # deployment hosts (Debian and the like) where the repo's own dev
 # tooling is absent, so the hints stay host-usable — a command
-# sequence the operator can paste, one command a line.
+# sequence the operator can paste, one command a line. The
+# cloud-hypervisor entry carries both release binaries — the
+# daemon drives the VMM over its --api-socket HTTP API, while
+# ch-remote serves the operator's hands-on control (the demo and
+# dev tooling) — named for this host's machine: the release's
+# assets are per-architecture (#831), the same map hostsetup
+# downloads from.
 UPSTREAM_HINTS = {
-    # The release ships pre-built static binaries — cloud-hypervisor
-    # itself and ch-remote — as x86-64 assets with -aarch64
-    # siblings; the daemon drives the VMM over its --api-socket
-    # HTTP API, while ch-remote serves the operator's hands-on
-    # control (the demo and dev tooling). The sequence installs
-    # both under their unsuffixed names with curl and install(1) —
-    # tools every deployment host already has.
-    "cloud-hypervisor": "\n".join(
-        [
-            "curl -LO "
-            "https://github.com/cloud-hypervisor/cloud-hypervisor"
-            "/releases/latest/download/cloud-hypervisor-static",
-            "curl -LO "
-            "https://github.com/cloud-hypervisor/cloud-hypervisor"
-            "/releases/latest/download/ch-remote-static",
-            "sudo install -m755 cloud-hypervisor-static"
-            " /usr/local/bin/cloud-hypervisor",
-            "sudo install -m755 ch-remote-static /usr/local/bin/ch-remote",
-        ]
-    ),
+    "cloud-hypervisor": cloud_hypervisor_hint(os.uname().machine),
 }
 
 # Each entry: check name → {manager → package}. A manager missing
