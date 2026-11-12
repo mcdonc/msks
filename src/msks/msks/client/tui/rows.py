@@ -203,15 +203,30 @@ def padded_cells(cells: tuple[str, ...], columns=LIST_COLUMNS) -> str:
     )
 
 
-#: The running status's color (#348) and the color every
-#: other unmapped state renders in — a state the map does not
-#: know takes the warning color, so a vocabulary the daemon
-#: grows still stands out.
+#: The running status's color (#348).
 RUNNING_COLOR = "$success"
 
-#: The color every status besides running renders in (#470 S1):
-#: stopped carried the muted text color until the cue-dot pass;
-#: every non-running state now stands in the warning color.
+#: The statuses that sit at rest (#850): ``stopped`` — the
+#: normal resting state — and ``created`` — never booted. The
+#: word rides the muted text color (:func:`muted_style`), the
+#: color the pre-#470 rows used, keeping the cue dot as the
+#: state's cue — a fleet at rest reads calm, and the abnormal
+#: row is the row the eye finds.
+RESTING_STATUSES = frozenset({"stopped", "created"})
+
+#: The statuses the daemon lost track of (#850): ``absent`` —
+#: the artifacts are gone — and ``unknown`` — the daemon lost
+#: the thread. Both want action, and the error color asks for
+#: it.
+LOST_STATUSES = frozenset({"absent", "unknown"})
+LOST_STATUS_COLOR = "$error"
+
+#: The color every other status renders in (#470 S1, #850): the
+#: states that want the eye — ``starting`` and ``stopping``
+#: while they pass, and ``paused``, a freeze no msks verb
+#: produces and none resumes (the client's own advice is a
+#: stop, then a start again) — and a state the map does not
+#: know, so a vocabulary the daemon grows still stands out.
 OTHER_STATUS_COLOR = "$warning"
 
 #: The muted ratio a theme spells some other way than Textual's
@@ -241,14 +256,22 @@ def muted_style(theme_variables: dict) -> str:
 
 
 def status_color(status: str, theme_variables: dict | None = None) -> str:
-    """The status cue's color (#348, #470 S1): a theme variable the
-    render resolves against the active theme — running in the
-    success color, every other state in the warning color. The
-    stopped state rode muted text until #470's pass; the cue dot
-    carries the state now, so the word keeps a color the eye
-    separates from the muted metadata around it."""
+    """The status cue's color (#348, #470 S1, #850), graded by
+    state class: a theme variable the render resolves against
+    the active theme — ``running`` in the success color; the
+    resting statuses in the muted text color the pre-#470 rows
+    used (the cue dot carries the state, so the word reads calm
+    beside the muted metadata around it); the lost statuses in
+    the error color; every other state — ``starting`` and
+    ``stopping`` in passing, ``paused`` until an operator
+    intervenes, and a status the map does not know — in the
+    warning color."""
     if status == "running":
         return RUNNING_COLOR
+    if status in RESTING_STATUSES:
+        return muted_style(theme_variables or {})
+    if status in LOST_STATUSES:
+        return LOST_STATUS_COLOR
     return OTHER_STATUS_COLOR
 
 
@@ -345,6 +368,21 @@ def row_cells(row: dict, columns=LIST_COLUMNS) -> tuple[str, ...]:
     )
 
 
+#: The mounts-issue marker's color (#850): the warning color —
+#: the prominence the ``✗N`` count keeps beside a status word
+#: whose own class may paint the word muted.
+ISSUE_MARKER_COLOR = "$warning"
+
+
+def issue_marker(row: dict) -> str | None:
+    """The mounts-issue count's marker (#620, part #624, #850):
+    ``✗N`` for a row whose mounts skip, else ``None`` — the
+    piece the listing paints the warning color whatever the
+    status word's own class paints the word behind it."""
+    issues = row.get("mount_issues") or []
+    return f"✗{len(issues)}" if issues else None
+
+
 def status_with_issues(row: dict) -> str:
     """The status cell with the mounts' standing marker (#620,
     part #624): a row whose mounts skip leads with the count
@@ -352,10 +390,10 @@ def status_with_issues(row: dict) -> str:
     would middle-clip the word it marks — and the
     workspace's page names each issue. A healthy row prints the
     status dot and word alone."""
-    issues = row.get("mount_issues") or []
-    if not issues:
+    marker = issue_marker(row)
+    if marker is None:
         return status_text(row["status"])
-    return f"✗{len(issues)} {row['status']}"
+    return f"{marker} {row['status']}"
 
 
 def row_content(
@@ -375,18 +413,24 @@ def row_content(
     parsed as markup — so a markup-carrying name cannot shift the
     columns (the name cell's own length fixes the span's offset:
     a wide-character name pads with fewer characters than its
-    display width)."""
+    display width). A row whose mounts skip splits its status
+    cell's span (#850): the ``✗N`` marker keeps the warning
+    color while the status word behind it rides its own class's
+    color."""
     cells = row_cells(row, columns)
     name, status, *_ = cells
     line = padded_cells(cells, columns).rstrip()
     offset = len(cell_pad(name, columns[0][1])) + len(COLUMN_GAP)
-    spans = [
-        Span(
-            offset,
-            offset + len(status),
-            status_color(row["status"], theme_variables),
-        )
-    ]
+    color = status_color(row["status"], theme_variables)
+    marker = issue_marker(row)
+    if marker is None:
+        spans = [Span(offset, offset + len(status), color)]
+    else:
+        marker_end = offset + min(len(marker), len(status))
+        spans = [
+            Span(offset, marker_end, ISSUE_MARKER_COLOR),
+            Span(marker_end, offset + len(status), color),
+        ]
     if focused:
         spans.append(Span(0, len(name), "$text bold"))
     return Content(line, spans)
