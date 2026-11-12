@@ -21,9 +21,15 @@
 #   arguments; the suite's tests point both knobs at throwaway
 #   trees to pin the boundary (bash 3.2 compatible — no mapfile,
 #   no associative arrays, macOS hosts included).
+#
+# Paths parse at the first whitespace, so a path containing a
+# space never matches an entry and fails as an offender — the
+# gate stays loud, never silently permissive.
 set -euo pipefail
 
-# The ceiling, in lines (wc -l). It only goes down.
+# The ceiling, in lines. It only goes down. Counting is
+# ``grep -c ''`` — wc -l would undercount a file whose final line
+# lacks its newline, and a 2001-line file would pass.
 MAX_LINES=2000
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -41,6 +47,10 @@ while [ "$#" -gt 0 ]; do
     ;;
   esac
 done
+if [ "${#positional[@]}" -gt 1 ]; then
+  echo "usage: lines-gate.sh [ROOT] [--exemptions FILE]" >&2
+  exit 1
+fi
 if [ "${#positional[@]}" -gt 0 ]; then
   root=$(cd "${positional[0]}" && pwd)
 fi
@@ -62,13 +72,19 @@ if [ "${#files[@]}" -eq 0 ]; then
   exit 1
 fi
 
+# Exemption entries: one path per line, reason after the path.
+# Blank lines and comments skip (leading whitespace allowed); a
+# line that parses to no path — CRLF blank, stray punctuation —
+# skips rather than poisoning a verdict with an empty entry.
 exempted=()
 if [ -f "$exemptions" ]; then
   while IFS= read -r line || [ -n "$line" ]; do
-    case "$line" in
+    trim=${line#"${line%%[![:space:]]*}"}
+    case "$trim" in
     '' | \#*) continue ;;
     esac
-    read -r path _reason <<<"$line"
+    read -r path _reason <<<"$trim"
+    [ -n "$path" ] || continue
     exempted+=("$path")
   done <"$exemptions"
 fi
@@ -78,14 +94,23 @@ fi
 # file at or under the ceiling, or absent from the tree, is stale.
 over=""
 for f in "${files[@]}"; do
-  n=$(wc -l <"$root/$f" | tr -d '[:space:]')
+  n=$(grep -c '' "$root/$f" || true)
   if [ "$n" -gt "$MAX_LINES" ]; then
     over+="$f $n"$'\n'
   fi
 done
 
-listed_over() {
-  printf '%s' "$over" | grep -Fq -- "$1 "
+# Exact membership of $1 among the over-ceiling paths — the same
+# first-whitespace token both passes compare, so an entry and an
+# offender can never disagree about what a line names.
+is_over() {
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    if [ "${entry%% *}" = "$1" ]; then
+      return 0
+    fi
+  done <<<"$over"
+  return 1
 }
 
 fail=0
@@ -109,7 +134,7 @@ done <<<"$over"
 
 # Stale pass: every listed path must name a real over-ceiling file.
 for e in ${exempted[@]+"${exempted[@]}"}; do
-  if ! listed_over "$e"; then
+  if ! is_over "$e"; then
     echo "lines-gate: FAIL — stale exemption: $e is at or under the ceiling (or absent); remove the entry in the commit that split it" >&2
     fail=1
   fi

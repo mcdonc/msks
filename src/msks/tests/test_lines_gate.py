@@ -16,16 +16,20 @@ SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "lines-gate.sh"
 SEEDED = SCRIPT.parent / "lines-exemptions.txt"
 
 
-def make_tree(tmp_path, modules):
+def make_tree(tmp_path, modules, ignore=""):
     """A throwaway repo with the named modules at the given line
     counts: the gate's scanned set is git-scoped, so each tree
-    starts as a repo with untracked-but-present files."""
+    starts as a repo with untracked-but-present files. ``ignore``
+    becomes a .gitignore, pinning that the gate's set follows
+    git's exclusion rules."""
     root = tmp_path / "tree"
     root.mkdir()
     for rel, count in modules.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("x = 1\n" * count)
+    if ignore:
+        (root / ".gitignore").write_text(ignore)
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     return root
 
@@ -85,6 +89,45 @@ def test_exemption_for_absent_file_fails(tmp_path):
     done = run_gate(root, "--exemptions", str(exempt))
     assert done.returncode == 1
     assert "stale exemption" in done.stderr
+
+
+def test_unterminated_final_line_counts(tmp_path):
+    """A 2,001-line file whose last line lacks its newline still
+    trips the gate: counting is ``grep -c ''``, not ``wc -l``."""
+    root = tmp_path / "tree"
+    (root / "src/msks/msks").mkdir(parents=True)
+    (root / "src/msks/msks/big.py").write_text("x = 1\n" * 2000 + "x = 1")
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    assert run_gate(root).returncode == 1
+
+
+def test_gitignored_module_stays_out(tmp_path):
+    """The scanned set is git-scoped: a gitignored over-ceiling
+    module grades never, and dropping --exclude-standard from the
+    gate would flip this pin."""
+    root = make_tree(
+        tmp_path,
+        {
+            "src/msks/msks/ignored.py": 2500,
+            "src/msks/msks/graded.py": 10,
+        },
+        ignore="src/msks/msks/ignored.py\n",
+    )
+    assert run_gate(root).returncode == 0
+
+
+def test_every_offender_reports(tmp_path):
+    root = make_tree(
+        tmp_path,
+        {
+            "src/msks/msks/one.py": 2100,
+            "src/msks/msks/two.py": 2200,
+        },
+    )
+    done = run_gate(root)
+    assert done.returncode == 1
+    assert "src/msks/msks/one.py" in done.stderr
+    assert "src/msks/msks/two.py" in done.stderr
 
 
 def test_seeded_exemption_list_is_empty():
