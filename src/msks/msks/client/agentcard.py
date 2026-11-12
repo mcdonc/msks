@@ -51,16 +51,16 @@ per daemon: a create over a live name exits 4.
 
 A workspace's `status` is one of these values:
 
-| status    | meaning                                       |
-| --------- | --------------------------------------------- |
-| `created` | the row exists; it has never booted           |
-| `starting`| boot in progress                              |
-| `running` | up                                            |
-| `paused`  | the hypervisor holds the VM paused            |
-| `stopping`| stop in progress                              |
-| `stopped` | shut down; `start` boots it again             |
-| `absent`  | the row exists; its artifacts are gone        |
-| `unknown` | the daemon lost track; re-read before acting  |
+| status     | meaning                                      |
+| ---------- | -------------------------------------------- |
+| `created`  | the row exists; it has never booted          |
+| `starting` | boot in progress                             |
+| `running`  | up                                           |
+| `paused`   | the hypervisor holds the VM paused           |
+| `stopping` | stop in progress                             |
+| `stopped`  | shut down; `start` boots it again            |
+| `absent`   | the row exists; its artifacts are gone       |
+| `unknown`  | the daemon lost track; re-read before acting |
 
 ## Run commands inside
 
@@ -90,15 +90,15 @@ one of `once`, `5m`, `15m`, `tilrestart`, `forever`.
 
 ## Exit codes
 
-| code | meaning                                                        |
-| ---- | -------------------------------------------------------------- |
-| 0    | success                                                        |
+| code | meaning                                                         |
+| ---- | --------------------------------------------------------------- |
+| 0    | success                                                         |
 | 1    | a failure no other row covers: network, timeout, other refusals |
-| 2    | bad invocation                                                 |
-| 3    | not found                                                      |
-| 4    | name conflict: a create or clone over a live name              |
-| 5    | wrong state: the row's state or placement refuses the action   |
-| 130  | interrupted                                                    |
+| 2    | bad invocation                                                  |
+| 3    | not found                                                       |
+| 4    | name conflict: a create or clone over a live name               |
+| 5    | wrong state: the row's state or placement refuses the action    |
+| 130  | interrupted                                                     |
 
 Under `--json` a failure prints one object on stderr and nothing on
 stdout:
