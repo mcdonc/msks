@@ -1189,7 +1189,7 @@ Every page uses the API.</p>
 full-screen workspace tree. <code>msks tui</code> is the same command, and <code>msks tui
 my-workspace</code> opens that workspace's page directly.</p>
 <h2 id="the-workspace-tree">The workspace tree<a class="headerlink" href="#the-workspace-tree" title="Permanent link">&para;</a></h2>
-<p><img alt="The workspaces list: two rows, the status bar's count and daemon URL" src="../screens/workspaces-list.svg" /></p>
+<p><img alt="The workspaces list: two rows, the status bar's count, state summary, and daemon URL" src="../screens/workspaces-list.svg" /></p>
 <p>The tree is rooted at the <strong>workspaces list</strong>: one row per workspace,
 newest first. Clicking a column header sorts the list by that column.
 The active column's header shows the direction with an arrow, and
@@ -1207,6 +1207,13 @@ overlay. The workspaces list answers it too.</p>
 <p>The list re-reads the daemon every five seconds. A workspace changed
 from another surface (the CLI, another operator) appears without a
 keypress.</p>
+<p>The status bar above the list counts the workspaces and summarizes
+their states beside the count. A fleet in one state reads
+<code>4 workspaces · all stopped</code>. Mixed states read each state's count,
+as in <code>4 workspaces · 1 running 3 stopped</code>, in the STATUS column's
+lifecycle order. The summary follows the five-second refresh. The
+daemon's URL comes last, and it crops first when the terminal runs
+narrow.</p>
 <h2 id="workspace-creation">Workspace creation<a class="headerlink" href="#workspace-creation" title="Permanent link">&para;</a></h2>
 <p>When you create a workspace, it looks like this:</p>
 <p><img alt="The create form over the list" src="../screens/create-form.svg" /></p>
