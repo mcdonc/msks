@@ -25,10 +25,11 @@ EXIT_NOT_FOUND = 3
 #: The daemon answered the duplicate-name 409 ("workspace
 #: exists"): a create or clone with a name another row holds.
 EXIT_CONFLICT = 4
-#: The workspace's state or placement refuses the action: the
-#: 409s that are not the duplicate-name one (a clone source that
-#: runs, a placement the daemon does not own), and the start-again
-#: refusal (a start against a workspace whose VMM already runs).
+#: A state, placement, or same-name row refuses the action: the
+#: 409s that are not the workspace-create one (a clone source that
+#: runs, a placement the daemon does not own, a secrets or image
+#: row the name already names), and the start-again refusal (a
+#: start against a workspace whose VMM already runs).
 EXIT_WRONG_STATE = 5
 #: A Ctrl-C.
 EXIT_INTERRUPT = 130

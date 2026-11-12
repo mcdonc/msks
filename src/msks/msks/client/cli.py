@@ -261,15 +261,12 @@ def root(
     global invoked_conf
     if not help_requested(invocation_tokens):
         invoked_conf = bootstrap(daemon, config)
-        if ctx.obj is None and ctx.invoked_subcommand != "image":
-            # The version-skew notice (#706): one best-effort
-            # /health roundtrip on a real dial — an in-process
-            # transport (the tests' seam) is not a deployment to
-            # compare against, so it skips the probe entirely, and
-            # the image group is exempted for its offline member
-            # (image check runs a child conformance process that
-            # never dials the daemon; the group's dialing members
-            # answer their own skew another invocation).
+        # The version-skew notice (#706): one best-effort /health
+        # roundtrip per invocation, on the conditions
+        # :func:`skew_probe_wanted` names (an in-process transport
+        # is the tests' seam, the image group has an offline
+        # member, and --json keeps stderr one object, #841).
+        if skew_probe_wanted(invocation_tokens, ctx):
             notice_daemon_version_skew()
     if ctx.invoked_subcommand is None:
         # The decorator's edge, same as every command: a Ctrl-C in
@@ -793,6 +790,7 @@ def egress_requests(
         egress_mod.run_requests(
             workspace_id,
             None if decision is None else decision.value,
+            as_json,
             transport=ctx.obj,
         )
     )
@@ -826,6 +824,7 @@ def egress_decide(
             request_id,
             decision.value,
             duration.value,
+            as_json,
             transport=ctx.obj,
         )
     )
@@ -1287,6 +1286,36 @@ def help_requested(argv: list[str]) -> bool:
         if token == "--":
             return False
         if token in ("-h", "--help"):
+            return True
+    return False
+
+
+def skew_probe_wanted(tokens: list[str], ctx: typer.Context) -> bool:
+    """Whether the root callback's version-skew probe runs (#706,
+    #841): a real dial (no in-process transport), a non-image
+    command, and a human invocation — under ``--json`` the
+    notice would land ahead of the structured error document a
+    failing run prints."""
+    return (
+        ctx.obj is None
+        and ctx.invoked_subcommand != "image"
+        and not json_requested(tokens)
+    )
+
+
+def json_requested(argv: list[str]) -> bool:
+    """Whether the invocation carries a ``--json`` flag before any
+    ``--`` separator (#841): the root callback's version-skew probe
+    runs before a command body parses, and its stderr notice would
+    land ahead of the structured error document a failing --json
+    run prints — a harness reading stderr as one JSON object would
+    break on it. The scan mirrors :func:`help_requested`'s shape;
+    a token a passthrough command later swallows only ever
+    suppresses the notice."""
+    for token in argv:
+        if token == "--":
+            return False
+        if token == "--json":
             return True
     return False
 

@@ -261,6 +261,7 @@ def cmd_proxy_add(
     ),
 ) -> int:
     """Store one persisted proxy (an identical row returns as is)."""
+    set_json_mode(as_json)
     if (local is None) == (remote is None):
         raise typer.BadParameter("pass exactly one of -L or -R")
     body = (
@@ -271,7 +272,6 @@ def cmd_proxy_add(
     if label is not None:
         body["label"] = label
     row = asyncio.run(create_proxy(workspace_id, body, ctx.obj))
-    set_json_mode(as_json)
     outcome(as_json, row, lambda: f"msks: {proxy_line(row)}")
     return 0
 

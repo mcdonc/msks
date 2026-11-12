@@ -1250,9 +1250,10 @@ def test_cmd_rm_multiple_stops_at_first_failure(
 
     def handler(request: httpx.Request) -> httpx.Response:
         paths.append(request.url.path)
-        if request.url.path.endswith("/b"):
+        ws = request.url.path.rsplit("/", 1)[-1]
+        if ws == "b":
             return httpx.Response(404, json={"detail": "no such workspace"})
-        return httpx.Response(200, json={"deleted": "x"})
+        return httpx.Response(200, json={"deleted": ws})
 
     with pytest.raises(SystemExit, match="msks: 404: no such workspace"):
         cli.cmd_rm(["a", "b", "c"], transport=mock(handler))
@@ -1459,10 +1460,12 @@ def test_main_rm_dispatch(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     client_env(monkeypatch)
-    rc = cli.main(
-        ["rm", "ws1", "ws2"],
-        transport=mock(lambda req: httpx.Response(200, json={"deleted": "x"})),
-    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        ws = request.url.path.rsplit("/", 1)[-1]
+        return httpx.Response(200, json={"deleted": ws})
+
+    rc = cli.main(["rm", "ws1", "ws2"], transport=mock(handler))
     assert rc == 0
     assert capsys.readouterr().out == "ws1 deleted\nws2 deleted\n"
 
@@ -6079,11 +6082,12 @@ def test_rm_json_is_one_line_per_id(
     workspace, in order — a partial run's survivors stay on the
     record."""
     client_env(monkeypatch)
-    rc = cli.cmd_rm(
-        ["a", "b"],
-        as_json=True,
-        transport=mock(lambda req: httpx.Response(200, json={"deleted": "x"})),
-    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        ws = request.url.path.rsplit("/", 1)[-1]
+        return httpx.Response(200, json={"deleted": ws})
+
+    rc = cli.cmd_rm(["a", "b"], as_json=True, transport=mock(handler))
     assert rc == 0
     out = capsys.readouterr().out.splitlines()
     assert out == ['{"removed": "a"}', '{"removed": "b"}']
@@ -6563,3 +6567,87 @@ def test_failed_boot_plain_exit_keeps_the_hint(
             cli.CreateFlags(workspace_id="ws1", start=True), mock(handler)
         )
     assert "boot it later" in str(caught.value)
+
+
+def test_egress_requests_and_decide_json_through_the_entry_point(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The typer dispatch carries --json into the egress read and
+    decide bodies (#841 review): the flag reaching the error path
+    but not the print site was the shipped bug."""
+    client_env(monkeypatch)
+    rows = [{"id": "r1", "decision": "allowed"}]
+    rc = cli.main(
+        ["egress", "requests", "ws1", "--json"],
+        transport=mock(lambda req: httpx.Response(200, json=rows)),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == rows
+
+    reply = {"verdict": {"decision": "deny", "duration": "once"}}
+    rc = cli.main(
+        [
+            "egress",
+            "decide",
+            "ws1",
+            "r1",
+            "deny",
+            "--duration",
+            "once",
+            "--json",
+        ],
+        transport=mock(lambda req: httpx.Response(200, json=reply)),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == reply
+
+
+def test_proxy_add_json_failure_reaches_the_chokepoint(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A failing proxy add under --json: the structured error and
+    the table's code, not a raised one-liner (#841 review — the
+    flag must be set before the exchange)."""
+    client_env(monkeypatch)
+    rc = cli.main(
+        ["proxy", "add", "ghost", "-L", "2222:localhost:22", "--json"],
+        transport=mock(
+            lambda req: httpx.Response(
+                404, json={"detail": "no such workspace"}
+            )
+        ),
+    )
+    err = json.loads(capsys.readouterr().err)
+    assert err["error"]["status"] == 404
+    assert rc == 3
+
+
+def test_start_json_survives_a_failed_refresh(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The follow-up GET cannot unrun the verb (#841 review): a
+    start whose POST landed answers the thin row when the refresh
+    dies — success stays success."""
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(500, json={"detail": "restarting"})
+        return httpx.Response(200, json={"id": "ws1", "status": "running"})
+
+    rc = cli.cmd_start("ws1", as_json=True, transport=mock(handler))
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "id": "ws1",
+        "status": "running",
+    }
+
+
+def test_json_requested_scans_before_the_separator() -> None:
+    """The pre-parse --json scan (#841 review): the flag before a
+    ``--`` separator answers True, everything after one belongs to
+    a passthrough command."""
+    assert cli.json_requested(["egress", "requests", "ws1", "--json"])
+    assert not cli.json_requested(["egress", "requests", "ws1"])
+    assert not cli.json_requested(["ssh", "ws", "--", "--json"])
+    assert not cli.json_requested(["ssh", "ws"])

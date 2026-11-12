@@ -893,7 +893,12 @@ def run_check(args: CheckOptions) -> int:
         return 2
     results, state_dir = run_pass(archive, args)
     if args.keep:
-        print(f"state kept at {state_dir} (serial logs, image cache)")
+        # stderr: under --json the rows document owns stdout whole
+        # (#841), and the state note is for the operator anyway.
+        print(
+            f"state kept at {state_dir} (serial logs, image cache)",
+            file=sys.stderr,
+        )
     return check_report(results, getattr(args, "as_json", False))
 
 

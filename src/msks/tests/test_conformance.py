@@ -946,9 +946,12 @@ def test_run_check_keeps_and_names_the_state_dir(
     monkeypatch.setattr(conformance, "check_image", fake_check)
     path = archive_with(tmp_path, manifest())
     assert conformance.run_check(check_args(archive=str(path), keep=True)) == 0
-    out = capsys.readouterr().out
-    assert "state kept at " in out
-    kept = Path(out.split("state kept at ")[1].split()[0])
+    captured = capsys.readouterr()
+    # The note rides stderr (#841): under --json the rows document
+    # owns stdout whole.
+    assert "state kept at " in captured.err
+    assert "state kept at" not in captured.out
+    kept = Path(captured.err.split("state kept at ")[1].split()[0])
     assert kept.is_dir() and (kept.stat().st_mode & 0o777) == 0o700
     shutil.rmtree(kept, ignore_errors=True)
 

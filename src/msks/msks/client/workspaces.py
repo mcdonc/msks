@@ -407,7 +407,10 @@ async def start_stop_row(
     in ``--json`` mode (#841): the POST's reply carries the id and
     status alone, and the machine-readable emit wants the row a
     follow-up ``ls`` would print — one GET, the verb already
-    blocked to the terminal state."""
+    blocked to the terminal state. A refresh that fails cannot
+    unrun the verb: the thin row the POST answered is the
+    document, and the failure stays visible in the daemon's own
+    next answer."""
     row = await call(
         "POST",
         f"/api/v1/workspaces/{workspace_id}/{action}",
@@ -415,9 +418,12 @@ async def start_stop_row(
     )
     if not as_json:
         return row
-    return await call(
-        "GET", f"/api/v1/workspaces/{row['id']}", transport=transport
-    )
+    try:
+        return await call(
+            "GET", f"/api/v1/workspaces/{row['id']}", transport=transport
+        )
+    except SystemExit:
+        return row
 
 
 def cmd_start(workspace_id: str, as_json: bool = False, transport=None) -> int:
@@ -425,14 +431,14 @@ def cmd_start(workspace_id: str, as_json: bool = False, transport=None) -> int:
     row = asyncio.run(
         start_stop_row("start", workspace_id, as_json, transport)
     )
-    outcome(as_json, row, f"{workspace_id} {row['status']}")
+    outcome(as_json, row, lambda: f"{workspace_id} {row['status']}")
     return 0
 
 
 def cmd_stop(workspace_id: str, as_json: bool = False, transport=None) -> int:
     """``msks stop``: power a workspace off, gracefully."""
     row = asyncio.run(start_stop_row("stop", workspace_id, as_json, transport))
-    outcome(as_json, row, f"{workspace_id} {row['status']}")
+    outcome(as_json, row, lambda: f"{workspace_id} {row['status']}")
     return 0
 
 
@@ -478,17 +484,18 @@ def cmd_rm(
     removed — and stay confirmed on stdout).
     """
     for workspace_id in workspace_ids:
-        asyncio.run(
+        reply = asyncio.run(
             call(
                 "DELETE",
                 f"/api/v1/workspaces/{workspace_id}",
                 transport=transport,
             )
         )
+        removed = reply.get("deleted") or workspace_id
         if as_json:
-            json_line({"removed": workspace_id})
+            json_line({"removed": removed})
         else:
-            print(f"{workspace_id} deleted")
+            print(f"{removed} deleted")
     return 0
 
 
@@ -519,7 +526,7 @@ def cmd_key(
     key = asyncio.run(
         fetch_ssh_key(env_url(), env_token(), workspace_id, transport)
     )
-    outcome(as_json, key, key["public_key"])
+    outcome(as_json, key, lambda: key["public_key"])
     return 0
 
 

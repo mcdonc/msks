@@ -240,7 +240,7 @@ async def unset_default_image(url, token, transport, as_json=False) -> dict:
         "/api/v1/images/default",
         transport=transport,
     )
-    outcome(as_json, result, unset_message(result))
+    outcome(as_json, result, lambda: unset_message(result))
     return result
 
 
