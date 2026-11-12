@@ -257,9 +257,15 @@ class NetManager:
     async def stop(self) -> None:
         """Detach every workspace (daemon shutdown; idempotent).
         The proxy sweep runs after: a forward listener can outlive
-        its workspace's attachment, and shutdown ends it too."""
+        its workspace's attachment, and shutdown ends it too. Each
+        workspace's teardown is its own failure (#828 review): one
+        raising detach stashes its residue for the retry pass below
+        and the loop moves on, so a single broken workspace cannot
+        skip the proxy sweep, the interceptor's stop, or the model's
+        close."""
         for workspace_id in list(self._attachments):
-            await self.detach(workspace_id)
+            with contextlib.suppress(Exception):
+                await self.detach(workspace_id)
         for workspace_id in list(self._residues):
             with contextlib.suppress(Exception):
                 await self.detach(workspace_id)
@@ -411,14 +417,14 @@ class NetManager:
 
         Releasing the slice keeps the workspace on its own /30 across
         stop/start cycles — the address derives from it, and nothing
-        else remembers the pairing. The slice releases whatever the
-        teardown below it does (#828): a raise in the plumbing teardown
-        stashes the popped attachment as residue, and the workspace's
-        next detach retries the same steps — the leftover table and tap
-        are re-cleaned instead of lingering until the daemon restarts.
-        A fresh attach supersedes the residue: its build swept the
-        leftover tap and replaced the leftover table, so nothing of
-        the residue is left to clean.
+        else remembers the pairing. The claim holds until the
+        teardown completes (#828): a raise in the teardown stashes
+        the popped attachment as residue and the claim stays, so no
+        other workspace can take the /30 while its tap lingers. The
+        workspace's next stop retries the residue's teardown, and a
+        fresh start retries or supersedes it (the launch path
+        detaches before it attaches; the manager's own attach
+        retires a residue and rebuilds the plumbing).
         """
         async with self.workspace_guard(workspace_id):
             attachment = self._attachments.pop(workspace_id, None)
@@ -445,8 +451,7 @@ class NetManager:
             except BaseException:
                 self._residues[workspace_id] = (attachment, services)
                 raise
-            finally:
-                self._used_slices.discard(attachment.slice)
+            self._used_slices.discard(attachment.slice)
 
     async def teardown_plumbing(
         self,
@@ -462,6 +467,7 @@ class NetManager:
         the plumbing subprocesses run before the service sockets
         close, so a closed-socket fd number is never reused by a
         fresh subprocess pipe underneath a stale selector entry.
+        Every step is idempotent: a retry re-runs the whole body.
         """
         await self.app.state.consent.on_workspace_stop(workspace_id)
         # The interceptor's listener drops before the table dies: an
@@ -1071,6 +1077,7 @@ class NetManager:
         workspace."""
         settings = self.app.state.settings
         await self.ensure_base_guard()
+        await self.retire_residue(workspace_id)
         slice_ = await self.claim_slice(workspace_id)
         consumer = None
         try:
@@ -1117,10 +1124,6 @@ class NetManager:
                 raise
             await self._start_services(attachment, policy, consumer, queue_num)
             self._attachments[workspace_id] = attachment
-            # The live attachment supersedes any residue (#828): the
-            # build swept the leftover tap and replaced the leftover
-            # table, so the residue's cleanup targets nothing.
-            self._residues.pop(workspace_id, None)
             await self.replay_boot_verdicts(workspace_id, policy)
             # The interceptor arms last (#199): its listener and the
             # table's redirect half appear together, only when a
@@ -1137,6 +1140,24 @@ class NetManager:
             self._used_slices.discard(slice_)
             await self._unwind(workspace_id)
             raise
+
+    async def retire_residue(self, workspace_id: str) -> None:
+        """Drop a residue a fresh build supersedes (#828 review):
+        the raise that stashed it preceded the services' stop, so
+        they stop here — a forwarder still bound to this slice's
+        address would refuse the fresh services their bind — and the
+        slice claim releases for the claim below. The residue's tap
+        and table are cleaned by the build itself (the tap create
+        sweeps the leftover tap, the table install replaces the
+        leftover table) or, on a failed build, by the unwind."""
+        residue = self._residues.pop(workspace_id, None)
+        if residue is None:
+            return
+        attachment, services = residue
+        if services is not None:
+            with contextlib.suppress(Exception):
+                await stop_services(services)
+        self._used_slices.discard(attachment.slice)
 
     async def ensure_base_guard(self) -> None:
         """Re-apply the base table when its loopback guard's shape
