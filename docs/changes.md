@@ -39,14 +39,13 @@ tagged `vX.Y.Z`.
 ### Changed
 
 - **The arm64 stop caveat is documented (#826).** cloud-hypervisor's
-  arm64 power button (the PL061 gpio key) delivers only the first press,
-  so every later re-press from a `msks stop` is a no-op the VMM logs as a
-  warning. A stop whose first press is lost is carried by the fallback
-  kill at the `MSKSD_SHUTDOWN_TIMEOUT_S` deadline. Size that setting to
-  cover the guest's slowest clean shutdown; a value above 120s outlives
-  the client's wait for the answer, which then reports a timeout while
-  the daemon still finishes the stop. x86_64 stops are unchanged: the
-  ACPI button there delivers re-presses.
+  arm64 power button (the PL061 gpio key) delivers only the first
+  press, so a `msks stop` cannot rescue a lost press by re-pressing.
+  The fallback kill at the `MSKSD_SHUTDOWN_TIMEOUT_S` deadline carries
+  the stop instead. Size that setting to cover the guest's slowest
+  clean shutdown. A value above 120s outlives the client's wait, and
+  the client reports a timeout while the daemon still finishes the
+  stop.
 
 ### Fixed
 
