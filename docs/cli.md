@@ -19,6 +19,7 @@ msks home export ws           # download its /home volume (backup, seed)
 msks start ws                 # boot it without attaching
 msks stop ws                  # power it off
 msks rm ws                    # delete it (and its data)
+msks agent-card               # print the agent reference card (#842)
 ```
 
 The client and the daemon ship in the same Python distribution, but they might

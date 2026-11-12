@@ -41,6 +41,7 @@ from ..conformance_args import (
     CheckOptions,
 )
 from . import egress as egress_mod
+from .agentcard import AGENT_CARD_MD
 from .config import ClientConfig, bootstrap
 from .console import run_workspace_shell
 from .create import read_pubkey  # noqa: F401 — the tests' seam
@@ -257,9 +258,12 @@ def root(
     # the file's and the flag's winners are in the environment by
     # the time any reader looks — except on a help screen, where
     # the operator is reading, not connecting, and a broken config
-    # file must not hide the help.
+    # file must not hide the help; and except on agent-card, whose
+    # reference text is read the same way (#842 review).
     global invoked_conf
-    if not help_requested(invocation_tokens):
+    if not help_requested(invocation_tokens) and not card_requested(
+        invocation_tokens
+    ):
         invoked_conf = bootstrap(daemon, config)
         # The version-skew notice (#706): one best-effort /health
         # roundtrip per invocation, on the conditions
@@ -284,6 +288,15 @@ def ls(
     """List workspaces on the daemon."""
     set_json_mode(as_json)
     return cmd_ls(as_json, transport=ctx.obj)
+
+
+@app.command("agent-card")
+@one_line_interrupts
+def agent_card() -> int:
+    """Print the agent reference card (#842): the same markdown as
+    the docs' agent chapter, for a harness to capture in one call."""
+    print(AGENT_CARD_MD, end="")
+    return 0
 
 
 @app.command("tui")
@@ -1275,6 +1288,39 @@ def secret_unlock(
     (rows the key cannot open stay ciphertext)."""
     set_json_mode(as_json)
     return cmd_secret_unlock(as_json, transport=ctx.obj)
+
+
+#: The root options that take their value as the next token; the
+#: card exemption skips that value on its scan for the first
+#: positional (#842 review: ``--config broken.yaml agent-card``
+#: must not read the path as the subcommand).
+CARD_VALUE_OPTIONS = frozenset({"--daemon", "--config"})
+
+
+def root_positionals(argv: list[str]) -> list[str]:
+    """The invocation's positional tokens under the root options:
+    a ``--`` barrier ends the scan, ``--daemon``/``--config``
+    consume the next token, an attached value rides inside its own
+    token (``--config=path``), and every other dash token is a
+    flag. The root callback's subcommand is the first of these."""
+    out: list[str] = []
+    tokens = iter(argv)
+    for token in tokens:
+        if token == "--":
+            break
+        if token in CARD_VALUE_OPTIONS:
+            next(tokens, None)  # the option's value
+        elif not token.startswith("-"):
+            out.append(token)
+    return out
+
+
+def card_requested(argv: list[str]) -> bool:
+    """Whether the invocation prints the agent reference card
+    (#842): the first positional token. The card is reference text
+    a harness reads offline — a broken client config must not hide
+    it, the same exemption the help screens carry."""
+    return root_positionals(argv)[:1] == ["agent-card"]
 
 
 def help_requested(argv: list[str]) -> bool:

@@ -31,6 +31,7 @@ nav = [
   { "Secrets" = "secrets.md" },
   { "Cloning Workspaces" = "cloning.md" },
   { "The CLI Client" = "cli.md" },
+  { "Agent Reference Card" = "agents.md" },
   { "Daemon Configuration" = "config.md" },
   { "Workspace Images" = "images.md" },
   { "Storage" = "storage.md" },

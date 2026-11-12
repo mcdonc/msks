@@ -8,6 +8,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Agent reference card (#842).** `msks agent-card` prints the agent
+  reference card: one markdown text grouped by task (read state,
+  lifecycle, run inside, egress consent) with the status vocabulary
+  and the exit-code table whole. The same text is the
+  [Agent Reference Card](https://mcdonc.github.io/msks/agents/)
+  docs chapter. The card covers the status vocabulary, the exit-code
+  table, and the non-interactive egress-consent flow.
+
 - **Machine-readable CLI (#841).** Every printing `msks` command takes
   `--json`: the mutating commands emit the affected workspace row as one
   JSON document (`create`, `clone`, `start`, `stop`, `resize`, `mount`,
