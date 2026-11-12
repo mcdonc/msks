@@ -176,6 +176,10 @@ def test_cloud_hypervisor_hint_names_the_machines_assets() -> None:
         "sudo install -m755 cloud-hypervisor-static-aarch64"
         " /usr/local/bin/cloud-hypervisor" in aarch64
     )
+    assert (
+        "sudo install -m755 ch-remote-static-aarch64"
+        " /usr/local/bin/ch-remote" in aarch64
+    )
     for machine in ("x86_64", "riscv64"):
         unsuffixed = cloud_hypervisor_hint(machine)
         assert (

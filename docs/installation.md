@@ -306,7 +306,7 @@ curl -L -o cloud-hypervisor-static \
 curl -L -o ch-remote-static \
   https://github.com/cloud-hypervisor/cloud-hypervisor/releases/latest/download/ch-remote-static
 sudo install -m755 cloud-hypervisor-static /usr/local/bin/cloud-hypervisor
-sudo install -m755 ch-remote-static /usr/local/bin/ch-remote-static
+sudo install -m755 ch-remote-static /usr/local/bin/ch-remote
 ```
 
 ## macOS on Apple Silicon hosts
