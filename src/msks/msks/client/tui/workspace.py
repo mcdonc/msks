@@ -51,6 +51,7 @@ from .consent_ui import (
 )
 from .follow import FLOW_SHELL
 from .forms import EDIT_FREE_STATUSES, EditScreen, edit_stop_question
+from .help import HelpKeys
 from .link import CONNECTED, REJECTED, UNUSABLE_TOKEN, DeciderLink
 from .mounts import MountsScreen, mounts_line
 from .proxies import PROXY_REFRESH_S, ProxiesScreen, proxies_line
@@ -348,7 +349,7 @@ class CloneNameScreen(ModalScreen[str | None]):
         self._submit_task = asyncio.create_task(self.submitted(name))
 
 
-class WorkspaceScreen(Screen):
+class WorkspaceScreen(HelpKeys, Screen):
     """One workspace's page (#309): the header's two lines (#351
     — the name with its status on the first, the id, image, host,
     and created date muted on the second, the pending-egress
@@ -364,6 +365,10 @@ class WorkspaceScreen(Screen):
     the action row and decides there (the consent page's own
     docstring owns that page's shape)."""
 
+    #: The ``?`` overlay's title (#851): the docs' name for the
+    #: page.
+    help_title = "workspace page"
+
     BINDINGS = [
         Binding("enter", "run", "Run", priority=True),
         Binding("e", "consent", "Egress"),
@@ -372,6 +377,7 @@ class WorkspaceScreen(Screen):
         Binding("S", "quick_stop", "Stop"),
         Binding("q", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
+        Binding("question_mark", "help", "Help", show=False),
     ]
 
     def __init__(self, row: dict, *, link_factory=None) -> None:

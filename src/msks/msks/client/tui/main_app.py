@@ -167,6 +167,13 @@ class MsksTuiApp(App):
     ConfirmScreen { align: center middle; }
     #question { padding: 1 2; background: $panel;
                 border: round $primary; }
+    HelpScreen { align: center middle; }
+    #help-panel { width: 64; height: auto; max-width: 100%;
+                  max-height: 100%; background: $panel;
+                  border: round $primary; padding: 1 2; }
+    #help-title { height: 1; color: $text-muted; }
+    #help-keys { margin-top: 1; }
+    #help-note { color: $text-muted; margin-top: 1; }
     CloneNameScreen { align: center middle; }
     #clone-prompt { width: 48; height: auto; padding: 1 2;
                      background: $panel; border: round $primary; }

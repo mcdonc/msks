@@ -33,6 +33,7 @@ from textual.widgets import Footer, OptionList, Static
 from ..config import DEFAULT_IMAGE_MANIFEST_URL
 from ..images import fetch_manifest, imported_cell
 from .consent_ui import ConfirmScreen, FailurePanel, panel_safe
+from .help import HelpKeys
 
 #: The published description's cap when no width is known (a
 #: caller outside the screen); the screen computes its own cap
@@ -412,7 +413,7 @@ class ImageDetailScreen(ModalScreen):
         self.dismiss()
 
 
-class ImagesScreen(Screen):
+class ImagesScreen(HelpKeys, Screen):
     """The images page (#565, #571): the catalog and the published
     channel in two labeled groups, a full page with its bindings
     on the footer row like every other page. Enter imports a
@@ -425,11 +426,16 @@ class ImagesScreen(Screen):
     configuration, so its failure is the first an operator
     meets."""
 
+    #: The ``?`` overlay's title (#851): the docs' name for the
+    #: page.
+    help_title = "images page"
+
     BINDINGS = [
         Binding("d", "default", "Def"),
         Binding("D", "delete", "Del"),
         Binding("q", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
+        Binding("question_mark", "help", "Help", show=False),
     ]
 
     def __init__(self) -> None:

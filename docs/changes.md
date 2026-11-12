@@ -8,6 +8,12 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **`?` key overlay in the TUI (#851).** Every screen of the tree
+  answers `?` with an overlay listing that screen's bindings, hidden
+  ones included (the escape leaves, the arrow bridges), each with its
+  action label. Any key closes the overlay. The footer stays as it
+  was; the overlay is where the full key list lives.
+
 - **Sortable listing columns in the TUI (#854).** Clicking a column
   header in the workspaces list sorts by that column; clicking the
   active header flips the direction, and the arrow in the header
