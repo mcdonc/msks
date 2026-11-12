@@ -564,6 +564,32 @@
   
   
     <li class="md-nav__item">
+      <a href="../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent Reference Card
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../config/" class="md-nav__link">
         
   
@@ -1761,6 +1787,15 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>Agent reference card (#842).</strong> <code>msks agent-card</code> prints the agent
+  reference card: one markdown text grouped by task (read state,
+  lifecycle, run inside, egress consent) with the status vocabulary
+  and the exit-code table whole. The same text is the
+  <a href="https://mcdonc.github.io/msks/agents/">Agent Reference Card</a>
+  docs chapter. The card covers the status vocabulary, the exit-code
+  table, and the non-interactive egress-consent flow.</p>
+</li>
 <li>
 <p><strong>Machine-readable CLI (#841).</strong> Every printing <code>msks</code> command takes
   <code>--json</code>: the mutating commands emit the affected workspace row as one
