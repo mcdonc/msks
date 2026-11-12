@@ -639,7 +639,7 @@ class LocalCloudHypervisor(MicrovmDriver):
     async def _launch_locked(self, spec: VmSpec) -> None:
         vmm = self._settings().vmm
         vm_dir = self._dir(spec.workspace_id)
-        self._ensure_launchable(spec.workspace_id, vm_dir)
+        await self._ensure_launchable(spec.workspace_id)
         self._check_socket_path(vm_dir / "api.sock")
         vm_dir.mkdir(parents=True, exist_ok=True)
         self._sweep_stale_sockets(vm_dir)
@@ -808,13 +808,25 @@ class LocalCloudHypervisor(MicrovmDriver):
                 f"{socket_path}; use a shorter state_dir or workspace id"
             )
 
-    def _ensure_launchable(self, workspace_id: str, vm_dir: Path) -> None:
-        if workspace_id in self._procs or self._pid_alive(
-            self._pid(workspace_id), workspace_id
-        ):
+    async def _ensure_launchable(self, workspace_id: str) -> None:
+        """Refuse a live VMM; reconcile the residue a dead one left.
+
+        A tracked VMM answers by its exit status; one a restarted
+        daemon never tracked answers by its pidfile (#56). A VMM
+        that exits outside the stop flow (#825 — the guest's own
+        poweroff, or a guest landing its shutdown just past a stop
+        deadline) leaves its tracked entry, share daemons, and tap
+        behind with no stop path to reap them: the launch clears
+        the same residue the stop path's dead-VMM branch clears,
+        so the next start is a start, not a 503.
+        """
+        if self._vmm_reachable(workspace_id):
             raise MicrovmError(
                 f"VM {workspace_id} already exists; shutdown or cleanup first"
             )
+        self._procs.pop(workspace_id, None)
+        await self._stop_fs_daemons(workspace_id)
+        await self._net_detach(workspace_id)
 
     async def _spawn(self, binary: str, socket_path: Path, log_path: Path):
         log_file = open(log_path, "wb")
@@ -1346,7 +1358,7 @@ class LocalCloudHypervisor(MicrovmDriver):
         proc = self._procs.get(workspace_id)
         if proc is not None:
             return proc.returncode is None
-        return pid is not None and self._pid_alive(pid, workspace_id)
+        return self._pid_alive(pid, workspace_id)
 
     async def _terminate(self, workspace_id: str, deadline: float) -> None:
         """SIGTERM the VMM daemon and wait for exit (guest already down)."""
