@@ -115,7 +115,7 @@ def audit_settled(app) -> bool:
 
 async def test_the_workspaces_list() -> None:
     """The tree's root: two rows, one running one stopped, the
-    status bar's count and daemon URL below."""
+    status bar's count, state summary, and daemon URL below."""
     data = FakeData(
         [
             row(status="running"),

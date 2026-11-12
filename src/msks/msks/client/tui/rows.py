@@ -718,15 +718,74 @@ def status_line(
 #: readable.
 URL_W = 48
 
+#: The URL's floor when the state summary eats the line (#853):
+#: the summary wins cells before the URL, and the URL crops to
+#: this many — a head and a tail around the ellipsis, still a
+#: recognizable hint — before the line's own crop takes over.
+URL_FLOOR_W = 8
 
-def status_content(count: int, url: str, noun: str = "workspace") -> Content:
-    """The status line's standing content (#349): the row count —
-    the fact that moves while the operator works — set in the bold
-    default foreground, the daemon's URL riding after it in the
-    line's own muted color (the span names ``$text`` so a theme's
-    foreground answers, not the line's muted base). The secrets
-    page's placeholder count rides the same shape (#390)."""
+#: The status line's whole cell budget (#853): the cells an
+#: 80-column terminal shows the line after its one-cell padding
+#: at each edge — the span the count, the state summary, and the
+#: URL share. The meta line's META_FRAME_W is the same derivation
+#: for its own widget; move a padding, move both.
+STATUS_LINE_W = 78
+
+
+def state_counts(rows: list[dict]) -> dict[str, int]:
+    """The rows' counts by status (#853). A row without a status
+    reads as the vocabulary's own ``unknown`` — a guard; the
+    listing's own render indexes the field, so a row this maps
+    never reaches the screen."""
+    counts: dict[str, int] = {}
+    for row in rows:
+        status = row.get("status") or "unknown"
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def state_summary(rows: list[dict]) -> str | None:
+    """The fleet's standing at one glance (#853): ``all stopped``
+    while one state stands, else each state's count in the
+    lifecycle order the STATUS column sorts in (``1 running 3
+    stopped``; a status the vocabulary does not know reads after
+    the known ones). No rows read no summary — the count alone
+    says the fleet is empty. The rows are the listing's own, so
+    the summary costs no daemon roundtrip."""
+    counts = state_counts(rows)
+    if not counts:
+        return None
+    if len(counts) == 1:
+        return f"all {next(iter(counts))}"
+    after = len(STATUS_SORT_ORDER)
+    order = sorted(
+        counts,
+        key=lambda status: (STATUS_SORT_RANK.get(status, after), status),
+    )
+    return " ".join(f"{counts[status]} {status}" for status in order)
+
+
+def status_content(
+    count: int,
+    url: str,
+    summary: str | None = None,
+    noun: str = "workspace",
+) -> Content:
+    """The status line's standing content (#349, #853): the row
+    count — the fact that moves while the operator works — set in
+    the bold default foreground, the fleet's state summary
+    (:func:`state_summary`) after it, and the daemon's URL riding
+    last in the line's own muted color (the span names ``$text``
+    so a theme's foreground answers, not the line's muted base).
+    The summary wins cells before the URL (#853): the URL's clip
+    budget is what the line's span leaves after the count and the
+    summary, so a long summary crops the URL — both ends kept —
+    before the summary gives a cell up. The secrets page's
+    placeholder count rides the same shape (#390)."""
     plural = "" if count == 1 else "s"
     head = f" {count} {noun}{plural}"
-    line = f"{head}  ·  {clip(url, URL_W)}"
+    parts = [head, summary] if summary else [head]
+    spent = cell_len("  ·  ".join(parts)) + len("  ·  ")
+    width = max(URL_FLOOR_W, min(URL_W, STATUS_LINE_W - spent))
+    line = "  ·  ".join([*parts, clip(url, width)])
     return Content(line, [Span(0, len(head), "$text bold")])

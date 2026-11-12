@@ -38,6 +38,7 @@ from .rows import (
     list_header,
     row_content,
     sort_rows,
+    state_summary,
     status_class,
     status_content,
     workspace_label,
@@ -388,9 +389,11 @@ class MainScreen(HelpKeys, Screen):
             return None
 
     def sync_status(self) -> None:
-        """The status line (#349): the workspace count in the bold
-        default foreground with the daemon's URL in muted text
-        after it; a flash owns the line until its TTL lapses. The
+        """The status line (#349, #853): the workspace count in the
+        bold default foreground, the fleet's state summary after
+        it (the rows the listing holds, no roundtrip), and the
+        daemon's URL in muted text last; a flash owns the line
+        until its TTL lapses. The
         bar stands one row whatever the flash carries (#359): the
         #status CSS crops a long message at the terminal's edge,
         an ellipsis marking the cut, so the listing below holds
@@ -401,7 +404,8 @@ class MainScreen(HelpKeys, Screen):
         teardown noise, not a crash."""
         try:
             count = len(self.rows)
-            default = status_content(count, self.app.url)
+            summary = state_summary(self.rows)
+            default = status_content(count, self.app.url, summary)
             text = self.app.flash_line.text(default)
             self.query_one("#status", Static).update(text)
             # The header row owns the listing's top; the empty

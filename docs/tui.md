@@ -12,7 +12,7 @@ my-workspace` opens that workspace's page directly.
 
 ## The workspace tree
 
-![The workspaces list: two rows, the status bar's count and daemon URL](screens/workspaces-list.svg)
+![The workspaces list: two rows, the status bar's count, state summary, and daemon URL](screens/workspaces-list.svg)
 
 The tree is rooted at the **workspaces list**: one row per workspace,
 newest first. Clicking a column header sorts the list by that column.
@@ -34,6 +34,14 @@ overlay. The workspaces list answers it too.
 The list re-reads the daemon every five seconds. A workspace changed
 from another surface (the CLI, another operator) appears without a
 keypress.
+
+The status bar above the list counts the workspaces and summarizes
+their states beside the count. A fleet in one state reads
+`4 workspaces · all stopped`. Mixed states read each state's count,
+as in `4 workspaces · 1 running 3 stopped`, in the STATUS column's
+lifecycle order. The summary follows the five-second refresh. The
+daemon's URL comes last, and it crops first when the terminal runs
+narrow.
 
 ## Workspace creation
 
