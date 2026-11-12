@@ -1770,6 +1770,15 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Workspace starts after a guest-initiated poweroff (#825).</strong> A
+  VMM that exited outside the stop flow — the guest's own <code>poweroff</code>,
+  or a guest landing its shutdown just past a stop deadline — left a
+  stale entry that refused every later <code>msks start</code> with "VM already
+  exists" until an operator passed a <code>stop</code>. The start now reconciles
+  the dead VMM's residue (its tracked entry, share daemons, and tap)
+  and boots.</p>
+</li>
+<li>
 <p><strong>Fedora guest's sshd address-wait wiring (#819).</strong> The Fedora
   image's sshd ordering dropin now lands in <code>sshd.service.d</code> (Fedora's
   own unit names) instead of Debian's <code>ssh.service.d</code>, so
