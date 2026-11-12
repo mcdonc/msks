@@ -848,10 +848,10 @@ class LocalCloudHypervisor(MicrovmDriver):
                 # pidfile fallback is the #56 case), verified live.
                 # A guardian's managed stop (devenv processes down /
                 # restart) kills the whole process TREE and takes
-                # workspaces with it — hard, without their ACPI
-                # cycle — so stop workspaces first when that matters;
-                # the session split at least keeps every accidental
-                # and crash path safe.
+                # workspaces with it — hard, without their
+                # power-button shutdown — so stop workspaces first
+                # when that matters; the session split at least
+                # keeps every accidental and crash path safe.
                 start_new_session=True,
             )
         except FileNotFoundError as exc:

@@ -36,6 +36,18 @@ tagged `vX.Y.Z`.
   database, every workspace start re-establishes them, and `add`
   is idempotent for an identical spec. Part of #807.
 
+### Changed
+
+- **The arm64 stop caveat is documented (#826).** cloud-hypervisor's
+  arm64 power button (the PL061 gpio key) delivers only the first press,
+  so every later re-press from a `msks stop` is a no-op the VMM logs as a
+  warning. A stop whose first press is lost is carried by the fallback
+  kill at the `MSKSD_SHUTDOWN_TIMEOUT_S` deadline. Size that setting to
+  cover the guest's slowest clean shutdown; a value above 120s outlives
+  the client's wait for the answer, which then reports a timeout while
+  the daemon still finishes the stop. x86_64 stops are unchanged: the
+  ACPI button there delivers re-presses.
+
 ### Fixed
 
 - **Workspace starts after a guest-initiated poweroff (#825).** A
@@ -128,15 +140,6 @@ tagged `vX.Y.Z`.
   shutdown.
 
 ### Changed
-
-- **The arm64 stop caveat is documented (#826).** cloud-hypervisor's
-  arm64 power button (the PL061 gpio key) delivers only the first press:
-  every later re-press from a `msks stop` is a no-op that the VMM logs as
-  a warning. A stop whose first press is lost, or whose guest outlasts
-  the deadline, is carried by the fallback kill at
-  `MSKSD_SHUTDOWN_TIMEOUT_S`; size it to cover the guest's slowest clean
-  shutdown. x86_64 stops are unchanged: there the button is the ACPI
-  event and re-presses deliver.
 
 - **New workspaces default to 4 vCPUs (#791).** A create that
   leaves the count unset boots 4 vCPUs, up from 2. The 1–64 bound

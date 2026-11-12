@@ -568,13 +568,15 @@ two minutes on the answer. A stop that misses the daemon's deadline
 answers 503 with the endpoint's detail on one line, exit non-zero.
 
 While the guest keeps running, the daemon presses the button again every
-five seconds. A press during early boot lands before logind listens and
-is dropped, and the next press recovers it. On an arm64 host the re-press
-never delivers (#826): cloud-hypervisor's power-button pulse drives the
-line one way only, so the first press is the only one the guest can ever
-receive. A first press lost there leaves the deadline and its fallback
-kill as the whole stop. Size `MSKSD_SHUTDOWN_TIMEOUT_S` to cover the
-guest's slowest clean shutdown.
+five seconds. A press during early boot lands before logind listens.
+The guest drops it, and the next press recovers it. On an arm64 host the
+re-press never delivers (#826): cloud-hypervisor's power-button pulse
+drives the line one way only. The first press is the only one that can
+ever deliver. A first press lost there leaves the deadline and its
+fallback kill as the whole stop. Size `MSKSD_SHUTDOWN_TIMEOUT_S` to
+cover the guest's slowest clean shutdown. A value above 120s outlives
+the client's wait for the stop answer: the daemon still finishes the
+stop, and the client reports a timeout.
 
 Stopping a workspace that is already stopped is a no-op success: the daemon
 reports it stopped either way, and the client asks without pre-filtering on

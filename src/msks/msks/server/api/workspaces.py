@@ -447,13 +447,13 @@ def router(app) -> APIRouter:
             raise HTTPException(status_code=409, detail=mismatch)
         # The stopping mark (#789): the graceful shutdown runs
         # power-button presses up to the shutdown timeout inside
-        # this request,
-        # and a row reading ``running`` through the whole window
-        # lies to every observer (the TUI tick, ``msks ls``, a
-        # second client). The seam cannot say it — the VMM answers
-        # ``Running`` until it exits — so the daemon owns the word
-        # as request-scoped state, like the start flow's
-        # ``starting``: written before the shutdown, the prior
+        # this request, and a row reading ``running`` through the
+        # whole window lies to every observer (the TUI tick,
+        # ``msks ls``, a second client). The seam cannot say it —
+        # the VMM answers ``Running`` until it exits — so the
+        # daemon owns the word as request-scoped state, like the
+        # start flow's ``starting``: written before the shutdown,
+        # the prior
         # status restored when the shutdown fails (a timeout
         # leaves the guest alive), ``stopped`` when it lands. The
         # watcher leaves the mark alone while the stop lives in

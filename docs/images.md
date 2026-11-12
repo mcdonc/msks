@@ -130,7 +130,7 @@ actually boots. A guest image must:
   or the operator installs them.
 - **Answer the power button.** `stop` presses the power
   button (`vm.power-button`) and waits. The button is the ACPI
-  event on x86_64 and the gpio key on aarch64. The guest's own
+  event on x86_64 and the gpio key on arm64. The guest's own
   handler runs the clean shutdown that flushes its disks
   (systemd-logind does this by default; an acpid rule works too).
   A guest that ignores the button is killed at the deadline, and
