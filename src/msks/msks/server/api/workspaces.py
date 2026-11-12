@@ -445,8 +445,9 @@ def router(app) -> APIRouter:
             # A stop from a non-owning host cannot reach the VMM; a
             # local no-op would mark a running VM stopped.
             raise HTTPException(status_code=409, detail=mismatch)
-        # The stopping mark (#789): the graceful shutdown runs ACPI
-        # presses up to the shutdown timeout inside this request,
+        # The stopping mark (#789): the graceful shutdown runs
+        # power-button presses up to the shutdown timeout inside
+        # this request,
         # and a row reading ``running`` through the whole window
         # lies to every observer (the TUI tick, ``msks ls``, a
         # second client). The seam cannot say it — the VMM answers
