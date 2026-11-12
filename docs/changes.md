@@ -69,8 +69,8 @@ tagged `vX.Y.Z`.
   `running` keeps the success color, `stopped` and `created`
   render in the muted text color, `starting`, `stopping`, and
   `paused` in the warning color, and `absent` and `unknown` in
-  the error color. A fleet at rest reads calm. The transitional
-  or lost row is the one the eye finds. The `✗N` mounts-issue
+  the error color. A fleet at rest reads calm. The transitional,
+  paused, or lost row is the one the eye finds. The `✗N` mounts-issue
   marker keeps the warning color beside whatever color the
   status word takes.
 
