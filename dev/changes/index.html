@@ -1788,6 +1788,15 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Sortable listing columns in the TUI (#854).</strong> Clicking a column
+  header in the workspaces list sorts by that column; clicking the
+  active header flips the direction, and the arrow in the header
+  shows the active sort. CREATED sorts by creation date (newest
+  first by default), STATUS in lifecycle order, the other columns
+  by their text. You sort by clicking a header; the keymap stays
+  as it was, and the sort holds across the standing refresh.</p>
+</li>
+<li>
 <p><strong>Agent reference card (#842).</strong> <code>msks agent-card</code> prints the agent
   reference card: one markdown text grouped by task (read state,
   lifecycle, run inside, egress consent) with the status vocabulary

@@ -1191,8 +1191,13 @@ my-workspace</code> opens that workspace's page directly.</p>
 <h2 id="the-workspace-tree">The workspace tree<a class="headerlink" href="#the-workspace-tree" title="Permanent link">&para;</a></h2>
 <p><img alt="The workspaces list: two rows, the status bar's count and daemon URL" src="../screens/workspaces-list.svg" /></p>
 <p>The tree is rooted at the <strong>workspaces list</strong>: one row per workspace,
-newest first. The CREATED column's arrow shows the sort direction. The
-list's keys: <code>c</code> creates a workspace, <code>s</code> starts it, <code>S</code> stops it, <code>D</code>
+newest first. Clicking a column header sorts the list by that column.
+The active column's header shows the direction with an arrow, and
+clicking it again flips the direction. The CREATED column sorts by
+creation date. The STATUS column sorts in the lifecycle order (created,
+starting, running, paused, stopping, stopped, absent, unknown). Every
+other column sorts by its text.</p>
+<p>The list's keys: <code>c</code> creates a workspace, <code>s</code> starts it, <code>S</code> stops it, <code>D</code>
 removes it (after a confirmation), <code>e</code> opens the secrets page, and <code>r</code>
 refreshes. <code>/</code> jumps to the first workspace whose name starts with what
 you type. Enter opens the workspace's page.</p>
