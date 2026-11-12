@@ -32,6 +32,7 @@ from urllib.parse import quote
 import typer
 
 from .context import call
+from .jsonio import json_line, outcome, set_json_mode
 from .tabular import listing_text
 
 app = typer.Typer(help="manage the daemon's persisted workspace proxies")
@@ -255,6 +256,9 @@ def cmd_proxy_add(
     label: str | None = typer.Option(
         None, "--label", metavar="TEXT", help="a note the listings show"
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the stored row as JSON"
+    ),
 ) -> int:
     """Store one persisted proxy (an identical row returns as is)."""
     if (local is None) == (remote is None):
@@ -267,7 +271,8 @@ def cmd_proxy_add(
     if label is not None:
         body["label"] = label
     row = asyncio.run(create_proxy(workspace_id, body, ctx.obj))
-    print(f"msks: {proxy_line(row)}")
+    set_json_mode(as_json)
+    outcome(as_json, row, lambda: f"msks: {proxy_line(row)}")
     return 0
 
 
@@ -279,6 +284,7 @@ def cmd_proxy_ls(
     ),
 ) -> int:
     """List every stored proxy, with live status."""
+    set_json_mode(as_json)
     rows = asyncio.run(proxy_rows(ctx.obj))
     if as_json:
         print(json.dumps(rows, indent=2))
@@ -309,8 +315,15 @@ def cmd_proxy_rm(
         ..., help="the workspace whose proxy is removed (name or id)"
     ),
     proxy_id: int = typer.Argument(..., help="the proxy row's id"),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the outcome as one JSON line"
+    ),
 ) -> int:
     """Remove one stored proxy (its listener closes at once)."""
+    set_json_mode(as_json)
     asyncio.run(remove_proxy(workspace_id, proxy_id, ctx.obj))
-    print(f"msks: removed proxy {proxy_id}")
+    if as_json:
+        json_line({"removed": proxy_id})
+    else:
+        print(f"msks: removed proxy {proxy_id}")
     return 0

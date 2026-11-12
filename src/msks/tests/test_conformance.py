@@ -973,3 +973,31 @@ def test_default_uplink_names_a_missing_ip_tool(
     monkeypatch.setattr(subprocess, "run", gone)
     with pytest.raises(RuntimeError, match="--uplink"):
         default_uplink()
+
+
+def test_run_check_json_prints_rows(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """``--json`` (#841): the contract rows as one document, and
+    the exit code keeps the first-failure convention."""
+    import json as json_mod
+
+    from msks.conformance_args import CheckOptions
+
+    archive = tmp_path / "ws.tar"
+    archive.write_bytes(b"")
+    rows = [passed(BOOT, "booted"), failed(VIRTIOFS, "no tag")]
+    monkeypatch.setattr(
+        conformance, "run_pass", lambda path, args: (rows, str(tmp_path))
+    )
+    rc = conformance.run_check(
+        CheckOptions(archive=str(archive), as_json=True)
+    )
+    doc = json_mod.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert doc == [
+        {"name": BOOT, "status": "pass", "detail": "booted"},
+        {"name": VIRTIOFS, "status": "fail", "detail": "no tag"},
+    ]

@@ -26,6 +26,7 @@ from .create import (
     read_pubkey,
 )
 from .env import env_token, env_url, is_unix, ssl_context
+from .jsonio import ApiExit, emit, json_line, outcome
 from .resize import display_name, resize_message
 from .rest import fetch_health
 from .rest import fetch_ssh_key as rest_fetch_ssh_key
@@ -258,6 +259,7 @@ def cmd_create(
     transport=None,
     pubkey: str | None = None,
     identity_note: str | None = None,
+    as_json: bool = False,
 ) -> int:
     """``msks create``: one workspace, optionally booted.
 
@@ -267,7 +269,7 @@ def cmd_create(
     either way. ``identity_note`` is the configured key's
     confirmation line (the identity source the create planted).
     """
-    asyncio.run(
+    row = asyncio.run(
         create_workspace(
             env_url(),
             env_token(),
@@ -276,8 +278,11 @@ def cmd_create(
             transport,
             pubkey,
             identity_note,
+            as_json,
         )
     )
+    if as_json:
+        emit(row)
     return 0
 
 
@@ -289,6 +294,7 @@ async def create_workspace(
     transport,
     pubkey: str | None = None,
     identity_note: str | None = None,
+    as_json: bool = False,
 ) -> dict:
     """POST the workspace, print its name and id, then boot it when
     asked.
@@ -308,6 +314,7 @@ async def create_workspace(
     # daemon warns once per context — the pair must not warn twice).
     # The local listener (#555) builds none: the kernel vouches.
     ssl_ctx = None if transport is not None or is_unix(url) else ssl_context()
+    announce, note = creation_lines(identity_note, as_json)
     row = await create_workspace_core(
         url,
         token,
@@ -315,14 +322,27 @@ async def create_workspace(
         transport,
         ssl_ctx=ssl_ctx,
         pubkey=pubkey,
-        announce=print_created_line,
+        announce=announce,
     )
-    if identity_note is not None:
-        print(identity_note)
+    if note is not None:
+        print(note)
     if not start:
         return row
-    await boot_created(row, transport, ssl_ctx)
+    await boot_created(row, transport, ssl_ctx, as_json)
     return row
+
+
+def creation_lines(
+    identity_note: str | None, as_json: bool
+) -> tuple[object, str | None]:
+    """The human confirmation pair (#841): the announce hook the
+    core calls the moment the workspace exists, and the identity
+    source line that follows it. JSON mode answers (None, None)
+    — one document lands at the flow's end instead, and a failed
+    start still leaves the structured error as the only output."""
+    if as_json:
+        return None, None
+    return print_created_line, identity_note
 
 
 def print_created_line(row: dict) -> None:
@@ -333,7 +353,9 @@ def print_created_line(row: dict) -> None:
     print(created_line(row))
 
 
-async def boot_created(row: dict, transport, ssl_ctx=None) -> None:
+async def boot_created(
+    row: dict, transport, ssl_ctx=None, as_json: bool = False
+) -> None:
     """Boot the freshly created row, with the recovery hint on a
     failed start (the workspace exists; the hint names the command
     that reaches it later); the caller's TLS context rides along,
@@ -346,11 +368,18 @@ async def boot_created(row: dict, transport, ssl_ctx=None) -> None:
             ssl_ctx=ssl_ctx,
         )
     except SystemExit as exc:
-        raise SystemExit(
+        hint = (
             f"{exc}\nmsks: {row['id']} is created; "
             f"boot it later with: msks start {display_name(row)}"
-        ) from exc
-    print(f"attach with: msks console {display_name(row)}")
+        )
+        if isinstance(exc, ApiExit):
+            # The structured error keeps its status and detail
+            # through the hint (#841): the exit table maps the
+            # daemon's answer, not the recovery wording.
+            raise ApiExit(hint, exc.api_status, exc.api_detail) from exc
+        raise SystemExit(hint) from exc
+    if not as_json:
+        print(f"attach with: msks console {display_name(row)}")
     row["status"] = "running"
 
 
@@ -371,29 +400,39 @@ def label_and_id(row: dict) -> str:
     return row["id"]
 
 
-def cmd_start(workspace_id: str, transport=None) -> int:
+async def start_stop_row(
+    action: str, workspace_id: str, as_json: bool, transport
+) -> dict:
+    """The row a start or stop answers, refreshed to the whole row
+    in ``--json`` mode (#841): the POST's reply carries the id and
+    status alone, and the machine-readable emit wants the row a
+    follow-up ``ls`` would print — one GET, the verb already
+    blocked to the terminal state."""
+    row = await call(
+        "POST",
+        f"/api/v1/workspaces/{workspace_id}/{action}",
+        transport=transport,
+    )
+    if not as_json:
+        return row
+    return await call(
+        "GET", f"/api/v1/workspaces/{row['id']}", transport=transport
+    )
+
+
+def cmd_start(workspace_id: str, as_json: bool = False, transport=None) -> int:
     """``msks start``: boot a created workspace."""
     row = asyncio.run(
-        call(
-            "POST",
-            f"/api/v1/workspaces/{workspace_id}/start",
-            transport=transport,
-        )
+        start_stop_row("start", workspace_id, as_json, transport)
     )
-    print(f"{workspace_id} {row['status']}")
+    outcome(as_json, row, f"{workspace_id} {row['status']}")
     return 0
 
 
-def cmd_stop(workspace_id: str, transport=None) -> int:
+def cmd_stop(workspace_id: str, as_json: bool = False, transport=None) -> int:
     """``msks stop``: power a workspace off, gracefully."""
-    row = asyncio.run(
-        call(
-            "POST",
-            f"/api/v1/workspaces/{workspace_id}/stop",
-            transport=transport,
-        )
-    )
-    print(f"{workspace_id} {row['status']}")
+    row = asyncio.run(start_stop_row("stop", workspace_id, as_json, transport))
+    outcome(as_json, row, f"{workspace_id} {row['status']}")
     return 0
 
 
@@ -401,6 +440,7 @@ def cmd_clone(
     source: str,
     name: str,
     copy_allowlist: bool = False,
+    as_json: bool = False,
     transport=None,
 ) -> int:
     """``msks clone`` (#773): copy a stopped workspace into a new
@@ -424,11 +464,13 @@ def cmd_clone(
             transport=transport,
         )
     )
-    print(f"cloned {source} into {label_and_id(row)}")
+    outcome(as_json, row, lambda: f"cloned {source} into {label_and_id(row)}")
     return 0
 
 
-def cmd_rm(workspace_ids: list[str], transport=None) -> int:
+def cmd_rm(
+    workspace_ids: list[str], as_json: bool = False, transport=None
+) -> int:
     """``msks rm``: delete workspaces and their persistent data.
 
     Ids are removed one at a time, in order; a failure stops the
@@ -443,7 +485,10 @@ def cmd_rm(workspace_ids: list[str], transport=None) -> int:
                 transport=transport,
             )
         )
-        print(f"{workspace_id} deleted")
+        if as_json:
+            json_line({"removed": workspace_id})
+        else:
+            print(f"{workspace_id} deleted")
     return 0
 
 
@@ -462,6 +507,7 @@ async def fetch_ssh_key(url, token, workspace_id, transport) -> dict:
 
 def cmd_key(
     workspace_id: str,
+    as_json: bool = False,
     transport=None,
 ) -> int:
     """``msks key``: the workspace's ssh identity — the public
@@ -473,13 +519,14 @@ def cmd_key(
     key = asyncio.run(
         fetch_ssh_key(env_url(), env_token(), workspace_id, transport)
     )
-    print(key["public_key"])
+    outcome(as_json, key, key["public_key"])
     return 0
 
 
 def cmd_resize(
     workspace_id: str,
     body: dict,
+    as_json: bool = False,
     transport=None,
 ) -> int:
     """``msks resize``: move a stopped workspace's sizes and
@@ -492,7 +539,10 @@ def cmd_resize(
             transport=transport,
         )
     )
-    print(resize_message(row, body))
+    if as_json:
+        emit(row)
+    else:
+        print(resize_message(row, body))
     return 0
 
 
@@ -563,6 +613,7 @@ def canonical_host_spelling(host: str, served: str, flag: str) -> str:
 def cmd_mount(
     workspace_id: str,
     spec: str,
+    as_json: bool = False,
     transport=None,
 ) -> int:
     """``msks mount``: add one share to the workspace's mounts
@@ -570,23 +621,26 @@ def cmd_mount(
     so the command reads the row, adds the entry, and posts the
     list. Next-start semantics: a running VM keeps its devices;
     the next start attaches the new set."""
-    return asyncio.run(mounts_exchange(workspace_id, "add", spec, transport))
+    return asyncio.run(
+        mounts_exchange(workspace_id, "add", spec, as_json, transport)
+    )
 
 
 def cmd_umount(
     workspace_id: str,
     share: str,
+    as_json: bool = False,
     transport=None,
 ) -> int:
     """``msks umount``: remove the workspace's mounts of one share
     (#620, part #624). The next start attaches the remainder."""
     return asyncio.run(
-        mounts_exchange(workspace_id, "remove", share, transport)
+        mounts_exchange(workspace_id, "remove", share, as_json, transport)
     )
 
 
 async def mounts_exchange(
-    workspace_id: str, action: str, spec: str, transport
+    workspace_id: str, action: str, spec: str, as_json: bool, transport
 ) -> int:
     """The mount/umount exchange: read the row, apply the one
     edit, post the whole list — the daemon validates and answers
@@ -601,7 +655,7 @@ async def mounts_exchange(
         json_body={"mounts": mounts},
         transport=transport,
     )
-    print(mounts_line(fresh))
+    outcome(as_json, fresh, lambda: mounts_line(fresh))
     return 0
 
 
@@ -700,6 +754,7 @@ def run_resize(
     cpus: int | None,
     mem_mib: int | None,
     transport,
+    as_json: bool = False,
 ) -> int:
     """Compose the request body, refusing the empty one locally."""
     body = {
@@ -717,7 +772,7 @@ def run_resize(
             "msks: nothing to resize: pass --home-mib, --root-mib, "
             "--cpus, or --mem-mib"
         )
-    return cmd_resize(workspace_id, body, transport)
+    return cmd_resize(workspace_id, body, as_json, transport)
 
 
 def read_user_data(path: str) -> str:
@@ -837,7 +892,7 @@ def create_identity(args: CreateFlags) -> tuple[str | None, str | None]:
     return operator_pubkey()
 
 
-def run_create(args: CreateFlags, transport) -> int:
+def run_create(args: CreateFlags, transport, as_json: bool = False) -> int:
     """Build the body, then resolve the identity source once — the
     body build fails on local grounds (a bad ``--user``, an
     unreadable ``--user-data``) before the resolver can read stdin
@@ -856,4 +911,5 @@ def run_create(args: CreateFlags, transport) -> int:
         transport=transport,
         pubkey=pubkey,
         identity_note=note,
+        as_json=as_json,
     )

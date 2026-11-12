@@ -26,6 +26,7 @@ to 1 for the pass and restores to whatever it found.
 import argparse
 import asyncio
 import contextlib
+import json
 import os
 import shutil
 import subprocess
@@ -35,7 +36,7 @@ import time
 import unicodedata
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .app import App, build_app
@@ -893,12 +894,21 @@ def run_check(args: CheckOptions) -> int:
     results, state_dir = run_pass(archive, args)
     if args.keep:
         print(f"state kept at {state_dir} (serial logs, image cache)")
-    print(render(results))
-    failure = first_failure(results)
-    if failure is not None:
-        print(f"\nfirst failure: {failure.name} — {failure.detail}")
-        return 1
-    return 0
+    return check_report(results, getattr(args, "as_json", False))
+
+
+def check_report(results: list[CheckResult], as_json: bool) -> int:
+    """The pass's report and exit (#841): the rows as one JSON
+    document or the aligned prose, and the first failure deciding
+    the code either way."""
+    if as_json:
+        print(json.dumps([asdict(row) for row in results], indent=2))
+    else:
+        print(render(results))
+        failure = first_failure(results)
+        if failure is not None:
+            print(f"\nfirst failure: {failure.name} — {failure.detail}")
+    return 1 if first_failure(results) is not None else 0
 
 
 def main(argv: list[str] | None = None) -> int:

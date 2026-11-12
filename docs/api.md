@@ -121,7 +121,9 @@ curl -X POST "$MSKSC_URL/api/v1/workspaces" \
   fill unnamed sizes); `DELETE` removes the row and its
   volumes. `PATCH`/`PUT` answer 405: a workspace is immutable
   after create, and sizes and topology move through
-  `…/resize`.
+  `…/resize`. A create whose name another row already holds
+  answers 409 `workspace exists`; the existing row keeps its
+  id, and the create must be retried with a new name.
 - `POST …/start` and `…/stop` drive the VM. `…/reset` wipes
   the root overlay to its first-boot state. `…/resize` grows
   the root overlay, grows or shrinks the home volume, and

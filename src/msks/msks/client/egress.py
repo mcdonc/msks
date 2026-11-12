@@ -7,6 +7,7 @@ import websockets
 
 from . import wsauth, wsdial
 from .env import env_token, env_url, is_unix, ssl_context
+from .jsonio import emit, json_line, outcome
 from .rest import api_client, request
 from .tabular import listing_text
 
@@ -93,18 +94,23 @@ def rules_line(rules: dict) -> str:
     return "\n".join(lines)
 
 
-async def run_rules(workspace_id: str, transport=None) -> int:
+async def run_rules(
+    workspace_id: str, as_json: bool = False, transport=None
+) -> int:
     """``msks egress rules``: the in-effect view."""
     async with api_client(env_url(), env_token(), transport) as client:
         rules = await request(
             client, "GET", f"/api/v1/workspaces/{workspace_id}/egress"
         )
-    print(rules_line(rules))
+    outcome(as_json, rules, lambda: rules_line(rules))
     return 0
 
 
 async def run_requests(
-    workspace_id: str, decision: str | None, transport=None
+    workspace_id: str,
+    decision: str | None,
+    as_json: bool = False,
+    transport=None,
 ) -> int:
     """``msks egress requests``: the consent rows."""
     path = f"/api/v1/workspaces/{workspace_id}/egress/requests"
@@ -112,6 +118,9 @@ async def run_requests(
         path += f"?decision={decision}"
     async with api_client(env_url(), env_token(), transport) as client:
         rows = await request(client, "GET", path)
+    if as_json:
+        emit(rows)
+        return 0
     text = requests_text(rows)
     if text:
         print(text)
@@ -123,6 +132,7 @@ async def run_decide(
     request_id: str,
     decision: str,
     duration: str,
+    as_json: bool = False,
     transport=None,
 ) -> int:
     """``msks egress decide``: one verdict on a held request."""
@@ -139,9 +149,13 @@ async def run_decide(
             f"/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",
             {"decision": decision, "duration": duration},
         )
-    print(
-        f"{request_id} {reply['verdict']['decision']} "
-        f"({reply['verdict'].get('duration', '')})"
+    outcome(
+        as_json,
+        reply,
+        lambda: (
+            f"{request_id} {reply['verdict']['decision']} "
+            f"({reply['verdict'].get('duration', '')})"
+        ),
     )
     return 0
 
@@ -151,6 +165,7 @@ async def run_mode(
     mode: str,
     allow: list[str] | None,
     offline: bool = False,
+    as_json: bool = False,
     transport=None,
 ) -> int:
     """``msks egress mode`` (#280): switch the workspace's posture.
@@ -179,12 +194,19 @@ async def run_mode(
         if reply.get("applied")
         else ("takes effect at next start")
     )
-    print(f"{workspace_id}: egress mode {reply['mode']} ({effect})")
+    outcome(
+        as_json,
+        {"workspace": workspace_id, **reply},
+        lambda: f"{workspace_id}: egress mode {reply['mode']} ({effect})",
+    )
     return 0
 
 
 async def run_revoke(
-    workspace_id: str, request_id: str, transport=None
+    workspace_id: str,
+    request_id: str,
+    as_json: bool = False,
+    transport=None,
 ) -> int:
     """``msks egress revoke``: undo an in-effect verdict."""
     async with api_client(env_url(), env_token(), transport) as client:
@@ -193,7 +215,10 @@ async def run_revoke(
             "DELETE",
             f"/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",
         )
-    print(f"{request_id} revoked")
+    if as_json:
+        json_line({"revoked": request_id})
+    else:
+        print(f"{request_id} revoked")
     return 0
 
 

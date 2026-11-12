@@ -20,6 +20,7 @@ import httpx
 
 from ..spec.images import is_hash_shape, newest_rank
 from .context import env_token, env_url
+from .jsonio import json_line, outcome
 from .rest import api_call, api_client, request
 from .tabular import listing_text
 
@@ -125,7 +126,7 @@ async def fetch_images(url, token, transport) -> list[dict]:
 
 
 async def import_image(
-    url, token, source, transport, name=None, version=None
+    url, token, source, transport, name=None, version=None, as_json=False
 ) -> dict:
     """POST the import; print the registered reference and hash.
 
@@ -143,11 +144,15 @@ async def import_image(
         json_body=body,
         transport=transport,
     )
-    print(f"imported {record['ref']} ({record['hash'][:12]})")
+    outcome(
+        as_json,
+        record,
+        lambda: f"imported {record['ref']} ({record['hash'][:12]})",
+    )
     return record
 
 
-async def remove_image(url, token, ref, transport) -> dict:
+async def remove_image(url, token, ref, transport, as_json=False) -> dict:
     """Resolve ``ref`` against the listing, DELETE by hash.
 
     Resolution and delete share one client so a refusal (409 names
@@ -159,11 +164,16 @@ async def remove_image(url, token, ref, transport) -> dict:
         result = await request(
             client, "DELETE", f"/api/v1/images/{row['hash']}"
         )
-    print(f"{row['name']}:{row['version']} deleted")
+    if as_json:
+        json_line({"removed": f"{row['name']}:{row['version']}"})
+    else:
+        print(f"{row['name']}:{row['version']} deleted")
     return result
 
 
-async def rename_image(url, token, ref, name, version, transport) -> dict:
+async def rename_image(
+    url, token, ref, name, version, transport, as_json=False
+) -> dict:
     """Resolve ``ref`` against the listing, PATCH the rename
     (#340) — the rm shape: resolution and rename share one client,
     and every reference form reads as one exchange."""
@@ -181,14 +191,18 @@ async def rename_image(url, token, ref, name, version, transport) -> dict:
             f"/api/v1/images/{row['hash']}",
             json_body=body,
         )
-    print(
-        f"renamed {row['name']}:{row['version']} to {result['ref']} "
-        f"({row['hash'][:12]})"
+    outcome(
+        as_json,
+        result,
+        lambda: (
+            f"renamed {row['name']}:{row['version']} to {result['ref']} "
+            f"({row['hash'][:12]})"
+        ),
     )
     return result
 
 
-async def designate_image(url, token, ref, transport) -> dict:
+async def designate_image(url, token, ref, transport, as_json=False) -> dict:
     """Resolve ``ref`` against the listing, POST the designation
     (#270) — the rm shape: resolution and designation share one
     client, and every reference form (a unique hash prefix, an
@@ -203,14 +217,18 @@ async def designate_image(url, token, ref, transport) -> dict:
             "/api/v1/images/default",
             json_body={"ref": row["hash"]},
         )
-    print(
-        f"designated {row['name']}:{row['version']} "
-        f"({row['hash'][:12]}) as the default image"
+    outcome(
+        as_json,
+        result,
+        lambda: (
+            f"designated {row['name']}:{row['version']} "
+            f"({row['hash'][:12]}) as the default image"
+        ),
     )
     return result
 
 
-async def unset_default_image(url, token, transport) -> dict:
+async def unset_default_image(url, token, transport, as_json=False) -> dict:
     """DELETE the designation; report the fallback that applies
     (#270) — the sole catalog entry a bare create still boots, or
     the named refusal when nothing answers for one.
@@ -222,7 +240,7 @@ async def unset_default_image(url, token, transport) -> dict:
         "/api/v1/images/default",
         transport=transport,
     )
-    print(unset_message(result))
+    outcome(as_json, result, unset_message(result))
     return result
 
 
@@ -242,11 +260,11 @@ def unset_message(result: dict) -> str:
     )
 
 
-async def describe_image(url, token, ref, transport) -> dict:
+async def describe_image(url, token, ref, transport, as_json=False) -> dict:
     """Print one image's full record from the listing data."""
     rows = await fetch_images(url, token, transport)
     row = resolve_image_ref(ref, rows)
-    print("\n".join(info_lines(row)))
+    outcome(as_json, row, lambda: "\n".join(info_lines(row)))
     return row
 
 
@@ -438,13 +456,16 @@ def cmd_image_import(
     source: str,
     name: str | None = None,
     version: str | None = None,
+    as_json: bool = False,
     transport=None,
 ) -> int:
     """``msks image import``: register a daemon-side archive or
     fetch one from an https:// URL (#258), under an optional
     name/version override (#340)."""
     asyncio.run(
-        import_image(env_url(), env_token(), source, transport, name, version)
+        import_image(
+            env_url(), env_token(), source, transport, name, version, as_json
+        )
     )
     return 0
 
@@ -460,6 +481,8 @@ def check_argv(args) -> list[str]:
     argv += ["--shutdown-timeout-s", str(args.shutdown_timeout_s)]
     if args.keep:
         argv.append("--keep")
+    if args.as_json:
+        argv.append("--json")
     return argv
 
 
@@ -498,15 +521,17 @@ def cmd_image_check(args) -> int:
     return code
 
 
-def cmd_image_rm(ref: str, transport=None) -> int:
+def cmd_image_rm(ref: str, as_json: bool = False, transport=None) -> int:
     """``msks image rm``: drop one image, by any reference form."""
-    asyncio.run(remove_image(env_url(), env_token(), ref, transport))
+    asyncio.run(remove_image(env_url(), env_token(), ref, transport, as_json))
     return 0
 
 
-def cmd_image_info(ref: str, transport=None) -> int:
+def cmd_image_info(ref: str, as_json: bool = False, transport=None) -> int:
     """``msks image info``: one image's full record."""
-    asyncio.run(describe_image(env_url(), env_token(), ref, transport))
+    asyncio.run(
+        describe_image(env_url(), env_token(), ref, transport, as_json)
+    )
     return 0
 
 
@@ -521,6 +546,7 @@ def cmd_image_rename(
     ref: str,
     name: str | None = None,
     version: str | None = None,
+    as_json: bool = False,
     transport=None,
 ) -> int:
     """``msks image rename``: change a cataloged image's registered
@@ -528,7 +554,9 @@ def cmd_image_rename(
     origin stay."""
     checked_rename_args(name, version)
     asyncio.run(
-        rename_image(env_url(), env_token(), ref, name, version, transport)
+        rename_image(
+            env_url(), env_token(), ref, name, version, transport, as_json
+        )
     )
     return 0
 
@@ -546,15 +574,22 @@ def checked_default_args(ref: str | None, unset: bool) -> None:
 
 
 def cmd_image_default(
-    ref: str | None, unset: bool = False, transport=None
+    ref: str | None,
+    unset: bool = False,
+    as_json: bool = False,
+    transport=None,
 ) -> int:
     """``msks image default``: designate the image a bare create
     boots (#270), or clear the designation with --unset."""
     checked_default_args(ref, unset)
     if unset:
-        asyncio.run(unset_default_image(env_url(), env_token(), transport))
+        asyncio.run(
+            unset_default_image(env_url(), env_token(), transport, as_json)
+        )
     else:
-        asyncio.run(designate_image(env_url(), env_token(), ref, transport))
+        asyncio.run(
+            designate_image(env_url(), env_token(), ref, transport, as_json)
+        )
     return 0
 
 

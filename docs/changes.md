@@ -8,6 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Machine-readable CLI (#841).** Every printing `msks` command takes
+  `--json`: the mutating commands emit the affected workspace row as one
+  JSON document (`create`, `clone`, `start`, `stop`, `resize`, `mount`,
+  `umount`; `rm` prints one JSON line per removed id), the read commands
+  emit their documents, and failures print
+  `{"error": {"status": ..., "detail": ...}}` on stderr. The exit codes
+  are a documented table (docs/cli.md): 3 not found, 4 name conflict,
+  5 wrong state. `msksd doctor --json` prints its check rows as one
+  document. Human output is unchanged.
+
 - **`host.msks` (#816).** Every egress workspace's resolver answers the
   name with its own tap address, so a guest dials the gateway by name
   (`https://host.msks:8660` with a `-R 8660:localhost:8660` proxy stored)

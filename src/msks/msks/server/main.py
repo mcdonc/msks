@@ -286,10 +286,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     # Doctor reads a config but takes no serve flags: giving it the
     # serve-only ones would parse them into silence.
-    sub.add_parser(
+    doctor = sub.add_parser(
         "doctor",
         parents=[CONFIG_FLAGS, VERSION_FLAGS],
         help="check the host for the daemon's external tools (#464)",
+    )
+    doctor.add_argument(
+        "--json",
+        action="store_true",
+        help="print the rows as one JSON document (#841)",
     )
     return parser
 
@@ -307,7 +312,7 @@ def main(argv: list[str] | None = None) -> int:
     args.__dict__.setdefault("no_tls", False)
     args.__dict__.setdefault("reload", False)
     if args.command == "doctor":
-        return doctor.doctor_main(args.config)
+        return doctor.doctor_main(args.config, getattr(args, "json", False))
     try:
         settings = load_settings(args.config)
         app = build_app(settings)
