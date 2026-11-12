@@ -37,11 +37,10 @@ keypress.
 
 The listing's bottom holds a two-line strip with the focused
 workspace's quick facts, under the rows. The first line carries the
-workspace's
-id, the image, and the egress posture. The second carries the cpu count,
-the memory in binary units (`8G`), the mounts-issue count while any mount
-skips (`mounts ✗2`), and the storage the workspace charges the state
-disk. The strip paints its labels muted and its values in the bright
+workspace's name, its id, and the image. The second carries the cpu
+count, the memory in binary units (`8G`), the egress mode, the
+mounts-issue count while any mount skips (`mounts ✗2`), and the
+storage the workspace charges the state disk. The strip paints its labels muted and its values in the bright
 foreground on the panel background, so it reads as its own bar at the
 bottom of the box. The storage figure is the root-plus-home cost `msks
 storage` reports, fetched with the list's five-second refresh and

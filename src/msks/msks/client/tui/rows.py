@@ -28,11 +28,13 @@ def workspace_label(row: dict) -> str:
 #: and the widest label the created column reads (#350,
 #: ``yesterday``) must fit whole beside the columns before it. A
 #: wider terminal widens the growing columns past these minimums
-#: (:func:`expanded_columns`).
+#: (:func:`expanded_columns`). The ID column (#849) carries a whole
+#: daemon id at ten cells; the egress posture it replaced moved to
+#: the detail strip.
 LIST_COLUMNS = (
     ("NAME", 22),
     ("STATUS", 10),
-    ("EGRESS", 12),
+    ("ID", 10),
     ("IMAGE", 12),
     ("CREATED", 10),
 )
@@ -87,9 +89,9 @@ LIST_FRAME_CELLS = 6
 #: The columns the listing's spare width flows into when the
 #: terminal runs wider than the fixed columns' span (#347): the
 #: name and the image — the two columns whose content runs long
-#: (workspace names, image references) — while the status,
-#: egress, and created columns hold their vocabulary-sized shape
-#: whatever the terminal's width.
+#: (workspace names, image references) — while the status, id,
+#: and created columns hold their fixed shape whatever the
+#: terminal's width.
 GROWING_LABELS = frozenset({"NAME", "IMAGE"})
 
 
@@ -360,12 +362,14 @@ def row_cells(row: dict, columns=LIST_COLUMNS) -> tuple[str, ...]:
     """The row's column cells (#347) at the given columns' widths,
     each clipped to its column's width whatever the daemon's
     vocabulary grows; the created cell reads as a relative label
-    (#350)."""
+    (#350). The ID cell (#849) carries the immutable id — the
+    egress posture the column carried moved to the detail
+    strip."""
     widths = [width for _label, width in columns]
     return (
         clip(workspace_label(row), widths[0]),
         clip(status_with_issues(row), widths[1]),
-        clip(row.get("egress_mode") or "-", widths[2]),
+        clip(row["id"], widths[2]),
         clip(row.get("image_ref") or row.get("image_hash") or "-", widths[3]),
         clip(created_label(row.get("created_at")), widths[4]),
     )
@@ -471,11 +475,6 @@ def stamp_sort_key(descending: bool):
     return key
 
 
-def egress_sort_key(row: dict) -> str:
-    """The EGRESS column's value key (#854): the posture's name."""
-    return row.get("egress_mode") or ""
-
-
 #: The sort key builder per column (#854): CREATED builds its own
 #: per direction; every other column reads one of the keys above.
 def sort_key(column: str, descending: bool):
@@ -484,14 +483,15 @@ def sort_key(column: str, descending: bool):
     keys = {
         "NAME": name_sort_key,
         "STATUS": status_sort_key,
-        "EGRESS": egress_sort_key,
+        "ID": id_sort_key,
         "IMAGE": image_sort_key,
     }
     return keys[column]
 
 
 def id_sort_key(row: dict) -> str:
-    """The tiebreak every column shares (#854): the id alone."""
+    """The ID column's value key (#849) — and the tiebreak every
+    other column shares (#854): the id alone."""
     return row["id"]
 
 
@@ -768,11 +768,12 @@ def state_summary(rows: list[dict]) -> str | None:
     return " ".join(f"{counts[status]} {status}" for status in order)
 
 
-#: The detail strip's cell budgets (#849): the id's ten cells
-#: carry a whole daemon id, the image shares the meta line's
-#: budget, and the egress budget covers the posture's vocabulary
-#: — both lines hold inside an 80-column terminal's box with
-#: every labeled fact whole.
+#: The detail strip's cell budgets (#849): the name leads with
+#: the NAME column's own width, the id's ten cells carry a whole
+#: daemon id, and the egress budget covers the posture's
+#: vocabulary — both lines hold inside an 80-column terminal's
+#: box with every fact whole.
+DETAIL_NAME_W = 22
 DETAIL_ID_W = 10
 DETAIL_EGRESS_W = 12
 
@@ -799,16 +800,20 @@ def detail_pairs(
     row: dict, used_bytes: int | None
 ) -> tuple[list[tuple], list[tuple]]:
     """The strip's facts as (label, value) pairs, one list per
-    line (#849): the identity — the id (bare: the row's own
-    name for itself), the image, the egress posture — on the
-    first, the topology and costs — cpu, memory, the
-    mounts-issue count while any mount skips, the storage the
-    capacity report charges — on the second. Every fact but
-    storage reads the row the listing already holds."""
+    line (#849): the identity — the name (bare: the strip's own
+    answer to which row it describes), the id, the image — on
+    the first, the posture and costs — cpu, memory, the egress
+    mode, the mounts-issue count while any mount skips, the
+    storage the capacity report charges — on the second. Every
+    fact but storage reads the row the listing already holds."""
     marker = issue_marker(row)
     second = [
         ("cpu", "-" if row.get("cpus") is None else str(row["cpus"])),
         ("mem", mem_value(row.get("mem_mib"))),
+        (
+            "egress",
+            clip(row.get("egress_mode") or "-", DETAIL_EGRESS_W),
+        ),
     ]
     if marker is not None:
         second.append(("mounts", marker))
@@ -817,12 +822,9 @@ def detail_pairs(
     )
     return (
         [
-            (None, clip(row["id"], DETAIL_ID_W)),
+            (None, clip(workspace_label(row), DETAIL_NAME_W)),
+            ("id", clip(row["id"], DETAIL_ID_W)),
             ("image", clip(meta_raw(row)[1], META_IMAGE_W)),
-            (
-                "egress",
-                clip(row.get("egress_mode") or "-", DETAIL_EGRESS_W),
-            ),
         ],
         second,
     )

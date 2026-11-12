@@ -950,8 +950,7 @@ async def test_the_detail_strip_pins_the_focused_rows_facts() -> None:
         await wait_for(lambda: "storage 3.1G" in detail_text(app))
         await pilot.pause()
         text = detail_text(app)
-        assert " ws-a " in text
-        assert "id ws-a" not in text
+        assert " alpha · id ws-a" in text
         assert f"image {rows_mod.clip('a' * 64, rows_mod.META_IMAGE_W)}" in (
             text
         )
@@ -975,7 +974,9 @@ async def test_the_detail_strip_pins_the_focused_rows_facts() -> None:
         )
         # A selection move repaints from the cache — no roundtrip.
         fetches = data.storage_fetches
-        await press_until(pilot, "down", lambda: " ws-b " in detail_text(app))
+        await press_until(
+            pilot, "down", lambda: " beta · id ws-b" in detail_text(app)
+        )
         text = detail_text(app)
         assert "storage 512M" in text
         assert "✗" not in text
@@ -992,7 +993,7 @@ async def test_a_long_list_keeps_the_strip_on_screen() -> None:
     app, _ = make_app(data)
     async with app.run_test(size=(80, 24)) as pilot:
         await wait_for(lambda: list_children(app) == 30)
-        await wait_for(lambda: " ws-0 " in detail_text(app))
+        await wait_for(lambda: " id ws-0" in detail_text(app))
         await pilot.pause()
         rows = app.query_one("#rows")
         strip = app.query_one("#detail", Static)
@@ -1030,6 +1031,36 @@ async def test_the_detail_strip_hides_on_an_empty_list() -> None:
         assert not app.query_one("#detail", Static).display
 
 
+async def test_a_refresh_with_standing_rows_updates_the_storage() -> None:
+    """An unchanged listing still takes the fresh figures (#849,
+    review): the rebuild's skip keeps the rows and the focus, and
+    the strip repaints from the new cache — the storage the
+    daemon reports moves with the workspace's own writes, not
+    only with its row."""
+    data = FakeData([row()])
+    data.storage_rows = [
+        {
+            "id": WS,
+            "name": "alpha",
+            "root_mib": 10240,
+            "home_mib": 20480,
+            "root_bytes": 0,
+            "home_bytes": 0,
+        }
+    ]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "storage 0K" in detail_text(app))
+        data.storage_rows[0]["root_bytes"] = 2 * 1024**3
+        data.storage_rows[0]["home_bytes"] = 1181116006
+        await pilot.press("r")
+        await wait_for(lambda: "storage 3.1G" in detail_text(app))
+        # The standing list kept its place: no swap, one row.
+        await wait_for(lambda: data.fetches >= 2)
+        await pilot.pause()
+        assert list_children(app) == 1
+
+
 async def test_a_storage_report_that_will_not_come_keeps_the_dash() -> None:
     """A refused capacity report keeps the strip standing
     (#849): the storage cell reads its honest dash, the row's own
@@ -1042,7 +1073,7 @@ async def test_a_storage_report_that_will_not_come_keeps_the_dash() -> None:
     async with app.run_test():
         await wait_for(lambda: list_children(app) == 1)
         await wait_for(lambda: data.storage_fetches >= 1)
-        await wait_for(lambda: " ws-a " in detail_text(app))
+        await wait_for(lambda: " alpha · id ws-a" in detail_text(app))
         assert "storage -" in detail_text(app)
         assert "listing failed" not in status_text(app)
 
@@ -3168,7 +3199,7 @@ def test_the_line_helpers() -> None:
     listing = rows_mod.row_content(row())
     assert "alpha" in listing.plain
     assert "● stopped" in listing.plain
-    assert "interactive" in listing.plain
+    assert WS in listing.plain  # the ID column's cell (#849)
     # The IMAGE cell prefers the catalog reference and keeps the
     # digest as its fallback (#470 L3).
     with_ref = rows_mod.row_content({**row(), "image_ref": "deb13:1"})
@@ -3269,13 +3300,13 @@ def test_the_line_helpers() -> None:
 
 def test_the_listing_columns_line_up(monkeypatch) -> None:
     """#347: every field pads to its column's width, so the status,
-    egress, image, and date start at the same offset in every row —
+    id, image, and date start at the same offset in every row —
     and the header's labels ride the same offsets. A name longer
     than its column clips at its middle instead of pushing the rest
     of the row sideways, and the offsets are display cells: a
     wide-character name cannot shift the columns either. The
-    status and egress cells clip to their columns too, so a
-    vocabulary the daemon grows cannot misalign a row."""
+    status cell clips to its column too, so a vocabulary the
+    daemon grows cannot misalign a row."""
     pinned_clock(monkeypatch)  # the created cell reads "2d ago"
     short = rows_mod.row_content(row(name="ab")).plain
     long_name = rows_mod.row_content(row(name="n" * 40)).plain
@@ -3286,7 +3317,7 @@ def test_the_listing_columns_line_up(monkeypatch) -> None:
     header = rows_mod.list_header()
     for label, cell in (
         ("STATUS", "● stopped"),
-        ("EGRESS", "interactive"),
+        ("ID", WS),
         ("IMAGE", "aaaaa…aaaaaa"),
         ("CREATED", "2d ago"),
     ):
@@ -3302,10 +3333,10 @@ def test_the_listing_columns_line_up(monkeypatch) -> None:
         short[: short.index("● stopped")]
     )
     # An over-wide status clips inside its column, not past it:
-    # the egress column still starts where the short row's does.
+    # the id column still starts where the short row's does.
     assert "…" in long_status
-    assert cell_len(long_status[: long_status.index("interactive")]) == (
-        cell_len(short[: short.index("interactive")])
+    assert cell_len(long_status[: long_status.index(WS)]) == cell_len(
+        short[: short.index(WS)]
     )
     # The head helper keeps a text that already fits its budget
     # whole (a clip's head call can never exhaust it — the guard
@@ -3318,24 +3349,24 @@ def test_the_columns_widen_with_the_terminal() -> None:
     """#347: the fixed widths are the 80-column minimums, and a
     wider terminal's spare cells split evenly between the name
     and image columns — the two whose content runs long — an odd
-    cell to the earlier one; the status, egress, and created
-    columns hold their vocabulary-sized shape, and a budget at or
-    under the fixed span (a narrower terminal) keeps the fixed
-    columns, the cells beyond clipping as they always did."""
+    cell to the earlier one; the status, id, and created columns
+    hold their fixed shape, and a budget at or under the fixed
+    span (a narrower terminal) keeps the fixed columns, the cells
+    beyond clipping as they always did."""
     base = rows_mod.LIST_COLUMNS
-    assert rows_mod.expanded_columns(74) == base
+    assert rows_mod.expanded_columns(72) == base
     assert rows_mod.expanded_columns(0) == base
     assert rows_mod.expanded_columns(78) == (
-        ("NAME", 24),
+        ("NAME", 25),
         ("STATUS", 10),
-        ("EGRESS", 12),
-        ("IMAGE", 14),
+        ("ID", 10),
+        ("IMAGE", 15),
         ("CREATED", 10),
     )
     # An odd spare cell goes to the earlier growing column.
     odd = rows_mod.expanded_columns(79)
-    assert odd[0] == ("NAME", 25)
-    assert odd[3] == ("IMAGE", 14)
+    assert odd[0] == ("NAME", 26)
+    assert odd[3] == ("IMAGE", 15)
     # Another listing's own columns grow through the same helper.
     assert rows_mod.expanded_columns(
         79, base=(("COVERAGE", 13),), grow={"COVERAGE"}
@@ -3351,7 +3382,7 @@ def test_widened_rows_keep_the_columns_and_fit_long_content(
     widths clipped (a long name, a long image reference) reads
     whole."""
     pinned_clock(monkeypatch)
-    columns = rows_mod.expanded_columns(134)  # 60 spare: NAME 52, IMAGE 42
+    columns = rows_mod.expanded_columns(134)  # 62 spare: NAME 53, IMAGE 43
     wide = rows_mod.row_content(
         {**row(name="n" * 40), "image_ref": "ghcr.internal.example/debian:13"},
         columns=columns,
@@ -3374,8 +3405,8 @@ def test_a_resize_before_the_listing_builds_keeps_its_widths() -> None:
     land."""
     screen = main_screen_mod.MainScreen()
     screen.on_resize(events.Resize(Size(200, 24), Size(200, 24)))
-    assert screen.columns[0] == ("NAME", 82)  # 120 spare, halved
-    assert screen.columns[3] == ("IMAGE", 72)
+    assert screen.columns[0] == ("NAME", 83)  # 122 spare, halved
+    assert screen.columns[3] == ("IMAGE", 73)
 
 
 def test_the_created_column_buckets_by_the_pinned_rule() -> None:
@@ -5240,7 +5271,7 @@ async def test_the_settled_listing_opens_on_the_newest_row(
 def test_every_column_sorts() -> None:
     """#854: sort_rows carries a key per column — the label
     case-folded for NAME, the lifecycle rank for STATUS, the bare
-    text for EGRESS and IMAGE, the parsed stamp (never the
+    id for ID, the bare text for IMAGE, the parsed stamp (never the
     relative label) for CREATED — each with the id behind it, so
     ties break deterministically and a broken stamp sinks in
     either direction."""
@@ -5274,17 +5305,8 @@ def test_every_column_sorts() -> None:
         "a",
     ]
     assert order(rows_mod.sort_rows(base)) == ["a", "c", "b"]
-    egress = [
-        {**r, "egress_mode": mode}
-        for r, mode in zip(
-            base, ("static", "allow", "interactive"), strict=True
-        )
-    ]
-    assert order(rows_mod.sort_rows(egress, ("EGRESS", False))) == [
-        "a",
-        "b",
-        "c",
-    ]
+    assert order(rows_mod.sort_rows(base, ("ID", False))) == ["a", "b", "c"]
+    assert order(rows_mod.sort_rows(base, ("ID", True))) == ["c", "b", "a"]
     images = [
         {**r, "image_hash": h}
         for r, h in zip(base, ("b" * 64, "a" * 64, "c" * 64), strict=True)
@@ -5318,11 +5340,6 @@ def test_every_column_sorts() -> None:
     assert order(rows_mod.sort_rows(tied, ("NAME", True))) == [
         "first",
         "second",
-    ]
-    assert order(rows_mod.sort_rows(egress, ("EGRESS", True))) == [
-        "c",
-        "b",
-        "a",
     ]
     assert order(rows_mod.sort_rows(images, ("IMAGE", True))) == [
         "b",
@@ -7227,28 +7244,32 @@ def test_the_list_row_marks_unresolved_mounts() -> None:
 
 def test_the_detail_strip_lines() -> None:
     """The strip's two lines (#849), pinned without the UI: the
-    identity on the first (the id bare, no label), the topology,
-    the mounts marker, and the storage figure on the second —
-    memory in the strip's own binary unit, the honest dash
-    before the first capacity report lands, the labels in the
-    muted accent with the marker in the warning color the
-    status cell already carries, and every field clipped to a
-    budget that holds the line inside an 80-column terminal. The
-    paint itself tolerates a screen the compose has not built
-    (or teardown has emptied) — teardown noise, not a crash."""
+    identity on the first — the name bare (the strip's answer to
+    which row it describes), the id, the image — the posture and
+    costs on the second — cpu, memory, the egress mode, the
+    mounts marker, and the storage figure; memory in the strip's
+    own binary unit, the honest dash before the first capacity
+    report lands, the labels in the muted accent with the marker
+    in the warning color the status cell already carries, and
+    every field clipped to a budget that holds the line inside
+    an 80-column terminal. The paint itself tolerates a screen
+    the compose has not built (or teardown has emptied) —
+    teardown noise, not a crash."""
     MainScreen().paint_detail()  # no strip yet: decides nothing
     dash = rows_mod.detail_strip(row(), None)
     first, second = dash.plain.split("\n")
     assert first == (
-        f" {WS} · image {rows_mod.clip('a' * 64, rows_mod.META_IMAGE_W)}"
-        " · egress interactive"
+        f" alpha · id {WS}"
+        f" · image {rows_mod.clip('a' * 64, rows_mod.META_IMAGE_W)}"
     )
-    assert second == " cpu 2 · mem 8G · storage -"
+    assert second == " cpu 2 · mem 8G · egress interactive · storage -"
     muted = rows_mod.muted_style({})
     dash_spans = {
         dash.plain[span.start : span.end]: span.style for span in dash.spans
     }
+    assert dash_spans["id"] == muted
     assert dash_spans["image"] == muted
+    assert dash_spans["egress"] == muted
     assert dash_spans["egress"] == muted
     assert dash_spans[" · "] == muted
     # The marker rides the warning color beside its muted label,
@@ -7264,10 +7285,12 @@ def test_the_detail_strip_lines() -> None:
     assert marked_spans["✗1"] == rows_mod.ISSUE_MARKER_COLOR
     assert marked_spans["mounts"] == muted
     # Both lines hold the 80-column frame's span whatever the
-    # fields carry.
+    # fields carry — a name as wide as the column's budget
+    # included.
     long = rows_mod.detail_strip(
         {
             **row(),
+            "name": "a-workspace-name-as-wide-as-the-column",
             "id": "very-long-workspace-id",
             "image_hash": "b" * 64,
             "egress_mode": "interactive",

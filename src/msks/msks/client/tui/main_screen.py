@@ -14,6 +14,8 @@ page keys act on the focused row, and ``q`` or Escape quits the
 tree — no trap.
 """
 
+import asyncio
+
 from rich.markup import escape
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -312,8 +314,9 @@ class MainScreen(HelpKeys, Screen):
 
     async def load_rows(self) -> None:
         try:
-            rows = await self.app.data.workspaces()
-            await self.load_storage()
+            rows, _ = await asyncio.gather(
+                self.app.data.workspaces(), self.load_storage()
+            )
             await self.rebuild_rows(rows)
         except (Exception, SystemExit) as exc:
             self.app.flash(f"listing failed: {flash_safe(str(exc))}")
@@ -323,12 +326,16 @@ class MainScreen(HelpKeys, Screen):
     async def load_storage(self) -> None:
         """Refresh the strip's storage cache (#849) off the
         daemon's capacity report — the listing's own refresh
-        cadence. A report that will not come (a daemon away) or
-        will not read (one predating the endpoint or its per-row
-        fields answers another shape) keeps the standing figures;
-        the strip's storage cell reads its honest dash until one
-        lands. The silence is deliberate: the strip is a detail
-        beside a listing that reports its own failures."""
+        cadence, fetched beside the rows so the listing's repaint
+        never waits on the disk walk behind it (the daemon runs
+        the walk off its event loop; a parked list costs it a
+        background stat pass, not a stall). A report that will
+        not come (a daemon away) or will not read (one predating
+        the endpoint or its per-row fields answers another shape)
+        keeps the standing figures; the strip's storage cell reads
+        its honest dash until one lands. The silence is
+        deliberate: the strip is a detail beside a listing that
+        reports its own failures."""
         try:
             report = await self.app.data.storage()
             self.storage_used = {

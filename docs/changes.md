@@ -10,9 +10,9 @@ tagged `vX.Y.Z`.
 
 - **Detail strip at the bottom of the workspaces list (#849).**
   A two-line strip renders at the bottom of the listing's box
-  and carries the focused workspace's quick facts: id, image,
-  egress posture, cpu count, memory, the mounts-issue count, and
-  the storage the workspace charges the state disk (the same
+  and carries the focused workspace's quick facts: name, id,
+  image, cpu count, memory, egress mode, the mounts-issue count,
+  and the storage the workspace charges the state disk (the same
   root-plus-home cost `msks storage` reports). The strip follows
   the selection and refreshes on the list's standing cadence;
   the storage figure rides a cached capacity report, so moving
@@ -89,6 +89,11 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **The workspaces list's ID column (#849).** The EGRESS column
+  became an ID column: each row carries its immutable workspace
+  id. The egress posture reads on the detail strip instead,
+  beside the row's other facts. Clicking the ID header sorts by
+  the id itself; the NAME header keeps the name sort.
 - **Graded status colors in the TUI listing (#850).** The
   workspaces list colors the status column by state class:
   `running` keeps the success color, `stopped` and `created`
