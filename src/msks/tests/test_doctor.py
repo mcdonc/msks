@@ -20,6 +20,7 @@ from msks.server.doctor import (
     check_library,
     check_ssh,
     check_tmux,
+    cloud_hypervisor_hint,
     detect_package_manager,
     doctor_main,
     format_report,
@@ -33,6 +34,7 @@ from msks.server.doctor import (
     run_doctor,
     settings_for_doctor,
 )
+from msks.server.hostsetup import cloud_hypervisor_assets
 from msks.settings import Settings, VmmSettings
 from msks.spec.version import __version__
 
@@ -132,25 +134,62 @@ def test_install_hint_fallbacks() -> None:
 def test_install_hint_pinned_binaries() -> None:
     hint = install_hint("cloud-hypervisor", "apt")
     # The upstream hint is the paste-able sequence (#557): fetch
-    # the release's static binaries and install each under its
-    # unsuffixed name — every line a host command, nothing to
-    # look up, no tarball that upstream does not ship.
+    # the release's static binaries for this host's machine
+    # (#831) and install each under its unsuffixed name — every
+    # line a host command, nothing to look up, no tarball that
+    # upstream does not ship.
+    vmm_asset, remote_asset = cloud_hypervisor_assets(os.uname().machine)
     assert (
         "curl -LO https://github.com/cloud-hypervisor/cloud-hypervisor"
-        "/releases/latest/download/cloud-hypervisor-static" in hint
+        f"/releases/latest/download/{vmm_asset}" in hint
     )
     assert (
         "curl -LO https://github.com/cloud-hypervisor/cloud-hypervisor"
-        "/releases/latest/download/ch-remote-static" in hint
+        f"/releases/latest/download/{remote_asset}" in hint
     )
     assert (
-        "sudo install -m755 cloud-hypervisor-static"
+        f"sudo install -m755 {vmm_asset}"
         " /usr/local/bin/cloud-hypervisor" in hint
     )
     assert (
-        "sudo install -m755 ch-remote-static /usr/local/bin/ch-remote" in hint
+        f"sudo install -m755 {remote_asset} /usr/local/bin/ch-remote" in hint
     )
     assert install_hint("cloud-hypervisor", None) == hint
+
+
+def test_cloud_hypervisor_hint_names_the_machines_assets() -> None:
+    """One asset pair per architecture (#831): an aarch64 host is
+    told to fetch the -aarch64 builds, an x86-64 host (and a
+    machine the release carries no build for) the unsuffixed
+    ones — a wrong-arch install dies with Exec format error at
+    the next workspace start."""
+    aarch64 = cloud_hypervisor_hint("aarch64")
+    assert (
+        "curl -LO https://github.com/cloud-hypervisor/cloud-hypervisor"
+        "/releases/latest/download/cloud-hypervisor-static-aarch64" in aarch64
+    )
+    assert (
+        "curl -LO https://github.com/cloud-hypervisor/cloud-hypervisor"
+        "/releases/latest/download/ch-remote-static-aarch64" in aarch64
+    )
+    assert (
+        "sudo install -m755 cloud-hypervisor-static-aarch64"
+        " /usr/local/bin/cloud-hypervisor" in aarch64
+    )
+    assert (
+        "sudo install -m755 ch-remote-static-aarch64"
+        " /usr/local/bin/ch-remote" in aarch64
+    )
+    for machine in ("x86_64", "riscv64"):
+        unsuffixed = cloud_hypervisor_hint(machine)
+        assert (
+            "curl -LO https://github.com/cloud-hypervisor/cloud-hypervisor"
+            "/releases/latest/download/cloud-hypervisor-static\n" in unsuffixed
+        )
+        assert (
+            "curl -LO https://github.com/cloud-hypervisor/cloud-hypervisor"
+            "/releases/latest/download/ch-remote-static\n" in unsuffixed
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1088,13 +1127,14 @@ def test_a_missing_vmm_report_prints_the_install_sequence(
         r.name == "cloud-hypervisor" for r in report.errors
     )  # the miss is error-grade: the daemon execs the VMM
     text = format_report(report)
+    vmm_asset, remote_asset = cloud_hypervisor_assets(os.uname().machine)
     assert "    Run:  curl -LO " in text
     assert (
-        "          sudo install -m755 cloud-hypervisor-static"
+        f"          sudo install -m755 {vmm_asset}"
         " /usr/local/bin/cloud-hypervisor" in text
     )
     assert (
-        "          sudo install -m755 ch-remote-static"
+        f"          sudo install -m755 {remote_asset}"
         " /usr/local/bin/ch-remote" in text
     )
     assert text.count("curl -LO ") == 4  # two assets, row and block

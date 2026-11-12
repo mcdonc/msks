@@ -234,26 +234,38 @@ SONAME_PACKAGES = {
 # The VMM (#598): Debian's archive carries cloud-hypervisor in
 # no suite, so the tool lands the documented upstream static
 # release itself (docs/installation.md names the same source).
-# The release carries one static build per architecture; the
-# unsuffixed asset is x86-64, aarch64's carries -aarch64 —
-# doctor's own fix hint names the same pair.
+# The release carries one static build per architecture — the
+# unsuffixed assets are x86-64, aarch64's carry -aarch64 — and
+# each entry names the (VMM, ch-remote) pair that architecture
+# ships; doctor's fix hint prints the same pair (#831).
 CLOUD_HYPERVISOR_RELEASE = (
     "https://github.com/cloud-hypervisor/cloud-hypervisor/releases"
     "/latest/download"
 )
 CLOUD_HYPERVISOR_ASSETS = {
-    "x86_64": "cloud-hypervisor-static",
-    "aarch64": "cloud-hypervisor-static-aarch64",
+    "x86_64": ("cloud-hypervisor-static", "ch-remote-static"),
+    "aarch64": (
+        "cloud-hypervisor-static-aarch64",
+        "ch-remote-static-aarch64",
+    ),
 }
 CLOUD_HYPERVISOR_BIN = "/usr/local/bin/cloud-hypervisor"
+
+
+def cloud_hypervisor_assets(machine: str) -> tuple[str, str]:
+    """The release's (cloud-hypervisor, ch-remote) static asset
+    names for one machine — a machine the release carries no
+    build for falls back to the x86-64 pair, the unsuffixed
+    assets."""
+    return CLOUD_HYPERVISOR_ASSETS.get(
+        machine, CLOUD_HYPERVISOR_ASSETS["x86_64"]
+    )
 
 
 def cloud_hypervisor_url() -> str:
     """The upstream static-release URL for this host's machine —
     kernel_package()'s uname() probe is the in-file precedent."""
-    asset = CLOUD_HYPERVISOR_ASSETS.get(
-        os.uname().machine, "cloud-hypervisor-static"
-    )
+    asset, _remote = cloud_hypervisor_assets(os.uname().machine)
     return f"{CLOUD_HYPERVISOR_RELEASE}/{asset}"
 
 

@@ -675,6 +675,26 @@ def test_the_asset_matches_the_machine(
     assert hostsetup.cloud_hypervisor_url().endswith("cloud-hypervisor-static")
 
 
+def test_the_release_assets_pair_per_machine() -> None:
+    """The map carries both release binaries per architecture
+    (#831): the (VMM, ch-remote) pair shares one -aarch64 suffix
+    on aarch64, and a machine the release carries no build for
+    falls back to the x86-64 pair — doctor's fix hint prints the
+    same names."""
+    assert hostsetup.cloud_hypervisor_assets("x86_64") == (
+        "cloud-hypervisor-static",
+        "ch-remote-static",
+    )
+    assert hostsetup.cloud_hypervisor_assets("aarch64") == (
+        "cloud-hypervisor-static-aarch64",
+        "ch-remote-static-aarch64",
+    )
+    assert hostsetup.cloud_hypervisor_assets("riscv64") == (
+        "cloud-hypervisor-static",
+        "ch-remote-static",
+    )
+
+
 def test_a_binary_that_does_not_run_is_removed_and_named(
     debian_host: Host,
     monkeypatch: pytest.MonkeyPatch,
