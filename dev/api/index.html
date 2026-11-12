@@ -1149,7 +1149,9 @@ carries both settings and the socket's tradeoffs.</p>
   fill unnamed sizes); <code>DELETE</code> removes the row and its
   volumes. <code>PATCH</code>/<code>PUT</code> answer 405: a workspace is immutable
   after create, and sizes and topology move through
-  <code>…/resize</code>.</li>
+  <code>…/resize</code>. A create whose name another row already holds
+  answers 409 <code>workspace exists</code>; the existing row keeps its
+  id, and the create must be retried with a new name.</li>
 <li><code>POST …/start</code> and <code>…/stop</code> drive the VM. <code>…/reset</code> wipes
   the root overlay to its first-boot state. <code>…/resize</code> grows
   the root overlay, grows or shrinks the home volume, and
