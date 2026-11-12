@@ -484,7 +484,7 @@ class SecretsScreen(HelpKeys, Screen):
         queries empty — noise, not a crash."""
         try:
             count = len(self.rows)
-            default = status_content(count, self.app.url, "placeholder")
+            default = status_content(count, self.app.url, noun="placeholder")
             self.query_one("#status", Static).update(
                 self.flash_line.text(default)
             )

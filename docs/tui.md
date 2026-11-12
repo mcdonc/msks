@@ -12,7 +12,7 @@ my-workspace` opens that workspace's page directly.
 
 ## The workspace tree
 
-![The workspaces list: two rows, the status bar's count and daemon URL](screens/workspaces-list.svg)
+![The workspaces list: two rows, the status bar's count, state summary, and daemon URL](screens/workspaces-list.svg)
 
 The tree is rooted at the **workspaces list**: one row per workspace,
 newest first. Clicking a column header sorts the list by that column.
