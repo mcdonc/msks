@@ -11,8 +11,8 @@ daemon- or client-side mint wrote against), so nothing crosses
 the API but the public line.
 
 Any key type is accepted, at whatever type it carries: the guest's
-sshd, the platform's own (#115 posture), stays the authority on
-which keys it will authenticate.
+sshd — the platform's own — stays the authority on which keys it
+will authenticate.
 """
 
 import base64
@@ -44,8 +44,8 @@ def normalize_public_key(line: str) -> tuple[str, str]:
 
     A supplied line is a key the operator already owns (#132, #486)
     — any key type is accepted, at whatever type it carries: the
-    guest's sshd, the platform's own (#115 posture), stays the
-    authority on which keys it will authenticate. The daemon checks
+    guest's sshd — the platform's own — stays the authority on
+    which keys it will authenticate. The daemon checks
     shape only — the label matches the algorithm-name charset, the
     body is base64, and the blob's embedded algorithm name agrees
     with its label. The caller's comment is dropped: the daemon

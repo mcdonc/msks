@@ -15,8 +15,8 @@ dispatch follows registration order, and the default TLS context
 lands first otherwise); the ``tls_start_client`` hook calls
 ``set_accept_state()`` itself; and the client-facing context takes
 mitmproxy's own ``_default_ciphers()`` list — an empty tuple is a
-hard OpenSSL error, and cipher overrides stay out of the code:
-the defaults are what the platform's OpenSSL ships.
+hard OpenSSL error, and msks adds no cipher override of its own:
+the list is mitmproxy's default.
 
 Fail-closed on the swap path: a secret the store cannot serve (or a
 sentinel whose row cannot be read) answers the guest with a local
