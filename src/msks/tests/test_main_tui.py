@@ -3361,6 +3361,107 @@ async def test_a_long_daemon_url_keeps_the_status_bar_one_line(
         assert status.size.height == 1
 
 
+def test_the_state_summary_reads_each_shape() -> None:
+    """#853: the summary's shapes — no rows read no summary, one
+    state reads ``all <state>``, mixed states read each state's
+    count in the lifecycle order the STATUS column sorts in, and
+    a status the vocabulary does not know reads after the known
+    ones."""
+    assert rows_mod.state_summary([]) is None
+    same = [row(), row(id="ws-b"), row(id="ws-c")]
+    assert rows_mod.state_summary(same) == "all stopped"
+    mixed = [
+        row(),
+        row(id="ws-b"),
+        row(id="ws-c", status="running"),
+        row(id="ws-d", status="created"),
+        row(id="ws-e", status="exploded"),
+    ]
+    assert (
+        rows_mod.state_summary(mixed)
+        == "1 created 1 running 2 stopped 1 exploded"
+    )
+
+
+def test_the_state_summary_wins_cells_before_the_url() -> None:
+    """#853: the summary takes its cells whole and the URL crops
+    first — the clip budget is the line's remainder, so the
+    standing line stays inside its one-row span at 80 columns
+    with the URL present."""
+    long_url = "https://msks-daemon.really-long-hostname.example.internal:8660"
+    content = rows_mod.status_content(4, long_url, "1 running 3 stopped")
+    assert "1 running 3 stopped" in content.plain
+    assert "8660" in content.plain
+    assert cell_len(content.plain) <= 78
+
+
+async def test_the_status_bar_reads_all_for_one_state(
+    monkeypatch,
+) -> None:
+    """#853: a fleet in one state reads ``all <state>`` beside
+    the count; an empty fleet reads the count alone."""
+    scripted_link(monkeypatch, [])
+    monkeypatch.setenv("MSKSC_URL", "https://127.0.0.1:8660")
+    data = FakeData([row(), row(id="ws-b"), row(id="ws-c")])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "3 workspaces" in status_text(app))
+        assert " 3 workspaces  ·  all stopped  ·  " in status_text(app)
+        data.rows = []
+        app.screen.action_refresh()
+        await wait_for(lambda: "0 workspaces" in status_text(app))
+        assert "all " not in status_text(app)
+
+
+async def test_the_status_bar_counts_mixed_states(
+    monkeypatch,
+) -> None:
+    """#853: mixed states read each state's count in the
+    lifecycle order, every state distinct included, and the line
+    keeps its one row at 80 columns with the URL present."""
+    scripted_link(monkeypatch, [])
+    monkeypatch.setenv("MSKSC_URL", "https://127.0.0.1:8660")
+    data = FakeData(
+        [
+            row(),
+            row(id="ws-b"),
+            row(id="ws-c"),
+            row(id="ws-d", status="running"),
+        ]
+    )
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "4 workspaces" in status_text(app))
+        assert "4 workspaces  ·  1 running 3 stopped" in status_text(app)
+        data.rows = [
+            row(status="created"),
+            row(id="ws-b", status="running"),
+            row(id="ws-c", status="stopped"),
+        ]
+        app.screen.action_refresh()
+        await wait_for(
+            lambda: "1 created 1 running 1 stopped" in status_text(app)
+        )
+        status = app.query_one("#status", Static)
+        assert status.size.height == 1
+
+
+async def test_the_status_summary_follows_the_standing_refresh(
+    monkeypatch,
+) -> None:
+    """#853: the summary derives from the rows the listing
+    refresh holds, so a fleet another surface moved reads its new
+    standing on the next standing refresh, without a keypress."""
+    scripted_link(monkeypatch, [])
+    monkeypatch.setattr(main_screen_mod, "LIST_REFRESH_S", 0.2)
+    data = FakeData([row(), row(id="ws-b")])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "all stopped" in status_text(app))
+        data.rows = [row(status="running"), row(id="ws-b", status="running")]
+        await wait_for(lambda: "all running" in status_text(app))
+
+
 async def test_a_unix_daemon_url_shows_its_path_decoded(
     monkeypatch,
 ) -> None:
