@@ -1803,6 +1803,14 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>The legacy create default cmdline (#833).</strong> A create with
+  explicit kernel/rootfs paths and no <code>cmdline</code> now boots with
+  this host's console device in the default: <code>ttyAMA0</code> on an
+  aarch64 daemon, <code>ttyS0</code> elsewhere. The console answers on
+  both; the catalog-record path was already per-arch and is
+  unchanged.</p>
+</li>
+<li>
 <p><strong><code>msks doctor</code> qemu-kvm apk hint (#832).</strong> The hint now
   prints this host's Alpine emulator package:
   <code>qemu-system-aarch64</code> on an aarch64 host,
