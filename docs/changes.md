@@ -55,7 +55,7 @@ tagged `vX.Y.Z`.
   elsewhere. The installation chapter states the same
   architecture distinction beside its install block, and
   installs `ch-remote` under the unsuffixed command name the
-  daemon's tooling calls.
+  demo and dev tooling calls.
 
 - **Egress slice release on a failed teardown (#828).** A `detach`
   whose table or tap delete raised left the workspace's slice
