@@ -1202,7 +1202,9 @@ def test_the_default_cmdline_bakes_the_machines_console(
         # first-generation VmSpec this file from-imports no
         # longer matches reloaded instances by identity — compare
         # strings or fields across that boundary, never
-        # instances.
+        # instances. sys.modules keeps the third-generation
+        # classes after this test — any later attribute-style
+        # msks.spec.vm.VmSpec use would hold that generation.
         monkeypatch.undo()
         importlib.reload(vm_mod)
         importlib.reload(boot_mod)

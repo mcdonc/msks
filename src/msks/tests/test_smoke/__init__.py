@@ -39,6 +39,10 @@ import pytest
 from httpx import AsyncClient
 from msks.microvm import close_console_stream
 
+# an explicit re-export: the smoke files reach the spec's
+# per-arch default cmdline through this package, beside CMDLINE
+from msks.spec.vm import DEFAULT_CMDLINE as DEFAULT_CMDLINE
+
 VMLINUX = os.environ.get("TEST_VMLINUX")
 INITRD = os.environ.get("TEST_INITRD")
 ROOTFS = os.environ.get("TEST_ROOTFS")

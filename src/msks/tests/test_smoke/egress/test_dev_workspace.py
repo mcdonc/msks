@@ -17,6 +17,7 @@ from msks.settings import (
 
 from test_smoke import (
     CMDLINE,
+    DEFAULT_CMDLINE,
     INITRD,
     ROOTFS,
     SHUTDOWN_TIMEOUT_S,
@@ -65,7 +66,7 @@ async def test_local_dev_workspace_bootstrap() -> None:
         kernel=Path(VMLINUX),
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
-        cmdline=CMDLINE or "console=ttyS0 root=/dev/vda rw",
+        cmdline=CMDLINE or DEFAULT_CMDLINE,
         # 8 GiB covers the in-guest suite (pytest -n auto across the
         # guest's cores); the bootstrap itself is downloads, not
         # builds. The overlay holds the venv and uv's Python.

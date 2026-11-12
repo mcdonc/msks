@@ -22,6 +22,7 @@ from msks.settings import (
 
 from test_smoke import (
     CMDLINE,
+    DEFAULT_CMDLINE,
     INITRD,
     ROOTFS,
     RSYNC_BIN,
@@ -87,7 +88,7 @@ async def test_local_sshd_and_rsync() -> None:
         kernel=Path(VMLINUX),
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
-        cmdline=CMDLINE or "console=ttyS0 root=/dev/vda rw",
+        cmdline=CMDLINE or DEFAULT_CMDLINE,
         egress=True,
     )
     workdir = state_dir / "ssh-work"
