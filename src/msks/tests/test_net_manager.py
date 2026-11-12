@@ -525,6 +525,32 @@ async def test_a_residue_retry_that_fails_again_keeps_the_residue(
     assert manager._used_slices == set()
 
 
+async def test_a_failed_superseding_build_keeps_the_residue_retryable(
+    net_app, monkeypatch
+) -> None:
+    """#828 review: a build that supersedes a residue and then
+    fails leaves the residue retryable with its claim — the slice
+    stays exclusive to the workspace while its plumbing lingers,
+    and the next detach still heals."""
+    app, _ip, _nft = net_app
+    manager = await ready(app)
+    first = await manager.attach("ws-a", want=True)
+    monkeypatch.setenv(NFT_FAIL_AT, "delete table")
+    with pytest.raises(MicrovmError, match="nft table delete"):
+        await manager.detach("ws-a")
+    monkeypatch.delenv(NFT_FAIL_AT)
+    # The superseding build fails at the table install.
+    monkeypatch.setenv(NFT_FAIL_AT, "-f -")
+    with pytest.raises(MicrovmError):
+        await manager.attach("ws-a", want=True)
+    monkeypatch.delenv(NFT_FAIL_AT)
+    assert "ws-a" in manager._residues
+    assert first.slice in manager._used_slices
+    await manager.detach("ws-a")  # the residue is still retryable
+    assert manager._residues == {}
+    assert manager._used_slices == set()
+
+
 async def test_a_services_less_residue_retires_clean(
     net_app, monkeypatch
 ) -> None:
