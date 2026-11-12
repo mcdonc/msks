@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from rich.cells import cell_len
 from textual.content import Content, Span
 
-from ..volumes import human_bytes
+from ..volumes import MIB, human_bytes
 
 
 def workspace_label(row: dict) -> str:
@@ -768,65 +768,134 @@ def state_summary(rows: list[dict]) -> str | None:
     return " ".join(f"{counts[status]} {status}" for status in order)
 
 
-#: The detail strip's identity budgets (#849): the id's ten
-#: cells carry a whole daemon id, the image shares the meta
-#: line's budget, and the egress budget covers the posture's
-#: vocabulary — together the two lines hold inside an 80-column
-#: terminal's box.
+#: The detail strip's cell budgets (#849): the id's ten cells
+#: carry a whole daemon id, the image shares the meta line's
+#: budget, and the egress budget covers the posture's vocabulary
+#: — both lines hold inside an 80-column terminal's box with
+#: every labeled fact whole.
 DETAIL_ID_W = 10
 DETAIL_EGRESS_W = 12
 
+#: The detail strip's field separator (#849): one cell each side
+#: of the dot, muted with the labels beside it.
+DETAIL_JOIN = " · "
 
-def detail_first(row: dict) -> str:
-    """The detail strip's first line (#849): the focused row's
-    identity — the immutable id, the image, the egress posture —
-    in the meta line's grammar, each field clipped to its budget.
-    Every fact rides the row the listing already holds."""
+#: The strip's facts whose value rides the warning color (#849):
+#: the mounts-issue marker, the same cue the status cell carries.
+DETAIL_WARNED = frozenset({"mounts"})
+
+
+def mem_value(mem_mib) -> str:
+    """The memory fact in the strip's own unit: binary units
+    (:func:`human_bytes`), the same renderer the storage figure
+    uses, with the honest dash for a row that predates the
+    field."""
+    if mem_mib is None:
+        return "-"
+    return human_bytes(mem_mib * MIB)
+
+
+def detail_pairs(
+    row: dict, used_bytes: int | None
+) -> tuple[list[tuple], list[tuple]]:
+    """The strip's facts as (label, value) pairs, one list per
+    line (#849): the identity — the id (bare: the row's own
+    name for itself), the image, the egress posture — on the
+    first, the topology and costs — cpu, memory, the
+    mounts-issue count while any mount skips, the storage the
+    capacity report charges — on the second. Every fact but
+    storage reads the row the listing already holds."""
+    marker = issue_marker(row)
+    second = [
+        ("cpu", "-" if row.get("cpus") is None else str(row["cpus"])),
+        ("mem", mem_value(row.get("mem_mib"))),
+    ]
+    if marker is not None:
+        second.append(("mounts", marker))
+    second.append(
+        ("storage", "-" if used_bytes is None else human_bytes(used_bytes))
+    )
     return (
-        f" id {clip(row['id'], DETAIL_ID_W)}"
-        f"  ·  image {clip(meta_raw(row)[1], META_IMAGE_W)}"
-        f"  ·  egress {clip(row.get('egress_mode') or '-', DETAIL_EGRESS_W)}"
+        [
+            (None, clip(row["id"], DETAIL_ID_W)),
+            ("image", clip(meta_raw(row)[1], META_IMAGE_W)),
+            (
+                "egress",
+                clip(row.get("egress_mode") or "-", DETAIL_EGRESS_W),
+            ),
+        ],
+        second,
     )
 
 
-def detail_second(row: dict, used_bytes: int | None) -> str:
-    """The detail strip's second line (#849): the sizes and the
-    costs — the topology (cpus, memory), the mounts-issue count
-    the status cell already marks, and the storage the capacity
-    report charges the workspace (``human_bytes`` rendered, the
-    honest dash before the first report lands or for a row it
-    does not name)."""
-    parts = [
-        f"cpus {row.get('cpus') if row.get('cpus') is not None else '-'}",
-        (
-            f"mem {row['mem_mib']} MiB"
-            if row.get("mem_mib") is not None
-            else "mem -"
-        ),
+def pair_spans(
+    label: str | None, value: str, end: int, offset: int, muted: str
+) -> list[Span]:
+    """One pair's spans (#849), placed by the pair's end in the
+    line: the muted label ahead of its value (a pair without a
+    label renders its value alone), and the warning color on a
+    warned pair's value — the ``✗N`` marker, the same cue the
+    status cell carries."""
+    if label is None:
+        return []
+    spans = [
+        Span(
+            offset + end - len(value) - len(label) - 1,
+            offset + end - len(value) - 1,
+            muted,
+        )
     ]
-    marker = issue_marker(row)
-    if marker is not None:
-        parts.append(f"{marker} mounts")
-    storage = "-" if used_bytes is None else human_bytes(used_bytes)
-    parts.append(f"storage {storage}")
-    return " " + "  ·  ".join(parts)
+    if label in DETAIL_WARNED:
+        spans.append(
+            Span(offset + end - len(value), offset + end, ISSUE_MARKER_COLOR)
+        )
+    return spans
 
 
-def detail_strip(row: dict, used_bytes: int | None) -> Content:
-    """The listing's detail strip (#849): the focused row's quick
-    facts in two lines directly under the rows — the identity on
-    the first, the sizes and costs on the second — every fact but
-    storage read off the row the listing holds, so a selection
-    move pays no roundtrip. The ``✗N`` mounts marker rides the
-    warning color, the same cue the status cell carries."""
-    first = detail_first(row)
-    second = detail_second(row, used_bytes)
+def detail_line(
+    pairs: list[tuple], theme_variables: dict | None, offset: int = 0
+) -> tuple[str, list[Span]]:
+    """One strip line (#849): each fact's label muted in the
+    muted accent, its value beside it in the line's own
+    foreground, the dot joins muted with the labels — the
+    strip's own paint, distinct from the rows it summarizes. A
+    pair whose label is None (the id) renders its value alone.
+    ``offset`` shifts the spans onto the line's place in the
+    two-line whole."""
+    muted = muted_style(theme_variables or {})
     spans: list[Span] = []
-    marker = issue_marker(row)
-    if marker is not None:
-        start = len(first) + 1 + second.index(marker)
-        spans.append(Span(start, start + len(marker), ISSUE_MARKER_COLOR))
-    return Content(f"{first}\n{second}", spans)
+    text = " "
+    for label, value in pairs:
+        if len(text) > 1:
+            text += DETAIL_JOIN
+            spans.append(
+                Span(
+                    offset + len(text) - len(DETAIL_JOIN),
+                    offset + len(text),
+                    muted,
+                )
+            )
+        text += value if label is None else f"{label} {value}"
+        spans.extend(pair_spans(label, value, len(text), offset, muted))
+    return text, spans
+
+
+def detail_strip(
+    row: dict, used_bytes: int | None, theme_variables: dict | None = None
+) -> Content:
+    """The listing's detail strip (#849): the focused row's quick
+    facts on two lines at the listing's bottom — every fact but
+    storage read off the row the listing holds, so a selection
+    move pays no roundtrip. The id opens the first line bare;
+    each fact behind it reads its muted label and its value in
+    the strip's own foreground, and the ``✗N`` mounts marker
+    rides the warning color."""
+    first_pairs, second_pairs = detail_pairs(row, used_bytes)
+    first, spans = detail_line(first_pairs, theme_variables)
+    second, more = detail_line(
+        second_pairs, theme_variables, offset=len(first) + 1
+    )
+    return Content(f"{first}\n{second}", [*spans, *more])
 
 
 def status_content(

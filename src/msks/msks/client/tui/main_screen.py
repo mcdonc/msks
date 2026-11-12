@@ -2,11 +2,12 @@
 extracted from the app shell so :mod:`msks.client.tui.main_app`
 composes it. Create, start, stop, and remove happen here; Enter
 opens the focused workspace's page, and ``e`` opens the secrets
-page (#431). A two-line detail strip under the rows (#849)
-carries the focused row's quick facts — identity, topology,
-egress, mounts, storage — painted from the standing rows and a
-storage cache the refresh cadence refills; the strip is
-display-only, so it takes no focus and no width from the table.
+page (#431). A two-line detail strip at the listing's bottom
+(#849) carries the focused row's quick facts — identity,
+topology, egress, mounts, storage — painted from the standing
+rows and a storage cache the refresh cadence refills; the strip
+is display-only, so it takes no focus and no width from the
+table.
 
 Spatial navigation: arrows walk the rows in reading order, the
 page keys act on the focused row, and ``q`` or Escape quits the
@@ -80,13 +81,6 @@ async def guarded_flash(app, label: str, work):
 #: skips the swap).
 LIST_REFRESH_S = 5.0
 
-#: The screen rows the listing holds besides its rows (#849): the
-#: status line, the box's round border, the columns header, the
-#: two-line detail strip, and the footer — the rows list caps at
-#: what remains, so the strip renders directly under the last row
-#: and stays inside the box whatever the fleet's size.
-LIST_RESERVED_ROWS = 7
-
 
 class SearchScreen(ModalScreen):
     """The listing's typeahead (#470 L4): ``/`` opens a one-line
@@ -150,8 +144,9 @@ class ColumnsHeader(Static):
 
 class MainScreen(HelpKeys, Screen):
     """The tree's root (#309): every workspace one row over a
-    two-line detail strip (#849) that carries the focused row's
-    quick facts; create, start, stop, and remove happen here;
+    two-line detail strip at the listing's bottom (#849) that
+    carries the focused row's quick facts; create, start, stop,
+    and remove happen here;
     Enter opens the workspace's page, ``e`` the secrets page
     (#431), ``/`` the typeahead jump (#470 L4), ``?`` the key
     overlay (#851). The
@@ -209,9 +204,9 @@ class MainScreen(HelpKeys, Screen):
             yield ColumnsHeader(self.header_content(), self.pick_column)
             yield Static(id="empty")
             # The detail strip (#849): the focused row's quick facts
-            # under the last row — the rows list mounts ahead of it
-            # and caps at the screen's spare height, so the strip
-            # follows the last row and never leaves the box.
+            # pinned at the listing's bottom — the rows list fills
+            # the box above it, so the strip keeps its place at the
+            # bottom whatever the fleet's size.
             yield Static(id="detail")
         yield Footer()
 
@@ -277,17 +272,12 @@ class MainScreen(HelpKeys, Screen):
         self.shown_once = True
 
     def on_resize(self, event: Resize) -> None:
-        """The terminal moved (#347, #849): the listing's columns
-        re-width to the frame — the name and image columns share
-        the cells a wider terminal brings, and the header and rows
-        repaint together so their offsets stay shared — and the
-        rows list re-caps at the height the detail strip leaves
-        whole. A resize that leaves the widths where they were (a
-        height-only move, a terminal under the fixed span)
-        repaints nothing beyond the cap."""
-        rows = self.rows_widget()
-        if rows is not None:
-            rows.styles.max_height = self.rows_budget()
+        """The terminal's width moved (#347): the listing's columns
+        re-width to the frame — the name and image columns share the
+        cells a wider terminal brings, and the header and rows
+        repaint together so their offsets stay shared. A resize
+        that leaves the widths where they were (a height-only move,
+        a terminal under the fixed span) repaints nothing."""
         columns = expanded_columns(event.size.width - LIST_FRAME_CELLS)
         if columns == self.columns:
             return
@@ -299,13 +289,6 @@ class MainScreen(HelpKeys, Screen):
             # build at these widths when they land.
             return
         self.paint_rows()
-
-    def rows_budget(self) -> int:
-        """The most rows the listing shows (#849): the screen's
-        height less the rows it holds besides the list — the strip
-        renders directly under the last row while the list is
-        short, and inside the box while it fills the screen."""
-        return max(1, self.size.height - LIST_RESERVED_ROWS)
 
     # -- the listing -------------------------------------------------------
 
@@ -377,7 +360,6 @@ class MainScreen(HelpKeys, Screen):
         focused = focused_attr(old, "row_key")
         items = [self.row_item(row) for row in self.rows]
         fresh = ListView(*items, id="rows")
-        fresh.styles.max_height = self.rows_budget()
         if old is not None:
             await old.remove()  # frees the id before the fresh list mounts
         await listing.mount(fresh, before=self.query_one("#detail", Static))
@@ -481,10 +463,10 @@ class MainScreen(HelpKeys, Screen):
 
     def paint_detail(self) -> None:
         """The detail strip (#849): the focused row's quick facts
-        under the last row, painted from the standing rows and the
-        storage cache. The strip hides while no row stands focused
-        — the empty state owns that space. A screen going away
-        under the timer or a worker leaves the query empty —
+        at the listing's bottom, painted from the standing rows
+        and the storage cache. The strip hides while no row stands
+        focused — the empty state owns that space. A screen going
+        away under the timer or a worker leaves the query empty —
         teardown noise, not a crash."""
         try:
             strip = self.query_one("#detail", Static)
@@ -493,7 +475,13 @@ class MainScreen(HelpKeys, Screen):
         row = self.focused_row()
         strip.display = row is not None
         if row is not None:
-            strip.update(detail_strip(row, self.storage_used.get(row["id"])))
+            strip.update(
+                detail_strip(
+                    row,
+                    self.storage_used.get(row["id"]),
+                    self.app.theme_variables,
+                )
+            )
 
     # -- the typeahead jump (#470 L4) ------------------------------------
 

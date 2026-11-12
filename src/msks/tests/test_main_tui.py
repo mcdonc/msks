@@ -919,13 +919,13 @@ async def test_a_refresh_keeps_the_focused_workspace_row() -> None:
 
 
 async def test_the_detail_strip_pins_the_focused_rows_facts() -> None:
-    """The detail strip under the rows (#849): the focused row's
-    quick facts — the identity on the first line, the topology,
-    the mounts marker, and the storage the capacity report
-    charges on the second — painted from the standing rows and
-    the storage cache, so a selection move changes the strip with
-    no roundtrip. The strip renders directly under the last row,
-    its lines inside the 80-column frame."""
+    """The detail strip at the listing's bottom (#849): the
+    focused row's quick facts — the identity (the id bare) on the
+    first line, the topology, the mounts marker, and the storage
+    the capacity report charges on the second — painted from the
+    standing rows and the storage cache, so a selection move
+    changes the strip with no roundtrip. The strip stands pinned
+    at the box's bottom, its lines inside the 80-column frame."""
     data = FakeData([mounted_row(), row(id="ws-b", name="beta")])
     data.storage_rows = [
         {
@@ -950,25 +950,32 @@ async def test_the_detail_strip_pins_the_focused_rows_facts() -> None:
         await wait_for(lambda: "storage 3.1G" in detail_text(app))
         await pilot.pause()
         text = detail_text(app)
-        assert "id ws-a" in text
+        assert " ws-a " in text
+        assert "id ws-a" not in text
         assert f"image {rows_mod.clip('a' * 64, rows_mod.META_IMAGE_W)}" in (
             text
         )
         assert "egress interactive" in text
-        assert "cpus 2" in text
-        assert "mem 8192 MiB" in text
-        assert "✗1 mounts" in text
+        assert "cpu 2" in text
+        assert "mem 8G" in text
+        assert "mounts ✗1" in text
         first, second = text.split("\n")
         assert cell_len(first) <= 78
         assert cell_len(second) <= 78
-        # The strip renders directly under the last row.
+        # The strip stands pinned at the listing's bottom: the
+        # rows fill the box above it, down to the strip's top.
         rows = app.query_one("#rows")
         strip = app.query_one("#detail", Static)
+        listing = app.query_one("#listing")
         assert strip.display
         assert strip.region.y == rows.region.y + rows.region.height
+        assert (
+            strip.region.y + strip.region.height
+            == listing.region.y + listing.region.height - 1
+        )
         # A selection move repaints from the cache — no roundtrip.
         fetches = data.storage_fetches
-        await press_until(pilot, "down", lambda: "id ws-b" in detail_text(app))
+        await press_until(pilot, "down", lambda: " ws-b " in detail_text(app))
         text = detail_text(app)
         assert "storage 512M" in text
         assert "✗" not in text
@@ -976,33 +983,32 @@ async def test_the_detail_strip_pins_the_focused_rows_facts() -> None:
 
 
 async def test_a_long_list_keeps_the_strip_on_screen() -> None:
-    """A list longer than the screen caps at the height the
-    standing lines leave (#849): the strip stays directly under
-    the visible rows, inside the box, and the arrows keep their
-    meaning — up from the first row keeps the focus on the list,
-    and the display-only strip never traps it."""
+    """A list longer than the screen scrolls inside the rows the
+    box holds (#849): the strip stays pinned at the box's bottom
+    above its border, and the arrows keep their meaning — up from
+    the first row keeps the focus on the list, and the
+    display-only strip never traps it."""
     data = FakeData([row(id=f"ws-{i}", name=f"ws{i}") for i in range(30)])
     app, _ = make_app(data)
     async with app.run_test(size=(80, 24)) as pilot:
         await wait_for(lambda: list_children(app) == 30)
-        await wait_for(lambda: "id ws-0" in detail_text(app))
+        await wait_for(lambda: " ws-0 " in detail_text(app))
         await pilot.pause()
         rows = app.query_one("#rows")
         strip = app.query_one("#detail", Static)
         listing = app.query_one("#listing")
-        assert rows.region.height == 24 - main_screen_mod.LIST_RESERVED_ROWS
         assert strip.display
         assert strip.region.y == rows.region.y + rows.region.height
         assert (
             strip.region.y + strip.region.height
-            < listing.region.y + listing.region.height
+            == listing.region.y + listing.region.height - 1
         )
         # Up from the first row stays on the list — the header
         # area takes no focus, and neither does the strip.
         await pilot.press("up")
         assert app.focused is rows
         # The walk still scrolls the list, the strip keeps its
-        # place under it, and the walk reaches the whole fleet.
+        # place at the bottom, and the walk reaches the fleet.
         for _ in range(25):
             await pilot.press("down")
         await pilot.pause()
@@ -1036,7 +1042,7 @@ async def test_a_storage_report_that_will_not_come_keeps_the_dash() -> None:
     async with app.run_test():
         await wait_for(lambda: list_children(app) == 1)
         await wait_for(lambda: data.storage_fetches >= 1)
-        await wait_for(lambda: "id ws-a" in detail_text(app))
+        await wait_for(lambda: " ws-a " in detail_text(app))
         assert "storage -" in detail_text(app)
         assert "listing failed" not in status_text(app)
 
@@ -7221,10 +7227,12 @@ def test_the_list_row_marks_unresolved_mounts() -> None:
 
 def test_the_detail_strip_lines() -> None:
     """The strip's two lines (#849), pinned without the UI: the
-    identity on the first, the topology, the mounts marker, and
-    the storage figure on the second — the honest dash before the
-    first capacity report lands, the marker in the warning color
-    the status cell already carries, and every field clipped to a
+    identity on the first (the id bare, no label), the topology,
+    the mounts marker, and the storage figure on the second —
+    memory in the strip's own binary unit, the honest dash
+    before the first capacity report lands, the labels in the
+    muted accent with the marker in the warning color the
+    status cell already carries, and every field clipped to a
     budget that holds the line inside an 80-column terminal. The
     paint itself tolerates a screen the compose has not built
     (or teardown has emptied) — teardown noise, not a crash."""
@@ -7232,19 +7240,29 @@ def test_the_detail_strip_lines() -> None:
     dash = rows_mod.detail_strip(row(), None)
     first, second = dash.plain.split("\n")
     assert first == (
-        f" id {WS}  ·  image {rows_mod.clip('a' * 64, rows_mod.META_IMAGE_W)}"
-        "  ·  egress interactive"
+        f" {WS} · image {rows_mod.clip('a' * 64, rows_mod.META_IMAGE_W)}"
+        " · egress interactive"
     )
-    assert second == " cpus 2  ·  mem 8192 MiB  ·  storage -"
-    assert dash.spans == []
-    # The marker rides the warning color, the storage figure the
-    # report's root-plus-home sum as human_bytes renders it.
+    assert second == " cpu 2 · mem 8G · storage -"
+    muted = rows_mod.muted_style({})
+    dash_spans = {
+        dash.plain[span.start : span.end]: span.style for span in dash.spans
+    }
+    assert dash_spans["image"] == muted
+    assert dash_spans["egress"] == muted
+    assert dash_spans[" · "] == muted
+    # The marker rides the warning color beside its muted label,
+    # the storage figure the report's root-plus-home sum as
+    # human_bytes renders it.
     marked = rows_mod.detail_strip(mounted_row(), 3328599654)
-    assert "✗1 mounts" in marked.plain
+    assert "mounts ✗1" in marked.plain
     assert "storage 3.1G" in marked.plain
-    (span,) = marked.spans
-    assert marked.plain[span.start : span.end] == "✗1"
-    assert span.style == rows_mod.ISSUE_MARKER_COLOR
+    marked_spans = {
+        marked.plain[span.start : span.end]: span.style
+        for span in marked.spans
+    }
+    assert marked_spans["✗1"] == rows_mod.ISSUE_MARKER_COLOR
+    assert marked_spans["mounts"] == muted
     # Both lines hold the 80-column frame's span whatever the
     # fields carry.
     long = rows_mod.detail_strip(

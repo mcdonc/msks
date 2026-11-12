@@ -8,15 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Added
 
-- **Detail strip under the workspaces list (#849).** A two-line
-  strip renders directly under the last row and carries the
-  focused workspace's quick facts: id, image, egress posture,
-  vcpus, memory, the mounts-issue count, and the storage the
-  workspace charges the state disk (the same root-plus-home cost
-  `msks storage` reports). The strip follows the selection and
-  refreshes on the list's standing cadence; the storage figure
-  rides a cached capacity report, so moving the selection costs
-  no roundtrip. An empty list hides the strip.
+- **Detail strip at the bottom of the workspaces list (#849).**
+  A two-line strip renders at the bottom of the listing's box
+  and carries the focused workspace's quick facts: id, image,
+  egress posture, cpu count, memory, the mounts-issue count, and
+  the storage the workspace charges the state disk (the same
+  root-plus-home cost `msks storage` reports). The strip follows
+  the selection and refreshes on the list's standing cadence;
+  the storage figure rides a cached capacity report, so moving
+  the selection costs no roundtrip. An empty list hides the
+  strip.
 
 - **State summary in the TUI status bar (#853).** The workspaces
   count now carries a summary of the fleet's states:
