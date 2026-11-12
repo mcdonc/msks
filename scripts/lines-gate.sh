@@ -28,8 +28,9 @@
 set -euo pipefail
 
 # The ceiling, in lines. It only goes down. Counting is
-# ``grep -c ''`` — wc -l would undercount a file whose final line
-# lacks its newline, and a 2001-line file would pass.
+# ``grep -c ''`` — wc -l undercounts a file whose final line
+# lacks its newline, and the unterminated variant of an
+# over-ceiling file would slip past.
 MAX_LINES=2000
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -73,9 +74,9 @@ if [ "${#files[@]}" -eq 0 ]; then
 fi
 
 # Exemption entries: one path per line, reason after the path.
-# Blank lines and comments skip (leading whitespace allowed); a
-# line that parses to no path — CRLF blank, stray punctuation —
-# skips rather than poisoning a verdict with an empty entry.
+# Blank lines and comments skip (leading whitespace allowed);
+# every other line grades as a path — a bogus one fails the
+# stale pass loudly instead of being swallowed.
 exempted=()
 if [ -f "$exemptions" ]; then
   while IFS= read -r line || [ -n "$line" ]; do
@@ -89,24 +90,26 @@ if [ -f "$exemptions" ]; then
   done <"$exemptions"
 fi
 
-# Every over-ceiling path, "path count" per line. An exemption
-# entry is valid only while its file appears here: an entry for a
-# file at or under the ceiling, or absent from the tree, is stale.
+# Every over-ceiling file, "count path" per line — the count
+# carries no space, so ${entry#* } keeps the path whole, spaces
+# included. An exemption entry is valid only while its path
+# appears here: an entry for a file at or under the ceiling, or
+# absent from the tree, is stale.
 over=""
 for f in "${files[@]}"; do
   n=$(grep -c '' "$root/$f" || true)
   if [ "$n" -gt "$MAX_LINES" ]; then
-    over+="$f $n"$'\n'
+    over+="$n $f"$'\n'
   fi
 done
 
-# Exact membership of $1 among the over-ceiling paths — the same
-# first-whitespace token both passes compare, so an entry and an
-# offender can never disagree about what a line names.
+# Exact membership of $1 among the over-ceiling paths — full
+# paths on both sides, so an entry and an offender can never
+# disagree about what a line names.
 is_over() {
   while IFS= read -r entry; do
     [ -n "$entry" ] || continue
-    if [ "${entry%% *}" = "$1" ]; then
+    if [ "${entry#* }" = "$1" ]; then
       return 0
     fi
   done <<<"$over"
@@ -115,10 +118,12 @@ is_over() {
 
 fail=0
 
-# Offender pass: every over-ceiling path the list does not carry.
+# Offender pass: every over-ceiling path the list does not
+# carry, reported with its full path and count.
 while IFS= read -r entry; do
   [ -n "$entry" ] || continue
-  path=${entry%% *}
+  count=${entry%% *}
+  path=${entry#* }
   exempt=0
   for e in ${exempted[@]+"${exempted[@]}"}; do
     if [ "$e" = "$path" ]; then
@@ -127,7 +132,7 @@ while IFS= read -r entry; do
     fi
   done
   if [ "$exempt" -eq 0 ]; then
-    echo "lines-gate: FAIL — $path is ${entry##* } lines (ceiling $MAX_LINES); split it into a package (AGENTS.md, \"Lines gate\")" >&2
+    echo "lines-gate: FAIL — $path is $count lines (ceiling $MAX_LINES); split it into a package (AGENTS.md, \"Lines gate\")" >&2
     fail=1
   fi
 done <<<"$over"

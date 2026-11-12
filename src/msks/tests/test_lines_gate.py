@@ -130,6 +130,24 @@ def test_every_offender_reports(tmp_path):
     assert "src/msks/msks/two.py" in done.stderr
 
 
+def test_spaced_path_never_matches_an_entry(tmp_path):
+    """The header's invariant, pinned: an over-ceiling path with a
+    space never matches an entry (entries are single tokens), so
+    the offender reports with its full path and the colliding
+    entry fails the stale pass — two complaints, never silence."""
+    root = tmp_path / "tree"
+    (root / "src/msks/msks").mkdir(parents=True)
+    (root / "src/msks/msks/my file.py").write_text("x = 1\n" * 2500)
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    exempt = tmp_path / "exemptions.txt"
+    exempt.write_text("src/msks/msks/my other.py reason\n")
+    done = run_gate(root, "--exemptions", str(exempt))
+    assert done.returncode == 1
+    assert "src/msks/msks/my file.py" in done.stderr
+    assert "2500" in done.stderr
+    assert "stale exemption" in done.stderr
+
+
 def test_seeded_exemption_list_is_empty():
     entries = [
         line
