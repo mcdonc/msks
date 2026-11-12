@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# Module-length gate (#863): no module under the shipped package
+# past the ceiling. The gate does one thing — it fails, naming the
+# file and its line count. It never edits, splits, or suggests:
+# the remedy is the agent's, and AGENTS.md's "Lines gate" section
+# carries the hint (split the module into a package along its
+# seams; the exemption list is the last resort).
+#
+# The exemption list is scripts/lines-exemptions.txt (seeded
+# empty): one path per line, everything after the path is the
+# reason. The list only shrinks — an entry whose file is at or
+# under the ceiling fails the gate as stale, and the commit that
+# brings a listed file back under removes its entry (the same
+# "config matches code" rule the import-graph snapshot carries).
+#
+# Usage: lines-gate.sh [ROOT] [--exemptions FILE]
+#   ROOT defaults to this script's repo root. The exemption file
+#   defaults to ROOT/scripts/lines-exemptions.txt; a missing file
+#   reads as the empty list. The commit hook, ``msks-preflight``,
+#   and the ``msks-lines`` devenv script run this script with no
+#   arguments; the suite's tests point both knobs at throwaway
+#   trees to pin the boundary (bash 3.2 compatible — no mapfile,
+#   no associative arrays, macOS hosts included).
+set -euo pipefail
+
+# The ceiling, in lines (wc -l). It only goes down.
+MAX_LINES=2000
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+exemptions=""
+positional=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+  --exemptions)
+    exemptions=$2
+    shift 2
+    ;;
+  *)
+    positional+=("$1")
+    shift
+    ;;
+  esac
+done
+if [ "${#positional[@]}" -gt 0 ]; then
+  root=$(cd "${positional[0]}" && pwd)
+fi
+if [ -z "$exemptions" ]; then
+  exemptions="$root/scripts/lines-exemptions.txt"
+fi
+
+# Scanned set: the shipped package, tracked OR untracked-but-present
+# (--cached --others --exclude-standard), the same scoping
+# xenon-gate.sh and jscpd-gate.sh use, so all three gates grade the
+# same files. gitignored scratch stays out; a new file grades at
+# once instead of escaping until the commit hook catches it.
+files=()
+while IFS= read -r f; do
+  files+=("$f")
+done < <(git -C "$root" ls-files --cached --others --exclude-standard 'src/msks/msks/*.py')
+if [ "${#files[@]}" -eq 0 ]; then
+  echo "lines-gate: no .py files found under src/msks/msks — is $root the repo root?" >&2
+  exit 1
+fi
+
+exempted=()
+if [ -f "$exemptions" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+    '' | \#*) continue ;;
+    esac
+    read -r path _reason <<<"$line"
+    exempted+=("$path")
+  done <"$exemptions"
+fi
+
+# Every over-ceiling path, "path count" per line. An exemption
+# entry is valid only while its file appears here: an entry for a
+# file at or under the ceiling, or absent from the tree, is stale.
+over=""
+for f in "${files[@]}"; do
+  n=$(wc -l <"$root/$f" | tr -d '[:space:]')
+  if [ "$n" -gt "$MAX_LINES" ]; then
+    over+="$f $n"$'\n'
+  fi
+done
+
+listed_over() {
+  printf '%s' "$over" | grep -Fq -- "$1 "
+}
+
+fail=0
+
+# Offender pass: every over-ceiling path the list does not carry.
+while IFS= read -r entry; do
+  [ -n "$entry" ] || continue
+  path=${entry%% *}
+  exempt=0
+  for e in ${exempted[@]+"${exempted[@]}"}; do
+    if [ "$e" = "$path" ]; then
+      exempt=1
+      break
+    fi
+  done
+  if [ "$exempt" -eq 0 ]; then
+    echo "lines-gate: FAIL — $path is ${entry##* } lines (ceiling $MAX_LINES); split it into a package (AGENTS.md, \"Lines gate\")" >&2
+    fail=1
+  fi
+done <<<"$over"
+
+# Stale pass: every listed path must name a real over-ceiling file.
+for e in ${exempted[@]+"${exempted[@]}"}; do
+  if ! listed_over "$e"; then
+    echo "lines-gate: FAIL — stale exemption: $e is at or under the ceiling (or absent); remove the entry in the commit that split it" >&2
+    fail=1
+  fi
+done
+
+exit "$fail"

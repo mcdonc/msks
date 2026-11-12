@@ -1,0 +1,11 @@
+# Module-length exemptions (#863, scripts/lines-gate.sh).
+#
+# One path per line, repo-relative; everything after the path is
+# the reason. Seeded empty: no shipped module is over the 2,000-
+# line ceiling (llm.py, the longest, sits at 1,993).
+#
+# The list only shrinks. An entry joins only when a file must
+# exceed the ceiling and its split cannot land in the change that
+# crossed it; the commit that brings the file back under the
+# ceiling removes the entry in the same commit. An entry whose
+# file is at or under the ceiling, or absent, fails the gate.
