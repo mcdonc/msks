@@ -11,6 +11,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from ...imagestore import ImageError, default_image, resolve
+from ...spec.vm import DEFAULT_CMDLINE
 from .schemas import WorkspaceCreate
 
 
@@ -272,4 +273,4 @@ def default_cmdline(body: WorkspaceCreate, record) -> str:
         return body.cmdline
     if record is not None:
         return record.cmdline
-    return "console=ttyS0 root=/dev/vda rw"
+    return DEFAULT_CMDLINE

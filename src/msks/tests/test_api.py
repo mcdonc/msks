@@ -16,6 +16,7 @@ from msks.app import build_app
 from msks.microvm.errors import MicrovmError, MicrovmTimeoutError
 from msks.server import api as api_mod
 from msks.server.api import build_api
+from msks.server.api.schemas import WorkspaceCreate
 from msks.server.watcher import scan_workspace
 from msks.settings import (
     NetSettings,
@@ -25,7 +26,13 @@ from msks.settings import (
     VmmSettings,
 )
 from msks.spec.mounts import HOST_MODE_PREFIX
-from msks.spec.vm import VmInfo, VmSpec, VmStatus
+from msks.spec.vm import (
+    DEFAULT_CMDLINE,
+    VmInfo,
+    VmSpec,
+    VmStatus,
+    guest_console_device,
+)
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 TOKEN = "test-token"
@@ -1143,6 +1150,62 @@ async def test_create_refuses_a_name_equal_to_a_live_id(client) -> None:
     )
     assert shadow.status_code == 409
     assert shadow.json()["detail"] == "workspace exists"
+
+
+def test_the_legacy_default_cmdline_follows_the_host_arch() -> None:
+    """One console device per arch (#833): an aarch64 daemon's
+    legacy default names ttyAMA0 — the PL011 UART its guest
+    presents — and every other machine keeps ttyS0, so the
+    default's console answers on both."""
+    assert guest_console_device("aarch64") == "ttyAMA0"
+    assert guest_console_device("x86_64") == "ttyS0"
+    assert guest_console_device("riscv64") == "ttyS0"
+    assert DEFAULT_CMDLINE == (
+        f"console={guest_console_device(os.uname().machine)} root=/dev/vda rw"
+    )
+
+
+def test_the_default_cmdline_bakes_the_machines_console(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default bakes at import — VmSpec's field and the
+    no-record create fallback — so a reload under an aarch64
+    uname must carry ttyAMA0 into both. Without the pin, a
+    literal console=ttyS0 default passes the suite on every
+    x86_64 host: the exact regression #833 retires."""
+    import collections
+    import importlib
+
+    import msks.server.api.boot as boot_mod
+    import msks.spec.vm as vm_mod
+
+    Uname = collections.namedtuple("Uname", "machine")
+    monkeypatch.setattr(vm_mod.os, "uname", lambda: Uname("aarch64"))
+    try:
+        importlib.reload(vm_mod)
+        importlib.reload(boot_mod)
+        assert "console=ttyAMA0" in vm_mod.DEFAULT_CMDLINE
+        assert (
+            "ttyAMA0"
+            in vm_mod.VmSpec(
+                workspace_id="w", kernel=Path("/k"), rootfs=Path("/r")
+            ).cmdline
+        )
+        assert "console=ttyAMA0" in boot_mod.default_cmdline(
+            WorkspaceCreate(), None
+        )
+    finally:
+        # restore the real machine's constants for the rest of
+        # the suite: the bake is module state, process-wide, and
+        # boot's from-import rebinds only on its own reload. The
+        # reloads also rebind vm's dataclasses, so the
+        # first-generation VmSpec this file from-imports no
+        # longer matches reloaded instances by identity — compare
+        # strings or fields across that boundary, never
+        # instances.
+        monkeypatch.undo()
+        importlib.reload(vm_mod)
+        importlib.reload(boot_mod)
 
 
 async def test_prepare_failure_leaves_no_trace(client) -> None:
