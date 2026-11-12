@@ -13,8 +13,8 @@ tagged `vX.Y.Z`.
   active header flips the direction, and the arrow in the header
   shows the active sort. CREATED sorts by creation date (newest
   first by default), STATUS in lifecycle order, the other columns
-  by their text. The sort is click-driven, adds no keybinding, and
-  survives the standing refresh.
+  by their text. You sort by clicking a header; the keymap stays
+  as it was, and the sort holds across the standing refresh.
 
 - **Agent reference card (#842).** `msks agent-card` prints the agent
   reference card: one markdown text grouped by task (read state,

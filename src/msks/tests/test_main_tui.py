@@ -3165,7 +3165,7 @@ def test_widened_rows_keep_the_columns_and_fit_long_content(
     assert cell_len(header[: header.index("STATUS")]) == cell_len(
         wide[: wide.index("● stopped")]
     )
-    assert cell_len(header[: header.index("CREATED ↓")]) == cell_len(
+    assert cell_len(header[: header.index("CREATED")]) == cell_len(
         wide[: wide.index("2d ago")]
     )
 
@@ -4744,7 +4744,9 @@ def test_every_column_sorts() -> None:
         return [r["id"] for r in rows]
 
     assert order(rows_mod.sort_rows(base, ("NAME", False))) == ["a", "b", "c"]
-    assert order(rows_mod.sort_rows(base, ("NAME", True))) == ["c", "b", "a"]
+    # Alpha and alpha tie case-folded: the id ascends in either
+    # direction (#854 review — one tiebreak rule for every column).
+    assert order(rows_mod.sort_rows(base, ("NAME", True))) == ["c", "a", "b"]
     assert order(rows_mod.sort_rows(base, ("STATUS", False))) == [
         "b",
         "a",
@@ -4792,11 +4794,45 @@ def test_every_column_sorts() -> None:
     ]
     assert order(rows_mod.sort_rows(broken, ("CREATED", True)))[-1] == "a"
     assert order(rows_mod.sort_rows(broken, ("CREATED", False)))[-1] == "a"
-    # The default is #470 L1's newest-first, and an off-vocabulary
-    # status ranks after every known one.
+    # The default is #470 L1's newest-first, the tiebreak holds
+    # under descending too, and the lifecycle order is the whole
+    # vocabulary's own sequence with an off-vocabulary status
+    # after it.
     assert rows_mod.sort_rows(base) == rows_mod.newest_first(base)
-    odd = [{**base[0], "status": "provisioning"}, base[1], base[2]]
-    assert order(rows_mod.sort_rows(odd, ("STATUS", False)))[-1] == "c"
+    assert order(rows_mod.sort_rows(tied, ("NAME", True))) == [
+        "first",
+        "second",
+    ]
+    assert order(rows_mod.sort_rows(egress, ("EGRESS", True))) == [
+        "c",
+        "b",
+        "a",
+    ]
+    assert order(rows_mod.sort_rows(images, ("IMAGE", True))) == [
+        "b",
+        "c",
+        "a",
+    ]
+    cycle = [
+        stamp(
+            row(id=chr(ord("z") - rank), status=status), "2026-01-01T00:00:00"
+        )
+        for rank, status in enumerate(rows_mod.STATUS_SORT_ORDER)
+    ]
+    cycle.append(
+        stamp(row(id="zz", status="provisioning"), "2026-01-01T00:00:00")
+    )
+    assert order(rows_mod.sort_rows(cycle, ("STATUS", False))) == [
+        "z",
+        "y",
+        "x",
+        "w",
+        "v",
+        "u",
+        "t",
+        "s",
+        "zz",
+    ]
 
 
 def test_the_header_carries_only_the_active_sorts_arrow() -> None:
@@ -4804,6 +4840,10 @@ def test_the_header_carries_only_the_active_sorts_arrow() -> None:
     arrow and no other column's does; the default arrow is
     CREATED's descending one."""
     header = rows_mod.list_header()
+    assert "CREATED" in header  # bare: the sort is opt-in
+    assert "↓" not in header
+    assert "↑" not in header
+    header = rows_mod.list_header(sort=rows_mod.DEFAULT_SORT)
     assert "CREATED ↓" in header
     assert "NAME ↓" not in header
     assert rows_mod.list_header(sort=("STATUS", False)).count("↑") == 1
@@ -4861,6 +4901,46 @@ async def test_a_header_click_sorts_the_listing(monkeypatch) -> None:
         await pilot.pause()
         await wait_for(lambda: "bravo" in row_text(app, 0))
         assert "NAME ↓" in str(header.content)
+
+
+async def test_a_header_click_maps_by_the_drawn_columns(
+    monkeypatch,
+) -> None:
+    """#854 review: the click's offset is content cells — the
+    header's one-cell CSS gutter sits before the NAME column, so
+    a click on a column's first drawn character picks that column
+    and a click on the last gap cell before it picks the column
+    behind the gap. The widened layout maps by its own widths."""
+    scripted_link(monkeypatch, [])
+    data = FakeData(
+        [
+            stamp(
+                row(id="bravo", name="bravo", status="stopped"),
+                "2026-01-01T00:00:00",
+            ),
+            stamp(
+                row(id="alpha", name="alpha", status="running"),
+                "2026-01-03T00:00:00",
+            ),
+        ]
+    )
+    app, _ = make_app(data)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await wait_for(lambda: "alpha" in row_text(app, 0))
+        screen = app.screen
+        await wait_for(lambda: screen.columns != rows_mod.LIST_COLUMNS)
+        header = app.query_one("#columns")
+        gutter = header.content_region.x - header.region.x
+        name_width = screen.columns[0][1]
+        status_start = gutter + name_width + len(rows_mod.COLUMN_GAP)
+        await pilot.click(header, offset=(status_start - 1, 0))  # gap's end
+        assert screen.sort == ("NAME", False)
+        await pilot.click(header, offset=(status_start, 0))  # first S
+        assert screen.sort == ("STATUS", False)
+        assert "STATUS ↑" in str(header.content)
+        # The lifecycle order: running ranks before stopped.
+        await wait_for(lambda: "alpha" in row_text(app, 0))
+        assert "bravo" in row_text(app, 1)
 
 
 async def test_a_click_during_a_rebuild_flight_is_dropped(

@@ -124,9 +124,14 @@ class ColumnsHeader(Static):
         self.pick = pick
 
     def on_click(self, event: Click) -> None:
-        """The click's widget-relative x reaches the screen whole;
-        the mapping owns the widths."""
-        self.pick(event.x)
+        """The click's offset reaches the screen in content cells:
+        the widget's own padding (#columns pads a cell left, the
+        frame's gutter) sits before the first column's first
+        character, and the mapping reads cell offsets from there
+        (#854 review — a raw widget offset would skew every
+        column's hit region one cell left of its drawn one)."""
+        gutter = self.content_region.x - self.region.x
+        self.pick(event.x - gutter)
 
 
 class MainScreen(Screen):
