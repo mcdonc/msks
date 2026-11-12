@@ -283,9 +283,12 @@ The repack runs under
 fakeroot so the image is root-owned with sane password-file modes,
 and the setuid binaries the workspace user's sudo needs pass
 through the same fakeroot session as uid-0 inodes.
-Stopping a workspace presses the ACPI power button
+Stopping a workspace presses the guest's power button
 (`vm.power-button`): the guest's systemd-logind runs the clean
-poweroff that flushes its persistent disks.
+poweroff that flushes its persistent disks. The button is the ACPI
+event on x86_64 and the device-tree gpio key on arm64. On arm64
+cloud-hypervisor's pulse is one-way (#826): every re-press is a
+no-op, and the deadline carries a stop whose first press was lost.
 
 Every step of the build runs inside the repo on any Linux host with
 nix:

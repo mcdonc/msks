@@ -605,7 +605,10 @@ async def test_shutdown_represses_button_when_guest_ignores_it(
 ) -> None:
     """A press during early boot lands before logind listens and is
     dropped; the driver presses again instead of burning the whole
-    deadline on the one lost event (#14)."""
+    deadline on the one lost event (#14). The re-press delivers on
+    x86_64: cloud-hypervisor's arm64 pulse is one-way (#826), where
+    the first press is the only deliverable one and the deadline
+    carries the rest."""
     app, _, _ = env
     await app.state.microvm.launch(spec(tmp_path))
     proc = app.state.microvm.local._procs[WID]

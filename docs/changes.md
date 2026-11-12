@@ -36,6 +36,17 @@ tagged `vX.Y.Z`.
   database, every workspace start re-establishes them, and `add`
   is idempotent for an identical spec. Part of #807.
 
+### Changed
+
+- **The arm64 stop caveat is documented (#826).** cloud-hypervisor's
+  arm64 power button (the PL061 gpio key) delivers only the first
+  press, so a `msks stop` cannot rescue a lost press by re-pressing.
+  The fallback kill at the `MSKSD_SHUTDOWN_TIMEOUT_S` deadline carries
+  the stop instead. Size that setting to cover the guest's slowest
+  clean shutdown. A value above 120s outlives the client's wait, and
+  the client reports a timeout while the daemon still finishes the
+  stop.
+
 ### Fixed
 
 - **Workspace starts after a guest-initiated poweroff (#825).** A

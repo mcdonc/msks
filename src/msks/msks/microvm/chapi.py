@@ -45,7 +45,9 @@ class CloudHypervisorApi:
         return result if isinstance(result, dict) else {}
 
     async def power_button(self) -> None:
-        """PUT /api/v1/vm.power-button — press the ACPI power button.
+        """PUT /api/v1/vm.power-button — press the guest's power
+        button (the ACPI event on x86_64; the device-tree gpio key
+        on arm64).
 
         The guest's own handler (systemd-logind, or an acpid rule) runs
         the clean shutdown — unmounts, syncs — which is what a workspace

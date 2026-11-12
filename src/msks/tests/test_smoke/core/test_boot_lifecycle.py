@@ -60,7 +60,7 @@ async def test_local_vm_boot_and_shutdown() -> None:
         info = await microvm.info(wid)
         assert info.status.value == "running"
         # Wait for userspace before shutting down: the graceful shutdown
-        # is an ACPI power-button press, and the guest only answers it
+        # is a power-button press, and the guest only answers it
         # once its logind is running — pressing earlier would drop the
         # event and time out against a VM that is running but not yet
         # listening.

@@ -559,12 +559,24 @@ my-workspace stopped
 ```
 
 The stop asks the guest for a graceful, deadline-bounded power-off: the
-daemon presses the ACPI power button and the guest's systemd runs a full
-shutdown. The write-out can take a moment. The deadline is the daemon's
-(`MSKSD_SHUTDOWN_TIMEOUT_S`); there is no client-side timeout flag, and like
-`msks start` the client waits at most two minutes on the answer. A stop that
-misses the daemon's deadline answers 503 with the endpoint's detail on one
-line, exit non-zero.
+daemon presses the guest's power button and the guest's systemd runs a full
+shutdown. The button is the ACPI event on an x86_64 host and the
+device-tree gpio button on an arm64 host. The write-out can take a moment.
+The deadline is the daemon's (`MSKSD_SHUTDOWN_TIMEOUT_S`); there is no
+client-side timeout flag, and like `msks start` the client waits at most
+two minutes on the answer. A stop that misses the daemon's deadline
+answers 503 with the endpoint's detail on one line, exit non-zero.
+
+While the guest keeps running, the daemon presses the button again every
+five seconds. A press during early boot lands before logind listens.
+The guest drops it, and the next press recovers it. On an arm64 host the
+re-press never delivers (#826): cloud-hypervisor's power-button pulse
+drives the line one way only. The first press is the only one that can
+ever deliver. A first press lost there leaves the deadline and its
+fallback kill as the whole stop. Size `MSKSD_SHUTDOWN_TIMEOUT_S` to
+cover the guest's slowest clean shutdown. A value above 120s outlives
+the client's wait for the stop answer: the daemon still finishes the
+stop, and the client reports a timeout.
 
 Stopping a workspace that is already stopped is a no-op success: the daemon
 reports it stopped either way, and the client asks without pre-filtering on

@@ -57,6 +57,9 @@ VIRTIOFS = "virtiofs"
 ROOT_RW = "root-rw"
 HOME_LABEL = "home-label"
 USER_DATA = "user-data"
+# The check id predates the arch split of the power button (the ACPI
+# event on x86_64, the PL061 gpio key on arm64, #826) and stays
+# stable: `msks image check` output names it, and scripts parse it.
 ACPI_SHUTDOWN = "acpi-shutdown"
 EGRESS_DHCP = "egress-dhcp"
 
