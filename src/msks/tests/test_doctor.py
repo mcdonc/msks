@@ -13,6 +13,7 @@ import pytest
 from msks.server.doctor import (
     CheckResult,
     DoctorReport,
+    apk_qemu_system_package,
     append_failure_block,
     append_result,
     apple_silicon_kvm_result,
@@ -122,7 +123,18 @@ def test_install_hint_names_the_kvm_stack_per_manager() -> None:
     emulator, not a qemu-kvm that neither archive carries."""
     assert install_hint("qemu-kvm", "apt") == "sudo apt install qemu-kvm"
     assert install_hint("qemu-kvm", "pacman") == "sudo pacman -S qemu-desktop"
-    assert install_hint("qemu-kvm", "apk") == "sudo apk add qemu-system-x86_64"
+    expected = apk_qemu_system_package(os.uname().machine)
+    assert install_hint("qemu-kvm", "apk") == f"sudo apk add {expected}"
+
+
+def test_the_kvm_apk_package_follows_the_machine() -> None:
+    """Alpine's emulator package embeds the target architecture
+    (#832): an aarch64 host is told to add qemu-system-aarch64,
+    an x86-64 host (and a machine the table lacks) the x86_64
+    one — the hint stays paste-able on every arch."""
+    assert apk_qemu_system_package("aarch64") == "qemu-system-aarch64"
+    assert apk_qemu_system_package("x86_64") == "qemu-system-x86_64"
+    assert apk_qemu_system_package("riscv64") == "qemu-system-x86_64"
 
 
 def test_install_hint_fallbacks() -> None:
