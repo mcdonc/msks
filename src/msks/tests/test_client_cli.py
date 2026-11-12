@@ -6,6 +6,7 @@ the same ``api_call`` seam against the real daemon surface.
 """
 
 import asyncio
+import contextlib
 import io
 import json
 import os
@@ -6641,6 +6642,45 @@ def test_start_json_survives_a_failed_refresh(
         "id": "ws1",
         "status": "running",
     }
+
+
+def test_unverified_warning_stands_down_under_json(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The CAFILE-unset warning is stderr noise ahead of the error
+    document (#841 review round 2): under --json it stands down."""
+    from msks.client import env as env_mod
+    from msks.client import jsonio
+
+    monkeypatch.delenv("MSKSC_CAFILE", raising=False)
+    jsonio.set_json_mode(True)
+    with contextlib.suppress(ssl.SSLError):
+        env_mod.ssl_context()
+    assert "NOT verified" not in capsys.readouterr().err
+    jsonio.set_json_mode(False)
+    env_mod._WARNED_UNVERIFIED = False
+    with contextlib.suppress(ssl.SSLError):
+        env_mod.ssl_context()
+    assert "NOT verified" in capsys.readouterr().err
+
+
+def test_start_json_degraded_refresh_notes_stderr(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A refresh that dies after the verb landed: the thin row is
+    the document and the note rides stderr (#841 review round 2)."""
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(500, json={"detail": "restarting"})
+        return httpx.Response(200, json={"id": "ws1", "status": "running"})
+
+    rc = cli.cmd_start("ws1", as_json=True, transport=mock(handler))
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {"id": "ws1", "status": "running"}
+    assert "could not be read" in captured.err
 
 
 def test_json_requested_scans_before_the_separator() -> None:

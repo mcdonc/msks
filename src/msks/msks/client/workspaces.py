@@ -422,7 +422,14 @@ async def start_stop_row(
         return await call(
             "GET", f"/api/v1/workspaces/{row['id']}", transport=transport
         )
-    except SystemExit:
+    except SystemExit as exc:
+        # The note is stderr (#841): stdout's document stays whole,
+        # and the operator still learns the refresh died.
+        print(
+            f"msks: {workspace_id} {row['status']} (the refreshed "
+            f"row could not be read: {exc})",
+            file=sys.stderr,
+        )
         return row
 
 
@@ -491,11 +498,12 @@ def cmd_rm(
                 transport=transport,
             )
         )
-        removed = reply.get("deleted") or workspace_id
         if as_json:
-            json_line({"removed": removed})
+            # The daemon's resolved id: the spelling the operator
+            # typed may be a name the row no longer matches.
+            json_line({"removed": reply.get("deleted") or workspace_id})
         else:
-            print(f"{removed} deleted")
+            print(f"{workspace_id} deleted")
     return 0
 
 

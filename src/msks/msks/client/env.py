@@ -28,6 +28,7 @@ import sys
 from urllib.parse import quote, unquote
 
 from ..spec.sockets import find_default_socket, socket_candidates
+from .jsonio import json_mode
 
 #: The unverified-mode warning's once-guard (#706 review): a
 #: process that builds two contexts (the skew probe beside a
@@ -179,11 +180,15 @@ def ssl_context() -> ssl.SSLContext:
                 "on a Mac)"
             ) from exc
     if not _WARNED_UNVERIFIED:
-        print(
-            "msks: MSKSC_CAFILE not set; the daemon certificate "
-            "is NOT verified",
-            file=sys.stderr,
-        )
+        # Under --json the warning stands down (#841): it would
+        # land ahead of the error document a failing run prints,
+        # and a harness reads stderr as one object.
+        if not json_mode():
+            print(
+                "msks: MSKSC_CAFILE not set; the daemon certificate "
+                "is NOT verified",
+                file=sys.stderr,
+            )
         _WARNED_UNVERIFIED = True
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
