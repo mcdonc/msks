@@ -287,11 +287,11 @@ def run_seed(
     # file a second per call — and mounts /home off its second
     # call when the scenario brings the volume in. #838: the
     # stub is builtin-only (read, parameter expansion, echo),
-    # one fork per call — its own shell. The cut and cat forks
-    # an earlier stub paid per call doubled the 1200-poll
-    # shape's host fork count, and a loaded shared macOS runner
-    # forks slowly enough to carry the whole run past run_seed's
-    # budget.
+    # one fork per call — its own shell. The cut fork an
+    # earlier stub paid on every call was a third of the
+    # 1200-poll shape's whole fork count, and a loaded shared
+    # macOS runner forks slowly enough to carry the run past
+    # run_seed's budget.
     if home_mount_arrives:
         stubs.joinpath("sleep").write_text(
             "#!/bin/sh\n"
@@ -302,8 +302,9 @@ def run_seed(
             "c=0\n"
             f'[ -r "{sandbox}/sleep-n" ] '
             f'&& read -r c < "{sandbox}/sleep-n"\n'
-            f'echo "$((c+1))" > "{sandbox}/sleep-n"\n'
-            'if [ "$((c+1))" -ge 2 ]; then '
+            "c=$((c+1))\n"
+            f'echo "$c" > "{sandbox}/sleep-n"\n'
+            'if [ "$c" -ge 2 ]; then '
             f'printf "/dev/vdb /home ext4 rw,relatime 0 0\\n" '
             f'>> "{sandbox}/mounts"; fi\n'
             "exit 0\n"
@@ -324,12 +325,16 @@ def run_seed(
     }
     # #838: this budget exists to catch a hung or looping seed
     # (a broken stub pays the real tools' wall clock), not to
-    # bound a paced run: the 1200-poll shape forks ~5000 host
+    # bound a paced run: the 1200-poll shape forks ~3600 host
     # processes (the loop's grep, the volume scan's cats, and
-    # the sleep stub's shell per poll) — ~9s on a dev host, and
-    # a loaded shared macOS runner can more than double that —
-    # so the budget sits an order of magnitude above the paced
-    # worst case, generous by design.
+    # the sleep stub's shell per poll), ~11s on a dev host and
+    # more than double that on a loaded shared macOS runner —
+    # 90s sits well above the paced worst case. It must also
+    # sit under the per-test ceilings, or a hang surfaces
+    # pytest-timeout's kill instead of this budget's
+    # TimeoutExpired with the seed's stderr: the workflow that
+    # flaked runs --timeout=120 (#776's rule), and the two
+    # 1200-poll tests carry markers lifting them above it.
     return subprocess.run(
         [
             "sh",
@@ -339,7 +344,7 @@ def run_seed(
         env=env,
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=90,
     )
 
 
@@ -514,6 +519,11 @@ def test_seed_script_gives_up_when_no_volume_disk_exists(tmp_path) -> None:
     assert (sandbox / "home" / "alice" / ".ssh" / "authorized_keys").exists()
 
 
+# #838: the marker lifts this test's per-test ceiling above
+# run_seed's 90s budget and above the workflow's --timeout=120
+# (#776's rule: the inner budget's TimeoutExpired, with the
+# seed's stderr, must fire before pytest-timeout's kill).
+@pytest.mark.timeout(150)
 def test_seed_script_caps_the_home_wait_in_uptime_seconds(
     tmp_path,
 ) -> None:
@@ -586,6 +596,9 @@ def test_seed_retries_a_dependency_failed_home_mount(tmp_path) -> None:
     assert (sandbox / "home" / "alice" / ".ssh" / "authorized_keys").exists()
 
 
+# #838: same tiering as the cap test above — the marker keeps
+# run_seed's budget the binding constraint on a hang.
+@pytest.mark.timeout(150)
 def test_seed_paces_the_home_mount_retry(tmp_path) -> None:
     """The retry's pace: a stuck boot (the start cannot succeed,
     the mount never lands) pays one start per 30s window — not
