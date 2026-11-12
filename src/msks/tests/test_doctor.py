@@ -163,7 +163,12 @@ def test_the_table_bakes_this_machines_packages(
         )
     finally:
         # restore the real machine's table for the rest of the
-        # suite: the bake is module state, process-wide
+        # suite: the bake is module state, process-wide. The
+        # reload also rebinds doctor's dataclasses, so the
+        # first-generation CheckResult/DoctorReport this file
+        # from-imports no longer match reloaded instances by
+        # identity — compare strings or fields across that
+        # boundary, never instances.
         monkeypatch.undo()
         importlib.reload(doctor_mod)
 

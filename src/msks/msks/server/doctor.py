@@ -334,7 +334,8 @@ PACKAGE_HINTS: dict[str, dict[str, str]] = {
     },
     # The KVM stack the /dev/kvm rows point at (#559): the name
     # splits the way the library rows' do — Arch carries KVM in
-    # its split qemu packages (qemu-desktop is the x86_64 one),
+    # its split qemu packages (qemu-desktop is the x86_64 one;
+    # the aarch64 pacman host's answer is open as #837),
     # Alpine's is the arch-named system emulator picked for this
     # host's machine (#832), and brew's formula is qemu under
     # either platform.
