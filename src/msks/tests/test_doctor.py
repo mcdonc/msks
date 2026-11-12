@@ -1,6 +1,7 @@
 """``msksd doctor`` (#464): report logic, probes, hints, dispatch."""
 
 import argparse
+import importlib
 import os
 import pathlib
 import subprocess
@@ -135,6 +136,36 @@ def test_the_kvm_apk_package_follows_the_machine() -> None:
     assert apk_qemu_system_package("aarch64") == "qemu-system-aarch64"
     assert apk_qemu_system_package("x86_64") == "qemu-system-x86_64"
     assert apk_qemu_system_package("riscv64") == "qemu-system-x86_64"
+
+
+def test_the_table_bakes_this_machines_packages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The arch-derived entries bake at import — PACKAGE_HINTS'
+    apk row (#832) and UPSTREAM_HINTS' VMM pair (#831) — so a
+    reload under an aarch64 uname must carry the aarch64 names
+    into install_hint. Without this pin, a literal x86_64 string
+    in either table passes the suite on every x86_64 host: the
+    exact regression both fixes made."""
+    import collections
+
+    Uname = collections.namedtuple("Uname", "machine")
+    monkeypatch.setattr(doctor_mod.os, "uname", lambda: Uname("aarch64"))
+    try:
+        importlib.reload(doctor_mod)
+        assert (
+            doctor_mod.install_hint("qemu-kvm", "apk")
+            == "sudo apk add qemu-system-aarch64"
+        )
+        assert (
+            "cloud-hypervisor-static-aarch64"
+            in doctor_mod.UPSTREAM_HINTS["cloud-hypervisor"]
+        )
+    finally:
+        # restore the real machine's table for the rest of the
+        # suite: the bake is module state, process-wide
+        monkeypatch.undo()
+        importlib.reload(doctor_mod)
 
 
 def test_install_hint_fallbacks() -> None:
