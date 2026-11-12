@@ -23,7 +23,7 @@ CHECK_UPLINK_HELP = (
 )
 CHECK_BOOT_TIMEOUT_HELP = "deadline for each boot and seed wait (default: 120)"
 CHECK_SHUTDOWN_TIMEOUT_HELP = (
-    "deadline for the ACPI power-button shutdown (default: 120)"
+    "deadline for the power-button shutdown (default: 120)"
 )
 CHECK_KEEP_HELP = "keep the throwaway state dir (serial logs) for inspection"
 

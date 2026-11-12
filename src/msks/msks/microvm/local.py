@@ -275,8 +275,10 @@ CH_STATE_TO_STATUS = {
 }
 GUEST_DOWN_STATES = ("Created", "Shutdown")
 POLL_INTERVAL_S = 0.05
-# How long to wait before pressing the ACPI button again: an early-boot
+# How long to wait before pressing the power button again: an early-boot
 # press lands before the guest's logind listens and is silently dropped.
+# The re-press delivers on x86_64 only while cloud-hypervisor's arm64
+# button emulation stays one-way (#826).
 POWER_REPRESS_S = 5.0
 
 
@@ -1302,12 +1304,21 @@ class LocalCloudHypervisor(MicrovmDriver):
     async def _graceful_guest_down(
         self, workspace_id: str, deadline: float
     ) -> None:
-        """Request the ACPI poweroff and wait for the guest to land.
+        """Press the guest's power button and wait for it to land.
 
-        The button is re-pressed every few seconds (_press_button_until_down):
-        an event pressed during early boot lands before logind listens
-        and is dropped, and one re-press closes that window without
-        extending the deadline for a guest that truly refuses to go.
+        The button is the ACPI event on x86_64 and the device-tree
+        gpio key on arm64. It is re-pressed every few seconds
+        (_press_button_until_down): an event pressed during early boot
+        lands before logind listens and is dropped, and one re-press
+        closes that window without extending the deadline for a guest
+        that truly refuses to go. The re-press safety net is x86_64's
+        alone while cloud-hypervisor's arm64 emulation stays one-way
+        (#826): its PL061 pulse drives the gpio line 0->1 and never
+        back, so the first press consumes the only edge the guest can
+        ever see and every later press delivers nothing (the VMM logs
+        "Failed to trigger GPIO input interrupt"). An arm64 stop that
+        loses its first press is carried by the deadline and the
+        fallback kill behind it.
         """
         vmm = self._settings().vmm
         api = CloudHypervisorApi(

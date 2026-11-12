@@ -129,6 +129,15 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **The arm64 stop caveat is documented (#826).** cloud-hypervisor's
+  arm64 power button (the PL061 gpio key) delivers only the first press:
+  every later re-press from a `msks stop` is a no-op that the VMM logs as
+  a warning. A stop whose first press is lost, or whose guest outlasts
+  the deadline, is carried by the fallback kill at
+  `MSKSD_SHUTDOWN_TIMEOUT_S`; size it to cover the guest's slowest clean
+  shutdown. x86_64 stops are unchanged: there the button is the ACPI
+  event and re-presses deliver.
+
 - **New workspaces default to 4 vCPUs (#791).** A create that
   leaves the count unset boots 4 vCPUs, up from 2. The 1–64 bound
   is unchanged, an explicit `--cpus` still wins, and existing

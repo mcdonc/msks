@@ -128,12 +128,13 @@ actually boots. A guest image must:
   postures. The shipped base carries no developer toolchain:
   git, curl, and uv all arrive over the egress NIC when a seed
   or the operator installs them.
-- **Answer the ACPI power button.** `stop` presses the power
-  button (`vm.power-button`) and waits; the guest's own handler
-  runs the clean shutdown that flushes its disks (systemd-logind
-  does this by default; an acpid rule works too). A guest that
-  ignores the button is killed at the deadline, and whatever its
-  page cache still held is lost.
+- **Answer the power button.** `stop` presses the power
+  button (`vm.power-button`) and waits. The button is the ACPI
+  event on x86_64 and the gpio key on aarch64. The guest's own
+  handler runs the clean shutdown that flushes its disks
+  (systemd-logind does this by default; an acpid rule works too).
+  A guest that ignores the button is killed at the deadline, and
+  whatever its page cache still held is lost.
 - **Tolerate a read-write root.** The daemon boots each
   workspace's root read-write through a per-workspace qcow2
   overlay, so the base image stays pristine under
@@ -606,8 +607,8 @@ up), a root that accepts writes through the overlay, and
 `/home` mounted by its label, both surviving a stop/start cycle.
 They also cover the seed payload running on first boot (checked
 when the manifest declares a provisioner; a provisioner-less
-image reports the point skipped with that reason) and the ACPI
-power button producing a clean shutdown. A broken point fails
+image reports the point skipped with that reason) and the power
+button producing a clean shutdown. A broken point fails
 its row and the exit code is 1; the summary gives the first
 failure. `--keep` preserves the throwaway state dir (serial logs
 included) for inspection.
