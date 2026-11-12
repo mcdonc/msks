@@ -3814,9 +3814,18 @@ def test_every_screen_carries_the_help_key() -> None:
         ImagesScreen,
         ProxiesScreen,
     }
+    titles = {
+        MainScreen: "workspaces list",
+        WorkspaceScreen: "workspace page",
+        SecretsScreen: "secrets page",
+        SecretAuditScreen: "secrets audit",
+        ConsentPage: "egress consent page",
+        ImagesScreen: "images page",
+        ProxiesScreen: "proxies page",
+    }
     for screen in pages:
         assert issubclass(screen, HelpKeys)
-        assert screen.help_title != HelpKeys.help_title
+        assert screen.help_title == titles[screen]
         assert any(
             binding.key == "question_mark"
             for binding in screen_bindings(screen)
