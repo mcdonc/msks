@@ -1803,6 +1803,15 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Egress slice release on a failed teardown (#828).</strong> A <code>detach</code>
+  whose table or tap delete raised left the workspace's slice
+  claimed with no retry path, so the next <code>msks start</code> was refused
+  with "held by another live workspace" until the daemon
+  restarted. A failed teardown now leaves a record the
+  workspace's next stop or start retries, and the slice releases
+  when that retry completes.</p>
+</li>
+<li>
 <p><strong>Workspace starts after a guest-initiated poweroff (#825).</strong> A
   VMM that exited outside the stop flow — the guest's own <code>poweroff</code>,
   or a guest landing its shutdown just past a stop deadline — left a
