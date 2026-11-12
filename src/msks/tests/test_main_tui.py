@@ -1554,7 +1554,7 @@ async def test_the_header_splits_the_name_from_the_metadata(
         header = app.screen.query_one("#header", Static)
         (span,) = header.content.spans
         assert header.content.plain[span.start : span.end] == "● stopped"
-        assert span.style == "$warning"
+        assert span.style == rows_mod.muted_style(app.theme_variables)
         # The meta line renders dimmer than the name line's default
         # foreground — muted beside prominent, both on the panel —
         # with its `·` separators carrying the muted span treatment
@@ -2983,7 +2983,7 @@ def test_the_line_helpers() -> None:
     assert "alpha" in name.plain
     (span,) = name.spans
     assert name.plain[span.start : span.end] == "● stopped"
-    assert span.style == "$warning"
+    assert span.style == rows_mod.muted_style({})
     # The running state keeps the success color behind its dot —
     # the dotted word and the raw word answer the same map
     # (the review round on #470: the dotted text fed to the map
@@ -3518,24 +3518,28 @@ async def test_a_scrolling_list_keeps_the_created_label(
 async def test_the_status_column_carries_its_states_color(
     monkeypatch,
 ) -> None:
-    """#348, #470 S1: the status cell alone carries a color — the
-    cue dot rides with the word — running in the theme's success
-    color, every other state in the warning color — while the
-    name, egress, image, and date keep the default foreground.
-    The colors are theme variables the render resolves against
+    """#348, #470 S1, #850: the status cell alone carries a
+    color — the cue dot rides with the word — graded by state
+    class: running in the theme's success color, the resting
+    states in the muted text color, the transitional and lost
+    states in the warning and error colors — while the name,
+    egress, image, and date keep the default foreground. The
+    colors are theme variables the render resolves against
     the active theme, and each row carries its status as a
     class."""
     pinned_clock(monkeypatch)  # the created cell reads "2d ago"
     data = FakeData(
         [
             row(status="stopped"),
-            row(id="ws-new", name="gamma", status="created"),
-            row(id="ws-run", name="beta", status="running"),
+            row(id="ws-b", name="beta", status="created"),
+            row(id="ws-c", name="gamma", status="starting"),
+            row(id="ws-d", name="delta", status="unknown"),
+            row(id="ws-e", name="epsilon", status="running"),
         ]
     )
     app, _ = make_app(data)
     async with app.run_test() as pilot:
-        await wait_for(lambda: list_children(app) == 3)
+        await wait_for(lambda: list_children(app) == 5)
         rows = app.query_one("#rows")
         # The listing's rows are the workspaces alone (#431: the
         # branch row is gone; `e` opens the secrets page).
@@ -3566,20 +3570,21 @@ async def test_the_status_column_carries_its_states_color(
             lambda: all(row_segments(item) for item in workspace_rows)
         )
         # The highlight composes its own color over the row it
-        # sits on, so the exact theme-color checks ride the two
+        # sits on, so the exact theme-color checks ride the four
         # unfocused rows: walk the highlight to the last one.
-        await pilot.press("down", "down")
+        await pilot.press("down", "down", "down", "down")
         await wait_for(
             lambda: (
-                "-highlight" in workspace_rows[2].classes
+                "-highlight" in workspace_rows[4].classes
                 and "-highlight" not in workspace_rows[0].classes
             )
         )
+        muted = rows_mod.muted_style(app.theme_variables)
         for item, name, style, status in zip(
             workspace_rows,
-            ("alpha", "gamma", "beta"),
-            ("$warning", "$warning", "$success"),
-            ("stopped", "created", "running"),
+            ("alpha", "beta", "gamma", "delta", "epsilon"),
+            (muted, muted, "$warning", "$error", "$success"),
+            ("stopped", "created", "starting", "unknown", "running"),
             strict=True,
         ):
             static = row_static(item)
@@ -3616,9 +3621,24 @@ async def test_the_status_column_carries_its_states_color(
                 # the date keeps the row's plain foreground.
                 assert rendered != name_color
                 assert segment(name).style.bold
-            else:
+            elif style is muted:
+                # The resting states render muted (#850): dimmer
+                # than the row's plain foreground, and not the
+                # warning color the abnormal states carry — the
+                # cue dot alone keeps the state visible.
+                assert (
+                    rendered != Color.parse(app.theme_variables["warning"]).rgb
+                )
+                assert sum(rendered) < sum(name_color)
+                assert date_color == name_color
+            elif status == "starting":
                 assert (
                     rendered == Color.parse(app.theme_variables["warning"]).rgb
+                )
+                assert date_color == name_color
+            else:  # unknown: the lost states take the error color
+                assert (
+                    rendered == Color.parse(app.theme_variables["error"]).rgb
                 )
                 assert date_color == name_color
 
@@ -3631,16 +3651,34 @@ async def test_the_status_column_carries_its_states_color(
         )
 
 
-def test_a_status_outside_the_map_still_names_itself() -> None:
-    """#348, #470 S1: running takes the success color and every
-    other state — stopped among them — the warning color, and a
-    status that does not read as one ASCII CSS word names the row
-    ``other`` (Textual's class names are ASCII — a wider word
-    would raise, so the guard hands it the bucket class
-    instead)."""
-    assert rows_mod.status_color("paused") == "$warning"
-    assert rows_mod.status_color("running") == "$success"
-    assert rows_mod.status_color("stopped") == "$warning"
+def test_the_status_colors_grade_by_state() -> None:
+    """#850: the status colors grade by state class — every one
+    of the vocabulary's eight statuses lands in its class's
+    color (running the success color, the resting states the
+    muted text color, the transitional states the warning
+    color, the lost states the error color), and a status the
+    map does not know still takes the warning color, so a
+    vocabulary the daemon grows stands out. A status that does
+    not read as one ASCII CSS word names the row ``other``
+    (Textual's class names are ASCII — a wider word would
+    raise, so the guard hands it the bucket class instead)."""
+    from msks.model.workspaces import WORKSPACE_STATUSES
+
+    muted = rows_mod.muted_style({})
+    graded = {
+        "running": "$success",
+        "stopped": muted,
+        "created": muted,
+        "paused": muted,
+        "starting": "$warning",
+        "stopping": "$warning",
+        "absent": "$error",
+        "unknown": "$error",
+    }
+    assert set(WORKSPACE_STATUSES) == set(graded)
+    for status in WORKSPACE_STATUSES:
+        assert rows_mod.status_color(status) == graded[status]
+    assert rows_mod.status_color("migrating") == "$warning"
     assert rows_mod.status_text("paused") == "● paused"
     assert rows_mod.status_class("paused") == "paused"
     assert rows_mod.status_class("not running") == "other"
@@ -6664,13 +6702,48 @@ def mounted_row(status: str = "stopped") -> dict:
 def test_the_list_row_marks_unresolved_mounts() -> None:
     """The listing's status cell carries the count (#620, part
     #624): a row with issues reads its status and ✗N; a healthy
-    row reads its status alone."""
-    from msks.client.tui.rows import status_with_issues
+    row reads its status alone. The marker keeps its own
+    prominence (#850): the ✗N span rides the warning color
+    whatever the status word's class paints the word behind
+    it."""
+    from msks.client.tui.rows import (
+        ISSUE_MARKER_COLOR,
+        issue_marker,
+        muted_style,
+        row_content,
+        status_with_issues,
+    )
 
     # status_text prefixes the status's dot; the marker rides the
     # issue count.
     assert status_with_issues(mounted_row()) == "✗1 stopped"
     assert status_with_issues(row()) == "● stopped"
+    assert issue_marker(mounted_row()) == "✗1"
+    assert issue_marker(row()) is None
+    # The marker splits the status cell's span: the count keeps
+    # the warning color while the word behind it rides its own
+    # class's color — muted for a stopped row, success for a
+    # running one.
+    stopped = row_content(mounted_row())
+    assert "✗1 stopped" in stopped.plain
+    stopped_spans = {
+        stopped.plain[span.start : span.end]: span.style
+        for span in stopped.spans
+    }
+    assert stopped_spans["✗1"] == ISSUE_MARKER_COLOR
+    assert stopped_spans[" stopped"] == muted_style({})
+    running = row_content(mounted_row(status="running"))
+    running_spans = {
+        running.plain[span.start : span.end]: span.style
+        for span in running.spans
+    }
+    assert running_spans["✗1"] == ISSUE_MARKER_COLOR
+    assert running_spans[" running"] == "$success"
+    # A healthy row keeps one span across the whole status cell.
+    healthy = row_content(row())
+    (span,) = healthy.spans
+    assert healthy.plain[span.start : span.end] == "● stopped"
+    assert span.style == muted_style({})
 
 
 def test_the_mounts_editor_boundary_branches() -> None:
