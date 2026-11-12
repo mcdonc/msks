@@ -1848,14 +1848,27 @@ tagged <code>vX.Y.Z</code>.</p>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>The arm64 stop caveat is documented (#826).</strong> cloud-hypervisor's
+<li>
+<p><strong>Graded status colors in the TUI listing (#850).</strong> The
+  workspaces list colors the status column by state class:
+  <code>running</code> keeps the success color, <code>stopped</code> and <code>created</code>
+  render in the muted text color, <code>starting</code>, <code>stopping</code>, and
+  <code>paused</code> in the warning color, and <code>absent</code> and <code>unknown</code> in
+  the error color. A fleet at rest reads calm. The transitional,
+  paused, or lost row is the one the eye finds. The <code>✗N</code> mounts-issue
+  marker keeps the warning color beside whatever color the
+  status word takes.</p>
+</li>
+<li>
+<p><strong>The arm64 stop caveat is documented (#826).</strong> cloud-hypervisor's
   arm64 power button (the PL061 gpio key) delivers only the first
   press, so a <code>msks stop</code> cannot rescue a lost press by re-pressing.
   The fallback kill at the <code>MSKSD_SHUTDOWN_TIMEOUT_S</code> deadline carries
   the stop instead. Size that setting to cover the guest's slowest
   clean shutdown. A value above 120s outlives the client's wait, and
   the client reports a timeout while the daemon still finishes the
-  stop.</li>
+  stop.</p>
+</li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
