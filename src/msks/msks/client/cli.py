@@ -1290,18 +1290,37 @@ def secret_unlock(
     return cmd_secret_unlock(as_json, transport=ctx.obj)
 
 
+#: The root options that take their value as the next token; the
+#: card exemption skips that value on its scan for the first
+#: positional (#842 review: ``--config broken.yaml agent-card``
+#: must not read the path as the subcommand).
+CARD_VALUE_OPTIONS = frozenset({"--daemon", "--config"})
+
+
+def root_positionals(argv: list[str]) -> list[str]:
+    """The invocation's positional tokens under the root options:
+    a ``--`` barrier ends the scan, ``--daemon``/``--config``
+    consume the next token, an attached value rides inside its own
+    token (``--config=path``), and every other dash token is a
+    flag. The root callback's subcommand is the first of these."""
+    out: list[str] = []
+    tokens = iter(argv)
+    for token in tokens:
+        if token == "--":
+            break
+        if token in CARD_VALUE_OPTIONS:
+            next(tokens, None)  # the option's value
+        elif not token.startswith("-"):
+            out.append(token)
+    return out
+
+
 def card_requested(argv: list[str]) -> bool:
     """Whether the invocation prints the agent reference card
     (#842): the first positional token. The card is reference text
     a harness reads offline — a broken client config must not hide
     it, the same exemption the help screens carry."""
-    for token in argv:
-        if token == "--":
-            return False
-        if token in ("-h", "--help") or token.startswith("-"):
-            continue
-        return token == "agent-card"
-    return False
+    return root_positionals(argv)[:1] == ["agent-card"]
 
 
 def help_requested(argv: list[str]) -> bool:

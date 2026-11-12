@@ -107,7 +107,15 @@ def test_card_requested_wants_the_first_positional() -> None:
     assert cli.card_requested(["agent-card"]) is True
     assert cli.card_requested([]) is False
     assert cli.card_requested(["--daemon", "url"]) is False
+    assert cli.card_requested(["--help"]) is False
     assert cli.card_requested(["--", "agent-card"]) is False
+    # An option's value must not read as the subcommand (#842
+    # review): the exemption holds behind --config/--daemon, split
+    # or attached.
+    assert cli.card_requested(["--config", "broken.yaml", "agent-card"])
+    assert cli.card_requested(["--daemon", "url", "agent-card"])
+    assert cli.card_requested(["--config=broken.yaml", "agent-card"])
+    assert not cli.card_requested(["--config", "agent-card", "ls"])
 
 
 def test_agent_card_prints_without_a_bootstrap(

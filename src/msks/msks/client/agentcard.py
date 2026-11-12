@@ -73,8 +73,8 @@ A workspace's `status` is one of these values:
 ```bash
 msks ssh ws -- whoami
 msks ssh ws -- python3 -m pip list
-msks rsync -av ./src :/src
-msks rsync -av :/src ./src
+msks rsync ws -- -av ./src :/src
+msks rsync ws -- -av :/src ./src
 ```
 
 Everything after the workspace reaches ssh or rsync verbatim. The
@@ -132,6 +132,8 @@ earlier confirmations on stdout.
 ## The daemon connection
 
 The client dials the daemon's local socket by default. A remote
-daemon needs `MSKSC_URL`, `MSKSC_TOKEN` (a token file), and
-`MSKSC_CAFILE` (the daemon's `msks-ca.pem`).
+daemon needs `MSKSC_URL`, `MSKSC_TOKEN` (the bearer token
+itself), and `MSKSC_CAFILE` (the daemon's `msks-ca.pem`); the
+config file carries the same three as `url`, `token_file`,
+`cafile`.
 """
