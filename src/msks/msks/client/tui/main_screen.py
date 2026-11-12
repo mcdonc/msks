@@ -14,7 +14,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.css.query import NoMatches
-from textual.events import Resize
+from textual.events import Click, Resize
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, Input, ListItem, ListView, Static
 
@@ -28,12 +28,15 @@ from .consent_ui import (
 from .forms import CreateScreen
 from .importer import ImagesScreen
 from .rows import (
+    DEFAULT_SORT,
     LIST_COLUMNS,
     LIST_FRAME_CELLS,
+    NATURAL_DESCENDING,
+    column_at,
     expanded_columns,
     list_header,
-    newest_first,
     row_content,
+    sort_rows,
     status_class,
     status_content,
     workspace_label,
@@ -108,6 +111,24 @@ class SearchScreen(ModalScreen):
         self.dismiss()
 
 
+class ColumnsHeader(Static):
+    """The listing's header row, clickable per column (#854): a
+    click reports its cell offset to the screen, which maps it to
+    the column under it through the live column widths and
+    re-sorts. The widget stays display-only — it takes no focus,
+    adds no binding, and the spatial navigation is untouched: the
+    sort is a click, not a key."""
+
+    def __init__(self, renderable, pick) -> None:
+        super().__init__(renderable, id="columns")
+        self.pick = pick
+
+    def on_click(self, event: Click) -> None:
+        """The click's widget-relative x reaches the screen whole;
+        the mapping owns the widths."""
+        self.pick(event.x)
+
+
 class MainScreen(Screen):
     """The tree's root (#309): every workspace one row; create,
     start, stop, and remove happen here; Enter opens the
@@ -135,6 +156,10 @@ class MainScreen(Screen):
     def __init__(self) -> None:
         super().__init__()
         self.rows: list[dict] = []
+        # The standing column sort (#854): CREATED newest-first is
+        # the order the tree opens with; a header click changes
+        # it, and every later refresh re-sorts through it.
+        self.sort = DEFAULT_SORT
         # The listing's columns at the terminal's width: the fixed
         # minimums until the first resize event lands, then the
         # widened shape (#347) — the header and every row render
@@ -148,9 +173,49 @@ class MainScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Static(id="status")
         with Vertical(id="listing"):
-            yield Static(list_header(self.columns), id="columns")
+            yield ColumnsHeader(self.header_content(), self.pick_column)
             yield Static(id="empty")
         yield Footer()
+
+    def header_content(self) -> str:
+        """The header line at the live widths, the active sort's
+        arrow on its column (#854)."""
+        return list_header(self.columns, self.sort)
+
+    def pick_column(self, offset: int) -> None:
+        """A header click picked the column under ``offset`` (#854):
+        the active column flips its direction, a new column starts
+        at its natural one (CREATED descends, the others ascend),
+        and the standing rows re-sort through the same swap the
+        refresh uses — focus kept by row, the arrow repainted."""
+        column = column_at(self.columns, offset)
+        active, descending = self.sort
+        if column == active:
+            self.sort = (column, not descending)
+        else:
+            self.sort = (column, column in NATURAL_DESCENDING)
+        try:
+            self.query_one("#columns", Static).update(self.header_content())
+        except NoMatches:
+            pass
+        self.resort_rows()
+
+    def resort_rows(self) -> None:
+        """Re-sort the standing rows through the listing's one
+        rebuild flight (#854): a click landing while a refresh is
+        in flight is dropped here — its sort state stands, the
+        header carries it, and the in-flight refresh (or the
+        standing interval's next tick) serves the order."""
+        if self.rows_loading:
+            return
+        self.rows_loading = True
+        self.run_worker(self.resort_standing_rows())
+
+    async def resort_standing_rows(self) -> None:
+        try:
+            await self.rebuild_rows(self.rows)
+        finally:
+            self.rows_loading = False
 
     def on_mount(self) -> None:
         self.set_interval(0.5, self.sync_status)
@@ -185,7 +250,7 @@ class MainScreen(Screen):
             return
         self.columns = columns
         try:
-            self.query_one("#columns", Static).update(list_header(columns))
+            self.query_one("#columns", Static).update(self.header_content())
         except NoMatches:
             # Compose has not built the listing yet: the first rows
             # build at these widths when they land.
@@ -223,16 +288,16 @@ class MainScreen(Screen):
 
     async def rebuild_rows(self, rows: list[dict]) -> None:
         """Swap in a freshly-built list (its mount awaited), the
-        rows newest-first (#470 L1), preserving the focused row by
-        key (the top when it left) — the consent queue's rebuild
-        rule, carried to the listing. An unchanged listing keeps
-        its list (#470 L2): the comparison reads in the display
-        order (the daemon serves oldest-first — plain equality
-        with the daemon's list would differ by order alone and
-        never skip), so the standing refresh repaints nothing
-        while the daemon serves the same rows, and focus and
-        scroll never blip on the interval."""
-        ordered = newest_first(rows)
+        rows in the standing sort (#470 L1, #854), preserving the
+        focused row by key (the top when it left) — the consent
+        queue's rebuild rule, carried to the listing. An unchanged
+        listing keeps its list (#470 L2): the comparison reads in
+        the display order (the daemon serves oldest-first — plain
+        equality with the daemon's list would differ by order
+        alone and never skip), so the standing refresh repaints
+        nothing while the daemon serves the same rows, and focus
+        and scroll never blip on the interval."""
+        ordered = sort_rows(rows, self.sort)
         if ordered == self.rows and self.rows_widget() is not None:
             self.sync_status()
             return

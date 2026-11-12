@@ -8,6 +8,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Sortable listing columns in the TUI (#854).** Clicking a column
+  header in the workspaces list sorts by that column; clicking the
+  active header flips the direction, and the arrow in the header
+  shows the active sort. CREATED sorts by creation date (newest
+  first by default), STATUS in lifecycle order, the other columns
+  by their text. The sort is click-driven, adds no keybinding, and
+  survives the standing refresh.
+
 - **Agent reference card (#842).** `msks agent-card` prints the agent
   reference card: one markdown text grouped by task (read state,
   lifecycle, run inside, egress consent) with the status vocabulary
