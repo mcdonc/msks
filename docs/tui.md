@@ -15,8 +15,14 @@ my-workspace` opens that workspace's page directly.
 ![The workspaces list: two rows, the status bar's count and daemon URL](screens/workspaces-list.svg)
 
 The tree is rooted at the **workspaces list**: one row per workspace,
-newest first. The CREATED column's arrow shows the sort direction. The
-list's keys: `c` creates a workspace, `s` starts it, `S` stops it, `D`
+newest first. Clicking a column header sorts the list by that column.
+The active column's header shows the direction with an arrow, and
+clicking it again flips the direction. The CREATED column sorts by
+creation date. The STATUS column sorts in the lifecycle order (created,
+starting, running, paused, stopping, stopped, absent, unknown). Every
+other column sorts by its text.
+
+The list's keys: `c` creates a workspace, `s` starts it, `S` stops it, `D`
 removes it (after a confirmation), `e` opens the secrets page, and `r`
 refreshes. `/` jumps to the first workspace whose name starts with what
 you type. Enter opens the workspace's page.

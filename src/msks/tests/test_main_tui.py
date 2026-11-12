@@ -3040,15 +3040,14 @@ def test_the_line_helpers() -> None:
         == rows_mod.header_meta(wide_row).plain
     )
 
-    # The listing's display order (#470 L1): newest creation
-    # first, a stamp that does not parse sinks to the end in the
-    # daemon's own order.
+    # The listing's display order (#470 L1, #854): newest creation
+    # first, a stamp that does not parse sinks to the end, by id.
     def stamped(id_: str, when: str) -> dict:
         return {**row(id=id_), "created_at": when}
 
     assert [
         r["id"]
-        for r in rows_mod.newest_first(
+        for r in rows_mod.sort_rows(
             [
                 stamped("old", "2026-01-01T00:00:00"),
                 stamped("new", "2026-01-03T00:00:00"),
@@ -3059,7 +3058,7 @@ def test_the_line_helpers() -> None:
     broken = {**row(id="broken"), "created_at": "not a stamp"}
     assert [
         r["id"]
-        for r in rows_mod.newest_first(
+        for r in rows_mod.sort_rows(
             [
                 stamped("old", "2026-01-01T00:00:00"),
                 broken,
@@ -3133,7 +3132,7 @@ def test_the_columns_widen_with_the_terminal() -> None:
         ("STATUS", 10),
         ("EGRESS", 12),
         ("IMAGE", 14),
-        ("CREATED ↓", 10),
+        ("CREATED", 10),
     )
     # An odd spare cell goes to the earlier growing column.
     odd = rows_mod.expanded_columns(79)
@@ -3165,7 +3164,7 @@ def test_widened_rows_keep_the_columns_and_fit_long_content(
     assert cell_len(header[: header.index("STATUS")]) == cell_len(
         wide[: wide.index("● stopped")]
     )
-    assert cell_len(header[: header.index("CREATED ↓")]) == cell_len(
+    assert cell_len(header[: header.index("CREATED")]) == cell_len(
         wide[: wide.index("2d ago")]
     )
 
@@ -4719,6 +4718,261 @@ async def test_the_settled_listing_opens_on_the_newest_row(
             "new",
         )
         assert app.focused is rows
+
+
+def test_every_column_sorts() -> None:
+    """#854: sort_rows carries a key per column — the label
+    case-folded for NAME, the lifecycle rank for STATUS, the bare
+    text for EGRESS and IMAGE, the parsed stamp (never the
+    relative label) for CREATED — each with the id behind it, so
+    ties break deterministically and a broken stamp sinks in
+    either direction."""
+    base = [
+        stamp(
+            row(id="c", name="Bravo", status="stopped"), "2026-01-02T00:00:00"
+        ),
+        stamp(
+            row(id="a", name="alpha", status="running"), "2026-01-03T00:00:00"
+        ),
+        stamp(
+            row(id="b", name="Alpha", status="starting"), "2026-01-01T00:00:00"
+        ),
+    ]
+
+    def order(rows: list[dict]) -> list[str]:
+        return [r["id"] for r in rows]
+
+    assert order(rows_mod.sort_rows(base, ("NAME", False))) == ["a", "b", "c"]
+    # Alpha and alpha tie case-folded: the id ascends in either
+    # direction (#854 review — one tiebreak rule for every column).
+    assert order(rows_mod.sort_rows(base, ("NAME", True))) == ["c", "a", "b"]
+    assert order(rows_mod.sort_rows(base, ("STATUS", False))) == [
+        "b",
+        "a",
+        "c",
+    ]
+    assert order(rows_mod.sort_rows(base, ("CREATED", False))) == [
+        "b",
+        "c",
+        "a",
+    ]
+    assert order(rows_mod.sort_rows(base)) == ["a", "c", "b"]
+    egress = [
+        {**r, "egress_mode": mode}
+        for r, mode in zip(
+            base, ("static", "allow", "interactive"), strict=True
+        )
+    ]
+    assert order(rows_mod.sort_rows(egress, ("EGRESS", False))) == [
+        "a",
+        "b",
+        "c",
+    ]
+    images = [
+        {**r, "image_hash": h}
+        for r, h in zip(base, ("b" * 64, "a" * 64, "c" * 64), strict=True)
+    ]
+    assert order(rows_mod.sort_rows(images, ("IMAGE", False))) == [
+        "a",
+        "c",
+        "b",
+    ]
+    # A tie on the column's own value breaks by id; a broken stamp
+    # sinks in either direction.
+    tied = [
+        stamp(row(id="second", name="same"), "2026-01-01T00:00:00"),
+        stamp(row(id="first", name="same"), "2026-01-01T00:00:00"),
+    ]
+    assert order(rows_mod.sort_rows(tied, ("NAME", False))) == [
+        "first",
+        "second",
+    ]
+    broken = [
+        {**r, "created_at": "not a stamp"} if r["id"] == "a" else r
+        for r in base
+    ]
+    assert order(rows_mod.sort_rows(broken, ("CREATED", True)))[-1] == "a"
+    assert order(rows_mod.sort_rows(broken, ("CREATED", False)))[-1] == "a"
+    # The default is #470 L1's newest-first, the tiebreak holds
+    # under descending too, and the lifecycle order is the whole
+    # vocabulary's own sequence with an off-vocabulary status
+    # after it.
+    assert rows_mod.sort_rows(base) == rows_mod.sort_rows(base)
+    assert order(rows_mod.sort_rows(tied, ("NAME", True))) == [
+        "first",
+        "second",
+    ]
+    assert order(rows_mod.sort_rows(egress, ("EGRESS", True))) == [
+        "c",
+        "b",
+        "a",
+    ]
+    assert order(rows_mod.sort_rows(images, ("IMAGE", True))) == [
+        "b",
+        "c",
+        "a",
+    ]
+    cycle = [
+        stamp(
+            row(id=chr(ord("z") - rank), status=status), "2026-01-01T00:00:00"
+        )
+        for rank, status in enumerate(rows_mod.STATUS_SORT_ORDER)
+    ]
+    cycle.append(
+        stamp(row(id="zz", status="provisioning"), "2026-01-01T00:00:00")
+    )
+    assert order(rows_mod.sort_rows(cycle, ("STATUS", False))) == [
+        "z",
+        "y",
+        "x",
+        "w",
+        "v",
+        "u",
+        "t",
+        "s",
+        "zz",
+    ]
+
+
+def test_the_header_carries_only_the_active_sorts_arrow() -> None:
+    """#854: the active column's header label carries its direction
+    arrow and no other column's does; the default arrow is
+    CREATED's descending one."""
+    header = rows_mod.list_header()
+    assert "CREATED" in header  # bare: the sort is opt-in
+    assert "↓" not in header
+    assert "↑" not in header
+    header = rows_mod.list_header(sort=rows_mod.DEFAULT_SORT)
+    assert "CREATED ↓" in header
+    assert "NAME ↓" not in header
+    assert rows_mod.list_header(sort=("STATUS", False)).count("↑") == 1
+    assert "STATUS ↑" in rows_mod.list_header(sort=("STATUS", False))
+    assert "NAME ↓" in rows_mod.list_header(sort=("NAME", True))
+    wide = rows_mod.expanded_columns(120)
+    assert "IMAGE ↑" in rows_mod.list_header(wide, ("IMAGE", False))
+
+
+def test_the_column_under_a_header_click() -> None:
+    """#854: a header click's cell offset maps to the column under
+    it through the live widths — a column owns its width plus the
+    gap behind it, an offset past the end reads as the last
+    column, and the widened layout a wider terminal shows maps by
+    its own widths."""
+    columns = rows_mod.LIST_COLUMNS
+    assert rows_mod.column_at(columns, 0) == "NAME"
+    assert rows_mod.column_at(columns, 23) == "NAME"  # the gap behind NAME
+    assert rows_mod.column_at(columns, 24) == "STATUS"
+    assert rows_mod.column_at(columns, 10_000) == "CREATED"
+    wide = rows_mod.expanded_columns(120)
+    assert rows_mod.column_at(wide, wide[0][1] + len(rows_mod.COLUMN_GAP)) == (
+        "STATUS"
+    )
+
+
+async def test_a_header_click_sorts_the_listing(monkeypatch) -> None:
+    """#854: a click on a header column takes that column's sort at
+    its natural direction, a click on the active column flips the
+    direction, the arrow follows, and the standing refresh holds
+    the sort whatever order the daemon serves."""
+    scripted_link(monkeypatch, [])
+    data = FakeData(
+        [
+            stamp(row(id="bravo", name="bravo"), "2026-01-01T00:00:00"),
+            stamp(row(id="alpha", name="alpha"), "2026-01-03T00:00:00"),
+        ]
+    )
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "alpha" in row_text(app, 0))  # created desc
+        header = app.query_one("#columns")
+        await pilot.click(header, offset=(0, 0))  # NAME, natural ascending
+        await wait_for(lambda: "alpha" in row_text(app, 0))
+        assert "bravo" in row_text(app, 1)
+        assert "NAME ↑" in str(header.content)
+        await pilot.click(header, offset=(0, 0))  # the active column flips
+        await wait_for(lambda: "bravo" in row_text(app, 0))
+        assert "NAME ↓" in str(header.content)
+        # The standing refresh holds the sort: the daemon serves
+        # the rows the other way round, the listing stays
+        # name-descending.
+        data.rows = list(reversed(data.rows))
+        app.screen.refresh_rows()
+        await pilot.pause()
+        await wait_for(lambda: "bravo" in row_text(app, 0))
+        assert "NAME ↓" in str(header.content)
+
+
+async def test_a_header_click_maps_by_the_drawn_columns(
+    monkeypatch,
+) -> None:
+    """#854 review: the click's offset is content cells — the
+    header's one-cell CSS gutter sits before the NAME column, so
+    a click on a column's first drawn character picks that column
+    and a click on the last gap cell before it picks the column
+    behind the gap. The widened layout maps by its own widths."""
+    scripted_link(monkeypatch, [])
+    data = FakeData(
+        [
+            stamp(
+                row(id="bravo", name="bravo", status="stopped"),
+                "2026-01-01T00:00:00",
+            ),
+            stamp(
+                row(id="alpha", name="alpha", status="running"),
+                "2026-01-03T00:00:00",
+            ),
+        ]
+    )
+    app, _ = make_app(data)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await wait_for(lambda: "alpha" in row_text(app, 0))
+        screen = app.screen
+        await wait_for(lambda: screen.columns != rows_mod.LIST_COLUMNS)
+        header = app.query_one("#columns")
+        gutter = header.content_region.x - header.region.x
+        name_width = screen.columns[0][1]
+        status_start = gutter + name_width + len(rows_mod.COLUMN_GAP)
+        await pilot.click(header, offset=(status_start - 1, 0))  # gap's end
+        assert screen.sort == ("NAME", False)
+        await pilot.click(header, offset=(status_start, 0))  # first S
+        assert screen.sort == ("STATUS", False)
+        assert "STATUS ↑" in str(header.content)
+        # The lifecycle order: running ranks before stopped.
+        await wait_for(lambda: "alpha" in row_text(app, 0))
+        assert "bravo" in row_text(app, 1)
+
+
+async def test_a_click_during_a_rebuild_flight_is_dropped(
+    monkeypatch,
+) -> None:
+    """#854: a click landing while the listing's rebuild flight is
+    in flight is dropped — its sort state stands and the header
+    carries it, and the standing refresh serves the order; and a
+    click after the header left the tree (a teardown window)
+    re-sorts quietly, the missing header a skip and not a
+    crash."""
+    scripted_link(monkeypatch, [])
+    data = FakeData(
+        [
+            stamp(row(id="bravo", name="bravo"), "2026-01-01T00:00:00"),
+            stamp(row(id="alpha", name="alpha"), "2026-01-03T00:00:00"),
+        ]
+    )
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "alpha" in row_text(app, 0))
+        screen = app.screen
+        screen.rows_loading = True  # a refresh holds the flight
+        screen.pick_column(0)  # the NAME click drops
+        await pilot.pause()
+        assert "alpha" in row_text(app, 0)  # the display never moved
+        assert screen.sort == ("NAME", False)  # the state stands
+        assert "NAME ↑" in str(app.query_one("#columns", Static).content)
+        screen.rows_loading = False
+        await app.query_one("#columns").remove()  # the teardown window
+        screen.pick_column(0)  # the active column flips, quietly
+        assert screen.sort == ("NAME", True)
+        await pilot.pause()
 
 
 async def test_the_listing_refreshes_while_it_stands(monkeypatch) -> None:

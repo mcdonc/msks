@@ -31,8 +31,43 @@ LIST_COLUMNS = (
     ("STATUS", 10),
     ("EGRESS", 12),
     ("IMAGE", 12),
-    ("CREATED ↓", 10),
+    ("CREATED", 10),
 )
+
+#: The sort direction arrows the active column's header carries
+#: (#854): down for the descending read, up for the ascending
+#: one. Only the active column carries one.
+SORT_ARROW_DESCENDING = " ↓"
+SORT_ARROW_ASCENDING = " ↑"
+
+#: The STATUS column's sort order (#854): the lifecycle order an
+#: operator scans in, the vocabulary's own sequence — a status
+#: outside the vocabulary sorts after it, by id.
+STATUS_SORT_ORDER = (
+    "created",
+    "starting",
+    "running",
+    "paused",
+    "stopping",
+    "stopped",
+    "absent",
+    "unknown",
+)
+
+#: The STATUS column's rank per status value (#854).
+STATUS_SORT_RANK = {
+    status: rank for rank, status in enumerate(STATUS_SORT_ORDER)
+}
+
+#: The columns whose first pick takes the descending read (#854):
+#: CREATED's natural order is newest-first (#470 L1); every other
+#: column starts ascending.
+NATURAL_DESCENDING = frozenset({"CREATED"})
+
+#: The listing's standing sort (#854): CREATED newest-first, the
+#: order the tree opened with — the default sort, the header's
+#: first arrow, and the state a new session starts in.
+DEFAULT_SORT = ("CREATED", True)
 
 #: The space between two listing columns.
 COLUMN_GAP = "  "
@@ -130,14 +165,33 @@ def clip(text: str, width: int = 12) -> str:
     )
 
 
-def list_header(columns=LIST_COLUMNS) -> str:
+def list_header(columns=LIST_COLUMNS, sort=None) -> str:
     """The listing's header row (#347): the column labels, each
     left-justified to its column's width — the offsets the rows
-    pad their fields to. The secrets page's own columns ride the
-    same shape (#390)."""
+    pad their fields to. A sort's active column carries its
+    direction arrow beside the label (#854); the others carry
+    none. The sort is opt-in: a caller that passes none (the
+    secrets and proxies pages, #390) renders bare labels whatever
+    its columns are named — an arrow there would misalign a
+    header whose widths sit tight and promise a sort no click
+    serves."""
     return COLUMN_GAP.join(
-        cell_pad(label, width) for label, width in columns
+        cell_pad(sort_label(label, sort), width) for label, width in columns
     ).rstrip()
+
+
+def sort_label(label: str, sort=None) -> str:
+    """One header label with its sort arrow when the sort names
+    it (#854): the active column reads ``LABEL ↓`` or
+    ``LABEL ↑``, every other column its bare label, and no sort
+    leaves every label bare."""
+    if sort is None:
+        return label
+    column, descending = sort
+    if label != column:
+        return label
+    arrow = SORT_ARROW_DESCENDING if descending else SORT_ARROW_ASCENDING
+    return f"{label}{arrow}"
 
 
 def padded_cells(cells: tuple[str, ...], columns=LIST_COLUMNS) -> str:
@@ -338,23 +392,94 @@ def row_content(
     return Content(line, spans)
 
 
-def newest_first(rows: list[dict]) -> list[dict]:
-    """The listing's display order (#470 L1): newest creation
-    first — the daemon serves oldest-first, so the row an operator
-    just made would land at the bottom, and the CREATED column's
-    arrow names the sort the labels sit in. A stamp that does not
-    parse sinks to the end in the daemon's own order."""
+def name_sort_key(row: dict) -> str:
+    """The NAME column's value key (#854): the label case-folded."""
+    return workspace_label(row).casefold()
 
-    def keyed(indexed):
-        index, item = indexed
-        stamp = parse_stamp(item.get("created_at") or "")
-        return (
-            stamp is None,
-            -(stamp.timestamp() if stamp is not None else 0.0),
-            index,
-        )
 
-    return [item for _index, item in sorted(enumerate(rows), key=keyed)]
+def status_sort_key(row: dict) -> int:
+    """The STATUS column's value key (#854): the lifecycle rank.
+    A status outside the vocabulary ranks after every known one."""
+    status = row.get("status") or ""
+    return STATUS_SORT_RANK.get(status, len(STATUS_SORT_ORDER))
+
+
+def image_sort_key(row: dict) -> str:
+    """The IMAGE column's value key (#854): the ref the cell reads
+    (the hash when no ref came)."""
+    return row.get("image_ref") or row.get("image_hash") or ""
+
+
+def stamp_sort_key(descending: bool):
+    """The CREATED column's sort key (#854): the parsed creation
+    timestamp, never the relative label (whose text order and
+    date order disagree). A stamp that does not parse sinks to
+    the end in either direction; the id breaks the ties."""
+
+    def key(row: dict) -> tuple:
+        stamp = parse_stamp(row.get("created_at") or "")
+        moment = stamp.timestamp() if stamp is not None else 0.0
+        return (stamp is None, -moment if descending else moment, row["id"])
+
+    return key
+
+
+def egress_sort_key(row: dict) -> str:
+    """The EGRESS column's value key (#854): the posture's name."""
+    return row.get("egress_mode") or ""
+
+
+#: The sort key builder per column (#854): CREATED builds its own
+#: per direction; every other column reads one of the keys above.
+def sort_key(column: str, descending: bool):
+    if column == "CREATED":
+        return stamp_sort_key(descending)
+    keys = {
+        "NAME": name_sort_key,
+        "STATUS": status_sort_key,
+        "EGRESS": egress_sort_key,
+        "IMAGE": image_sort_key,
+    }
+    return keys[column]
+
+
+def id_sort_key(row: dict) -> str:
+    """The tiebreak every column shares (#854): the id alone."""
+    return row["id"]
+
+
+def sort_rows(rows: list[dict], sort=DEFAULT_SORT) -> list[dict]:
+    """The listing's display order under a column sort (#854):
+    the rows ordered by the column's key, ties broken by the id
+    ascending in either direction, so the order is deterministic
+    whatever the rows carry and a tie renders one way whatever
+    the column. The default is CREATED descending — #470 L1's
+    newest-first. CREATED embeds its direction in its key (a
+    broken stamp sinks in either one); every other column runs a
+    stable value-sort, descending, over rows first sorted by id —
+    stability under ``reverse`` keeps the id order intact."""
+    column, descending = sort
+    if column == "CREATED":
+        return sorted(rows, key=sort_key(column, descending))
+    value_key = sort_key(column, False)
+    by_id = sorted(rows, key=id_sort_key)
+    if not descending:
+        return sorted(by_id, key=value_key)
+    return sorted(by_id, key=value_key, reverse=True)
+
+
+def column_at(columns, offset: int) -> str:
+    """The column a header click's cell offset lands in (#854):
+    each column owns its width plus the gap behind it, and an
+    offset past the last span reads as the last column. The
+    offsets are display cells, the same arithmetic the header and
+    the rows render through."""
+    start = 0
+    for label, width in columns:
+        start += width + len(COLUMN_GAP)
+        if offset < start:
+            return label
+    return columns[-1][0]
 
 
 def header_name(
