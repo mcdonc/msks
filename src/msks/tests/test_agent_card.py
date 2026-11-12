@@ -1,0 +1,125 @@
+"""The agent reference card (#842): one text, three surfaces.
+
+The card constant is the whole chapter (``docs/agents.md`` carries
+it byte for byte) and the ``msks agent-card`` command prints it.
+These tests hold all three together: the docs chapter equals the
+constant, the command prints it, and every ``msks`` invocation the
+card names parses against the real CLI — a card that names a flag
+the parser refuses, or stops naming one it takes, fails here.
+"""
+
+import re
+import shlex
+from pathlib import Path
+
+import click
+import pytest
+import typer
+from msks.client import agentcard, cli
+
+DOCS_CARD = Path(__file__).parents[3] / "docs" / "agents.md"
+
+
+class CardBodyReached(Exception):
+    """The stubbed body of a card command: parse reached it."""
+
+
+def card_invocations() -> list[list[str]]:
+    """Every ``msks`` line in the card's fenced blocks, tokens
+    split; a trailing comment drops (the card keeps its comments
+    after the command, space-separated)."""
+    invocations: list[list[str]] = []
+    in_fence = False
+    for line in agentcard.AGENT_CARD_MD.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence and line.lstrip().startswith("msks "):
+            stripped = line.split("#", 1)[0].strip()
+            invocations.append(shlex.split(stripped))
+    return invocations
+
+
+def test_the_card_names_commands_that_all_parse() -> None:
+    """The card's every invocation parses against the CLI: the
+    bodies are stubbed (no dial, no bootstrap, no skew probe — the
+    root callback is dropped with them), so a command body reached
+    means the parse itself succeeded and every flag and choice was
+    accepted."""
+    command = typer.main.get_command(cli.app)
+    command.callback = None
+
+    def reached(*args, **kwargs) -> None:
+        raise CardBodyReached
+
+    def stub_leaves(group: click.Group) -> None:
+        for leaf in group.commands.values():
+            if isinstance(leaf, click.Group):
+                stub_leaves(leaf)
+            else:
+                leaf.callback = reached
+
+    stub_leaves(command)
+    assert card_invocations(), "the card names no commands at all"
+    for tokens in card_invocations():
+        # The card's lines carry the leading ``msks``; click's main
+        # takes the argv without it (run_parsed passes sys.argv[1:]).
+        try:
+            command.main(
+                tokens[1:], prog_name="msks", standalone_mode=False, obj=None
+            )
+        except CardBodyReached:
+            continue
+        pytest.fail(f"the card names an invocation the CLI refuses: {tokens}")
+
+
+def test_the_docs_chapter_is_the_card_text() -> None:
+    """docs/agents.md and the constant are one text on two
+    surfaces; drift between them fails here (an installed package
+    has no docs tree, and the card still prints)."""
+    if not DOCS_CARD.exists():
+        pytest.skip("no docs tree beside the package (installed run)")
+    assert DOCS_CARD.read_text() == agentcard.AGENT_CARD_MD
+
+
+def test_the_agent_card_command_prints_the_card(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rc = cli.agent_card()
+    assert rc == 0
+    assert capsys.readouterr().out == agentcard.AGENT_CARD_MD
+
+
+def test_the_card_carries_the_whole_status_vocabulary() -> None:
+    """A harness that reads a status the card never taught it was
+    lied to by omission: every row status the daemon can hold has
+    its meaning on the card."""
+    from msks.model.workspaces import WORKSPACE_STATUSES
+
+    for status in WORKSPACE_STATUSES:
+        assert re.search(rf"\| `{status}`", agentcard.AGENT_CARD_MD), status
+
+
+def test_the_card_carries_the_whole_exit_table() -> None:
+    """Same honesty for exit codes: every code the client can exit
+    with (#841) has its row on the card."""
+    from msks.client.jsonio import (
+        EXIT_CONFLICT,
+        EXIT_FAILURE,
+        EXIT_INTERRUPT,
+        EXIT_NOT_FOUND,
+        EXIT_OK,
+        EXIT_USAGE,
+        EXIT_WRONG_STATE,
+    )
+
+    for code in (
+        EXIT_OK,
+        EXIT_FAILURE,
+        EXIT_USAGE,
+        EXIT_NOT_FOUND,
+        EXIT_CONFLICT,
+        EXIT_WRONG_STATE,
+        EXIT_INTERRUPT,
+    ):
+        assert re.search(rf"^\| {code}\s", agentcard.AGENT_CARD_MD, re.M), code

@@ -41,6 +41,7 @@ from ..conformance_args import (
     CheckOptions,
 )
 from . import egress as egress_mod
+from .agentcard import AGENT_CARD_MD
 from .config import ClientConfig, bootstrap
 from .console import run_workspace_shell
 from .create import read_pubkey  # noqa: F401 — the tests' seam
@@ -284,6 +285,15 @@ def ls(
     """List workspaces on the daemon."""
     set_json_mode(as_json)
     return cmd_ls(as_json, transport=ctx.obj)
+
+
+@app.command("agent-card")
+@one_line_interrupts
+def agent_card() -> int:
+    """Print the agent reference card (#842): the same markdown as
+    the docs' agent chapter, for a harness to capture in one call."""
+    print(AGENT_CARD_MD, end="")
+    return 0
 
 
 @app.command("tui")
