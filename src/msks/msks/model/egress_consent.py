@@ -688,7 +688,7 @@ async def pending_row(session, workspace_id, dest_host, dest_port):
 # key unset, no tag is computed or stored, and rows written while
 # tagging is disabled carry a NULL tag. The key is read live off
 # the settings, so a SIGHUP reload turns tagging on for later rows
-# without touching earlier ones. FIPS posture: the digest goes
+# without touching earlier ones. The digest goes
 # through :mod:`hmac`/``hashlib`` — the process's own OpenSSL —
 # pinning nothing here.
 

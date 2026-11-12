@@ -158,10 +158,10 @@ def signature(algo: str, sig: bytes) -> bytes:
 def sign(private, challenge: bytes, flags: int) -> bytes | None:
     """Sign ``challenge`` and return the algorithm-tagged blob, or
     None when the request's flag bits ask for a signature this
-    agent refuses to make (an unpinned RSA digest — SHA-1, or an
-    invalid combination — cuts against the FIPS posture, and
-    answering it wrong would send the client a signature its server
-    rejects with no agent-side clue)."""
+    agent refuses to make: an unpinned RSA digest (SHA-1), or an
+    invalid combination. Answering either wrong would send the
+    client a signature its server rejects with no agent-side
+    clue."""
     if isinstance(private, ed25519.Ed25519PrivateKey):
         return signature("ssh-ed25519", private.sign(challenge))
     if isinstance(private, ec.EllipticCurvePrivateKey):

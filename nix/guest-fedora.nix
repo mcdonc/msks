@@ -392,10 +392,9 @@ let
         # key — the console-planted identity of #110's tests, the
         # msksd-minted key of #111 — and never with a password.
         #
-        # Authentication policy only, never algorithm policy: no cipher,
-        # MAC, key-exchange, or host-key lists here, so a FIPS-restricted
-        # OpenSSH (a distro crypto provider) narrows itself without
-        # config surgery (#115).
+        # Authentication policy only, never algorithm policy: no
+        # cipher, MAC, key-exchange, or host-key lists land here —
+        # the platform's OpenSSH keeps its own defaults (#115).
         printf '%s\n' \
           '# msks (#110): key-only login; the forward is the road in.' \
           'PasswordAuthentication no' \

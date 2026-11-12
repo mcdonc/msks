@@ -15,7 +15,7 @@ and per-workspace seeding variance.
 Both halves are minted with msks code, not mitmproxy's
 ``CertStore``: the store mints RSA-only CAs, and its leaf path
 signs with SHA-256 — a hard ``ValueError`` under the Ed25519 keys
-the #111/#138 FIPS posture chooses (the #194 spike's finding).
+the #111/#138 mint chooses (the #194 spike's finding).
 
 The CA is Ed25519 and stays so for the leaves: nothing in the
 daemon, the leaf format, or the wire depends on the type.

@@ -1,7 +1,7 @@
 """The virtiofs daemons behind host mounts (#620, part #622).
 
 One virtiofsd per attached share, from the platform's own package
-(the FIPS posture: no vendored build). This module owns the
+— nothing is vendored. This module owns the
 argument grammar and the path shapes; the local driver owns the
 process lifecycle — spawn before the VMM boots, teardown beside
 the tap on every stop path.
