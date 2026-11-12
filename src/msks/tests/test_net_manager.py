@@ -425,6 +425,111 @@ async def test_recorded_slice_conflict_fails_closed(net_app) -> None:
         await manager.attach("ws-b", want=True)
 
 
+# --- A teardown that raises (#828) ---------------------------------------
+
+
+async def test_a_raising_teardown_still_releases_the_slice(
+    net_app, monkeypatch
+) -> None:
+    """#828: a teardown step that raises after the attachment popped
+    must not strand the slice — the next start re-claims the row's
+    recorded /30 instead of being refused."""
+    app, _ip, _nft = net_app
+    manager = await ready(app)
+    first = await manager.attach("ws-a", want=True)
+    monkeypatch.setenv(NFT_FAIL_AT, "delete table")
+    with pytest.raises(MicrovmError, match="nft table delete"):
+        await manager.detach("ws-a")
+    monkeypatch.delenv(NFT_FAIL_AT)
+    assert first.slice not in manager._used_slices
+    second = await manager.attach("ws-a", want=True)
+    assert second.slice == first.slice
+    assert second.guest_ip == first.guest_ip
+    await manager.detach("ws-a")
+
+
+async def test_a_later_detach_retries_the_residue(
+    net_app, monkeypatch
+) -> None:
+    """#828: the failed teardown's leftover table and tap are
+    re-cleaned by the workspace's next detach — the retry is the
+    same step sequence, and success clears the residue."""
+    app, ip_log, nft_log = net_app
+    manager = await ready(app)
+    attachment = await manager.attach("ws-a", want=True)
+    services = manager._services["ws-a"]
+    monkeypatch.setenv(NFT_FAIL_AT, "delete table")
+    with pytest.raises(MicrovmError, match="nft table delete"):
+        await manager.detach("ws-a")
+    monkeypatch.delenv(NFT_FAIL_AT)
+    assert not services.dhcp.stopped  # the raise preceded the service stop
+    assert "ws-a" in manager._residues
+    open(ip_log, "w").close()
+    open(nft_log, "w").close()
+    await manager.detach("ws-a")  # attachment is None; the residue retries
+    assert services.dhcp.stopped and services.dns.stopped
+    assert f"link del dev {attachment.tap}" in log_lines(ip_log)
+    assert any(line.startswith("delete table") for line in log_lines(nft_log))
+    assert manager._residues == {}
+    assert manager._used_slices == set()
+
+
+async def test_a_fresh_attach_supersedes_the_residue(
+    net_app, monkeypatch
+) -> None:
+    """#828: a start between the failed detach and its retry re-arms
+    the plumbing (the build sweeps the leftover tap and replaces the
+    leftover table), so the residue is dropped — a later detach tears
+    down the live attachment, not a stale one."""
+    app, ip_log, _nft = net_app
+    manager = await ready(app)
+    await manager.attach("ws-a", want=True)
+    monkeypatch.setenv(NFT_FAIL_AT, "delete table")
+    with pytest.raises(MicrovmError, match="nft table delete"):
+        await manager.detach("ws-a")
+    monkeypatch.delenv(NFT_FAIL_AT)
+    attachment = await manager.attach("ws-a", want=True)
+    assert "ws-a" not in manager._residues
+    await manager.detach("ws-a")
+    assert f"link del dev {attachment.tap}" in log_lines(ip_log)
+    assert manager._residues == {}
+
+
+async def test_a_residue_retry_that_fails_again_keeps_the_residue(
+    net_app, monkeypatch
+) -> None:
+    """#828: a retry that raises again re-stashes the residue — the
+    slice stays released and the next detach tries once more."""
+    app, _ip, _nft = net_app
+    manager = await ready(app)
+    await manager.attach("ws-a", want=True)
+    monkeypatch.setenv(NFT_FAIL_AT, "delete table")
+    for _ in range(2):
+        with pytest.raises(MicrovmError, match="nft table delete"):
+            await manager.detach("ws-a")
+    monkeypatch.delenv(NFT_FAIL_AT)
+    assert "ws-a" in manager._residues
+    await manager.detach("ws-a")
+    assert manager._residues == {}
+
+
+async def test_stop_retries_a_stashed_residue(net_app, monkeypatch) -> None:
+    """#828: daemon shutdown cleans a residue too, and a residue
+    whose retry still fails cannot abort the shutdown loop."""
+    app, ip_log, nft_log = net_app
+    manager = await ready(app)
+    await manager.attach("ws-a", want=True)
+    monkeypatch.setenv(NFT_FAIL_AT, "delete table")
+    with pytest.raises(MicrovmError, match="nft table delete"):
+        await manager.detach("ws-a")
+    monkeypatch.delenv(NFT_FAIL_AT)
+    open(ip_log, "w").close()
+    open(nft_log, "w").close()
+    await manager.stop()
+    assert any(line.startswith("delete table") for line in log_lines(nft_log))
+    assert manager._residues == {}
+
+
 # --- The forward dial (#109) ---
 
 

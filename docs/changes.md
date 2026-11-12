@@ -38,6 +38,13 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **Egress slice release on a failed teardown (#828).** A `detach`
+  whose table or tap delete raised left the workspace's slice
+  claimed until the daemon restarted, so the next `msks start` was
+  refused with "held by another live workspace". The slice now
+  releases whatever the teardown does, and the workspace's next
+  stop retries the leftover table and tap deletes.
+
 - **Workspace starts after a guest-initiated poweroff (#825).** A
   VMM that exited outside the stop flow — the guest's own `poweroff`,
   or a guest landing its shutdown just past a stop deadline — left a
