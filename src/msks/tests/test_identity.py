@@ -285,16 +285,25 @@ def run_seed(
     # grace run in test time, each poll costing one fake second.
     # The wait's poll cadence: a logger that ticks the uptime
     # file a second per call — and mounts /home off its second
-    # call when the scenario brings the volume in.
+    # call when the scenario brings the volume in. #838: the
+    # stub is builtin-only (read, parameter expansion, echo),
+    # one fork per call — its own shell. The cut and cat forks
+    # an earlier stub paid per call doubled the 1200-poll
+    # shape's host fork count, and a loaded shared macOS runner
+    # forks slowly enough to carry the whole run past run_seed's
+    # budget.
     if home_mount_arrives:
         stubs.joinpath("sleep").write_text(
             "#!/bin/sh\n"
             f'echo "sleep $*" >> "{log}"\n'
-            f'u=$(cut -d. -f1 "{sandbox}/uptime")\n'
+            f'read -r u _ < "{sandbox}/uptime"\n'
+            "u=${u%%.*}\n"
             f'echo "$((u+1)).00 8000.00" > "{sandbox}/uptime"\n'
-            f'c=$(cat "{sandbox}/sleep-n" 2>/dev/null || echo 0)\n'
-            f'c=$((c+1)); echo "$c" > "{sandbox}/sleep-n"\n'
-            f'if [ "$c" -ge 2 ]; then '
+            "c=0\n"
+            f'[ -r "{sandbox}/sleep-n" ] '
+            f'&& read -r c < "{sandbox}/sleep-n"\n'
+            f'echo "$((c+1))" > "{sandbox}/sleep-n"\n'
+            'if [ "$((c+1))" -ge 2 ]; then '
             f'printf "/dev/vdb /home ext4 rw,relatime 0 0\\n" '
             f'>> "{sandbox}/mounts"; fi\n'
             "exit 0\n"
@@ -303,7 +312,8 @@ def run_seed(
         stubs.joinpath("sleep").write_text(
             "#!/bin/sh\n"
             f'echo "sleep $*" >> "{log}"\n'
-            f'u=$(cut -d. -f1 "{sandbox}/uptime")\n'
+            f'read -r u _ < "{sandbox}/uptime"\n'
+            "u=${u%%.*}\n"
             f'echo "$((u+1)).00 8000.00" > "{sandbox}/uptime"\n'
             "exit 0\n"
         )
@@ -312,6 +322,14 @@ def run_seed(
     env = {
         "PATH": f"{stubs}:{os.environ['PATH']}",
     }
+    # #838: this budget exists to catch a hung or looping seed
+    # (a broken stub pays the real tools' wall clock), not to
+    # bound a paced run: the 1200-poll shape forks ~5000 host
+    # processes (the loop's grep, the volume scan's cats, and
+    # the sleep stub's shell per poll) — ~9s on a dev host, and
+    # a loaded shared macOS runner can more than double that —
+    # so the budget sits an order of magnitude above the paced
+    # worst case, generous by design.
     return subprocess.run(
         [
             "sh",
@@ -321,7 +339,7 @@ def run_seed(
         env=env,
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=120,
     )
 
 
