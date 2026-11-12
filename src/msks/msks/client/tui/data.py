@@ -32,6 +32,20 @@ class TuiData:
             ssl_ctx=shared_ssl(),
         )
 
+    async def storage(self) -> dict:
+        """GET the capacity report (#849) — the list's detail
+        strip: the per-workspace root-plus-home cost ``msks
+        storage`` reports, fetched on the listing's refresh
+        cadence and cached between refreshes."""
+        return await api_call(
+            "GET",
+            env_url(),
+            env_token(),
+            "/api/v1/storage",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+        )
+
     async def images(self) -> list[dict]:
         """GET the image catalog — the create form's image select
         (the same listing ``msksc image ls`` prints)."""

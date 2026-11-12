@@ -40,6 +40,7 @@ from test_main_tui import (
     FakeFactory,
     FakeWS,
     action_children,
+    detail_text,
     list_children,
     make_app,
     on_consent,
@@ -52,6 +53,9 @@ from test_main_tui import (
     scripted_link,
     scripted_manifest,
     wait_for,
+)
+from test_main_tui import (
+    WS as WS_ID,
 )
 from test_tui_secrets import (
     audit_row,
@@ -115,6 +119,7 @@ def audit_settled(app) -> bool:
 
 async def test_the_workspaces_list() -> None:
     """The tree's root: two rows, one running one stopped, the
+    detail strip under them with its storage figures, and the
     status bar's count, state summary, and daemon URL below."""
     data = FakeData(
         [
@@ -122,9 +127,28 @@ async def test_the_workspaces_list() -> None:
             row(id="ws2", name="beta", status="stopped"),
         ]
     )
+    data.storage_rows = [
+        {
+            "id": WS_ID,
+            "name": "alpha",
+            "root_mib": 10240,
+            "home_mib": 20480,
+            "root_bytes": 2 * 1024**3,
+            "home_bytes": 1181116006,
+        },
+        {
+            "id": "ws2",
+            "name": "beta",
+            "root_mib": 10240,
+            "home_mib": 20480,
+            "root_bytes": 512 * 1024**2,
+            "home_bytes": 0,
+        },
+    ]
     app, _ = make_app(data)
     async with app.run_test(size=(80, 24)) as pilot:
         await wait_for(lambda: list_children(app) == 2)
+        await wait_for(lambda: "storage 3.1G" in detail_text(app))
         await pilot.pause()
         await export(app, "workspaces-list")
 

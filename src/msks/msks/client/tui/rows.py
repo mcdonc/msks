@@ -1,8 +1,9 @@
 """The workspace tree's row rendering (#309, #347–#351): the
 listing's columns, the status colors, the relative created labels,
-and the header/status lines' content — pure text arithmetic over
-daemon rows: no Textual widgets, no screens, and no daemon
-imports, so every screen module renders through one vocabulary.
+the header/status lines' content, and the detail strip's lines
+(#849) — pure text arithmetic over daemon rows: no Textual
+widgets, no screens, and no daemon imports, so every screen
+module renders through one vocabulary.
 """
 
 import re
@@ -10,6 +11,8 @@ from datetime import UTC, datetime
 
 from rich.cells import cell_len
 from textual.content import Content, Span
+
+from ..volumes import human_bytes
 
 
 def workspace_label(row: dict) -> str:
@@ -763,6 +766,67 @@ def state_summary(rows: list[dict]) -> str | None:
         key=lambda status: (STATUS_SORT_RANK.get(status, after), status),
     )
     return " ".join(f"{counts[status]} {status}" for status in order)
+
+
+#: The detail strip's identity budgets (#849): the id's ten
+#: cells carry a whole daemon id, the image shares the meta
+#: line's budget, and the egress budget covers the posture's
+#: vocabulary — together the two lines hold inside an 80-column
+#: terminal's box.
+DETAIL_ID_W = 10
+DETAIL_EGRESS_W = 12
+
+
+def detail_first(row: dict) -> str:
+    """The detail strip's first line (#849): the focused row's
+    identity — the immutable id, the image, the egress posture —
+    in the meta line's grammar, each field clipped to its budget.
+    Every fact rides the row the listing already holds."""
+    return (
+        f" id {clip(row['id'], DETAIL_ID_W)}"
+        f"  ·  image {clip(meta_raw(row)[1], META_IMAGE_W)}"
+        f"  ·  egress {clip(row.get('egress_mode') or '-', DETAIL_EGRESS_W)}"
+    )
+
+
+def detail_second(row: dict, used_bytes: int | None) -> str:
+    """The detail strip's second line (#849): the sizes and the
+    costs — the topology (cpus, memory), the mounts-issue count
+    the status cell already marks, and the storage the capacity
+    report charges the workspace (``human_bytes`` rendered, the
+    honest dash before the first report lands or for a row it
+    does not name)."""
+    parts = [
+        f"cpus {row.get('cpus') if row.get('cpus') is not None else '-'}",
+        (
+            f"mem {row['mem_mib']} MiB"
+            if row.get("mem_mib") is not None
+            else "mem -"
+        ),
+    ]
+    marker = issue_marker(row)
+    if marker is not None:
+        parts.append(f"{marker} mounts")
+    storage = "-" if used_bytes is None else human_bytes(used_bytes)
+    parts.append(f"storage {storage}")
+    return " " + "  ·  ".join(parts)
+
+
+def detail_strip(row: dict, used_bytes: int | None) -> Content:
+    """The listing's detail strip (#849): the focused row's quick
+    facts in two lines directly under the rows — the identity on
+    the first, the sizes and costs on the second — every fact but
+    storage read off the row the listing holds, so a selection
+    move pays no roundtrip. The ``✗N`` mounts marker rides the
+    warning color, the same cue the status cell carries."""
+    first = detail_first(row)
+    second = detail_second(row, used_bytes)
+    spans: list[Span] = []
+    marker = issue_marker(row)
+    if marker is not None:
+        start = len(first) + 1 + second.index(marker)
+        spans.append(Span(start, start + len(marker), ISSUE_MARKER_COLOR))
+    return Content(f"{first}\n{second}", spans)
 
 
 def status_content(

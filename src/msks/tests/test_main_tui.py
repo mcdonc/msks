@@ -209,12 +209,35 @@ class FakeData:
         self.proxy_calls: list[tuple] = []
         self.proxy_refusal: str | None = None
         self.proxy_removes: list[tuple] = []
+        # The detail strip's surface (#849): the capacity report's
+        # per-workspace rows and the fetches the list's refresh
+        # cadence makes against it.
+        self.storage_rows: list[dict] = []
+        self.storage_fetches = 0
 
     async def workspaces(self) -> list[dict]:
         self.fetches += 1
         if "workspaces" in self.fail:
             raise RuntimeError("daemon away")
         return [dict(r) for r in self.rows]
+
+    async def storage(self) -> dict:
+        """The capacity report (#849) — the detail strip's storage
+        cell; recorded, and refused the way the daemon's would be
+        when a test arms it."""
+        self.storage_fetches += 1
+        if "storage" in self.fail:
+            raise RuntimeError(self.refusal)
+        return {
+            "state": {
+                "total": 0,
+                "used": 0,
+                "free": 0,
+                "pressure": "ok",
+            },
+            "workspaces": [dict(r) for r in self.storage_rows],
+            "images": [],
+        }
 
     def proxy_id(self) -> int:
         """The next proxy row's id — the daemon's own sequence,
@@ -700,6 +723,15 @@ def row_text(app, index: int) -> str:
         return ""
 
 
+def detail_text(app) -> str:
+    """The detail strip's text (#849): the focused row's quick
+    facts under the rows; empty while the listing still mounts."""
+    try:
+        return str(app.query_one("#detail", Static).content)
+    except Exception:
+        return ""
+
+
 def consent_text(app) -> str:
     """The consent line's text; empty while the page still mounts."""
     try:
@@ -884,6 +916,129 @@ async def test_a_refresh_keeps_the_focused_workspace_row() -> None:
             lambda: fresh().highlighted_child.row_key == ("workspace", "ws-b")
         )
         await wait_for(lambda: list_children(app) == 3)
+
+
+async def test_the_detail_strip_pins_the_focused_rows_facts() -> None:
+    """The detail strip under the rows (#849): the focused row's
+    quick facts — the identity on the first line, the topology,
+    the mounts marker, and the storage the capacity report
+    charges on the second — painted from the standing rows and
+    the storage cache, so a selection move changes the strip with
+    no roundtrip. The strip renders directly under the last row,
+    its lines inside the 80-column frame."""
+    data = FakeData([mounted_row(), row(id="ws-b", name="beta")])
+    data.storage_rows = [
+        {
+            "id": WS,
+            "name": "alpha",
+            "root_mib": 10240,
+            "home_mib": 20480,
+            "root_bytes": 2 * 1024**3,
+            "home_bytes": 1181116006,
+        },
+        {
+            "id": "ws-b",
+            "name": "beta",
+            "root_mib": 10240,
+            "home_mib": 20480,
+            "root_bytes": 512 * 1024**2,
+            "home_bytes": 0,
+        },
+    ]
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await wait_for(lambda: "storage 3.1G" in detail_text(app))
+        await pilot.pause()
+        text = detail_text(app)
+        assert "id ws-a" in text
+        assert f"image {rows_mod.clip('a' * 64, rows_mod.META_IMAGE_W)}" in (
+            text
+        )
+        assert "egress interactive" in text
+        assert "cpus 2" in text
+        assert "mem 8192 MiB" in text
+        assert "✗1 mounts" in text
+        first, second = text.split("\n")
+        assert cell_len(first) <= 78
+        assert cell_len(second) <= 78
+        # The strip renders directly under the last row.
+        rows = app.query_one("#rows")
+        strip = app.query_one("#detail", Static)
+        assert strip.display
+        assert strip.region.y == rows.region.y + rows.region.height
+        # A selection move repaints from the cache — no roundtrip.
+        fetches = data.storage_fetches
+        await press_until(pilot, "down", lambda: "id ws-b" in detail_text(app))
+        text = detail_text(app)
+        assert "storage 512M" in text
+        assert "✗" not in text
+        assert data.storage_fetches == fetches
+
+
+async def test_a_long_list_keeps_the_strip_on_screen() -> None:
+    """A list longer than the screen caps at the height the
+    standing lines leave (#849): the strip stays directly under
+    the visible rows, inside the box, and the arrows keep their
+    meaning — up from the first row keeps the focus on the list,
+    and the display-only strip never traps it."""
+    data = FakeData([row(id=f"ws-{i}", name=f"ws{i}") for i in range(30)])
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await wait_for(lambda: list_children(app) == 30)
+        await wait_for(lambda: "id ws-0" in detail_text(app))
+        await pilot.pause()
+        rows = app.query_one("#rows")
+        strip = app.query_one("#detail", Static)
+        listing = app.query_one("#listing")
+        assert rows.region.height == 24 - main_screen_mod.LIST_RESERVED_ROWS
+        assert strip.display
+        assert strip.region.y == rows.region.y + rows.region.height
+        assert (
+            strip.region.y + strip.region.height
+            < listing.region.y + listing.region.height
+        )
+        # Up from the first row stays on the list — the header
+        # area takes no focus, and neither does the strip.
+        await pilot.press("up")
+        assert app.focused is rows
+        # The walk still scrolls the list, the strip keeps its
+        # place under it, and the walk reaches the whole fleet.
+        for _ in range(25):
+            await pilot.press("down")
+        await pilot.pause()
+        assert rows.scroll_offset.y > 0
+        assert strip.region.y == rows.region.y + rows.region.height
+
+
+async def test_the_detail_strip_hides_on_an_empty_list() -> None:
+    """The strip hides while no row stands (#849): the empty
+    state owns the space under the header."""
+    data = FakeData([])
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(
+            lambda: (
+                "No workspaces" in str(app.query_one("#empty", Static).content)
+            )
+        )
+        assert not app.query_one("#detail", Static).display
+
+
+async def test_a_storage_report_that_will_not_come_keeps_the_dash() -> None:
+    """A refused capacity report keeps the strip standing
+    (#849): the storage cell reads its honest dash, the row's own
+    facts still paint, and no flash answers for the strip — the
+    listing reports its own failures, and the strip is a detail
+    beside it."""
+    data = FakeData([row()])
+    data.fail.add("storage")
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: list_children(app) == 1)
+        await wait_for(lambda: data.storage_fetches >= 1)
+        await wait_for(lambda: "id ws-a" in detail_text(app))
+        assert "storage -" in detail_text(app)
+        assert "listing failed" not in status_text(app)
 
 
 async def test_start_stop_and_remove_from_the_list(monkeypatch) -> None:
@@ -2696,6 +2851,29 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
             return httpx.Response(
                 200, json=[{"name": "debian-13", "version": "2026.01"}]
             )
+        if request.method == "GET" and request.url.path == ("/api/v1/storage"):
+            return httpx.Response(
+                200,
+                json={
+                    "state": {
+                        "total": 1,
+                        "used": 0,
+                        "free": 1,
+                        "pressure": "ok",
+                    },
+                    "workspaces": [
+                        {
+                            "id": "ws1",
+                            "name": "n",
+                            "root_mib": 10240,
+                            "home_mib": 20480,
+                            "root_bytes": 0,
+                            "home_bytes": 0,
+                        }
+                    ],
+                    "images": [],
+                },
+            )
         if request.method == "GET" and request.url.path == ("/api/v1/health"):
             return httpx.Response(
                 200, json={"status": "ok", "machine": "x86_64"}
@@ -2865,6 +3043,11 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
         "root_mib": 10240,
         "home_mib": 20480,
     }
+    # The detail strip's seam (#849): the same capacity report
+    # ``msks storage`` renders.
+    report = await data.storage()
+    assert report["workspaces"][0]["id"] == "ws1"
+    assert ("GET", "/api/v1/storage") in seen
     created = await data.create({"name": "n"})
     assert created["id"] == "ws1"
     # The create sends the configured key's public half (#486): the
@@ -7034,6 +7217,48 @@ def test_the_list_row_marks_unresolved_mounts() -> None:
     (span,) = healthy.spans
     assert healthy.plain[span.start : span.end] == "● stopped"
     assert span.style == muted_style({})
+
+
+def test_the_detail_strip_lines() -> None:
+    """The strip's two lines (#849), pinned without the UI: the
+    identity on the first, the topology, the mounts marker, and
+    the storage figure on the second — the honest dash before the
+    first capacity report lands, the marker in the warning color
+    the status cell already carries, and every field clipped to a
+    budget that holds the line inside an 80-column terminal. The
+    paint itself tolerates a screen the compose has not built
+    (or teardown has emptied) — teardown noise, not a crash."""
+    MainScreen().paint_detail()  # no strip yet: decides nothing
+    dash = rows_mod.detail_strip(row(), None)
+    first, second = dash.plain.split("\n")
+    assert first == (
+        f" id {WS}  ·  image {rows_mod.clip('a' * 64, rows_mod.META_IMAGE_W)}"
+        "  ·  egress interactive"
+    )
+    assert second == " cpus 2  ·  mem 8192 MiB  ·  storage -"
+    assert dash.spans == []
+    # The marker rides the warning color, the storage figure the
+    # report's root-plus-home sum as human_bytes renders it.
+    marked = rows_mod.detail_strip(mounted_row(), 3328599654)
+    assert "✗1 mounts" in marked.plain
+    assert "storage 3.1G" in marked.plain
+    (span,) = marked.spans
+    assert marked.plain[span.start : span.end] == "✗1"
+    assert span.style == rows_mod.ISSUE_MARKER_COLOR
+    # Both lines hold the 80-column frame's span whatever the
+    # fields carry.
+    long = rows_mod.detail_strip(
+        {
+            **row(),
+            "id": "very-long-workspace-id",
+            "image_hash": "b" * 64,
+            "egress_mode": "interactive",
+        },
+        40 * 1024**3,
+    )
+    left, right = long.plain.split("\n")
+    assert cell_len(left) <= 78
+    assert cell_len(right) <= 78
 
 
 def test_the_mounts_editor_boundary_branches() -> None:
