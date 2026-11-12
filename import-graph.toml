@@ -315,7 +315,9 @@ secretcache = 2
 # #773: the clone route's two statements — the failure class
 # (MicrovmError) and the seam's truth-guard vocabulary (VmStatus),
 # each the module edge beside its name.
-spec = 41
+# #833: the create fallback boots the per-arch default cmdline
+# (DEFAULT_CMDLINE) — the module edge beside the name.
+spec = 43
 # #773: the clone route reads the state-disk floor (create_refusal
 # beside the artifacts' allocated-cost file_cost) before any byte
 # copies.

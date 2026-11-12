@@ -49,6 +49,13 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **The legacy create default cmdline (#833).** A create with
+  explicit kernel/rootfs paths and no `cmdline` now boots with
+  this host's console device in the default: `ttyAMA0` on an
+  aarch64 daemon, `ttyS0` elsewhere. The console answers on
+  both; the catalog-record path was already per-arch and is
+  unchanged.
+
 - **`msks doctor` qemu-kvm apk hint (#832).** The hint now
   prints this host's Alpine emulator package:
   `qemu-system-aarch64` on an aarch64 host,

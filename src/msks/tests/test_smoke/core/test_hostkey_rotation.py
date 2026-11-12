@@ -34,6 +34,7 @@ from msks.spec.mounts import MountSpec
 
 from test_smoke import (
     CMDLINE,
+    DEFAULT_CMDLINE,
     INITRD,
     ROOTFS,
     SHUTDOWN_TIMEOUT_S,
@@ -52,7 +53,7 @@ def spec_of(wid: str, mounts: tuple) -> VmSpec:
         kernel=Path(VMLINUX),
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
-        cmdline=CMDLINE or "console=ttyS0 root=/dev/vda rw",
+        cmdline=CMDLINE or DEFAULT_CMDLINE,
         root_mib=2048,
         home_mib=256,
         egress=False,

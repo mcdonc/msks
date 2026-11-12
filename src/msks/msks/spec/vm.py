@@ -3,11 +3,38 @@
 over, in :mod:`msks.spec.failures` (#416), so a module that only
 raises ``MicrovmError`` pulls none of this vocabulary."""
 
+import os
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
 from .mounts import MountSpec
+
+# The console device the guest's serial line answers on, per
+# host arch (#833): cloud-hypervisor's aarch64 machine presents
+# a PL011 UART, which Linux names ttyAMA0, while x86_64's 8250
+# is ttyS0 — the same fact the guest images bake per arch
+# (nix/guest-debian.nix's archFacts). A machine the table lacks
+# keeps ttyS0, the historic default.
+GUEST_CONSOLE_DEVICES = {
+    "x86_64": "ttyS0",
+    "aarch64": "ttyAMA0",
+}
+
+
+def guest_console_device(machine: str) -> str:
+    """The console device a guest booted on one machine's arch
+    presents on its serial line."""
+    return GUEST_CONSOLE_DEVICES.get(machine, "ttyS0")
+
+
+# The cmdline a create without one boots with (#833): the
+# console follows this host's machine — the legacy surface's
+# own default, beside the per-arch cmdline the catalog record
+# carries (the create path prefers the record's).
+DEFAULT_CMDLINE = (
+    f"console={guest_console_device(os.uname().machine)} root=/dev/vda rw"
+)
 
 
 @dataclass(frozen=True)
@@ -27,7 +54,7 @@ class VmSpec:
     workspace_id: str
     kernel: Path
     rootfs: Path
-    cmdline: str = "console=ttyS0 root=/dev/vda rw"
+    cmdline: str = DEFAULT_CMDLINE
     cpus: int = 4
     mem_mib: int = 8192
     initrd: Path | None = None

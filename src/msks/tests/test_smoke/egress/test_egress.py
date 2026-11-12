@@ -26,6 +26,7 @@ from msks.settings import (
 
 from test_smoke import (
     CMDLINE,
+    DEFAULT_CMDLINE,
     GIT_BIN,
     GIT_OUT_TIMEOUT_S,
     INITRD,
@@ -94,7 +95,7 @@ async def test_local_egress_boot() -> None:
         kernel=Path(VMLINUX),
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
-        cmdline=CMDLINE or "console=ttyS0 root=/dev/vda rw",
+        cmdline=CMDLINE or DEFAULT_CMDLINE,
         egress=True,
     )
     # The daemon verifies, never writes, ip_forward (#101 — the
@@ -248,7 +249,7 @@ async def test_local_egress_git_out() -> None:
         kernel=Path(VMLINUX),
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
-        cmdline=CMDLINE or "console=ttyS0 root=/dev/vda rw",
+        cmdline=CMDLINE or DEFAULT_CMDLINE,
         egress=True,
     )
     workdir = state_dir / "gitout"
@@ -930,7 +931,7 @@ async def boot_consent_workspace(
         kernel=Path(VMLINUX),
         rootfs=Path(ROOTFS),
         initrd=Path(INITRD) if INITRD else None,
-        cmdline=CMDLINE or "console=ttyS0 root=/dev/vda rw",
+        cmdline=CMDLINE or DEFAULT_CMDLINE,
         egress=True,
         egress_mode=mode,
         egress_allowlist=allowlist,

@@ -6,8 +6,9 @@ Per-workspace layout under ``<state_dir>/vms/<workspace_id>/``:
 - ``ch.pid``    — the CH process id (restart-surviving kill path)
 - ``ch.log``    — the VMM's own stderr
 - ``console.sock``— the serial device's unix socket (the guest's
-                 autologin root getty on ttyS0 speaks through it,
-                 #481)
+                 autologin root getty on the arch's console
+                 device, ttyS0 on x86_64 and ttyAMA0 on aarch64
+                 (#833), speaks through it, #481)
 
 Shutdown model, matching how the VMM really behaves: a bare
 ``cloud-hypervisor --api-socket`` is a daemon that keeps running after
@@ -186,7 +187,9 @@ async def console_attempt(socket_path: Path):
     """One connect against the console device's unix socket.
 
     cloud-hypervisor listens on the path; the guest's autologin
-    getty on ttyS0 (#481) speaks through it. Raises _ConsoleRetry
+    getty on the arch's console device, ttyS0 on x86_64 and
+    ttyAMA0 on aarch64 (#833), speaks through it (#481). Raises
+    _ConsoleRetry
     for every state a still-booting guest can present (missing
     socket, refused connect, hostile path).
     """
@@ -298,9 +301,10 @@ def vm_config(
 
     ``console_socket`` puts the serial device in socket mode
     (#481): cloud-hypervisor LISTENS on that unix path, and the
-    guest's ttyS0 — kernel console and autologin root getty —
-    speaks through it, bidirectionally. Without it the serial
-    device stays off.
+    guest's console device — ttyS0 on x86_64, ttyAMA0 on
+    aarch64 (#833) — carries the kernel console and the
+    autologin root getty through it, bidirectionally. Without it
+    the serial device stays off.
 
     ``net`` adds the virtio-net device (#52): ``tap`` names the
     per-VM interface the daemon already created and addressed (a
@@ -1136,9 +1140,9 @@ class LocalCloudHypervisor(MicrovmDriver):
         console device — seconds after vm.boot reported success —
         so the connect is retried under one deadline; a dead VMM
         fails fast instead of waiting it out. The stream is raw
-        bytes: the guest side is an autologin root getty on ttyS0
-        (#481), and whatever it prints is the session's first
-        output.
+        bytes: the guest side is an autologin root getty on the
+        arch's console device (#833; #481), and whatever it
+        prints is the session's first output.
         """
         socket_path = self._dir(workspace_id) / "console.sock"
         settings = self._settings().vmm

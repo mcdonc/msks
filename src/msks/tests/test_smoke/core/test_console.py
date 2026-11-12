@@ -1,6 +1,7 @@
 """Console smoke: the root getty and the seeded workspace user (#481)."""
 
 import contextlib
+import os
 import shutil
 import uuid
 from pathlib import Path
@@ -12,10 +13,12 @@ from msks.settings import (
     Settings,
     VmmSettings,
 )
+from msks.spec.vm import guest_console_device
 from testkeys import mint
 
 from test_smoke import (
     CMDLINE,
+    DEFAULT_CMDLINE,
     INITRD,
     ROOTFS,
     SHUTDOWN_TIMEOUT_S,
@@ -59,7 +62,7 @@ async def test_local_console_identity_drop() -> None:
                 kernel=Path(VMLINUX),
                 rootfs=Path(ROOTFS),
                 initrd=Path(INITRD) if INITRD else None,
-                cmdline=CMDLINE or "console=ttyS0 root=/dev/vda rw",
+                cmdline=CMDLINE or DEFAULT_CMDLINE,
                 root_mib=2048,
                 home_mib=256,
                 egress=False,
@@ -78,11 +81,14 @@ async def test_local_console_identity_drop() -> None:
         # drops the directive silently), and the prompt races the
         # hostname again — the guest-up needle above would still
         # pass, its retries re-rendering PS1's \h until the name
-        # lands.
+        # lands. The getty rides the arch's console device
+        # (#833): serial-getty@ttyS0 on x86_64, @ttyAMA0 on
+        # aarch64 — the unit the image's ordering dropin names.
+        console = guest_console_device(os.uname().machine)
         await run_in_console(
             microvm,
             wid,
-            "systemctl show -p After serial-getty@ttyS0.service "
+            f"systemctl show -p After serial-getty@{console}.service "
             "| grep -qE 'cloud-init-network\\.service"
             "|msks-seed-hostname\\.service' "
             "&& echo O-$((6*7))",

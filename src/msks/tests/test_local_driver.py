@@ -45,7 +45,7 @@ from msks.settings import (
     VmmSettings,
 )
 from msks.spec.mounts import MountSpec, mount_tag
-from msks.spec.vm import VmStatus
+from msks.spec.vm import DEFAULT_CMDLINE, VmStatus
 from netstubs import stub_ip, stub_nft
 from test_fsdaemons import FakeProc, socket_from_args, socket_sleeper
 from test_net_manager import FakeService
@@ -182,7 +182,7 @@ def test_vm_config_matches_v52_schema(tmp_path: Path) -> None:
     assert config["cpus"] == {"boot_vcpus": 4, "max_vcpus": 4}
     assert config["memory"] == {"size": 2048 * 1024 * 1024}
     assert config["payload"]["kernel"] == str(tmp_path / "k")
-    assert config["payload"]["cmdline"] == "console=ttyS0 root=/dev/vda rw"
+    assert config["payload"]["cmdline"] == DEFAULT_CMDLINE
     assert config["disks"] == disk_entries(tmp_path, WID)
     assert config["serial"] == {"mode": "Off"}
     assert config["console"] == {"mode": "Off"}
