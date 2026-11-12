@@ -4,7 +4,7 @@ The shipped tree generates no key anywhere (#486 — the operator's
 own key is the identity), but the tests still need fresh keypairs
 as fixtures: the ssh staging tests, the create tests, the smokes.
 This helper keeps the mint's shape (OpenSSH private PEM, one-line
-public half, the FIPS-approvable type set #138 carried) on the
+public half, the type set #138 carried) on the
 test side of the tree.
 """
 

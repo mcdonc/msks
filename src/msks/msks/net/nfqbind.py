@@ -23,8 +23,8 @@ OSError naming the sonames, which ``nfq.py``'s guard turns into
 the named refusal at bind time. Nothing here compiles, so the msks
 wheel ships pure on every platform; the runtime contract is the
 soname load (``msksd doctor`` probes it), and the library stays
-the platform's own (the FIPS posture: msks pins no crypto, and
-this binding adds no algorithm of its own).
+the platform's own — msks pins no crypto, and this binding adds
+no algorithm of its own.
 """
 
 import ctypes
