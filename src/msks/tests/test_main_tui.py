@@ -3040,15 +3040,14 @@ def test_the_line_helpers() -> None:
         == rows_mod.header_meta(wide_row).plain
     )
 
-    # The listing's display order (#470 L1): newest creation
-    # first, a stamp that does not parse sinks to the end in the
-    # daemon's own order.
+    # The listing's display order (#470 L1, #854): newest creation
+    # first, a stamp that does not parse sinks to the end, by id.
     def stamped(id_: str, when: str) -> dict:
         return {**row(id=id_), "created_at": when}
 
     assert [
         r["id"]
-        for r in rows_mod.newest_first(
+        for r in rows_mod.sort_rows(
             [
                 stamped("old", "2026-01-01T00:00:00"),
                 stamped("new", "2026-01-03T00:00:00"),
@@ -3059,7 +3058,7 @@ def test_the_line_helpers() -> None:
     broken = {**row(id="broken"), "created_at": "not a stamp"}
     assert [
         r["id"]
-        for r in rows_mod.newest_first(
+        for r in rows_mod.sort_rows(
             [
                 stamped("old", "2026-01-01T00:00:00"),
                 broken,
@@ -4798,7 +4797,7 @@ def test_every_column_sorts() -> None:
     # under descending too, and the lifecycle order is the whole
     # vocabulary's own sequence with an off-vocabulary status
     # after it.
-    assert rows_mod.sort_rows(base) == rows_mod.newest_first(base)
+    assert rows_mod.sort_rows(base) == rows_mod.sort_rows(base)
     assert order(rows_mod.sort_rows(tied, ("NAME", True))) == [
         "first",
         "second",

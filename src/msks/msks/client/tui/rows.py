@@ -468,15 +468,6 @@ def sort_rows(rows: list[dict], sort=DEFAULT_SORT) -> list[dict]:
     return sorted(by_id, key=value_key, reverse=True)
 
 
-def newest_first(rows: list[dict]) -> list[dict]:
-    """The listing's default display order (#470 L1, #854): newest
-    creation first — the daemon serves oldest-first, so the row an
-    operator just made would land at the bottom. The CREATED
-    column's descending sort; a stamp that does not parse sinks to
-    the end, by id."""
-    return sort_rows(rows, DEFAULT_SORT)
-
-
 def column_at(columns, offset: int) -> str:
     """The column a header click's cell offset lands in (#854):
     each column owns its width plus the gap behind it, and an
