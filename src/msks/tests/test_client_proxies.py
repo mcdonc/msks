@@ -247,3 +247,31 @@ def test_rm_deletes_on_the_workspace_route(
         "path": "/api/v1/workspaces/alpha/proxies/3",
     }
     assert "removed proxy 3" in capsys.readouterr().out
+
+
+def test_add_and_rm_json(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--json on the mutating proxy commands (#841): add emits the
+    stored row, rm emits one line."""
+    from msks.client import cli, jsonio
+
+    client_env(monkeypatch)
+    rc = cli.main(
+        ["proxy", "add", "alpha", "-L", "2201:localhost:22", "--json"],
+        transport=httpx.MockTransport(
+            lambda req: httpx.Response(200, json=ROW)
+        ),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["id"] == ROW["id"]
+    assert jsonio.json_mode() is True
+
+    rc = cli.main(
+        ["proxy", "rm", "alpha", "3", "--json"],
+        transport=httpx.MockTransport(
+            lambda req: httpx.Response(200, json={"removed": 3})
+        ),
+    )
+    assert rc == 0
+    assert capsys.readouterr().out == '{"removed": 3}\n'

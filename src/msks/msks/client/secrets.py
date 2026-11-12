@@ -19,6 +19,7 @@ from msks.agecrypto import (
 )
 
 from .context import call
+from .jsonio import emit, error_document, json_line, outcome
 from .ssh import configured_identity_file
 from .tabular import listing_text
 from .unlock import (
@@ -154,6 +155,7 @@ def cmd_secret_mint(
     dests: list[str],
     ttl: int | None,
     secret_file: str,
+    as_json: bool = False,
     transport=None,
 ) -> int:
     """``msks secret mint`` (#339, #423): one step; the operator's
@@ -174,6 +176,9 @@ def cmd_secret_mint(
     row = asyncio.run(
         call("POST", "/api/v1/secrets", json_body=body, transport=transport)
     )
+    if as_json:
+        emit(row)
+        return 0
     print(
         f"minted {coverage_label(row['workspaces'])}/{name} "
         f"for {', '.join(row['dests'])}"
@@ -228,6 +233,26 @@ def row_names(rows: list) -> str:
     )
 
 
+def unlock_document(unlocked: list, left: list, corrupt: list) -> dict:
+    """The unlock's machine-readable summary (#841): the names
+    each outcome class holds, the same three the report lines
+    name."""
+    return {
+        "unlocked": [
+            f"{coverage_label(row['workspaces'])}/{row['name']}"
+            for row, _value in unlocked
+        ],
+        "corrupt": [
+            f"{coverage_label(row['workspaces'])}/{row['name']}"
+            for row in corrupt
+        ],
+        "left_ciphertext": [
+            f"{coverage_label(row['workspaces'])}/{row['name']}"
+            for row in left
+        ],
+    }
+
+
 def report_unlock(unlocked: list, left: list, corrupt: list) -> None:
     """The command's report (#515): one line per unlocked row,
     then the rows that failed to open (a re-mint remedies them)
@@ -254,7 +279,7 @@ def missing_identity_line() -> str:
     )
 
 
-def cmd_secret_unlock(transport=None) -> int:
+def cmd_secret_unlock(as_json: bool = False, transport=None) -> int:
     """``msks secret unlock`` (#515): the client's half of the
     store — fetch the pending ciphertexts, decrypt the blobs the
     configured identity file opens, upload the plaintext. The
@@ -264,19 +289,26 @@ def cmd_secret_unlock(transport=None) -> int:
     nothing."""
     path = configured_identity_file()
     if path is None:
-        print(missing_identity_line(), file=sys.stderr)
+        if as_json:
+            error_document(None, missing_identity_line())
+        else:
+            print(missing_identity_line(), file=sys.stderr)
         return 1
     rows = asyncio.run(
         call("GET", "/api/v1/secrets/pending", transport=transport)
     )
     rows = locked_rows(rows)
     if not rows:
-        print("every placeholder row is unlocked")
+        outcome(
+            as_json,
+            unlock_document([], [], []),
+            "every placeholder row is unlocked",
+        )
         return 0
-    return upload_unlock(path, rows, transport)
+    return upload_unlock(path, rows, as_json, transport)
 
 
-def upload_unlock(path, rows, transport) -> int:
+def upload_unlock(path, rows, as_json, transport) -> int:
     """The load-decrypt-upload half (#515): the key loads only
     now — a store with nothing locked never prompted for its
     passphrase (#515 review). The report names every outcome,
@@ -287,14 +319,24 @@ def upload_unlock(path, rows, transport) -> int:
     try:
         identity = unlock_identity(path)
     except AgeCryptoError as exc:
-        print(
-            f"msks: the identity file {path} refused: {exc}",
-            file=sys.stderr,
-        )
+        if as_json:
+            error_document(None, f"the identity file {path} refused: {exc}")
+        else:
+            print(
+                f"msks: the identity file {path} refused: {exc}",
+                file=sys.stderr,
+            )
         return 1
     unlocked, left, corrupt = decrypt_rows(rows, identity)
+
+    def report() -> None:
+        if as_json:
+            emit(unlock_document(unlocked, left, corrupt))
+        else:
+            report_unlock(unlocked, left, corrupt)
+
     if not unlocked:
-        report_unlock(unlocked, left, corrupt)
+        report()
         return 1 if corrupt else 0
     asyncio.run(
         call(
@@ -304,12 +346,15 @@ def upload_unlock(path, rows, transport) -> int:
             transport=transport,
         )
     )
-    report_unlock(unlocked, left, corrupt)
+    report()
     return 0
 
 
 def cmd_secret_revoke(
-    workspace_refs: list[str] | None, name: str, transport=None
+    workspace_refs: list[str] | None,
+    name: str,
+    as_json: bool = False,
+    transport=None,
 ) -> int:
     """``msks secret revoke`` (#339): effective on the next
     request; the targeting mirrors the mint's."""
@@ -321,7 +366,10 @@ def cmd_secret_revoke(
             transport=transport,
         )
     )
-    print(f"revoked {coverage_label(row['workspaces'])}/{name}")
+    if as_json:
+        json_line({"revoked": name})
+    else:
+        print(f"revoked {coverage_label(row['workspaces'])}/{name}")
     return 0
 
 
@@ -329,6 +377,7 @@ def cmd_secret_renew(
     workspace_refs: list[str] | None,
     name: str,
     ttl: int,
+    as_json: bool = False,
     transport=None,
 ) -> int:
     """``msks secret renew`` (#339): extends in place, sentinel
@@ -342,15 +391,22 @@ def cmd_secret_renew(
             transport=transport,
         )
     )
-    print(
-        f"renewed {coverage_label(row['workspaces'])}/{name}; "
-        f"expires {updated['expires_at']}"
+    outcome(
+        as_json,
+        updated,
+        lambda: (
+            f"renewed {coverage_label(row['workspaces'])}/{name}; "
+            f"expires {updated['expires_at']}"
+        ),
     )
     return 0
 
 
 def cmd_secret_coverage(
-    workspace_id: str, coverage: str, transport=None
+    workspace_id: str,
+    coverage: str,
+    as_json: bool = False,
+    transport=None,
 ) -> int:
     """``msks secret coverage`` (#339): flip a workspace's
     daemon-wide placeholder posture — ``all`` takes daemon-wide
@@ -363,8 +419,12 @@ def cmd_secret_coverage(
             transport=transport,
         )
     )
-    print(
-        f"workspace {workspace_id} secret coverage: "
-        f"{result['secret_coverage']}"
+    outcome(
+        as_json,
+        result,
+        lambda: (
+            f"workspace {workspace_id} secret coverage: "
+            f"{result['secret_coverage']}"
+        ),
     )
     return 0

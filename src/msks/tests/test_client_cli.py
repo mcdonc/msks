@@ -6,6 +6,7 @@ the same ``api_call`` seam against the real daemon surface.
 """
 
 import asyncio
+import contextlib
 import io
 import json
 import os
@@ -1250,9 +1251,10 @@ def test_cmd_rm_multiple_stops_at_first_failure(
 
     def handler(request: httpx.Request) -> httpx.Response:
         paths.append(request.url.path)
-        if request.url.path.endswith("/b"):
+        ws = request.url.path.rsplit("/", 1)[-1]
+        if ws == "b":
             return httpx.Response(404, json={"detail": "no such workspace"})
-        return httpx.Response(200, json={"deleted": "x"})
+        return httpx.Response(200, json={"deleted": ws})
 
     with pytest.raises(SystemExit, match="msks: 404: no such workspace"):
         cli.cmd_rm(["a", "b", "c"], transport=mock(handler))
@@ -1459,10 +1461,12 @@ def test_main_rm_dispatch(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     client_env(monkeypatch)
-    rc = cli.main(
-        ["rm", "ws1", "ws2"],
-        transport=mock(lambda req: httpx.Response(200, json={"deleted": "x"})),
-    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        ws = request.url.path.rsplit("/", 1)[-1]
+        return httpx.Response(200, json={"deleted": ws})
+
+    rc = cli.main(["rm", "ws1", "ws2"], transport=mock(handler))
     assert rc == 0
     assert capsys.readouterr().out == "ws1 deleted\nws2 deleted\n"
 
@@ -4833,8 +4837,8 @@ def test_typer_commands_route_to_their_bodies(
     monkeypatch.setattr(cli, "run_workspace_forward", routed("forward"))
     monkeypatch.setattr(cli, "run_main_tui", routed("tui"))
 
-    async def fake_rules(workspace_id, transport=None) -> int:
-        calls.append(("rules", (workspace_id,), {}))
+    async def fake_rules(workspace_id, as_json=False, transport=None) -> int:
+        calls.append(("rules", (workspace_id, as_json), {}))
         return 7
 
     async def fake_watch(workspace_id, decide, duration) -> int:
@@ -4866,7 +4870,7 @@ def test_typer_commands_route_to_their_bodies(
     assert by_name["cmd_image_check"][0][0].keep is True
     assert by_name["cmd_image_check"][0][0].boot_timeout_s == 30.0
     assert by_name["forward"] == (("ws1", 22, 2200), {})
-    assert by_name["rules"] == (("ws1",), {})
+    assert by_name["rules"] == (("ws1", False), {})
     assert by_name["watch"] == (("ws1", True, "5m"), {})
     assert by_name["tui"][0] == ("ws1",)
     # The tree's config resolution rides along (#341): the
@@ -4953,7 +4957,7 @@ def test_a_help_shaped_option_value_is_not_a_help_exit(
     monkeypatch.setattr(
         cli,
         "cmd_secret_mint",
-        lambda refs, name, dests, ttl, sf, transport=None: (
+        lambda refs, name, dests, ttl, sf, as_json=False, transport=None: (
             ran.append(name),
             0,
         )[1],
@@ -5828,3 +5832,868 @@ def test_main_clone_with_copy_allowlist_rides_the_body(
     )
     assert rc == 0
     assert seen["body"] == {"name": "task-42", "copy_allowlist": True}
+
+
+# --- Machine-readable output (#841) --------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def plain_json_mode():
+    """The invocation-wide JSON flag is module state: reset it
+    around every test so one test's --json never leaks into the
+    next (#841)."""
+    from msks.client import jsonio
+
+    jsonio.set_json_mode(False)
+    yield
+    jsonio.set_json_mode(False)
+
+
+from msks.client.jsonio import (  # noqa: E402 — beside the section it serves
+    exit_code,
+    plain_detail,
+    plain_exit,
+)
+
+
+def test_exit_code_table() -> None:
+    """The documented table: 404 is not-found, the duplicate-name
+    409 is a conflict, the other 409s and the start-again refusal
+    are wrong state, everything else the unnamed failure."""
+    assert exit_code(404, "no such workspace") == 3
+    assert exit_code(409, "workspace exists") == 4
+    assert exit_code(409, "workspace ws1 is running; stop it first") == 5
+    assert (
+        exit_code(503, "VM ws1 already exists; shutdown or cleanup first") == 5
+    )
+    assert exit_code(503, "egress is not enabled") == 1
+    assert exit_code(400, "bad shape") == 1
+    assert exit_code(None, "cannot reach") == 1
+
+
+def test_plain_exit_and_detail() -> None:
+    """A non-API failure keeps 130 for the interrupt and 1 for
+    everything else; the detail is the message a string-coded
+    exit carries."""
+    assert plain_exit(SystemExit(130)) == 130
+    assert plain_exit(SystemExit("msks: boom")) == 1
+    assert plain_detail(SystemExit(130)) == "interrupted"
+    assert plain_detail(SystemExit("msks: boom")) == "msks: boom"
+    assert plain_detail(SystemExit(7)) == "exit 7"
+
+
+def test_main_json_error_maps_status_to_exit_code(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A daemon 404 under --json: one error object on stderr, the
+    table's exit code; the human invocation keeps its one-line
+    exit."""
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"detail": "no such workspace"})
+
+    rc = cli.main(["start", "ghost", "--json"], transport=mock(handler))
+    err = capsys.readouterr().err
+    assert json.loads(err) == {
+        "error": {"status": 404, "detail": "no such workspace"}
+    }
+    assert rc == 3
+
+
+def test_main_json_plain_failure_is_one_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A local refusal (never an API status) under --json: the
+    status is null and the exit is the unnamed failure."""
+
+    client_env(monkeypatch)
+    rc = cli.main(
+        ["resize", "ws1", "--json"],
+        transport=mock(lambda req: httpx.Response(200)),
+    )
+    err = capsys.readouterr().err
+    assert json.loads(err)["error"]["status"] is None
+    assert "nothing to resize" in json.loads(err)["error"]["detail"]
+    assert rc == 1
+
+
+def test_main_human_error_still_one_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Without --json the same 404 exits as before: the message
+    raises through, no JSON anywhere."""
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"detail": "no such workspace"})
+
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["start", "ghost"], transport=mock(handler))
+    assert "404" in str(caught.value)
+    assert capsys.readouterr().err == ""
+
+
+def test_create_json_emits_the_new_row(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """``msks create --json``: one document — the daemon's row —
+    and no human lines beside it; a follow-up ls is not
+    needed."""
+    identity_env(monkeypatch, tmp_path)
+    client_env(monkeypatch)
+    _pem, public, _mine = plant_identity(monkeypatch, tmp_path)
+    row = {
+        "id": "ws1",
+        "name": "ws1",
+        "status": "created",
+        "public": public,
+    }
+
+    rc = cli.run_create(
+        cli.CreateFlags(workspace_id="ws1"),
+        mock(lambda req: httpx.Response(201, json=row)),
+        as_json=True,
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == row
+
+
+def test_create_json_with_start_emits_the_running_row(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """A --start create under --json emits one document at the
+    end: the row at its terminal status."""
+    identity_env(monkeypatch, tmp_path)
+    client_env(monkeypatch)
+    _pem, _public, _mine = plant_identity(monkeypatch, tmp_path)
+    row = {"id": "ws1", "name": "ws1", "status": "created"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/start"):
+            return httpx.Response(200, json={"id": "ws1", "status": "running"})
+        return httpx.Response(201, json=row)
+
+    rc = cli.run_create(
+        cli.CreateFlags(workspace_id="ws1", start=True),
+        mock(handler),
+        as_json=True,
+    )
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "running"
+    assert out["id"] == "ws1"
+
+
+def test_start_stop_json_emit_the_settled_row(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The verbs' replies are thin (id, status): --json follows
+    with one GET and emits the whole row."""
+    client_env(monkeypatch)
+    full = {"id": "ws1", "name": "ws1", "status": "running", "cpus": 4}
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json=full)
+        return httpx.Response(200, json={"id": "ws1", "status": "running"})
+
+    rc = cli.cmd_start("ws1", as_json=True, transport=mock(handler))
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == full
+    assert ("GET", "/api/v1/workspaces/ws1") in seen
+
+
+def test_stop_json_emits_the_settled_row(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    full = {"id": "ws1", "name": "ws1", "status": "stopped"}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json=full)
+        return httpx.Response(200, json={"id": "ws1", "status": "stopped"})
+
+    rc = cli.cmd_stop("ws1", as_json=True, transport=mock(handler))
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "stopped"
+
+
+def test_clone_resize_mount_json_emit_rows(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """clone/resize/mount reply with the full row already: --json
+    emits it verbatim."""
+    client_env(monkeypatch)
+    row = {"id": "ws9", "name": "fork", "status": "created"}
+    rc = cli.cmd_clone(
+        "ws1",
+        "fork",
+        as_json=True,
+        transport=mock(lambda req: httpx.Response(201, json=row)),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == row
+
+    resized = {**row, "home_mib": 40960}
+    rc = cli.cmd_resize(
+        "ws9",
+        {"home_mib": 40960},
+        as_json=True,
+        transport=mock(lambda req: httpx.Response(200, json=resized)),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["home_mib"] == 40960
+
+
+def test_mount_umount_json_emit_the_refreshed_row(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    fresh = {
+        "id": "ws1",
+        "name": None,
+        "mounts": [{"host": "/srv", "guest": "/mnt", "mode": "ro"}],
+        "mounts_pending": True,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": "ws1", "mounts": []})
+        return httpx.Response(200, json=fresh)
+
+    rc = cli.cmd_mount(
+        "ws1", "/srv:/mnt:ro", as_json=True, transport=mock(handler)
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == fresh
+
+
+def test_rm_json_is_one_line_per_id(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``msks rm --json``: one compact JSON line per removed
+    workspace, in order — a partial run's survivors stay on the
+    record."""
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        ws = request.url.path.rsplit("/", 1)[-1]
+        return httpx.Response(200, json={"deleted": ws})
+
+    rc = cli.cmd_rm(["a", "b"], as_json=True, transport=mock(handler))
+    assert rc == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out == ['{"removed": "a"}', '{"removed": "b"}']
+
+
+def test_key_json_emits_the_identity_document(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+    rc = cli.cmd_key(
+        "alpha",
+        as_json=True,
+        transport=mock(lambda req: httpx.Response(200, json=KEY_BODY)),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == KEY_BODY
+
+
+def test_egress_json_outputs(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """rules/requests/decide/revoke/mode emit their documents."""
+    from msks.client import egress as egress_mod
+
+    client_env(monkeypatch)
+    rules = {
+        "workspace_id": "ws1",
+        "mode": "allow",
+        "verdicts": [{"name": "a.example"}],
+    }
+    rc = asyncio.run(
+        egress_mod.run_rules(
+            "ws1",
+            as_json=True,
+            transport=mock(lambda req: httpx.Response(200, json=rules)),
+        )
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == rules
+
+    rows = [{"id": "r1", "decision": "allowed"}]
+    rc = asyncio.run(
+        egress_mod.run_requests(
+            "ws1",
+            None,
+            as_json=True,
+            transport=mock(lambda req: httpx.Response(200, json=rows)),
+        )
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == rows
+
+    reply = {"verdict": {"decision": "allow", "duration": "5m"}}
+    rc = asyncio.run(
+        egress_mod.run_decide(
+            "ws1",
+            "r1",
+            "allow",
+            "5m",
+            as_json=True,
+            transport=mock(lambda req: httpx.Response(200, json=reply)),
+        )
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == reply
+
+    rc = asyncio.run(
+        egress_mod.run_revoke(
+            "ws1",
+            "r1",
+            as_json=True,
+            transport=mock(
+                lambda req: httpx.Response(200, json={"revoked": "r1"})
+            ),
+        )
+    )
+    assert rc == 0
+    assert capsys.readouterr().out == '{"revoked": "r1"}\n'
+
+    mode_reply = {"mode": "static", "applied": True}
+    rc = asyncio.run(
+        egress_mod.run_mode(
+            "ws1",
+            "static",
+            None,
+            False,
+            as_json=True,
+            transport=mock(lambda req: httpx.Response(200, json=mode_reply)),
+        )
+    )
+    assert rc == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert doc == {"workspace": "ws1", "mode": "static", "applied": True}
+
+
+def test_image_json_outputs(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """import/rename/info emit records; rm emits one line."""
+
+    client_env(monkeypatch)
+    record = {"ref": "debian:13.6", "hash": "a" * 64}
+    rc = cli.cmd_image_import(
+        "/tmp/a.tar",
+        as_json=True,
+        transport=mock(lambda req: httpx.Response(201, json=record)),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == record
+
+    listing = httpx.Response(
+        200,
+        json=[{"name": "debian", "version": "13.6", "hash": "a" * 64}],
+    )
+    rc = cli.cmd_image_info(
+        "debian", as_json=True, transport=mock(lambda req: listing)
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["hash"] == "a" * 64
+
+
+def test_image_rm_json_is_one_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/images"):
+            return httpx.Response(
+                200,
+                json=[{"name": "debian", "version": "13.6", "hash": "a" * 64}],
+            )
+        return httpx.Response(200, json={"removed": "x"})
+
+    rc = cli.cmd_image_rm("debian:13.6", as_json=True, transport=mock(handler))
+    assert rc == 0
+    assert capsys.readouterr().out == '{"removed": "debian:13.6"}\n'
+
+
+def test_home_json_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """home export/import emit their byte-count documents."""
+    from msks.client import volumes as volumes_mod
+
+    client_env(monkeypatch)
+    target = tmp_path / "home.ext4"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"0123456789")
+
+    total = asyncio.run(
+        volumes_mod.run_home_export(
+            "https://daemon", "tok", "ws1", str(target), mock(handler)
+        )
+    )
+    assert total == 10
+    rc = cli.cmd_home_export(
+        "ws1", str(target), as_json=True, transport=mock(handler)
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "id": "ws1",
+        "file": str(target),
+        "bytes": 10,
+    }
+
+    rc = cli.cmd_home_import(
+        "ws1",
+        str(target),
+        as_json=True,
+        transport=mock(lambda req: httpx.Response(200, json={"bytes": 10})),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {"id": "ws1", "bytes": 10}
+
+
+def test_secret_mint_json_carries_the_sentinel(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """The mint's one-time sentinel is the payload: --json emits
+    the row with it, and nothing else."""
+    from msks.client import secrets as secrets_mod
+
+    client_env(monkeypatch)
+    value = tmp_path / "value"
+    value.write_text("hunter2")
+    row = {
+        "name": "gh",
+        "sentinel": "msks_s3nt1n3l",
+        "dests": [".github.com"],
+        "workspaces": [],
+    }
+    rc = secrets_mod.cmd_secret_mint(
+        None,
+        "gh",
+        [".github.com"],
+        None,
+        str(value),
+        as_json=True,
+        transport=mock(lambda req: httpx.Response(201, json=row)),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == row
+
+
+def test_secret_renew_json_emits_the_row(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from msks.client import secrets as secrets_mod
+
+    client_env(monkeypatch)
+    listing = httpx.Response(
+        200,
+        json=[{"id": 7, "name": "gh", "workspaces": []}],
+    )
+    updated = {"id": 7, "name": "gh", "expires_at": "2026-01-01T00:00:00"}
+    rc = secrets_mod.cmd_secret_renew(
+        None,
+        "gh",
+        3600,
+        as_json=True,
+        transport=mock(
+            lambda req: (
+                listing
+                if req.method == "GET"
+                else httpx.Response(200, json=updated)
+            )
+        ),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == updated
+
+
+def test_unlock_json_document_names_every_class(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The unlock's summary: one document naming the unlocked, the
+    corrupt, and the stayed-ciphertext rows."""
+    from msks.client import secrets as secrets_mod
+
+    doc = secrets_mod.unlock_document(
+        [({"name": "gh", "workspaces": []}, "v")],
+        [{"name": "other", "workspaces": ["ws2"]}],
+        [{"name": "broken", "workspaces": []}],
+    )
+    assert doc == {
+        "unlocked": ["*/gh"],
+        "corrupt": ["*/broken"],
+        "left_ciphertext": ["ws2/other"],
+    }
+
+
+def test_interrupt_in_json_mode_is_the_document(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A Ctrl-C under --json: no human line, the error document
+    names the interrupt, and the exit keeps its 130 (#841)."""
+
+    client_env(monkeypatch)
+
+    def boom(refs, name, dests, ttl, sf, as_json=False, transport=None):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "cmd_secret_mint", boom)
+    rc = cli.main(
+        [
+            "secret",
+            "mint",
+            "--name",
+            "x",
+            "--dest",
+            "h",
+            "--secret-file",
+            "-",
+            "--json",
+        ],
+        transport=mock(lambda req: httpx.Response(200)),
+    )
+    err = capsys.readouterr().err
+    assert json.loads(err) == {
+        "error": {"status": None, "detail": "interrupted"}
+    }
+    assert rc == 130
+
+
+def test_failed_start_after_create_json_keeps_the_api_status(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """A --start create whose boot the daemon refuses: the
+    structured error keeps the daemon's status and detail through
+    the recovery hint (#841), so the exit table maps the refusal,
+    not the hint."""
+    identity_env(monkeypatch, tmp_path)
+    client_env(monkeypatch)
+    _pem, _public, _mine = plant_identity(monkeypatch, tmp_path)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/start"):
+            return httpx.Response(
+                503,
+                json={"detail": "egress is not enabled"},
+            )
+        return httpx.Response(201, json={"id": "ws1", "name": "ws1"})
+
+    rc = cli.main(
+        ["create", "ws1", "--start", "--json"], transport=mock(handler)
+    )
+    assert rc == 1
+    err = json.loads(capsys.readouterr().err)
+    assert err["error"] == {"status": 503, "detail": "egress is not enabled"}
+    assert capsys.readouterr().out == ""
+
+
+def test_check_argv_passes_json_to_the_child() -> None:
+    """The conformance child receives --json (#841)."""
+    from msks.client.images import check_argv
+    from msks.conformance_args import CheckOptions
+
+    argv = check_argv(CheckOptions(archive="/tmp/a.tar", as_json=True))
+    assert argv[-1] == "--json"
+    assert "--json" not in check_argv(CheckOptions(archive="/tmp/a.tar"))
+
+
+def test_secret_unlock_json_paths(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The unlock's three refusal shapes under --json (#841): no
+    configured identity, a store with nothing locked, and a key
+    that refuses to load — each one document, each its exit."""
+    from msks.client import secrets as secrets_mod
+
+    client_env(monkeypatch)
+    monkeypatch.setattr(secrets_mod, "configured_identity_file", lambda: None)
+    rc = secrets_mod.cmd_secret_unlock(as_json=True)
+    assert rc == 1
+    assert "identity" in json.loads(capsys.readouterr().err)["error"]["detail"]
+
+    monkeypatch.setattr(
+        secrets_mod, "configured_identity_file", lambda: "/keys/id"
+    )
+    monkeypatch.setattr(
+        secrets_mod,
+        "call",
+        lambda *a, **k: asyncio.sleep(0, result=[]),
+    )
+    rc = secrets_mod.cmd_secret_unlock(as_json=True)
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "unlocked": [],
+        "corrupt": [],
+        "left_ciphertext": [],
+    }
+
+
+def test_home_export_stdout_json_goes_to_stderr(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An export to stdout owns stdout for its bytes: the JSON
+    confirmation rides stderr in one line (#841)."""
+    from msks.client import volumes as volumes_mod
+
+    client_env(monkeypatch)
+    monkeypatch.setattr(
+        volumes_mod,
+        "run_home_export",
+        lambda url, token, ws, out, transport: asyncio.sleep(0, result=7),
+    )
+    rc = volumes_mod.cmd_home_export(
+        "ws1", "-", as_json=True, transport=object()
+    )
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert json.loads(err) == {"id": "ws1", "file": "-", "bytes": 7}
+
+
+def test_secret_revoke_json(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from msks.client import secrets as secrets_mod
+
+    client_env(monkeypatch)
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.method == "GET":
+            return httpx.Response(
+                200, json=[{"id": 7, "name": "gh", "workspaces": []}]
+            )
+        return httpx.Response(200, json={"revoked": 7})
+
+    rc = secrets_mod.cmd_secret_revoke(
+        None, "gh", as_json=True, transport=mock(handler)
+    )
+    assert rc == 0
+    assert capsys.readouterr().out == '{"revoked": "gh"}\n'
+
+
+def test_unlock_json_refusing_key_and_full_flow(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The unlock's JSON shapes past the gates (#841): a key that
+    refuses to load is one error document, and a full run reports
+    its three outcome classes as one document."""
+    from msks.client import secrets as secrets_mod
+
+    client_env(monkeypatch)
+    monkeypatch.setattr(
+        secrets_mod,
+        "unlock_identity",
+        lambda path: (_ for _ in ()).throw(
+            secrets_mod.AgeCryptoError("bad key")
+        ),
+    )
+    rc = secrets_mod.upload_unlock(
+        "/keys/id", [{"id": 7}], True, transport=object()
+    )
+    assert rc == 1
+    err = json.loads(capsys.readouterr().err)
+    assert "refused" in err["error"]["detail"]
+
+    monkeypatch.setattr(
+        secrets_mod,
+        "unlock_identity",
+        lambda path: object(),
+    )
+    monkeypatch.setattr(
+        secrets_mod,
+        "decrypt_rows",
+        lambda rows, identity: (
+            [({"id": 7, "name": "gh", "workspaces": []}, "v")],
+            [{"id": 8, "name": "other", "workspaces": ["ws2"]}],
+            [],
+        ),
+    )
+    monkeypatch.setattr(
+        secrets_mod,
+        "call",
+        lambda *a, **k: asyncio.sleep(0, result={}),
+    )
+    rc = secrets_mod.upload_unlock(
+        "/keys/id", [{"id": 7}], True, transport=object()
+    )
+    assert rc == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert doc == {
+        "unlocked": ["*/gh"],
+        "corrupt": [],
+        "left_ciphertext": ["ws2/other"],
+    }
+
+
+def test_failed_boot_plain_exit_keeps_the_hint(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """A --start create whose boot dies without an API status (a
+    dead dial): the recovery hint rides the exit in human mode,
+    and the JSON document carries the reach line (#841)."""
+    identity_env(monkeypatch, tmp_path)
+    client_env(monkeypatch)
+    _pem, _public, _mine = plant_identity(monkeypatch, tmp_path)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/start"):
+            raise httpx.ConnectError("dead dial")
+        return httpx.Response(201, json={"id": "ws1", "name": "ws1"})
+
+    with pytest.raises(SystemExit) as caught:
+        cli.run_create(
+            cli.CreateFlags(workspace_id="ws1", start=True), mock(handler)
+        )
+    assert "boot it later" in str(caught.value)
+
+
+def test_egress_requests_and_decide_json_through_the_entry_point(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The typer dispatch carries --json into the egress read and
+    decide bodies (#841 review): the flag reaching the error path
+    but not the print site was the shipped bug."""
+    client_env(monkeypatch)
+    rows = [{"id": "r1", "decision": "allowed"}]
+    rc = cli.main(
+        ["egress", "requests", "ws1", "--json"],
+        transport=mock(lambda req: httpx.Response(200, json=rows)),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == rows
+
+    reply = {"verdict": {"decision": "deny", "duration": "once"}}
+    rc = cli.main(
+        [
+            "egress",
+            "decide",
+            "ws1",
+            "r1",
+            "deny",
+            "--duration",
+            "once",
+            "--json",
+        ],
+        transport=mock(lambda req: httpx.Response(200, json=reply)),
+    )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == reply
+
+
+def test_proxy_add_json_failure_reaches_the_chokepoint(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A failing proxy add under --json: the structured error and
+    the table's code, not a raised one-liner (#841 review — the
+    flag must be set before the exchange)."""
+    client_env(monkeypatch)
+    rc = cli.main(
+        ["proxy", "add", "ghost", "-L", "2222:localhost:22", "--json"],
+        transport=mock(
+            lambda req: httpx.Response(
+                404, json={"detail": "no such workspace"}
+            )
+        ),
+    )
+    err = json.loads(capsys.readouterr().err)
+    assert err["error"]["status"] == 404
+    assert rc == 3
+
+
+def test_start_json_survives_a_failed_refresh(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The follow-up GET cannot unrun the verb (#841 review): a
+    start whose POST landed answers the thin row when the refresh
+    dies — success stays success."""
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(500, json={"detail": "restarting"})
+        return httpx.Response(200, json={"id": "ws1", "status": "running"})
+
+    rc = cli.cmd_start("ws1", as_json=True, transport=mock(handler))
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "id": "ws1",
+        "status": "running",
+    }
+
+
+def test_unverified_warning_stands_down_under_json(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The CAFILE-unset warning is stderr noise ahead of the error
+    document (#841 review round 2): under --json it stands down."""
+    from msks.client import env as env_mod
+    from msks.client import jsonio
+
+    monkeypatch.delenv("MSKSC_CAFILE", raising=False)
+    # The warned-once mark is process state: reset it so each
+    # build below is the process's first, whatever ran before
+    # this test on the same worker (#841 review — the CI run's
+    # one dark arc).
+    jsonio.set_json_mode(True)
+    env_mod._WARNED_UNVERIFIED = False
+    with contextlib.suppress(ssl.SSLError):
+        env_mod.ssl_context()
+    assert "NOT verified" not in capsys.readouterr().err
+    jsonio.set_json_mode(False)
+    env_mod._WARNED_UNVERIFIED = False
+    with contextlib.suppress(ssl.SSLError):
+        env_mod.ssl_context()
+    assert "NOT verified" in capsys.readouterr().err
+    env_mod._WARNED_UNVERIFIED = False
+
+
+def test_start_json_degraded_refresh_notes_stderr(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A refresh that dies after the verb landed: the thin row is
+    the document and the note rides stderr (#841 review round 2)."""
+    client_env(monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(500, json={"detail": "restarting"})
+        return httpx.Response(200, json={"id": "ws1", "status": "running"})
+
+    rc = cli.cmd_start("ws1", as_json=True, transport=mock(handler))
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {"id": "ws1", "status": "running"}
+    assert "could not be read" in captured.err
+
+
+def test_json_requested_scans_before_the_separator() -> None:
+    """The pre-parse --json scan (#841 review): the flag before a
+    ``--`` separator answers True, everything after one belongs to
+    a passthrough command."""
+    assert cli.json_requested(["egress", "requests", "ws1", "--json"])
+    assert not cli.json_requested(["egress", "requests", "ws1"])
+    assert not cli.json_requested(["ssh", "ws", "--", "--json"])
+    assert not cli.json_requested(["ssh", "ws"])

@@ -31,6 +31,55 @@ most usually encountered on MacOS, because the daemon runs in a Lima VM
 separate from the client. If you see this on MacOS, rerun
 `msks-setup-macos-host` on the Mac to update the daemon in the Lima VM.
 
+## Machine-readable output
+
+Every command that prints a report or a confirmation takes `--json`.
+The flag switches the command's stdout to one JSON document and its
+failures to one JSON error object on stderr. The default output stays
+human-readable and keeps its shape.
+
+The mutating commands emit the row they affected: `create` and `clone`
+emit the new row, `start` and `stop` emit the settled row (the verbs
+block until the transition completes), `resize`, `mount`, and `umount`
+emit the refreshed row. A start or stop whose settled row cannot be
+read back after the verb landed emits the verb's own thin row (id and
+status) with a stderr note naming the failed read. `msks rm` prints one compact JSON line per
+removed workspace, in order, so a partial run's survivors stay on the
+record. `msks secret mint` emits the new row including the sentinel:
+the sentinel prints once, in whichever mode you asked for, and is
+never available again.
+
+A failure with `--json` prints one object on stderr and nothing on
+stdout:
+
+```json
+{ "error": { "status": 404, "detail": "no such workspace" } }
+```
+
+`status` is the daemon's HTTP status for an API refusal, or `null` for
+a failure that never reached one (an unreachable daemon, a timeout, a
+locally refused argument). The object is one line; a harness reads it
+whole. Two failures stay human-shaped, both exiting by the table below:
+a bad invocation (exit 2 — the parse never reached the command body),
+and a config bootstrap that cannot read the client config file (the
+bootstrap runs before the body too).
+
+Every command exits with a code from this table:
+
+| Code | Meaning                                                                  |
+| ---- | ------------------------------------------------------------------------ |
+| 0    | Success                                                                  |
+| 1    | A failure the table names no code for (network, timeout, other refusals) |
+| 2    | Bad invocation (the usage error)                                         |
+| 3    | Not found (the daemon answered 404)                                      |
+| 4    | Name conflict (a create or clone with a name another row holds)          |
+| 5    | Wrong state (a state, placement, or same-name row refuses the action)    |
+| 130  | Interrupted (Ctrl-C)                                                     |
+
+`msksd doctor --json` prints its check rows as one JSON document (one
+object per check: `name`, `ok`, `warning`, `message`, `hint`) and keeps
+its exit convention: 0 when the report passes, 1 when a check fails.
+
 ## Client environment
 
 The client reads environment variables prefixed `MSKSC_` (client) to stay apart
@@ -359,6 +408,11 @@ digit, up to 64 chars. The daemon mints the workspace's immutable
 id; the name is the label the other commands address it by. The
 create request's field is `name` (an `id` field is accepted as
 the same thing, the earlier spelling).
+
+A create with a name another row already holds is refused: the
+daemon answers 409 `workspace exists` and the existing row keeps
+its id. Retry with a new name; the conflict is exit code 4 under
+`--json`.
 
 Flags map onto the create request's fields (the identity flags
 below generate theirs):

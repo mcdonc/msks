@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator
 
 from .context import call, env_token, env_url
 from .images import imported_cell
+from .jsonio import outcome
 from .resize import display_name
 from .rest import STREAM_WINDOW_B, api_client, download, upload
 from .stdio import DrainSink
@@ -224,7 +225,10 @@ def imported_bytes(reply: dict) -> int:
 
 
 def cmd_home_export(
-    workspace_id: str, out: str | None = None, transport=None
+    workspace_id: str,
+    out: str | None = None,
+    as_json: bool = False,
+    transport=None,
 ) -> int:
     """``msks home export``: download a workspace's /home volume."""
     target = out if out is not None else f"{workspace_id}.ext4"
@@ -236,13 +240,22 @@ def cmd_home_export(
         )
     except BrokenPipeError:
         raise SystemExit(broken_pipe_line(target)) from None
+    doc = {"id": workspace_id, "file": target, "bytes": total}
     if target == "-":
         # Bytes own stdout; the confirmation goes to stderr.
-        print(
-            f"msks: exported {workspace_id} ({total} bytes)", file=sys.stderr
-        )
+        if as_json:
+            print(json.dumps(doc), file=sys.stderr)
+        else:
+            print(
+                f"msks: exported {workspace_id} ({total} bytes)",
+                file=sys.stderr,
+            )
     else:
-        print(f"exported {workspace_id} ({total} bytes) to {target}")
+        outcome(
+            as_json,
+            doc,
+            f"exported {workspace_id} ({total} bytes) to {target}",
+        )
     return 0
 
 
@@ -262,7 +275,10 @@ def broken_pipe_line(target: str) -> str:
 
 
 def cmd_home_import(
-    workspace_id: str, source_path: str, transport=None
+    workspace_id: str,
+    source_path: str,
+    as_json: bool = False,
+    transport=None,
 ) -> int:
     """``msks home import``: replace a workspace's /home volume."""
     total = asyncio.run(
@@ -270,5 +286,9 @@ def cmd_home_import(
             env_url(), env_token(), workspace_id, source_path, transport
         )
     )
-    print(f"imported {total} bytes into {workspace_id}")
+    outcome(
+        as_json,
+        {"id": workspace_id, "bytes": total},
+        f"imported {total} bytes into {workspace_id}",
+    )
     return 0

@@ -1525,13 +1525,14 @@ def test_doctor_rejects_serve_flags() -> None:
 def test_main_dispatches_doctor(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = {}
 
-    def fake_doctor(config):
+    def fake_doctor(config, as_json=False):
         calls["config"] = config
+        calls["json"] = as_json
         return 7
 
     monkeypatch.setattr(doctor_mod, "doctor_main", fake_doctor)
     assert main_mod.main(["doctor", "--config=none"]) == 7
-    assert calls == {"config": "none"}
+    assert calls == {"config": "none", "json": False}
 
 
 def test_main_legacy_flags_still_serve(
@@ -1588,3 +1589,52 @@ def test_shared_flags_missing_values_default(
     parser = argparse.ArgumentParser(parents=[main_mod.SHARED_FLAGS])
     args = parser.parse_args([])
     assert not hasattr(args, "config")
+
+
+def test_doctor_json_prints_rows(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``msksd doctor --json`` (#841): one document, one object per
+    check with the verdict booleans and the message; the exit code
+    keeps the prose report's convention."""
+    import json
+
+    from msks.server import doctor
+
+    rows = [
+        CheckResult("good", True, "fine"),
+        CheckResult("warned", False, "meh", is_warning=True),
+        CheckResult("bad", False, "broken", hint="fix it"),
+    ]
+    monkeypatch.setattr(
+        doctor, "run_doctor", lambda settings: DoctorReport(rows)
+    )
+    monkeypatch.setattr(
+        doctor, "settings_for_doctor", lambda config: (object(), None)
+    )
+    rc = doctor_main(None, as_json=True)
+    doc = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert doc == [
+        {
+            "name": "good",
+            "ok": True,
+            "warning": False,
+            "message": "fine",
+            "hint": "",
+        },
+        {
+            "name": "warned",
+            "ok": False,
+            "warning": True,
+            "message": "meh",
+            "hint": "",
+        },
+        {
+            "name": "bad",
+            "ok": False,
+            "warning": False,
+            "message": "broken",
+            "hint": "fix it",
+        },
+    ]

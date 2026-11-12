@@ -41,6 +41,7 @@ class CheckOptions:
     boot_timeout_s: float = 120.0
     shutdown_timeout_s: float = 120.0
     keep: bool = False
+    as_json: bool = False
 
 
 def check_arguments(parser: argparse.ArgumentParser) -> None:
@@ -64,3 +65,9 @@ def check_arguments(parser: argparse.ArgumentParser) -> None:
         help=CHECK_SHUTDOWN_TIMEOUT_HELP,
     )
     parser.add_argument("--keep", action="store_true", help=CHECK_KEEP_HELP)
+    parser.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="print the contract rows as one JSON document (#841)",
+    )

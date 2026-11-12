@@ -42,6 +42,7 @@ the error.
 from __future__ import annotations
 
 import grp
+import json
 import os
 import re
 import shutil
@@ -1247,14 +1248,34 @@ def settings_for_doctor(
         return fallback, notice
 
 
-def doctor_main(config: str | None) -> int:
-    """Run all checks, print the report, return the exit code."""
+def doctor_main(config: str | None, as_json: bool = False) -> int:
+    """Run all checks, print the report, return the exit code.
+    ``--json`` prints the rows as one document (#841) — the same
+    verdicts, the same exit code, machine-readable."""
     settings, notice = settings_for_doctor(config)
     report = run_doctor(settings)
     if notice is not None:
         report.add(notice)
+    if as_json:
+        print(json.dumps(report_document(report), indent=2))
+        return 0 if report.passed else 1
     print(format_report(report))
     return 0 if report.passed else 1
+
+
+def report_document(report) -> list[dict]:
+    """The report's rows as documents (#841): one per check, the
+    verdict booleans and the message the prose report carries."""
+    return [
+        {
+            "name": result.name,
+            "ok": result.ok,
+            "warning": bool(result.is_warning),
+            "message": result.message,
+            "hint": result.hint,
+        }
+        for result in report.results
+    ]
 
 
 # ---------------------------------------------------------------------------

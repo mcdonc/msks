@@ -18,6 +18,7 @@ import time
 import httpx
 
 from .env import is_unix, ssl_context, unix_path
+from .jsonio import ApiExit
 
 # Generous read budget: ``POST .../start`` answers only after the
 # VMM boot completes (~3s p50, slower on a loaded host), and the
@@ -137,7 +138,11 @@ async def guarded(client: httpx.AsyncClient, exchange):
     except httpx.TransportError as exc:
         raise SystemExit(reach_message(client, exc)) from exc
     except httpx.HTTPStatusError as exc:
-        raise SystemExit(status_message(exc)) from exc
+        raise ApiExit(
+            status_message(exc),
+            exc.response.status_code,
+            error_detail(exc.response),
+        ) from exc
 
 
 async def request(

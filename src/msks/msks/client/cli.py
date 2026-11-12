@@ -61,6 +61,13 @@ from .images import (  # noqa: F401
     remove_image,
     unset_default_image,
 )
+from .jsonio import (
+    ApiExit,
+    api_failure,
+    json_mode,
+    plain_failure,
+    set_json_mode,
+)
 from .proxies import app as proxy_app
 from .resize import display_name  # noqa: F401 — the tests' seam
 from .rsync import run_workspace_rsync
@@ -198,7 +205,8 @@ def one_line_interrupts(fn):
         try:
             return fn(*args, **kwargs)
         except KeyboardInterrupt:
-            print("msks: interrupted", file=sys.stderr)
+            if not json_mode():
+                print("msks: interrupted", file=sys.stderr)
             raise SystemExit(130) from None
 
     return wrapped
@@ -253,15 +261,12 @@ def root(
     global invoked_conf
     if not help_requested(invocation_tokens):
         invoked_conf = bootstrap(daemon, config)
-        if ctx.obj is None and ctx.invoked_subcommand != "image":
-            # The version-skew notice (#706): one best-effort
-            # /health roundtrip on a real dial — an in-process
-            # transport (the tests' seam) is not a deployment to
-            # compare against, so it skips the probe entirely, and
-            # the image group is exempted for its offline member
-            # (image check runs a child conformance process that
-            # never dials the daemon; the group's dialing members
-            # answer their own skew another invocation).
+        # The version-skew notice (#706): one best-effort /health
+        # roundtrip per invocation, on the conditions
+        # :func:`skew_probe_wanted` names (an in-process transport
+        # is the tests' seam, the image group has an offline
+        # member, and --json keeps stderr one object, #841).
+        if skew_probe_wanted(invocation_tokens, ctx):
             notice_daemon_version_skew()
     if ctx.invoked_subcommand is None:
         # The decorator's edge, same as every command: a Ctrl-C in
@@ -277,6 +282,7 @@ def ls(
     as_json: bool = typer.Option(False, "--json", help="one JSON document"),
 ) -> int:
     """List workspaces on the daemon."""
+    set_json_mode(as_json)
     return cmd_ls(as_json, transport=ctx.obj)
 
 
@@ -304,6 +310,7 @@ def storage(
     as_json: bool = typer.Option(False, "--json", help="one JSON document"),
 ) -> int:
     """Report the state-disk budget and per-workspace cost (#184)."""
+    set_json_mode(as_json)
     return cmd_storage(workspace, as_json, transport=ctx.obj)
 
 
@@ -424,8 +431,12 @@ def create(
     start: bool = typer.Option(
         False, "--start", help="boot the workspace immediately"
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the new row as one JSON document"
+    ),
 ) -> int:
     """Create a workspace."""
+    set_json_mode(as_json)
     return run_create(
         CreateFlags(
             workspace_id=workspace_id,
@@ -451,6 +462,7 @@ def create(
             start=start,
         ),
         ctx.obj,
+        as_json=as_json,
     )
 
 
@@ -461,9 +473,13 @@ def start(
     workspace_id: str = typer.Argument(
         ..., help="the workspace to boot (name or id)"
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the settled row as one JSON document"
+    ),
 ) -> int:
     """Boot a created workspace."""
-    return cmd_start(workspace_id, transport=ctx.obj)
+    set_json_mode(as_json)
+    return cmd_start(workspace_id, as_json, transport=ctx.obj)
 
 
 @app.command("stop")
@@ -473,9 +489,13 @@ def stop(
     workspace_id: str = typer.Argument(
         ..., help="the workspace to stop (name or id)"
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the settled row as one JSON document"
+    ),
 ) -> int:
     """Power a workspace off."""
-    return cmd_stop(workspace_id, transport=ctx.obj)
+    set_json_mode(as_json)
+    return cmd_stop(workspace_id, as_json, transport=ctx.obj)
 
 
 @app.command("clone")
@@ -499,6 +519,9 @@ def clone(
         "allow anew, a static clone answers every name NXDOMAIN "
         "until its list is set",
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the new row as one JSON document"
+    ),
 ) -> int:
     """Copy a workspace into a new one (#773).
 
@@ -513,7 +536,8 @@ def clone(
     generated itself (ssh host keys above all) duplicates — rotate
     what matters before trusting the clone's identity.
     """
-    return cmd_clone(source, name, copy_allowlist, transport=ctx.obj)
+    set_json_mode(as_json)
+    return cmd_clone(source, name, copy_allowlist, as_json, ctx.obj)
 
 
 @app.command("resize")
@@ -539,10 +563,16 @@ def resize(
         "--mem-mib",
         help="new guest memory, MiB (applies at the next boot)",
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the resized row as one JSON document"
+    ),
 ) -> int:
     """Change a stopped workspace's disk sizes and topology (#184,
     #277)."""
-    return run_resize(workspace_id, home_mib, root_mib, cpus, mem_mib, ctx.obj)
+    set_json_mode(as_json)
+    return run_resize(
+        workspace_id, home_mib, root_mib, cpus, mem_mib, ctx.obj, as_json
+    )
 
 
 @app.command("mount")
@@ -559,6 +589,9 @@ def mount(
         "absolute path it lands at in the guest, and ro or rw "
         "(rw when omitted)",
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the refreshed row as one JSON document"
+    ),
 ) -> int:
     """Mount a host directory into a workspace (#667).
 
@@ -567,7 +600,8 @@ def mount(
     Next-start semantics: a running workspace keeps the devices
     it attached, and the next start attaches the new set.
     """
-    return cmd_mount(workspace_id, spec, ctx.obj)
+    set_json_mode(as_json)
+    return cmd_mount(workspace_id, spec, as_json, ctx.obj)
 
 
 @app.command("umount")
@@ -581,13 +615,17 @@ def umount(
         ...,
         help="the host path (~ expands) whose mounts leave the workspace",
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the refreshed row as one JSON document"
+    ),
 ) -> int:
     """Remove a workspace's mounts of one host path (#667).
 
     The next start attaches the remainder; a running workspace
     keeps its attached devices until then.
     """
-    return cmd_umount(workspace_id, share, ctx.obj)
+    set_json_mode(as_json)
+    return cmd_umount(workspace_id, share, as_json, ctx.obj)
 
 
 @app.command("rm")
@@ -597,9 +635,15 @@ def rm(
     workspace_ids: list[str] = typer.Argument(
         ..., help="the workspaces to delete, in order (name or id)"
     ),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="print one JSON line per removed workspace",
+    ),
 ) -> int:
     """Delete workspaces and their data."""
-    return cmd_rm(workspace_ids, transport=ctx.obj)
+    set_json_mode(as_json)
+    return cmd_rm(workspace_ids, as_json, transport=ctx.obj)
 
 
 @app.command("console")
@@ -639,11 +683,15 @@ def key(
     workspace_id: str = typer.Argument(
         ..., help="the workspace whose identity to fetch (name or id)"
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the identity document as JSON"
+    ),
 ) -> int:
     """Fetch a workspace's ssh identity (#111): the public half.
     The private half is the operator's own key — it never crosses
     the API (#486, #497)."""
-    return cmd_key(workspace_id, transport=ctx.obj)
+    set_json_mode(as_json)
+    return cmd_key(workspace_id, as_json, transport=ctx.obj)
 
 
 @app.command(
@@ -707,10 +755,17 @@ def rsync(
 @egress_app.command("rules")
 @one_line_interrupts
 def egress_rules(
-    ctx: typer.Context, workspace_id: str = typer.Argument(...)
+    ctx: typer.Context,
+    workspace_id: str = typer.Argument(...),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the rules document as JSON"
+    ),
 ) -> int:
     """The in-effect verdicts for a workspace."""
-    return asyncio.run(egress_mod.run_rules(workspace_id, transport=ctx.obj))
+    set_json_mode(as_json)
+    return asyncio.run(
+        egress_mod.run_rules(workspace_id, as_json, transport=ctx.obj)
+    )
 
 
 @egress_app.command("requests")
@@ -725,12 +780,17 @@ def egress_requests(
         help="filter one lifecycle state (pending, allowed, denied, "
         "expired, or revoked)",
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the rows as one JSON document"
+    ),
 ) -> int:
     """The consent rows (audit trail)."""
+    set_json_mode(as_json)
     return asyncio.run(
         egress_mod.run_requests(
             workspace_id,
             None if decision is None else decision.value,
+            as_json,
             transport=ctx.obj,
         )
     )
@@ -752,14 +812,19 @@ def egress_decide(
         help="how long enforcement honors the verdict (once, 5m, "
         "15m, tilrestart, or forever; default tilrestart)",
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the verdict document as JSON"
+    ),
 ) -> int:
     """Give a verdict on a held request."""
+    set_json_mode(as_json)
     return asyncio.run(
         egress_mod.run_decide(
             workspace_id,
             request_id,
             decision.value,
             duration.value,
+            as_json,
             transport=ctx.obj,
         )
     )
@@ -771,10 +836,16 @@ def egress_revoke(
     ctx: typer.Context,
     workspace_id: str = typer.Argument(...),
     request_id: str = typer.Argument(...),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the outcome as one JSON line"
+    ),
 ) -> int:
     """Undo an in-effect verdict."""
+    set_json_mode(as_json)
     return asyncio.run(
-        egress_mod.run_revoke(workspace_id, request_id, transport=ctx.obj)
+        egress_mod.run_revoke(
+            workspace_id, request_id, as_json, transport=ctx.obj
+        )
     )
 
 
@@ -801,15 +872,20 @@ def egress_mode_command(
         "effectively allowed (every name NXDOMAINs — an offline "
         "workspace)",
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the reply as one JSON document"
+    ),
 ) -> int:
     """Switch the egress posture (#280): live for a running
     workspace, at next start for a stopped one."""
+    set_json_mode(as_json)
     return asyncio.run(
         egress_mod.run_mode(
             workspace_id,
             mode.value,
             allow,
             offline,
+            as_json,
             transport=ctx.obj,
         )
     )
@@ -849,6 +925,7 @@ def image_ls(
     as_json: bool = typer.Option(False, "--json", help="one JSON document"),
 ) -> int:
     """List catalog images."""
+    set_json_mode(as_json)
     return cmd_image_ls(as_json, transport=ctx.obj)
 
 
@@ -875,10 +952,14 @@ def image_import(
         "--version",
         help="register under this version instead of the archive's own (#340)",
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the imported record as JSON"
+    ),
 ) -> int:
     """Register an image archive from a daemon-side path or an
     https:// URL."""
-    return cmd_image_import(source, name, version, transport=ctx.obj)
+    set_json_mode(as_json)
+    return cmd_image_import(source, name, version, as_json, ctx.obj)
 
 
 @image_app.command("rename")
@@ -896,10 +977,14 @@ def image_rename(
     version: str | None = typer.Option(
         None, "--version", help="the registered version moves to this"
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the renamed record as JSON"
+    ),
 ) -> int:
     """Change a cataloged image's registered name/version (#340);
     the bytes, the hash, and the manifest origin stay."""
-    return cmd_image_rename(ref, name, version, transport=ctx.obj)
+    set_json_mode(as_json)
+    return cmd_image_rename(ref, name, version, as_json, ctx.obj)
 
 
 @image_app.command("check")
@@ -917,9 +1002,15 @@ def image_check(
         120.0, "--shutdown-timeout-s", help=CHECK_SHUTDOWN_TIMEOUT_HELP
     ),
     keep: bool = typer.Option(False, "--keep", help=CHECK_KEEP_HELP),
+    as_json: bool = typer.Option(
+        False,
+        "--json",
+        help="print the contract rows as one JSON document",
+    ),
 ) -> int:
     """Boot an image and verify the guest contract (#258); local —
     needs /dev/kvm, --egress needs root."""
+    set_json_mode(as_json)
     return cmd_image_check(
         CheckOptions(
             archive=archive,
@@ -928,6 +1019,7 @@ def image_check(
             boot_timeout_s=boot_timeout_s,
             shutdown_timeout_s=shutdown_timeout_s,
             keep=keep,
+            as_json=as_json,
         )
     )
 
@@ -941,9 +1033,13 @@ def image_rm(
         help="name:version, bare name (newest), name@hash (full "
         "hash), or hash (a unique hash prefix works too)",
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the outcome as one JSON line"
+    ),
 ) -> int:
     """Remove an image from the catalog."""
-    return cmd_image_rm(ref, transport=ctx.obj)
+    set_json_mode(as_json)
+    return cmd_image_rm(ref, as_json, ctx.obj)
 
 
 @image_app.command("info")
@@ -955,9 +1051,13 @@ def image_info(
         help="name:version, bare name, name@hash, or hash "
         "(a unique hash prefix works too)",
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the record as one JSON document"
+    ),
 ) -> int:
     """Show one image's full record."""
-    return cmd_image_info(ref, transport=ctx.obj)
+    set_json_mode(as_json)
+    return cmd_image_info(ref, as_json, ctx.obj)
 
 
 @image_app.command("default")
@@ -975,10 +1075,14 @@ def image_default(
         help="clear the designation; a bare create falls back to the "
         "sole catalog entry, or needs --image when several remain",
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the reply as one JSON document"
+    ),
 ) -> int:
     """Designate the image a bare create boots (#270), or clear the
     designation with --unset."""
-    return cmd_image_default(ref, unset, transport=ctx.obj)
+    set_json_mode(as_json)
+    return cmd_image_default(ref, unset, as_json, ctx.obj)
 
 
 @home_app.command("export")
@@ -992,9 +1096,13 @@ def home_export(
         None,
         help="output file (default: <workspace_id>.ext4); - writes stdout",
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the outcome as one JSON document"
+    ),
 ) -> int:
     """Download a workspace's /home volume."""
-    return cmd_home_export(workspace_id, file, transport=ctx.obj)
+    set_json_mode(as_json)
+    return cmd_home_export(workspace_id, file, as_json, transport=ctx.obj)
 
 
 @home_app.command("import")
@@ -1007,9 +1115,13 @@ def home_import(
     file: str = typer.Argument(
         ..., help="the ext4 volume image to upload; - reads stdin"
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the outcome as one JSON document"
+    ),
 ) -> int:
     """Replace a workspace's /home volume from an ext4 image."""
-    return cmd_home_import(workspace_id, file, transport=ctx.obj)
+    set_json_mode(as_json)
+    return cmd_home_import(workspace_id, file, as_json, transport=ctx.obj)
 
 
 @secret_app.command("mint")
@@ -1051,12 +1163,16 @@ def secret_mint(
             "(pipe it from a password manager)"
         ),
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the row (with sentinel) as JSON"
+    ),
 ) -> int:
     """Mint a placeholder: the operator's value rides the request
     and is never echoed; the sentinel prints once. Daemon-wide by
     default, scoped with --workspace."""
+    set_json_mode(as_json)
     return cmd_secret_mint(
-        workspace, name, dests, ttl, secret_file, transport=ctx.obj
+        workspace, name, dests, ttl, secret_file, as_json, transport=ctx.obj
     )
 
 
@@ -1067,6 +1183,7 @@ def secret_ls(
     as_json: bool = typer.Option(False, "--json", help="one JSON document"),
 ) -> int:
     """List placeholders (sentinels are never listed)."""
+    set_json_mode(as_json)
     return cmd_secret_ls(as_json, transport=ctx.obj)
 
 
@@ -1084,9 +1201,13 @@ def secret_revoke(
             "split); omitted, the daemon-wide row of this label"
         ),
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the outcome as one JSON line"
+    ),
 ) -> int:
     """Revoke a placeholder (effective next request)."""
-    return cmd_secret_revoke(workspace, name, transport=ctx.obj)
+    set_json_mode(as_json)
+    return cmd_secret_revoke(workspace, name, as_json, transport=ctx.obj)
 
 
 @secret_app.command("renew")
@@ -1109,9 +1230,13 @@ def secret_renew(
         metavar="SECONDS",
         help="the new lifetime from now",
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the renewed row as JSON"
+    ),
 ) -> int:
     """Extend a placeholder's lifetime in place."""
-    return cmd_secret_renew(workspace, name, ttl, transport=ctx.obj)
+    set_json_mode(as_json)
+    return cmd_secret_renew(workspace, name, ttl, as_json, transport=ctx.obj)
 
 
 @secret_app.command("coverage")
@@ -1126,20 +1251,30 @@ def secret_coverage(
         help="all (default posture) or scoped (daemon-wide "
         "placeholders exempt this workspace)",
     ),
+    as_json: bool = typer.Option(
+        False, "--json", help="print the reply as one JSON document"
+    ),
 ) -> int:
     """Flip a workspace's daemon-wide placeholder posture (#339)."""
-    return cmd_secret_coverage(workspace_id, coverage.value, transport=ctx.obj)
+    set_json_mode(as_json)
+    return cmd_secret_coverage(
+        workspace_id, coverage.value, as_json, transport=ctx.obj
+    )
 
 
 @secret_app.command("unlock")
 @one_line_interrupts
 def secret_unlock(
     ctx: typer.Context,
+    as_json: bool = typer.Option(
+        False, "--json", help="print the outcome as one JSON document"
+    ),
 ) -> int:
     """Unlock the store: decrypt the pending ciphertexts the
     configured identity key opens and upload the plaintext
     (rows the key cannot open stay ciphertext)."""
-    return cmd_secret_unlock(transport=ctx.obj)
+    set_json_mode(as_json)
+    return cmd_secret_unlock(as_json, transport=ctx.obj)
 
 
 def help_requested(argv: list[str]) -> bool:
@@ -1151,6 +1286,36 @@ def help_requested(argv: list[str]) -> bool:
         if token == "--":
             return False
         if token in ("-h", "--help"):
+            return True
+    return False
+
+
+def skew_probe_wanted(tokens: list[str], ctx: typer.Context) -> bool:
+    """Whether the root callback's version-skew probe runs (#706,
+    #841): a real dial (no in-process transport), a non-image
+    command, and a human invocation — under ``--json`` the
+    notice would land ahead of the structured error document a
+    failing run prints."""
+    return (
+        ctx.obj is None
+        and ctx.invoked_subcommand != "image"
+        and not json_requested(tokens)
+    )
+
+
+def json_requested(argv: list[str]) -> bool:
+    """Whether the invocation carries a ``--json`` flag before any
+    ``--`` separator (#841): the root callback's version-skew probe
+    runs before a command body parses, and its stderr notice would
+    land ahead of the structured error document a failing --json
+    run prints — a harness reading stderr as one JSON object would
+    break on it. The scan mirrors :func:`help_requested`'s shape;
+    a token a passthrough command later swallows only ever
+    suppresses the notice."""
+    for token in argv:
+        if token == "--":
+            return False
+        if token == "--json":
             return True
     return False
 
@@ -1202,11 +1367,38 @@ def help_exit(code: int, tokens: list[str]) -> bool:
     return code == 0 and not body_reached and help_requested(tokens)
 
 
+def structured_error(exc: SystemExit) -> int | None:
+    """The JSON-mode exit for a command failure (#841), or None
+    when the invocation is human-mode and the one-line exit raises
+    through: an API-status failure carries its status and detail,
+    every other exit names itself."""
+    if not json_mode():
+        return None
+    if isinstance(exc, ApiExit):
+        return api_failure(exc.api_status, exc.api_detail)
+    return plain_failure(exc)
+
+
+def json_or_reraise(exc: SystemExit) -> int:
+    """The JSON-mode exit for a command failure (#841); a
+    human-mode invocation re-raises its one-line exit."""
+    mapped = structured_error(exc)
+    if mapped is None:
+        raise exc
+    return mapped
+
+
 def main(argv: list[str] | None = None, transport=None) -> int:
     """The ``msks`` entry point: parse with the typer app, run the
-    command, return its exit code."""
+    command, return its exit code. A failure in ``--json`` mode is
+    the structured error document on stderr with the table's exit
+    code (#841); the human modes keep their one-line exits."""
     tokens = sys.argv[1:] if argv is None else argv
-    code = run_parsed(argv, transport)
+    set_json_mode(False)  # per invocation, never across them
+    try:
+        code = run_parsed(argv, transport)
+    except SystemExit as exc:
+        return json_or_reraise(exc)
     if help_exit(code, tokens):
         # SystemExit(0), the shape the argparse era pinned.
         raise SystemExit(0)
