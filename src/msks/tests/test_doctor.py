@@ -30,6 +30,7 @@ from msks.server.doctor import (
     install_hint,
     kvm_access_result,
     library_probe_result,
+    pacman_qemu_kvm_package,
     parse_tmux_version,
     result_marker,
     run,
@@ -123,9 +124,13 @@ def test_install_hint_names_the_kvm_stack_per_manager() -> None:
     real package — Arch's split qemu and Alpine's arch-named
     emulator, not a qemu-kvm that neither archive carries."""
     assert install_hint("qemu-kvm", "apt") == "sudo apt install qemu-kvm"
-    assert install_hint("qemu-kvm", "pacman") == "sudo pacman -S qemu-desktop"
-    expected = apk_qemu_system_package(os.uname().machine)
-    assert install_hint("qemu-kvm", "apk") == f"sudo apk add {expected}"
+    expected_pacman = pacman_qemu_kvm_package(os.uname().machine)
+    assert (
+        install_hint("qemu-kvm", "pacman")
+        == f"sudo pacman -S {expected_pacman}"
+    )
+    expected_apk = apk_qemu_system_package(os.uname().machine)
+    assert install_hint("qemu-kvm", "apk") == f"sudo apk add {expected_apk}"
 
 
 def test_the_kvm_apk_package_follows_the_machine() -> None:
@@ -138,15 +143,26 @@ def test_the_kvm_apk_package_follows_the_machine() -> None:
     assert apk_qemu_system_package("riscv64") == "qemu-system-x86_64"
 
 
+def test_the_kvm_pacman_package_follows_the_machine() -> None:
+    """Arch's split qemu answers per host family (#837): an
+    aarch64 pacman host (Arch Linux ARM, where the aarch64
+    emulator is optional beside qemu-desktop) is told the
+    arch-named qemu-system-aarch64, a mainline x86-64 host (and
+    a machine the table lacks) qemu-desktop."""
+    assert pacman_qemu_kvm_package("aarch64") == "qemu-system-aarch64"
+    assert pacman_qemu_kvm_package("x86_64") == "qemu-desktop"
+    assert pacman_qemu_kvm_package("riscv64") == "qemu-desktop"
+
+
 def test_the_table_bakes_this_machines_packages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The arch-derived entries bake at import — PACKAGE_HINTS'
-    apk row (#832) and UPSTREAM_HINTS' VMM pair (#831) — so a
-    reload under an aarch64 uname must carry the aarch64 names
-    into install_hint. Without this pin, a literal x86_64 string
-    in either table passes the suite on every x86_64 host: the
-    exact regression both fixes made."""
+    apk row (#832) and pacman row (#837) and UPSTREAM_HINTS'
+    VMM pair (#831) — so a reload under an aarch64 uname must
+    carry the aarch64 names into install_hint. Without this
+    pin, a literal x86_64 string in any table passes the suite
+    on every x86_64 host: the exact regression each fix made."""
     import collections
 
     Uname = collections.namedtuple("Uname", "machine")
@@ -156,6 +172,10 @@ def test_the_table_bakes_this_machines_packages(
         assert (
             doctor_mod.install_hint("qemu-kvm", "apk")
             == "sudo apk add qemu-system-aarch64"
+        )
+        assert (
+            doctor_mod.install_hint("qemu-kvm", "pacman")
+            == "sudo pacman -S qemu-system-aarch64"
         )
         assert (
             "cloud-hypervisor-static-aarch64"

@@ -188,6 +188,28 @@ def apk_qemu_system_package(machine: str) -> str:
     )
 
 
+# Arch splits its qemu per host family (#837): mainline Arch is
+# x86_64-only and qemu-desktop carries that machine's emulators
+# (the row's historical prescription), while Arch Linux ARM
+# builds the split for aarch64 too — there qemu-system-aarch64
+# is a package in its own right and sits beside qemu-desktop as
+# an optional only, so an aarch64 pacman host is pointed at the
+# arch-named package the way the apk entry is (#832).
+PACMAN_QEMU_KVM_PACKAGES = {
+    "x86_64": "qemu-desktop",
+    "aarch64": "qemu-system-aarch64",
+}
+
+
+def pacman_qemu_kvm_package(machine: str) -> str:
+    """The pacman package that carries one machine's KVM stack
+    — a machine the table lacks falls back to the x86_64 name,
+    the row's historical prescription."""
+    return PACMAN_QEMU_KVM_PACKAGES.get(
+        machine, PACMAN_QEMU_KVM_PACKAGES["x86_64"]
+    )
+
+
 # Each entry: check name → {manager → package}. A manager missing
 # from an entry falls back to the check name in the generic hint.
 # The package name differs from the binary it ships on several
@@ -333,19 +355,18 @@ PACKAGE_HINTS: dict[str, dict[str, str]] = {
         "pacman": "libnfnetlink",
     },
     # The KVM stack the /dev/kvm rows point at (#559): the name
-    # splits the way the library rows' do — Arch carries KVM in
-    # its split qemu packages (qemu-desktop is the x86_64 one;
-    # the aarch64 pacman host's answer is open as #837),
-    # Alpine's is the arch-named system emulator picked for this
-    # host's machine (#832), and brew's formula is qemu under
-    # either platform.
+    # splits the way the library rows' do — the Arch and Alpine
+    # entries follow the host's machine (qemu-desktop on
+    # mainline x86_64 #837, the arch-named system emulator on
+    # ALARM aarch64 and on Alpine #832), and brew's formula is
+    # qemu under either platform.
     "qemu-kvm": {
         "dnf": "qemu-kvm",
         "yum": "qemu-kvm",
         "apt": "qemu-kvm",
         "zypper": "qemu-kvm",
         "apk": apk_qemu_system_package(os.uname().machine),
-        "pacman": "qemu-desktop",
+        "pacman": pacman_qemu_kvm_package(os.uname().machine),
         "brew": "qemu",
     },
 }

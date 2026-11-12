@@ -56,6 +56,14 @@ tagged `vX.Y.Z`.
   both; the catalog-record path was already per-arch and is
   unchanged.
 
+- **`msks doctor` qemu-kvm pacman hint (#837).** On an aarch64
+  Arch-family host (Arch Linux ARM), the hint now prints
+  `qemu-system-aarch64` instead of `qemu-desktop`: ALARM lists
+  the aarch64 emulator as an optional package beside
+  `qemu-desktop`, so the old hint could install a KVM stack
+  without this host's emulator. Mainline x86-64 hosts keep the
+  `qemu-desktop` prescription.
+
 - **`msks doctor` qemu-kvm apk hint (#832).** The hint now
   prints this host's Alpine emulator package:
   `qemu-system-aarch64` on an aarch64 host,
