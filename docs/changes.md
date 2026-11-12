@@ -57,11 +57,12 @@ tagged `vX.Y.Z`.
   unchanged.
 
 - **`msks doctor` qemu-kvm pacman hint (#837).** On an aarch64
-  Arch-family host (Arch Linux ARM), the hint now prints
-  `qemu-system-aarch64` instead of `qemu-desktop`: ALARM lists
-  the aarch64 emulator as an optional package beside
-  `qemu-desktop`, so the old hint could install a KVM stack
-  without this host's emulator. Mainline x86-64 hosts keep the
+  Arch-family host (Arch Linux ARM) the hint now names
+  `qemu-system-aarch64`, the minimal headless KVM stack
+  (qemu-common, qemu-img, and virtiofsd ride its dependencies).
+  `qemu-desktop` reaches the same emulator there through
+  qemu-base, but drags the desktop meta package's GTK, SDL, and
+  audio stack along. Mainline x86-64 hosts keep the
   `qemu-desktop` prescription.
 
 - **`msks doctor` qemu-kvm apk hint (#832).** The hint now

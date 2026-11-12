@@ -188,13 +188,18 @@ def apk_qemu_system_package(machine: str) -> str:
     )
 
 
-# Arch splits its qemu per host family (#837): mainline Arch is
-# x86_64-only and qemu-desktop carries that machine's emulators
-# (the row's historical prescription), while Arch Linux ARM
-# builds the split for aarch64 too — there qemu-system-aarch64
-# is a package in its own right and sits beside qemu-desktop as
-# an optional only, so an aarch64 pacman host is pointed at the
-# arch-named package the way the apk entry is (#832).
+# Arch's qemu splits per host family (#837): qemu-desktop on
+# mainline x86_64 carries that machine's emulators (the row's
+# historical prescription). ALARM's aarch64 qemu-desktop also
+# reaches the aarch64 emulator — its qemu-base hard-depends on
+# qemu-system-aarch64 (the mirror of mainline's qemu-base →
+# qemu-system-x86); the emulator's optional listing beside
+# qemu-desktop is the split's inherited optdepends metadata,
+# not absence. The aarch64 entry names the arch-named package
+# directly: the minimal headless stack (qemu-common, qemu-img,
+# and virtiofsd ride its deps), skipping the desktop meta's
+# GTK/SDL/audio pull — the same per-arch shape the apk entry
+# takes (#832).
 PACMAN_QEMU_KVM_PACKAGES = {
     "x86_64": "qemu-desktop",
     "aarch64": "qemu-system-aarch64",
