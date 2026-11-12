@@ -53,6 +53,7 @@ from .consent_ui import (
     render_order,
 )
 from .forms import FormSelect, FormWalk
+from .help import HelpKeys
 from .link import AuditLink
 from .rows import (
     LIST_FRAME_CELLS,
@@ -317,7 +318,7 @@ def minted_note(row: dict) -> str:
     return f"minted {escape(coverage_text(row))}/{escape(row['name'])}"
 
 
-class SecretsScreen(Screen):
+class SecretsScreen(HelpKeys, Screen):
     """The secrets page (#390): every placeholder row the daemon
     holds — coverage, name, destinations, a live TTL countdown,
     the created date — with revoke and renew on the focused row,
@@ -329,6 +330,10 @@ class SecretsScreen(Screen):
     workspace links land with the cross-references (#394).
     """
 
+    #: The ``?`` overlay's title (#851): the docs' name for the
+    #: page.
+    help_title = "secrets page"
+
     BINDINGS = [
         Binding("x", "revoke", "Revoke"),
         Binding("r", "renew", "Renew"),
@@ -337,6 +342,7 @@ class SecretsScreen(Screen):
         Binding("u", "unlock", "Unlock"),
         Binding("q", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
+        Binding("question_mark", "help", "Help", show=False),
     ]
 
     def __init__(self) -> None:
@@ -678,7 +684,7 @@ AUDIT_KINDS = ("swap", "sighting", "mint", "revoke", "expiry", "unlock")
 FILTER_ALL = "all"
 
 
-class SecretAuditScreen(Screen):
+class SecretAuditScreen(HelpKeys, Screen):
     """The daemon-wide audit view (#390): every workspace's
     placeholder lifecycle and wire events, newest first — the
     newest hundred recorded rows replayed from the audit listing
@@ -696,6 +702,10 @@ class SecretAuditScreen(Screen):
     page — no focus trap.
     """
 
+    #: The ``?`` overlay's title (#851): the docs' name for the
+    #: view.
+    help_title = "secrets audit"
+
     BINDINGS = [
         Binding("k", "kind", "Kind"),
         Binding("w", "workspace", "Workspace"),
@@ -705,7 +715,8 @@ class SecretAuditScreen(Screen):
         # `e` from here returns instead of stacking another audit
         # view (the page's key would push otherwise) — the rules
         # screen's `r` follows the same shape.
-        Binding("e", "back", show=False),
+        Binding("e", "back", "Back", show=False),
+        Binding("question_mark", "help", "Help", show=False),
     ]
 
     def __init__(self, data, *, link_factory=None) -> None:

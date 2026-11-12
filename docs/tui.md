@@ -27,6 +27,10 @@ removes it (after a confirmation), `e` opens the secrets page, and `r`
 refreshes. `/` jumps to the first workspace whose name starts with what
 you type. Enter opens the workspace's page.
 
+Every page answers `?` with a key overlay: the page's bindings,
+hidden ones included, each with its label. Any key closes the
+overlay. The workspaces list answers it too.
+
 The list re-reads the daemon every five seconds. A workspace changed
 from another surface (the CLI, another operator) appears without a
 keypress.

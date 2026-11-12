@@ -47,6 +47,7 @@ from .consent_ui import (
     focused_attr,
 )
 from .forms import FormSelect, FormWalk
+from .help import HelpKeys
 from .link import AuditLink, proxy_frame
 from .rows import (
     COLUMN_GAP,
@@ -397,7 +398,7 @@ class ProxyAddScreen(FormWalk, ModalScreen[dict | None]):
         self._task = asyncio.create_task(self.submitted(answer))
 
 
-class ProxiesScreen(Screen):
+class ProxiesScreen(HelpKeys, Screen):
     """One workspace's proxies page (#809, part #807): the
     workspace's proxy rows with their live status, opened from
     its page (the action row, or ``p``). ``a`` opens the add form,
@@ -409,12 +410,17 @@ class ProxiesScreen(Screen):
     rows; ``q`` or Escape returns to the workspace page — no
     trap."""
 
+    #: The ``?`` overlay's title (#851): the docs' name for the
+    #: page.
+    help_title = "proxies page"
+
     BINDINGS = [
         Binding("a", "add", "Add"),
         Binding("D", "remove", "Del"),
-        Binding("enter", "remove", show=False, priority=True),
+        Binding("enter", "remove", "Del", show=False, priority=True),
         Binding("q", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
+        Binding("question_mark", "help", "Help", show=False),
     ]
 
     def __init__(self, workspace: dict) -> None:

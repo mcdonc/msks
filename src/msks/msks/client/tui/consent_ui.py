@@ -67,6 +67,7 @@ from .consent import (
     SecretEvent,
     fmt_duration,
 )
+from .help import HelpKeys
 from .rows import clip, header_meta, header_name
 
 #: Reconnect backoff (seconds), capped; a repeatedly-dropping daemon
@@ -820,7 +821,7 @@ class EdgeListView(ListView):
 HOLDS_HINT = "a allow · d deny · shift or enter picks a duration · x revoke"
 
 
-class ConsentPage(Screen):
+class ConsentPage(HelpKeys, Screen):
     """The egress consent page (#454): the held-request queue and
     the in-effect verdicts on one full-screen page — the consent
     overlay (#358) and its rules screen merged, the tree's only
@@ -859,6 +860,10 @@ class ConsentPage(Screen):
     swaps a list (the swap was the once-a-second flash #301
     reports)."""
 
+    #: The ``?`` overlay's title (#851): the docs' name for the
+    #: page.
+    help_title = "egress consent page"
+
     #: The page sets its own initial focus (``started``: the holds
     #: zone when a hold waits, the verdicts otherwise) once the
     #: compose has settled — Textual's auto-focus would grab the
@@ -878,6 +883,7 @@ class ConsentPage(Screen):
         Binding("m", "mode", "Mode"),
         Binding("q", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
+        Binding("question_mark", "help", "Help", show=False),
     ]
 
     def check_action(self, action: str, parameters) -> bool | None:

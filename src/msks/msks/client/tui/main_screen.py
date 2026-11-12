@@ -26,6 +26,7 @@ from .consent_ui import (
     focused_attr,
 )
 from .forms import CreateScreen
+from .help import HelpKeys
 from .importer import ImagesScreen
 from .rows import (
     DEFAULT_SORT,
@@ -134,15 +135,21 @@ class ColumnsHeader(Static):
         self.pick(event.x - gutter)
 
 
-class MainScreen(Screen):
+class MainScreen(HelpKeys, Screen):
     """The tree's root (#309): every workspace one row; create,
     start, stop, and remove happen here; Enter opens the
     workspace's page, ``e`` the secrets page (#431), ``/`` the
-    typeahead jump (#470 L4). The footer's descriptions stay
-    short (#524): every binding must fit the 80-column footer a
-    24-row terminal shows — the longer words (``Jmp`` for the
-    typeahead, ``Del`` for remove, ``Rload`` for the standing
-    refresh) abbreviate their actions without hiding a binding."""
+    typeahead jump (#470 L4), ``?`` the key overlay (#851). The
+    footer's descriptions stay short (#524): every binding must
+    fit the 80-column footer a 24-row terminal shows — the longer
+    words (``Jmp`` for the typeahead, ``Del`` for remove,
+    ``Rload`` for the standing refresh) abbreviate their actions
+    without hiding a binding; ``?`` stays off the footer for the
+    same budget and lists itself in the overlay it opens."""
+
+    #: The ``?`` overlay's title (#851): the docs' name for the
+    #: list.
+    help_title = "workspaces list"
 
     BINDINGS = [
         Binding("enter", "open", "Open", priority=True),
@@ -155,7 +162,8 @@ class MainScreen(Screen):
         Binding("e", "secrets", "Scrts"),
         Binding("r", "refresh", "Rload"),
         Binding("q", "quit", "Quit"),
-        Binding("escape", "quit", show=False),
+        Binding("escape", "quit", "Quit", show=False),
+        Binding("question_mark", "help", "Help", show=False),
     ]
 
     def __init__(self) -> None:

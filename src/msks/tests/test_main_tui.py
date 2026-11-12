@@ -38,10 +38,17 @@ from msks.client.tui.follow import FLOW_SHELL, TuiFollow, run_follow_up
 from msks.client.tui.forms import (
     EDIT_FREE_STATUSES,
     FORM_FIELDS,
+    CreateScreen,
     EditScreen,
     WorkspaceForm,
     edit_seeds,
     image_options,
+)
+from msks.client.tui.help import (
+    HelpKeys,
+    HelpScreen,
+    help_content,
+    screen_bindings,
 )
 from msks.client.tui.link import DeciderLink
 from msks.client.tui.main_app import (
@@ -69,11 +76,13 @@ from test_consent_tui import (
 )
 from testkeys import mint as MINT
 from textual import events
+from textual.binding import Binding
 from textual.color import Color
 from textual.containers import Vertical
 from textual.content import Content, Span
 from textual.css.query import NoMatches
 from textual.geometry import Size
+from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
     Input,
@@ -3706,6 +3715,176 @@ def test_the_flash_line_expires() -> None:
     assert flash.text("default") == "held"
     flash.until = 0.0
     assert flash.text("default") == "default"
+
+
+# -- the ? overlay (#851) --------------------------------------------------
+
+
+async def test_the_help_overlay_lists_the_screens_bindings() -> None:
+    """#851: ``?`` opens the overlay over the list — every
+    binding the screen carries, hidden ones included (the escape
+    leave, the ``?`` itself), each with its action label and the
+    footer's own key glyphs. The list derives from the screen's
+    BINDINGS, so a new binding reaches the overlay without a
+    second edit."""
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 1)
+        await pilot.press("?")
+        await wait_for(lambda: isinstance(app.screen, HelpScreen))
+        overlay = app.screen
+        assert str(overlay.query_one("#help-title", Static).content) == (
+            "keys — workspaces list"
+        )
+        keys = overlay.query_one("#help-keys", Static).content
+        # The overlay's list is the screen beneath's BINDINGS —
+        # the same derivation the push runs — through the
+        # footer's key glyphs.
+        assert (
+            keys.plain
+            == help_content(
+                screen_bindings(app.screen_stack[-2]), app.get_key_display
+            ).plain
+        )
+        # Hidden bindings stand in the list beside the shown ones:
+        # the escape the footer never paints, and the ? that
+        # opened the overlay.
+        lines = keys.plain.splitlines()
+        assert "/    Jmp" in lines
+        assert any(
+            line.startswith("?") and line.endswith("Help") for line in lines
+        )
+        assert any(
+            line.startswith("esc") and line.endswith("Quit") for line in lines
+        )
+
+
+async def test_any_key_closes_the_help_overlay() -> None:
+    """#851: any key closes the overlay — the arrows (the
+    spatial-navigation rule), escape, ``?`` again — and the
+    dismiss key stops at the overlay: a ``c`` closes it without
+    opening the create form beneath it."""
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 1)
+        for key in ("down", "escape", "?", "c"):
+            await pilot.press("?")
+            await wait_for(lambda: isinstance(app.screen, HelpScreen))
+            await pilot.press(key)
+            await wait_for(lambda: on_main(app))
+            assert not isinstance(app.screen, CreateScreen)
+
+
+def test_every_screen_carries_the_help_key() -> None:
+    """#851: every full screen of the tree — every ``Screen`` the
+    tui package declares that is not a modal — carries the ``?``
+    binding, the mixin that pushes the overlay, and its own
+    overlay title. The enumeration walks the package, so a new
+    page ships wired or this test names it."""
+    import importlib
+    import pkgutil
+
+    import msks.client.tui as tui_pkg
+    from msks.client.tui.consent_ui import ConsentPage
+    from msks.client.tui.importer import ImagesScreen
+    from msks.client.tui.proxies import ProxiesScreen
+    from msks.client.tui.secrets import SecretAuditScreen, SecretsScreen
+
+    pages = set()
+    for module_info in pkgutil.iter_modules(tui_pkg.__path__):
+        module = importlib.import_module(f"msks.client.tui.{module_info.name}")
+        for obj in vars(module).values():
+            if (
+                isinstance(obj, type)
+                and issubclass(obj, Screen)
+                and not issubclass(obj, ModalScreen)
+                and obj.__module__ == module.__name__
+            ):
+                pages.add(obj)
+    # The seven full screens the tree holds — the enumeration's
+    # own pin, so a page the walk finds unplanned shows here.
+    assert pages == {
+        MainScreen,
+        WorkspaceScreen,
+        SecretsScreen,
+        SecretAuditScreen,
+        ConsentPage,
+        ImagesScreen,
+        ProxiesScreen,
+    }
+    titles = {
+        MainScreen: "workspaces list",
+        WorkspaceScreen: "workspace page",
+        SecretsScreen: "secrets page",
+        SecretAuditScreen: "secrets audit",
+        ConsentPage: "egress consent page",
+        ImagesScreen: "images page",
+        ProxiesScreen: "proxies page",
+    }
+    for screen in pages:
+        assert issubclass(screen, HelpKeys)
+        assert screen.help_title == titles[screen]
+        assert any(
+            binding.key == "question_mark"
+            for binding in screen_bindings(screen)
+        )
+
+
+def test_the_help_content_lines() -> None:
+    """#851: the overlay's content arithmetic — keys padded to
+    the widest and bold, a binding with no description reads its
+    action's name, and the footer's glyphs render the keys
+    (``slash`` renders ``/``); the bare key stands in when no
+    formatter came."""
+    content = help_content(
+        [
+            Binding("enter", "open", "Open"),
+            Binding("slash", "search", "Jmp"),
+            Binding("escape", "quit", show=False),
+        ],
+        lambda binding: {"enter": "enter", "slash": "/", "escape": "esc"}[
+            binding.key
+        ],
+    )
+    assert content.plain == "enter  Open\n/      Jmp\nesc    quit"
+    assert [
+        (span.start, span.end, content.plain[span.start : span.end])
+        for span in content.spans
+    ] == [(0, 5, "enter"), (12, 13, "/"), (23, 26, "esc")]
+    assert all(span.style == "$text bold" for span in content.spans)
+    # No formatter: the binding's key stands in, its own key
+    # display ahead of it (the unit caller's shape).
+    bare = help_content(
+        [
+            Binding("slash", "search", "Jmp"),
+            Binding("f1", "help", "Help", key_display="??"),
+        ]
+    )
+    assert bare.plain == "slash  Jmp\n??     Help"
+
+
+def test_screen_bindings_skip_the_frameworks_own() -> None:
+    """#851: the overlay's derivation — the screen's own classes'
+    BINDINGS, hidden ones included, the framework's own bases
+    (the Tab walk, the copy keys) excepted, a subclass's key
+    overriding its base's."""
+
+    class Base(Screen):
+        BINDINGS = [Binding("q", "quit", "Quit")]
+
+    class Leaf(Base):
+        BINDINGS = [
+            Binding("q", "back", "Back"),
+            Binding("x", "revoke", "Revoke", show=False),
+        ]
+
+    bindings = screen_bindings(Leaf)
+    assert [binding.key for binding in bindings] == ["q", "x"]
+    assert bindings[0].action == "back"  # the subclass's key wins
+    assert "tab" not in {binding.key for binding in bindings}
+    assert "ctrl+c" not in {binding.key for binding in bindings}
 
 
 # -- the coverage corners ---------------------------------------------------
