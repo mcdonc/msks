@@ -207,13 +207,12 @@ def padded_cells(cells: tuple[str, ...], columns=LIST_COLUMNS) -> str:
 RUNNING_COLOR = "$success"
 
 #: The statuses that sit at rest (#850): ``stopped`` — the
-#: normal resting state — ``created`` — never booted — and
-#: ``paused`` — the hypervisor holds the VM frozen. The word
-#: rides the muted text color (:func:`muted_style`), the color
-#: the pre-#470 rows used, keeping the cue dot as the state's
-#: cue — a fleet at rest reads calm, and the abnormal row is
-#: the row the eye finds.
-RESTING_STATUSES = frozenset({"stopped", "created", "paused"})
+#: normal resting state — and ``created`` — never booted. The
+#: word rides the muted text color (:func:`muted_style`), the
+#: color the pre-#470 rows used, keeping the cue dot as the
+#: state's cue — a fleet at rest reads calm, and the abnormal
+#: row is the row the eye finds.
+RESTING_STATUSES = frozenset({"stopped", "created"})
 
 #: The statuses the daemon lost track of (#850): ``absent`` —
 #: the artifacts are gone — and ``unknown`` — the daemon lost
@@ -223,10 +222,11 @@ LOST_STATUSES = frozenset({"absent", "unknown"})
 LOST_STATUS_COLOR = "$error"
 
 #: The color every other status renders in (#470 S1, #850): the
-#: transitional states — ``starting``, ``stopping`` — deserve
-#: the eye while they pass, and a state the map does not know
-#: takes the same warning color, so a vocabulary the daemon
-#: grows still stands out.
+#: states that want the eye — ``starting`` and ``stopping``
+#: while they pass, and ``paused``, a freeze no msks verb
+#: produces and none resumes (the client's own advice is a
+#: stop, then a start again) — and a state the map does not
+#: know, so a vocabulary the daemon grows still stands out.
 OTHER_STATUS_COLOR = "$warning"
 
 #: The muted ratio a theme spells some other way than Textual's
@@ -262,9 +262,10 @@ def status_color(status: str, theme_variables: dict | None = None) -> str:
     resting statuses in the muted text color the pre-#470 rows
     used (the cue dot carries the state, so the word reads calm
     beside the muted metadata around it); the lost statuses in
-    the error color; every other state — the transitional ones
-    and a status the map does not know — in the warning
-    color."""
+    the error color; every other state — ``starting`` and
+    ``stopping`` in passing, ``paused`` until an operator
+    intervenes, and a status the map does not know — in the
+    warning color."""
     if status == "running":
         return RUNNING_COLOR
     if status in RESTING_STATUSES:

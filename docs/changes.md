@@ -66,10 +66,10 @@ tagged `vX.Y.Z`.
 
 - **Graded status colors in the TUI listing (#850).** The
   workspaces list colors the status column by state class:
-  `running` keeps the success color, `stopped`, `created`, and
-  `paused` render in the muted text color, `starting` and
-  `stopping` in the warning color, and `absent` and `unknown` in
-  the error color. A fleet at rest reads calm; the transitional
+  `running` keeps the success color, `stopped` and `created`
+  render in the muted text color, `starting`, `stopping`, and
+  `paused` in the warning color, and `absent` and `unknown` in
+  the error color. A fleet at rest reads calm. The transitional
   or lost row is the one the eye finds. The `✗N` mounts-issue
   marker keeps the warning color beside whatever color the
   status word takes.

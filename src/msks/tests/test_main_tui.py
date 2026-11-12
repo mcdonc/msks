@@ -3621,7 +3621,7 @@ async def test_the_status_column_carries_its_states_color(
                 # the date keeps the row's plain foreground.
                 assert rendered != name_color
                 assert segment(name).style.bold
-            elif style is muted:
+            elif status in ("stopped", "created"):
                 # The resting states render muted (#850): dimmer
                 # than the row's plain foreground, and not the
                 # warning color the abnormal states carry — the
@@ -3655,13 +3655,14 @@ def test_the_status_colors_grade_by_state() -> None:
     """#850: the status colors grade by state class — every one
     of the vocabulary's eight statuses lands in its class's
     color (running the success color, the resting states the
-    muted text color, the transitional states the warning
-    color, the lost states the error color), and a status the
-    map does not know still takes the warning color, so a
-    vocabulary the daemon grows stands out. A status that does
-    not read as one ASCII CSS word names the row ``other``
-    (Textual's class names are ASCII — a wider word would
-    raise, so the guard hands it the bucket class instead)."""
+    muted text color, the lost states the error color, and
+    every other state — starting, stopping, paused among them —
+    the warning color), and a status the map does not know
+    still takes the warning color, so a vocabulary the daemon
+    grows stands out. A status that does not read as one ASCII
+    CSS word names the row ``other`` (Textual's class names are
+    ASCII — a wider word would raise, so the guard hands it the
+    bucket class instead)."""
     from msks.model.workspaces import WORKSPACE_STATUSES
 
     muted = rows_mod.muted_style({})
@@ -3669,9 +3670,9 @@ def test_the_status_colors_grade_by_state() -> None:
         "running": "$success",
         "stopped": muted,
         "created": muted,
-        "paused": muted,
         "starting": "$warning",
         "stopping": "$warning",
+        "paused": "$warning",
         "absent": "$error",
         "unknown": "$error",
     }
