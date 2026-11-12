@@ -1788,6 +1788,13 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong><code>?</code> key overlay in the TUI (#851).</strong> Every page of the tree
+  answers <code>?</code> with an overlay listing that page's bindings,
+  hidden ones included (the escape leaves among them), each with
+  its action label. Any key closes the overlay. The footer stays
+  as it was. The overlay is where the full key list lives.</p>
+</li>
+<li>
 <p><strong>Sortable listing columns in the TUI (#854).</strong> Clicking a column
   header in the workspaces list sorts by that column; clicking the
   active header flips the direction, and the arrow in the header
