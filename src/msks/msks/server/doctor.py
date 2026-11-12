@@ -195,11 +195,13 @@ def apk_qemu_system_package(machine: str) -> str:
 # qemu-system-aarch64 (the mirror of mainline's qemu-base →
 # qemu-system-x86); the emulator's optional listing beside
 # qemu-desktop is the split's inherited optdepends metadata,
-# not absence. The aarch64 entry names the arch-named package
-# directly: the minimal headless stack (qemu-common, qemu-img,
-# and virtiofsd ride its deps), skipping the desktop meta's
-# GTK/SDL/audio pull — the same per-arch shape the apk entry
-# takes (#832).
+# not absence. The aarch64 entry points at the arch-named
+# package directly: the emulator plus qemu-common (the
+# kvm-group sysusers) ride its deps, without the desktop
+# meta's GTK/SDL/audio pull. qemu-img and virtiofsd stay the
+# table's own rows on every manager — riders of qemu-base, not
+# of this package. The same per-arch shape the apk entry takes
+# (#832).
 PACMAN_QEMU_KVM_PACKAGES = {
     "x86_64": "qemu-desktop",
     "aarch64": "qemu-system-aarch64",

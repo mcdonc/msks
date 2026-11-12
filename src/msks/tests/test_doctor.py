@@ -146,9 +146,9 @@ def test_the_kvm_apk_package_follows_the_machine() -> None:
 def test_the_kvm_pacman_package_follows_the_machine() -> None:
     """Arch's split qemu answers per host family (#837): an
     aarch64 pacman host (Arch Linux ARM) is told the arch-named
-    qemu-system-aarch64 — the minimal headless stack, the same
-    shape the apk entry takes — and a mainline x86-64 host (and
-    a machine the table lacks) qemu-desktop."""
+    qemu-system-aarch64 — the emulator plus qemu-common, the
+    same shape the apk entry takes — and a mainline x86-64 host
+    (and a machine the table lacks) qemu-desktop."""
     assert pacman_qemu_kvm_package("aarch64") == "qemu-system-aarch64"
     assert pacman_qemu_kvm_package("x86_64") == "qemu-desktop"
     assert pacman_qemu_kvm_package("riscv64") == "qemu-desktop"
