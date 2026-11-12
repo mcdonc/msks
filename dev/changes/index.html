@@ -1803,6 +1803,15 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong><code>msks doctor</code> cloud-hypervisor install hint (#831).</strong> The
+  hint now prints this host's release assets: the <code>-aarch64</code>
+  builds on an aarch64 host, the unsuffixed x86-64 builds
+  elsewhere. The installation chapter states the same
+  architecture distinction beside its install block, and
+  installs <code>ch-remote</code> under the unsuffixed command name the
+  demo and dev tooling calls.</p>
+</li>
+<li>
 <p><strong>Egress slice release on a failed teardown (#828).</strong> A <code>detach</code>
   whose table or tap delete raised left the workspace's slice
   claimed with no retry path, so the next <code>msks start</code> was refused
