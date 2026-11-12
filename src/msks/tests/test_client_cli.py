@@ -6653,7 +6653,12 @@ def test_unverified_warning_stands_down_under_json(
     from msks.client import jsonio
 
     monkeypatch.delenv("MSKSC_CAFILE", raising=False)
+    # The warned-once mark is process state: reset it so each
+    # build below is the process's first, whatever ran before
+    # this test on the same worker (#841 review — the CI run's
+    # one dark arc).
     jsonio.set_json_mode(True)
+    env_mod._WARNED_UNVERIFIED = False
     with contextlib.suppress(ssl.SSLError):
         env_mod.ssl_context()
     assert "NOT verified" not in capsys.readouterr().err
@@ -6662,6 +6667,7 @@ def test_unverified_warning_stands_down_under_json(
     with contextlib.suppress(ssl.SSLError):
         env_mod.ssl_context()
     assert "NOT verified" in capsys.readouterr().err
+    env_mod._WARNED_UNVERIFIED = False
 
 
 def test_start_json_degraded_refresh_notes_stderr(
