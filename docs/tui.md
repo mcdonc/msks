@@ -36,11 +36,11 @@ from another surface (the CLI, another operator) appears without a
 keypress.
 
 The status bar above the list counts the workspaces and summarizes
-their states beside the count: `4 workspaces · all stopped` when every
-row holds one state, or each state's count (`4 workspaces · 1 running
-3 stopped`) when they mix, in the same lifecycle order the STATUS
-column sorts in. The summary follows the five-second refresh. The
-daemon's URL rides last, and it crops first when the terminal runs
+their states beside the count. A fleet in one state reads
+`4 workspaces · all stopped`. Mixed states read each state's count,
+as in `4 workspaces · 1 running 3 stopped`, in the STATUS column's
+lifecycle order. The summary follows the five-second refresh. The
+daemon's URL comes last, and it crops first when the terminal runs
 narrow.
 
 ## Workspace creation

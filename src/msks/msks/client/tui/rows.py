@@ -727,13 +727,16 @@ URL_FLOOR_W = 8
 #: The status line's whole cell budget (#853): the cells an
 #: 80-column terminal shows the line after its one-cell padding
 #: at each edge — the span the count, the state summary, and the
-#: URL share.
+#: URL share. The meta line's META_FRAME_W is the same derivation
+#: for its own widget; move a padding, move both.
 STATUS_LINE_W = 78
 
 
 def state_counts(rows: list[dict]) -> dict[str, int]:
-    """The rows' counts by status (#853): a row without a status
-    reads as the vocabulary's own ``unknown``."""
+    """The rows' counts by status (#853). A row without a status
+    reads as the vocabulary's own ``unknown`` — a guard; the
+    listing's own render indexes the field, so a row this maps
+    never reaches the screen."""
     counts: dict[str, int] = {}
     for row in rows:
         status = row.get("status") or "unknown"

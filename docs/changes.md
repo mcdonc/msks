@@ -9,11 +9,12 @@ tagged `vX.Y.Z`.
 ### Added
 
 - **State summary in the TUI status bar (#853).** The workspaces
-  count carries the fleet's standing beside it: `4 workspaces ·
-all stopped` when every row holds one state, or each state's
-  count (`4 workspaces · 1 running 3 stopped`) when they mix. The
-  summary follows the standing five-second refresh, and the
-  daemon's URL after it crops first when the terminal runs narrow.
+  count now carries a summary of the fleet's states:
+  `4 workspaces · all stopped` when every row holds one state,
+  or each state's count (`4 workspaces · 1 running 3 stopped`)
+  when they mix. The summary follows the standing five-second
+  refresh. The daemon's URL comes after the summary, and it crops
+  first when the terminal runs narrow.
 
 - **`?` key overlay in the TUI (#851).** Every page of the tree
   answers `?` with an overlay listing that page's bindings,

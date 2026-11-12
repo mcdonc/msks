@@ -3370,6 +3370,11 @@ def test_the_state_summary_reads_each_shape() -> None:
     assert rows_mod.state_summary([]) is None
     same = [row(), row(id="ws-b"), row(id="ws-c")]
     assert rows_mod.state_summary(same) == "all stopped"
+    # One workspace reads the same all-form.
+    assert rows_mod.state_summary([row()]) == "all stopped"
+    # Two unknown statuses tiebreak by name.
+    unknown = [row(status="exploded"), row(id="ws-b", status="altered")]
+    assert rows_mod.state_summary(unknown) == "1 altered 1 exploded"
     mixed = [
         row(),
         row(id="ws-b"),
@@ -3411,6 +3416,10 @@ async def test_the_status_bar_reads_all_for_one_state(
         app.screen.action_refresh()
         await wait_for(lambda: "0 workspaces" in status_text(app))
         assert "all " not in status_text(app)
+        data.rows = [row(status="running")]
+        app.screen.action_refresh()
+        await wait_for(lambda: "1 workspace" in status_text(app))
+        assert " 1 workspace  ·  all running  ·  " in status_text(app)
 
 
 async def test_the_status_bar_counts_mixed_states(
