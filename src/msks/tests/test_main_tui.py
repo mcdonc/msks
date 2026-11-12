@@ -82,7 +82,7 @@ from textual.containers import Vertical
 from textual.content import Content, Span
 from textual.css.query import NoMatches
 from textual.geometry import Size
-from textual.screen import Screen
+from textual.screen import ModalScreen, Screen
 from textual.widgets import (
     Button,
     Input,
@@ -3778,26 +3778,45 @@ async def test_any_key_closes_the_help_overlay() -> None:
 
 
 def test_every_screen_carries_the_help_key() -> None:
-    """#851: every full screen of the tree carries the ``?``
+    """#851: every full screen of the tree — every ``Screen`` the
+    tui package declares that is not a modal — carries the ``?``
     binding, the mixin that pushes the overlay, and its own
-    overlay title."""
+    overlay title. The enumeration walks the package, so a new
+    page ships wired or this test names it."""
+    import importlib
+    import pkgutil
+
+    import msks.client.tui as tui_pkg
     from msks.client.tui.consent_ui import ConsentPage
     from msks.client.tui.importer import ImagesScreen
     from msks.client.tui.proxies import ProxiesScreen
     from msks.client.tui.secrets import SecretAuditScreen, SecretsScreen
 
-    screens = (
-        (MainScreen, "workspaces list"),
-        (WorkspaceScreen, "workspace page"),
-        (SecretsScreen, "secrets page"),
-        (SecretAuditScreen, "secrets audit"),
-        (ConsentPage, "egress consent page"),
-        (ImagesScreen, "images page"),
-        (ProxiesScreen, "proxies page"),
-    )
-    for screen, title in screens:
+    pages = set()
+    for module_info in pkgutil.iter_modules(tui_pkg.__path__):
+        module = importlib.import_module(f"msks.client.tui.{module_info.name}")
+        for obj in vars(module).values():
+            if (
+                isinstance(obj, type)
+                and issubclass(obj, Screen)
+                and not issubclass(obj, ModalScreen)
+                and obj.__module__ == module.__name__
+            ):
+                pages.add(obj)
+    # The seven full screens the tree holds — the enumeration's
+    # own pin, so a page the walk finds unplanned shows here.
+    assert pages == {
+        MainScreen,
+        WorkspaceScreen,
+        SecretsScreen,
+        SecretAuditScreen,
+        ConsentPage,
+        ImagesScreen,
+        ProxiesScreen,
+    }
+    for screen in pages:
         assert issubclass(screen, HelpKeys)
-        assert screen.help_title == title
+        assert screen.help_title != HelpKeys.help_title
         assert any(
             binding.key == "question_mark"
             for binding in screen_bindings(screen)
@@ -3826,10 +3845,15 @@ def test_the_help_content_lines() -> None:
         for span in content.spans
     ] == [(0, 5, "enter"), (12, 13, "/"), (23, 26, "esc")]
     assert all(span.style == "$text bold" for span in content.spans)
-    # No formatter: the binding's key stands in (the unit caller's
-    # shape).
-    bare = help_content([Binding("slash", "search", "Jmp")])
-    assert bare.plain == "slash  Jmp"
+    # No formatter: the binding's key stands in, its own key
+    # display ahead of it (the unit caller's shape).
+    bare = help_content(
+        [
+            Binding("slash", "search", "Jmp"),
+            Binding("f1", "help", "Help", key_display="??"),
+        ]
+    )
+    assert bare.plain == "slash  Jmp\n??     Help"
 
 
 def test_screen_bindings_skip_the_frameworks_own() -> None:
