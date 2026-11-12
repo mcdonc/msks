@@ -49,6 +49,11 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **`msks doctor` qemu-kvm apk hint (#832).** The hint now
+  prints this host's Alpine emulator package:
+  `qemu-system-aarch64` on an aarch64 host,
+  `qemu-system-x86_64` elsewhere.
+
 - **`msks doctor` cloud-hypervisor install hint (#831).** The
   hint now prints this host's release assets: the `-aarch64`
   builds on an aarch64 host, the unsuffixed x86-64 builds

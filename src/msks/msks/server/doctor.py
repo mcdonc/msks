@@ -169,6 +169,25 @@ UPSTREAM_HINTS = {
     "cloud-hypervisor": cloud_hypervisor_hint(os.uname().machine),
 }
 
+# Alpine names its system-emulator package per target
+# architecture (#832): the KVM row's apk entry follows the
+# host's machine, the same per-arch shape the VMM hint's
+# release assets take (#831).
+APK_QEMU_SYSTEM_PACKAGES = {
+    "x86_64": "qemu-system-x86_64",
+    "aarch64": "qemu-system-aarch64",
+}
+
+
+def apk_qemu_system_package(machine: str) -> str:
+    """The apk package that carries one machine's system
+    emulator — a machine the table lacks falls back to the
+    x86_64 name, the row's historical prescription."""
+    return APK_QEMU_SYSTEM_PACKAGES.get(
+        machine, APK_QEMU_SYSTEM_PACKAGES["x86_64"]
+    )
+
+
 # Each entry: check name → {manager → package}. A manager missing
 # from an entry falls back to the check name in the generic hint.
 # The package name differs from the binary it ships on several
@@ -315,15 +334,17 @@ PACKAGE_HINTS: dict[str, dict[str, str]] = {
     },
     # The KVM stack the /dev/kvm rows point at (#559): the name
     # splits the way the library rows' do — Arch carries KVM in
-    # its split qemu packages (qemu-desktop is the x86_64 one),
-    # Alpine's is the arch-named system emulator, and brew's
-    # formula is qemu under either platform.
+    # its split qemu packages (qemu-desktop is the x86_64 one;
+    # the aarch64 pacman host's answer is open as #837),
+    # Alpine's is the arch-named system emulator picked for this
+    # host's machine (#832), and brew's formula is qemu under
+    # either platform.
     "qemu-kvm": {
         "dnf": "qemu-kvm",
         "yum": "qemu-kvm",
         "apt": "qemu-kvm",
         "zypper": "qemu-kvm",
-        "apk": "qemu-system-x86_64",
+        "apk": apk_qemu_system_package(os.uname().machine),
         "pacman": "qemu-desktop",
         "brew": "qemu",
     },
