@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.9.0] - 2026-11-13
+
 ### Added
 
 - **Version-skew marker in the TUI status bar (#852).** While
@@ -14,7 +16,7 @@ tagged `vX.Y.Z`.
   naming both versions (`msksd 1.2.3 ≠ client 1.2.4`); the
   CLI's one-line notice with its remedy keeps its own behavior.
   The marker refreshes on the listing's five-second reload, a
-  `/health` dial that fails leaves the standing marker in place,
+  `/health` connection that fails leaves the standing marker in place,
   and the marker leaves when the versions agree. The URL and the
   state summary crop before the marker does, so the marker stays
   visible at 80 columns.
