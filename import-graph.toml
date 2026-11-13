@@ -42,6 +42,11 @@ facades = [
   "msks.client.tui.consent_ui",
   "msks.interceptor",
   "msks.microvm",
+  # #874: the local driver split into a package (console, procs,
+  # config, fsproc, driver); the composer and the console API keep
+  # importing LocalCloudHypervisor and close_console_stream through
+  # the package root.
+  "msks.microvm.local",
   "msks.microvm.errors",
   "msks.model",
   "msks.net",
@@ -203,13 +208,16 @@ interceptor = 2
 # #697: the boot path bumps the disk epoch when a heal recreates
 # the overlay. #803: one more name — seed_bake_pending, the
 # predicate whose answer bumps the seed epoch ahead of the bake
-# it precedes.
-persist = 8
+# it precedes. #874: the local driver split into a package — the
+# persist names the driver and its config submodule both import.
+persist = 12
 # #620 part #622: the local driver reads the mount vocabulary
 # (MODE_RW for the readonly composition) beside the fs-daemon
 # module it already owns. #672: one more name — mount_tag, the
-# device name both mount forms attach as.
-spec = 17
+# device name both mount forms attach as. #874: the local driver
+# split into a package — the vm vocabulary imports spread from
+# the one module to its config and driver submodules.
+spec = 22
 
 [snapshot.model]
 # #514: the blob staleness hash moved to the crypto leaf with the
