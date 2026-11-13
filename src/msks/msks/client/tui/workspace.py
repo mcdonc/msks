@@ -50,6 +50,10 @@ from .consent_ui import (
     sighting_flash,
     switch_mode_path,
 )
+from .detail import (
+    header_meta,
+    status_line,
+)
 from .follow import FLOW_SHELL
 from .forms import EDIT_FREE_STATUSES, EditScreen, edit_stop_question
 from .help import HelpKeys
@@ -57,10 +61,8 @@ from .link import CONNECTED, REJECTED, UNUSABLE_TOKEN, DeciderLink
 from .mounts import MountsScreen, mounts_line
 from .proxies import PROXY_REFRESH_S, ProxiesScreen, proxies_line
 from .rows import (
-    header_meta,
     header_name,
     muted_style,
-    status_line,
     workspace_label,
 )
 

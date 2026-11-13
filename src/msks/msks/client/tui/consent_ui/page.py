@@ -17,8 +17,9 @@ from ..consent import (
     DURATION_DEFAULT,
     ConsentController,
 )
+from ..detail import header_meta
 from ..help import HelpKeys
-from ..rows import header_meta, header_name
+from ..rows import header_name
 from .flash import FlashLine, flash_safe
 from .focus import (
     ensure_focus,

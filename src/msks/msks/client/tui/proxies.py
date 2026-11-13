@@ -46,13 +46,15 @@ from .consent_ui import (
     focus_attr,
     focused_attr,
 )
+from .detail import (
+    STATUS_LABEL_W,
+)
 from .forms import FormSelect, FormWalk
 from .help import HelpKeys
 from .link import AuditLink, proxy_frame
 from .rows import (
     COLUMN_GAP,
     LIST_FRAME_CELLS,
-    STATUS_LABEL_W,
     cell_pad,
     clip,
     expanded_columns,
