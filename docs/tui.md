@@ -58,9 +58,10 @@ narrow.
 When the daemon's version and the client's differ, the status line
 carries a marker after the URL naming both versions in the warning
 color, as in `msksd 1.2.3 ≠ client 1.2.4`. The marker follows the
-five-second refresh and leaves when the versions agree. The URL
-and the state summary crop before the marker does, so the marker
-stays readable at 80 columns.
+five-second refresh and leaves when the versions agree. A `/health`
+dial that fails leaves the standing marker in place. The URL and the
+state summary crop before the marker does, so the marker stays
+readable at 80 columns.
 
 A row can carry two markers ahead of its status word. `✗1` counts
 the workspace's mounts that skipped at the last start (the mounts

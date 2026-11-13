@@ -986,6 +986,25 @@ def detail_strip(
     return Content(f"{first}\n{second}", [*spans, *more])
 
 
+def printable_word(word: str) -> str:
+    """The word's printable characters only (#852): control codes
+    drop — a junk word's BEL would desync the warning span's
+    offset, and a newline would split the line's one row."""
+    return "".join(ch for ch in word if ord(ch) >= 32)
+
+
+def daemon_version_word(health: dict | None) -> str | None:
+    """The daemon's version word as the marker prints it (#852):
+    the ``/health`` document's version with its control codes
+    dropped (:func:`printable_word`), or None for every silent
+    side — no document, no word, a non-string word, a word only
+    control codes, and a word that matches this client's."""
+    theirs = health.get("version") if health else None
+    if not isinstance(theirs, str) or theirs == __version__:
+        return None
+    return printable_word(theirs) or None
+
+
 def skew_marker(health: dict | None) -> str | None:
     """The version-skew marker (#852): ``msksd 1.2.3 ≠ client
     1.2.4`` — both words in short form — when the daemon's
@@ -993,13 +1012,13 @@ def skew_marker(health: dict | None) -> str | None:
     The CLI prints the full notice with its remedy once per
     invocation (#706, #715); the marker is the TUI's standing
     form, the one an operator leaves on screen. An unknown side
-    stays silent (a ``None`` health, a document without a
-    version word — a wrong host, a proxy)."""
-    theirs = health.get("version") if health else None
-    if not isinstance(theirs, str) or not theirs or theirs == __version__:
+    stays silent — :func:`daemon_version_word` owns every silent
+    shape."""
+    word = daemon_version_word(health)
+    if word is None:
         return None
     return (
-        f"msksd {clip(theirs, SKEW_WORD_W)}"
+        f"msksd {clip(word, SKEW_WORD_W)}"
         f" ≠ client {clip(__version__, SKEW_WORD_W)}"
     )
 
@@ -1024,16 +1043,18 @@ def summary_fit(
 
 
 def fitted_url(
-    url: str, head: str, summary: str | None, tail: list[str]
+    url: str, head: str, summary: str | None, tail: list[str], floor: int
 ) -> str:
     """The URL at its clip budget (#853, #852): the line's
-    remainder after the count, the summary, and the marker,
-    floored — a long summary or marker crops the URL, both ends
-    kept, before either gives a cell up."""
+    remainder after the count, the summary, and the marker. The
+    first pass crops at ``URL_FLOOR_W`` — the summary clips
+    before the URL goes past its floor — and the re-fit pass,
+    run after the summary gave what it could, takes the floor
+    down to one cell while a marker stands: the URL yields its
+    last cells before the marker loses its last one."""
     before = [head, summary] if summary else [head]
     spent = cell_len("  ·  ".join([*before, *tail])) + len("  ·  ")
-    width = max(URL_FLOOR_W, min(URL_W, STATUS_LINE_W - spent))
-    return clip(url, width)
+    return clip(url, max(floor, min(URL_W, STATUS_LINE_W - spent)))
 
 
 def status_line_spans(head: str, skew: str | None, line: str) -> list[Span]:
@@ -1072,8 +1093,16 @@ def status_content(
     plural = "" if count == 1 else "s"
     head = f" {count} {noun}{plural}"
     tail = [skew] if skew else []
-    url_text = fitted_url(url, head, summary, tail)
+    url_text = fitted_url(url, head, summary, tail, URL_FLOOR_W)
     summary_text = summary_fit(head, summary, url_text, tail)
+    # The re-fit pass: a summary the fit clipped or dropped frees
+    # cells the first pass spent against the whole summary, and a
+    # marker that still overruns the line takes the URL's floor
+    # — the URL re-fits at the width that actually stands, down
+    # to one cell before the marker loses its last one.
+    url_text = fitted_url(
+        url, head, summary_text, tail, 1 if tail else URL_FLOOR_W
+    )
     parts = (
         [head, summary_text, url_text, *tail]
         if summary_text is not None

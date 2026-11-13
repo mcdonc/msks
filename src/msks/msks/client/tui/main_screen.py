@@ -370,11 +370,16 @@ class MainScreen(HelpKeys, Screen):
         """Land the version-skew marker (#852): the daemon's
         /health version against this client's, on the listing's
         own refresh cadence — the marker refreshes with the rows
-        and leaves when the versions agree. A /health that will
-        not come answers None (:func:`fetch_health` owns the
-        every-failure-is-None contract), and the marker leaves
-        with it."""
-        self.version_skew = skew_marker(await self.app.data.health())
+        and leaves when the versions agree. A dial that will not
+        come answers None (:func:`fetch_health` owns the
+        every-failure-is-None contract) and keeps the standing
+        marker, the same silence :func:`load_storage` keeps its
+        figures for — a probe timeout is not an all-clear. Only a
+        document that answers moves the marker: to a new word, or
+        off the line when the versions agree."""
+        health = await self.app.data.health()
+        if health is not None:
+            self.version_skew = skew_marker(health)
 
     async def rebuild_rows(self, rows: list[dict]) -> None:
         """Swap in a freshly-built list (its mount awaited), the
