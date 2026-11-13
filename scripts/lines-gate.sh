@@ -31,7 +31,7 @@ set -euo pipefail
 # ``grep -c ''`` — wc -l undercounts a file whose final line
 # lacks its newline, and the unterminated variant of an
 # over-ceiling file would slip past.
-MAX_LINES=2000
+MAX_LINES=1500
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 exemptions=""

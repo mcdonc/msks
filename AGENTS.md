@@ -226,7 +226,7 @@ Widening a config file is a deliberate edit: the diff states why.
 ## Lines gate
 
 `scripts/lines-gate.sh` fails when a module under `src/msks/msks/`
-exceeds the ceiling the script carries (2,000 lines; the ceiling only
+exceeds the ceiling the script carries (1,500 lines; the ceiling only
 goes down). The gate names the file and its count and does nothing
 else. Do not grow the file past the ceiling, and do not reach for the
 exemption list first.
