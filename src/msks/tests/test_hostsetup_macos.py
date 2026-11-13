@@ -17,12 +17,28 @@ the fakes answer at that boundary so every real body runs).
 import json
 import os
 import subprocess
+import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.error import HTTPError
 
 import pytest
 from msks.server import hostsetup_macos as mac
+
+
+def patch_phase(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: object
+) -> None:
+    """Patch *name* on every hostsetup_macos submodule that carries it.
+
+    The split package binds each phase helper in the submodule that
+    defines or imports it, so a patch on the package root reaches
+    nothing a phase calls; walking SUBMODULES with ``raising=False``
+    rebinds every copy the phases see."""
+    for sub in mac.SUBMODULES:
+        monkeypatch.setattr(sub, name, value, raising=False)
+    monkeypatch.setattr(mac, name, value, raising=False)
+
 
 # --- the one fake: subprocess.run -------------------------------------
 
@@ -138,12 +154,12 @@ def client_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     the entry paths write these, and a test run must never reach
     the operator's real files."""
     monkeypatch.setenv("MSKSC_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setattr(mac, "MAC_CA", tmp_path / "config" / "ca.pem")
-    monkeypatch.setattr(mac, "MAC_TOKEN", tmp_path / "config" / "vm.token")
-    monkeypatch.setattr(
-        mac, "AGENT_PLIST", tmp_path / "LaunchAgents" / "agent.plist"
+    patch_phase(monkeypatch, "MAC_CA", tmp_path / "config" / "ca.pem")
+    patch_phase(monkeypatch, "MAC_TOKEN", tmp_path / "config" / "vm.token")
+    patch_phase(
+        monkeypatch, "AGENT_PLIST", tmp_path / "LaunchAgents" / "agent.plist"
     )
-    monkeypatch.setattr(mac, "AGENT_LOG", tmp_path / "Logs" / "agent.log")
+    patch_phase(monkeypatch, "AGENT_LOG", tmp_path / "Logs" / "agent.log")
     # The client links' surfaces (#719, #734): the brew-prefix
     # paths, the siblings, and the uninstall sweep's fallback
     # dirs all relocate under tmp_path — a test run never
@@ -155,12 +171,14 @@ def client_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     sibling.write_text("#!/bin/sh\n")
     for command in mac.CLIENT_COMMANDS:
         (brew_bin / command).symlink_to(sibling)
-    monkeypatch.setattr(
-        mac, "client_link_path", lambda command: str(brew_bin / command)
+    patch_phase(
+        monkeypatch,
+        "client_link_path",
+        lambda command: str(brew_bin / command),
     )
-    monkeypatch.setattr(mac, "client_sibling", lambda command: str(sibling))
-    monkeypatch.setattr(
-        mac,
+    patch_phase(monkeypatch, "client_sibling", lambda command: str(sibling))
+    patch_phase(
+        monkeypatch,
         "FALLBACK_BREW_BINS",
         (str(tmp_path / "fb1"), str(tmp_path / "fb2")),
     )
@@ -307,8 +325,8 @@ def test_the_vm_is_created_started_or_left_alone(
     ):
         procs.calls.clear()
         procs.listing = listing
-        monkeypatch.setattr(mac, "say", lambda _message: None)
-        monkeypatch.setattr(mac, "forward_host_port", lambda name: None)
+        patch_phase(monkeypatch, "say", lambda _message: None)
+        patch_phase(monkeypatch, "forward_host_port", lambda name: None)
         # With no --port and no readable forward, every arm returns
         # the tool's default — the run's port for the phases after.
         assert mac.ensure_vm() == mac.PORT
@@ -354,7 +372,7 @@ def test_creation_carries_the_flagged_sizing(
             return out
 
     reading = Reading().install(monkeypatch)
-    monkeypatch.setattr(mac, "say", lambda _message: None)
+    patch_phase(monkeypatch, "say", lambda _message: None)
     monkeypatch.setattr(mac.Path, "home", lambda: tmp_path)
     reading.listing = ""
     assert mac.ensure_vm(shape={"disk": 200}) == mac.PORT
@@ -393,7 +411,7 @@ def test_a_rerun_with_equal_values_changes_nothing(
     """The no-op: flags equal to the instance's own sizing run no
     stop, edit, or start — safe in scripts and in cron."""
     says = []
-    monkeypatch.setattr(mac, "say", says.append)
+    patch_phase(monkeypatch, "say", says.append)
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(mac.Path, "home", lambda: home)
@@ -411,7 +429,7 @@ def test_a_changed_value_stops_edits_and_starts(
     with only the changed flags, and starts it again — the say
     line names the restart's workspace consequence."""
     says = []
-    monkeypatch.setattr(mac, "say", says.append)
+    patch_phase(monkeypatch, "say", says.append)
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(mac.Path, "home", lambda: home)
@@ -432,7 +450,7 @@ def test_a_stopped_vm_skips_the_stop(
     """A stopped VM takes the edit and the start without the
     stop — there is nothing to stop — and exactly one start: the
     apply's own, with the ensure pass standing down after it."""
-    monkeypatch.setattr(mac, "say", lambda _message: None)
+    patch_phase(monkeypatch, "say", lambda _message: None)
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(mac.Path, "home", lambda: home)
@@ -499,7 +517,7 @@ def test_a_port_mismatch_refuses_before_the_resize(
     """The port policy is a pure read, so its recreation refusal
     lands before the sizing's stop/edit/start — a mismatched
     --port costs no restart (#721 review)."""
-    monkeypatch.setattr(mac, "say", lambda _message: None)
+    patch_phase(monkeypatch, "say", lambda _message: None)
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(mac.Path, "home", lambda: home)
@@ -517,7 +535,7 @@ def test_the_floors_refuse_before_the_host_check(
     host check included, so a mistyped flag never spends a brew
     install first (#721 review)."""
     checked = []
-    monkeypatch.setattr(mac, "check_host", lambda: checked.append("host"))
+    patch_phase(monkeypatch, "check_host", lambda: checked.append("host"))
     args = mac.parse_args(["--disk", "5"])
     with pytest.raises(mac.MacSetupError, match="below the floor"):
         mac.run_setup(args)
@@ -530,7 +548,7 @@ def test_a_failed_edit_names_the_recovery(
     """A limactl edit that fails mid-resize leaves the VM
     stopped; the refusal names both the failure and the way back
     (#721 review)."""
-    monkeypatch.setattr(mac, "say", lambda _message: None)
+    patch_phase(monkeypatch, "say", lambda _message: None)
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(mac.Path, "home", lambda: home)
@@ -679,14 +697,14 @@ def test_a_dev_build_without_a_wheel_refuses_by_name(
     daemon predating the config the same script writes. A dev
     marker refuses the PyPI path up front with the --wheel
     remedy; a wheel and a release word ride through."""
-    monkeypatch.setattr(mac, "vm_version", lambda: "9.9.9.dev0")
+    patch_phase(monkeypatch, "vm_version", lambda: "9.9.9.dev0")
     with pytest.raises(
         mac.MacSetupError, match="build one .uv build. and pass --wheel"
     ):
         mac.refuse_dev_build(None)
     assert not procs.calls  # nothing touched the host or the VM
     mac.refuse_dev_build("/builds/w.whl")  # a wheel rides through
-    monkeypatch.setattr(mac, "vm_version", lambda: "9.9.9")
+    patch_phase(monkeypatch, "vm_version", lambda: "9.9.9")
     mac.refuse_dev_build(None)  # a release word rides the PyPI path
     mac.bootstrap_vm(None, "/Users/p")  # ... and reaches the script
 
@@ -706,10 +724,10 @@ def test_a_dev_build_preflights_before_the_mutating_phases(
         "client_preset",
         "ensure_agent",
     ):
-        monkeypatch.setattr(
-            mac, phase, lambda phase=phase: order.append(phase)
+        patch_phase(
+            monkeypatch, phase, lambda phase=phase: order.append(phase)
         )
-    monkeypatch.setattr(mac, "vm_version", lambda: "9.9.9.dev0")
+    patch_phase(monkeypatch, "vm_version", lambda: "9.9.9.dev0")
     with pytest.raises(mac.MacSetupError, match="--wheel"):
         mac.run_setup(
             SimpleNamespace(
@@ -734,7 +752,7 @@ def test_any_http_answer_proves_the_stack(
         opened.append(url)
         raise HTTPError(url, 401, "no token", None, None)
 
-    monkeypatch.setattr(mac.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     mac.verify_daemon(mac.PORT, timeout_s=1.0)
     assert opened == [f"https://127.0.0.1:{mac.PORT}/"]
 
@@ -759,7 +777,7 @@ def test_a_two_xx_answer_proves_the_stack(
 ) -> None:
     """A 200-level answer returns on the urlopen return path."""
     monkeypatch.setattr(
-        mac.urllib.request,
+        urllib.request,
         "urlopen",
         lambda url, timeout, context=None: object(),
     )
@@ -784,7 +802,7 @@ def test_a_retry_then_answer_proves_the_stack(
     def fake_sleep(seconds):
         sleeps.append(seconds)
 
-    monkeypatch.setattr(mac.urllib.request, "urlopen", flaky)
+    monkeypatch.setattr(urllib.request, "urlopen", flaky)
     monkeypatch.setattr(mac.time, "sleep", fake_sleep)
     monkeypatch.setattr(mac.time, "monotonic", lambda: 0.0)
     mac.verify_daemon(mac.PORT, timeout_s=30.0)
@@ -828,7 +846,7 @@ def test_a_silent_listener_refuses_with_the_journal_line(
     def silent(url, timeout, context=None):
         raise OSError("refused")
 
-    monkeypatch.setattr(mac.urllib.request, "urlopen", silent)
+    monkeypatch.setattr(urllib.request, "urlopen", silent)
     with pytest.raises(mac.MacSetupError, match="journalctl"):
         mac.verify_daemon(mac.PORT, timeout_s=0.0)
 
@@ -868,7 +886,7 @@ def test_an_empty_ca_refuses_before_the_context_is_built(
 def test_the_preset_carries_the_three_exports(
     monkeypatch: pytest.MonkeyPatch, procs: FakeProcesses, client_tree: Path
 ) -> None:
-    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    patch_phase(monkeypatch, "verify_chain", lambda port, ca: None)
     preset = mac.client_preset(mac.PORT)
     assert "export MSKSC_URL=https://127.0.0.1:8660" in preset
     assert "export MSKSC_TOKEN=the-token" in preset
@@ -899,7 +917,7 @@ def test_a_missing_ca_retries_then_refuses(
         mac.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s)
     )
     procs.vm = {"msks-ca.pem": ""}
-    monkeypatch.setattr(mac, "MAC_CA", mac.MAC_CA)
+    patch_phase(monkeypatch, "MAC_CA", mac.MAC_CA)
     with pytest.raises(mac.MacSetupError, match="CA did not come back"):
         mac.client_preset(mac.PORT)
 
@@ -931,11 +949,11 @@ def test_the_check_rows_answer_the_doctor_questions(
     procs: FakeProcesses,
     client_tree: Path,
 ) -> None:
-    monkeypatch.setattr(
-        mac, "verify_daemon", lambda port, timeout_s=15.0: None
+    patch_phase(
+        monkeypatch, "verify_daemon", lambda port, timeout_s=15.0: None
     )
-    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
-    monkeypatch.setattr(mac, "daemon_version", lambda port: mac.vm_version())
+    patch_phase(monkeypatch, "verify_chain", lambda port, ca: None)
+    patch_phase(monkeypatch, "daemon_version", lambda port: mac.vm_version())
     mac.ensure_client_config(mac.PORT)
     rows = mac.check_rows(mac.PORT)
     assert rows[0] == "lima 2.2.1 at the template's floor"
@@ -998,11 +1016,11 @@ def test_the_not_found_nested_row_reports_truthfully(
         "bootstrap-token": "the-token\n",
         "dpkg -s virtiofsd": "present\n",
     }
-    monkeypatch.setattr(
-        mac, "verify_daemon", lambda port, timeout_s=15.0: None
+    patch_phase(
+        monkeypatch, "verify_daemon", lambda port, timeout_s=15.0: None
     )
-    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
-    monkeypatch.setattr(mac, "daemon_version", lambda port: mac.vm_version())
+    patch_phase(monkeypatch, "verify_chain", lambda port, ca: None)
+    patch_phase(monkeypatch, "daemon_version", lambda port: mac.vm_version())
     mac.ensure_client_config(mac.PORT)
     rows = mac.check_rows(mac.PORT)
     assert any("marker not found" in row for row in rows)
@@ -1045,7 +1063,7 @@ def test_daemon_version_reads_health(monkeypatch: pytest.MonkeyPatch) -> None:
         opened.append(url)
         return HealthAnswer({"status": "ok", "version": "0.5.0"})
 
-    monkeypatch.setattr(mac.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     assert mac.daemon_version(mac.PORT) == "0.5.0"
     assert opened == [f"https://127.0.0.1:{mac.PORT}/api/v1/health"]
 
@@ -1057,7 +1075,7 @@ def test_daemon_version_refuses_a_wordless_or_dead_health(
     answers, refuses by name with the rerun remedy — the row's
     whole job is stale daemons."""
     monkeypatch.setattr(
-        mac.urllib.request,
+        urllib.request,
         "urlopen",
         lambda url, timeout, context=None: HealthAnswer({"status": "ok"}),
     )
@@ -1067,7 +1085,7 @@ def test_daemon_version_refuses_a_wordless_or_dead_health(
     def dead(url, timeout, context=None):
         raise OSError("refused")
 
-    monkeypatch.setattr(mac.urllib.request, "urlopen", dead)
+    monkeypatch.setattr(urllib.request, "urlopen", dead)
     with pytest.raises(mac.MacSetupError, match="re-run"):
         mac.daemon_version(mac.PORT)
 
@@ -1085,36 +1103,36 @@ def test_a_version_skew_refuses_the_check(
     arms name their own tool word: the tree's ambient word is a
     dev build between releases and the release's number at a
     cut, and neither may the test assume."""
-    monkeypatch.setattr(
-        mac, "verify_daemon", lambda port, timeout_s=15.0: None
+    patch_phase(
+        monkeypatch, "verify_daemon", lambda port, timeout_s=15.0: None
     )
-    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
-    monkeypatch.setattr(
-        mac, "vm_version", lambda: "0.7.0.dev0"
+    patch_phase(monkeypatch, "verify_chain", lambda port, ca: None)
+    patch_phase(
+        monkeypatch, "vm_version", lambda: "0.7.0.dev0"
     )  # a dev tree's own word
-    monkeypatch.setattr(mac, "daemon_version", lambda port: "9.9.9")
+    patch_phase(monkeypatch, "daemon_version", lambda port: "9.9.9")
     mac.ensure_client_config(mac.PORT)
     # #715: the daemon leads — the plain rerun would downgrade
     # it, so the remedy names this tool's own update.
     with pytest.raises(mac.MacSetupError, match="update this tool"):
         mac.check_rows(mac.PORT)  # the tool's own word carries .dev
     # A newer dev-marked daemon names the tree no release matches.
-    monkeypatch.setattr(mac, "daemon_version", lambda port: "9.9.9.dev0")
+    patch_phase(monkeypatch, "daemon_version", lambda port: "9.9.9.dev0")
     with pytest.raises(mac.MacSetupError, match="development build"):
         mac.check_rows(mac.PORT)
     # A dev tool behind a release daemon names the wheel path
     # (#704 review): the plain rerun is what it refuses.
-    monkeypatch.setattr(mac, "daemon_version", lambda port: "0.5.0")
+    patch_phase(monkeypatch, "daemon_version", lambda port: "0.5.0")
     with pytest.raises(mac.MacSetupError, match="--wheel"):
         mac.check_rows(mac.PORT)
     # A release tool behind a release daemon names the rerun.
-    monkeypatch.setattr(mac, "vm_version", lambda: "0.6.0")
+    patch_phase(monkeypatch, "vm_version", lambda: "0.6.0")
     with pytest.raises(mac.MacSetupError, match="update the VM's daemon"):
         mac.check_rows(mac.PORT)
     # An equal-base dev daemon under a release tool does too
     # (#715 review): the plain rerun lands the shipped release
     # over the older dev build.
-    monkeypatch.setattr(mac, "daemon_version", lambda port: "0.6.0.dev0")
+    patch_phase(monkeypatch, "daemon_version", lambda port: "0.6.0.dev0")
     with pytest.raises(mac.MacSetupError, match="update the VM's daemon"):
         mac.check_rows(mac.PORT)
 
@@ -1207,8 +1225,8 @@ def test_the_check_pass_refuses_when_the_ca_never_lands(
     monkeypatch.setattr(
         mac.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + s)
     )
-    monkeypatch.setattr(
-        mac, "verify_daemon", lambda port, timeout_s=15.0: None
+    patch_phase(
+        monkeypatch, "verify_daemon", lambda port, timeout_s=15.0: None
     )
     procs.vm["msks-ca.pem"] = ""
     with pytest.raises(mac.MacSetupError, match="CA did not come back"):
@@ -1224,7 +1242,7 @@ def test_creation_writes_the_rendered_instance(
     """The create branch: limactl start reads the rendered
     instance config (template plus this tool's forward) from a
     temp path."""
-    monkeypatch.setattr(mac, "say", lambda _message: None)
+    patch_phase(monkeypatch, "say", lambda _message: None)
     monkeypatch.setattr(mac.Path, "home", lambda: tmp_path)
     procs.listing = ""
     assert mac.ensure_vm(host_port=8662) == 8662
@@ -1238,7 +1256,7 @@ def test_a_port_change_on_an_existing_vm_names_the_recreation(
     """The forward is fixed at creation: a mid-life --port is a
     named refusal with the delete-and-recreate remedy, never a
     silent wrong port."""
-    monkeypatch.setattr(mac, "say", lambda _message: None)
+    patch_phase(monkeypatch, "say", lambda _message: None)
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(mac.Path, "home", lambda: home)
@@ -1255,7 +1273,7 @@ def test_a_run_without_a_port_adopts_the_existing_forward(
     of demanding a recreation; an explicit --port that agrees
     with the forward passes too."""
     says = []
-    monkeypatch.setattr(mac, "say", says.append)
+    patch_phase(monkeypatch, "say", says.append)
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(mac.Path, "home", lambda: home)
@@ -1272,7 +1290,7 @@ def test_a_default_forward_returns_without_a_word(
     nothing said — the everyday rerun, distinct from adopting a
     non-default forward."""
     says = []
-    monkeypatch.setattr(mac, "say", says.append)
+    patch_phase(monkeypatch, "say", says.append)
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setattr(mac.Path, "home", lambda: home)
@@ -1302,11 +1320,11 @@ def test_the_check_only_entry_prints_rows(
             else procs._run(command, **kwargs)
         ),
     )
-    monkeypatch.setattr(
-        mac, "verify_daemon", lambda port, timeout_s=15.0: None
+    patch_phase(
+        monkeypatch, "verify_daemon", lambda port, timeout_s=15.0: None
     )
-    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
-    monkeypatch.setattr(mac, "daemon_version", lambda port: mac.vm_version())
+    patch_phase(monkeypatch, "verify_chain", lambda port, ca: None)
+    patch_phase(monkeypatch, "daemon_version", lambda port: mac.vm_version())
     # Path.home pinned: the check's port resolution reads the
     # VM's forward — a dev Mac's real ~/.lima/msksd must not
     # answer it.
@@ -1341,11 +1359,11 @@ def test_the_check_adopts_the_forward_too(
             else procs._run(command, **kwargs)
         ),
     )
-    monkeypatch.setattr(
-        mac, "verify_daemon", lambda port, timeout_s=15.0: None
+    patch_phase(
+        monkeypatch, "verify_daemon", lambda port, timeout_s=15.0: None
     )
-    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
-    monkeypatch.setattr(mac, "daemon_version", lambda port: mac.vm_version())
+    patch_phase(monkeypatch, "verify_chain", lambda port, ca: None)
+    patch_phase(monkeypatch, "daemon_version", lambda port: mac.vm_version())
     monkeypatch.setattr(mac.Path, "home", lambda: client_tree)
     write_forward(client_tree, 8661)
     mac.ensure_client_config(8661)
@@ -1406,8 +1424,10 @@ def test_the_check_names_the_recreation_refusal_on_a_port_mismatch(
         ),
     )
     probes = []
-    monkeypatch.setattr(
-        mac, "verify_daemon", lambda port, timeout_s=15.0: probes.append(port)
+    patch_phase(
+        monkeypatch,
+        "verify_daemon",
+        lambda port, timeout_s=15.0: probes.append(port),
     )
     monkeypatch.setattr(mac.Path, "home", lambda: client_tree)
     write_forward(client_tree, 8661)
@@ -1422,8 +1442,8 @@ def test_the_entry_prints_the_preset(
     capsys,
     client_tree: Path,
 ) -> None:
-    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
-    monkeypatch.setattr(mac, "verify_daemon", lambda port: None)
+    patch_phase(monkeypatch, "verify_chain", lambda port, ca: None)
+    patch_phase(monkeypatch, "verify_daemon", lambda port: None)
     monkeypatch.setattr(mac.sys, "platform", "darwin")
     monkeypatch.setattr(
         mac.os, "uname", lambda: SimpleNamespace(machine="arm64")
@@ -1466,8 +1486,8 @@ def test_a_default_run_reaches_the_client_config_on_the_adopted_port(
     run with no --port. The run finishes — the preset, the client
     config, and the CA/token pair all point at 8661, so a bare
     msks reaches the daemon through the forward the VM carries."""
-    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
-    monkeypatch.setattr(mac, "verify_daemon", lambda port: None)
+    patch_phase(monkeypatch, "verify_chain", lambda port, ca: None)
+    patch_phase(monkeypatch, "verify_daemon", lambda port: None)
     monkeypatch.setattr(mac.sys, "platform", "darwin")
     monkeypatch.setattr(
         mac.os, "uname", lambda: SimpleNamespace(machine="arm64")
@@ -1510,7 +1530,7 @@ def test_the_uninstall_mirror(
     capsys,
     client_tree: Path,
 ) -> None:
-    monkeypatch.setattr(mac, "say", lambda _message: None)
+    patch_phase(monkeypatch, "say", lambda _message: None)
     mac.AGENT_PLIST.parent.mkdir(parents=True, exist_ok=True)
     mac.AGENT_PLIST.write_bytes(b"stale plist")
     assert mac.main(["--uninstall"]) == 0
@@ -1535,7 +1555,7 @@ def test_the_uninstall_names_a_missing_limactl(
     delete; the agent is the half of the uninstall that needs no
     limactl, and a rerun after installing Lima finishes the
     rest)."""
-    monkeypatch.setattr(mac, "say", lambda _message: None)
+    patch_phase(monkeypatch, "say", lambda _message: None)
     procs.absent = ["limactl"]
     assert mac.main(["--uninstall"]) == 1
     err = capsys.readouterr().err
@@ -1697,7 +1717,7 @@ def test_a_kept_config_rides_the_entry_beside_the_exports(
     cannot corrupt a file that already carries a daemons:
     mapping) beside the shell exports, and the file stands
     untouched."""
-    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
+    patch_phase(monkeypatch, "verify_chain", lambda port, ca: None)
     path = Path(mac.default_config_path())
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -1745,7 +1765,7 @@ def test_ensure_agent_rewrites_reloads_and_creates_the_log_dir(
     procs: FakeProcesses,
     client_tree: Path,
 ) -> None:
-    monkeypatch.setattr(mac, "say", lambda _message: None)
+    patch_phase(monkeypatch, "say", lambda _message: None)
     monkeypatch.setattr(
         mac.shutil, "which", lambda name: "/opt/homebrew/bin/limactl"
     )
@@ -1809,11 +1829,11 @@ def test_the_check_refuses_when_the_agent_is_not_loaded(
     procs: FakeProcesses,
     client_tree: Path,
 ) -> None:
-    monkeypatch.setattr(
-        mac, "verify_daemon", lambda port, timeout_s=15.0: None
+    patch_phase(
+        monkeypatch, "verify_daemon", lambda port, timeout_s=15.0: None
     )
-    monkeypatch.setattr(mac, "verify_chain", lambda port, ca: None)
-    monkeypatch.setattr(mac, "daemon_version", lambda port: mac.vm_version())
+    patch_phase(monkeypatch, "verify_chain", lambda port, ca: None)
+    patch_phase(monkeypatch, "daemon_version", lambda port: mac.vm_version())
     mac.ensure_client_config(mac.PORT)
     procs.fail_output = {"launchctl print": "not loaded"}
     with pytest.raises(mac.MacSetupError, match="re-run"):
@@ -1835,11 +1855,13 @@ def test_the_client_link_lands_idempotently(
     for command in mac.CLIENT_COMMANDS:
         (sibling / command).write_text("#!/bin/sh\n")
         paths[command] = brew_bin / command
-    monkeypatch.setattr(
-        mac, "client_link_path", lambda command: str(brew_bin / command)
+    patch_phase(
+        monkeypatch,
+        "client_link_path",
+        lambda command: str(brew_bin / command),
     )
-    monkeypatch.setattr(
-        mac, "client_sibling", lambda command: str(sibling / command)
+    patch_phase(
+        monkeypatch, "client_sibling", lambda command: str(sibling / command)
     )
     fresh = "; ".join(
         f"{path} -> {sibling / command}" for command, path in paths.items()
@@ -1873,11 +1895,13 @@ def test_a_foreign_thing_at_the_client_link_refuses(
     sibling.mkdir(parents=True)
     for command in mac.CLIENT_COMMANDS:
         (sibling / command).write_text("#!/bin/sh\n")
-    monkeypatch.setattr(
-        mac, "client_link_path", lambda command: str(brew_bin / command)
+    patch_phase(
+        monkeypatch,
+        "client_link_path",
+        lambda command: str(brew_bin / command),
     )
-    monkeypatch.setattr(
-        mac, "client_sibling", lambda command: str(sibling / command)
+    patch_phase(
+        monkeypatch, "client_sibling", lambda command: str(sibling / command)
     )
     other = brew_bin / "my-own-msks"
     other.write_text("#!/bin/sh\n")
@@ -1904,7 +1928,7 @@ def test_the_client_link_without_a_sibling_stands_down(
     script nowhere beside the tool skips that command with the
     note (#734: one command can stand down while its sibling
     links)."""
-    monkeypatch.setattr(mac, "client_sibling", lambda command: None)
+    patch_phase(monkeypatch, "client_sibling", lambda command: None)
     note = mac.link_client_mac()
     for command in mac.CLIENT_COMMANDS:
         assert f"skipped, no {command} beside the tool" in note
@@ -1929,8 +1953,10 @@ def test_the_client_link_row_answers_green_and_refuses(
     target.write_text("#!/bin/sh\n")
     for command in mac.CLIENT_COMMANDS:
         (brew_bin / command).symlink_to(target)
-    monkeypatch.setattr(
-        mac, "client_link_path", lambda command: str(brew_bin / command)
+    patch_phase(
+        monkeypatch,
+        "client_link_path",
+        lambda command: str(brew_bin / command),
     )
     row = mac.client_link_row()
     assert str(brew_bin / "msks") in row and "sibling" in row
@@ -1940,8 +1966,8 @@ def test_the_client_link_row_answers_green_and_refuses(
     (rel_dir / "sib").write_text("#!/bin/sh\n")
     (rel_dir / "msks").symlink_to("sib")
     (rel_dir / "msks-term-popup").symlink_to("sib")
-    monkeypatch.setattr(
-        mac, "client_link_path", lambda command: str(rel_dir / command)
+    patch_phase(
+        monkeypatch, "client_link_path", lambda command: str(rel_dir / command)
     )
     row = mac.client_link_row()
     assert "msks answers at" in row
@@ -1949,13 +1975,15 @@ def test_the_client_link_row_answers_green_and_refuses(
     (rel_dir / "msks-term-popup").unlink()
     with pytest.raises(mac.MacSetupError, match="re-run"):
         mac.client_link_row()
-    monkeypatch.setattr(
-        mac, "client_link_path", lambda command: str(brew_bin / command)
+    patch_phase(
+        monkeypatch,
+        "client_link_path",
+        lambda command: str(brew_bin / command),
     )
     (brew_bin / "msks").unlink()
     with pytest.raises(mac.MacSetupError, match="re-run"):
         mac.client_link_row()
-    monkeypatch.setattr(mac, "client_link_path", real_path)
+    patch_phase(monkeypatch, "client_link_path", real_path)
     procs.absent.append("brew")
     with pytest.raises(mac.MacSetupError, match="Homebrew"):
         mac.client_link_row()
@@ -1974,7 +2002,7 @@ def test_the_uninstall_sweep_takes_the_link_without_brew(
     gone = tmp_path / "swept" / "scripts"
     for command in mac.CLIENT_COMMANDS:
         (fb1 / command).symlink_to(gone / command)
-    monkeypatch.setattr(mac, "FALLBACK_BREW_BINS", (str(fb1),))
+    patch_phase(monkeypatch, "FALLBACK_BREW_BINS", (str(fb1),))
     assert mac.remove_client_link() == (
         f"the client links {fb1 / 'msks'} and "
         f"{fb1 / 'msks-term-popup'} are gone"
@@ -2001,10 +2029,10 @@ def test_the_brewed_prefix_answers_and_falls_silent(
     bin_dir = brewed / "bin"
     bin_dir.mkdir(parents=True)
     (bin_dir / "msks").symlink_to(tmp_path / "gone")
-    monkeypatch.setattr(mac, "FALLBACK_BREW_BINS", (str(tmp_path / "fb1"),))
+    patch_phase(monkeypatch, "FALLBACK_BREW_BINS", (str(tmp_path / "fb1"),))
 
-    monkeypatch.setattr(
-        mac, "run", lambda command, *, capture=False: f"{brewed}\n"
+    patch_phase(
+        monkeypatch, "run", lambda command, *, capture=False: f"{brewed}\n"
     )
     assert mac.brewed_prefix() == str(brewed)
     assert mac.client_link_path("msks-term-popup") == (
@@ -2014,7 +2042,7 @@ def test_the_brewed_prefix_answers_and_falls_silent(
         mac.remove_client_link()
         == f"the client link {bin_dir / 'msks'} is gone"
     )
-    monkeypatch.setattr(mac, "run", lambda command, *, capture=False: "")
+    patch_phase(monkeypatch, "run", lambda command, *, capture=False: "")
     assert mac.brewed_prefix() == ""
     assert mac.remove_client_link() == "no client link found"
 

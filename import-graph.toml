@@ -251,7 +251,11 @@ app = 2
 # hostsetup_macos is the tool's entry module, and no daemon path
 # imports the client. #730 drops render_template: a rerun keeps
 # any existing file, so the replaceable-template read is gone.
-client = 3
+# #874: the mac setup split into a package spreads the same two
+# names across its clientconfig and verify submodules plus the
+# package root — the coupling is the same pair, three import
+# statements deeper.
+client = 7
 # #672: the set-time (checked_mounts) and start-time
 # (mount_state) host-share gates — the module and the
 # check entry.
@@ -330,7 +334,10 @@ secretcache = 2
 # each the module edge beside its name.
 # #833: the create fallback boots the per-arch default cmdline
 # (DEFAULT_CMDLINE) — the module edge beside the name.
-spec = 43
+# #874: the mac setup split into a package — the __version__ the
+# bootstrap script prints and the ordering the skew row's remedy
+# reads now import from their own submodules.
+spec = 44
 # #773: the clone route reads the state-disk floor (create_refusal
 # beside the artifacts' allocated-cost file_cost) before any byte
 # copies.
