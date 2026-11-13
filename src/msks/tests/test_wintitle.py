@@ -28,7 +28,7 @@ def test_the_title_resolves_the_workspace_and_session() -> None:
     without a record (the consent launcher, a remote-command run)
     drops the token half; a child naming no workspace takes the
     shell spelling."""
-    assert wt.window_title("a1b2c3d4e5", "f8x2n") == ("msks a1b2c3d4e5 f8x2n")
+    assert wt.window_title("a1b2c3d4e5", "f8x2n") == "msks a1b2c3d4e5 f8x2n"
     assert wt.window_title("a1b2c3d4e5") == "msks a1b2c3d4e5"
     assert wt.window_title(None, "f8x2n") == "msks shell f8x2n"
     assert wt.window_title(None) == "msks shell"

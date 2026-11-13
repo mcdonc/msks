@@ -123,7 +123,7 @@ def record_key(pin: str) -> str:
     daemon id, a plain name, a hyphenated one), else a short hash
     of it stands in — the records tree never grows a path a typed
     reference carved."""
-    if SAFE_KEY.match(pin):
+    if SAFE_KEY.fullmatch(pin):
         return pin
     return hashlib.sha1(pin.encode()).hexdigest()[:12]
 
@@ -272,13 +272,16 @@ def mint_token(
     base: Path | None = None,
     rng: random.Random | None = None,
 ) -> str:
-    """A short token unique among the workspace's live sessions
+    """A short token drawn against the workspace's live sessions
     (#858): five characters from :data:`TOKEN_CHARS`, redrawn
-    against the live tokens until one stands clear. A draw that
-    collides takes a numeric suffix on its next attempt
-    (:func:`candidate_token`), so the mint always terminates — a
-    workspace would need millions of live shells before a suffix
-    ever shows."""
+    until one stands clear of the fresh records' tokens — a draw
+    that collides takes a numeric suffix on its next attempt
+    (:func:`candidate_token`), so the mint always terminates. The
+    uniqueness is best effort: two sessions minting concurrently
+    read the same live set and can draw alike (about one pair in
+    28 million), and the mint costs no lock because the token is
+    a display and join key, not a security boundary.
+    """
     picker = rng if rng is not None else random.SystemRandom()
     live = live_tokens(pin, now=now, base=base)
     attempt = 0

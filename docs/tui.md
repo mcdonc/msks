@@ -165,7 +165,7 @@ created date on the second. While shells are open on this host, the
 first line carries their count after the status (`alpha · ● running ·
 2 shells open`); the segment leaves with the last shell's close. The
 count comes from the [session records](#open-shells-and-the-session-records)
-and refreshes every second while the page is open.
+and follows the page's per-second row refresh.
 
 Below the header, two status lines share one shape: a muted label,
 then the value. The consent line shows the mode and one granted
@@ -417,21 +417,24 @@ title: `msks {workspace} {session}`. The workspace half is the
 workspace's id (the token `msks ssh` addresses, which is what the TUI
 appends to the launcher). The session half is the token of the session
 record [the open shells section](#open-shells-and-the-session-records)
-describes: `msks a1b2c3d4e5 f8x2n`.
+describes: `msks a1b2c3d4e5 f8x2n`. A child that names no workspace
+(an appended command that is not an `msks ssh`) titles as
+`msks shell`.
 
 A session without a record drops the session half. The consent
 launcher (`msks-term-popup`) titles its window before any session
 exists, and a remote-command run in a spawned window registers
 nothing, so both read `msks a1b2c3d4e5`. The plain window the TUI
 opens takes the full title from the appended `msks ssh` itself: the
-window is marked at spawn, and the command names it before the
-session starts, first with the workspace alone (a first boot can wait
-out its probe before the session records itself), then with the token
-once the record exists. The title stays for the window's lifetime: a
-workspace shell inside the window cannot rewrite it. A workspace that
-sets its own title from inside the session (a `PROMPT_COMMAND` with a
-title escape, the way stock ssh sessions can) rewrites it there. tmux
-shields the popup path. Nothing shields the plain path.
+window is marked at spawn, and the command names it twice. The first
+write carries the workspace alone, before the boot pre-flight — a
+refused pre-flight still leaves the window named. The second write
+completes the title with the record's token, once the pre-flight
+answers and the session registers. The title stays until something
+inside the window replaces it: a workspace that sets its own title
+from inside the session (a `PROMPT_COMMAND` with a title escape, the
+way stock ssh sessions can) rewrites it there. tmux shields the
+popup path. Nothing shields the plain path.
 
 A `msks ssh` you type yourself keeps your terminal's title: the title
 applies only to the windows msks opens, and a same-terminal shell

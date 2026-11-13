@@ -4523,9 +4523,7 @@ async def test_a_page_that_cannot_refresh_keeps_its_row(monkeypatch) -> None:
 async def test_the_headers_count_follows_the_shells(monkeypatch) -> None:
     """#858 on the workspace page: the host's open shells ride the
     header beside the status (the per-second row refresh lands
-    them), the segment leaves with the last shell's close, and a
-    refused listing keeps the standing header — the count is
-    client-side state the page paints beside the daemon's row."""
+    them), and the segment leaves with the last shell's close."""
     scripted_link(monkeypatch, [rules_frame()])
     from msks.client import sshsessions
 

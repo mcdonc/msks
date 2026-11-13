@@ -77,8 +77,9 @@ def test_record_key_passes_a_safe_pin_through() -> None:
 def test_record_key_hashes_a_carving_reference() -> None:
     """A typed reference a path could carve (a slash, a space, a
     leading dot) never names a directory: a short hash of it
-    stands in."""
-    for carving in ("../etc", "a b", ".hidden", "."):
+    stands in — and a trailing newline carves nothing either (the
+    hash form is the one spelling a newline cannot sneak past)."""
+    for carving in ("../etc", "a b", ".hidden", ".", "abc\n"):
         assert rec.record_key(carving).isalnum()
         assert rec.record_key(carving) != carving
 
