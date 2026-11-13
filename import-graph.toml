@@ -59,6 +59,10 @@ facades = [
   # parse_config_doc and bootstrap through the module they
   # always did.
   "msks.client.config",
+  # #874 wave two: the ssh module split its identity and forwarding
+  # halves out; the command modules and the suites keep importing
+  # those names through msks.client.ssh.
+  "msks.client.ssh",
   # #874: the workspace page split into a package (lines, actions,
   # screen); the main screen and app keep importing the page's
   # surface through the package root.

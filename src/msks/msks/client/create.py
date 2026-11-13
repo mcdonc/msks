@@ -23,9 +23,9 @@ from pathlib import Path
 
 from ..identity import LOGIN_NAME_RE
 from .agent import load_private
+from .identity import ENCRYPTED_CREATE_RECOVERY
 from .rest import api_client, request
 from .ssh import (
-    ENCRYPTED_CREATE_RECOVERY,
     configured_pubkey_file,
     derived_public,
     operator_identity,
