@@ -228,13 +228,17 @@ spec = 22
 
 [snapshot.model]
 # #514: the blob staleness hash moved to the crypto leaf with the
-# blob-writing path (model imports the one name).
-agecrypto = 2
+# blob-writing path (model imports the one name). #874: the keys
+# leaf (the classifier the placeholder swap walks) and the model's
+# suite seam take the same name beside it.
+agecrypto = 4
 # #620 part #624: the create stores its mounts through the
 # spec's dump (the module edge and the one name). #685: the
 # row's served mounts parse through the leaf (parse_mounts
 # beside dump_mounts) so a legacy named entry drops at read.
-spec = 19
+# #874: the serializer leaf took the mounts and vm edges with
+# the functions that use them.
+spec = 23
 
 [snapshot.net]
 # spec grew by one import: the resolver answers the probe name (#424);

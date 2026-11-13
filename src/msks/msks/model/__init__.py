@@ -8,6 +8,18 @@ the database path live at call time.
 """
 
 from .db import Base
-from .model import Model, hash_token, new_token
+from .keys import (
+    classify_blobs as classify_blobs,
+)
+from .keys import (
+    coverage_key as coverage_key,
+)
+from .keys import (
+    hash_token as hash_token,
+)
+from .keys import (
+    new_token as new_token,
+)
+from .model import Model
 
 __all__ = ["Base", "Model", "hash_token", "new_token"]
