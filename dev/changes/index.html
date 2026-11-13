@@ -1810,6 +1810,18 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Version-skew marker in the TUI status bar (#852).</strong> While
+  the daemon's version and the client's differ, the workspaces
+  status line carries a warning-colored marker after the URL
+  naming both versions (<code>msksd 1.2.3 ≠ client 1.2.4</code>); the
+  CLI's one-line notice with its remedy keeps its own behavior.
+  The marker refreshes on the listing's five-second reload, a
+  <code>/health</code> dial that fails leaves the standing marker in place,
+  and the marker leaves when the versions agree. The URL and the
+  state summary crop before the marker does, so the marker stays
+  visible at 80 columns.</p>
+</li>
+<li>
 <p><strong>Open-shell counts in the TUI (#858).</strong> Every interactive
   <code>msks ssh</code> writes a heartbeat session record under
   <code>~/.local/state/msks/sessions</code> (relocatable with the <code>state_dir</code>
