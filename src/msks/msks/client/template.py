@@ -1,7 +1,8 @@
 """The first-run config template.
 
-The commented msks.yaml a first run writes — one template text,
-the write path prints and ``msks config edit`` seeds from.
+The commented msks.yaml ``ensure_default_config`` writes when no
+config exists yet (client/config.py) — the one consumer of this
+text.
 """
 
 from __future__ import annotations
