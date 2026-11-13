@@ -609,7 +609,7 @@ def scripted_link(monkeypatch, frames: list[str]) -> FakeFactory:
     connection carries the frames; later ones stay quiet)."""
     factory = FakeFactory([FakeWS(frames), FakeWS([])])
     monkeypatch.setattr(
-        page_mod,
+        page_mod.screen,
         "DeciderLink",
         lambda ws_id: DeciderLink(
             ws_id, ws_factory=factory, reconnect_delays=(0.01, 0.01, 0.01)
@@ -4675,7 +4675,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
     ws = FakeWS([rules_frame()])
     factory = FakeFactory([ws, FakeWS([])])
     monkeypatch.setattr(
-        page_mod,
+        page_mod.screen,
         "DeciderLink",
         lambda ws_id: DeciderLink(
             ws_id, ws_factory=factory, reconnect_delays=(0.01, 0.01)
@@ -5093,7 +5093,7 @@ async def test_a_removal_under_an_open_consent_page_waits_for_it(
     ws = FakeWS([rules_frame()])
     factory = FakeFactory([ws, FakeWS([])])
     monkeypatch.setattr(
-        page_mod,
+        page_mod.screen,
         "DeciderLink",
         lambda ws_id: DeciderLink(
             ws_id, ws_factory=factory, reconnect_delays=(0.01, 0.01, 0.01)

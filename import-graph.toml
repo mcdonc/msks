@@ -52,6 +52,10 @@ facades = [
   # parse_config_doc and bootstrap through the module they
   # always did.
   "msks.client.config",
+  # #874: the workspace page split into a package (lines, actions,
+  # screen); the main screen and app keep importing the page's
+  # surface through the package root.
+  "msks.client.tui.workspace",
   "msks.microvm.errors",
   "msks.model",
   "msks.net",
