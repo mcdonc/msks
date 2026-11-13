@@ -285,8 +285,10 @@ client = 7
 hostshares = 2
 # #464: msksd doctor reads the daemon's own tool-name settings
 # (load_settings) beside serve's — the checks name what the
-# daemon will actually exec.
-config = 4
+# daemon will actually exec. #874 wave two: the doctor split
+# spreads load_settings across its run submodule and the package
+# root's suite seam.
+config = 6
 events = 4
 # #481: the console endpoint's identity-validation gate went with
 # the prelude. #486: the create route's mint went with the daemon
