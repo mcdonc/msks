@@ -47,6 +47,11 @@ facades = [
   # importing LocalCloudHypervisor and close_console_stream through
   # the package root.
   "msks.microvm.local",
+  # #874: the client config module split its validator and
+  # template out; the mac setup and the CLI keep importing
+  # parse_config_doc and bootstrap through the module they
+  # always did.
+  "msks.client.config",
   "msks.microvm.errors",
   "msks.model",
   "msks.net",
@@ -137,7 +142,9 @@ settings = 2
 # review round: +2 — the corruption diagnostic (addressed) and
 # the CLI's named AgeCryptoError catch.
 agecrypto = 12
-configio = 3
+# #874: the config split — the validator leaf imports the unique-
+# key loader beside the config module's own writes.
+configio = 4
 conformance_args = 8
 # #481: the console dropped its identity negotiation — the
 # challenge signer and the login-user resolver went with it.
