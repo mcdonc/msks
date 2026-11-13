@@ -3658,6 +3658,124 @@ def test_the_state_summary_wins_cells_before_the_url() -> None:
     assert cell_len(content.plain) <= 78
 
 
+def test_the_skew_marker_reads_each_shape() -> None:
+    """#852: the marker names both words when the daemon's
+    /health version and the client's differ, and every unknown
+    or equal side reads None — the same silence the CLI's notice
+    keeps (#706). A word longer than a release's clips both ends
+    rather than push the marker past the line's span."""
+    mine = rows_mod.__version__
+    assert rows_mod.skew_marker(None) is None
+    assert rows_mod.skew_marker({"status": "ok"}) is None
+    assert rows_mod.skew_marker({"version": ""}) is None
+    assert rows_mod.skew_marker({"version": 7}) is None
+    assert rows_mod.skew_marker({"version": mine}) is None
+    assert (
+        rows_mod.skew_marker({"version": "9.9.9"})
+        == f"msksd 9.9.9 ≠ client {mine}"
+    )
+    long_word = "1.0.0.dev0+git-abcdef1234567"
+    theirs = rows_mod.skew_marker({"version": long_word})
+    assert theirs.startswith("msksd 1.0.0")
+    assert "…" in theirs
+    bound = 6 + rows_mod.SKEW_WORD_W + 3 + 7 + rows_mod.SKEW_WORD_W
+    assert cell_len(theirs) <= bound
+    # A junk word's control codes drop (a BEL would desync the
+    # warning span; a newline would split the one-row line), and
+    # a word that is only control codes reads as an unknown side.
+    scrubbed = rows_mod.skew_marker({"version": "9.9.9\n\x07x"})
+    assert "\n" not in scrubbed and "\x07" not in scrubbed
+    assert scrubbed.startswith("msksd 9.9.9x")
+    assert rows_mod.skew_marker({"version": "\x07\n"}) is None
+    # A junk wrapper around an exactly-matching word is equality
+    # once printed, not a standing self-contradictory marker
+    # (review round: the raw compare ran before the scrub).
+    assert (
+        rows_mod.skew_marker({"version": rows_mod.__version__ + "\n"}) is None
+    )
+    assert rows_mod.skew_marker({"version": " \x7f "}) is None
+
+
+def test_mem_value_reads_the_honest_dash() -> None:
+    """#849: a row whose daemon predates the mem field renders
+    the honest dash, and a row carrying the field renders its
+    binary unit."""
+    assert rows_mod.mem_value(None) == "-"
+    assert "8" in rows_mod.mem_value(8192)
+
+
+def test_the_skew_marker_wins_cells_before_the_url() -> None:
+    """#852: the marker rides last in the warning color and gives
+    no cell up: the URL crops to its floor first, then the
+    summary clips, so the line keeps its one-row span at 80
+    columns with the count, the URL, and the marker all
+    present."""
+    long_url = "https://msks-daemon.really-long-hostname.example.internal:8660"
+    marker = rows_mod.skew_marker({"version": "9.9.9"})
+    content = rows_mod.status_content(
+        4, long_url, "1 running 3 stopped", skew=marker
+    )
+    assert marker in content.plain
+    assert "8660" in content.plain
+    assert cell_len(content.plain) <= 78
+    warn = [s for s in content.spans if s.style == rows_mod.SKEW_MARKER_COLOR]
+    assert len(warn) == 1
+    assert content.plain[warn[0].start : warn[0].end] == marker
+    # A summary the overrun would eat past recognition leaves the
+    # line before the marker does.
+    dropped = rows_mod.status_content(
+        4, long_url, "1 running 3 stopped 1 created", skew="m" * 40
+    )
+    assert "m" * 40 in dropped.plain
+    assert cell_len(dropped.plain) <= 78
+    # The invariant holds at the marker's own worst width — both
+    # words at the cell ceiling — with and without a summary:
+    # the URL's floor yields to the marker down to one cell, so
+    # the crop never eats the marker's last cell (review round:
+    # the floor held and a 48-cell marker overran by one).
+    fat = f"msksd {'1' * 16} ≠ client {'2' * 16}"
+    assert cell_len(fat) == 48
+    bare = rows_mod.status_content(4, long_url, None, skew=fat)
+    assert fat in bare.plain
+    assert cell_len(bare.plain) <= 78
+    mixed = rows_mod.status_content(
+        4, long_url, "1 running 3 stopped", skew=fat
+    )
+    assert fat in mixed.plain
+    assert cell_len(mixed.plain) <= 78
+
+
+async def test_the_version_skew_marker_appears_and_leaves(
+    monkeypatch,
+) -> None:
+    """#852: the standing line carries the both-words marker in
+    the warning color while the daemon's /health version and the
+    client's differ, refreshes with the listing, and the marker
+    leaves when the versions agree again."""
+    scripted_link(monkeypatch, [])
+    monkeypatch.setenv("MSKSC_URL", "https://127.0.0.1:8660")
+    data = FakeData([row()])
+    data.health_doc = {"version": "9.9.9"}
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "msksd 9.9.9" in status_text(app))
+        assert "≠" in status_text(app)
+        assert rows_mod.__version__ in status_text(app)
+        # A dial that fails keeps the standing marker — a probe
+        # timeout is not an all-clear (the storage cache keeps its
+        # figures the same way). The row count's move proves the
+        # refresh landed and repainted.
+        data.rows = [row(), row(id="ws-b")]
+        data.health_doc = None
+        app.screen.action_refresh()
+        await wait_for(lambda: "2 workspaces" in status_text(app))
+        assert "msksd 9.9.9" in status_text(app)
+        data.health_doc = {"version": rows_mod.__version__}
+        app.screen.action_refresh()
+        await wait_for(lambda: "msksd" not in status_text(app))
+        assert "≠" not in status_text(app)
+
+
 async def test_the_status_bar_reads_all_for_one_state(
     monkeypatch,
 ) -> None:

@@ -46,6 +46,7 @@ from .rows import (
     expanded_columns,
     list_header,
     row_content,
+    skew_marker,
     sort_rows,
     state_summary,
     status_class,
@@ -200,6 +201,10 @@ class MainScreen(HelpKeys, Screen):
         # refreshed on the listing's cadence — a selection move
         # reads it and pays no roundtrip.
         self.storage_used: dict[str, int] = {}
+        # The version-skew marker (#852): the last /health
+        # answer's both-words form, standing on the status line
+        # beside the URL until the versions agree again.
+        self.version_skew: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(id="status")
@@ -315,8 +320,10 @@ class MainScreen(HelpKeys, Screen):
 
     async def load_rows(self) -> None:
         try:
-            rows, _ = await asyncio.gather(
-                self.app.data.workspaces(), self.load_storage()
+            rows, _, _ = await asyncio.gather(
+                self.app.data.workspaces(),
+                self.load_storage(),
+                self.load_skew(),
             )
             await self.rebuild_rows(self.with_shell_counts(rows))
         except (Exception, SystemExit) as exc:
@@ -358,6 +365,21 @@ class MainScreen(HelpKeys, Screen):
             }
         except Exception, SystemExit:
             return
+
+    async def load_skew(self) -> None:
+        """Land the version-skew marker (#852): the daemon's
+        /health version against this client's, on the listing's
+        own refresh cadence — the marker refreshes with the rows
+        and leaves when the versions agree. A dial that will not
+        come answers None (:func:`fetch_health` owns the
+        every-failure-is-None contract) and keeps the standing
+        marker, the same silence :func:`load_storage` keeps its
+        figures for — a probe timeout is not an all-clear. Only a
+        document that answers moves the marker: to a new word, or
+        off the line when the versions agree."""
+        health = await self.app.data.health()
+        if health is not None:
+            self.version_skew = skew_marker(health)
 
     async def rebuild_rows(self, rows: list[dict]) -> None:
         """Swap in a freshly-built list (its mount awaited), the
@@ -456,7 +478,9 @@ class MainScreen(HelpKeys, Screen):
         """The status line (#349, #853): the workspace count in the
         bold default foreground, the fleet's state summary after
         it (the rows the listing holds, no roundtrip), and the
-        daemon's URL in muted text last; a flash owns the line
+        daemon's URL in muted text — the version-skew marker
+        after it in the warning color while the daemon's version
+        and this client's differ (#852); a flash owns the line
         until its TTL lapses. The
         bar stands one row whatever the flash carries (#359): the
         #status CSS crops a long message at the terminal's edge,
@@ -469,7 +493,9 @@ class MainScreen(HelpKeys, Screen):
         try:
             count = len(self.rows)
             summary = state_summary(self.rows)
-            default = status_content(count, self.app.url, summary)
+            default = status_content(
+                count, self.app.url, summary, skew=self.version_skew
+            )
             text = self.app.flash_line.text(default)
             self.query_one("#status", Static).update(text)
             # The header row owns the listing's top; the empty
