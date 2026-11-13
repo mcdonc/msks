@@ -25,9 +25,11 @@ def workspace_label(row: dict) -> str:
 #: column's width, so the columns line up down the list. The widths
 #: are the fixed minimums the 80-column frame budgets: at that width
 #: the border and the scrollbar together leave 74 cells for a row,
-#: and the widest label the created column reads (#350,
-#: ``yesterday``) must fit whole beside the columns before it. A
-#: wider terminal widens the growing columns past these minimums
+#: two past the fixed span (#849's ID column sits ten wide where
+#: EGRESS sat twelve), and the widest label the created column
+#: reads (#350, ``yesterday``) must fit whole beside the columns
+#: before it. A wider terminal widens the growing columns past
+#: these minimums
 #: (:func:`expanded_columns`). The ID column (#849) carries a whole
 #: daemon id at ten cells; the egress posture it replaced moved to
 #: the detail strip.
@@ -80,8 +82,9 @@ COLUMN_GAP = "  "
 
 #: The cells a listing row's frame eats before its first column
 #: (#347, #349): the round border's two edges, the row's two-cell
-#: padding, and the scrollbar's two — at an 80-column terminal the
-#: 74 cells that remain are exactly the fixed columns' span, so
+#: padding, and the scrollbar's two — the workspaces' fixed span
+#: (#849) sits two cells under the 74 an 80-column terminal leaves
+#: a row, so the growing columns take those two at that width, and
 #: both listings (the workspaces', the secrets') compute their
 #: widened budgets from the terminal's width less this.
 LIST_FRAME_CELLS = 6
@@ -769,7 +772,7 @@ def state_summary(rows: list[dict]) -> str | None:
 
 
 #: The detail strip's cell budgets (#849): the name leads with
-#: the NAME column's own width, the id's ten cells carry a whole
+#: the NAME column's fixed minimum, the id's ten cells carry a whole
 #: daemon id, and the egress budget covers the posture's
 #: vocabulary — both lines hold inside an 80-column terminal's
 #: box with every fact whole.

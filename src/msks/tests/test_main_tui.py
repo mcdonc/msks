@@ -7270,7 +7270,7 @@ def test_the_detail_strip_lines() -> None:
     assert dash_spans["id"] == muted
     assert dash_spans["image"] == muted
     assert dash_spans["egress"] == muted
-    assert dash_spans["egress"] == muted
+    assert dash_spans["cpu"] == muted
     assert dash_spans[" · "] == muted
     # The marker rides the warning color beside its muted label,
     # the storage figure the report's root-plus-home sum as
