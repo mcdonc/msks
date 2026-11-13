@@ -813,6 +813,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#breaking" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Breaking
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -869,7 +880,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#breaking" class="md-nav__link">
+  <a href="#breaking_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Breaking
@@ -1208,7 +1219,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#breaking_1" class="md-nav__link">
+  <a href="#breaking_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Breaking
@@ -1328,6 +1339,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#breaking" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Breaking
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1384,7 +1406,7 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#breaking" class="md-nav__link">
+  <a href="#breaking_1" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Breaking
@@ -1723,7 +1745,7 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#breaking_1" class="md-nav__link">
+  <a href="#breaking_2" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
         Breaking
@@ -1787,6 +1809,21 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li>
+<p><strong>Open-shell counts in the TUI (#858).</strong> Every interactive
+  <code>msks ssh</code> writes a heartbeat session record under
+  <code>~/.local/state/msks/sessions</code> (relocatable with the <code>state_dir</code>
+  key / <code>MSKSC_STATE_DIR</code>), and the workspaces list shows the live
+  count beside a row's status word (<code>»2</code>) and on the detail strip
+  (<code>shells »2</code>); the workspace page's header carries the count
+  beside the status (<code>2 shells open</code>). The count covers the shells
+  open on the host the TUI runs on, survives a tree restart, and a
+  session killed without cleanup stops counting about twenty
+  seconds after its death. Windows the tree opens carry the
+  workspace's name and the session record's five-character token in
+  their title (<code>msks tree-vm f8x2n</code>); a later release will use the
+  token to match a session to its window.</p>
+</li>
 <li>
 <p><strong>Detail strip at the bottom of the workspaces list (#849).</strong>
   A two-line strip renders at the bottom of the listing's box
@@ -1903,6 +1940,17 @@ tagged <code>vX.Y.Z</code>.</p>
   stop.</p>
 </li>
 </ul>
+<h3 id="breaking">Breaking<a class="headerlink" href="#breaking" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong><code>terminal_title</code> / <code>MSKSC_TERMINAL_TITLE</code> removed (#858).</strong> The
+  window title template setting is gone; every terminal window msks
+  opens for a workspace shell now carries one fixed title,
+  <code>msks &lt;workspace-name&gt; &lt;token&gt;</code>, and windows msks does not open keep
+  the terminal emulator's own title. The client refuses a config
+  file that still carries the <code>terminal_title</code> key, on every
+  command, until the key is deleted — delete it from your
+  <code>msks.yaml</code> and unset the variable. The refusal names the key.</li>
+</ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
@@ -1995,7 +2043,7 @@ tagged <code>vX.Y.Z</code>.</p>
   instead of refusing it.</li>
 </ul>
 <h2 id="v082-2026-11-07">[v0.8.2] - 2026-11-07<a class="headerlink" href="#v082-2026-11-07" title="Permanent link">&para;</a></h2>
-<h3 id="breaking">Breaking<a class="headerlink" href="#breaking" title="Permanent link">&para;</a></h3>
+<h3 id="breaking_1">Breaking<a class="headerlink" href="#breaking_1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>The <code>client</code> flake output is gone (#793).</strong> The flake's
   <code>client</code> package and devenv's <code>outputs.client</code> are removed.
@@ -3077,7 +3125,7 @@ no</code>, <code>PermitRootLogin prohibit-password</code>) pinned by a config dr
 <p><strong>Workspace shell (#21).</strong> <code>msks shell &lt;workspace-id&gt;</code> gives an interactive shell inside a running workspace microvm, from any host that can reach the daemon: the client speaks the authenticated <code>/api/v1/workspaces/{id}/console</code> websocket (TLS + token, Ctrl-] detach, raw tty mode), and the daemon proxies it over virtio-vsock — the VM's vsock unix socket after a <code>CONNECT &lt;port&gt;</code> handshake — into a per-connection busybox ash on a pty served by static socat in the guest (root shell today, per #5's guest userland; <code>MSKSC_URL</code>/<code>MSKSC_TOKEN</code>/<code>MSKSC_CAFILE</code> configure the client). The guest assets gained the vsock module, <code>/dev/vsock</code> creation, devpts/ptmx setup, and socat; the daemon retries the console handshake across the guest's post-boot bring-up window.</p>
 </li>
 </ul>
-<h3 id="breaking_1">Breaking<a class="headerlink" href="#breaking_1" title="Permanent link">&para;</a></h3>
+<h3 id="breaking_2">Breaking<a class="headerlink" href="#breaking_2" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Dev state moved under <code>.devenv/state/</code> (#156).</strong> The repo-root
   state dirs — <code>.guest/</code>, <code>.msksd/</code> — now live at

@@ -1767,6 +1767,12 @@ variables has a config-file equivalent.</p>
 <td><code>~/.cache/msks</code></td>
 </tr>
 <tr>
+<td><code>MSKSC_STATE_DIR</code></td>
+<td><code>state_dir</code></td>
+<td>The msks state root: every interactive <code>msks ssh</code> heartbeats a session record under its <code>sessions</code> subtree (see <a href="../tui/#open-shells-and-the-session-records">The TUI</a>)</td>
+<td><code>~/.local/state/msks</code></td>
+</tr>
+<tr>
 <td><code>MSKSC_IDENTITY_FILE</code></td>
 <td><code>identity_file</code></td>
 <td>Your own private key file, the ssh identity <code>msks create</code> plants into every workspace (msks generates none; <a href="../first-run/#the-key-files">the identity section</a> owns the whole story); a leading <code>~</code> expands</td>
@@ -1779,12 +1785,6 @@ variables has a config-file equivalent.</p>
 <td>unset (<code>identity_file</code> answers)</td>
 </tr>
 <tr>
-<td><code>MSKSC_TERMINAL_TITLE</code></td>
-<td><code>terminal_title</code></td>
-<td>The title template for the workspace-shell windows the workspace page opens (the file key's section lives in <a href="../tui/">The TUI</a>); <code>{workspace}</code> resolves to the workspace's id</td>
-<td>unset (the terminal's own title)</td>
-</tr>
-<tr>
 <td><code>MSKSC_IMAGE_MANIFEST_URL</code></td>
 <td><code>image_manifest_url</code></td>
 <td>Where the TUI's Import image action (<code>i</code> on the workspace list) reads the published channel's manifest (a fork's or self-hoster's channel gives its own); the picker shows each row's ref, description, and size, and the pick POSTs the row's URL to the daemon's import endpoint</td>
@@ -1795,6 +1795,9 @@ variables has a config-file equivalent.</p>
 <p><code>MSKSC_CACHE_DIR</code> exists because the host-key cache is disposable: a swept
 cache costs one trust-on-first-use re-pin. Pointing it at a per-project,
 disposable location is the intended use.</p>
+<p><code>MSKSC_STATE_DIR</code> names the state root the session records live under. The
+records are small heartbeat files, swept when they go stale; a swept root
+costs the TUI's open-shell counts until the sessions beat again.</p>
 <p>Each directory-valued setting takes an absolute path (a relative value is
 refused with a line giving the fix; a leading <code>~</code> expands; an empty value
 counts as unset). The per-workspace directories are created below it.</p>

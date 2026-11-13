@@ -399,6 +399,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The workspace tree">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#open-shells-and-the-session-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Open shells and the session records
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -525,10 +542,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#terminal_title" class="md-nav__link">
+  <a href="#the-window-title" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        <code>terminal_title</code>
+        The window title
       </span>
     </span>
   </a>
@@ -1003,6 +1020,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="The workspace tree">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#open-shells-and-the-session-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Open shells and the session records
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1129,10 +1163,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#terminal_title" class="md-nav__link">
+  <a href="#the-window-title" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        <code>terminal_title</code>
+        The window title
       </span>
     </span>
   </a>
@@ -1225,6 +1259,39 @@ as in <code>4 workspaces · 1 running 3 stopped</code>, in the STATUS column's
 lifecycle order. The summary follows the five-second refresh. The
 daemon's URL comes last, and it crops first when the terminal runs
 narrow.</p>
+<p>A row can carry two markers ahead of its status word. <code>✗1</code> counts
+the workspace's mounts that skipped at the last start (the mounts
+chapter lists every kind of skip). <code>»2</code> counts the workspace's open
+shells on this host. The <a href="#open-shells-and-the-session-records">open shells section</a>
+below owns the count's whole story; the workspace's page carries the
+count in its header. Both markers follow the five-second refresh.</p>
+<h3 id="open-shells-and-the-session-records">Open shells and the session records<a class="headerlink" href="#open-shells-and-the-session-records" title="Permanent link">&para;</a></h3>
+<p>Every interactive <code>msks ssh</code> writes one small record under the msks
+state directory. That includes a window the tree opened and a
+session you typed yourself. The default location is
+<code>~/.local/state/msks/sessions</code>; <code>XDG_STATE_HOME</code> moves it, and the
+<code>state_dir</code> config key (its variable is <code>MSKSC_STATE_DIR</code>) names the
+root outright. The record carries the workspace's id, the session
+process's pid, and a short token. The session rewrites its record
+every five seconds while it lives and unlinks it when it exits.</p>
+<p>The count you read is the host's truthful shell count. It survives a
+tree restart, because the records live on disk and the sessions keep
+rewriting them. A <code>--hold</code> window whose ssh child exited stops
+counting at once. A session killed without cleanup stops counting
+once its heartbeat passes the fifteen-second stale TTL and the
+listing's next refresh reads the tree, about twenty seconds in the
+worst case. A passthrough remote command (<code>msks ssh &lt;ws&gt; -- &lt;cmd&gt;</code>)
+and <code>msks rsync</code> write nothing: they are connections, not shells.</p>
+<p>The count is per-host. It names the shells open on the host the TUI
+runs on, whatever host the daemon runs on. The daemon is not
+involved: the TUI reads the records on its refresh cadence and sweeps
+the stale ones away. A session whose record cannot be written (a
+read-only state directory, say) runs fine; the count simply does not
+see it.</p>
+<p>Each record's token is five characters, drawn against the
+workspace's live sessions. The token completes the window's title
+(<code>msks tree-vm f8x2n</code>); a later release will use it to match a
+session to its window.</p>
 <h2 id="workspace-creation">Workspace creation<a class="headerlink" href="#workspace-creation" title="Permanent link">&para;</a></h2>
 <p>When you create a workspace, it looks like this:</p>
 <p><img alt="The create form over the list" src="../screens/create-form.svg" /></p>
@@ -1274,7 +1341,11 @@ demand, both at mint time and after.</p>
 <p>The <strong>workspace page</strong> operates on an already-created workspace. Its
 two-line header: the workspace's name on the first line with its status
 beside it, in the state's color, then the id, image, host, and
-created date on the second.</p>
+created date on the second. While shells are open on this host, the
+first line carries their count after the status (<code>alpha · ● running ·
+2 shells open</code>); the segment leaves with the last shell's close. The
+count comes from the <a href="#open-shells-and-the-session-records">session records</a>
+and follows the page's per-second row refresh.</p>
 <p>Below the header, two status lines share one shape: a muted label,
 then the value. The consent line shows the mode and one granted
 scope with its expiry. Two or more grants show as a count with the
@@ -1469,38 +1540,43 @@ runs <code>msks ssh</code> in the TUI's own terminal, on every host, with no ter
 to launch. A configured launcher that fails to execute (a binary that is
 missing or not executable) reports the reason on the tree's first flash
 after the same-terminal shell ends. The shell runs in the same terminal.</p>
-<h4 id="terminal_title"><code>terminal_title</code><a class="headerlink" href="#terminal_title" title="Permanent link">&para;</a></h4>
-<p><code>terminal_title</code> sets the title of every terminal window the workspace
-page's shell action opens through a configured launcher. <code>{workspace}</code>
-resolves to the workspace's id (the token <code>msks ssh</code> addresses; that is
-what the TUI appends to the launcher), or to <code>shell</code> when the appended
-command addresses no workspace:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">terminal_title</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">msks — {workspace}</span>
-</span></code></pre></div>
-<p>A launcher that runs <code>msks-term-popup</code> writes the title before it attaches
-tmux, and the launch's own tmux server pins <code>set-titles</code> off. The title stays
-for the window's lifetime: a workspace shell inside the window cannot rewrite
-it. Every other launcher gets the title from the appended <code>msks ssh</code> itself:
-the window msks opens is marked at spawn, and the command sets it before the
-session starts. A workspace that sets its own title from inside the session (a
-<code>PROMPT_COMMAND</code> with a title escape, the way stock ssh sessions can) rewrites
-it there. tmux shields the popup path. Nothing shields the plain path.</p>
-<p><code>terminal_title</code>'s environment form (<code>MSKSC_TERMINAL_TITLE</code>) overrides
-the file value. The default is unset: the terminal emulator's own title
-stays in place (the command it runs, or whatever its <code>-T</code> / <code>--title</code>
-flag sets). A <code>msks ssh</code> you type yourself keeps your terminal's title:
-the setting applies only to the windows msks opens, and a same-terminal
-shell (the dead-launcher fallback) changes nothing.</p>
+<h4 id="the-window-title">The window title<a class="headerlink" href="#the-window-title" title="Permanent link">&para;</a></h4>
+<p>Every terminal window msks opens for a workspace shell carries one
+title: <code>msks {workspace} {session}</code>. The workspace half is the
+workspace's name — the word the operator reads everywhere else —
+with its id standing in when the daemon serves no name. The session
+half is the token of the session record <a href="#open-shells-and-the-session-records">the open shells
+section</a> describes:
+<code>msks tree-vm f8x2n</code>. A child that names no workspace (an appended
+command that is not an <code>msks ssh</code>) titles as <code>msks shell</code>.</p>
+<p>A session without a record drops the session half. The consent
+launcher (<code>msks-term-popup</code>) titles its window before any session
+exists, and a remote-command run in a spawned window registers
+nothing, so both read <code>msks tree-vm</code>. The plain window the TUI
+opens takes the full title from the appended <code>msks ssh</code> itself: the
+window is marked at spawn, and the command names it twice. The first
+write carries the typed reference alone, before the boot pre-flight
+— a refused pre-flight still leaves the window named. The second
+write carries the resolved name and completes the title with the
+record's token, once the pre-flight answers and the session
+registers. The title stays until something
+inside the window replaces it: a workspace that sets its own title
+from inside the session (a <code>PROMPT_COMMAND</code> with a title escape, the
+way stock ssh sessions can) rewrites it there. tmux shields the
+popup path. Nothing shields the plain path.</p>
+<p>A <code>msks ssh</code> you type yourself keeps your terminal's title: the title
+applies only to the windows msks opens, and a same-terminal shell
+(the dead-launcher fallback) changes nothing.</p>
 <h4 id="msks-term-popup-the-consent-decider-terminal"><code>msks-term-popup</code>: the consent-decider terminal<a class="headerlink" href="#msks-term-popup-the-consent-decider-terminal" title="Permanent link">&para;</a></h4>
 <p><code>msks-term-popup</code> is a shipped client command that runs the appended
 shell inside a local tmux session and answers the workspace's egress
 consent prompts right there.</p>
 <p>To use, it change your <code>msks.yaml</code> config file such that it's the program
 opened by <code>terminal_open_cmd</code>. For example:</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">konsole -e msks-term-popup</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">xterm -e msks-term-popup</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghostty +wait -e msks-term-popup</span><span class="w">       </span><span class="c1"># Linux</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">open -na Ghostty.app --args -e msks-term-popup</span><span class="w">  </span><span class="c1"># macOS</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">konsole -e msks-term-popup</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">xterm -e msks-term-popup</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghostty +wait -e msks-term-popup</span><span class="w">       </span><span class="c1"># Linux</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">open -na Ghostty.app --args -e msks-term-popup</span><span class="w">  </span><span class="c1"># macOS</span>
 </span></code></pre></div>
 <p>The launch also starts the consent-decider
 app in a hidden tmux session on the same socket, where it holds the
