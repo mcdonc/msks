@@ -1,3 +1,10 @@
+"""The capability wrapper phase.
+
+A root-owned setpriv copy at ``/usr/local/bin/msks-caps``
+carrying CAP_NET_ADMIN and CAP_NET_BIND_SERVICE — the Debian
+equivalent of the NixOS host's security wrapper (#231).
+"""
+
 from __future__ import annotations
 
 from .util import HostSetupError, remove_file, sh, which

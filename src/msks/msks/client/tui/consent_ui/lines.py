@@ -60,15 +60,7 @@ def duration_label(rule, remaining: float | None) -> str:
 #: The verdict word's colors (#470 C5): the decision earns its
 #: leading cell — allowed in the success color, denied in the
 #: error color.
-
-#: The verdict word's colors (#470 C5): the decision earns its
-#: leading cell — allowed in the success color, denied in the
-#: error color.
 VERDICT_COLORS = {"allowed": "$success", "denied": "$error"}
-
-#: A verdict row's host budget (#470 C5): a long FQDN clips at
-#: its middle — the row keeps one line and the duration stays
-#: readable at the terminal's edge.
 
 #: A verdict row's host budget (#470 C5): a long FQDN clips at
 #: its middle — the row keeps one line and the duration stays

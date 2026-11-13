@@ -30,8 +30,6 @@ from .router import LlmRouter
 
 logger = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
-
 #: The port the per-tap listeners bind (a setting; this is the
 #: default). Unprivileged by choice: the daemon's two low-port
 #: services are DHCP and DNS, and the proxy has no reason to join

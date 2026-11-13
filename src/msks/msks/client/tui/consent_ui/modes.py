@@ -24,12 +24,6 @@ def effective_allows(rules: EgressRules | None) -> bool:
 #: workspace page's (#344). It names the posture (every name
 #: answers NXDOMAIN — an offline workspace) and the escape
 #: (switching anyway).
-
-#: The empty-static confirmation's question (#280) — one text for
-#: every surface that asks it: the decider app's picker, and the
-#: workspace page's (#344). It names the posture (every name
-#: answers NXDOMAIN — an offline workspace) and the escape
-#: (switching anyway).
 EMPTY_STATIC_QUESTION = (
     "static with nothing allowed answers every name NXDOMAIN "
     "— an offline workspace. Switch anyway?"

@@ -1,3 +1,10 @@
+"""The orchestration: the setup and uninstall runs, the CLI.
+
+The phase order the docstring's numbered pieces describe, the
+summaries both runs end with, and the argument parser and
+``main`` the entry points call.
+"""
+
 from __future__ import annotations
 
 import argparse

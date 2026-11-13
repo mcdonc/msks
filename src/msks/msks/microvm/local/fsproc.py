@@ -39,11 +39,6 @@ FS_TERM_GRACE_S = 5.0
 #: answers inside 10s, and a mount start must not hang on an
 #: MSKSD_VIRTIOFSD wrapper that wedges — the probe dies with the
 #: error naming it instead.
-
-#: The version probe's ceiling (#655): the doctor's own probe
-#: answers inside 10s, and a mount start must not hang on an
-#: MSKSD_VIRTIOFSD wrapper that wedges — the probe dies with the
-#: error naming it instead.
 VERSION_PROBE_TIMEOUT_S = 10.0
 
 

@@ -27,11 +27,6 @@ POLL_INTERVAL_S = 0.05
 # press lands before the guest's logind listens and is silently dropped.
 # The re-press delivers on x86_64 only while cloud-hypervisor's arm64
 # button emulation stays one-way (#826).
-
-# How long to wait before pressing the power button again: an early-boot
-# press lands before the guest's logind listens and is silently dropped.
-# The re-press delivers on x86_64 only while cloud-hypervisor's arm64
-# button emulation stays one-way (#826).
 POWER_REPRESS_S = 5.0
 
 

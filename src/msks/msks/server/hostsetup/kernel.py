@@ -1,3 +1,10 @@
+"""The routing-kernel-settings phase.
+
+The forwarding sysctl as a boot-time setting and the
+netfilter/tun modules at boot — the settings egress verifies or
+needs, with the module states the summary's consent line reads.
+"""
+
 from __future__ import annotations
 
 import os
@@ -63,19 +70,11 @@ def land_sysctl() -> None:
 
 # A module's state after land_modules: it loaded, the kernel's
 # module tree does not carry it, or the load itself failed.
-
-# A module's state after land_modules: it loaded, the kernel's
-# module tree does not carry it, or the load itself failed.
 LOADED = "loaded"
 
 ABSENT = "absent"
 
 LOAD_FAILED = "load-failed"
-
-# The three the consent chain's rulesets reference (the deny RST's
-# `reject with tcp reset`, the interactive queue's `queue num`):
-# interactive egress consent cannot work without them, and the
-# daemon refuses consent-egress workspaces (#550).
 
 # The three the consent chain's rulesets reference (the deny RST's
 # `reject with tcp reset`, the interactive queue's `queue num`):

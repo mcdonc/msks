@@ -1,7 +1,7 @@
 """The first-run config template.
 
-The commented msks.yaml a first run writes and the TUI's edit
-dialog shows — one template text, two consumers.
+The commented msks.yaml a first run writes — one template text,
+the write path prints and ``msks config edit`` seeds from.
 """
 
 from __future__ import annotations

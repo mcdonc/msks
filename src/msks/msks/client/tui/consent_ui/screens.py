@@ -242,8 +242,4 @@ class EdgeListView(ListView):
 #: The verdict keys' standing hint (#470 C2): the letters the
 #: queue answers, named beside the queue itself — the footer's
 #: ellipsis variant cannot teach its own meaning.
-
-#: The verdict keys' standing hint (#470 C2): the letters the
-#: queue answers, named beside the queue itself — the footer's
-#: ellipsis variant cannot teach its own meaning.
 HOLDS_HINT = "a allow · d deny · shift or enter picks a duration · x revoke"

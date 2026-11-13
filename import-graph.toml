@@ -276,7 +276,7 @@ app = 2
 # any existing file, so the replaceable-template read is gone.
 # #874: the mac setup split into a package spreads the same two
 # names across its clientconfig and verify submodules plus the
-# package root — the coupling is the same pair, three import
+# package root — the coupling is the same pair, four import
 # statements deeper.
 client = 7
 # #672: the set-time (checked_mounts) and start-time

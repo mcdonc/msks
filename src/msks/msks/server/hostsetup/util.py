@@ -1,3 +1,11 @@
+"""The shared shell-and-filesystem vocabulary.
+
+Every phase speaks these: ``sh`` runs a command and names its
+failure, the file helpers write and remove atomically, the
+os-release readers carry the platform gate's evidence, and
+:class:`HostSetupError` is the named refusal every phase raises.
+"""
+
 from __future__ import annotations
 
 import os
@@ -134,13 +142,7 @@ def which(tool: str) -> str | None:
 #: Debian's admin directories: the systemd user manager's default
 #: PATH carries them (the daemon's own search path), while a
 #: non-root login shell's may not (#601).
-
-#: Debian's admin directories: the systemd user manager's default
-#: PATH carries them (the daemon's own search path), while a
-#: non-root login shell's may not (#601).
 PATH_EXTRA_DIRS = ("/usr/local/sbin", "/usr/sbin", "/sbin")
-
-#: The idempotent marker for the ~/.profile block (#601).
 
 
 def silent_unlink(path: str) -> None:

@@ -2760,7 +2760,7 @@ def test_shared_ssl_answers_none_over_the_local_socket(
     builder returns None — no TOFU warning prints on the TUI."""
     monkeypatch.setenv("MSKSC_URL", "")
     monkeypatch.setenv("MSKSC_SOCKET", "/run/msks/msksd.sock")
-    monkeypatch.setattr(consent_ui, "_SHARED_SSL", [None])
+    monkeypatch.setattr(consent_ui.wire, "_SHARED_SSL", [None])
     assert consent_ui.shared_ssl() is None
 
 

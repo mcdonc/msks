@@ -1,3 +1,11 @@
+"""The client console-script links.
+
+``msks`` and ``msks-term-popup`` link at ``/usr/local/bin``, each
+pointing at the bin sibling this tool's own venv ships (#719,
+#755); a live link or a regular file refuses by name, a dangling
+link re-points.
+"""
+
 from __future__ import annotations
 
 import os
@@ -13,12 +21,6 @@ from .util import HostSetupError
 CLIENT_LINK = "/usr/local/bin/msks"
 
 POPUP_LINK = "/usr/local/bin/msks-term-popup"
-
-#: The client's console commands the link phase lands (#719,
-#: #755): the client for every shell, and the consent-terminal
-#: launcher beside it — the command a GUI-opened terminal window
-#: resolves on its own PATH, the fresh-PATH rule the macOS tool
-#: links both commands for (#734).
 
 #: The client's console commands the link phase lands (#719,
 #: #755): the client for every shell, and the consent-terminal

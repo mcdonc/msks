@@ -1,3 +1,10 @@
+"""The daemon user phase: executing user, kvm group, uplink.
+
+Who invoked the tool (SUDO_USER under sudo), the supplementary
+group that grants /dev/kvm, and the egress uplink the phases
+name in their messages.
+"""
+
 from __future__ import annotations
 
 import grp

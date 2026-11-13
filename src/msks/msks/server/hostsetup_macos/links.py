@@ -26,10 +26,6 @@ CLIENT_COMMANDS = ("msks", "msks-term-popup")
 #: The brew prefixes the uninstall arm sweeps in brew's absence
 #: (#701's lesson: the uninstall never requires a tool the
 #: install needed) — the arm tries brew first for the truth.
-
-#: The brew prefixes the uninstall arm sweeps in brew's absence
-#: (#701's lesson: the uninstall never requires a tool the
-#: install needed) — the arm tries brew first for the truth.
 FALLBACK_BREW_BINS = ("/opt/homebrew/bin", "/usr/local/bin")
 
 

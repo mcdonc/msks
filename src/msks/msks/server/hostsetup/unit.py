@@ -1,3 +1,11 @@
+"""The systemd user service phase.
+
+``~/.config/systemd/user/msksd.service`` for the executing user,
+exec'd through the wrapper, its runtime directory under the
+user's own XDG_RUNTIME_DIR, linger keeping the manager alive
+across logouts — and the teardown mirror (#604).
+"""
+
 from __future__ import annotations
 
 import time

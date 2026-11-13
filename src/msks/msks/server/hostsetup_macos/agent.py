@@ -21,14 +21,7 @@ MAC_CA = Path("~/.config/msks/msksd-vm-ca.pem").expanduser()
 #: Where the bootstrap token lands, beside the CA: the managed
 #: config's ``token_file`` names it (the config tree stays free
 #: of inline credentials — a file is the client's own shape).
-
-#: Where the bootstrap token lands, beside the CA: the managed
-#: config's ``token_file`` names it (the config tree stays free
-#: of inline credentials — a file is the client's own shape).
 MAC_TOKEN = Path("~/.config/msks/msksd-vm.token").expanduser()
-
-#: The daemon alias the managed client config defines — the name
-#: a bare ``msks`` addresses through ``active_daemon``.
 
 #: The daemon alias the managed client config defines — the name
 #: a bare ``msks`` addresses through ``active_daemon``.
@@ -36,16 +29,7 @@ MANAGED_ALIAS = "msksd-vm"
 #: The managed config's first line: names the tool that wrote
 #: the file — provenance for the operator; no code reads it
 #: (#730 — a rerun keeps any existing file, marker or not).
-
-#: The managed config's first line: names the tool that wrote
-#: the file — provenance for the operator; no code reads it
-#: (#730 — a rerun keeps any existing file, marker or not).
 MANAGED_HEADER = "# Written by msks-setup-macos-host"
-
-#: The login agent (launchd): ``RunAtLoad`` runs ``limactl start``
-#: at login, so the VM — and with it the daemon — answers after a
-#: reboot with no manual step. The plist lives in the user's own
-#: LaunchAgents: a user agent, no root, matching the VM it owns.
 
 #: The login agent (launchd): ``RunAtLoad`` runs ``limactl start``
 #: at login, so the VM — and with it the daemon — answers after a

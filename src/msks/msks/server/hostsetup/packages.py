@@ -1,3 +1,10 @@
+"""The package and VMM phases.
+
+Missing plumbing packages and NFQUEUE sonames install through
+the distro manager; cloud-hypervisor lands from the upstream
+static release when the archive carries none.
+"""
+
 from __future__ import annotations
 
 import os

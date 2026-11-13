@@ -1,3 +1,11 @@
+"""The per-distro surface: HostProfile and its Debian instance.
+
+The phases are one distro-neutral implementation; this module
+carries what varies — the tool's name and package maps, the
+installer verbs, the landed texts that name the tool — plus the
+``~/.profile`` PATH block both directions share.
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -46,11 +54,6 @@ MODULES_HEADER = """\
 
 #: The idempotent marker for the ~/.profile block (#601).
 PROFILE_MARKER = "# msks: Debian keeps the admin tools in /usr/sbin and /sbin"
-
-#: The block the tool appends to the operator's ~/.profile (#601):
-#: guarded additions at the tail of PATH — Debian's own order puts
-#: /usr/local and the account's own bins ahead, so the block never
-#: shadows a user-local tool that shares a name with an sbin one.
 
 #: The block the tool appends to the operator's ~/.profile (#601):
 #: guarded additions at the tail of PATH — Debian's own order puts
@@ -107,10 +110,6 @@ TOOL_PACKAGES = {
     # package and a present binary still answers the probe.
     "virtiofsd": "virtiofsd",
 }
-
-# soname → package for the consent stack's NFQUEUE libraries
-# (#598): no binary answers a `which`, so the linker cache is
-# the probe.
 
 # soname → package for the consent stack's NFQUEUE libraries
 # (#598): no binary answers a `which`, so the linker cache is

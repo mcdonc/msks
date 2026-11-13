@@ -25,10 +25,6 @@ RECONNECT_DELAYS = (1.0, 2.0, 5.0)
 #: After an auth refusal (the daemon's 4401 close for a bad token)
 #: the retry slows to this fixed interval: bounded noise, and the
 #: client still heals if a corrected token lands mid-session.
-
-#: After an auth refusal (the daemon's 4401 close for a bad token)
-#: the retry slows to this fixed interval: bounded noise, and the
-#: client still heals if a corrected token lands mid-session.
 REFUSED_RETRY_INTERVAL = 60.0
 
 #: How long a flashed message owns the status line.
@@ -41,11 +37,6 @@ CONNECTED = "connected"
 RECONNECTING = "reconnecting"
 
 REFUSED = "refused — bad token?"
-
-#: The registration-refusal and unusable-token states' labels — the
-#: same strings :mod:`msks.client.tui.link` names its states by (the
-#: link owns the connection; the surfaces render the labels, and an
-#: import between the two modules would cycle).
 
 #: The registration-refusal and unusable-token states' labels — the
 #: same strings :mod:`msks.client.tui.link` names its states by (the
@@ -152,8 +143,6 @@ async def close_ws(ws) -> None:
     except Exception:
         pass
 
-
-# --- default seams (the real socket and REST calls) ---------------------
 
 # --- default seams (the real socket and REST calls) ---------------------
 

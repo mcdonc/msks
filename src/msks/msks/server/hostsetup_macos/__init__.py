@@ -89,7 +89,6 @@ import ssl as ssl
 import subprocess as subprocess
 import sys as sys
 import time as time
-from importlib.resources import files as files
 from pathlib import Path as Path
 
 from ...client.config import default_config_path as default_config_path
