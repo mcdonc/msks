@@ -2541,11 +2541,11 @@ async def test_spawn_window_detaches_quietly() -> None:
 
 async def test_spawn_window_marks_the_opened_window(monkeypatch) -> None:
     """The child's environment carries the new-window marker
-    (#445): the window msks opened may take its title from
-    ``MSKSC_TERMINAL_TITLE`` — the appended ``msks ssh`` reads the
-    marker to tell a spawned window from the operator's own
-    terminal. A copy of the environment, so the marker never
-    leaks into the tree's own process."""
+    (#445): the window msks opened takes the msks title — the
+    appended ``msks ssh`` reads the marker to tell a spawned
+    window from the operator's own terminal. A copy of the
+    environment, so the marker never leaks into the tree's own
+    process."""
     seen = {}
 
     async def fake_exec(*argv, **kwargs):
@@ -7310,12 +7310,13 @@ def test_the_list_row_marks_open_shells() -> None:
         for span in both_spanned.spans
     }
     assert both_spans["✗1"] == rows_mod.ISSUE_MARKER_COLOR
-    assert both_spans["opped"] == rows_mod.muted_style({})
-    # The composed cell clips at the STATUS column's width like
-    # any cell does — the markers keep their colors over the
-    # clipped head (the cell's own approximation), and the full
-    # text rides status_with_issues above.
+    # The composed cell clips at the STATUS column's width, and the
+    # clip eats the second marker (its color must not ride the
+    # characters the clip rearranged): the word's span carries the
+    # clipped cell whole, muted for a stopped row.
     assert "✗1 »…" in both_spanned.plain
+    assert "»2" not in both_spans
+    assert both_spans[" »…opped"] == rows_mod.muted_style({})
 
 
 def test_the_detail_strip_lines() -> None:

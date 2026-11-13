@@ -22,9 +22,9 @@ Two roles share this module, spelled as the first argument:
 
 ``launch``
     The console entry the operator's prefix runs. Validates tmux,
-    names the window per ``MSKSC_TERMINAL_TITLE`` when the setting
-    is in place (#445), resolves the workspace's name for the
-    session's status bar (#455), names a fresh session after the
+    names the window with the msks title (#445, #858), resolves
+    the workspace's name for the session's status bar (#455),
+    names a fresh session after the
     workspace on a dedicated socket (a server of its own, so the
     pane inherits this process's environment — an operator's
     already-running tmux server would otherwise substitute its
@@ -49,7 +49,7 @@ import sys
 
 from .env import env_token, env_url
 from .rest import workspace_row
-from .wintitle import TITLE_MARKER, configured_title, set_window_title
+from .wintitle import TITLE_MARKER, set_window_title, window_title
 
 #: The popup geometry: fixed cells, sized for the 80-column window
 #: the consent screens already target; tmux clips it to a smaller
@@ -196,22 +196,21 @@ def split_role(args: list[str]) -> tuple[str, list[str]]:
 
 def run_launch(argv: list[str]) -> int:
     """The launcher (#379): a missing tmux names itself and stops
-    before a window could open half-way — its title included; a
-    configured title (``MSKSC_TERMINAL_TITLE``) names the window
-    only once tmux is there to fill it (#445). Then resolve the
-    workspace's name for the status bar (#455) — last of the
-    pre-exec steps, so a slow lookup delays only the client — and
-    become the tmux client attached to a fresh session (one that
-    ends with this window) whose pane runs this module's pane role
-    with the appended command. The terminal window itself is
-    whatever the operator's prefix opened — this process already
-    runs inside it."""
+    before a window could open half-way — its title included;
+    the window's title — the msks title (#858, ``msks <id>``: no
+    session record exists yet here, so the token half drops) —
+    is written only once tmux is there to fill it (#445). Then
+    resolve the workspace's name for the status bar (#455) —
+    last of the pre-exec steps, so a slow lookup delays only the
+    client — and become the tmux client attached to a fresh
+    session (one that ends with this window) whose pane runs this
+    module's pane role with the appended command. The terminal
+    window itself is whatever the operator's prefix opened —
+    this process already runs inside it."""
     workspace_id = workspace_from_argv(argv)
     if shutil.which("tmux") is None:
         raise SystemExit("msks-term-popup: tmux is not on PATH")
-    title = configured_title(workspace_id)
-    if title is not None:
-        set_window_title(title)
+    set_window_title(window_title(workspace_id))
     label = status_label(workspace_id)
     os.execvp(
         "tmux",

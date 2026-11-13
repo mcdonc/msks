@@ -1892,17 +1892,41 @@ def test_run_workspace_ssh_registers_the_interactive_session(
     rc = ssh.run_workspace_ssh("alpha", [])
     assert rc == 0
     # The record stood for the session's whole run, keyed by the
-    # workspace and this process's pid, and the title carried its
-    # token beside the pin.
+    # workspace and this process's pid; the window's title wrote
+    # twice — once before the pre-flight (#445), once with the
+    # record's token beside the pin (#858).
     (record,) = seen
     assert record is not None
     assert record["workspace"] == "alpha"
     assert record["pid"] == os.getpid()
-    assert titles == [("alpha", record["token"])]
+    assert titles == [("alpha", None), ("alpha", record["token"])]
     assert len(record["token"]) == sshsessions.TOKEN_LEN
     # The clean close unlinked it at once: the count drops with
     # the session, not with the TTL.
     assert not sshsessions.record_path("alpha", os.getpid()).exists()
+
+
+def test_run_workspace_ssh_titles_the_window_before_a_refusal(
+    monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
+) -> None:
+    """#445 held through #858: the window the TUI opened is titled
+    at once, before the boot pre-flight — a session the pre-flight
+    refuses (here: the identity fetch) still leaves the window
+    named, because the early write does not wait on the daemon."""
+
+    async def refusing_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        raise SystemExit("msks: the daemon refused")
+
+    monkeypatch.setattr(ssh, "prepare", refusing_prepare)
+    titles: list[tuple] = []
+    monkeypatch.setattr(
+        ssh,
+        "title_spawned_window",
+        lambda ref, token=None: titles.append((ref, token)),
+    )
+    with pytest.raises(SystemExit, match="refused"):
+        ssh.run_workspace_ssh("alpha", [])
+    assert titles == [("alpha", None)]
 
 
 def test_run_workspace_ssh_registers_no_remote_command(
@@ -1942,7 +1966,10 @@ def test_run_workspace_ssh_registers_no_remote_command(
     monkeypatch.setattr(ssh.subprocess, "run", fake_run)
     rc = ssh.run_workspace_ssh("alpha", ["uname", "-a"])
     assert rc == 0
-    assert titles == [("alpha", None)]
+    # The early write named the window before the pre-flight; the
+    # second write re-resolves the same token-less title (nothing
+    # new to add — no record, no token).
+    assert titles == [("alpha", None), ("alpha", None)]
     assert sshsessions.count_sessions() == {}
 
 

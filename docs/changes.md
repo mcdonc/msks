@@ -127,6 +127,16 @@ tagged `vX.Y.Z`.
   the client reports a timeout while the daemon still finishes the
   stop.
 
+### Removed
+
+- **`terminal_title` / `MSKSC_TERMINAL_TITLE` (#858).** The window
+  title template setting is gone. Every terminal window msks opens
+  for a workspace shell now carries one fixed title,
+  `msks <workspace-id> <token>`, and windows msks does not open keep
+  the terminal emulator's own title. Delete the key from your
+  `msks.yaml` and the variable from your environment; nothing reads
+  either.
+
 ### Fixed
 
 - **The legacy create default cmdline (#833).** A create with

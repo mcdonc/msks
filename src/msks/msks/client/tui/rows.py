@@ -446,18 +446,19 @@ def status_spans(
     """The status cell's spans (#850, #858): each standing marker
     its own color over its slice of the cell's head, the status
     word behind them — the separator spaces included, the #850
-    convention — its own class's color. The markers ride the
-    composed cell (:func:`status_with_issues`) ahead of the word,
-    their positions read off their own lengths, clamped to the
-    clipped cell's end the way the cell itself clips."""
+    convention — its own class's color. A marker the cell's clip
+    ate (a composed cell wider than the STATUS column) paints
+    nothing: the word's span carries the clipped cell whole, so
+    no marker's color rides characters the clip rearranged."""
     end = offset + len(status)
     spans: list[Span] = []
     word_start = offset
     pos = offset
     for text, mark_color in markers:
-        spans.append(Span(pos, min(pos + len(text), end), mark_color))
-        word_start = pos + len(text)
-        pos = word_start + 1
+        if status[pos - offset : pos - offset + len(text)] == text:
+            spans.append(Span(pos, pos + len(text), mark_color))
+            word_start = pos + len(text)
+        pos += len(text) + 1
     spans.append(Span(min(word_start, end), end, color))
     return spans
 

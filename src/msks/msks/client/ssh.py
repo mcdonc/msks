@@ -59,8 +59,8 @@ then runs exactly once.
 An interactive session self-registers while it runs (#858):
 :func:`msks.client.sshsessions.record_session` holds one heartbeat
 record under the per-user state directory, so the workspaces list
-counts the host's open shells, and the token the record mints rides
-the spawned window's default title. A passthrough remote command
+counts the host's open shells, and the token the record mints
+completes the spawned window's title. A passthrough remote command
 and ``msks rsync`` register nothing — they are connections, not
 shells.
 """
@@ -1364,19 +1364,21 @@ def run_workspace_ssh(
     workspace_id: str, passthrough: list[str], transport=None
 ) -> int:
     """One ssh session, from boot pre-flight to ssh's own exit
-    code. An interactive session registers itself in the
-    per-user session records (#858): one record keyed by the
-    workspace and this process's pid, heartbeated for the
-    session's life and unlinked at its end, so the workspaces
-    list counts the host's open shells — typed sessions and
-    TUI-spawned windows alike. The token the record mints names
-    the window the TUI opened for this session (#445): a
-    configured ``MSKSC_TERMINAL_TITLE`` keeps precedence, and a
-    session without a record (a passthrough remote command — a
-    connection, not a shell, registering nothing) drops the
-    session half of the default title."""
+    code. The window the TUI opened for this session is titled at
+    once (#445 — a boot or a refusal never leaves it nameless),
+    and an interactive session registers itself in the per-user
+    session records (#858) once the pre-flight answers: one
+    record keyed by the workspace and this process's pid,
+    heartbeated for the session's life and unlinked at its end,
+    so the workspaces list counts the host's open shells — typed
+    sessions and TUI-spawned windows alike. The token the record
+    mints completes the window's title (#858): a session without
+    a record (a passthrough remote command — a connection, not a
+    shell, registering nothing) drops the session half of the
+    title."""
     passthrough = passthrough_args(passthrough)
     interactive = not split_command(passthrough)[1]
+    title_spawned_window(workspace_id)
     with staged_session(workspace_id, transport) as (
         booted,
         served,

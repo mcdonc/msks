@@ -530,10 +530,9 @@ def test_a_missing_tmux_leaves_the_window_title_alone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The refusal path stops before the window could open
-    # half-way — its title included: a configured template never
-    # reaches a window tmux is not there to fill.
+    # half-way — its title included: the title never reaches a
+    # window tmux is not there to fill.
     monkeypatch.setattr(tp.shutil, "which", lambda tool: None)
-    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
     out = Tty()
     monkeypatch.setattr(tp.sys, "stdout", out)
     with pytest.raises(SystemExit, match="tmux is not on PATH"):
@@ -658,27 +657,16 @@ class Tty(io.StringIO):
 def test_run_launch_titles_the_window_before_the_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The window the launcher runs in takes the msks title (#445,
+    #858) before the client starts — no session record exists
+    yet here, so the token half drops."""
     monkeypatch.setattr(tp.shutil, "which", lambda tool: "/bin/" + tool)
     no_daemon_env(monkeypatch)
     monkeypatch.setattr(tp.os, "execvp", lambda binname, argv: None)
-    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
     out = Tty()
     monkeypatch.setattr(tp.sys, "stdout", out)
     assert tp.run_launch(list(SSH_CHILD)) == 0
-    assert out.getvalue() == "\x1b]0;msks — a1b2c3d4e5\x07"
-
-
-def test_run_launch_without_a_title_writes_nothing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(tp.shutil, "which", lambda tool: "/bin/" + tool)
-    no_daemon_env(monkeypatch)
-    monkeypatch.setattr(tp.os, "execvp", lambda binname, argv: None)
-    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "")
-    out = Tty()
-    monkeypatch.setattr(tp.sys, "stdout", out)
-    assert tp.run_launch(list(SSH_CHILD)) == 0
-    assert out.getvalue() == ""
+    assert out.getvalue() == "\x1b]0;msks a1b2c3d4e5\x07"
 
 
 def test_the_launch_line_meets_the_pane_role(

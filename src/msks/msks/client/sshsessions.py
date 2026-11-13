@@ -19,10 +19,12 @@ the daemon is not involved, and a tree restart changes nothing
 passthrough remote command and ``msks rsync`` write nothing: they
 are connections, not shells.
 
-Record creation mints a short token, unique among the workspace's
-live sessions; the token rides the record and the spawned window's
-default title, and is the join key a later surface (#856) matches
-a session's window by. The state directory is the one the
+Record creation mints a short token drawn against the
+workspace's live sessions (best effort; the mint holds no lock —
+the token is a join key, not a security boundary); the token
+rides the record and the spawned window's default title, and is
+the join key a later surface (#856) matches a
+session's window by. The state directory is the one the
 session-shaped surfaces share: #857's shape files ride it too when
 they land.
 """
@@ -323,14 +325,13 @@ def record_session(
     session.
     """
     token = mint_token(pin, base=base, rng=rng)
-    key = record_key(pin)
     pid = os.getpid()
     path = record_path(pin, pid, base=base)
-    write_record(path, key, pid, token, clock())
+    write_record(path, pin, pid, token, clock())
     stop = threading.Event()
     thread = threading.Thread(
         target=beat_loop,
-        args=(path, key, pid, token, stop, beat, clock),
+        args=(path, pin, pid, token, stop, beat, clock),
         daemon=True,
     )
     thread.start()
