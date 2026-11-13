@@ -589,7 +589,10 @@ def header_name(
     name in the default foreground, its status behind the cue dot
     beside it in the status color (the list's status coloring),
     and — while holds wait on the page's queue — the pending-egress
-    count (#354): the segment leaves with the last hold. The name
+    count (#354): the segment leaves with the last hold. While
+    shells are open on this host, their count rides the same line
+    (#858): the page lands it on the row beside its per-second
+    refresh, and the segment leaves with the last shell. The name
     rides a Content's plain text, so a markup-carrying name
     cannot shift the span."""
     name = workspace_label(row)
@@ -597,6 +600,10 @@ def header_name(
     text = f" {name}  ·  {status}"
     if pending:
         text += f"  ·  egress to decide: {pending}"
+    shells = row.get("shells") or 0
+    if shells:
+        noun = "shell" if shells == 1 else "shells"
+        text += f"  ·  {shells} {noun} open"
     offset = 1 + len(name) + len("  ·  ")
     span = Span(
         offset,

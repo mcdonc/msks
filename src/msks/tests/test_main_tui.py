@@ -3254,6 +3254,13 @@ def test_the_line_helpers() -> None:
     assert running_span.style == "$success"
     assert "egress to decide" not in name.plain
     assert "egress to decide: 2" in rows_mod.header_name(row(), 2).plain
+    # The open-shells segment (#858): the count rides the same
+    # line while any shell is live on this host, with its honest
+    # singular, and a row without the count prints no segment.
+    assert "shells open" not in name.plain
+    shelled = rows_mod.header_name({**row(), "shells": 2})
+    assert "2 shells open" in shelled.plain
+    assert "1 shell open" in rows_mod.header_name({**row(), "shells": 1}).plain
     # A wide-character name keeps the span on the status: the
     # offsets are codepoints, like the listing's span.
     wide = rows_mod.header_name(row(name="北" * 16))
@@ -4511,6 +4518,31 @@ async def test_a_page_that_cannot_refresh_keeps_its_row(monkeypatch) -> None:
         await wait_for(lambda: on_page(app))
         await wait_for(lambda: "api.example:443" in consent_text(app))
         assert WS in meta_text(app)  # the stale row still paints
+
+
+async def test_the_headers_count_follows_the_shells(monkeypatch) -> None:
+    """#858 on the workspace page: the host's open shells ride the
+    header beside the status (the per-second row refresh lands
+    them), the segment leaves with the last shell's close, and a
+    refused listing keeps the standing header — the count is
+    client-side state the page paints beside the daemon's row."""
+    scripted_link(monkeypatch, [rules_frame()])
+    from msks.client import sshsessions
+
+    record = sshsessions.record_path(WS, 4242)
+    sshsessions.write_record(
+        record, WS, 4242, "f8x2n", sshsessions.clock_now()
+    )
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: "1 shell open" in header_text(app))
+        # The shell closes: the record unlinks at once, and the
+        # page's per-second refresh drops the segment.
+        sshsessions.remove_record(record)
+        await wait_for(lambda: "shell open" not in header_text(app))
+        assert "● stopped" in header_text(app)
 
 
 async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:

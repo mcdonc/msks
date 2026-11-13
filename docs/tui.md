@@ -59,8 +59,8 @@ A row can carry two markers ahead of its status word. `✗1` counts
 the workspace's mounts that skipped at the last start (the mounts
 chapter lists every kind of skip). `»2` counts the workspace's open
 shells on this host. The [open shells section](#open-shells-and-the-session-records)
-below owns the count's whole story. Both markers follow the
-five-second refresh.
+below owns the count's whole story; the workspace's page carries the
+count in its header. Both markers follow the five-second refresh.
 
 ### Open shells and the session records
 
@@ -161,7 +161,11 @@ demand, both at mint time and after.
 The **workspace page** operates on an already-created workspace. Its
 two-line header: the workspace's name on the first line with its status
 beside it, in the state's color, then the id, image, host, and
-created date on the second.
+created date on the second. While shells are open on this host, the
+first line carries their count after the status (`alpha · ● running ·
+2 shells open`); the segment leaves with the last shell's close. The
+count comes from the [session records](#open-shells-and-the-session-records)
+and refreshes every second while the page is open.
 
 Below the header, two status lines share one shape: a muted label,
 then the value. The consent line shows the mode and one granted
