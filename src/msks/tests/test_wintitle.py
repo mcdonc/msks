@@ -1,9 +1,12 @@
-"""The workspace-shell window title tests (#445).
+"""The workspace-shell window title tests (#445, #858).
 
-The template resolution and the OSC emission are pinned here for
+The title's resolution and the OSC emission are pinned here for
 both paths that share them — the tmux consent launcher and the
 plain ssh window the TUI marks at spawn — with a stdout that is a
-terminal only where a window would be.
+terminal only where a window would be. One title rule stands: a
+window msks opened carries `msks <workspace> <session>`, the
+session record's token as the session half; every other terminal
+keeps its own title.
 """
 
 import io
@@ -19,28 +22,23 @@ class Tty(io.StringIO):
         return True
 
 
-def test_configured_title_resolves_the_workspace(
-    monkeypatch,
-) -> None:
-    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
-    assert wt.configured_title("a1b2c3d4e5") == "msks — a1b2c3d4e5"
-    # A child naming no workspace takes the shell spelling.
-    assert wt.configured_title(None) == "msks — shell"
-    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks shell")
-    assert wt.configured_title("a1b2c3d4e5") == "msks shell"
-    # Unset and blank are the unset form: the emulator's own
-    # title stays.
-    monkeypatch.delenv("MSKSC_TERMINAL_TITLE")
-    assert wt.configured_title("a1b2c3d4e5") is None
-    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "  ")
-    assert wt.configured_title("a1b2c3d4e5") is None
+def test_the_title_resolves_the_workspace_and_session() -> None:
+    """The one title a window msks opened carries (#858): the
+    workspace's id and the session record's token. A session
+    without a record (the consent launcher, a remote-command run)
+    drops the token half; a child naming no workspace takes the
+    shell spelling."""
+    assert wt.window_title("a1b2c3d4e5", "f8x2n") == "msks a1b2c3d4e5 f8x2n"
+    assert wt.window_title("a1b2c3d4e5") == "msks a1b2c3d4e5"
+    assert wt.window_title(None, "f8x2n") == "msks shell f8x2n"
+    assert wt.window_title(None) == "msks shell"
 
 
 def test_set_window_title_writes_the_osc(monkeypatch) -> None:
     out = Tty()
     monkeypatch.setattr(wt.sys, "stdout", out)
-    wt.set_window_title("msks — a1b2c3d4e5")
-    assert out.getvalue() == "\x1b]0;msks — a1b2c3d4e5\x07"
+    wt.set_window_title("msks a1b2c3d4e5 f8x2n")
+    assert out.getvalue() == "\x1b]0;msks a1b2c3d4e5 f8x2n\x07"
 
 
 def test_set_window_title_leaves_a_pipe_clean(monkeypatch) -> None:
@@ -69,12 +67,11 @@ def test_a_marked_window_takes_the_title(monkeypatch) -> None:
     # nothing — the marker is the one live signal.
     monkeypatch.delenv("TMUX", raising=False)
     monkeypatch.setenv(wt.TITLE_MARKER, "1")
-    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
     monkeypatch.setenv("TMUX", "/tmp/tmux-0/default,1,sess")
     out = Tty()
     monkeypatch.setattr(wt.sys, "stdout", out)
-    wt.title_spawned_window("a1b2c3d4e5")
-    assert out.getvalue() == "\x1b]0;msks — a1b2c3d4e5\x07"
+    wt.title_spawned_window("a1b2c3d4e5", "f8x2n")
+    assert out.getvalue() == "\x1b]0;msks a1b2c3d4e5 f8x2n\x07"
 
 
 def test_a_typed_invocation_keeps_its_terminal_title(
@@ -84,22 +81,9 @@ def test_a_typed_invocation_keeps_its_terminal_title(
     # terminal, and OSC cannot read a title back to restore it.
     monkeypatch.delenv(wt.TITLE_MARKER, raising=False)
     monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
     out = Tty()
     monkeypatch.setattr(wt.sys, "stdout", out)
-    wt.title_spawned_window("a1b2c3d4e5")
-    assert out.getvalue() == ""
-
-
-def test_a_marked_window_without_a_template_writes_nothing(
-    monkeypatch,
-) -> None:
-    monkeypatch.delenv("TMUX", raising=False)
-    monkeypatch.setenv(wt.TITLE_MARKER, "1")
-    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "")
-    out = Tty()
-    monkeypatch.setattr(wt.sys, "stdout", out)
-    wt.title_spawned_window("a1b2c3d4e5")
+    wt.title_spawned_window("a1b2c3d4e5", "f8x2n")
     assert out.getvalue() == ""
 
 
@@ -110,8 +94,7 @@ def test_a_marked_window_on_a_pipe_writes_nothing(monkeypatch) -> None:
     # writer.
     monkeypatch.delenv("TMUX", raising=False)
     monkeypatch.setenv(wt.TITLE_MARKER, "1")
-    monkeypatch.setenv("MSKSC_TERMINAL_TITLE", "msks — {workspace}")
     out = io.StringIO()
     monkeypatch.setattr(wt.sys, "stdout", out)
-    wt.title_spawned_window("a1b2c3d4e5")
+    wt.title_spawned_window("a1b2c3d4e5", "f8x2n")
     assert out.getvalue() == ""

@@ -95,14 +95,18 @@ variables has a config-file equivalent.
 | `MSKSC_CAFILE`             | `cafile`             | A PEM file to verify the daemon's TLS certificate; a socket connection verifies nothing (the kernel vouches for both ends)                                                                                                                                                         | unverified with warning                                   |
 | `MSKSC_EXPECTED_IMAGE`     | `expected_image`     | An image reference the operator sets; `msks ls` compares it with the image the daemon reports in `/health` and reports drift                                                                                                                                                       | unset (no check)                                          |
 | `MSKSC_CACHE_DIR`          | `cache_dir`          | The directory the per-workspace host-key caches live under; the per-workspace directories are created below it                                                                                                                                                                     | `~/.cache/msks`                                           |
+| `MSKSC_STATE_DIR`          | `state_dir`          | The msks state root: every interactive `msks ssh` heartbeats a session record under its `sessions` subtree (see [The TUI](tui.md#open-shells-and-the-session-records))                                                                                                             | `~/.local/state/msks`                                     |
 | `MSKSC_IDENTITY_FILE`      | `identity_file`      | Your own private key file, the ssh identity `msks create` plants into every workspace (msks generates none; [the identity section](first-run.md#the-key-files) owns the whole story); a leading `~` expands                                                                        | unset (`pubkey_file` answers, else `msks create` refuses) |
 | `MSKSC_PUBKEY_FILE`        | `pubkey_file`        | Your key's public half, what a bare `msks create` plants instead of reading `identity_file`. The form for a key you keep encrypted (your agent holds it; msks reads no private half); same naming rule, global-only                                                                | unset (`identity_file` answers)                           |
-| `MSKSC_TERMINAL_TITLE`     | `terminal_title`     | The title template for the workspace-shell windows the workspace page opens (the file key's section lives in [The TUI](tui.md)); `{workspace}` resolves to the workspace's id                                                                                                      | unset (the terminal's own title)                          |
 | `MSKSC_IMAGE_MANIFEST_URL` | `image_manifest_url` | Where the TUI's Import image action (`i` on the workspace list) reads the published channel's manifest (a fork's or self-hoster's channel gives its own); the picker shows each row's ref, description, and size, and the pick POSTs the row's URL to the daemon's import endpoint | this repository's latest release's `images.json`          |
 
 `MSKSC_CACHE_DIR` exists because the host-key cache is disposable: a swept
 cache costs one trust-on-first-use re-pin. Pointing it at a per-project,
 disposable location is the intended use.
+
+`MSKSC_STATE_DIR` names the state root the session records live under. The
+records are small heartbeat files, swept when they go stale; a swept root
+costs the TUI's open-shell counts until the sessions beat again.
 
 Each directory-valued setting takes an absolute path (a relative value is
 refused with a line giving the fix; a leading `~` expands; an empty value

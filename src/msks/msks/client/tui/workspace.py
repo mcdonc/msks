@@ -27,6 +27,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, Input, ListItem, ListView, Static
 
 from ..resize import resize_message
+from ..sshsessions import count_sessions
 
 # The ``follow`` module-object import below is load-bearing: the
 # page calls ``follow.spawn_window``/``follow.ssh_child_argv``
@@ -353,7 +354,8 @@ class WorkspaceScreen(HelpKeys, Screen):
     """One workspace's page (#309): the header's two lines (#351
     — the name with its status on the first, the id, image, host,
     and created date muted on the second, the pending-egress
-    count beside the status while holds wait, #354), the consent
+    count beside the status while holds wait, #354, and the
+    host's open-shell count the same way, #858), the consent
     status line, and the page's actions — a shell in a new window
     (#341), the egress consent page (#454), the edit dialog, and
     start and stop; the egress-mode switch (#344) lives on the
@@ -742,6 +744,11 @@ class WorkspaceScreen(HelpKeys, Screen):
         if fresh is None:
             self.close_removed()
             return
+        # The host's open-shell count lands on the row the way the
+        # listing lands it (#858): client-side, per-host state the
+        # header's shells segment reads — the per-second refresh
+        # keeps it within a heartbeat of each open and close.
+        fresh["shells"] = count_sessions().get(self.row["id"], 0)
         self.row = fresh
         self.paint_header()
         self.paint_actions()

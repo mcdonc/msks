@@ -55,6 +55,45 @@ lifecycle order. The summary follows the five-second refresh. The
 daemon's URL comes last, and it crops first when the terminal runs
 narrow.
 
+A row can carry two markers ahead of its status word. `✗1` counts
+the workspace's mounts that skipped at the last start (the mounts
+chapter lists every kind of skip). `»2` counts the workspace's open
+shells on this host. The [open shells section](#open-shells-and-the-session-records)
+below owns the count's whole story; the workspace's page carries the
+count in its header. Both markers follow the five-second refresh.
+
+### Open shells and the session records
+
+Every interactive `msks ssh` writes one small record under the msks
+state directory. That includes a window the tree opened and a
+session you typed yourself. The default location is
+`~/.local/state/msks/sessions`; `XDG_STATE_HOME` moves it, and the
+`state_dir` config key (its variable is `MSKSC_STATE_DIR`) names the
+root outright. The record carries the workspace's id, the session
+process's pid, and a short token. The session rewrites its record
+every five seconds while it lives and unlinks it when it exits.
+
+The count you read is the host's truthful shell count. It survives a
+tree restart, because the records live on disk and the sessions keep
+rewriting them. A `--hold` window whose ssh child exited stops
+counting at once. A session killed without cleanup stops counting
+once its heartbeat passes the fifteen-second stale TTL and the
+listing's next refresh reads the tree, about twenty seconds in the
+worst case. A passthrough remote command (`msks ssh <ws> -- <cmd>`)
+and `msks rsync` write nothing: they are connections, not shells.
+
+The count is per-host. It names the shells open on the host the TUI
+runs on, whatever host the daemon runs on. The daemon is not
+involved: the TUI reads the records on its refresh cadence and sweeps
+the stale ones away. A session whose record cannot be written (a
+read-only state directory, say) runs fine; the count simply does not
+see it.
+
+Each record's token is five characters, drawn against the
+workspace's live sessions. The token completes the window's title
+(`msks tree-vm f8x2n`); a later release will use it to match a
+session to its window.
+
 ## Workspace creation
 
 When you create a workspace, it looks like this:
@@ -122,7 +161,11 @@ demand, both at mint time and after.
 The **workspace page** operates on an already-created workspace. Its
 two-line header: the workspace's name on the first line with its status
 beside it, in the state's color, then the id, image, host, and
-created date on the second.
+created date on the second. While shells are open on this host, the
+first line carries their count after the status (`alpha · ● running ·
+2 shells open`); the segment leaves with the last shell's close. The
+count comes from the [session records](#open-shells-and-the-session-records)
+and follows the page's per-second row refresh.
 
 Below the header, two status lines share one shape: a muted label,
 then the value. The consent line shows the mode and one granted
@@ -367,33 +410,36 @@ to launch. A configured launcher that fails to execute (a binary that is
 missing or not executable) reports the reason on the tree's first flash
 after the same-terminal shell ends. The shell runs in the same terminal.
 
-#### `terminal_title`
+#### The window title
 
-`terminal_title` sets the title of every terminal window the workspace
-page's shell action opens through a configured launcher. `{workspace}`
-resolves to the workspace's id (the token `msks ssh` addresses; that is
-what the TUI appends to the launcher), or to `shell` when the appended
-command addresses no workspace:
+Every terminal window msks opens for a workspace shell carries one
+title: `msks {workspace} {session}`. The workspace half is the
+workspace's name — the word the operator reads everywhere else —
+with its id standing in when the daemon serves no name. The session
+half is the token of the session record [the open shells
+section](#open-shells-and-the-session-records) describes:
+`msks tree-vm f8x2n`. A child that names no workspace (an appended
+command that is not an `msks ssh`) titles as `msks shell`.
 
-```yaml
-terminal_title: msks — {workspace}
-```
+A session without a record drops the session half. The consent
+launcher (`msks-term-popup`) titles its window before any session
+exists, and a remote-command run in a spawned window registers
+nothing, so both read `msks tree-vm`. The plain window the TUI
+opens takes the full title from the appended `msks ssh` itself: the
+window is marked at spawn, and the command names it twice. The first
+write carries the typed reference alone, before the boot pre-flight
+— a refused pre-flight still leaves the window named. The second
+write carries the resolved name and completes the title with the
+record's token, once the pre-flight answers and the session
+registers. The title stays until something
+inside the window replaces it: a workspace that sets its own title
+from inside the session (a `PROMPT_COMMAND` with a title escape, the
+way stock ssh sessions can) rewrites it there. tmux shields the
+popup path. Nothing shields the plain path.
 
-A launcher that runs `msks-term-popup` writes the title before it attaches
-tmux, and the launch's own tmux server pins `set-titles` off. The title stays
-for the window's lifetime: a workspace shell inside the window cannot rewrite
-it. Every other launcher gets the title from the appended `msks ssh` itself:
-the window msks opens is marked at spawn, and the command sets it before the
-session starts. A workspace that sets its own title from inside the session (a
-`PROMPT_COMMAND` with a title escape, the way stock ssh sessions can) rewrites
-it there. tmux shields the popup path. Nothing shields the plain path.
-
-`terminal_title`'s environment form (`MSKSC_TERMINAL_TITLE`) overrides
-the file value. The default is unset: the terminal emulator's own title
-stays in place (the command it runs, or whatever its `-T` / `--title`
-flag sets). A `msks ssh` you type yourself keeps your terminal's title:
-the setting applies only to the windows msks opens, and a same-terminal
-shell (the dead-launcher fallback) changes nothing.
+A `msks ssh` you type yourself keeps your terminal's title: the title
+applies only to the windows msks opens, and a same-terminal shell
+(the dead-launcher fallback) changes nothing.
 
 #### `msks-term-popup`: the consent-decider terminal
 

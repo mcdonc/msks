@@ -92,10 +92,6 @@ CONFIG_FILENAME = "msks.yaml"
 #: belongs to the operator, not to a daemon connection.
 #: ``pubkey_file`` names the operator's key's public half (#495)
 #: and carries the same global-only rule for the same reason.
-#: ``terminal_title`` names the title of the workspace-shell
-#: windows the workspace page opens (#445) and is global-only:
-#: the windows belong to the operator's desktop, not to a daemon
-#: connection.
 GLOBAL_ENV_VARS: dict[str, str] = {
     "url": "MSKSC_URL",
     "socket": "MSKSC_SOCKET",
@@ -103,9 +99,9 @@ GLOBAL_ENV_VARS: dict[str, str] = {
     "cafile": "MSKSC_CAFILE",
     "expected_image": "MSKSC_EXPECTED_IMAGE",
     "cache_dir": "MSKSC_CACHE_DIR",
+    "state_dir": "MSKSC_STATE_DIR",
     "identity_file": "MSKSC_IDENTITY_FILE",
     "pubkey_file": "MSKSC_PUBKEY_FILE",
-    "terminal_title": "MSKSC_TERMINAL_TITLE",
     "image_manifest_url": "MSKSC_IMAGE_MANIFEST_URL",
 }
 
@@ -120,14 +116,6 @@ DAEMON_ENTRY_KEYS = ("url", "socket", "token_file", "cafile", "expected_image")
 #: The terminal-launch setting's variable (#314): the string form
 #: of the file value, overriding it for one shell.
 TERMINAL_ENV_VAR = "MSKSC_TERMINAL_OPEN_CMD"
-
-#: The workspace-shell window's title template (#445): the
-#: variable the title writers read — the consent launcher inside
-#: the window the prefix opened, and the appended ``msks ssh`` in
-#: a window the TUI marked at spawn. A file's value reaches them
-#: through :func:`apply`'s materialization, the way every
-#: file-derived setting rides.
-TITLE_ENV_VAR = "MSKSC_TERMINAL_TITLE"
 
 #: The remembered-passthrough setting's variable (#385): the string
 #: form of the file value (shell-split), overriding it for one
@@ -744,9 +732,9 @@ class ClientConfig:
     cafile: str
     expected_image: str
     cache_dir: str | None
+    state_dir: str | None
     identity_file: str | None
     pubkey_file: str | None
-    terminal_title: str | None
     terminal_open_cmd: list[str] | None
     image_manifest_url: str
     ssh_options: list[str]
@@ -775,9 +763,9 @@ def resolve(
     cafile = resolved_scalar("cafile", entry, selection, doc, layer)
     image = resolved_scalar("expected_image", entry, selection, doc, layer)
     cache = resolved_global("cache_dir", doc, layer)
+    state = resolved_global("state_dir", doc, layer)
     identity = resolved_global("identity_file", doc, layer)
     pubkey = resolved_global("pubkey_file", doc, layer)
-    title = resolved_global("terminal_title", doc, layer)
     return ClientConfig(
         url=url,
         socket=socket,
@@ -785,9 +773,9 @@ def resolve(
         cafile=cafile or "",
         expected_image=image or "",
         cache_dir=cache,
+        state_dir=state,
         identity_file=identity,
         pubkey_file=pubkey,
-        terminal_title=title,
         terminal_open_cmd=terminal_command(doc),
         image_manifest_url=(
             resolved_global("image_manifest_url", doc, layer)
@@ -1006,6 +994,11 @@ def render_template() -> str:
 # expected_image: msks/debian13:1.0  # the image msks ls compares
 #                                # against the daemon's /health (#160)
 # cache_dir: ~/.cache/msks      # per-workspace host-key caches (#251)
+# state_dir: ~/.local/state/msks  # the per-user state root: the
+#                                # session records every interactive
+#                                # msks ssh heartbeat there (#858),
+#                                # and the TUI counts them per
+#                                # workspace as open shells
 # identity_file: ~/.ssh/id_ed25519  # your own private key — the ssh
 #                                # identity a bare msks create plants
 #                                # into every workspace (#336); msks
@@ -1033,11 +1026,6 @@ def render_template() -> str:
 #                                # reads the published channel's manifest
 #                                # (#565); the default is this
 #                                # repository's latest release
-# terminal_title: msks — {workspace} # the title of the workspace-shell
-#                                # windows the workspace page opens
-#                                # (#445); {workspace} resolves to the
-#                                # workspace's id; unset leaves the
-#                                # terminal emulator's own title
 # ssh_options:                  # ssh options remembered for every ssh
 #                                # session msks runs — msks ssh, the
 #                                # new-terminal shell, msks rsync's

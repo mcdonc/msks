@@ -139,9 +139,9 @@ async def spawn_window(argv: list[str]):
     asyncio child watcher reaps the launcher when it closes, so
     the tree holds no waitable handle and leaves no zombie. The
     child's environment carries the new-window marker (#445): the
-    window msks opened may take its title from
-    ``MSKSC_TERMINAL_TITLE`` — the launcher names it when it runs
-    one, and the appended ``msks ssh`` names it when none does.
+    window msks opened takes the msks title — the launcher names
+    it when it runs one, and the appended ``msks ssh`` names it
+    (with the session record's token, #858) when none does.
     """
     return await asyncio.create_subprocess_exec(
         *argv,

@@ -268,7 +268,9 @@ async def test_the_page_lists_only_the_workspaces_rows(
         assert "-L 8888:localhost:8889" in text
         assert "listening" in text
         assert "alpha" in proxy_status(app)
-        assert page.workspace == data.rows[0]
+        # The page's row carries the host's open-shell count beside the
+        # daemon's fields (#858).
+        assert page.workspace == {**data.rows[0], "shells": 0}
 
 
 async def test_the_action_row_opens_the_page(monkeypatch) -> None:
@@ -307,7 +309,9 @@ async def test_the_page_returns_to_the_workspace_page(
         page = await open_proxies(pilot, app)
         await wait_for(lambda: proxy_children(app) == 1)
         assert "alpha" in proxy_status(app)
-        assert page.workspace == data.rows[0]
+        # The page's row carries the host's open-shell count beside the
+        # daemon's fields (#858).
+        assert page.workspace == {**data.rows[0], "shells": 0}
         await pilot.press("q")
         await wait_for(lambda: type(app.screen).__name__ == "WorkspaceScreen")
 

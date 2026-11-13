@@ -273,6 +273,12 @@ def test_run_workspace_rsync_runs_rsync_and_stops_the_agent(
     assert argv[1] == "-e"
     assert argv[-1] == "alpha:/d/"  # the empty host was filled
     assert stopped == ["stopped"]  # the agent tears down after rsync exits
+    # A copy is a connection, not a shell (#858): rsync registers
+    # no session record, and the host's open-shell count stays
+    # empty after the run.
+    from msks.client import sshsessions
+
+    assert sshsessions.count_sessions() == {}
 
 
 def test_run_workspace_rsync_rides_the_operator_agent(

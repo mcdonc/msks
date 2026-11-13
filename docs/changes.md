@@ -8,6 +8,20 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Open-shell counts in the TUI (#858).** Every interactive
+  `msks ssh` writes a heartbeat session record under
+  `~/.local/state/msks/sessions` (relocatable with the `state_dir`
+  key / `MSKSC_STATE_DIR`), and the workspaces list shows the live
+  count beside a row's status word (`»2`) and on the detail strip
+  (`shells »2`); the workspace page's header carries the count
+  beside the status (`2 shells open`). The count covers the shells
+  open on the host the TUI runs on, survives a tree restart, and a
+  session killed without cleanup stops counting about twenty
+  seconds after its death. Windows the tree opens carry the
+  workspace's name and the session record's five-character token in
+  their title (`msks tree-vm f8x2n`); a later release will use the
+  token to match a session to its window.
+
 - **Detail strip at the bottom of the workspaces list (#849).**
   A two-line strip renders at the bottom of the listing's box
   and carries the focused workspace's quick facts: name, id,
@@ -112,6 +126,17 @@ tagged `vX.Y.Z`.
   clean shutdown. A value above 120s outlives the client's wait, and
   the client reports a timeout while the daemon still finishes the
   stop.
+
+### Breaking
+
+- **`terminal_title` / `MSKSC_TERMINAL_TITLE` removed (#858).** The
+  window title template setting is gone; every terminal window msks
+  opens for a workspace shell now carries one fixed title,
+  `msks <workspace-name> <token>`, and windows msks does not open keep
+  the terminal emulator's own title. The client refuses a config
+  file that still carries the `terminal_title` key, on every
+  command, until the key is deleted — delete it from your
+  `msks.yaml` and unset the variable. The refusal names the key.
 
 ### Fixed
 

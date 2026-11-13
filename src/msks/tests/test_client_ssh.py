@@ -1849,6 +1849,180 @@ def test_run_workspace_ssh_runs_ssh_and_stops_the_agent(
     assert stopped == ["stopped"]  # the agent tears down after ssh exits
 
 
+def test_run_workspace_ssh_registers_the_interactive_session(
+    monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
+) -> None:
+    """#858: an interactive session self-registers — one record
+    under the state root, keyed by the workspace and the process's
+    pid, alive for exactly the ssh child's run — and the token it
+    mints rides the window title the spawn writes."""
+    from msks.client import sshsessions
+
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return KEY, False
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
+    )
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    titles: list[tuple] = []
+    monkeypatch.setattr(
+        ssh,
+        "title_spawned_window",
+        lambda ref, token=None: titles.append((ref, token)),
+    )
+    seen: list = []
+
+    def fake_run(argv, **kwargs) -> SimpleNamespace:
+        record = sshsessions.read_record(
+            sshsessions.record_path("alpha", os.getpid())
+        )
+        seen.append(record)
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(ssh.subprocess, "run", fake_run)
+    rc = ssh.run_workspace_ssh("alpha", [])
+    assert rc == 0
+    # The record stood for the session's whole run, keyed by the
+    # workspace and this process's pid; the window's title wrote
+    # twice — once before the pre-flight (#445), once with the
+    # record's token beside the pin (#858).
+    (record,) = seen
+    assert record is not None
+    assert record["workspace"] == "alpha"
+    assert record["pid"] == os.getpid()
+    assert titles == [("alpha", None), ("alpha", record["token"])]
+    assert len(record["token"]) == sshsessions.TOKEN_LEN
+    # The clean close unlinked it at once: the count drops with
+    # the session, not with the TTL.
+    assert not sshsessions.record_path("alpha", os.getpid()).exists()
+
+
+def test_run_workspace_ssh_titles_the_window_before_a_refusal(
+    monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
+) -> None:
+    """#445 held through #858: the window the TUI opened is titled
+    at once, before the boot pre-flight — a session the pre-flight
+    refuses (here: the identity fetch) still leaves the window
+    named, because the early write does not wait on the daemon."""
+
+    async def refusing_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        raise SystemExit("msks: the daemon refused")
+
+    monkeypatch.setattr(ssh, "prepare", refusing_prepare)
+    titles: list[tuple] = []
+    monkeypatch.setattr(
+        ssh,
+        "title_spawned_window",
+        lambda ref, token=None: titles.append((ref, token)),
+    )
+    with pytest.raises(SystemExit, match="refused"):
+        ssh.run_workspace_ssh("alpha", [])
+    assert titles == [("alpha", None)]
+
+
+def test_run_workspace_ssh_registers_no_remote_command(
+    monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
+) -> None:
+    """#858: a passthrough remote command is a connection, not a
+    shell — it writes no record, and the window title it may
+    write drops the session half of the default."""
+    from msks.client import sshsessions
+
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return KEY, False
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
+    )
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    titles: list[tuple] = []
+    monkeypatch.setattr(
+        ssh,
+        "title_spawned_window",
+        lambda ref, token=None: titles.append((ref, token)),
+    )
+
+    def fake_run(argv, **kwargs) -> SimpleNamespace:
+        assert not sshsessions.record_path("alpha", os.getpid()).exists()
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(ssh.subprocess, "run", fake_run)
+    rc = ssh.run_workspace_ssh("alpha", ["uname", "-a"])
+    assert rc == 0
+    # The early write named the window before the pre-flight; the
+    # second write re-resolves the same token-less title (nothing
+    # new to add — no record, no token).
+    assert titles == [("alpha", None), ("alpha", None)]
+    assert sshsessions.count_sessions() == {}
+
+
+def test_the_session_titles_the_window_with_the_workspace_s_name(
+    monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
+) -> None:
+    """#858: the window title's workspace half is the name the
+    human reads, not the id the session dials — the early write
+    carries the typed reference before the daemon answers, and
+    the second write replaces it with the served name (the id
+    standing in when the daemon serves none)."""
+    from msks.client import sshsessions
+
+    keyed = {
+        **KEY,
+        "id": "03c31bd241",
+        "name": "tree-vm",
+        "created_at": "2026-10-11T00:00:00",
+    }
+
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return keyed, False
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
+    )
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    titles: list[tuple] = []
+    monkeypatch.setattr(
+        ssh,
+        "title_spawned_window",
+        lambda ref, token=None: titles.append((ref, token)),
+    )
+    monkeypatch.setattr(
+        ssh.subprocess,
+        "run",
+        lambda argv, **kwargs: SimpleNamespace(returncode=0, stderr=""),
+    )
+    assert ssh.run_workspace_ssh("03c31bd241", []) == 0
+    (early_ref, _none), (named_ref, token) = titles
+    assert early_ref == "03c31bd241"  # the typed reference, at once
+    assert named_ref == "tree-vm"  # the served name, once staged
+    assert len(token) == sshsessions.TOKEN_LEN
+
+
 def test_run_workspace_ssh_pins_under_the_served_id(
     monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
 ) -> None:
@@ -1929,7 +2103,14 @@ def test_staged_session_names_recreated_disks(
         yield FakeAgent()
 
     monkeypatch.setattr(ssh.agent, "serve", fake_serve)
-    with ssh.staged_session("tree") as (booted, served, hosts, user, pin):
+    with ssh.staged_session("tree") as (
+        booted,
+        served,
+        hosts,
+        user,
+        pin,
+        label,
+    ):
         assert (booted, pin) == (False, "03c31bd241")
     assert keyed_paths == [("03c31bd241", "e1")]
     assert "disks were recreated" in capsys.readouterr().err
@@ -1937,7 +2118,7 @@ def test_staged_session_names_recreated_disks(
     # known_hosts already exists — the first connect wrote it —
     # says nothing.
     (tmp_path / "03c31bd241.e1").write_text("")
-    with ssh.staged_session("tree") as (_booted, _served, _h, _u, _pin):
+    with ssh.staged_session("tree"):
         pass
     assert "disks were recreated" not in capsys.readouterr().err
 
@@ -1977,7 +2158,14 @@ def test_staged_session_names_the_renewed_seed(
         yield FakeAgent()
 
     monkeypatch.setattr(ssh.agent, "serve", fake_serve)
-    with ssh.staged_session("tree") as (booted, served, hosts, user, pin):
+    with ssh.staged_session("tree") as (
+        booted,
+        served,
+        hosts,
+        user,
+        pin,
+        label,
+    ):
         assert (booted, pin) == (False, "03c31bd241")
     assert keyed_paths == [("03c31bd241", "r1")]
     err = capsys.readouterr().err

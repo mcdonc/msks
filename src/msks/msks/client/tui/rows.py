@@ -383,6 +383,12 @@ def row_cells(row: dict, columns=LIST_COLUMNS) -> tuple[str, ...]:
 #: whose own class may paint the word muted.
 ISSUE_MARKER_COLOR = "$warning"
 
+#: The open-shells marker's color (#858): the success color — a
+#: live shell count is the row's healthy, live signal, distinct
+#: from the warning the mounts-issue count carries and from
+#: whatever color the status word's own class paints the word.
+SHELL_MARKER_COLOR = "$success"
+
 
 def issue_marker(row: dict) -> str | None:
     """The mounts-issue count's marker (#620, part #624, #850):
@@ -393,17 +399,68 @@ def issue_marker(row: dict) -> str | None:
     return f"✗{len(issues)}" if issues else None
 
 
-def status_with_issues(row: dict) -> str:
-    """The status cell with the mounts' standing marker (#620,
-    part #624): a row whose mounts skip leads with the count
-    beside a plain status word — ahead, where a trailing one
-    would middle-clip the word it marks — and the
-    workspace's page names each issue. A healthy row prints the
-    status dot and word alone."""
+def shell_marker(row: dict) -> str | None:
+    """The open-shells count's marker (#858): ``»N`` for a row
+    with live shells on this host, else ``None``. The count is
+    client-side state — the session records ``msks ssh`` writes,
+    landed on the row by the listing — so a row the daemon serves
+    alone carries nothing and prints no marker."""
+    shells = row.get("shells") or 0
+    return f"»{shells}" if shells else None
+
+
+def standing_markers(row: dict) -> list[tuple[str, str]]:
+    """The status cell's leading markers with their colors (#620,
+    #858): the mounts-issue count first — the established
+    marker, ahead of the word — then the open-shells count, each
+    keeping its own color whatever the status word's own class
+    paints the word behind them."""
+    markers = []
     marker = issue_marker(row)
-    if marker is None:
+    if marker is not None:
+        markers.append((marker, ISSUE_MARKER_COLOR))
+    marker = shell_marker(row)
+    if marker is not None:
+        markers.append((marker, SHELL_MARKER_COLOR))
+    return markers
+
+
+def status_with_issues(row: dict) -> str:
+    """The status cell with its standing markers (#620, part
+    #624, #858): a row whose mounts skip leads with the count
+    beside a plain status word — ahead, where a trailing one
+    would middle-clip the word it marks — and a row with live
+    shells carries the open-shells count beside it the same way
+    (`✗1 »2 running`). The workspace's page names each mount
+    issue. A healthy, shell-free row prints the status dot and
+    word alone."""
+    markers = [text for text, _color in standing_markers(row)]
+    if not markers:
         return status_text(row["status"])
-    return f"{marker} {row['status']}"
+    return " ".join([*markers, row["status"]])
+
+
+def status_spans(
+    markers: list[tuple[str, str]], offset: int, status: str, color: str
+) -> list[Span]:
+    """The status cell's spans (#850, #858): each standing marker
+    its own color over its slice of the cell's head, the status
+    word behind them — the separator spaces included, the #850
+    convention — its own class's color. A marker the cell's clip
+    ate (a composed cell wider than the STATUS column) paints
+    nothing: the word's span carries the clipped cell whole, so
+    no marker's color rides characters the clip rearranged."""
+    end = offset + len(status)
+    spans: list[Span] = []
+    word_start = offset
+    pos = offset
+    for text, mark_color in markers:
+        if status[pos - offset : pos - offset + len(text)] == text:
+            spans.append(Span(pos, pos + len(text), mark_color))
+            word_start = pos + len(text)
+        pos += len(text) + 1
+    spans.append(Span(min(word_start, end), end, color))
+    return spans
 
 
 def row_content(
@@ -423,24 +480,17 @@ def row_content(
     parsed as markup — so a markup-carrying name cannot shift the
     columns (the name cell's own length fixes the span's offset:
     a wide-character name pads with fewer characters than its
-    display width). A row whose mounts skip splits its status
-    cell's span (#850): the ``✗N`` marker keeps the warning
-    color while the status word behind it rides its own class's
+    display width). A row with standing markers splits its status
+    cell's span (#850, #858): each marker — the ``✗N`` mounts
+    count, the ``»N`` open-shells count — keeps its own color
+    while the status word behind them rides its own class's
     color."""
     cells = row_cells(row, columns)
     name, status, *_ = cells
     line = padded_cells(cells, columns).rstrip()
     offset = len(cell_pad(name, columns[0][1])) + len(COLUMN_GAP)
     color = status_color(row["status"], theme_variables)
-    marker = issue_marker(row)
-    if marker is None:
-        spans = [Span(offset, offset + len(status), color)]
-    else:
-        marker_end = offset + min(len(marker), len(status))
-        spans = [
-            Span(offset, marker_end, ISSUE_MARKER_COLOR),
-            Span(marker_end, offset + len(status), color),
-        ]
+    spans = status_spans(standing_markers(row), offset, status, color)
     if focused:
         spans.append(Span(0, len(name), "$text bold"))
     return Content(line, spans)
@@ -539,7 +589,10 @@ def header_name(
     name in the default foreground, its status behind the cue dot
     beside it in the status color (the list's status coloring),
     and — while holds wait on the page's queue — the pending-egress
-    count (#354): the segment leaves with the last hold. The name
+    count (#354): the segment leaves with the last hold. While
+    shells are open on this host, their count rides the same line
+    (#858): the page lands it on the row beside its per-second
+    refresh, and the segment leaves with the last shell. The name
     rides a Content's plain text, so a markup-carrying name
     cannot shift the span."""
     name = workspace_label(row)
@@ -547,6 +600,10 @@ def header_name(
     text = f" {name}  ·  {status}"
     if pending:
         text += f"  ·  egress to decide: {pending}"
+    shells = row.get("shells") or 0
+    if shells:
+        noun = "shell" if shells == 1 else "shells"
+        text += f"  ·  {shells} {noun} open"
     offset = 1 + len(name) + len("  ·  ")
     span = Span(
         offset,
@@ -799,6 +856,21 @@ def mem_value(mem_mib) -> str:
     return human_bytes(mem_mib * MIB)
 
 
+def marker_pairs(row: dict) -> list[tuple]:
+    """The strip's marker pairs (#849, #858): the mounts count
+    while any mount skips, then the shells count while any shell
+    is live — the same ✗N/»N cues the status cell carries, read
+    beside the costs."""
+    pairs: list[tuple] = []
+    marker = issue_marker(row)
+    if marker is not None:
+        pairs.append(("mounts", marker))
+    shells = shell_marker(row)
+    if shells is not None:
+        pairs.append(("shells", shells))
+    return pairs
+
+
 def detail_pairs(
     row: dict, used_bytes: int | None
 ) -> tuple[list[tuple], list[tuple]]:
@@ -806,10 +878,9 @@ def detail_pairs(
     line (#849): the identity — the name (bare: the strip's own
     answer to which row it describes), the id, the image — on
     the first, the posture and costs — cpu, memory, the egress
-    mode, the mounts-issue count while any mount skips, the
-    storage the capacity report charges — on the second. Every
-    fact but storage reads the row the listing already holds."""
-    marker = issue_marker(row)
+    mode, the markers (:func:`marker_pairs`), the storage the
+    capacity report charges — on the second. Every fact but
+    storage reads the row the listing already holds."""
     second = [
         ("cpu", "-" if row.get("cpus") is None else str(row["cpus"])),
         ("mem", mem_value(row.get("mem_mib"))),
@@ -818,8 +889,7 @@ def detail_pairs(
             clip(row.get("egress_mode") or "-", DETAIL_EGRESS_W),
         ),
     ]
-    if marker is not None:
-        second.append(("mounts", marker))
+    second += marker_pairs(row)
     second.append(
         ("storage", "-" if used_bytes is None else human_bytes(used_bytes))
     )

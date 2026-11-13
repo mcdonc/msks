@@ -1031,6 +1031,37 @@ async def test_the_detail_strip_hides_on_an_empty_list() -> None:
         assert not app.query_one("#detail", Static).display
 
 
+async def test_the_listing_counts_open_shells() -> None:
+    """The listing's refresh lands the host's open shells on the
+    rows (#858): the session records a live `msks ssh` writes —
+    under the suite's isolated state root — paint the row's `»N`
+    marker and the strip's shells fact on the refresh cadence,
+    and a session's clean close takes the marker with it on the
+    next refresh (the record unlinks at once, the count follows
+    the cadence)."""
+    from msks.client import sshsessions
+
+    record = sshsessions.record_path(WS, 4242)
+    sshsessions.write_record(
+        record, WS, 4242, "f8x2n", sshsessions.clock_now()
+    )
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "»1" in row_text(app, 0))
+        assert "»1 stopped" in row_text(app, 0)
+        await wait_for(lambda: "shells »1" in detail_text(app))
+        # The session closes: the record unlinks at once, and the
+        # standing refresh repaints the row without its marker
+        # (an unchanged daemon row — the count alone moved it).
+        sshsessions.remove_record(record)
+        await pilot.press("r")
+        await wait_for(lambda: "»" not in row_text(app, 0))
+        await pilot.pause()
+        assert "stopped" in row_text(app, 0)
+        assert "shells" not in detail_text(app)
+
+
 async def test_a_refresh_with_standing_rows_updates_the_storage() -> None:
     """An unchanged listing still takes the fresh figures (#849,
     review): the rebuild's skip keeps the rows and the focus, and
@@ -2510,11 +2541,11 @@ async def test_spawn_window_detaches_quietly() -> None:
 
 async def test_spawn_window_marks_the_opened_window(monkeypatch) -> None:
     """The child's environment carries the new-window marker
-    (#445): the window msks opened may take its title from
-    ``MSKSC_TERMINAL_TITLE`` — the appended ``msks ssh`` reads the
-    marker to tell a spawned window from the operator's own
-    terminal. A copy of the environment, so the marker never
-    leaks into the tree's own process."""
+    (#445): the window msks opened takes the msks title — the
+    appended ``msks ssh`` reads the marker to tell a spawned
+    window from the operator's own terminal. A copy of the
+    environment, so the marker never leaks into the tree's own
+    process."""
     seen = {}
 
     async def fake_exec(*argv, **kwargs):
@@ -3223,6 +3254,13 @@ def test_the_line_helpers() -> None:
     assert running_span.style == "$success"
     assert "egress to decide" not in name.plain
     assert "egress to decide: 2" in rows_mod.header_name(row(), 2).plain
+    # The open-shells segment (#858): the count rides the same
+    # line while any shell is live on this host, with its honest
+    # singular, and a row without the count prints no segment.
+    assert "shells open" not in name.plain
+    shelled = rows_mod.header_name({**row(), "shells": 2})
+    assert "2 shells open" in shelled.plain
+    assert "1 shell open" in rows_mod.header_name({**row(), "shells": 1}).plain
     # A wide-character name keeps the span on the status: the
     # offsets are codepoints, like the listing's span.
     wide = rows_mod.header_name(row(name="北" * 16))
@@ -4480,6 +4518,29 @@ async def test_a_page_that_cannot_refresh_keeps_its_row(monkeypatch) -> None:
         await wait_for(lambda: on_page(app))
         await wait_for(lambda: "api.example:443" in consent_text(app))
         assert WS in meta_text(app)  # the stale row still paints
+
+
+async def test_the_headers_count_follows_the_shells(monkeypatch) -> None:
+    """#858 on the workspace page: the host's open shells ride the
+    header beside the status (the per-second row refresh lands
+    them), and the segment leaves with the last shell's close."""
+    scripted_link(monkeypatch, [rules_frame()])
+    from msks.client import sshsessions
+
+    record = sshsessions.record_path(WS, 4242)
+    sshsessions.write_record(
+        record, WS, 4242, "f8x2n", sshsessions.clock_now()
+    )
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: "1 shell open" in header_text(app))
+        # The shell closes: the record unlinks at once, and the
+        # page's per-second refresh drops the segment.
+        sshsessions.remove_record(record)
+        await wait_for(lambda: "shell open" not in header_text(app))
+        assert "● stopped" in header_text(app)
 
 
 async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
@@ -7242,6 +7303,52 @@ def test_the_list_row_marks_unresolved_mounts() -> None:
     assert span.style == muted_style({})
 
 
+def test_the_list_row_marks_open_shells() -> None:
+    """The listing's status cell carries the open-shells count
+    (#858): a row with live shells on this host reads `»N` beside
+    its status word, composed behind the mounts-issue marker the
+    same way — each marker its own color, the word behind them
+    its own class's color. The count is client-side state the
+    listing lands on the row; a row without it prints nothing."""
+    from msks.client.tui.rows import (
+        SHELL_MARKER_COLOR,
+        row_content,
+        shell_marker,
+        status_with_issues,
+    )
+
+    shelled = {**row(status="running"), "shells": 2}
+    assert shell_marker(shelled) == "»2"
+    assert shell_marker(row()) is None
+    assert shell_marker({**row(), "shells": 0}) is None
+    assert status_with_issues(shelled) == "»2 running"
+    # Behind the mounts marker, ahead of the word — the ✗1
+    # precedent, composed.
+    both = {**mounted_row(), "shells": 2}
+    assert status_with_issues(both) == "✗1 »2 stopped"
+    spanned = row_content(shelled)
+    assert "»2 running" in spanned.plain
+    spans = {
+        spanned.plain[span.start : span.end]: span.style
+        for span in spanned.spans
+    }
+    assert spans["»2"] == SHELL_MARKER_COLOR
+    assert spans[" running"] == "$success"
+    both_spanned = row_content(both)
+    both_spans = {
+        both_spanned.plain[span.start : span.end]: span.style
+        for span in both_spanned.spans
+    }
+    assert both_spans["✗1"] == rows_mod.ISSUE_MARKER_COLOR
+    # The composed cell clips at the STATUS column's width, and the
+    # clip eats the second marker (its color must not ride the
+    # characters the clip rearranged): the word's span carries the
+    # clipped cell whole, muted for a stopped row.
+    assert "✗1 »…" in both_spanned.plain
+    assert "»2" not in both_spans
+    assert both_spans[" »…opped"] == rows_mod.muted_style({})
+
+
 def test_the_detail_strip_lines() -> None:
     """The strip's two lines (#849), pinned without the UI: the
     identity on the first — the name bare (the strip's answer to
@@ -7284,6 +7391,11 @@ def test_the_detail_strip_lines() -> None:
     }
     assert marked_spans["✗1"] == rows_mod.ISSUE_MARKER_COLOR
     assert marked_spans["mounts"] == muted
+    # The open-shells count composes with the strip (#858): the
+    # same »N marker the status cell carries, behind the mounts
+    # marker, ahead of the storage figure.
+    shelled = rows_mod.detail_strip({**mounted_row(), "shells": 2}, None)
+    assert "shells »2" in shelled.plain
     # Both lines hold the 80-column frame's span whatever the
     # fields carry — a name as wide as the column's budget
     # included.
