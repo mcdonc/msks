@@ -63,6 +63,13 @@ facades = [
   # halves out; the command modules and the suites keep importing
   # those names through msks.client.ssh.
   "msks.client.ssh",
+  # #874 wave two: the secrets surfaces split into a package
+  # (cells, screen, audit, mint, sentinel); the main screen keeps
+  # importing SecretsScreen through the package root, and ui is
+  # the package's single borrow seam for its TUI siblings (the
+  # fan-in ceiling over rows and consent_ui).
+  "msks.client.tui.secrets",
+  "msks.client.tui.secrets.ui",
   # #874: the workspace page split into a package (lines, actions,
   # screen); the main screen and app keep importing the page's
   # surface through the package root.

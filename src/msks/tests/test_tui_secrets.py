@@ -244,7 +244,8 @@ async def test_the_page_lists_rows_with_the_live_countdown(
     the created label; the TTL repaints as the clock moves (#390)."""
     now = {"at": datetime(2030, 6, 1, 12, 0, 0, tzinfo=UTC)}
     monkeypatch.setattr(rows_mod, "clock_now", lambda: now["at"])
-    monkeypatch.setattr(secrets_mod, "clock_now", lambda: now["at"])
+    monkeypatch.setattr(secrets_mod.cells, "clock_now", lambda: now["at"])
+    monkeypatch.setattr(secrets_mod.screen, "clock_now", lambda: now["at"])
     data = FakeData([])
     data.secret_rows = [
         secret_row(id=1, expires_at="2030-06-01T12:59:00"),
@@ -789,7 +790,7 @@ async def test_the_panel_copies_the_sentinel_over_osc52(
         copied.append(text)
         return True
 
-    monkeypatch.setattr(secrets_mod, "osc52_copy", record_copy)
+    monkeypatch.setattr(secrets_mod.sentinel, "osc52_copy", record_copy)
     app, _follow = make_app(data)
     async with app.run_test() as pilot:
         await open_secrets(pilot, app)
@@ -804,7 +805,9 @@ async def test_the_panel_copies_the_sentinel_over_osc52(
         assert "OSC 52" in panel_text(app)
         assert sentinel not in panel_text(app)  # the copy reveals nothing
         # A copy with no driver to write through names that.
-        monkeypatch.setattr(secrets_mod, "osc52_copy", lambda app, text: False)
+        monkeypatch.setattr(
+            secrets_mod.sentinel, "osc52_copy", lambda app, text: False
+        )
         await pilot.press("c")
         assert "the copy did not land" in panel_text(app)
         assert "no terminal to write through" in panel_text(app)
