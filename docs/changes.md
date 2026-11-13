@@ -8,6 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Version-skew marker in the TUI status bar (#852).** While
+  the daemon's version and the client's differ, the workspaces
+  status line carries a warning-colored marker after the URL
+  naming both versions (`msksd 1.2.3 ≠ client 1.2.4`); the
+  CLI's one-line notice with its remedy keeps its own behavior.
+  The marker refreshes on the listing's five-second reload and
+  leaves when the versions agree. The URL and the state summary
+  crop before the marker does, so the marker stays visible at 80
+  columns.
+
 - **Open-shell counts in the TUI (#858).** Every interactive
   `msks ssh` writes a heartbeat session record under
   `~/.local/state/msks/sessions` (relocatable with the `state_dir`

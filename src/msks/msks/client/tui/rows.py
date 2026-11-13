@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from rich.cells import cell_len
 from textual.content import Content, Span
 
+from ...spec.version import __version__
 from ..volumes import MIB, human_bytes
 
 
@@ -795,6 +796,18 @@ URL_FLOOR_W = 8
 STATUS_LINE_W = 78
 
 
+#: The version-skew marker's color (#852): the warning color —
+#: the standing hint keeps the prominence the mounts-issue count
+#: keeps on a row, beside a URL the line paints muted.
+SKEW_MARKER_COLOR = "$warning"
+
+#: Each version word's cell ceiling in the skew marker (#852): a
+#: release word fits whole; a longer one (a proxy's junk string)
+#: clips both ends rather than push the marker past the line's
+#: span.
+SKEW_WORD_W = 16
+
+
 def state_counts(rows: list[dict]) -> dict[str, int]:
     """The rows' counts by status (#853). A row without a status
     reads as the vocabulary's own ``unknown`` — a guard; the
@@ -973,11 +986,72 @@ def detail_strip(
     return Content(f"{first}\n{second}", [*spans, *more])
 
 
+def skew_marker(health: dict | None) -> str | None:
+    """The version-skew marker (#852): ``msksd 1.2.3 ≠ client
+    1.2.4`` — both words in short form — when the daemon's
+    ``/health`` version and this client's differ, else ``None``.
+    The CLI prints the full notice with its remedy once per
+    invocation (#706, #715); the marker is the TUI's standing
+    form, the one an operator leaves on screen. An unknown side
+    stays silent (a ``None`` health, a document without a
+    version word — a wrong host, a proxy)."""
+    theirs = health.get("version") if health else None
+    if not isinstance(theirs, str) or not theirs or theirs == __version__:
+        return None
+    return (
+        f"msksd {clip(theirs, SKEW_WORD_W)}"
+        f" ≠ client {clip(__version__, SKEW_WORD_W)}"
+    )
+
+
+def summary_fit(
+    head: str, summary: str | None, url_text: str, tail: list[str]
+) -> str | None:
+    """The summary at the cells the line's span leaves it (#852):
+    the summary whole while it fits, clipped by what the count,
+    the URL, and the marker spend together, and gone when the
+    overrun eats it past recognition — the marker never gives a
+    cell up, because every row already shows the fleet's shape
+    and nothing else on the line shows the skew."""
+    if summary is None:
+        return None
+    whole = "  ·  ".join([head, summary, url_text, *tail])
+    over = cell_len(whole) - STATUS_LINE_W
+    if over <= 0:
+        return summary
+    room = cell_len(summary) - over
+    return None if room < 4 else clip(summary, room)
+
+
+def fitted_url(
+    url: str, head: str, summary: str | None, tail: list[str]
+) -> str:
+    """The URL at its clip budget (#853, #852): the line's
+    remainder after the count, the summary, and the marker,
+    floored — a long summary or marker crops the URL, both ends
+    kept, before either gives a cell up."""
+    before = [head, summary] if summary else [head]
+    spent = cell_len("  ·  ".join([*before, *tail])) + len("  ·  ")
+    width = max(URL_FLOOR_W, min(URL_W, STATUS_LINE_W - spent))
+    return clip(url, width)
+
+
+def status_line_spans(head: str, skew: str | None, line: str) -> list[Span]:
+    """The standing line's spans: the count in the bold default
+    foreground, the version-skew marker in the warning color
+    while one stands (#852)."""
+    spans = [Span(0, len(head), "$text bold")]
+    if skew:
+        spans.append(Span(len(line) - len(skew), len(line), SKEW_MARKER_COLOR))
+    return spans
+
+
 def status_content(
     count: int,
     url: str,
     summary: str | None = None,
     noun: str = "workspace",
+    skew: str | None = None,
 ) -> Content:
     """The status line's standing content (#349, #853): the row
     count — the fact that moves while the operator works — set in
@@ -988,12 +1062,22 @@ def status_content(
     The summary wins cells before the URL (#853): the URL's clip
     budget is what the line's span leaves after the count and the
     summary, so a long summary crops the URL — both ends kept —
-    before the summary gives a cell up. The secrets page's
-    placeholder count rides the same shape (#390)."""
+    before the summary gives a cell up. The version-skew marker
+    (#852) rides last in the warning color and outranks both: the
+    URL crops to its floor first, then the summary clips — the
+    marker never gives a cell, because every row already shows
+    the fleet's shape and nothing else on the line shows the
+    skew. The secrets page's placeholder count rides the same
+    shape (#390)."""
     plural = "" if count == 1 else "s"
     head = f" {count} {noun}{plural}"
-    parts = [head, summary] if summary else [head]
-    spent = cell_len("  ·  ".join(parts)) + len("  ·  ")
-    width = max(URL_FLOOR_W, min(URL_W, STATUS_LINE_W - spent))
-    line = "  ·  ".join([*parts, clip(url, width)])
-    return Content(line, [Span(0, len(head), "$text bold")])
+    tail = [skew] if skew else []
+    url_text = fitted_url(url, head, summary, tail)
+    summary_text = summary_fit(head, summary, url_text, tail)
+    parts = (
+        [head, summary_text, url_text, *tail]
+        if summary_text is not None
+        else [head, url_text, *tail]
+    )
+    line = "  ·  ".join(parts)
+    return Content(line, status_line_spans(head, skew, line))

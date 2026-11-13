@@ -138,7 +138,10 @@ identity = 2
 # (the module edge beside the name, the same +2 the server's
 # bootstrap import took in #676). #715: the notice's remedy
 # orders the pair numerically (ordering joins the statement).
-spec = 9
+# #852: the TUI's status line carries the version-skew marker —
+# rows.py joins the client's own version word for the marker's
+# client side (the same module-edge-plus-name +2).
+spec = 11
 
 [snapshot.config]
 configio = 3
