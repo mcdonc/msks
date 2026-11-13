@@ -131,7 +131,7 @@ earlier confirmations on stdout.
 
 ## The daemon connection
 
-The client dials the daemon's local socket by default. A remote
+The client connects to the daemon's local socket by default. A remote
 daemon needs `MSKSC_URL`, `MSKSC_TOKEN` (the bearer token
 itself), and `MSKSC_CAFILE` (the daemon's `msks-ca.pem`); the
 config file carries the same three as `url`, `token_file`,

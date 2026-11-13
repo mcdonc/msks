@@ -58,7 +58,7 @@ let
 in
 buildPythonPackage {
   pname = "msks";
-  version = "0.8.3";
+  version = "0.9.0";
   pyproject = true;
   inherit src;
 
