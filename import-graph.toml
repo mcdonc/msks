@@ -50,6 +50,11 @@ facades = [
   # probe keep importing the surfaces they always did (LlmProxy,
   # TapListener) through the package root.
   "msks.llm",
+  # #874: the Debian host setup split into a package (util,
+  # profile, packages, wrapper, kernel, users, links, unit, run);
+  # doctor and the Fedora sibling keep importing the names they
+  # always did through the package root.
+  "msks.server.hostsetup",
 ]
 
 # Package-level cycles the DAG gate exempts. The module-level graph

@@ -1198,7 +1198,7 @@ def test_path_note_hints_the_distros_own_tool(
 
     def distro(identifier: str) -> None:
         release.write_text(f"ID={identifier}\n")
-        monkeypatch.setattr(hostsetup_mod, "OS_RELEASE", str(release))
+        monkeypatch.setattr(hostsetup_mod.util, "OS_RELEASE", str(release))
 
     distro("fedora")
     assert "(msks-setup-fedora-host adds" in doctor_mod.path_note_result().hint

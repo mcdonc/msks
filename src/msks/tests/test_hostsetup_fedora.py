@@ -9,7 +9,7 @@ import msks.server.hostsetup as hostsetup
 import pytest
 from msks.server.hostsetup import CAPS, WRAPPER
 from msks.server.hostsetup_fedora import FEDORA_PROFILE, main
-from test_hostsetup import Host
+from test_hostsetup import Host, patch_phase
 
 
 class FedoraHost(Host):
@@ -45,46 +45,46 @@ def fedora_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     )
     manager = tmp_path / "systemd"
     manager.mkdir()
-    monkeypatch.setattr(hostsetup, "SYSTEMD_MANAGER", str(manager))
-    monkeypatch.setattr(hostsetup, "group_present", lambda name: name == "kvm")
-    monkeypatch.setattr(hostsetup, "in_group", lambda user, name: False)
+    patch_phase(monkeypatch, "SYSTEMD_MANAGER", str(manager))
+    patch_phase(monkeypatch, "group_present", lambda name: name == "kvm")
+    patch_phase(monkeypatch, "in_group", lambda user, name: False)
     home = tmp_path / "home" / "chrism"
     home.mkdir(parents=True)
-    monkeypatch.setattr(
-        hostsetup, "executing_user", lambda: ("chrism", 1000, 1000, str(home))
+    patch_phase(
+        monkeypatch,
+        "executing_user",
+        lambda: ("chrism", 1000, 1000, str(home)),
     )
     runtime = tmp_path / "run-user-1000"
     runtime.mkdir()
-    monkeypatch.setattr(
-        hostsetup, "RUNTIME_DIR_FMT", str(runtime.parent / "run-user-{}")
+    patch_phase(
+        monkeypatch, "RUNTIME_DIR_FMT", str(runtime.parent / "run-user-{}")
     )
-    monkeypatch.setattr(
-        hostsetup,
+    patch_phase(
+        monkeypatch,
         "chown_path",
         lambda path, uid, gid: None,
     )
-    monkeypatch.setattr(hostsetup, "RETRY_DELAY", 0.0)
-    monkeypatch.setattr(hostsetup, "sh", host.sh)
-    monkeypatch.setattr(hostsetup, "write_file", host.write)
-    monkeypatch.setattr(hostsetup, "read_file", host.read)
-    monkeypatch.setattr(hostsetup, "file_exists", lambda p: p in host.files)
-    monkeypatch.setattr(hostsetup, "remove_file", host.remove_file)
-    monkeypatch.setattr(hostsetup, "replace_file", lambda source, target: None)
-    monkeypatch.setattr(
-        hostsetup, "CLOUD_HYPERVISOR_BIN", str(tmp_path / "cloud-hypervisor")
+    patch_phase(monkeypatch, "RETRY_DELAY", 0.0)
+    patch_phase(monkeypatch, "sh", host.sh)
+    patch_phase(monkeypatch, "write_file", host.write)
+    patch_phase(monkeypatch, "read_file", host.read)
+    patch_phase(monkeypatch, "file_exists", lambda p: p in host.files)
+    patch_phase(monkeypatch, "remove_file", host.remove_file)
+    patch_phase(monkeypatch, "replace_file", lambda source, target: None)
+    patch_phase(
+        monkeypatch, "CLOUD_HYPERVISOR_BIN", str(tmp_path / "cloud-hypervisor")
     )
     # The client links' paths (#719, #755): under tmp_path, as
     # the Debian rig patches them — this fixture's bin dir ships
     # no client sibling, but a future fixture that adds one must
     # never write the host's real /usr/local/bin.
-    monkeypatch.setattr(
-        hostsetup, "CLIENT_LINK", str(tmp_path / "client" / "msks")
+    patch_phase(monkeypatch, "CLIENT_LINK", str(tmp_path / "client" / "msks"))
+    patch_phase(
+        monkeypatch, "POPUP_LINK", str(tmp_path / "client" / "msks-term-popup")
     )
-    monkeypatch.setattr(
-        hostsetup, "POPUP_LINK", str(tmp_path / "client" / "msks-term-popup")
-    )
-    monkeypatch.setattr(
-        hostsetup,
+    patch_phase(
+        monkeypatch,
         "CLIENT_LINKS",
         (
             ("msks", hostsetup.CLIENT_LINK),
@@ -92,9 +92,9 @@ def fedora_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         ),
     )
     (tmp_path / "client").mkdir()
-    monkeypatch.setattr(hostsetup, "OS_RELEASE", str(release))
+    patch_phase(monkeypatch, "OS_RELEASE", str(release))
     monkeypatch.setattr(hostsetup.os, "geteuid", lambda: 0)
-    monkeypatch.setattr(hostsetup, "which", lambda tool: f"/usr/bin/{tool}")
+    patch_phase(monkeypatch, "which", lambda tool: f"/usr/bin/{tool}")
     yield host
 
 
@@ -176,7 +176,7 @@ def test_missing_tools_install_via_dnf(
     def lacking(tool):
         return None if tool == "conntrack" else real_which(tool)
 
-    monkeypatch.setattr(hostsetup, "which", lacking)
+    patch_phase(monkeypatch, "which", lacking)
     assert main() == 0
     # dnf refreshes metadata as part of install: one command.
     assert fedora_host.ran("dnf") == [
@@ -195,7 +195,7 @@ def test_the_ca_probe_names_fedora_command(
     def lacking(tool):
         return None if tool == "update-ca-trust" else real_which(tool)
 
-    monkeypatch.setattr(hostsetup, "which", lacking)
+    patch_phase(monkeypatch, "which", lacking)
     assert "update-ca-certificates" not in FEDORA_PROFILE.tool_packages
     assert main() == 0
     assert fedora_host.ran("dnf") == [
@@ -208,7 +208,7 @@ def test_absent_sonames_install_their_packages(
 ) -> None:
     host = fedora_host
     host.ldconfig_answer = ""
-    monkeypatch.setattr(hostsetup, "sh", host.sh)
+    patch_phase(monkeypatch, "sh", host.sh)
     assert main() == 0
     assert host.ran("dnf") == [
         [
@@ -257,7 +257,7 @@ def test_uninstall_round_trips_every_piece(
     fedora_host.files.add(WRAPPER)
     # The install's usermod landed the membership; the uninstall
     # reads it back before removing it.
-    monkeypatch.setattr(hostsetup, "in_group", lambda user, name: True)
+    patch_phase(monkeypatch, "in_group", lambda user, name: True)
     assert main(["--uninstall"]) == 0
     host = fedora_host
     assert host.ran("gpasswd") == [["gpasswd", "-d", "chrism", "kvm"]]
