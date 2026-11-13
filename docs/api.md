@@ -280,7 +280,7 @@ Three streams use the same listener and the same token:
   line to the daemon's journal (#762), so the event history
   stays readable after the subscribers are gone. The lines carry
   the frames' identifiers, names, hosts, ports, paths, and
-  counts; secret values and sentinels never ride them.
+  counts; secret values and sentinels never appear in them.
 - `wss://…/api/v1/workspaces/{id}/console`: the guest's serial console as a
   bidirectional byte stream. Ctrl-] detaches in the client. The [console
   chapter](cli.md#msks-console) covers the interactive form.
@@ -288,4 +288,4 @@ Three streams use the same listener and the same token:
   bytes between the client and that port on the workspace's
   tap, the pipe `msks forward` and ssh's ProxyCommand use. A
   workspace without egress is refused with close code 4501
-  before any dial.
+  before any connection.

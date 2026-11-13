@@ -24,7 +24,7 @@ This is the ssh `-L` shape: a port on your side reaching a port on the far
 end.
 
 A remote proxy (`-R`) binds a port on the workspace's own gateway. A process
-inside the guest dials its DHCP gateway on that port, and the daemon bridges
+inside the guest connects to its DHCP gateway on that port, and the daemon bridges
 the connection to a daemon-side service the spec names. This is the ssh `-R`
 shape: a port on the far end reaching a service on your side.
 
@@ -34,7 +34,7 @@ the machine the command runs on. A proxy's listener lives in the daemon. Use
 a forward for a one-off pipe during a session. Use a proxy for a port you
 want there more permanently.
 
-### What each side dials
+### What each side connects to
 
 A forward proxy's target is the workspace itself. The spec's host field names
 the workspace, the way ssh's `-L` host names the far end, and it accepts
@@ -42,7 +42,7 @@ exactly two spellings: `localhost` or `127.0.0.1`. Anything else refuses with
 a message that points at the `-R` direction, which is the one that reaches
 daemon-side services.
 
-A remote proxy's target is dialed by the daemon, from the daemon's host. In
+The daemon connects to a remote proxy's target from the daemon's host. In
 the spec `-R 9200:localhost:9200`, the `localhost` is the daemon's own
 loopback. A name like `db.internal` resolves through the daemon host's
 resolver.
@@ -50,7 +50,7 @@ resolver.
 A remote proxy's listen address is fixed by the workspace's tap, so the
 grammar carries no bind field for `-R`.
 
-Inside the guest, dial `host.msks`. Every workspace's resolver answers the
+Inside the guest, connect to `host.msks`. Every workspace's resolver answers the
 name with its own tap address. `ip route show default` prints the same
 address when a name is unavailable:
 
@@ -66,7 +66,7 @@ refused: `workspace … has no NIC (created without egress)`.
 The daemon connects to a remote proxy's target itself. The consent machinery
 gates the guest's traffic through the tap; it never sees the daemon's own
 connections. A remote row therefore reaches its target without a verdict. [The
-consent chapter](egress-consent.md) covers the guest's connections; this dial
+consent chapter](egress-consent.md) covers the guest's connections; this connection
 is the daemon's own.
 
 The tap's ingress chain admits a remote port only while its listener is up.
@@ -135,7 +135,7 @@ While [secret interception](secrets.md) is armed, the tap's 80 and 443
 answer the interceptor; a `-R` proxy on either port stays unreachable from
 the guest until interception stands down.
 
-The daemon dials `localhost:5432` on its own host for every guest
+The daemon connects to `localhost:5432` on its own host for every guest
 connection. A target on another host works the same way
 (`-R 5432:db.internal:5432`). The daemon host's resolver resolves it.
 

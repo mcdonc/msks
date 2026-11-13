@@ -51,7 +51,7 @@ What each request gets:
   destination, and the request's Host header is pinned to that
   same name: a guest cannot claim one name in the handshake and
   route by another in the header (domain fronting). On plain
-  HTTP the request is dialed by the Host header's name, for the
+  HTTP the request's destination is the Host header's name, for the
   same binding.
 - **The splice.** An HTTPS destination no placeholder of this
   workspace covers is relayed undecrypted: the origin's real
@@ -173,7 +173,7 @@ do by hand. The verification:
 # on the host: read the seeded sentinel (token-gated API)
 curl -s -H "Authorization: Bearer $TOKEN" https://msksd/api/v1/probe
 
-# inside the workspace: the sentinel rides as the raw Basic blob
+# inside the workspace: the sentinel is sent as the raw Basic blob
 curl -H "Authorization: Basic <sentinel>" https://secretprobe.msks/
 ok
 ```
@@ -183,7 +183,7 @@ redirect (guest TCP 80/443 to the per-tap interceptor
 listener), the splice tier (the SNI matched an allowlisted
 entry), and the daemon CA's leaf mint. The swap then rewrote
 the raw blob into a well-formed credential. The interceptor's
-upstream dial was repointed to the service's own per-tap port
+upstream connection was repointed to the service's own per-tap port
 (`probe_port`, default 8644) and verified against the service
 CA the daemon mints. The guest's 443 is the redirect's port.
 The service listener binds the setting's unprivileged number, which a
@@ -202,7 +202,7 @@ seeded row's sentinel is served back over the token-gated API
 
 Two reachability notes. The probe answers only while the workspace is
 **armed**. A workspace scoped against daemon-wide placeholders (no covering row
-of its own) never arms. Its direct dial to `secretprobe.msks:443` finds nothing
+of its own) never arms. Its direct connection to `secretprobe.msks:443` finds nothing
 admitted and times out. That posture is the documented way to opt a workspace
 out of interception entirely.
 

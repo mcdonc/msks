@@ -76,7 +76,7 @@ around, all behind that same offered resolver.
 Two names the resolver answers itself, in every consent mode. The first is
 `secretprobe.msks`, the interception probe (#424). The second is `host.msks`
 (#816), the guest's name for its own gateway: it resolves to the tap's
-address, so a `-R` proxy is dialed by name instead of discovered through
+address, so a `-R` proxy is reached by name instead of discovered through
 `ip route show default`. A well-formed internet-class (IN) query for either name never reaches
 an upstream, records a policy row, or pins an address. Both are the
 daemon's own services.
@@ -171,7 +171,7 @@ refuses to boot with the cause given.
 
 Egress is the guest's outbound path. The forward websocket (`msks forward`,
 issue) is the client's inbound one, and it uses the same per-VM tap. The
-daemon dials the workspace's deterministic tap address on the port the
+daemon connects to the workspace's deterministic tap address on the port the
 caller gives and bridges raw bytes over its authenticated websocket API. The
 CLI chapter's `msks forward` section covers the stdio and `--local` shapes
 and the close-code contract.
@@ -189,7 +189,7 @@ workspace's immutable id, so a workspace recreated under the same name is a
 new id with a fresh cache: it trusts its own first-boot host keys instead of
 refusing the first instance's. A workspace without egress carries the same
 image unchanged: its forward is refused at the API with close code 4501
-before any dial, and its console is the virtio-console getty.
+before any connection, and its console is the virtio-console getty.
 
 ### Persisted proxies (the other direction too)
 
@@ -197,8 +197,8 @@ The forward websocket lives as long as the command holding it. A persisted
 proxy (`msks proxy add`) lives in the daemon's database instead: the daemon
 owns the listener, and every workspace start re-establishes it. A forward
 proxy binds a port on the daemon's host and bridges each connection to the
-guest through the same dial the forward websocket uses. A remote proxy binds a port on the workspace's own tap
-address: a guest process dials its DHCP gateway on that port, and the
+guest through the same daemon-to-guest connection the forward websocket uses. A remote proxy binds a port on the workspace's own tap
+address: a guest process connects to its DHCP gateway on that port, and the
 daemon bridges the connection to a daemon-side service (the ssh `-R`
 shape).
 
@@ -208,10 +208,10 @@ source, the same scoping the resolver and LLM proxy rules carry. A live
 add or removal swaps the admission in one nft transaction. A bind that
 fails admits nothing, so the rule and the service always agree.
 
-The daemon dials a remote proxy's target itself, and the consent machinery
+The daemon connects to a remote proxy's target itself, and the consent machinery
 gates the guest's traffic through the tap, not the daemon's own
 connections. A remote row therefore reaches its target without a verdict:
-the consent chapter covers the guest's connections, and this dial is the
+the consent chapter covers the guest's connections, and this connection is the
 daemon's own. [The proxies chapter](proxies.md) owns the concept and the
 worked examples for both surfaces.
 
@@ -301,7 +301,7 @@ The block sets no `User`: plain `ssh` logs in as its own default, the local
 username. That is the workspace's recorded login user for the operator who
 created it (the name `msks create --user` planted; `ssh -l alice` reaches a
 workspace another operator's name recorded). A workspace that records no
-user dials `root`, the account every seed provisions a key for. The alias
+user connects as `root`, the account every seed provisions a key for. The alias
 block gives the operator's own key with `IdentityFile`, the same file
 `identity_file` points at. Those paths are the client cache root's defaults
 and stay where the block writes them. OpenSSH reads its own config, so

@@ -40,7 +40,7 @@ tagged `vX.Y.Z`.
   and the storage the workspace charges the state disk (the same
   root-plus-home cost `msks storage` reports). The strip follows
   the selection and refreshes on the list's standing cadence;
-  the storage figure rides a cached capacity report, so moving
+  the storage figure uses a cached capacity report, so moving
   the selection costs no roundtrip. An empty list hides the
   strip.
 
@@ -85,7 +85,7 @@ tagged `vX.Y.Z`.
   document. Human output is unchanged.
 
 - **`host.msks` (#816).** Every egress workspace's resolver answers the
-  name with its own tap address, so a guest dials the gateway by name
+  name with its own tap address, so a guest connects to the gateway by name
   (`https://host.msks:8660` with a `-R 8660:localhost:8660` proxy stored)
   instead of discovering it through `ip route show default`. The name
   answers in every consent mode, feeds no policy row or address pin, and
@@ -338,7 +338,7 @@ tagged `vX.Y.Z`.
   `http+unix://%2Frun%2Fus…%2Fmsksd.sock`. It now decodes the
   path — `http+unix:///run/user/1001/msks/msksd.sock` — keeping
   the quoting where it belongs, in the address the transports
-  dial. A TCP daemon's URL shows unchanged.
+  connect to. A TCP daemon's URL shows unchanged.
 
 ### Added
 
@@ -528,7 +528,7 @@ tagged `vX.Y.Z`.
   event lines are INFO and sit in journald's own rate-limit
   pool, separate from the daemon's error lines; journald's
   retention rotates the record. Secret values and sentinels
-  never ride event frames.
+  never appear in event frames.
 
 - **The Linux host setups link `msks-term-popup` beside `msks`
   (#755).** `msks-setup-debian-host` and `msks-setup-fedora-host`
@@ -807,7 +807,7 @@ tagged `vX.Y.Z`.
   (#688).** A restarted workspace that lost the udev race — the
   volume's by-label symlink landing after the mount unit's 30s
   device timeout — came up with `/home` unmounted indefinitely
-  (the first-boot retry that rides the identity seed never runs
+  (the first-boot retry that comes with the identity seed never runs
   on a later boot). Every guest image now ships a udev rule that
   asks systemd for the mount when the labeled disk appears, so
   `/home` mounts moments after the label lands, on every boot a
@@ -1009,7 +1009,7 @@ tagged `vX.Y.Z`.
   (`secret_store_provider`: `file` default, `age` for at-rest
   encryption, `awssm`, `bws`), never in the workspace; `ls`,
   `renew --ttl`, `revoke`, and `check` round out the surface.
-  Secrets ride stdin or a file, never argv; each lifecycle event
+  Secrets are passed through stdin or a file, never argv; each lifecycle event
   (mint, revoke, expiry) lands in the audit table. See
   [docs/secrets.md](secrets.md), the [key reference](config.md),
   and [cli.md](cli.md#msks-secret).
@@ -1020,7 +1020,7 @@ tagged `vX.Y.Z`.
   rsync through a forward the copy opens itself — push and pull,
   with the identity in memory only and no key file written. A
   path with an empty host (`:src/`, `root@:/root/site/`) targets
-  the workspace the command names, its login user riding the
+  the workspace the command names, its login user taken from the
   paths' own `user@` spelling; a `--pubkey` workspace exits
   naming the recovery for its private half. See
   [docs/cli.md](cli.md#msks-rsync).
@@ -1123,7 +1123,7 @@ key` answers the public line, and `msks ssh` serves the private
   mirrors and fetches an unrelated HTTPS host through the NAT'd
   uplink, then pushes a commit to a scratch git server on the host
   through a test-widened input pin, authenticating only with an
-  operator key that rode the forward as a forwarded agent — no
+  operator key that came through the forward as a forwarded agent — no
   credential in the image or the seed. The workflow and its
   ControlMaster caveat are in `docs/networking.md`.
 - **`msks ssh` (#112).** One command logs into a workspace with stock
@@ -1170,13 +1170,13 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
   into the persistent root overlay, so they survive stop/start — the
   recorded `known_hosts` entry keeps matching. The egress input
   rules admit the conntrack-established replies to the
-  daemon-originated forward dial; guest-initiated connections
+  daemon-originated forward connection; guest-initiated connections
   arrive state NEW and still drop. See
   [networking](/networking/#reaching-guest-services-the-forward).
 - **`msks forward` and the forward websocket (#109).** A workspace's
   guest TCP ports reach the client through a new authenticated
   endpoint, `WS /api/v1/workspaces/{id}/forward/{port}`: the daemon
-  dials the workspace's deterministic tap address (retrying through
+  connects to the workspace's deterministic tap address (retrying through
   the DHCP/service bring-up race) and pumps raw bytes both ways —
   one websocket per guest TCP connection, no framing, with
   `forward.opened`/`forward.closed` events on the events channel.
@@ -1444,7 +1444,7 @@ no`, `PermitRootLogin prohibit-password`) pinned by a config dropin,
   "guest NIC up but no frames" symptom recorded on #143 — not the
   container boundary.
 
-- **`/home` could fail to mount on slow boots (#14).** The guest fstab mounted the home volume by label under `x-systemd.device-timeout=2s`; that clock starts at sysinit job enqueue, before udevd runs, and on a first boot from a fresh overlay (every root read a copy-on-write miss) the udev label probe can exceed what is left of the budget — `home.mount` then fails for the whole boot (`nofail` keeps the boot moving and never retries). The device timeout is now 30s, so the mount rides out a slow coldplug; a boot with no volume at all waits the same 30s once and continues.
+- **`/home` could fail to mount on slow boots (#14).** The guest fstab mounted the home volume by label under `x-systemd.device-timeout=2s`; that clock starts at sysinit job enqueue, before udevd runs, and on a first boot from a fresh overlay (every root read a copy-on-write miss) the udev label probe can exceed what is left of the budget — `home.mount` then fails for the whole boot (`nofail` keeps the boot moving and never retries). The device timeout is now 30s, so the mount survives a slow coldplug; a boot with no volume at all waits the same 30s once and continues.
 
 - **Egress workspaces never took a DHCP lease on fast hosts (#36).** The guest reaches multi-user immediately after sysinit, and a networkd that enumerates its NIC while udev is still renaming it (eth0 to ens3) never manages the renamed link — DHCP never runs. The guest image orders networkd after `systemd-udev-trigger.service` and `systemd-udevd.service`, so the interface name is final before the first enumeration.
 
