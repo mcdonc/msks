@@ -987,22 +987,27 @@ def detail_strip(
 
 
 def printable_word(word: str) -> str:
-    """The word's printable characters only (#852): control codes
-    drop — a junk word's BEL would desync the warning span's
-    offset, and a newline would split the line's one row."""
-    return "".join(ch for ch in word if ord(ch) >= 32)
+    """The word's printable characters only (#852): control
+    codes drop — a junk word's BEL would desync the warning
+    span's offset, and a newline would split the line's one row.
+    """
+    return "".join(ch for ch in word if ch.isprintable())
 
 
 def daemon_version_word(health: dict | None) -> str | None:
     """The daemon's version word as the marker prints it (#852):
     the ``/health`` document's version with its control codes
-    dropped (:func:`printable_word`), or None for every silent
-    side — no document, no word, a non-string word, a word only
-    control codes, and a word that matches this client's."""
+    dropped and its edges trimmed (:func:`printable_word`), or
+    None for every silent side — no document, no word, a
+    non-string word, a word only control codes or spaces, and a
+    word that matches this client's once printed."""
     theirs = health.get("version") if health else None
-    if not isinstance(theirs, str) or theirs == __version__:
+    if not isinstance(theirs, str):
         return None
-    return printable_word(theirs) or None
+    word = printable_word(theirs).strip()
+    if not word or word == __version__:
+        return None
+    return word
 
 
 def skew_marker(health: dict | None) -> str | None:

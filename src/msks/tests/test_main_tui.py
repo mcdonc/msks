@@ -3687,6 +3687,13 @@ def test_the_skew_marker_reads_each_shape() -> None:
     assert "\n" not in scrubbed and "\x07" not in scrubbed
     assert scrubbed.startswith("msksd 9.9.9x")
     assert rows_mod.skew_marker({"version": "\x07\n"}) is None
+    # A junk wrapper around an exactly-matching word is equality
+    # once printed, not a standing self-contradictory marker
+    # (review round: the raw compare ran before the scrub).
+    assert (
+        rows_mod.skew_marker({"version": rows_mod.__version__ + "\n"}) is None
+    )
+    assert rows_mod.skew_marker({"version": " \x7f "}) is None
 
 
 def test_mem_value_reads_the_honest_dash() -> None:
