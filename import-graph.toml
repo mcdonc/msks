@@ -45,6 +45,11 @@ facades = [
   "msks.microvm.errors",
   "msks.model",
   "msks.net",
+  # #874: the LLM proxy split into a package (indirect, entries,
+  # router, anthropic, proxy); the composer and the interceptor's
+  # probe keep importing the surfaces they always did (LlmProxy,
+  # TapListener) through the package root.
+  "msks.llm",
 ]
 
 # Package-level cycles the DAG gate exempts. The module-level graph

@@ -787,7 +787,9 @@ def test_the_extension_prints_a_failure_reason() -> None:
     assert ".slice(0, 320)" in ext
     # The cap composes with the proxy's 401 detail: the recovery
     # text must fit under it whole.
-    src = (REPO_ROOT / "src" / "msks" / "msks" / "llm.py").read_text()
+    src = (
+        REPO_ROOT / "src" / "msks" / "msks" / "llm" / "proxy.py"
+    ).read_text()
     block = re.search(r"detail=\((.*?)\),\n", src, re.S).group(1)
     detail = ast.literal_eval("(" + block + ")")
     assert isinstance(detail, str), (
