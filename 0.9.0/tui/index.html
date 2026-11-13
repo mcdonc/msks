@@ -1,0 +1,1743 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Microvm workspaces for AI coding agents">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/msks/0.9.0/tui/">
+      
+      
+      
+        <link rel="prev" href="../first-run/">
+      
+      
+        <link rel="next" href="../mounts/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.71">
+    
+    
+      
+        <title>The TUI - msks</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.e442bf79.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.b60ce83d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="msks" class="md-header__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            msks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              The TUI
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="msks" class="md-nav__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    msks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The host doctor
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  First run
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-workspace-tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The workspace tree
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The workspace tree">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#open-shells-and-the-session-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Open shells and the session records
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workspace-creation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Workspace creation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-secrets-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The secrets page
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-workspace-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The workspace page
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The workspace page">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-mounts-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The mounts page
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-proxies-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The proxies page
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-images-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The images page
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-egress-consent-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The egress consent page
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-edit-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The edit page
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#opening-a-shell" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Opening a shell
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Opening a shell">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-shell-actions-terminal-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The shell action's terminal settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#terminal_open_cmd" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>terminal_open_cmd</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-window-title" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The window title
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#msks-term-popup-the-consent-decider-terminal" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>msks-term-popup</code>: the consent-decider terminal
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Host Share Mounts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../proxies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Proxies
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../egress-consent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Consent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cloning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Cloning Workspaces
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent Reference Card
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Daemon Configuration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development environment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-workspace-tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The workspace tree
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The workspace tree">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#open-shells-and-the-session-records" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Open shells and the session records
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workspace-creation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Workspace creation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-secrets-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The secrets page
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-workspace-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The workspace page
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The workspace page">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-mounts-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The mounts page
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-proxies-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The proxies page
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-images-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The images page
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-egress-consent-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The egress consent page
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-edit-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The edit page
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#opening-a-shell" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Opening a shell
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Opening a shell">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-shell-actions-terminal-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The shell action's terminal settings
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#terminal_open_cmd" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>terminal_open_cmd</code>
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-window-title" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        The window title
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#msks-term-popup-the-consent-decider-terminal" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        <code>msks-term-popup</code>: the consent-decider terminal
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="the-tui">The TUI<a class="headerlink" href="#the-tui" title="Permanent link">&para;</a></h1>
+<p>The terminal UI and the command-line client are one program named <code>msks</code>.</p>
+<p>The TUI uses the same REST API as the CLI commands, with the same environment
+variables, config file, and daemon aliases. It reads no daemon state directly.
+Every page uses the API.</p>
+<p>A bare <code>msks</code> (no arguments at all) launches the TUI. The default page is a
+full-screen workspace tree. <code>msks tui</code> is the same command, and <code>msks tui
+my-workspace</code> opens that workspace's page directly.</p>
+<h2 id="the-workspace-tree">The workspace tree<a class="headerlink" href="#the-workspace-tree" title="Permanent link">&para;</a></h2>
+<p><img alt="The workspaces list: two rows, the detail strip at the bottom of the box, and the status bar's count, state summary, and daemon URL" src="../screens/workspaces-list.svg" /></p>
+<p>The tree is rooted at the <strong>workspaces list</strong>: one row per workspace,
+newest first. Clicking a column header sorts the list by that column.
+The active column's header shows the direction with an arrow, and
+clicking it again flips the direction. The CREATED column sorts by
+creation date. The STATUS column sorts in the lifecycle order (created,
+starting, running, paused, stopping, stopped, absent, unknown). Every
+other column sorts by its text.</p>
+<p>The list's keys: <code>c</code> creates a workspace, <code>s</code> starts it, <code>S</code> stops it, <code>D</code>
+removes it (after a confirmation), <code>e</code> opens the secrets page, and <code>r</code>
+refreshes. <code>/</code> jumps to the first workspace whose name starts with what
+you type. Enter opens the workspace's page.</p>
+<p>Every page answers <code>?</code> with a key overlay: the page's bindings,
+hidden ones included, each with its label. Any key closes the
+overlay. The workspaces list answers it too.</p>
+<p>The list re-reads the daemon every five seconds. A workspace changed
+from another surface (the CLI, another operator) appears without a
+keypress.</p>
+<p>The listing's bottom holds a two-line strip with the focused
+workspace's quick facts, under the rows. The first line carries the
+workspace's name, its id, and the image. The second carries the cpu
+count, the memory in binary units (<code>8G</code>), the egress mode, the
+mounts-issue count while any mount skips (<code>mounts ✗2</code>), and the
+storage the workspace charges the state disk. The strip paints its labels muted and its values in the bright
+foreground on the panel background, so it reads as its own bar at the
+bottom of the box. The storage figure is the root-plus-home cost <code>msks
+storage</code> reports, fetched with the list's five-second refresh and
+cached between refreshes. The strip follows the selection without a
+keypress, and an empty list hides it.</p>
+<p>The status bar above the list counts the workspaces and summarizes
+their states beside the count. A fleet in one state reads
+<code>4 workspaces · all stopped</code>. Mixed states read each state's count,
+as in <code>4 workspaces · 1 running 3 stopped</code>, in the STATUS column's
+lifecycle order. The summary follows the five-second refresh. The
+daemon's URL comes last, and it crops first when the terminal runs
+narrow.</p>
+<p>When the daemon's version and the client's differ, the status line
+carries a marker after the URL naming both versions in the warning
+color, as in <code>msksd 1.2.3 ≠ client 1.2.4</code>. The marker follows the
+five-second refresh and leaves when the versions agree. A <code>/health</code>
+connection that fails leaves the standing marker in place. The URL and the
+state summary crop before the marker does, so the marker stays
+readable at 80 columns.</p>
+<p>A row can carry two markers ahead of its status word. <code>✗1</code> counts
+the workspace's mounts that skipped at the last start (the mounts
+chapter lists every kind of skip). <code>»2</code> counts the workspace's open
+shells on this host. The <a href="#open-shells-and-the-session-records">open shells section</a>
+below owns the count's whole story; the workspace's page carries the
+count in its header. Both markers follow the five-second refresh.</p>
+<h3 id="open-shells-and-the-session-records">Open shells and the session records<a class="headerlink" href="#open-shells-and-the-session-records" title="Permanent link">&para;</a></h3>
+<p>Every interactive <code>msks ssh</code> writes one small record under the msks
+state directory. That includes a window the tree opened and a
+session you typed yourself. The default location is
+<code>~/.local/state/msks/sessions</code>; <code>XDG_STATE_HOME</code> moves it, and the
+<code>state_dir</code> config key (its variable is <code>MSKSC_STATE_DIR</code>) names the
+root outright. The record carries the workspace's id, the session
+process's pid, and a short token. The session rewrites its record
+every five seconds while it lives and unlinks it when it exits.</p>
+<p>The count you read is the host's truthful shell count. It survives a
+tree restart, because the records live on disk and the sessions keep
+rewriting them. A <code>--hold</code> window whose ssh child exited stops
+counting at once. A session killed without cleanup stops counting
+once its heartbeat passes the fifteen-second stale TTL and the
+listing's next refresh reads the tree, about twenty seconds in the
+worst case. A passthrough remote command (<code>msks ssh &lt;ws&gt; -- &lt;cmd&gt;</code>)
+and <code>msks rsync</code> write nothing: they are connections, not shells.</p>
+<p>The count is per-host. It names the shells open on the host the TUI
+runs on, whatever host the daemon runs on. The daemon is not
+involved: the TUI reads the records on its refresh cadence and sweeps
+the stale ones away. A session whose record cannot be written (a
+read-only state directory, say) runs fine; the count simply does not
+see it.</p>
+<p>Each record's token is five characters, drawn against the
+workspace's live sessions. The token completes the window's title
+(<code>msks tree-vm f8x2n</code>); a later release will use it to match a
+session to its window.</p>
+<h2 id="workspace-creation">Workspace creation<a class="headerlink" href="#workspace-creation" title="Permanent link">&para;</a></h2>
+<p>When you create a workspace, it looks like this:</p>
+<p><img alt="The create form over the list" src="../screens/create-form.svg" /></p>
+<p>The only required field is <code>name</code>. You may need to <a href="../first-run/#importing-a-guest-vm-image">import an
+image</a> before you can successfully
+create a workspace. There are Debian, Fedora, and NixOS images available for
+import. You can also <a href="../images/#building-your-own">build your own</a>.</p>
+<p>You can change <code>vcpus</code>, <code>memory</code>, <code>root</code>, and <code>home</code> values after a workspace
+is created. The rest are fixed for the lifetime of the workspace.</p>
+<h2 id="the-secrets-page">The secrets page<a class="headerlink" href="#the-secrets-page" title="Permanent link">&para;</a></h2>
+<p>You can register secret placeholders to use in workspaces instead of putting
+actual secrets into VMs. These secrets are kept in an encrypted store, and
+placeholders within HTTP headers bound for external sites are swapped on the
+wire sent to actual secret values. The <a href="../secrets/">secrets chapter</a>
+explains this in detail.</p>
+<p>The <strong>secrets page</strong> lists every placeholder the daemon holds, in columns:
+coverage (<code>*</code> for the daemon-wide row, otherwise its workspace ids), name,
+destinations, remaining lifetime, and created date.</p>
+<p><img alt="The secrets page: the placeholder list" src="../screens/secrets-page.svg" /></p>
+<p>The lifetime cell is a live countdown (<code>2h</code>, then <code>1h</code>), repainted every
+second. An unbounded row reads <code>never</code>. <code>x</code> revokes the focused row after a
+confirmation that explains what a revoke does: the row retires everywhere at
+once. <code>r</code> opens the duration picker with TTL-appropriate choices, an hour to
+thirty days. The choice nearest the row's remaining lifetime is highlighted.
+Picking one extends the row in place.</p>
+<p><img alt="The mint form: fields, coverage, lifetime, the masked value" src="../screens/mint-form.svg" /></p>
+<p><code>c</code> opens the mint form. The name field comes first, then repeatable
+destinations: an exact host or a label-anchored suffix, comma-separated
+in one field. Coverage follows: the daemon-wide row, or a multi-select
+fed by the tree's workspace list.</p>
+<p>The lifetime field offers <code>unbounded</code> by default, with an hour to thirty days
+beside it. Submit checks the secret store first for dupes, then mints.</p>
+<p><img alt="The sentinel's panel: masked, with Show and Copy" src="../screens/sentinel-panel.svg" /></p>
+<p>A successful mint replaces the form with the sentinel's panel. The sentinel
+opens masked: the prefix shows its reach (<code>mskssec1_</code> is scoped to the
+chosen workspaces, <code>mskssec2_</code> goes to every accepting workspace), and the
+body renders as bullets. <code>s</code> shows and hides it again. <code>c</code> copies the
+sentinel to the terminal's clipboard over OSC 52. A terminal that honors the
+sequence answers the copy (over ssh included, with no reveal needed).</p>
+<p>The display ends with the panel: closing it clears its text, and the minted
+row stays in the page's list. Enter (or a click) on a listing row opens the
+panel again. The page fetches the row's sentinel from the daemon and shows
+it with the same show and copy actions. The sentinel therefore reads back on
+demand, both at mint time and after.</p>
+<h2 id="the-workspace-page">The workspace page<a class="headerlink" href="#the-workspace-page" title="Permanent link">&para;</a></h2>
+<p><img alt="The workspace page: header, consent line, the three action groups" src="../screens/workspace-page.svg" /></p>
+<p>The <strong>workspace page</strong> operates on an already-created workspace. Its
+two-line header: the workspace's name on the first line with its status
+beside it, in the state's color, then the id, image, host, and
+created date on the second. While shells are open on this host, the
+first line carries their count after the status (<code>alpha · ● running ·
+2 shells open</code>); the segment leaves with the last shell's close. The
+count comes from the <a href="#open-shells-and-the-session-records">session records</a>
+and follows the page's per-second row refresh.</p>
+<p>Below the header, two status lines share one shape: a muted label,
+then the value. The consent line shows the mode and one granted
+scope with its expiry. Two or more grants show as a count with the
+nearest expiry (<code>5 grants · next expires 4h</code>). Grant details are
+listed on the workspace's egress consent screen.</p>
+<p>When the workspace mounts host shares, a mounts line follows the same shape.
+It carries one entry per mount (<code>projects:/mnt/projects:rw</code>), a skipped
+mount's kind beside its spec (<code>refs:/srv/refs:ro · skipped</code>), and an
+<code>applies at next start</code> note while a change is pending.</p>
+<p>When the workspace holds proxies, a proxies line follows the mounts line.
+It carries one port pair per proxy, the forwards before a bar and the
+remotes after it:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>8888 -&gt; 8889, 9111 -&gt; 9115 | 8881 &lt;- 8882, 8866 &lt;- 8762
+</span></code></pre></div>
+<p>Each pair reads <code>listen -&gt; target</code> (or <code>&lt;-</code> for a remote). A listening
+pair shows green, a pair whose bind refused shows red, and a pair on a
+stopped workspace shows the line's own color. The line refetches on every
+proxy transition the daemon publishes, so it moves without a keypress.</p>
+<p>The page's fixed actions sit in three groups — use, configure, and
+power. The configure group holds the egress consent screen, the
+sizes-and-topology edit dialog, the mounts editor, the proxies page,
+and <strong>Clone</strong>:
+the full-fork copy of <a href="../cloning/">the cloning chapter</a>, taken
+with a name prompt. The daemon owns the stopped-source rule — a
+refusal names itself on the page's consent line. The <code>p</code> key opens
+the proxies page from the workspace page.</p>
+<h3 id="the-mounts-page">The mounts page<a class="headerlink" href="#the-mounts-page" title="Permanent link">&para;</a></h3>
+<p>The <strong>mounts editor</strong> shows the workspace's mounts one row each, in the
+CLI's <code>HOST_PATH:GUEST_PATH:MODE</code> grammar with the mode always shown.
+<code>a</code> adds a row (a single-line input), Enter edits the focused row
+(seeded with its current spec), <code>D</code> removes it, and Escape closes the
+editor with the last saved set.</p>
+<p>Every change posts the whole list to the daemon's mounts route. The reply
+repaints each row with its derived state (<code>healthy</code>, or the skip's kind and
+reason). A refusal appears on the editor's note line, and the refused list
+is rolled back.</p>
+<p>The daemon owns the rules: a host path outside the allowed roots, or one
+under a root the daemon's VM does not mount, is refused with the remedy
+stated. The <a href="../mounts/">mounts chapter</a> and the <a href="../config/#host-share-mounts">configuration
+rows</a> describe the behavior. The CLI's <a href="../cli/#msks-mount"><code>msks
+mount</code></a> uses the same route.</p>
+<h3 id="the-proxies-page">The proxies page<a class="headerlink" href="#the-proxies-page" title="Permanent link">&para;</a></h3>
+<p><img alt="The proxies page: two rows, one the guest cannot reach" src="../screens/proxies-page.svg" /></p>
+<p>Each workspace owns its <strong>proxies page</strong>: the workspace's page opens it
+with its action row or <code>p</code>. The page manages that workspace's
+persisted proxies (<a href="../proxies/">the proxies chapter</a> describes what a
+proxy is) and no other's. The rows carry the spec in the CLI's
+own grammar (<code>-L 2201:localhost:22</code>), the label, and the live status —
+a row the guest cannot reach names its reason beside the word.</p>
+<p>The page re-reads the listing every five seconds and on every proxy
+transition the daemon publishes, so a bind that fails while the page
+stands paints itself without a keypress.</p>
+<p><code>a</code> opens the add form: the workspace (the page's own, shown as its
+name), the direction (<code>forward (-L)</code> or <code>reverse (-R)</code>), the spec in
+the same grammar <code>msks proxy add</code> reads, and a label. A spec the CLI's own parser refuses keeps the
+form standing with the rule on its note line — a <code>-L</code> spec naming a
+host besides the workspace itself says so and points at <code>-R</code>. <code>D</code> or
+Enter removes the focused row after a confirmation; the listener
+closes at once. <code>q</code> or Escape returns to the workspace page.</p>
+<h3 id="the-images-page">The images page<a class="headerlink" href="#the-images-page" title="Permanent link">&para;</a></h3>
+<p><img alt="The image page: the catalog group, then the published channel" src="../screens/image-page.svg" /></p>
+<p><code>i</code>: the images page — a full page with its key bindings on the
+footer row. The catalog group comes first, with the default
+marker, each row's hash prefix, and each import's date. Then the
+published channel's rows follow, with their descriptions, sizes,
+hash prefixes, and membership markers.</p>
+<p>The published group lists only the rows this daemon's machine can boot: a
+row that declares another architecture stays off the page. A row that
+declares none is shown (<code>msks image import</code> follows the same rule).
+<code>[imported]</code> marks a row whose archive the catalog holds by exact hash
+match; <code>[local]</code> marks a row the catalog holds under a
+different hash. <img alt="The image detail: description, hash, the built
+date" src="../screens/image-detail.svg" /></p>
+<p>Enter imports a published row through the daemon's URL import or opens
+a catalog row's detail.</p>
+<p><code>D</code> deletes a catalog row after a confirmation, the same DELETE <code>msks
+image rm</code> makes. <code>d</code> designates the highlighted catalog row the default
+image, the same POST <code>msks image default</code> makes; the row that already
+holds the designation flashes so. Both groups show the build's hash
+prefix beside the ref, so a published row matches its catalog row by
+eye — the same prefix <code>msks image ls</code> prints. The page re-reads the
+workspace each second, so the
+dimming follows a start or stop made anywhere, not only on the page.</p>
+<h3 id="the-egress-consent-page">The egress consent page<a class="headerlink" href="#the-egress-consent-page" title="Permanent link">&para;</a></h3>
+<p><img alt="The egress consent page: a held request over the in-effect verdicts" src="../screens/consent-page.svg" /></p>
+<p>The page's <strong>Egress</strong> action and its <code>e</code> key open the egress consent
+page: a full-screen view that holds the held-request queue and the
+in-effect verdicts together. It is the consent decider as a page inside
+the tree, and the only place verdicts are made.</p>
+<p>The page carries the same two-line header as the workspace page beneath
+it: the workspace's name with its status (and the pending-hold count
+while any hold waits), then the id, image hash, host, and created date,
+muted. The workspace's identity stays visible while verdicts are made.</p>
+<p>Keys on the page: the arrows navigate the held requests and cross into the
+verdict rows beneath (and back). <code>a</code>/<code>d</code> allow or deny the focused hold for
+the default duration (<code>tilrestart</code>); <code>A</code>/<code>D</code> pick a duration first (<code>once /
+5m / 15m / tilrestart / forever</code>). The letters act on the holds alone: a
+press aimed at the wrong zone reports which zone it would act on, instead of
+deciding silently. <code>x</code> revokes the focused verdict. The row leaves on the
+daemon's refreshed frame, never optimistically.</p>
+<p><img alt="The mode picker: the three postures, the current one highlighted" src="../screens/mode-picker.svg" /></p>
+<p><code>m</code> opens the mode picker (<code>allow</code> / <code>static</code> / <code>interactive</code>, the
+current mode highlighted). Picking a mode switches it
+through the same endpoint <code>msks egress mode</code> uses, without leaving the
+page. The status line shows the new mode once the switch takes effect.
+Picking <code>static</code> while nothing is effectively allowed asks the same
+offline-workspace confirmation the CLI asks: confirm to switch, decline
+to change nothing. A refused switch states its reason on the status
+line.</p>
+<p><img alt="The duration picker over a held request" src="../screens/duration-picker.svg" /></p>
+<p>Enter on a focused hold opens the duration picker: the key answers, the
+pick decides, and only an explicit letter or a picked duration ever
+decides. While no hold waits, the verdict keys do nothing and leave the
+footer until one arrives. See <a href="../cli/#msks-egress"><code>msks egress</code></a> for
+what verdicts and rules cover.</p>
+<h3 id="the-edit-page">The edit page<a class="headerlink" href="#the-edit-page" title="Permanent link">&para;</a></h3>
+<p>The page's <strong>Edit settings</strong> action opens the edit dialog: the create
+form's layout, seeded with the workspace's current values. <img alt="The edit dialog: the sizes and topology, prefilled" src="../screens/edit-dialog.svg" /></p>
+<p>The sizes and topology (root, home, vcpus, memory) are editable. Submit
+sends the changed values to the same endpoint <code>msks resize</code> uses, and
+the page's consent line shows the same outcome the CLI prints,
+including changes that wait for the next boot.</p>
+<p>A workspace that is running when you press Apply asks first: confirm and the
+page stops the workspace, then applies the resize. Decline, and the
+workspace keeps running with its sizes unchanged. Home size changes apply
+immediately. Root growth and the new topology apply at the next boot.</p>
+<p>A resize the daemon still refuses (a root shrink, among others)
+states its reason on the consent line. The name, image, and user fields
+show their current values read-only, marked <code>*</code> as create-time:
+changing them is a delete-and-recreate, and the dialog refuses a
+changed value with a note pointing at the field, instead of accepting
+it silently. A size left blank keeps its current value. Escape closes
+the dialog and changes nothing.</p>
+<h3 id="opening-a-shell">Opening a shell<a class="headerlink" href="#opening-a-shell" title="Permanent link">&para;</a></h3>
+<p>By default, the page's <strong>Open a shell</strong> action runs <code>msks ssh</code> in the TUI's own
+terminal: the tree exits, the ssh session runs where it stood, and the tree
+restarts when the session returns the terminal. Configure <code>msks</code> to open
+shells in new windows using <code>terminal_open_cmd</code>, documented below.</p>
+<p>A workspace that ssh cannot reach (no NIC, no identity configured) takes a
+longer path. The flow boots a stopped workspace first and probes the forward. A
+probe that reports a refusal opens no session: the tree's first flash leads
+with a suggestion to use <code>msks console</code> as a fallback and follows with the
+refusal's first line. The row ellipsizes at its end, so the suggestion stays
+visible. The full refusal text is logged before the tree restarts.</p>
+<p>A host that wants shells in windows beside the running tree configures a
+terminal launcher (<code>terminal_open_cmd</code> below). The action then spawns the
+launcher with a <code>msks ssh</code> invocation appended. The spawned shell inherits the
+tree's resolved connection, so it reaches the same daemon. A launcher that
+cannot start (a missing binary, one without the execute bit) reports the reason
+on the tree's first flash, exits to the workspace page.</p>
+<p>Every screen is navigable with arrow keys. Lists move with up/down, the
+create form's fields move with up/down between them, and Escape leaves the
+screen it is on. <code>q</code> backs out of a page. At the workspaces list, Escape
+quits the tree. Ctrl+Q exits the client from any screen (the tree, a page, a
+form field, or a panel stacked over them), the same clean exit <code>q</code> takes at
+the workspaces list.</p>
+<h4 id="the-shell-actions-terminal-settings">The shell action's terminal settings<a class="headerlink" href="#the-shell-actions-terminal-settings" title="Permanent link">&para;</a></h4>
+<p>The workspace page's <strong>Open a shell</strong> action runs <code>msks ssh</code>: in the TUI's
+own terminal by default, or in a new window through a configured launcher.
+Two client settings shape those windows. Their environment-variable rows are
+in <a href="../cli/#client-environment">the client environment table</a>. Their file
+keys are documented here.</p>
+<h4 id="terminal_open_cmd"><code>terminal_open_cmd</code><a class="headerlink" href="#terminal_open_cmd" title="Permanent link">&para;</a></h4>
+<p><code>terminal_open_cmd</code> is the launcher the workspace page's <strong>Open a shell</strong>
+action uses to open workspace shells in new terminal windows. It is the opt-in
+for hosts that want windows beside the running tree isntead of within. The msks
+invocation is appended after it, the way most terminals take a command after
+<code>-e</code> / <code>--</code>:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">konsole --hold -e</span><span class="w">   </span><span class="c1"># string form (shell-split)</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w">                     </span><span class="c1"># Linux (list form, no shell quoting)</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghostty</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">+wait</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-e</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w">                     </span><span class="c1"># macOS (open launches Ghostty.app)</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">open</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-na</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Ghostty.app</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">--args</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-e</span>
+</span></code></pre></div>
+<p>Any terminal is supported, but let's explain the options to the Ghostty
+terminal examples anove. On Linux, Ghostty's <code>-e</code> takes the appended
+invocation as the window's command, and <code>+wait</code> holds the ghostty process until
+the window closes — the same hold <code>konsole -e</code> gives. On macOS the <code>ghostty</code>
+CLI is a helper tool; <code>open -n</code> starts a new Ghostty.app instance and <code>--args</code>
+hands it the <code>-e</code>. A window opened through <code>open</code> runs with a fresh login
+environment: nothing from the shell the TUI runs in passes through. The
+appended client therefore locates its packages and its daemon on its own.</p>
+<p><code>terminal_open_cmd</code>'s environment form (<code>MSKSC_TERMINAL_OPEN_CMD</code>) overrides
+the file value with the string form. Unset (the default), the shell action
+runs <code>msks ssh</code> in the TUI's own terminal, on every host, with no terminal
+to launch. A configured launcher that fails to execute (a binary that is
+missing or not executable) reports the reason on the tree's first flash
+after the same-terminal shell ends. The shell runs in the same terminal.</p>
+<h4 id="the-window-title">The window title<a class="headerlink" href="#the-window-title" title="Permanent link">&para;</a></h4>
+<p>Every terminal window msks opens for a workspace shell carries one
+title: <code>msks {workspace} {session}</code>. The workspace half is the
+workspace's name — the word the operator reads everywhere else —
+with its id standing in when the daemon serves no name. The session
+half is the token of the session record <a href="#open-shells-and-the-session-records">the open shells
+section</a> describes:
+<code>msks tree-vm f8x2n</code>. A child that names no workspace (an appended
+command that is not an <code>msks ssh</code>) titles as <code>msks shell</code>.</p>
+<p>A session without a record drops the session half. The consent
+launcher (<code>msks-term-popup</code>) titles its window before any session
+exists, and a remote-command run in a spawned window registers
+nothing, so both read <code>msks tree-vm</code>. The plain window the TUI
+opens takes the full title from the appended <code>msks ssh</code> itself: the
+window is marked at spawn, and the command names it twice. The first
+write carries the typed reference alone, before the boot pre-flight
+— a refused pre-flight still leaves the window named. The second
+write carries the resolved name and completes the title with the
+record's token, once the pre-flight answers and the session
+registers. The title stays until something
+inside the window replaces it: a workspace that sets its own title
+from inside the session (a <code>PROMPT_COMMAND</code> with a title escape, the
+way stock ssh sessions can) rewrites it there. tmux shields the
+popup path. Nothing shields the plain path.</p>
+<p>A <code>msks ssh</code> you type yourself keeps your terminal's title: the title
+applies only to the windows msks opens, and a same-terminal shell
+(the dead-launcher fallback) changes nothing.</p>
+<p>The title uses the standard OSC title sequence, and the launcher's
+terminal decides what its titlebar shows. xterm (the built-in default
+launcher) and Ghostty show it. Konsole's titlebar shows the <em>tab</em>
+title, whose default format composes the working directory's name and
+the process name instead — a spawned shell reads
+<code>msks : python3.14 — Konsole</code> from a checkout named <code>msks</code>, and the
+consent launcher reads <code>msks : tmux : client — Konsole</code>; the <code>msks :</code>
+prefix is the directory, not msks.</p>
+<p>Konsole carries the title two ways. The one-checkbox way: Settings →
+Configure Konsole → General → <em>Show window title on the titlebar</em>, and the
+titlebar follows the OSC title (<code>msks tree-vm f8x2n — Konsole</code>). The
+tab-format way: Settings → Configure Konsole → Tab Bar → <em>Tab title
+format</em> (the local one) set to <code>%w</code> or <code>%w : %p</code>, which carries the
+window title into the tab title the titlebar already shows.</p>
+<h4 id="msks-term-popup-the-consent-decider-terminal"><code>msks-term-popup</code>: the consent-decider terminal<a class="headerlink" href="#msks-term-popup-the-consent-decider-terminal" title="Permanent link">&para;</a></h4>
+<p><code>msks-term-popup</code> is a shipped client command that runs the appended
+shell inside a local tmux session and answers the workspace's egress
+consent prompts right there.</p>
+<p>To use, it change your <code>msks.yaml</code> config file such that it's the program
+opened by <code>terminal_open_cmd</code>. For example:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">konsole -e msks-term-popup</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">xterm -e msks-term-popup</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghostty +wait -e msks-term-popup</span><span class="w">       </span><span class="c1"># Linux</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="nt">terminal_open_cmd</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">open -na Ghostty.app --args -e msks-term-popup</span><span class="w">  </span><span class="c1"># macOS</span>
+</span></code></pre></div>
+<p>The launch also starts the consent-decider
+app in a hidden tmux session on the same socket, where it holds the
+workspace's decider registration for the window's whole life. <img alt="The popup's decider app: the held-request queue and verdict keys" src="../screens/term-popup-decider.svg" /></p>
+<p>The app lists every hold the workspace carries, destination and time
+remaining per row, with the arrow keys moving the selection. <code>a</code> allows
+until restart and <code>d</code> denies the selected hold. The uppercase twins <code>A</code> and
+<code>D</code> pick a duration for their verdict (Enter picks, Escape cancels). <code>m</code>
+switches the workspace's egress mode. The picker offers <code>allow</code>, <code>static</code>,
+and <code>interactive</code> with the current mode highlighted (Enter picks, Escape or
+<code>q</code> cancels).</p>
+<p>Picking <code>static</code> while nothing is effectively allowed asks the
+empty-static question first, the same confirmation the consent page asks.
+The switch goes through the same endpoint <code>msks egress mode</code> uses. The
+status line shows the current mode beside the connection state, and a
+completed switch flashes its effect there (<code>in effect now</code>, or <code>takes effect
+at next start</code> for a stopped workspace). A switch the daemon refuses states
+its reason on the same line. A hold leaves the list the moment the daemon
+resolves it (a verdict from another decider window, or the hold's own
+timeout). The popup viewer hides itself when the list empties.</p>
+<p>A hold arriving with the popup closed raises a popup viewer over the shell
+that attaches to the hidden session. The bindings map runs along the popup's
+bottom edge: the verdict keys, the mode switch, and the hide/show entry.
+<code>q</code>, <code>Esc</code>, or <code>C-b</code> hide the viewer. The decider keeps running, its queue
+keeps living, and <code>C-b p</code> brings the popup back. A popup the app raised
+returns the same way on the next hold. The session ends with its window, and
+the decider registration ends with the server. It works with any terminal
+that runs a command: put your terminal and its command flag in
+<code>terminal_open_cmd</code>, and <code>msks-term-popup</code> right after it (tmux 3.2 or newer
+must be on PATH):</p>
+<p>On macOS, an <code>open</code>-opened window resolves commands on a fresh login PATH, and
+<code>msks-setup-macos-host</code> links both client commands there. tmux comes
+from that PATH the same way. The Linux forms need the same: the window resolves
+<code>msks-term-popup</code> on its own PATH, and <code>msks-setup-debian-host</code> and
+<code>msks-setup-fedora-host</code> link it beside <code>msks</code> at <code>/usr/local/bin</code>.</p>
+<p>The popup viewer keeps its own attach to the hidden session. A hold that
+arrives while it is open is already in the list. Verdicts posted from it go
+through the same REST contract as the consent page. A post that cannot
+complete (the request resolved in another decider window while the verdict
+was in flight) reports the reason on the popup's status line.</p>
+<p>The session's status bar shows the workspace: the launch resolves the
+workspace's name and pins it to the bar's left side (<code>[project-x]</code>). The id
+stands in whenever the lookup fails (the daemon down, the workspace gone, the
+wait run out), and <code>shell</code> stands for a plain shell. The window list after the
+label stays empty.</p>
+<p>The bar's right side carries the egress mode beside the popup key (#764), as
+<code>interactive · C-b p popup</code>. The key hint lands at launch. The decider app
+fills the mode in front of it when its first rules frame lands, and updates it
+on every change whatever surface decided it. Every workspace carries a mode.
+A workspace created without egress reads <code>allow</code>. A window with no workspace
+(a plain shell) ships neither half: no decider stands behind it, and <code>C-b p</code>
+stays stock tmux's own key.</p>
+<p>The hidden consent session runs on the launch's own socket, one small
+server per window. The app retires when the window has been gone for a
+while, taking the session and the server with it. The window's own hold
+flags (<code>konsole --hold</code>, xterm's <code>-hold</code>) keep the window open after
+the session ends, as they do for a plain shell window.</p>
+<p>The tmux pane keeps 10000 lines of scrollback and takes the mouse wheel. Wheel
+up scrolls into the pane's history, and wheel down scrolls back toward the live
+output. Reaching the bottom (or pressing <code>q</code>) returns to the plain shell. The
+keyboard path covers the same history: <code>Ctrl-b [</code> (or <code>Ctrl-b PageUp</code>) opens
+tmux's copy mode, where the arrow keys and PageUp/PageDown move through
+it. <code>Shift-PageUp</code> and <code>Shift-PageDown</code> page through it too, one page per
+press, entering copy mode on the way up and returning to the shell at the
+bottom.</p>
+<p>A plain drag selects text in tmux's buffer and copies it. The copy lands in
+tmux's paste buffer and in the system clipboard, so a paste in another
+window delivers the selection just made. The clipboard half is sent as an OSC 52
+write, which the outer terminal must take: Konsole builds since 2024, kitty,
+foot, wezterm, ghostty, and alacritty do. VTE terminals (gnome-terminal,
+Ptyxis) leave the sequence untouched, so there a plain drag copies into
+tmux's own buffer only. Holding Shift while dragging selects the terminal's
+native text in every terminal (most terminals hand Shift drags to their own
+selection). A consent popup raised while the pane is scrolled still takes
+its verdict keys: the popup overlays the scrolled pane, and the next keypress
+answers it.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a2388154.min.js"></script>
+      
+    
+  </body>
+</html>

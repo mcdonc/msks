@@ -1,0 +1,1297 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Microvm workspaces for AI coding agents">
+      
+      
+        <meta name="author" content="Chris McDonough">
+      
+      
+        <link rel="canonical" href="https://mcdonc.github.io/msks/0.9.0/proxies/">
+      
+      
+      
+        <link rel="prev" href="../networking/">
+      
+      
+        <link rel="next" href="../egress-consent/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="zensical-0.0.71">
+    
+    
+      
+        <title>Workspace Proxies - msks</title>
+      
+    
+    
+      
+        
+      
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.e442bf79.min.css">
+      
+        
+          
+        
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.b60ce83d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,500,500i,700,700i%7CJetBrains+Mono:400,400i,700,700i&amp;display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer" aria-hidden="true"></label>
+    <div data-md-component="skip">
+      <a href="#__skip" class="md-skip">
+        Skip to content
+      </a>
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="./.." title="msks" class="md-header__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-menu" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            msks
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Workspace Proxies
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="none" data-md-color-scheme="default" data-md-color-primary="green" data-md-color-accent="green"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search" aria-label="Search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-search" viewBox="0 0 24 24"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog" aria-label="Search">
+  <button type="button" class="md-search__button">
+    Search
+  </button>
+</div>
+      
+    
+    <div class="md-header__source">
+      
+        <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+      
+    </div>
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="./.." title="msks" class="md-nav__button md-logo" aria-label="msks" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-book-open" viewBox="0 0 24 24"><path d="M12 5v16M20.001 19A2 2 0 0 0 22 17V5a2 2 0 0 0-1.999-2L16 3.002A5 5 0 0 0 12 5a5 5 0 0 0-4-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 1.999 2H8a5 5 0 0 1 4 2 5 5 0 0 1 4-2z"/></svg>
+
+    </a>
+    msks
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/mcdonc/msks" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.3.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2026 Fonticons, Inc.--><path fill="currentColor" d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    mcdonc/msks
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="./.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Home
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Installation
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../doctor/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The host doctor
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  First run
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The TUI
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mounts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Host Share Mounts
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../networking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Guest Networking
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Proxies
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Proxies
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-persistent-proxy-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a persistent proxy is
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What a persistent proxy is">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-each-side-connects-to" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What each side connects to
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reach-and-consent" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reach and consent
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#status-and-events" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Status and events
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managing-proxies-from-the-cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Managing proxies from the CLI
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Managing proxies from the CLI">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#reaching-a-guest-service-from-the-daemon-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reaching a guest service from the daemon host
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reaching-a-guest-service-from-other-machines" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reaching a guest service from other machines
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#letting-a-guest-reach-a-daemon-side-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Letting a guest reach a daemon-side service
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading-and-removing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reading and removing
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managing-proxies-from-the-tui" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Managing proxies from the TUI
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../egress-consent/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Egress Consent
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../llm/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  LLM Proxy
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../secrets/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Secrets
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cloning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Cloning Workspaces
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The CLI Client
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agents/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent Reference Card
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Daemon Configuration
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../images/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Workspace Images
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../storage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Storage
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  The HTTP API
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Development environment
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Changelog
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  
+                    
+                    
+                    
+                      
+                    
+                    
+                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+                      <div class="md-sidebar-button__wrapper">
+                        <label class="md-sidebar-button" for="__toc"></label>
+                      </div>
+                    
+                  
+                  <div class="md-sidebar__inner">
+                    
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-persistent-proxy-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What a persistent proxy is
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="What a persistent proxy is">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-each-side-connects-to" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        What each side connects to
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reach-and-consent" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reach and consent
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#status-and-events" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Status and events
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managing-proxies-from-the-cli" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Managing proxies from the CLI
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Managing proxies from the CLI">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#reaching-a-guest-service-from-the-daemon-host" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reaching a guest service from the daemon host
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reaching-a-guest-service-from-other-machines" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reaching a guest service from other machines
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#letting-a-guest-reach-a-daemon-side-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Letting a guest reach a daemon-side service
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading-and-removing" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Reading and removing
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managing-proxies-from-the-tui" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Managing proxies from the TUI
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                <a id="__skip" tabindex="-1"></a>
+                
+                  
+
+  
+  
+
+
+<h1 id="workspace-proxies">Workspace proxies<a class="headerlink" href="#workspace-proxies" title="Permanent link">&para;</a></h1>
+<p>A proxy is a TCP port that can connect the daemon host to a guest or one that
+connect a guest to the daemon host or another location.</p>
+<p>It is defined once. The daemon owns the listener, and every start of the
+workspace brings it back. This chapter shows the two directions a proxy
+bridges, and how to manage proxies from the <a href="../cli/#msks-proxy">CLI</a> and the
+<a href="../tui/#the-proxies-page">TUI</a>.</p>
+<h2 id="what-a-persistent-proxy-is">What a persistent proxy is<a class="headerlink" href="#what-a-persistent-proxy-is" title="Permanent link">&para;</a></h2>
+<p>The daemon holds every proxy definition as a row in its database. The row
+survives a daemon restart and a workspace stop. Each time the workspace
+starts, the daemon binds the row's listener again.</p>
+<p>Two directions exist, and both borrow ssh's letters and ssh's spec grammar.
+The spec reads <code>listen : target</code>, left to right. The flag letter says which
+side listens.</p>
+<p>A forward proxy (<code>-L</code>) binds a port on the daemon's host. Every connection
+to that port bridges into the workspace, to the guest port the spec names.
+This is the ssh <code>-L</code> shape: a port on your side reaching a port on the far
+end.</p>
+<p>A remote proxy (<code>-R</code>) binds a port on the workspace's own gateway. A process
+inside the guest connects to its DHCP gateway on that port, and the daemon bridges
+the connection to a daemon-side service the spec names. This is the ssh <code>-R</code>
+shape: a port on the far end reaching a service on your side.</p>
+<p>The contrast with <a href="../cli/#msks-forward"><code>msks forward</code></a> is ownership. A
+forward's listener lives as long as the command holding it, and it binds on
+the machine the command runs on. A proxy's listener lives in the daemon. Use
+a forward for a one-off pipe during a session. Use a proxy for a port you
+want there more permanently.</p>
+<h3 id="what-each-side-connects-to">What each side connects to<a class="headerlink" href="#what-each-side-connects-to" title="Permanent link">&para;</a></h3>
+<p>A forward proxy's target is the workspace itself. The spec's host field names
+the workspace, the way ssh's <code>-L</code> host names the far end, and it accepts
+exactly two spellings: <code>localhost</code> or <code>127.0.0.1</code>. Anything else refuses with
+a message that points at the <code>-R</code> direction, which is the one that reaches
+daemon-side services.</p>
+<p>The daemon connects to a remote proxy's target from the daemon's host. In
+the spec <code>-R 9200:localhost:9200</code>, the <code>localhost</code> is the daemon's own
+loopback. A name like <code>db.internal</code> resolves through the daemon host's
+resolver.</p>
+<p>A remote proxy's listen address is fixed by the workspace's tap, so the
+grammar carries no bind field for <code>-R</code>.</p>
+<p>Inside the guest, connect to <code>host.msks</code>. Every workspace's resolver answers the
+name with its own tap address. <code>ip route show default</code> prints the same
+address when a name is unavailable:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>http://<span class="k">$(</span>ip<span class="w"> </span>route<span class="w"> </span>show<span class="w"> </span>default<span class="w"> </span><span class="p">|</span><span class="w"> </span>awk<span class="w"> </span><span class="s1">'{print $3}'</span><span class="k">)</span>:9200
+</span></code></pre></div>
+<p>A workspace created without egress has no NIC. Adding a proxy to it is
+refused: <code>workspace … has no NIC (created without egress)</code>.</p>
+<h3 id="reach-and-consent">Reach and consent<a class="headerlink" href="#reach-and-consent" title="Permanent link">&para;</a></h3>
+<p>The daemon connects to a remote proxy's target itself. The consent machinery
+gates the guest's traffic through the tap; it never sees the daemon's own
+connections. A remote row therefore reaches its target without a verdict. <a href="../egress-consent/">The
+consent chapter</a> covers the guest's connections; this connection
+is the daemon's own.</p>
+<p>The tap's ingress chain admits a remote port only while its listener is up.
+Each accept line is pinned to that tap's address and that guest's source. A
+bind that fails admits nothing. A live add or removal swaps the admission in
+one nft transaction, so the rule and the service always agree.</p>
+<h3 id="status-and-events">Status and events<a class="headerlink" href="#status-and-events" title="Permanent link">&para;</a></h3>
+<p>Every proxy carries a live status. <code>listening</code> means the daemon holds the
+listener. <code>failed</code> means the bind refused, and the cause follows the
+word (a taken port, an address the host cannot bind). <code>stopped</code> means
+nothing serves the row: a remote proxy on a workspace that is not running,
+for example. A <code>listening</code> remote row whose admission swap failed carries
+the cause the same way. The listener serves, and the guest cannot reach it.</p>
+<p>Each transition publishes an event on the daemon's hub (<code>proxy.created</code>,
+<code>proxy.listening</code>, <code>proxy.failed</code>, <code>proxy.closed</code>, <code>proxy.removed</code>). The TUI
+subscribes, so its proxy surfaces move without a keypress.</p>
+<h2 id="managing-proxies-from-the-cli">Managing proxies from the CLI<a class="headerlink" href="#managing-proxies-from-the-cli" title="Permanent link">&para;</a></h2>
+<p>The <code>msks proxy</code> command group owns the rows. <a href="../cli/#msks-proxy">Its reference
+section</a> lists every flag; this section walks the usual
+work.</p>
+<h3 id="reaching-a-guest-service-from-the-daemon-host">Reaching a guest service from the daemon host<a class="headerlink" href="#reaching-a-guest-service-from-the-daemon-host" title="Permanent link">&para;</a></h3>
+<p>A web server inside the workspace, on guest port 8080:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>msks<span class="w"> </span>proxy<span class="w"> </span>add<span class="w"> </span>my-workspace<span class="w"> </span>-L<span class="w"> </span><span class="m">8080</span>:localhost:8080
+</span></code></pre></div>
+<p>The daemon binds <code>127.0.0.1:8080</code> on its own host. A browser there opens
+<code>http://127.0.0.1:8080</code> and reaches the guest's server.</p>
+<h3 id="reaching-a-guest-service-from-other-machines">Reaching a guest service from other machines<a class="headerlink" href="#reaching-a-guest-service-from-other-machines" title="Permanent link">&para;</a></h3>
+<p>The same forward with a bind address:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>msks<span class="w"> </span>proxy<span class="w"> </span>add<span class="w"> </span>my-workspace<span class="w"> </span>-L<span class="w"> </span><span class="m">0</span>.0.0.0:8080:localhost:8080
+</span></code></pre></div>
+<p>The daemon listens on every interface of its host. Any machine that can
+route to the daemon host reaches the guest's server. The bind is the
+daemon's, so the firewall rules of the daemon host govern the reach.</p>
+<h3 id="letting-a-guest-reach-a-daemon-side-service">Letting a guest reach a daemon-side service<a class="headerlink" href="#letting-a-guest-reach-a-daemon-side-service" title="Permanent link">&para;</a></h3>
+<p>A database on the daemon host, port 5432, labeled for the listing:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>msks<span class="w"> </span>proxy<span class="w"> </span>add<span class="w"> </span>my-workspace<span class="w"> </span>-R<span class="w"> </span><span class="m">5432</span>:localhost:5432<span class="w"> </span>--label<span class="w"> </span>db
+</span></code></pre></div>
+<p>The workspace's gateway listens on 5432. Inside the guest, an application
+connects to <code>host.msks</code> on that port:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>psql<span class="w"> </span>-h<span class="w"> </span>host.msks<span class="w"> </span>-p<span class="w"> </span><span class="m">5432</span>
+</span></code></pre></div>
+<p>While <a href="../secrets/">secret interception</a> is armed, the tap's 80 and 443
+answer the interceptor; a <code>-R</code> proxy on either port stays unreachable from
+the guest until interception stands down.</p>
+<p>The daemon connects to <code>localhost:5432</code> on its own host for every guest
+connection. A target on another host works the same way
+(<code>-R 5432:db.internal:5432</code>). The daemon host's resolver resolves it.</p>
+<h3 id="reading-and-removing">Reading and removing<a class="headerlink" href="#reading-and-removing" title="Permanent link">&para;</a></h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>msks<span class="w"> </span>proxy<span class="w"> </span>ls<span class="w">            </span><span class="c1"># every stored proxy, with live status</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>msks<span class="w"> </span>proxy<span class="w"> </span>ls<span class="w"> </span>--json<span class="w">     </span><span class="c1"># the same rows as JSON</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>msks<span class="w"> </span>proxy<span class="w"> </span>rm<span class="w"> </span>my-workspace<span class="w"> </span><span class="m">3</span>
+</span></code></pre></div>
+<p>The listing shows each row's direction, listen and target endpoints, label,
+and live status. A removal closes the listener at once and drops the row.</p>
+<p><code>add</code> is declarative. Asking twice for the same spec returns the standing
+row. A different spec on the same bind is refused with the row that holds
+it.</p>
+<p>A forward proxy binds at once, on a stopped workspace too; each connection
+refuses until the guest runs. A remote proxy on a stopped workspace records
+the row, and the workspace's next start brings its listener up. A stop
+closes every listener the workspace owns. Each start binds them again. A
+proxy whose bind fails records the failure as its status with the cause,
+and every later start retries it.</p>
+<h2 id="managing-proxies-from-the-tui">Managing proxies from the TUI<a class="headerlink" href="#managing-proxies-from-the-tui" title="Permanent link">&para;</a></h2>
+<p><a href="../tui/#the-proxies-page">The TUI chapter</a> documents the page key by key.
+This section walks the same work by hand.</p>
+<p>Open the workspace's page (<code>msks tui my-workspace</code>, or Enter on the list's
+row). The page carries a compact proxies line beside the consent and mounts
+lines:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>8888 -&gt; 8889, 9111 -&gt; 9115 | 8881 &lt;- 8882
+</span></code></pre></div>
+<p>The forwards sit before the bar, the remotes after it. Each pair reads
+<code>listen -&gt; target</code> (or <code>&lt;-</code> for a remote). A listening pair shows green. A
+pair whose bind refused shows red. The line moves on every proxy transition
+the daemon publishes, without a refresh.</p>
+<p>Press <code>p</code> (or Enter on the Proxies action row) for the workspace's proxies
+page. The page lists that workspace's rows with the spec in the CLI's
+grammar, the label, and the live status. Press <code>a</code> to add one.</p>
+<p>The form holds the direction (<code>forward (-L)</code> or <code>reverse (-R)</code>), the spec in
+the same grammar <code>msks proxy add</code> reads, and a label. A spec the parser refuses
+keeps the form standing, with the rule on the note line. <code>D</code> (or Enter, on the
+focused row) removes it behind a confirmation. <code>q</code> or Escape returns to the
+workspace page.</p>
+<p>The page re-reads the listing every five seconds and on every proxy
+transition, so a bind that fails while the page stands paints itself without
+a keypress.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 Chris McDonough
+    </div>
+  
+  
+    Made with
+    <a href="https://zensical.org/" target="_blank" rel="noopener">
+      Zensical
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog" role="status" aria-atomic="true">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      
+      
+        
+        
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":[],"redirect":null,"search":"../assets/javascripts/workers/search.c47bb847.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","clipboard.error":"Could not copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":{"default":"latest","provider":"mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a2388154.min.js"></script>
+      
+    
+  </body>
+</html>
