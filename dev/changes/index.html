@@ -1788,6 +1788,18 @@ tagged <code>vX.Y.Z</code>.</p>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><strong>Detail strip at the bottom of the workspaces list (#849).</strong>
+  A two-line strip renders at the bottom of the listing's box
+  and carries the focused workspace's quick facts: name, id,
+  image, cpu count, memory, egress mode, the mounts-issue count,
+  and the storage the workspace charges the state disk (the same
+  root-plus-home cost <code>msks storage</code> reports). The strip follows
+  the selection and refreshes on the list's standing cadence;
+  the storage figure rides a cached capacity report, so moving
+  the selection costs no roundtrip. An empty list hides the
+  strip.</p>
+</li>
+<li>
 <p><strong>State summary in the TUI status bar (#853).</strong> The workspaces
   count now carries a summary of the fleet's states:
   <code>4 workspaces · all stopped</code> when every row holds one state,
@@ -1864,6 +1876,11 @@ tagged <code>vX.Y.Z</code>.</p>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>The workspaces list's ID column (#849).</strong> The EGRESS column
+  became an ID column: each row carries its immutable workspace
+  id. The egress posture reads on the detail strip instead,
+  beside the row's other facts. Clicking the ID header sorts by
+  the id itself; the NAME header keeps the name sort.</li>
 <li>
 <p><strong>Graded status colors in the TUI listing (#850).</strong> The
   workspaces list colors the status column by state class:

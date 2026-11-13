@@ -1189,7 +1189,7 @@ Every page uses the API.</p>
 full-screen workspace tree. <code>msks tui</code> is the same command, and <code>msks tui
 my-workspace</code> opens that workspace's page directly.</p>
 <h2 id="the-workspace-tree">The workspace tree<a class="headerlink" href="#the-workspace-tree" title="Permanent link">&para;</a></h2>
-<p><img alt="The workspaces list: two rows, the status bar's count, state summary, and daemon URL" src="../screens/workspaces-list.svg" /></p>
+<p><img alt="The workspaces list: two rows, the detail strip at the bottom of the box, and the status bar's count, state summary, and daemon URL" src="../screens/workspaces-list.svg" /></p>
 <p>The tree is rooted at the <strong>workspaces list</strong>: one row per workspace,
 newest first. Clicking a column header sorts the list by that column.
 The active column's header shows the direction with an arrow, and
@@ -1207,6 +1207,17 @@ overlay. The workspaces list answers it too.</p>
 <p>The list re-reads the daemon every five seconds. A workspace changed
 from another surface (the CLI, another operator) appears without a
 keypress.</p>
+<p>The listing's bottom holds a two-line strip with the focused
+workspace's quick facts, under the rows. The first line carries the
+workspace's name, its id, and the image. The second carries the cpu
+count, the memory in binary units (<code>8G</code>), the egress mode, the
+mounts-issue count while any mount skips (<code>mounts ✗2</code>), and the
+storage the workspace charges the state disk. The strip paints its labels muted and its values in the bright
+foreground on the panel background, so it reads as its own bar at the
+bottom of the box. The storage figure is the root-plus-home cost <code>msks
+storage</code> reports, fetched with the list's five-second refresh and
+cached between refreshes. The strip follows the selection without a
+keypress, and an empty list hides it.</p>
 <p>The status bar above the list counts the workspaces and summarizes
 their states beside the count. A fleet in one state reads
 <code>4 workspaces · all stopped</code>. Mixed states read each state's count,
