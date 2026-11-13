@@ -197,7 +197,7 @@ The forward websocket lives as long as the command holding it. A persisted
 proxy (`msks proxy add`) lives in the daemon's database instead: the daemon
 owns the listener, and every workspace start re-establishes it. A forward
 proxy binds a port on the daemon's host and bridges each connection to the
-guest through the same connection the forward websocket uses. A remote proxy binds a port on the workspace's own tap
+guest through the same daemon-to-guest connection the forward websocket uses. A remote proxy binds a port on the workspace's own tap
 address: a guest process connects to its DHCP gateway on that port, and the
 daemon bridges the connection to a daemon-side service (the ssh `-R`
 shape).

@@ -197,7 +197,7 @@ a home-volume backup carries no credential.
 
 **Log in with the paste-code flow.** `claude auth login`
 prints an authorize URL. Open it on your own machine; any
-browser works, and the guest never opens it. Authorize, copy
+browser works, and nothing connects to the guest. Authorize, copy
 the code the page shows, and paste it at the guest CLI's
 prompt. A reboot drops the tokens (the tmpfs again), and the
 next session logs in the same way.
