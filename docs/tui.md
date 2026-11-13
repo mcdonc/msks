@@ -441,6 +441,22 @@ A `msks ssh` you type yourself keeps your terminal's title: the title
 applies only to the windows msks opens, and a same-terminal shell
 (the dead-launcher fallback) changes nothing.
 
+The title rides the standard OSC title sequence, and the launcher's
+terminal decides what its titlebar shows. xterm (the built-in default
+launcher) and Ghostty show it. Konsole's titlebar shows the _tab_
+title, whose default format composes the working directory's name and
+the process name instead — a spawned shell reads
+`msks : python3.14 — Konsole` from a checkout named `msks`, and the
+consent launcher reads `msks : tmux : client — Konsole`; the `msks :`
+prefix is the directory, not msks.
+
+Konsole carries the title two ways. The one-checkbox way: Settings →
+Configure Konsole → General → _Show window title on the titlebar_, and the
+titlebar follows the OSC title (`msks tree-vm f8x2n — Konsole`). The
+tab-format way: Settings → Configure Konsole → Tab Bar → _Tab title
+format_ (the local one) set to `%w` or `%w : %p`, which carries the
+window title into the tab title the titlebar already shows.
+
 #### `msks-term-popup`: the consent-decider terminal
 
 `msks-term-popup` is a shipped client command that runs the appended
