@@ -37,6 +37,7 @@ from msks.llm import (
     split_entry,
     sse_line,
 )
+from msks.llm import proxy as proxy_mod
 from msks.settings import LlmSettings, Settings
 
 from msks import llm as llm_mod
@@ -329,7 +330,7 @@ def test_ensure_rebuilds_only_on_settings_change(monkeypatch) -> None:
     second = llm_settings(("*:http://b:9",))
     closed: list = []
     monkeypatch.setattr(
-        "msks.llm.spawn_aclose", lambda client: closed.append(client)
+        "msks.llm.router.spawn_aclose", lambda client: closed.append(client)
     )
     router.ensure(first)
     client_one = router._http_client
@@ -344,7 +345,7 @@ def test_reconfigure_to_empty_closes_and_deactivates(monkeypatch) -> None:
     router = LlmRouter()
     closed: list = []
     monkeypatch.setattr(
-        "msks.llm.spawn_aclose", lambda client: closed.append(client)
+        "msks.llm.router.spawn_aclose", lambda client: closed.append(client)
     )
     router.ensure(llm_settings(("*:http://a:9",)))
     assert router.active
@@ -913,7 +914,7 @@ async def test_malformed_and_oversized_bodies_answer_named_codes(
         transport=httpx.MockTransport(upstream_handler), timeout=timeout
     )
     proxy.router.ensure(proxy.app.state.settings)
-    monkeypatch.setattr(llm_mod, "MAX_BODY_BYTES", 16)
+    monkeypatch.setattr(proxy_mod, "MAX_BODY_BYTES", 16)
     async with async_client(proxy, "10.0.0.1") as http:
         not_json = await http.post(
             "/v1/chat/completions",
@@ -986,7 +987,7 @@ class StreamedRequest:
 
 
 async def test_parse_body_bounds_a_headerless_stream(monkeypatch) -> None:
-    monkeypatch.setattr(llm_mod, "MAX_BODY_BYTES", 8)
+    monkeypatch.setattr(proxy_mod, "MAX_BODY_BYTES", 8)
     refusal, body = await llm_mod.parse_body(
         StreamedRequest([b'{"model":', b' "m"}'])
     )

@@ -23,7 +23,8 @@ from textual.screen import ModalScreen
 from textual.widgets import Footer, Input, Label, ListItem, ListView, Static
 
 from ..workspaces import mount_spec
-from .rows import clip, status_line, workspace_label
+from .detail import status_line
+from .rows import clip, workspace_label
 
 #: The editor row's spec column budget: the share, the guest path,
 #: and the mode beside the state's word — the guest path is the

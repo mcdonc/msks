@@ -612,7 +612,7 @@ async def test_shutdown_represses_button_when_guest_ignores_it(
     app, _, _ = env
     await app.state.microvm.launch(spec(tmp_path))
     proc = app.state.microvm.local._procs[WID]
-    monkeypatch.setattr(local_mod, "POWER_REPRESS_S", 0.05)
+    monkeypatch.setattr(local_mod.driver, "POWER_REPRESS_S", 0.05)
     presses = 0
 
     def stubborn_until_third_press() -> None:

@@ -1,8 +1,6 @@
 """The Model state object: every database operation msksd performs."""
 
-import hashlib
 import json
-import secrets
 from datetime import UTC
 from pathlib import Path
 
@@ -14,12 +12,12 @@ from sqlalchemy import create_engine, delete, or_, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from ..agecrypto import secret_key_hash
-from ..spec.mounts import dump_mounts, parse_mounts
+from ..agecrypto import secret_key_hash  # noqa: F401 — the suite reads it here
 from ..spec.tokens import validate_token_plaintext
 from ..spec.vm import VmSpec
 from .db import Base, engine_for, sessionmaker_for, tighten_db_mode, utcnow
 from .egress_consent import EgressConsentModel
+from .keys import classify_blobs, coverage_key, hash_token, new_token
 from .proxies import WorkspaceProxy
 from .secrets import (
     AUDIT_KINDS,
@@ -27,38 +25,17 @@ from .secrets import (
     SecretAudit,
     SecretBlob,
 )
+from .serialize import (
+    audit_dict,
+    placeholder_dict,
+    proxy_dict,
+    resolve_workspace,
+    workspace_dict,
+    workspace_fields,
+)
 from .tokens import Token
 from .workspaces import WORKSPACE_STATUSES, Workspace
 
-
-def coverage_key(workspaces: list[str]) -> str:
-    """The canonical stored form of a coverage set: sorted,
-    de-duplicated ids as JSON (#339). An empty list is the
-    daemon-wide row and stays ``[]``."""
-    return json.dumps(sorted(set(workspaces)))
-
-
-TOKEN_ENTROPY_BYTES = 32
-
-
-def classify_blobs(expected: dict[str, str], blobs: dict[str, str]) -> dict:
-    """The staleness rule over two maps (#513): a recipient whose
-    workspace has no blob row is missing, one whose blob names
-    another key hash is stale (the key rotated), and a matching
-    hash is fresh. Pure — the rows alone decide."""
-    missing = []
-    stale = []
-    for workspace_id, line in expected.items():
-        hash_seen = blobs.get(workspace_id)
-        if hash_seen is None:
-            missing.append(workspace_id)
-        elif hash_seen != secret_key_hash(line):
-            stale.append(workspace_id)
-    return {"missing": sorted(missing), "stale": sorted(stale)}
-
-
-# Inside the package, so the wheel ships it: a pip-installed msksd
-# can run its migrations (the package build inherits this).
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
 
 
@@ -68,22 +45,6 @@ def alembic_config(db_path: Path) -> AlembicConfig:
     config.set_main_option("script_location", str(MIGRATIONS_DIR))
     config.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
     return config
-
-
-def hash_token(plaintext: str) -> str:
-    """The stored form of a bearer token (sha256 hex)."""
-    return hashlib.sha256(plaintext.encode()).hexdigest()
-
-
-def new_token() -> str:
-    """A fresh bearer token plaintext (shown once, stored hashed).
-
-    The plaintext passes the grammar guard: tokens ride the
-    ``Authorization`` header on the REST surface and the websocket
-    handshake (#216), where a stray separator would fail the
-    header-form guard before any dial.
-    """
-    return validate_token_plaintext(secrets.token_urlsafe(TOKEN_ENTROPY_BYTES))
 
 
 class Model:
@@ -979,155 +940,3 @@ class Model:
                 .limit(limit)
             )
             return [audit_dict(row) for row in reversed(rows.all())]
-
-
-async def resolve_workspace(session, ref: str) -> Workspace | None:
-    """One workspace row by id-or-name ref (#246), inside a session
-    the caller owns: id first (the canonical preference, not a
-    tiebreak — live ids and names are one disjoint namespace), then
-    the unique name."""
-    row = await session.get(Workspace, ref)
-    if row is None:
-        row = await session.scalar(
-            select(Workspace).where(Workspace.name == ref)
-        )
-    return row
-
-
-def workspace_fields(
-    spec: VmSpec,
-    image_hash: str | None,
-    host: str | None,
-    name: str | None = None,
-) -> dict:
-    """The ORM column values a VmSpec maps to."""
-    return {
-        "id": spec.workspace_id,
-        "name": name,
-        "kernel": str(spec.kernel),
-        "initrd": None if spec.initrd is None else str(spec.initrd),
-        "rootfs": str(spec.rootfs),
-        "cmdline": spec.cmdline,
-        "cpus": spec.cpus,
-        "mem_mib": spec.mem_mib,
-        "image_hash": image_hash,
-        "host": host,
-        "root_mib": spec.root_mib,
-        "home_mib": spec.home_mib,
-        "egress": spec.egress,
-        "egress_mode": spec.egress_mode,
-        "secret_coverage": spec.secret_coverage,
-        "egress_allowlist": json.dumps(spec.egress_allowlist)
-        if spec.egress_allowlist
-        else None,
-        "user_data": spec.user_data,
-        "ssh_pubkey": spec.ssh_pubkey,
-        "login_user": spec.login_user,
-        # The host's timezone captured at create (#633): NULL is
-        # UTC-or-unreadable — a UTC host and a pre-#633 row read
-        # the same.
-        "timezone": spec.timezone,
-        # The workspace's mounts (#620, part #624): the create-time
-        # set rides the spec; dump_mounts keeps the no-mounts row
-        # NULL (a pre-#620 row and a mountless row read the same).
-        "mounts": dump_mounts(spec.mounts),
-        "status": "created",
-    }
-
-
-def proxy_dict(row: WorkspaceProxy) -> dict:
-    """The API-facing dict for a proxy row. The two hosts are
-    direction-shaped: a forward row carries ``listen_host`` (the
-    daemon-side bind) and no ``target_host`` (the target is the
-    guest); a remote row carries ``target_host`` (the daemon-side
-    dial) and no ``listen_host`` (the bind is the workspace's tap
-    address, a runtime fact the row cannot pin)."""
-    return {
-        "id": row.id,
-        "workspace_id": row.workspace_id,
-        "direction": row.direction,
-        "listen_host": row.listen_host,
-        "listen_port": row.listen_port,
-        "target_host": row.target_host,
-        "target_port": row.target_port,
-        "label": row.label,
-        "created_at": row.created_at.isoformat(),
-    }
-
-
-def placeholder_dict(row: Placeholder) -> dict:
-    """The API-facing dict for a placeholder row.
-
-    The sentinel is included — mint's response and the on-demand
-    row fetch (#440) print it — but list views built from these
-    dicts drop it. ``workspaces`` is the coverage set (#339):
-    ``[]`` is the daemon-wide row.
-    """
-    return {
-        "id": row.id,
-        "workspaces": json.loads(row.workspaces),
-        "name": row.name,
-        "sentinel": row.sentinel,
-        "dests": json.loads(row.dests),
-        "backend_ref": row.backend_ref,
-        "created_at": row.created_at.isoformat(),
-        "expires_at": (
-            None if row.expires_at is None else row.expires_at.isoformat()
-        ),
-    }
-
-
-def audit_dict(row: SecretAudit) -> dict:
-    """The API-facing dict for an audit row; ``workspaces`` is the
-    placeholder's coverage at the event (#339)."""
-    return {
-        "id": row.id,
-        "kind": row.kind,
-        "workspaces": json.loads(row.workspaces),
-        "name": row.name,
-        "dests": json.loads(row.dests),
-        "created_at": row.created_at.isoformat(),
-    }
-
-
-def workspace_dict(row: Workspace) -> dict:
-    """The API-facing dict for a workspace row. The mounts list
-    serves the parsed form: a row a pre-#685 daemon wrote keeps
-    its stored shape in the column until the next set, but every
-    read serves the entries the one grammar admits (#685's drop
-    at read) — no surface ever sees a named entry back.
-    ``mounts_pending`` (#756) compares the configured set against
-    the set the last start attached: True while the two disagree
-    (an edit the next start takes, a mount never yet attached),
-    False once they agree again."""
-    configured = parse_mounts(row.mounts)
-    return {
-        "id": row.id,
-        "name": row.name,
-        "kernel": row.kernel,
-        "initrd": row.initrd,
-        "rootfs": row.rootfs,
-        "cmdline": row.cmdline,
-        "cpus": row.cpus,
-        "mem_mib": row.mem_mib,
-        "image_hash": row.image_hash,
-        "host": row.host,
-        "root_mib": row.root_mib,
-        "home_mib": row.home_mib,
-        "egress": row.egress,
-        "egress_slice": row.egress_slice,
-        "egress_mode": row.egress_mode or "allow",
-        "secret_coverage": row.secret_coverage or "all",
-        "egress_allowlist": json.loads(row.egress_allowlist)
-        if row.egress_allowlist
-        else [],
-        "mounts": [mount.as_dict() for mount in configured],
-        "mounts_pending": set(configured)
-        != set(parse_mounts(row.attached_mounts)),
-        "user_data": row.user_data,
-        "ssh_pubkey": row.ssh_pubkey,
-        "login_user": row.login_user,
-        "timezone": row.timezone,
-        "status": row.status,
-        "created_at": row.created_at.isoformat(),
-    }

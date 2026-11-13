@@ -2214,7 +2214,7 @@ async def test_a_flight_dying_at_teardown_stays_quiet(
         def exception(self, *args):
             logged.append(args[0])
 
-    monkeypatch.setattr(consent_ui, "logger", RecordingLog())
+    monkeypatch.setattr(consent_ui.wire, "logger", RecordingLog())
     alive = {"go": True}
     gate = asyncio.Event()
     runs: list[int] = []
@@ -2582,7 +2582,7 @@ def test_ws_connect_kwargs_and_shared_ssl(monkeypatch) -> None:
     import ssl
 
     ctx = ssl.create_default_context()
-    monkeypatch.setattr(consent_ui, "_SHARED_SSL", [ctx])
+    monkeypatch.setattr(consent_ui.wire, "_SHARED_SSL", [ctx])
     kwargs = consent_ui.ws_connect_kwargs("http://d", "t", ctx)
     assert kwargs["ssl"] is None
     kwargs = consent_ui.ws_connect_kwargs("https://d", "t", ctx)
@@ -2760,7 +2760,7 @@ def test_shared_ssl_answers_none_over_the_local_socket(
     builder returns None — no TOFU warning prints on the TUI."""
     monkeypatch.setenv("MSKSC_URL", "")
     monkeypatch.setenv("MSKSC_SOCKET", "/run/msks/msksd.sock")
-    monkeypatch.setattr(consent_ui, "_SHARED_SSL", [None])
+    monkeypatch.setattr(consent_ui.wire, "_SHARED_SSL", [None])
     assert consent_ui.shared_ssl() is None
 
 

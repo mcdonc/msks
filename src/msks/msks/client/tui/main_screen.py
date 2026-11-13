@@ -33,6 +33,12 @@ from .consent_ui import (
     focus_attr,
     focused_attr,
 )
+from .detail import (
+    detail_strip,
+    skew_marker,
+    state_summary,
+    status_content,
+)
 from .forms import CreateScreen
 from .help import HelpKeys
 from .importer import ImagesScreen
@@ -42,15 +48,11 @@ from .rows import (
     LIST_FRAME_CELLS,
     NATURAL_DESCENDING,
     column_at,
-    detail_strip,
     expanded_columns,
     list_header,
     row_content,
-    skew_marker,
     sort_rows,
-    state_summary,
     status_class,
-    status_content,
     workspace_label,
 )
 from .secrets import SecretsScreen

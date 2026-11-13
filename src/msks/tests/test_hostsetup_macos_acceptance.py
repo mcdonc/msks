@@ -40,6 +40,7 @@ import pytest
 from msks.client.config import parse_config_doc
 from msks.server import hostsetup_macos as mac
 from msks.server.tls import load_or_generate
+from test_hostsetup_macos import patch_phase
 
 pytestmark = [
     pytest.mark.skipif(
@@ -139,12 +140,12 @@ def client_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     """The client's config tree and the agent's paths, relocated:
     the harness writes real files, never the host's own."""
     monkeypatch.setenv("MSKSC_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setattr(mac, "MAC_CA", tmp_path / "config" / "ca.pem")
-    monkeypatch.setattr(mac, "MAC_TOKEN", tmp_path / "config" / "vm.token")
-    monkeypatch.setattr(
-        mac, "AGENT_PLIST", tmp_path / "LaunchAgents" / "agent.plist"
+    patch_phase(monkeypatch, "MAC_CA", tmp_path / "config" / "ca.pem")
+    patch_phase(monkeypatch, "MAC_TOKEN", tmp_path / "config" / "vm.token")
+    patch_phase(
+        monkeypatch, "AGENT_PLIST", tmp_path / "LaunchAgents" / "agent.plist"
     )
-    monkeypatch.setattr(mac, "AGENT_LOG", tmp_path / "Logs" / "agent.log")
+    patch_phase(monkeypatch, "AGENT_LOG", tmp_path / "Logs" / "agent.log")
     return tmp_path
 
 
@@ -161,7 +162,7 @@ def vm_seam(monkeypatch: pytest.MonkeyPatch, daemon: FakeDaemon) -> FakeDaemon:
             return "acceptance-token\n"
         return ""
 
-    monkeypatch.setattr(mac, "vm_shell", fake_vm_shell)
+    patch_phase(monkeypatch, "vm_shell", fake_vm_shell)
     return daemon
 
 
@@ -266,7 +267,7 @@ def test_a_mismatched_vm_ca_refuses_before_any_file_lands(
             return "acceptance-token\n"
         return ""
 
-    monkeypatch.setattr(mac, "vm_shell", other_ca_vm_shell)
+    patch_phase(monkeypatch, "vm_shell", other_ca_vm_shell)
     try:
         with pytest.raises(mac.MacSetupError, match="--port"):
             mac.client_preset(daemon.port)
@@ -326,8 +327,8 @@ def test_the_login_agent_loads_and_unloads_through_launchd(
     out again. The program is /usr/bin/true — limactl's slot in
     the plist, held by a command the runner carries; the label is
     the harness's own, never the real tool's."""
-    monkeypatch.setattr(mac, "limactl_path", lambda: "/usr/bin/true")
-    monkeypatch.setattr(mac, "AGENT_LABEL", AGENT_TEST_LABEL)
+    patch_phase(monkeypatch, "limactl_path", lambda: "/usr/bin/true")
+    patch_phase(monkeypatch, "AGENT_LABEL", AGENT_TEST_LABEL)
     mac.ensure_agent()
     try:
         assert mac.agent_loaded()
@@ -361,8 +362,8 @@ def test_the_client_links_claim_the_brew_prefix(
     deployment's links are never touched."""
     for command in mac.CLIENT_COMMANDS:
         (tmp_path / command).write_text("#!/bin/sh\n")
-    monkeypatch.setattr(
-        mac,
+    patch_phase(
+        monkeypatch,
         "client_sibling",
         lambda command: str(tmp_path / command),
     )

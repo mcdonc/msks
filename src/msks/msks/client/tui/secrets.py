@@ -52,6 +52,9 @@ from .consent_ui import (
     focused_event_id,
     render_order,
 )
+from .detail import (
+    status_content,
+)
 from .forms import FormSelect, FormWalk
 from .help import HelpKeys
 from .link import AuditLink
@@ -63,7 +66,6 @@ from .rows import (
     list_header,
     padded_cells,
     parse_stamp,
-    status_content,
     workspace_label,
 )
 from .rows import clip as clip_cell

@@ -791,8 +791,8 @@ async def test_the_real_probe_reads_the_binary(tmp_path: Path) -> None:
 
     import msks.microvm.local as local_mod
 
-    real_timeout = local_mod.VERSION_PROBE_TIMEOUT_S
-    local_mod.VERSION_PROBE_TIMEOUT_S = 0.2
+    real_timeout = local_mod.fsproc.VERSION_PROBE_TIMEOUT_S
+    local_mod.fsproc.VERSION_PROBE_TIMEOUT_S = 0.2
     hang = tmp_path / "virtiofsd-hang"
     hang.write_text("#!/bin/sh\nsleep 5\n")
     hang.chmod(0o755)
@@ -802,7 +802,7 @@ async def test_the_real_probe_reads_the_binary(tmp_path: Path) -> None:
         ):
             await driver._require_virtiofsd_floor(str(hang))
     finally:
-        local_mod.VERSION_PROBE_TIMEOUT_S = real_timeout
+        local_mod.fsproc.VERSION_PROBE_TIMEOUT_S = real_timeout
 
 
 def test_doctor_names_a_probe_failing_virtiofsd(tmp_path: Path) -> None:
@@ -931,8 +931,8 @@ async def test_stop_is_idempotent_and_kills_a_hang(tmp_path: Path) -> None:
     that ignores SIGTERM dies by SIGKILL past the grace."""
     import msks.microvm.local as local_mod
 
-    real_grace = local_mod.FS_TERM_GRACE_S
-    local_mod.FS_TERM_GRACE_S = 0.1
+    real_grace = local_mod.fsproc.FS_TERM_GRACE_S
+    local_mod.fsproc.FS_TERM_GRACE_S = 0.1
     share_dir = tmp_path / "proj"
     share_dir.mkdir()
     vm_dir = tmp_path / "vms" / "ws-h"
@@ -971,7 +971,7 @@ async def test_stop_is_idempotent_and_kills_a_hang(tmp_path: Path) -> None:
         assert proc.killed  # ignored the TERM, died by KILL
         await driver._stop_fs_daemons("ws-h")  # idempotent second call
     finally:
-        local_mod.FS_TERM_GRACE_S = real_grace
+        local_mod.fsproc.FS_TERM_GRACE_S = real_grace
 
 
 async def test_real_spawn_wraps_a_missing_binary(tmp_path: Path) -> None:
@@ -1141,8 +1141,8 @@ async def test_untracked_sweep_escalates_to_kill(tmp_path: Path) -> None:
 
     import msks.microvm.local as local_mod
 
-    real_grace = local_mod.FS_TERM_GRACE_S
-    local_mod.FS_TERM_GRACE_S = 0.2
+    real_grace = local_mod.fsproc.FS_TERM_GRACE_S
+    local_mod.fsproc.FS_TERM_GRACE_S = 0.2
     try:
         vm_dir = tmp_path / "vms" / "ws-imm"
         vm_dir.mkdir(parents=True)
@@ -1161,7 +1161,7 @@ async def test_untracked_sweep_escalates_to_kill(tmp_path: Path) -> None:
         assert not pidfile.exists()
         assert await local_mod.pid_dead_by(immortal.pid, 2.0)
     finally:
-        local_mod.FS_TERM_GRACE_S = real_grace
+        local_mod.fsproc.FS_TERM_GRACE_S = real_grace
         with contextlib.suppress(ProcessLookupError):
             os.kill(immortal.pid, signal_mod.SIGCONT)
         with contextlib.suppress(ProcessLookupError):
@@ -1178,8 +1178,8 @@ async def test_untracked_sweep_kills_a_term_ignoring_daemon(
     with the pid."""
     import msks.microvm.local as local_mod
 
-    real_grace = local_mod.FS_TERM_GRACE_S
-    local_mod.FS_TERM_GRACE_S = 0.2
+    real_grace = local_mod.fsproc.FS_TERM_GRACE_S
+    local_mod.fsproc.FS_TERM_GRACE_S = 0.2
     try:
         vm_dir = tmp_path / "vms" / "ws-imm2"
         vm_dir.mkdir(parents=True)
@@ -1195,7 +1195,7 @@ async def test_untracked_sweep_kills_a_term_ignoring_daemon(
         assert not pidfile.exists()
         assert await local_mod.pid_dead_by(stubborn.pid, 2.0)
     finally:
-        local_mod.FS_TERM_GRACE_S = real_grace
+        local_mod.fsproc.FS_TERM_GRACE_S = real_grace
         with contextlib.suppress(ProcessLookupError):
             stubborn.kill()
         await stubborn.wait()
@@ -1278,8 +1278,8 @@ async def test_a_silent_daemon_refuses_past_the_grace(tmp_path: Path) -> None:
         return proc
 
     driver._spawn_fs = silent_spawn
-    real_grace = local_mod.FS_TERM_GRACE_S
-    local_mod.FS_TERM_GRACE_S = 0.2
+    real_grace = local_mod.fsproc.FS_TERM_GRACE_S
+    local_mod.fsproc.FS_TERM_GRACE_S = 0.2
     try:
         with pytest.raises(MicrovmError, match="never served"):
             await driver._start_fs_daemons(
@@ -1299,7 +1299,7 @@ async def test_a_silent_daemon_refuses_past_the_grace(tmp_path: Path) -> None:
         # start.
         assert [proc.killed for proc in refused] == [True]
     finally:
-        local_mod.FS_TERM_GRACE_S = real_grace
+        local_mod.fsproc.FS_TERM_GRACE_S = real_grace
 
 
 async def test_stop_fs_pid_takes_the_term_fast_path() -> None:
@@ -1339,11 +1339,11 @@ async def test_sweep_keeps_a_killproof_daemons_pidfile(tmp_path):
         return False  # survived even SIGKILL
 
     real_stop = local_mod.stop_fs_pid
-    local_mod.stop_fs_pid = killproof
+    local_mod.fsproc.stop_fs_pid = killproof
     try:
         await local_mod.sweep_fs_pidfile(vm_dir, pidfile)
     finally:
-        local_mod.stop_fs_pid = real_stop
+        local_mod.fsproc.stop_fs_pid = real_stop
         with contextlib.suppress(ProcessLookupError):
             live.kill()
         await live.wait()

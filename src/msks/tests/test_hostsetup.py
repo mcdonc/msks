@@ -24,6 +24,21 @@ from msks.server.hostsetup import (
     main,
 )
 
+
+def patch_phase(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: object
+) -> None:
+    """Patch *name* on every hostsetup submodule that carries it.
+
+    The split package binds each phase helper in the submodule
+    that defines or imports it, so a patch on the package root
+    reaches nothing a phase calls; walking SUBMODULES with
+    ``raising=False`` rebinds every copy the phases see."""
+    for sub in hostsetup.SUBMODULES:
+        monkeypatch.setattr(sub, name, value, raising=False)
+    monkeypatch.setattr(hostsetup, name, value, raising=False)
+
+
 CAPS = "cap_net_admin,cap_net_bind_service"
 
 
@@ -153,55 +168,55 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     )
     manager = tmp_path / "systemd"
     manager.mkdir()
-    monkeypatch.setattr(hostsetup, "SYSTEMD_MANAGER", str(manager))
-    monkeypatch.setattr(hostsetup, "group_present", lambda name: name == "kvm")
-    monkeypatch.setattr(hostsetup, "in_group", lambda user, name: False)
+    patch_phase(monkeypatch, "SYSTEMD_MANAGER", str(manager))
+    patch_phase(monkeypatch, "group_present", lambda name: name == "kvm")
+    patch_phase(monkeypatch, "in_group", lambda user, name: False)
     home = tmp_path / "home" / "chrism"
     home.mkdir(parents=True)
-    monkeypatch.setattr(
-        hostsetup, "executing_user", lambda: ("chrism", 1000, 1000, str(home))
+    patch_phase(
+        monkeypatch,
+        "executing_user",
+        lambda: ("chrism", 1000, 1000, str(home)),
     )
     # The user manager is up by default (the login-session shape);
     # the stale-manager tests point this at a missing path.
     runtime = tmp_path / "run-user-1000"
     runtime.mkdir()
-    monkeypatch.setattr(
-        hostsetup, "RUNTIME_DIR_FMT", str(runtime.parent / "run-user-{}")
+    patch_phase(
+        monkeypatch, "RUNTIME_DIR_FMT", str(runtime.parent / "run-user-{}")
     )
     # chown is root-only; the seam records the handovers instead.
     chowns: list[tuple[str, int, int]] = []
-    monkeypatch.setattr(
-        hostsetup,
+    patch_phase(
+        monkeypatch,
         "chown_path",
         lambda path, uid, gid: chowns.append((str(path), uid, gid)),
     )
     host.chowns = chowns
-    monkeypatch.setattr(hostsetup, "RETRY_DELAY", 0.0)
-    monkeypatch.setattr(hostsetup, "sh", host.sh)
-    monkeypatch.setattr(hostsetup, "write_file", host.write)
-    monkeypatch.setattr(hostsetup, "read_file", host.read)
-    monkeypatch.setattr(hostsetup, "file_exists", lambda p: p in host.files)
-    monkeypatch.setattr(hostsetup, "remove_file", host.remove_file)
+    patch_phase(monkeypatch, "RETRY_DELAY", 0.0)
+    patch_phase(monkeypatch, "sh", host.sh)
+    patch_phase(monkeypatch, "write_file", host.write)
+    patch_phase(monkeypatch, "read_file", host.read)
+    patch_phase(monkeypatch, "file_exists", lambda p: p in host.files)
+    patch_phase(monkeypatch, "remove_file", host.remove_file)
     # The profile phase's atomic rename: the fake write_file
     # records in memory, so the real rename has nothing to move.
-    monkeypatch.setattr(hostsetup, "replace_file", lambda source, target: None)
+    patch_phase(monkeypatch, "replace_file", lambda source, target: None)
     # The VMM's landed path lives under tmp_path: the .part sweep
     # runs a real best-effort unlink, and the suite never touches
     # the host's /usr/local/bin (the fake's one real-FS escape).
-    monkeypatch.setattr(
-        hostsetup, "CLOUD_HYPERVISOR_BIN", str(tmp_path / "cloud-hypervisor")
+    patch_phase(
+        monkeypatch, "CLOUD_HYPERVISOR_BIN", str(tmp_path / "cloud-hypervisor")
     )
     # The client links' paths (#719, #755): under tmp_path, like
     # the VMM's — the phase's real symlinks never reach the
     # host's /usr/local/bin.
-    monkeypatch.setattr(
-        hostsetup, "CLIENT_LINK", str(tmp_path / "client" / "msks")
+    patch_phase(monkeypatch, "CLIENT_LINK", str(tmp_path / "client" / "msks"))
+    patch_phase(
+        monkeypatch, "POPUP_LINK", str(tmp_path / "client" / "msks-term-popup")
     )
-    monkeypatch.setattr(
-        hostsetup, "POPUP_LINK", str(tmp_path / "client" / "msks-term-popup")
-    )
-    monkeypatch.setattr(
-        hostsetup,
+    patch_phase(
+        monkeypatch,
         "CLIENT_LINKS",
         (
             ("msks", hostsetup.CLIENT_LINK),
@@ -209,9 +224,9 @@ def debian_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         ),
     )
     (tmp_path / "client").mkdir()
-    monkeypatch.setattr(hostsetup, "OS_RELEASE", str(release))
+    patch_phase(monkeypatch, "OS_RELEASE", str(release))
     monkeypatch.setattr(hostsetup.os, "geteuid", lambda: 0)
-    monkeypatch.setattr(hostsetup, "which", lambda tool: f"/usr/bin/{tool}")
+    patch_phase(monkeypatch, "which", lambda tool: f"/usr/bin/{tool}")
     yield host
 
 
@@ -239,7 +254,7 @@ def test_non_debian_host_refuses_by_name(
 ) -> None:
     release = Path(hostsetup.OS_RELEASE)
     release.write_text("ID=fedora\n")
-    monkeypatch.setattr(hostsetup, "OS_RELEASE", str(release))
+    patch_phase(monkeypatch, "OS_RELEASE", str(release))
     assert main() == 1
     assert "targets Debian hosts (os-release says 'fedora')" in (
         capsys.readouterr().err
@@ -315,7 +330,7 @@ def test_kernel_hint_names_the_ubuntu_flavour(
     names (#639)."""
     release = tmp_path / "os-release"
     release.write_text('ID="ubuntu"\nVERSION_ID="24.04"\n')
-    monkeypatch.setattr(hostsetup, "OS_RELEASE", str(release))
+    patch_phase(monkeypatch, "OS_RELEASE", str(release))
     assert hostsetup.kernel_package("x86_64", "6.8.0") == (
         "linux-image-generic"
     )
@@ -383,7 +398,7 @@ def test_off_path_virtiofsd_answers_the_probe(
     def lacking(tool):
         return None if tool == "virtiofsd" else real_which(tool)
 
-    monkeypatch.setattr(hostsetup, "which", lacking)
+    patch_phase(monkeypatch, "which", lacking)
     location = tmp_path / "virtiofsd"
     location.write_text("#!/bin/sh\n")
     location.chmod(0o755)
@@ -408,7 +423,7 @@ def test_absent_everywhere_virtiofsd_names_the_package(
     def lacking(tool):
         return None if tool == "virtiofsd" else real_which(tool)
 
-    monkeypatch.setattr(hostsetup, "which", lacking)
+    patch_phase(monkeypatch, "which", lacking)
     assert hostsetup.missing_packages() == ["virtiofsd"]
 
 
@@ -420,7 +435,7 @@ def test_missing_tools_install_via_apt(
     def lacking(tool):
         return None if tool == "conntrack" else real_which(tool)
 
-    monkeypatch.setattr(hostsetup, "which", lacking)
+    patch_phase(monkeypatch, "which", lacking)
     assert main() == 0
     apt = debian_host.ran("apt-get")
     assert apt[0] == ["apt-get", "-qq", "update"]
@@ -442,7 +457,7 @@ def test_every_doctor_tool_gains_its_package(
             else (real_which(tool))
         )
 
-    monkeypatch.setattr(hostsetup, "which", lacking)
+    patch_phase(monkeypatch, "which", lacking)
     assert main() == 0
     apt = debian_host.ran("apt-get")
     assert apt[1] == [
@@ -489,7 +504,7 @@ def test_an_unreadable_linker_cache_installs_the_sonames(
             return 1, "", "ldconfig: cannot read"
         return debian_host.sh(cmd, timeout=timeout, env=env)
 
-    monkeypatch.setattr(hostsetup, "sh", broken_sh)
+    patch_phase(monkeypatch, "sh", broken_sh)
     assert main() == 0
     apt = debian_host.ran("apt-get")
     assert "libnetfilter-queue1" in apt[1]
@@ -525,8 +540,8 @@ def test_the_login_path_block_never_duplicates(
         "export EDITOR=vi\n" + hostsetup.PROFILE_PATH_BLOCK
     )
     written: dict[str, str] = {}
-    monkeypatch.setattr(
-        hostsetup,
+    patch_phase(
+        monkeypatch,
         "write_file",
         lambda path, text: written.update({path: text}),
     )
@@ -544,9 +559,9 @@ def test_an_unreadable_profile_reads_as_empty(
     def raising(path: str) -> str:
         raise FileNotFoundError(path)
 
-    monkeypatch.setattr(hostsetup, "read_file", raising)
-    monkeypatch.setattr(
-        hostsetup,
+    patch_phase(monkeypatch, "read_file", raising)
+    patch_phase(
+        monkeypatch,
         "write_file",
         lambda path, text: Path(path).write_text(text, encoding="utf-8"),
     )
@@ -568,7 +583,7 @@ def test_a_non_utf8_profile_is_a_named_refusal(
     def raising(path: str) -> str:
         raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
 
-    monkeypatch.setattr(hostsetup, "read_file", raising)
+    patch_phase(monkeypatch, "read_file", raising)
     with pytest.raises(hostsetup.HostSetupError) as caught:
         hostsetup.land_user_path(str(tmp_path), 1000, 1000)
     assert "not UTF-8" in str(caught.value)
@@ -583,8 +598,8 @@ def test_a_profile_that_is_a_directory_refuses_by_name(
     file the phase writes: the rename refuses with the path
     named, and nothing partial survives (#601 review)."""
     (tmp_path / ".profile").mkdir()
-    monkeypatch.setattr(
-        hostsetup,
+    patch_phase(
+        monkeypatch,
         "write_file",
         lambda path, text: Path(path).write_text(text, encoding="utf-8"),
     )
@@ -627,9 +642,9 @@ def test_cloud_hypervisor_lands_from_upstream_when_absent(
         fetched.append(url)
         Path(dest).write_bytes(b"CH-BINARY\n")
 
-    monkeypatch.setattr(hostsetup, "which", lacking)
-    monkeypatch.setattr(hostsetup, "fetch_upstream", fake_fetch)
-    monkeypatch.setattr(hostsetup, "CLOUD_HYPERVISOR_BIN", str(target))
+    patch_phase(monkeypatch, "which", lacking)
+    patch_phase(monkeypatch, "fetch_upstream", fake_fetch)
+    patch_phase(monkeypatch, "CLOUD_HYPERVISOR_BIN", str(target))
     assert main() == 0
     assert fetched == [hostsetup.cloud_hypervisor_url()]
     assert debian_host.ran(str(target)) == [[str(target), "--version"]]
@@ -645,8 +660,8 @@ def test_a_present_cloud_hypervisor_stays_untouched(
     """The host's own VMM install wins: nothing downloads, no
     fetch seam even runs (#598)."""
     fetched: list[str] = []
-    monkeypatch.setattr(
-        hostsetup,
+    patch_phase(
+        monkeypatch,
         "fetch_upstream",
         lambda url, dest: fetched.append(url),
     )
@@ -716,14 +731,14 @@ def test_a_binary_that_does_not_run_is_removed_and_named(
             return 126, "", "cannot execute binary file\n"
         return debian_host.sh(cmd, timeout=timeout, env=env)
 
-    monkeypatch.setattr(hostsetup, "which", lacking)
-    monkeypatch.setattr(
-        hostsetup,
+    patch_phase(monkeypatch, "which", lacking)
+    patch_phase(
+        monkeypatch,
         "fetch_upstream",
         lambda url, dest: Path(dest).write_bytes(b"X"),
     )
-    monkeypatch.setattr(hostsetup, "CLOUD_HYPERVISOR_BIN", str(target))
-    monkeypatch.setattr(hostsetup, "sh", broken_sh)
+    patch_phase(monkeypatch, "CLOUD_HYPERVISOR_BIN", str(target))
+    patch_phase(monkeypatch, "sh", broken_sh)
     assert main() == 1
     err = capsys.readouterr().err
     assert "does not run" in err
@@ -746,7 +761,7 @@ def test_the_apt_list_carries_each_package_once(
             else real_which(tool)
         )
 
-    monkeypatch.setattr(hostsetup, "which", lacking)
+    patch_phase(monkeypatch, "which", lacking)
     assert main() == 0
     apt = debian_host.ran("apt-get")
     assert apt[1].count("e2fsprogs") == 1
@@ -769,11 +784,9 @@ def test_cloud_hypervisor_download_failure_names_the_source(
     def lacking(tool):
         return None if tool == "cloud-hypervisor" else real_which(tool)
 
-    monkeypatch.setattr(hostsetup, "which", lacking)
-    monkeypatch.setattr(hostsetup, "fetch_upstream", no_network)
-    monkeypatch.setattr(
-        hostsetup, "CLOUD_HYPERVISOR_BIN", str(tmp_path / "ch")
-    )
+    patch_phase(monkeypatch, "which", lacking)
+    patch_phase(monkeypatch, "fetch_upstream", no_network)
+    patch_phase(monkeypatch, "CLOUD_HYPERVISOR_BIN", str(tmp_path / "ch"))
     assert main() == 1
     err = capsys.readouterr().err
     assert "cloud-hypervisor download failed" in err
@@ -850,7 +863,7 @@ def test_absent_consent_modules_name_the_cause_and_fix(
         "nfnetlink_queue",
     }
     fake_uname(monkeypatch, "6.12.107+deb13-cloud-amd64", machine="amd64")
-    monkeypatch.setattr(hostsetup, "module_tree_present", lambda: True)
+    patch_phase(monkeypatch, "module_tree_present", lambda: True)
     assert main() == 0
     out = capsys.readouterr()
     assert (
@@ -876,7 +889,7 @@ def test_absent_modules_with_no_tree_name_the_missing_package(
     cannot verify (#550's review)."""
     debian_host.modprobe_absent = {"nfnetlink_queue"}
     fake_uname(monkeypatch, "6.12.107+deb13-amd64", machine="x86_64")
-    monkeypatch.setattr(hostsetup, "module_tree_present", lambda: False)
+    patch_phase(monkeypatch, "module_tree_present", lambda: False)
     assert main() == 0
     out = capsys.readouterr()
     assert (
@@ -895,7 +908,7 @@ def test_the_fix_names_the_machines_own_package(
     (#550's review)."""
     debian_host.modprobe_absent = {"nfnetlink_queue"}
     fake_uname(monkeypatch, "6.12.107+deb13-arm64", machine="aarch64")
-    monkeypatch.setattr(hostsetup, "module_tree_present", lambda: True)
+    patch_phase(monkeypatch, "module_tree_present", lambda: True)
     assert main() == 0
     assert "apt install linux-image-arm64, reboot, re-run" in (
         capsys.readouterr().err
@@ -917,7 +930,7 @@ def test_an_infra_failure_is_a_load_failure_not_an_absence(
             return -1, "", "modprobe: timed out"
         return debian_host.sh(cmd, timeout, env)
 
-    monkeypatch.setattr(hostsetup, "sh", flaky)
+    patch_phase(monkeypatch, "sh", flaky)
     assert main() == 0
     out = capsys.readouterr()
     assert "WARNING modprobe tun failed — check the kernel" in out.err
@@ -933,7 +946,7 @@ def test_sh_runs_a_real_command() -> None:
 def test_os_release_missing_file_reads_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(hostsetup, "OS_RELEASE", "/nonexistent")
+    patch_phase(monkeypatch, "OS_RELEASE", "/nonexistent")
     assert hostsetup.os_release_id() == ""
     assert hostsetup.os_release_version_id() == ""
 
@@ -950,7 +963,7 @@ def test_os_release_without_id_reads_empty(
 ) -> None:
     release = tmp_path / "os-release"
     release.write_text("PRETTY_NAME=Not Debian\n")
-    monkeypatch.setattr(hostsetup, "OS_RELEASE", str(release))
+    patch_phase(monkeypatch, "OS_RELEASE", str(release))
     assert hostsetup.os_release_id() == ""
 
 
@@ -959,7 +972,7 @@ def test_os_release_id_strips_quotes(
 ) -> None:
     release = tmp_path / "os-release"
     release.write_text('ID="debian"\n')
-    monkeypatch.setattr(hostsetup, "OS_RELEASE", str(release))
+    patch_phase(monkeypatch, "OS_RELEASE", str(release))
     assert hostsetup.os_release_id() == "debian"
 
 
@@ -973,7 +986,7 @@ def test_apt_failure_refuses(
     def lacking(tool):
         return None if tool == "nft" else real_which(tool)
 
-    monkeypatch.setattr(hostsetup, "which", lacking)
+    patch_phase(monkeypatch, "which", lacking)
 
     def failing(cmd, timeout=10.0, env=None):
         debian_host.commands.append(cmd)
@@ -981,7 +994,7 @@ def test_apt_failure_refuses(
             return 100, "", "apt update is broken"
         return debian_host.sh(cmd, timeout)
 
-    monkeypatch.setattr(hostsetup, "sh", failing)
+    patch_phase(monkeypatch, "sh", failing)
     assert main() == 1
     assert "apt-get update failed: apt update is broken" in (
         capsys.readouterr().err
@@ -1000,7 +1013,7 @@ def test_missing_setpriv_refuses(
     def lacking(tool):
         return None if tool == "setpriv" else real_which(tool)
 
-    monkeypatch.setattr(hostsetup, "which", lacking)
+    patch_phase(monkeypatch, "which", lacking)
     debian_host.sh = lambda cmd, timeout=10.0: (  # apt "succeeds"
         (0, "", "")
         if cmd[0] == "apt-get"
@@ -1023,7 +1036,7 @@ def test_install_failure_refuses(
             return 1, "", "no space left"
         return debian_host.sh(cmd, timeout)
 
-    monkeypatch.setattr(hostsetup, "sh", failing)
+    patch_phase(monkeypatch, "sh", failing)
     assert main() == 1
     assert "installing /usr/local/bin/msks-caps failed: no space left" in (
         capsys.readouterr().err
@@ -1041,7 +1054,7 @@ def test_setcap_failure_refuses(
             return 1, "", "operation not supported"
         return debian_host.sh(cmd, timeout)
 
-    monkeypatch.setattr(hostsetup, "sh", failing)
+    patch_phase(monkeypatch, "sh", failing)
     assert main() == 1
     assert "filesystem must support capability xattrs" in (
         capsys.readouterr().err
@@ -1059,7 +1072,7 @@ def test_wrapper_proof_command_failure_refuses(
             return 1, "", "setpriv: capset failed"
         return debian_host.sh(cmd, timeout)
 
-    monkeypatch.setattr(hostsetup, "sh", failing)
+    patch_phase(monkeypatch, "sh", failing)
     assert main() == 1
     assert "no ambient capabilities" in capsys.readouterr().err
 
@@ -1080,7 +1093,7 @@ def test_kvm_absent_hint(
         raise OSError("nss is down")
 
     for failure in (no_group, broken_backend):
-        monkeypatch.setattr(hostsetup, "group_present", lambda name: False)
+        patch_phase(monkeypatch, "group_present", lambda name: False)
         assert main() == 0
         assert "kvm group is absent" in capsys.readouterr().out
 
@@ -1090,11 +1103,9 @@ def test_uplink_without_a_default_route(
 ) -> None:
     """ip answers success with no route, and a failing ip answers
     nothing: both read as no uplink."""
-    monkeypatch.setattr(hostsetup, "sh", lambda cmd, timeout=10.0: (0, "", ""))
+    patch_phase(monkeypatch, "sh", lambda cmd, timeout=10.0: (0, "", ""))
     assert hostsetup.uplink() == ""
-    monkeypatch.setattr(
-        hostsetup, "sh", lambda cmd, timeout=10.0: (1, "", "oops")
-    )
+    patch_phase(monkeypatch, "sh", lambda cmd, timeout=10.0: (1, "", "oops"))
     assert hostsetup.uplink() == ""
 
 
@@ -1157,12 +1168,12 @@ def test_apt_install_runs_noninteractive(
         seen.append(env)
         return real_sh(cmd, timeout)
 
-    monkeypatch.setattr(hostsetup, "sh", recording)
+    patch_phase(monkeypatch, "sh", recording)
     release = Path(hostsetup.OS_RELEASE)
     release.write_text("ID=debian\n")
-    monkeypatch.setattr(hostsetup, "OS_RELEASE", str(release))
-    monkeypatch.setattr(
-        hostsetup,
+    patch_phase(monkeypatch, "OS_RELEASE", str(release))
+    patch_phase(
+        monkeypatch,
         "which",
         lambda tool: None if tool == "nft" else "/usr/bin/x",
     )
@@ -1194,7 +1205,7 @@ def test_apt_install_failure_refuses(
     def lacking(tool):
         return None if tool == "nft" else real_which(tool)
 
-    monkeypatch.setattr(hostsetup, "which", lacking)
+    patch_phase(monkeypatch, "which", lacking)
 
     def failing(cmd, timeout=10.0, env=None):
         debian_host.commands.append(cmd)
@@ -1202,7 +1213,7 @@ def test_apt_install_failure_refuses(
             return 100, "", "dpkg is locked"
         return debian_host.sh(cmd, timeout, env)
 
-    monkeypatch.setattr(hostsetup, "sh", failing)
+    patch_phase(monkeypatch, "sh", failing)
     assert main() == 1
     assert "apt install failed: dpkg is locked" in capsys.readouterr().err
 
@@ -1214,7 +1225,7 @@ def test_module_tree_present_reads_the_filesystem(
     running release answers True, a missing one False."""
     release = "6.12.107-test-amd64"
     fake_uname(monkeypatch, release, machine="amd64")
-    monkeypatch.setattr(hostsetup, "MODULES_ROOT", str(tmp_path))
+    patch_phase(monkeypatch, "MODULES_ROOT", str(tmp_path))
     assert hostsetup.module_tree_present() is False
     (tmp_path / release).mkdir()
     assert hostsetup.module_tree_present() is True
@@ -1239,7 +1250,7 @@ def test_a_fresh_landing_adds_the_executing_user_to_kvm(
 def test_an_existing_kvm_membership_is_left_alone(
     debian_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(hostsetup, "in_group", lambda user, name: True)
+    patch_phase(monkeypatch, "in_group", lambda user, name: True)
     assert main() == 0
     assert debian_host.ran("adduser") == []
 
@@ -1267,9 +1278,9 @@ def test_in_group_reads_membership_and_primary_group(
         def getgrnam(self, name):
             return self.entry
 
-    monkeypatch.setattr(hostsetup, "grp", KvmGrp())
-    monkeypatch.setattr(
-        hostsetup,
+    patch_phase(monkeypatch, "grp", KvmGrp())
+    patch_phase(
+        monkeypatch,
         "pwd_getpwnam",
         lambda name: FakeEntry("chrism", 1000, "/home/chrism"),
     )
@@ -1291,8 +1302,8 @@ def test_in_group_reads_membership_and_primary_group(
     # The primary-group pass rides the base gid getgrouplist
     # always includes — the arm that replaced the old explicit
     # pw_gid == gr_gid check.
-    monkeypatch.setattr(
-        hostsetup,
+    patch_phase(
+        monkeypatch,
         "pwd_getpwnam",
         lambda name: FakeEntry("chrism", 1000, "/home/chrism", gid=104),
     )
@@ -1305,7 +1316,7 @@ def test_in_group_reads_membership_and_primary_group(
         def getgrnam(self, name):
             raise KeyError(name)
 
-    monkeypatch.setattr(hostsetup, "grp", MissingGrp())
+    patch_phase(monkeypatch, "grp", MissingGrp())
     assert hostsetup.in_group("chrism", "kvm") is False
 
 
@@ -1370,7 +1381,7 @@ def test_service_lands_the_unit_as_the_executing_user(
             raise FileNotFoundError(path)
         return debian_host.read(path)
 
-    monkeypatch.setattr(hostsetup, "read_file", strict_unit_read)
+    patch_phase(monkeypatch, "read_file", strict_unit_read)
     assert main() == 0
     home = Path(hostsetup.executing_user()[3])
     path = hostsetup.unit_path(str(home))
@@ -1441,7 +1452,7 @@ def test_service_skips_without_a_systemd_manager(
 ) -> None:
     """A container or another init: the manager probe answers no
     and the phase stands down, naming it."""
-    monkeypatch.setattr(hostsetup, "SYSTEMD_MANAGER", "/no/such/manager-dir")
+    patch_phase(monkeypatch, "SYSTEMD_MANAGER", "/no/such/manager-dir")
     assert main() == 0
     assert unit_writes(debian_host) == {}
     assert debian_host.ran("runuser") == []
@@ -1569,9 +1580,9 @@ def test_executing_user_prefers_sudo_user(
         def getpwuid(self, uid):
             return FakeEntry("root", 0, "/root")
 
-    monkeypatch.setattr(hostsetup, "pwd", AlicePwd())
-    monkeypatch.setattr(
-        hostsetup, "pwd_getpwuid", lambda uid: FakeEntry("root", 0, "/root")
+    patch_phase(monkeypatch, "pwd", AlicePwd())
+    patch_phase(
+        monkeypatch, "pwd_getpwuid", lambda uid: FakeEntry("root", 0, "/root")
     )
     assert hostsetup.executing_user() == ("alice", 1001, 1001, "/home/alice")
 
@@ -1588,9 +1599,9 @@ def test_executing_user_falls_back_when_sudo_user_left_no_entry(
     def missing(name):
         raise KeyError(name)
 
-    monkeypatch.setattr(hostsetup, "pwd_getpwnam", missing)
-    monkeypatch.setattr(
-        hostsetup,
+    patch_phase(monkeypatch, "pwd_getpwnam", missing)
+    patch_phase(
+        monkeypatch,
         "pwd_getpwuid",
         lambda uid: FakeEntry("root", 0, "/root", gid=0),
     )
@@ -1613,7 +1624,7 @@ def test_executing_user_reads_the_effective_account_without_sudo(
         def getpwnam(self, name):
             raise KeyError(name)
 
-    monkeypatch.setattr(hostsetup, "pwd", RootPwd())
+    patch_phase(monkeypatch, "pwd", RootPwd())
     assert hostsetup.executing_user() == ("root", 0, 0, "/root")
 
 
@@ -1627,14 +1638,14 @@ def test_group_present_degrades_to_false(
         def getgrnam(self, name):
             raise OSError("nss unavailable")
 
-    monkeypatch.setattr(hostsetup, "grp", FlakyGrp())
+    patch_phase(monkeypatch, "grp", FlakyGrp())
     assert hostsetup.group_present("kvm") is False
 
     class CarryingGrp:
         def getgrnam(self, name):
             return FakeGroup(name)
 
-    monkeypatch.setattr(hostsetup, "grp", CarryingGrp())
+    patch_phase(monkeypatch, "grp", CarryingGrp())
     assert hostsetup.group_present("kvm") is True
 
 
@@ -1698,7 +1709,7 @@ def test_kvm_note_survives_a_member_rerun(
     unchanged — and still prints the note, because the running
     daemon's manager cannot be proven to postdate the membership
     it already carries."""
-    monkeypatch.setattr(hostsetup, "in_group", lambda user, name: True)
+    patch_phase(monkeypatch, "in_group", lambda user, name: True)
     assert main() == 0
     out = capsys.readouterr().out
     assert "the manager may predate the kvm membership" in out
@@ -1713,9 +1724,7 @@ def test_kvm_joined_before_the_manager_started_needs_no_restart(
     """Linger started the manager after the adduser, so the fresh
     manager — and the daemon it forks — already carry kvm: the
     service line carries no restart note."""
-    monkeypatch.setattr(
-        hostsetup, "RUNTIME_DIR_FMT", str(tmp_path / "absent-{}")
-    )
+    patch_phase(monkeypatch, "RUNTIME_DIR_FMT", str(tmp_path / "absent-{}"))
     assert main() == 0
     out = capsys.readouterr().out
     assert "user@1000.service" not in out
@@ -1776,8 +1785,8 @@ def tmp_missing_home(monkeypatch, debian_host):
     import tempfile
 
     home = Path(tempfile.mkdtemp()) / "ghost"
-    monkeypatch.setattr(
-        hostsetup, "executing_user", lambda: ("ghost", 1042, 1042, str(home))
+    patch_phase(
+        monkeypatch, "executing_user", lambda: ("ghost", 1042, 1042, str(home))
     )
     return home
 
@@ -1805,7 +1814,7 @@ def test_the_kvm_note_needs_a_kvm_group(
     """A host with no kvm group has no membership the manager
     could predate — the note stays off and the kvm line names the
     stack to install."""
-    monkeypatch.setattr(hostsetup, "group_present", lambda name: False)
+    patch_phase(monkeypatch, "group_present", lambda name: False)
     assert main() == 0
     out = capsys.readouterr().out
     assert "the manager may predate" not in out
@@ -1826,7 +1835,7 @@ def test_a_unit_read_error_is_a_named_refusal(
             raise IsADirectoryError(path)
         return debian_host.read(path)
 
-    monkeypatch.setattr(hostsetup, "read_file", broken_unit_read)
+    patch_phase(monkeypatch, "read_file", broken_unit_read)
     assert main() == 1
     assert "landing the user unit failed" in capsys.readouterr().err
 
@@ -1862,7 +1871,7 @@ def test_uninstall_removes_every_piece(
     and the summary names the apt line for the packages that
     stay."""
     host = landed_host(debian_host)
-    monkeypatch.setattr(hostsetup, "in_group", lambda user, name: True)
+    patch_phase(monkeypatch, "in_group", lambda user, name: True)
     assert main(["--uninstall"]) == 0
     home = hostsetup.executing_user()[3]
     # The service teardown, in order: disable --now (waited out),
@@ -1968,7 +1977,7 @@ def test_uninstall_service_skips_without_a_systemd_manager(
     and the phase stands down, naming it — the unit file on disk
     stays, dead text either way."""
     host = landed_host(debian_host)
-    monkeypatch.setattr(hostsetup, "SYSTEMD_MANAGER", "/no/such/manager")
+    patch_phase(monkeypatch, "SYSTEMD_MANAGER", "/no/such/manager")
     assert main(["--uninstall"]) == 0
     assert host.ran("runuser") == []
     home = hostsetup.executing_user()[3]
@@ -2077,7 +2086,7 @@ def test_uninstall_deluser_failure_refuses(
     """A membership the group database will not give up is a named
     refusal, adduser's own failure text included."""
     host = landed_host(debian_host)
-    monkeypatch.setattr(hostsetup, "in_group", lambda user, name: True)
+    patch_phase(monkeypatch, "in_group", lambda user, name: True)
     host.deluser_rc = 1
     assert main(["--uninstall"]) == 1
     assert "deluser chrism kvm failed" in capsys.readouterr().err
@@ -2102,7 +2111,7 @@ def test_uninstall_kvm_group_absent_names_it(
 ) -> None:
     """A host with no kvm group has no membership to remove — the
     line says so and deluser never runs."""
-    monkeypatch.setattr(hostsetup, "group_present", lambda name: False)
+    patch_phase(monkeypatch, "group_present", lambda name: False)
     assert main(["--uninstall"]) == 0
     assert debian_host.ran("deluser") == []
     assert "the kvm group is absent (nothing was removed)" in (
@@ -2140,7 +2149,7 @@ def test_uninstall_names_only_the_present_packages(
     def lacking(tool):
         return None if tool in ("tmux", "ssh") else real_which(tool)
 
-    monkeypatch.setattr(hostsetup, "which", lacking)
+    patch_phase(monkeypatch, "which", lacking)
     host.ldconfig_answer = ""
     assert main(["--uninstall"]) == 0
     line = [
@@ -2161,7 +2170,7 @@ def test_uninstall_with_no_packages_present_names_none(
 ) -> None:
     """A host whose probes all miss (the packages already gone by
     hand) gets the none-present line, not an empty apt command."""
-    monkeypatch.setattr(hostsetup, "which", lambda tool: None)
+    patch_phase(monkeypatch, "which", lambda tool: None)
     debian_host.ldconfig_answer = ""
     assert main(["--uninstall"]) == 0
     out = capsys.readouterr().out
@@ -2198,7 +2207,7 @@ def test_the_remove_seams_touch_the_filesystem(
     assert not link.is_symlink()
     # The probe/unlink race: the probe answers yes, the unlink
     # finds nothing, and the answer is the idempotent False.
-    monkeypatch.setattr(hostsetup, "file_exists", lambda path: True)
+    patch_phase(monkeypatch, "file_exists", lambda path: True)
     assert hostsetup.remove_file(str(tmp_path / "never-there")) is False
 
 
@@ -2213,7 +2222,7 @@ def test_uninstall_with_the_user_manager_down_needs_no_stop(
     not block the whole uninstall behind a bus the run can never
     reach."""
     host = landed_host(debian_host)
-    monkeypatch.setattr(hostsetup, "RUNTIME_DIR_FMT", "/no/such/run-user-{}")
+    patch_phase(monkeypatch, "RUNTIME_DIR_FMT", "/no/such/run-user-{}")
     assert main(["--uninstall"]) == 0
     assert host.ran("runuser") == []
     assert host.ran("loginctl") == [["loginctl", "disable-linger", "chrism"]]
@@ -2263,7 +2272,7 @@ def test_install_uninstall_install_round_trip(
         host.files.discard(str(source))
         host.files.add(str(target))
 
-    monkeypatch.setattr(hostsetup, "replace_file", moving_replace)
+    patch_phase(monkeypatch, "replace_file", moving_replace)
     home = hostsetup.executing_user()[3]
     unit = hostsetup.unit_path(home)
     pieces = {SYSCTL_FILE, hostsetup.MODULES_FILE, unit, f"{home}/.profile"}
@@ -2379,7 +2388,7 @@ def test_no_client_sibling_stands_the_phase_down(
     """A deployment whose bin dir ships no client beside the tool
     skips each command's phase with the note — the service
     phase's invoked_as reasoning, the client's shape."""
-    monkeypatch.setattr(hostsetup, "bin_sibling", lambda name: None)
+    patch_phase(monkeypatch, "bin_sibling", lambda name: None)
     assert main() == 0
     out = capsys.readouterr().out
     assert "no msks beside the tool" in out
@@ -2400,7 +2409,7 @@ def test_a_missing_popup_sibling_skips_alone(
     def only_msks(name: str):
         return real(name) if name == "msks" else None
 
-    monkeypatch.setattr(hostsetup, "bin_sibling", only_msks)
+    patch_phase(monkeypatch, "bin_sibling", only_msks)
     assert main() == 0
     assert Path(hostsetup.CLIENT_LINK).is_symlink()
     assert not Path(hostsetup.POPUP_LINK).exists()

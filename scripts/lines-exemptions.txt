@@ -1,8 +1,9 @@
 # Module-length exemptions (#863, scripts/lines-gate.sh).
 #
 # One path per line, repo-relative; everything after the path is
-# the reason. Seeded empty: no shipped module is over the 2,000-
-# line ceiling (llm.py, the longest, sits at 1,993).
+# the reason. Seeded empty: no shipped module is over the
+# 1,500-line ceiling (#874 wave one; the longest, cli.py, sits
+# at 1,455).
 #
 # The list only shrinks. An entry joins only when a file must
 # exceed the ceiling and its split cannot land in the change that

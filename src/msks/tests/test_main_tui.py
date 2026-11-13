@@ -21,6 +21,7 @@ import pytest
 import websockets
 from msks.client import cli
 from msks.client.tui import data as data_mod
+from msks.client.tui import detail as detail_mod
 from msks.client.tui import follow as follow_mod
 from msks.client.tui import forms as forms_mod
 from msks.client.tui import link as link_mod
@@ -608,7 +609,7 @@ def scripted_link(monkeypatch, frames: list[str]) -> FakeFactory:
     connection carries the frames; later ones stay quiet)."""
     factory = FakeFactory([FakeWS(frames), FakeWS([])])
     monkeypatch.setattr(
-        page_mod,
+        page_mod.screen,
         "DeciderLink",
         lambda ws_id: DeciderLink(
             ws_id, ws_factory=factory, reconnect_delays=(0.01, 0.01, 0.01)
@@ -801,7 +802,7 @@ def test_meta_fields_prefer_the_image_reference() -> None:
     ``name:version`` an operator can act on — and falls back to
     the digest only when the catalog cannot resolve it; the
     reference's version tail survives the clip."""
-    from msks.client.tui.rows import META_IMAGE_W, meta_fields
+    from msks.client.tui.detail import META_IMAGE_W, meta_fields
 
     ref = meta_fields({"id": "ws1", "image_ref": "debian:13"})
     assert ref[1] == "debian:13"
@@ -951,7 +952,7 @@ async def test_the_detail_strip_pins_the_focused_rows_facts() -> None:
         await pilot.pause()
         text = detail_text(app)
         assert " alpha · id ws-a" in text
-        assert f"image {rows_mod.clip('a' * 64, rows_mod.META_IMAGE_W)}" in (
+        assert f"image {rows_mod.clip('a' * 64, detail_mod.META_IMAGE_W)}" in (
             text
         )
         assert "egress interactive" in text
@@ -1928,16 +1929,16 @@ def test_the_meta_budgets_fill_clipped_fields_in_order() -> None:
         "image_ref": "debian-testing:13.6",
         "host": "workstation-3.lab.example.internal",
     }
-    fixed = cell_len(rows_mod.meta_text(rows_mod.meta_fields(wide_row)))
+    fixed = cell_len(detail_mod.meta_text(detail_mod.meta_fields(wide_row)))
     # Two spare cells land on the id alone; the image and the
     # host keep the fixed minimums.
-    assert rows_mod.meta_budgets(wide_row, fixed + 2) == (10, 14, 8)
+    assert detail_mod.meta_budgets(wide_row, fixed + 2) == (10, 14, 8)
     # A budget at the fixed span holds the fixed layout; one
     # under it keeps the minimums too (the frame clips beyond).
-    assert rows_mod.meta_budgets(wide_row, fixed) == (8, 14, 8)
-    assert rows_mod.meta_budgets(wide_row, fixed - 10) == (8, 14, 8)
+    assert detail_mod.meta_budgets(wide_row, fixed) == (8, 14, 8)
+    assert detail_mod.meta_budgets(wide_row, fixed - 10) == (8, 14, 8)
     # Enough spare reads every field whole.
-    assert rows_mod.meta_budgets(wide_row, fixed + 60) == (16, 19, 34)
+    assert detail_mod.meta_budgets(wide_row, fixed + 60) == (16, 19, 34)
     # A row with slack at the 80-column frame keeps the fixed
     # minimums (#752's acceptance: the fixed layout belongs to
     # the frame, not to the row) — the growth starts only past
@@ -1948,9 +1949,9 @@ def test_the_meta_budgets_fill_clipped_fields_in_order() -> None:
         "image_ref": "debian:13",
         "host": "",
     }
-    assert rows_mod.meta_budgets(short_row, 78) == (8, 14, 8)
-    assert "…" in rows_mod.header_meta(short_row, {}, 78).plain
-    assert "03c9d241ab" in rows_mod.header_meta(short_row, {}, 82).plain
+    assert detail_mod.meta_budgets(short_row, 78) == (8, 14, 8)
+    assert "…" in detail_mod.header_meta(short_row, {}, 78).plain
+    assert "03c9d241ab" in detail_mod.header_meta(short_row, {}, 82).plain
 
 
 async def test_a_hold_arriving_pushes_nothing(monkeypatch) -> None:
@@ -3271,14 +3272,14 @@ def test_the_line_helpers() -> None:
     # host, the date — each clipped to its own budget (#470 S2) —
     # with its separators carrying the muted span treatment
     # (#366) — the same ride the name line gives the status.
-    meta = rows_mod.header_meta(row())
+    meta = detail_mod.header_meta(row())
     plain = meta.plain
     assert WS in plain and "host-1" in plain and "2026-01-02" in plain
-    assert f"image {rows_mod.image_cell(row())}" in plain
-    assert "…" in rows_mod.image_cell(row())  # the digest clips
+    assert f"image {detail_mod.image_cell(row())}" in plain
+    assert "…" in detail_mod.image_cell(row())  # the digest clips
     assert [plain[s.start : s.end] for s in meta.spans] == ["·", "·", "·"]
     assert all(span.style == rows_mod.muted_style({}) for span in meta.spans)
-    long_meta = rows_mod.header_meta(
+    long_meta = detail_mod.header_meta(
         row(id="a1b2c3d4e5", host="workstation-3.lab.example.internal")
     ).plain
     assert "a1b…" in long_meta and "d4e5" in long_meta  # the id clips
@@ -3297,14 +3298,14 @@ def test_the_line_helpers() -> None:
         "image_ref": "debian-testing:13.6",
         "host": "workstation-3.lab.example.internal",
     }
-    wide = rows_mod.header_meta(wide_row, {}, available=120).plain
+    wide = detail_mod.header_meta(wide_row, {}, available=120).plain
     assert "a1b2c3d4e5f6g7h8" in wide
     assert "debian-testing:13.6" in wide
     assert "workstation-3.lab.example.internal" in wide
     assert "…" not in wide
     assert (
-        rows_mod.header_meta(wide_row, {}, available=78).plain
-        == rows_mod.header_meta(wide_row).plain
+        detail_mod.header_meta(wide_row, {}, available=78).plain
+        == detail_mod.header_meta(wide_row).plain
     )
 
     # The listing's display order (#470 L1, #854): newest creation
@@ -3607,7 +3608,7 @@ async def test_a_long_daemon_url_keeps_the_status_bar_one_line(
     row at 80 columns — the URL is a hint, not data."""
     long_url = "https://msks-daemon.really-long-hostname.example.internal:8660"
     monkeypatch.setenv("MSKSC_URL", long_url)
-    content = rows_mod.status_content(2, long_url)
+    content = detail_mod.status_content(2, long_url)
     assert "…" in content.plain and "8660" in content.plain
     assert cell_len(content.plain) <= 78
     scripted_link(monkeypatch, [])
@@ -3625,14 +3626,14 @@ def test_the_state_summary_reads_each_shape() -> None:
     count in the lifecycle order the STATUS column sorts in, and
     a status the vocabulary does not know reads after the known
     ones."""
-    assert rows_mod.state_summary([]) is None
+    assert detail_mod.state_summary([]) is None
     same = [row(), row(id="ws-b"), row(id="ws-c")]
-    assert rows_mod.state_summary(same) == "all stopped"
+    assert detail_mod.state_summary(same) == "all stopped"
     # One workspace reads the same all-form.
-    assert rows_mod.state_summary([row()]) == "all stopped"
+    assert detail_mod.state_summary([row()]) == "all stopped"
     # Two unknown statuses tiebreak by name.
     unknown = [row(status="exploded"), row(id="ws-b", status="altered")]
-    assert rows_mod.state_summary(unknown) == "1 altered 1 exploded"
+    assert detail_mod.state_summary(unknown) == "1 altered 1 exploded"
     mixed = [
         row(),
         row(id="ws-b"),
@@ -3641,7 +3642,7 @@ def test_the_state_summary_reads_each_shape() -> None:
         row(id="ws-e", status="exploded"),
     ]
     assert (
-        rows_mod.state_summary(mixed)
+        detail_mod.state_summary(mixed)
         == "1 created 1 running 2 stopped 1 exploded"
     )
 
@@ -3652,7 +3653,7 @@ def test_the_state_summary_wins_cells_before_the_url() -> None:
     standing line stays inside its one-row span at 80 columns
     with the URL present."""
     long_url = "https://msks-daemon.really-long-hostname.example.internal:8660"
-    content = rows_mod.status_content(4, long_url, "1 running 3 stopped")
+    content = detail_mod.status_content(4, long_url, "1 running 3 stopped")
     assert "1 running 3 stopped" in content.plain
     assert "8660" in content.plain
     assert cell_len(content.plain) <= 78
@@ -3664,44 +3665,45 @@ def test_the_skew_marker_reads_each_shape() -> None:
     or equal side reads None — the same silence the CLI's notice
     keeps (#706). A word longer than a release's clips both ends
     rather than push the marker past the line's span."""
-    mine = rows_mod.__version__
-    assert rows_mod.skew_marker(None) is None
-    assert rows_mod.skew_marker({"status": "ok"}) is None
-    assert rows_mod.skew_marker({"version": ""}) is None
-    assert rows_mod.skew_marker({"version": 7}) is None
-    assert rows_mod.skew_marker({"version": mine}) is None
+    mine = detail_mod.__version__
+    assert detail_mod.skew_marker(None) is None
+    assert detail_mod.skew_marker({"status": "ok"}) is None
+    assert detail_mod.skew_marker({"version": ""}) is None
+    assert detail_mod.skew_marker({"version": 7}) is None
+    assert detail_mod.skew_marker({"version": mine}) is None
     assert (
-        rows_mod.skew_marker({"version": "9.9.9"})
+        detail_mod.skew_marker({"version": "9.9.9"})
         == f"msksd 9.9.9 ≠ client {mine}"
     )
     long_word = "1.0.0.dev0+git-abcdef1234567"
-    theirs = rows_mod.skew_marker({"version": long_word})
+    theirs = detail_mod.skew_marker({"version": long_word})
     assert theirs.startswith("msksd 1.0.0")
     assert "…" in theirs
-    bound = 6 + rows_mod.SKEW_WORD_W + 3 + 7 + rows_mod.SKEW_WORD_W
+    bound = 6 + detail_mod.SKEW_WORD_W + 3 + 7 + detail_mod.SKEW_WORD_W
     assert cell_len(theirs) <= bound
     # A junk word's control codes drop (a BEL would desync the
     # warning span; a newline would split the one-row line), and
     # a word that is only control codes reads as an unknown side.
-    scrubbed = rows_mod.skew_marker({"version": "9.9.9\n\x07x"})
+    scrubbed = detail_mod.skew_marker({"version": "9.9.9\n\x07x"})
     assert "\n" not in scrubbed and "\x07" not in scrubbed
     assert scrubbed.startswith("msksd 9.9.9x")
-    assert rows_mod.skew_marker({"version": "\x07\n"}) is None
+    assert detail_mod.skew_marker({"version": "\x07\n"}) is None
     # A junk wrapper around an exactly-matching word is equality
     # once printed, not a standing self-contradictory marker
     # (review round: the raw compare ran before the scrub).
     assert (
-        rows_mod.skew_marker({"version": rows_mod.__version__ + "\n"}) is None
+        detail_mod.skew_marker({"version": detail_mod.__version__ + "\n"})
+        is None
     )
-    assert rows_mod.skew_marker({"version": " \x7f "}) is None
+    assert detail_mod.skew_marker({"version": " \x7f "}) is None
 
 
 def test_mem_value_reads_the_honest_dash() -> None:
     """#849: a row whose daemon predates the mem field renders
     the honest dash, and a row carrying the field renders its
     binary unit."""
-    assert rows_mod.mem_value(None) == "-"
-    assert "8" in rows_mod.mem_value(8192)
+    assert detail_mod.mem_value(None) == "-"
+    assert "8" in detail_mod.mem_value(8192)
 
 
 def test_the_skew_marker_wins_cells_before_the_url() -> None:
@@ -3711,19 +3713,21 @@ def test_the_skew_marker_wins_cells_before_the_url() -> None:
     columns with the count, the URL, and the marker all
     present."""
     long_url = "https://msks-daemon.really-long-hostname.example.internal:8660"
-    marker = rows_mod.skew_marker({"version": "9.9.9"})
-    content = rows_mod.status_content(
+    marker = detail_mod.skew_marker({"version": "9.9.9"})
+    content = detail_mod.status_content(
         4, long_url, "1 running 3 stopped", skew=marker
     )
     assert marker in content.plain
     assert "8660" in content.plain
     assert cell_len(content.plain) <= 78
-    warn = [s for s in content.spans if s.style == rows_mod.SKEW_MARKER_COLOR]
+    warn = [
+        s for s in content.spans if s.style == detail_mod.SKEW_MARKER_COLOR
+    ]
     assert len(warn) == 1
     assert content.plain[warn[0].start : warn[0].end] == marker
     # A summary the overrun would eat past recognition leaves the
     # line before the marker does.
-    dropped = rows_mod.status_content(
+    dropped = detail_mod.status_content(
         4, long_url, "1 running 3 stopped 1 created", skew="m" * 40
     )
     assert "m" * 40 in dropped.plain
@@ -3735,10 +3739,10 @@ def test_the_skew_marker_wins_cells_before_the_url() -> None:
     # the floor held and a 48-cell marker overran by one).
     fat = f"msksd {'1' * 16} ≠ client {'2' * 16}"
     assert cell_len(fat) == 48
-    bare = rows_mod.status_content(4, long_url, None, skew=fat)
+    bare = detail_mod.status_content(4, long_url, None, skew=fat)
     assert fat in bare.plain
     assert cell_len(bare.plain) <= 78
-    mixed = rows_mod.status_content(
+    mixed = detail_mod.status_content(
         4, long_url, "1 running 3 stopped", skew=fat
     )
     assert fat in mixed.plain
@@ -3760,7 +3764,7 @@ async def test_the_version_skew_marker_appears_and_leaves(
     async with app.run_test():
         await wait_for(lambda: "msksd 9.9.9" in status_text(app))
         assert "≠" in status_text(app)
-        assert rows_mod.__version__ in status_text(app)
+        assert detail_mod.__version__ in status_text(app)
         # A dial that fails keeps the standing marker — a probe
         # timeout is not an all-clear (the storage cache keeps its
         # figures the same way). The row count's move proves the
@@ -3770,7 +3774,7 @@ async def test_the_version_skew_marker_appears_and_leaves(
         app.screen.action_refresh()
         await wait_for(lambda: "2 workspaces" in status_text(app))
         assert "msksd 9.9.9" in status_text(app)
-        data.health_doc = {"version": rows_mod.__version__}
+        data.health_doc = {"version": detail_mod.__version__}
         app.screen.action_refresh()
         await wait_for(lambda: "msksd" not in status_text(app))
         assert "≠" not in status_text(app)
@@ -4279,8 +4283,10 @@ def test_every_screen_carries_the_help_key() -> None:
     from msks.client.tui.secrets import SecretAuditScreen, SecretsScreen
 
     pages = set()
-    for module_info in pkgutil.iter_modules(tui_pkg.__path__):
-        module = importlib.import_module(f"msks.client.tui.{module_info.name}")
+    for module_info in pkgutil.walk_packages(
+        tui_pkg.__path__, "msks.client.tui."
+    ):
+        module = importlib.import_module(module_info.name)
         for obj in vars(module).values():
             if (
                 isinstance(obj, type)
@@ -4669,7 +4675,7 @@ async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
     ws = FakeWS([rules_frame()])
     factory = FakeFactory([ws, FakeWS([])])
     monkeypatch.setattr(
-        page_mod,
+        page_mod.screen,
         "DeciderLink",
         lambda ws_id: DeciderLink(
             ws_id, ws_factory=factory, reconnect_delays=(0.01, 0.01)
@@ -5087,7 +5093,7 @@ async def test_a_removal_under_an_open_consent_page_waits_for_it(
     ws = FakeWS([rules_frame()])
     factory = FakeFactory([ws, FakeWS([])])
     monkeypatch.setattr(
-        page_mod,
+        page_mod.screen,
         "DeciderLink",
         lambda ws_id: DeciderLink(
             ws_id, ws_factory=factory, reconnect_delays=(0.01, 0.01, 0.01)
@@ -7481,11 +7487,11 @@ def test_the_detail_strip_lines() -> None:
     the compose has not built (or teardown has emptied) —
     teardown noise, not a crash."""
     MainScreen().paint_detail()  # no strip yet: decides nothing
-    dash = rows_mod.detail_strip(row(), None)
+    dash = detail_mod.detail_strip(row(), None)
     first, second = dash.plain.split("\n")
     assert first == (
         f" alpha · id {WS}"
-        f" · image {rows_mod.clip('a' * 64, rows_mod.META_IMAGE_W)}"
+        f" · image {rows_mod.clip('a' * 64, detail_mod.META_IMAGE_W)}"
     )
     assert second == " cpu 2 · mem 8G · egress interactive · storage -"
     muted = rows_mod.muted_style({})
@@ -7500,7 +7506,7 @@ def test_the_detail_strip_lines() -> None:
     # The marker rides the warning color beside its muted label,
     # the storage figure the report's root-plus-home sum as
     # human_bytes renders it.
-    marked = rows_mod.detail_strip(mounted_row(), 3328599654)
+    marked = detail_mod.detail_strip(mounted_row(), 3328599654)
     assert "mounts ✗1" in marked.plain
     assert "storage 3.1G" in marked.plain
     marked_spans = {
@@ -7512,12 +7518,12 @@ def test_the_detail_strip_lines() -> None:
     # The open-shells count composes with the strip (#858): the
     # same »N marker the status cell carries, behind the mounts
     # marker, ahead of the storage figure.
-    shelled = rows_mod.detail_strip({**mounted_row(), "shells": 2}, None)
+    shelled = detail_mod.detail_strip({**mounted_row(), "shells": 2}, None)
     assert "shells »2" in shelled.plain
     # Both lines hold the 80-column frame's span whatever the
     # fields carry — a name as wide as the column's budget
     # included.
-    long = rows_mod.detail_strip(
+    long = detail_mod.detail_strip(
         {
             **row(),
             "name": "a-workspace-name-as-wide-as-the-column",
