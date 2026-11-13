@@ -91,7 +91,7 @@ see it.
 
 Each record's token is five characters, drawn against the
 workspace's live sessions. The token completes the window's title
-(`msks a1b2c3d4e5 f8x2n`); a later release will use it to match a
+(`msks tree-vm f8x2n`); a later release will use it to match a
 session to its window.
 
 ## Workspace creation
@@ -414,23 +414,24 @@ after the same-terminal shell ends. The shell runs in the same terminal.
 
 Every terminal window msks opens for a workspace shell carries one
 title: `msks {workspace} {session}`. The workspace half is the
-workspace's id (the token `msks ssh` addresses, which is what the TUI
-appends to the launcher). The session half is the token of the session
-record [the open shells section](#open-shells-and-the-session-records)
-describes: `msks a1b2c3d4e5 f8x2n`. A child that names no workspace
-(an appended command that is not an `msks ssh`) titles as
-`msks shell`.
+workspace's name — the word the operator reads everywhere else —
+with its id standing in when the daemon serves no name. The session
+half is the token of the session record [the open shells
+section](#open-shells-and-the-session-records) describes:
+`msks tree-vm f8x2n`. A child that names no workspace (an appended
+command that is not an `msks ssh`) titles as `msks shell`.
 
 A session without a record drops the session half. The consent
 launcher (`msks-term-popup`) titles its window before any session
 exists, and a remote-command run in a spawned window registers
-nothing, so both read `msks a1b2c3d4e5`. The plain window the TUI
+nothing, so both read `msks tree-vm`. The plain window the TUI
 opens takes the full title from the appended `msks ssh` itself: the
 window is marked at spawn, and the command names it twice. The first
-write carries the workspace alone, before the boot pre-flight — a
-refused pre-flight still leaves the window named. The second write
-completes the title with the record's token, once the pre-flight
-answers and the session registers. The title stays until something
+write carries the typed reference alone, before the boot pre-flight
+— a refused pre-flight still leaves the window named. The second
+write carries the resolved name and completes the title with the
+record's token, once the pre-flight answers and the session
+registers. The title stays until something
 inside the window replaces it: a workspace that sets its own title
 from inside the session (a `PROMPT_COMMAND` with a title escape, the
 way stock ssh sessions can) rewrites it there. tmux shields the

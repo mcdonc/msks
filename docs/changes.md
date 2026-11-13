@@ -17,9 +17,10 @@ tagged `vX.Y.Z`.
   beside the status (`2 shells open`). The count covers the shells
   open on the host the TUI runs on, survives a tree restart, and a
   session killed without cleanup stops counting about twenty
-  seconds after its death. Windows the tree opens carry the session
-  record's five-character token in their title, where a later
-  release will use it to match a session to its window.
+  seconds after its death. Windows the tree opens carry the
+  workspace's name and the session record's five-character token in
+  their title (`msks tree-vm f8x2n`); a later release will use the
+  token to match a session to its window.
 
 - **Detail strip at the bottom of the workspaces list (#849).**
   A two-line strip renders at the bottom of the listing's box
@@ -131,7 +132,7 @@ tagged `vX.Y.Z`.
 - **`terminal_title` / `MSKSC_TERMINAL_TITLE` removed (#858).** The
   window title template setting is gone; every terminal window msks
   opens for a workspace shell now carries one fixed title,
-  `msks <workspace-id> <token>`, and windows msks does not open keep
+  `msks <workspace-name> <token>`, and windows msks does not open keep
   the terminal emulator's own title. The client refuses a config
   file that still carries the `terminal_title` key, on every
   command, until the key is deleted — delete it from your

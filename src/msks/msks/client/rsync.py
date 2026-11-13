@@ -232,6 +232,7 @@ def run_workspace_rsync(
         known_hosts,
         user,
         pin,
+        label,
     ):
         extra = forward_agent_args(with_config_options([]), "msks rsync")
         config_path = write_ssh_config(

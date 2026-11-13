@@ -13,9 +13,11 @@ title back to restore it.
 A window msks opens carries one title: ``msks {workspace}
 {session}`` (:data:`DEFAULT_TITLE`), with the session record's
 token as ``{session}`` — the join key a later surface (#856)
-matches the session's window by. A session without a record (the
-consent launcher, which titles before any session exists; a
-remote-command run) drops the token half.
+matches the session's window by — and the workspace's name as
+``{workspace}`` (its id when the daemon serves none; the human
+reads the name, and the token carries the join). A session
+without a record (the consent launcher, which titles before any
+session exists; a remote-command run) drops the token half.
 """
 
 import os
@@ -31,9 +33,10 @@ import sys
 TITLE_MARKER = "MSKS_NEW_WINDOW"
 
 #: The title a window msks opened carries (#445, #858): the
-#: workspace's id and the session record's token,
-#: ``msks a1b2c3d4e5 f8x2n``. The token is the join key a later
-#: surface (#856) matches the session's window by.
+#: workspace's name (its id when the daemon serves none) and the
+#: session record's token, ``msks tree-vm f8x2n``. The token is
+#: the join key a later surface (#856) matches the session's
+#: window by; the workspace half is for the human.
 DEFAULT_TITLE = "msks {workspace} {session}"
 
 
@@ -41,10 +44,12 @@ def resolve_title(
     template: str, workspace_ref: str | None, token: str | None
 ) -> str:
     """One title template with its placeholders resolved (#445,
-    #858): ``{workspace}`` to the workspace's id — ``shell`` when
-    the child names no workspace — and ``{session}`` to the
-    session record's token, dropped whole (its leading space
-    included) when the session carries none."""
+    #858): ``{workspace}`` to the workspace's name (its id when
+    the daemon serves none, and the typed reference before the
+    daemon answers) — ``shell`` when the child names no workspace
+    — and ``{session}`` to the session record's token, dropped
+    whole (its leading space included) when the session carries
+    none."""
     resolved = template.replace("{workspace}", workspace_ref or "shell")
     if token:
         return resolved.replace("{session}", token)

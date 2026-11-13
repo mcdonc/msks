@@ -1973,6 +1973,56 @@ def test_run_workspace_ssh_registers_no_remote_command(
     assert sshsessions.count_sessions() == {}
 
 
+def test_the_session_titles_the_window_with_the_workspace_s_name(
+    monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
+) -> None:
+    """#858: the window title's workspace half is the name the
+    human reads, not the id the session dials — the early write
+    carries the typed reference before the daemon answers, and
+    the second write replaces it with the served name (the id
+    standing in when the daemon serves none)."""
+    from msks.client import sshsessions
+
+    keyed = {
+        **KEY,
+        "id": "03c31bd241",
+        "name": "tree-vm",
+        "created_at": "2026-10-11T00:00:00",
+    }
+
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return keyed, False
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
+    )
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    titles: list[tuple] = []
+    monkeypatch.setattr(
+        ssh,
+        "title_spawned_window",
+        lambda ref, token=None: titles.append((ref, token)),
+    )
+    monkeypatch.setattr(
+        ssh.subprocess,
+        "run",
+        lambda argv, **kwargs: SimpleNamespace(returncode=0, stderr=""),
+    )
+    assert ssh.run_workspace_ssh("03c31bd241", []) == 0
+    (early_ref, _none), (named_ref, token) = titles
+    assert early_ref == "03c31bd241"  # the typed reference, at once
+    assert named_ref == "tree-vm"  # the served name, once staged
+    assert len(token) == sshsessions.TOKEN_LEN
+
+
 def test_run_workspace_ssh_pins_under_the_served_id(
     monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
 ) -> None:
@@ -2053,7 +2103,14 @@ def test_staged_session_names_recreated_disks(
         yield FakeAgent()
 
     monkeypatch.setattr(ssh.agent, "serve", fake_serve)
-    with ssh.staged_session("tree") as (booted, served, hosts, user, pin):
+    with ssh.staged_session("tree") as (
+        booted,
+        served,
+        hosts,
+        user,
+        pin,
+        label,
+    ):
         assert (booted, pin) == (False, "03c31bd241")
     assert keyed_paths == [("03c31bd241", "e1")]
     assert "disks were recreated" in capsys.readouterr().err
@@ -2061,7 +2118,7 @@ def test_staged_session_names_recreated_disks(
     # known_hosts already exists — the first connect wrote it —
     # says nothing.
     (tmp_path / "03c31bd241.e1").write_text("")
-    with ssh.staged_session("tree") as (_booted, _served, _h, _u, _pin):
+    with ssh.staged_session("tree"):
         pass
     assert "disks were recreated" not in capsys.readouterr().err
 
@@ -2101,7 +2158,14 @@ def test_staged_session_names_the_renewed_seed(
         yield FakeAgent()
 
     monkeypatch.setattr(ssh.agent, "serve", fake_serve)
-    with ssh.staged_session("tree") as (booted, served, hosts, user, pin):
+    with ssh.staged_session("tree") as (
+        booted,
+        served,
+        hosts,
+        user,
+        pin,
+        label,
+    ):
         assert (booted, pin) == (False, "03c31bd241")
     assert keyed_paths == [("03c31bd241", "r1")]
     err = capsys.readouterr().err

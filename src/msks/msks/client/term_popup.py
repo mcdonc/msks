@@ -196,13 +196,13 @@ def split_role(args: list[str]) -> tuple[str, list[str]]:
 
 def run_launch(argv: list[str]) -> int:
     """The launcher (#379): a missing tmux names itself and stops
-    before a window could open half-way — its title included;
-    the window's title — the msks title (#858, ``msks <id>``: no
-    session record exists yet here, so the token half drops) —
-    is written only once tmux is there to fill it (#445). Then
-    resolve the workspace's name for the status bar (#455) —
-    last of the pre-exec steps, so a slow lookup delays only the
-    client — and become the tmux client attached to a fresh
+    before a window could open half-way — its title included.
+    Then the workspace's name is resolved (#455) — the one
+    lookup the launch makes, so a slow daemon delays only the
+    client — and the window's title — the msks title (#858,
+    ``msks <name>``: no session record exists yet here, so the
+    token half drops) — is written once tmux is there to fill it
+    (#445). Then become the tmux client attached to a fresh
     session (one that ends with this window) whose pane runs this
     module's pane role with the appended command. The terminal
     window itself is whatever the operator's prefix opened —
@@ -210,8 +210,8 @@ def run_launch(argv: list[str]) -> int:
     workspace_id = workspace_from_argv(argv)
     if shutil.which("tmux") is None:
         raise SystemExit("msks-term-popup: tmux is not on PATH")
-    set_window_title(window_title(workspace_id))
     label = status_label(workspace_id)
+    set_window_title(window_title(label))
     os.execvp(
         "tmux",
         session_argv(argv, session_name(workspace_id), workspace_id, label),

@@ -1323,12 +1323,14 @@ def staged_session(workspace_id: str, transport=None):
     session's identity — served from the operator's own agent
     when it holds the key (#490) or staged in the transient agent
     (:mod:`msks.client.agent`). Yields ``(booted, served,
-    known_hosts, user, pin)`` — whether this session booted the
-    workspace (the #168 wait runs only then), the agent holder
+    known_hosts, user, pin, label)`` — whether this session booted
+    the workspace (the #168 wait runs only then), the agent holder
     carrying the identity (either branch of :func:`session_identity`),
     the per-instance known_hosts path (#246), the workspace's login
-    user (#248), and the one host alias the session pins under
-    (#697). ``msks ssh`` (#112) and ``msks rsync`` (#190) share it.
+    user (#248), the one host alias the session pins under
+    (#697), and the workspace's human-facing label (its name,
+    else the pin — the half the window title carries, #858).
+    ``msks ssh`` (#112) and ``msks rsync`` (#190) share it.
     """
     token = env_token()
     url = env_url()
@@ -1347,6 +1349,7 @@ def staged_session(workspace_id: str, transport=None):
             hosts,
             workspace_user(key),
             pin,
+            key.get("name") or pin,
         )
 
 
@@ -1372,10 +1375,11 @@ def run_workspace_ssh(
     heartbeated for the session's life and unlinked at its end,
     so the workspaces list counts the host's open shells — typed
     sessions and TUI-spawned windows alike. The token the record
-    mints completes the window's title (#858): a session without
-    a record (a passthrough remote command — a connection, not a
-    shell, registering nothing) drops the session half of the
-    title."""
+    mints completes the window's title (#858): the workspace half
+    is the workspace's name (its id when the daemon serves none),
+    and a session without a record (a passthrough remote command
+    — a connection, not a shell, registering nothing) drops the
+    session half of the title."""
     passthrough = passthrough_args(passthrough)
     interactive = not split_command(passthrough)[1]
     title_spawned_window(workspace_id)
@@ -1385,10 +1389,11 @@ def run_workspace_ssh(
         known_hosts,
         user,
         pin,
+        label,
     ):
         guard = record_session(pin) if interactive else nullcontext(None)
         with guard as token:
-            title_spawned_window(pin, token)
+            title_spawned_window(label, token)
             if booted:
                 probe_argv = probe_args(
                     pin,
