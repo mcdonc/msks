@@ -481,10 +481,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#what-each-side-dials" class="md-nav__link">
+  <a href="#what-each-side-connects-to" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        What each side dials
+        What each side connects to
       </span>
     </span>
   </a>
@@ -963,10 +963,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#what-each-side-dials" class="md-nav__link">
+  <a href="#what-each-side-connects-to" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        What each side dials
+        What each side connects to
       </span>
     </span>
   </a>
@@ -1111,7 +1111,7 @@ to that port bridges into the workspace, to the guest port the spec names.
 This is the ssh <code>-L</code> shape: a port on your side reaching a port on the far
 end.</p>
 <p>A remote proxy (<code>-R</code>) binds a port on the workspace's own gateway. A process
-inside the guest dials its DHCP gateway on that port, and the daemon bridges
+inside the guest connects to its DHCP gateway on that port, and the daemon bridges
 the connection to a daemon-side service the spec names. This is the ssh <code>-R</code>
 shape: a port on the far end reaching a service on your side.</p>
 <p>The contrast with <a href="../cli/#msks-forward"><code>msks forward</code></a> is ownership. A
@@ -1119,19 +1119,19 @@ forward's listener lives as long as the command holding it, and it binds on
 the machine the command runs on. A proxy's listener lives in the daemon. Use
 a forward for a one-off pipe during a session. Use a proxy for a port you
 want there more permanently.</p>
-<h3 id="what-each-side-dials">What each side dials<a class="headerlink" href="#what-each-side-dials" title="Permanent link">&para;</a></h3>
+<h3 id="what-each-side-connects-to">What each side connects to<a class="headerlink" href="#what-each-side-connects-to" title="Permanent link">&para;</a></h3>
 <p>A forward proxy's target is the workspace itself. The spec's host field names
 the workspace, the way ssh's <code>-L</code> host names the far end, and it accepts
 exactly two spellings: <code>localhost</code> or <code>127.0.0.1</code>. Anything else refuses with
 a message that points at the <code>-R</code> direction, which is the one that reaches
 daemon-side services.</p>
-<p>A remote proxy's target is dialed by the daemon, from the daemon's host. In
+<p>The daemon connects to a remote proxy's target from the daemon's host. In
 the spec <code>-R 9200:localhost:9200</code>, the <code>localhost</code> is the daemon's own
 loopback. A name like <code>db.internal</code> resolves through the daemon host's
 resolver.</p>
 <p>A remote proxy's listen address is fixed by the workspace's tap, so the
 grammar carries no bind field for <code>-R</code>.</p>
-<p>Inside the guest, dial <code>host.msks</code>. Every workspace's resolver answers the
+<p>Inside the guest, connect to <code>host.msks</code>. Every workspace's resolver answers the
 name with its own tap address. <code>ip route show default</code> prints the same
 address when a name is unavailable:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>http://<span class="k">$(</span>ip<span class="w"> </span>route<span class="w"> </span>show<span class="w"> </span>default<span class="w"> </span><span class="p">|</span><span class="w"> </span>awk<span class="w"> </span><span class="s1">'{print $3}'</span><span class="k">)</span>:9200
@@ -1142,7 +1142,7 @@ refused: <code>workspace … has no NIC (created without egress)</code>.</p>
 <p>The daemon connects to a remote proxy's target itself. The consent machinery
 gates the guest's traffic through the tap; it never sees the daemon's own
 connections. A remote row therefore reaches its target without a verdict. <a href="../egress-consent/">The
-consent chapter</a> covers the guest's connections; this dial
+consent chapter</a> covers the guest's connections; this connection
 is the daemon's own.</p>
 <p>The tap's ingress chain admits a remote port only while its listener is up.
 Each accept line is pinned to that tap's address and that guest's source. A
@@ -1186,7 +1186,7 @@ connects to <code>host.msks</code> on that port:</p>
 <p>While <a href="../secrets/">secret interception</a> is armed, the tap's 80 and 443
 answer the interceptor; a <code>-R</code> proxy on either port stays unreachable from
 the guest until interception stands down.</p>
-<p>The daemon dials <code>localhost:5432</code> on its own host for every guest
+<p>The daemon connects to <code>localhost:5432</code> on its own host for every guest
 connection. A target on another host works the same way
 (<code>-R 5432:db.internal:5432</code>). The daemon host's resolver resolves it.</p>
 <h3 id="reading-and-removing">Reading and removing<a class="headerlink" href="#reading-and-removing" title="Permanent link">&para;</a></h3>

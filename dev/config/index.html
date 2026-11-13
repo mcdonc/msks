@@ -1422,7 +1422,7 @@ the file itself carries them all at one level.</p>
 <td><code>MSKSD_FORWARD_WAIT_TIMEOUT_S</code></td>
 <td>float</td>
 <td><code>15.0</code></td>
-<td>Seconds a forward websocket retries its guest dial at boot (a freshly booted guest races DHCP against its services); past the deadline the refusal gives the cause.</td>
+<td>Seconds a forward websocket retries its guest connection at boot (a freshly booted guest races DHCP against its services); past the deadline the refusal gives the cause.</td>
 </tr>
 <tr>
 <td><code>console_stall_timeout_s</code></td>
@@ -1667,7 +1667,7 @@ the file itself carries them all at one level.</p>
 <td><code>MSKSD_PROBE_PORT</code></td>
 <td>int</td>
 <td><code>8644</code></td>
-<td>The TCP port every workspace's probe service listener binds on its own tap address. The guest still dials 443 (the redirect catches it); the interceptor repoints its upstream dial to this port, so a host service on 443 cannot break the probe.</td>
+<td>The TCP port every workspace's probe service listener binds on its own tap address. The guest still connects to 443 (the redirect catches it); the interceptor repoints its upstream connection to this port, so a host service on 443 cannot break the probe.</td>
 </tr>
 <tr>
 <td><code>audit_hmac_key</code></td>

@@ -1160,7 +1160,7 @@ around, all behind that same offered resolver.</p>
 <p>Two names the resolver answers itself, in every consent mode. The first is
 <code>secretprobe.msks</code>, the interception probe (#424). The second is <code>host.msks</code>
 (#816), the guest's name for its own gateway: it resolves to the tap's
-address, so a <code>-R</code> proxy is dialed by name instead of discovered through
+address, so a <code>-R</code> proxy is reached by name instead of discovered through
 <code>ip route show default</code>. A well-formed internet-class (IN) query for either name never reaches
 an upstream, records a policy row, or pins an address. Both are the
 daemon's own services.</p>
@@ -1279,7 +1279,7 @@ refuses to boot with the cause given.</p>
 <h2 id="reaching-guest-services-msks-forward">Reaching guest services (msks forward)<a class="headerlink" href="#reaching-guest-services-msks-forward" title="Permanent link">&para;</a></h2>
 <p>Egress is the guest's outbound path. The forward websocket (<code>msks forward</code>,
 issue) is the client's inbound one, and it uses the same per-VM tap. The
-daemon dials the workspace's deterministic tap address on the port the
+daemon connects to the workspace's deterministic tap address on the port the
 caller gives and bridges raw bytes over its authenticated websocket API. The
 CLI chapter's <code>msks forward</code> section covers the stdio and <code>--local</code> shapes
 and the close-code contract.</p>
@@ -1296,14 +1296,14 @@ workspace's immutable id, so a workspace recreated under the same name is a
 new id with a fresh cache: it trusts its own first-boot host keys instead of
 refusing the first instance's. A workspace without egress carries the same
 image unchanged: its forward is refused at the API with close code 4501
-before any dial, and its console is the virtio-console getty.</p>
+before any connection, and its console is the virtio-console getty.</p>
 <h3 id="persisted-proxies-the-other-direction-too">Persisted proxies (the other direction too)<a class="headerlink" href="#persisted-proxies-the-other-direction-too" title="Permanent link">&para;</a></h3>
 <p>The forward websocket lives as long as the command holding it. A persisted
 proxy (<code>msks proxy add</code>) lives in the daemon's database instead: the daemon
 owns the listener, and every workspace start re-establishes it. A forward
 proxy binds a port on the daemon's host and bridges each connection to the
-guest through the same dial the forward websocket uses. A remote proxy binds a port on the workspace's own tap
-address: a guest process dials its DHCP gateway on that port, and the
+guest through the same daemon-to-guest connection the forward websocket uses. A remote proxy binds a port on the workspace's own tap
+address: a guest process connects to its DHCP gateway on that port, and the
 daemon bridges the connection to a daemon-side service (the ssh <code>-R</code>
 shape).</p>
 <p>The tap's ingress chain admits a remote port only while its listener is
@@ -1311,10 +1311,10 @@ up. Each accept line is pinned to that tap's address and that guest's
 source, the same scoping the resolver and LLM proxy rules carry. A live
 add or removal swaps the admission in one nft transaction. A bind that
 fails admits nothing, so the rule and the service always agree.</p>
-<p>The daemon dials a remote proxy's target itself, and the consent machinery
+<p>The daemon connects to a remote proxy's target itself, and the consent machinery
 gates the guest's traffic through the tap, not the daemon's own
 connections. A remote row therefore reaches its target without a verdict:
-the consent chapter covers the guest's connections, and this dial is the
+the consent chapter covers the guest's connections, and this connection is the
 daemon's own. <a href="../proxies/">The proxies chapter</a> owns the concept and the
 worked examples for both surfaces.</p>
 <h3 id="the-workspace-ssh-identity">The workspace ssh identity<a class="headerlink" href="#the-workspace-ssh-identity" title="Permanent link">&para;</a></h3>
@@ -1388,7 +1388,7 @@ The block sets no <code>User</code>: plain <code>ssh</code> logs in as its own d
 username. That is the workspace's recorded login user for the operator who
 created it (the name <code>msks create --user</code> planted; <code>ssh -l alice</code> reaches a
 workspace another operator's name recorded). A workspace that records no
-user dials <code>root</code>, the account every seed provisions a key for. The alias
+user connects as <code>root</code>, the account every seed provisions a key for. The alias
 block gives the operator's own key with <code>IdentityFile</code>, the same file
 <code>identity_file</code> points at. Those paths are the client cache root's defaults
 and stay where the block writes them. OpenSSH reads its own config, so

@@ -1308,7 +1308,7 @@ consent chapter</a>:</p>
   line to the daemon's journal (#762), so the event history
   stays readable after the subscribers are gone. The lines carry
   the frames' identifiers, names, hosts, ports, paths, and
-  counts; secret values and sentinels never ride them.</li>
+  counts; secret values and sentinels never appear in them.</li>
 <li><code>wss://…/api/v1/workspaces/{id}/console</code>: the guest's serial console as a
   bidirectional byte stream. Ctrl-] detaches in the client. The <a href="../cli/#msks-console">console
   chapter</a> covers the interactive form.</li>
@@ -1316,7 +1316,7 @@ consent chapter</a>:</p>
   bytes between the client and that port on the workspace's
   tap, the pipe <code>msks forward</code> and ssh's ProxyCommand use. A
   workspace without egress is refused with close code 4501
-  before any dial.</li>
+  before any connection.</li>
 </ul>
 
 

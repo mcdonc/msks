@@ -1129,7 +1129,7 @@ above, from the stream or from <code>requests</code>. <code>--duration</code> is
 workspace as the removals land, so a failure mid-sequence keeps the
 earlier confirmations on stdout.</p>
 <h2 id="the-daemon-connection">The daemon connection<a class="headerlink" href="#the-daemon-connection" title="Permanent link">&para;</a></h2>
-<p>The client dials the daemon's local socket by default. A remote
+<p>The client connects to the daemon's local socket by default. A remote
 daemon needs <code>MSKSC_URL</code>, <code>MSKSC_TOKEN</code> (the bearer token
 itself), and <code>MSKSC_CAFILE</code> (the daemon's <code>msks-ca.pem</code>); the
 config file carries the same three as <code>url</code>, <code>token_file</code>,

@@ -1733,7 +1733,7 @@ variables has a config-file equivalent.</p>
 <tr>
 <td><code>MSKSC_URL</code></td>
 <td><code>url</code></td>
-<td>The remote daemon's base URL, the TCP + TLS + token shape; the client dials TCP only when a URL gives one</td>
+<td>The remote daemon's base URL, the TCP + TLS + token shape; the client opens a TCP connection only when a URL gives one</td>
 <td>unset (the local socket answers, else the client refuses)</td>
 </tr>
 <tr>
@@ -1827,7 +1827,7 @@ config-file daemon) looks for the default socket a same-host
 daemon binds (<code>$XDG_RUNTIME_DIR/msks/msksd.sock</code>) and connects
 through it with peer credentials alone. Finding none, it exits
 with the paths it looked for and the two settings that pick a
-daemon outright. The client never dials a TCP address
+daemon outright. The client never connects to a TCP address
 implicitly: a well-known port could belong to any daemon.</p>
 <p>The daemon serves TLS with a self-signed certificate. Point
 <code>MSKSC_CAFILE</code> at the daemon's CA (<code>msks-ca.pem</code> under its state
@@ -2174,7 +2174,7 @@ boot says so in its log, and the login stays with the accounts
 the guest already serves. Pick a name the image uses for no one.</p>
 <p>The name is create-time and immutable, like <code>user_data</code>: a
 workspace created before records no user of its own. <code>msks ssh</code>
-and <code>msks rsync</code> dial it as <code>root</code>, and the image's <code>msks</code>
+and <code>msks rsync</code> connect to it as <code>root</code>, and the image's <code>msks</code>
 account stays reachable by giving it directly.</p>
 <p><code>--start</code> boots the workspace right after creating it:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>$<span class="w"> </span>msks<span class="w"> </span>create<span class="w"> </span>my-workspace<span class="w"> </span>--image<span class="w"> </span>debian:13<span class="w"> </span>--start
@@ -2688,7 +2688,7 @@ right; the flag letter says which side listens:</p>
 </span><span id="__span-32-7"><a id="__codelineno-32-7" name="__codelineno-32-7" href="#__codelineno-32-7"></a><span class="c1"># reverse: the workspace's gateway listens on 9200, and every guest</span>
 </span><span id="__span-32-8"><a id="__codelineno-32-8" name="__codelineno-32-8" href="#__codelineno-32-8"></a><span class="c1"># connection bridges to port 9200 on the daemon's host</span>
 </span><span id="__span-32-9"><a id="__codelineno-32-9" name="__codelineno-32-9" href="#__codelineno-32-9"></a>msks<span class="w"> </span>proxy<span class="w"> </span>add<span class="w"> </span>my-workspace<span class="w"> </span>-R<span class="w"> </span><span class="m">5432</span>:db.internal:5432<span class="w"> </span>--label<span class="w"> </span>db
-</span><span id="__span-32-10"><a id="__codelineno-32-10" name="__codelineno-32-10" href="#__codelineno-32-10"></a><span class="c1"># the gateway's 5432 bridges to db.internal:5432, dialed by the daemon</span>
+</span><span id="__span-32-10"><a id="__codelineno-32-10" name="__codelineno-32-10" href="#__codelineno-32-10"></a><span class="c1"># the gateway's 5432 bridges to db.internal:5432; the daemon makes the connection</span>
 </span></code></pre></div>
 <p>The <code>-L</code> spec is <code>[BIND:]PORT:HOST:PORT</code>; the <code>-R</code> spec is <code>RPORT:HOST:TPORT</code>
 (its bind is the workspace's tap, a runtime fact). The host field plays the
@@ -2698,17 +2698,17 @@ spellings — <code>localhost</code> or <code>127.0.0.1</code> — and anything 
 <div class="language-text highlight"><pre><span></span><code><span id="__span-33-1"><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a>msks: -L's host field names the workspace itself; only localhost or
 </span><span id="__span-33-2"><a id="__codelineno-33-2" name="__codelineno-33-2" href="#__codelineno-33-2"></a>127.0.0.1 is allowed — to reach a daemon-side service, use -R
 </span></code></pre></div>
-<p>The workspace cannot dial out on a forward's behalf (no agent runs inside it),
+<p>The workspace cannot connect out on a forward's behalf (no agent runs inside it),
 so a forward always lands on the workspace itself. Reaching a daemon-side
 service is the <code>-R</code> direction.</p>
-<p>A remote proxy is the reverse of a forward one. The guest dials <code>host.msks</code>
+<p>A remote proxy is the reverse of a forward one. The guest connects to <code>host.msks</code>
 on the listen port. The workspace's resolver answers that name with its DHCP
 gateway address (<code>ip route show default</code> inside the workspace prints the same
 address). The daemon bridges the connection to the daemon-side service the
 spec names. With the example stored, <code>curl http://host.msks:9200</code> inside the
 workspace reaches the host service. A workspace created without
 egress holds no proxies: its row has no NIC to reach.</p>
-<p>The daemon dials a remote proxy's target itself. The consent machinery gates
+<p>The daemon connects to a remote proxy's target itself. The consent machinery gates
 the guest's traffic through the tap, not the daemon's own connections. A
 remote row therefore reaches its target without a verdict.</p>
 <p><code>add</code> is declarative. Asking twice for the same spec returns the standing
@@ -2839,7 +2839,7 @@ alias, whichever way the workspace was addressed: <code>msks ssh
 &lt;name&gt;</code> and the TUI's shell action record the same <code>known_hosts</code>
 entry, and an operator's own <code>~/.ssh/config</code> <code>Host &lt;name&gt;</code> block
 no longer matches the session (the id is the hostname msks ssh
-dials; use the id in a matching block instead).</p>
+connects to; use the id in a matching block instead).</p>
 <p>Host keys persist across stop/start on the workspace's overlay, so the
 first-connection entry keeps matching. When the daemon recreates the overlay
 under a live workspace (a healed loss, a factory reset), the guest regenerates
@@ -2893,7 +2893,7 @@ stock ssh: ssh takes the first value a repeated option receives,
 and the passthrough comes first.</p>
 <p>The login user is the workspace's recorded login user: the
 create-time <code>--user</code>, defaulting to the creating operator's name.
-A workspace created before records none, and the dial is <code>root</code>.
+A workspace created before records none, and the connection is made as <code>root</code>.
 ssh arguments that give a user (<code>-l root</code>, <code>-o User=root</code>)
 override it. The host argument ssh sees is the workspace id
 itself; the transport is the proxy, so the name never resolves.
