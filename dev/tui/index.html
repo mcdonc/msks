@@ -1567,6 +1567,20 @@ popup path. Nothing shields the plain path.</p>
 <p>A <code>msks ssh</code> you type yourself keeps your terminal's title: the title
 applies only to the windows msks opens, and a same-terminal shell
 (the dead-launcher fallback) changes nothing.</p>
+<p>The title rides the standard OSC title sequence, and the launcher's
+terminal decides what its titlebar shows. xterm (the built-in default
+launcher) and Ghostty show it. Konsole's titlebar shows the <em>tab</em>
+title, whose default format composes the working directory's name and
+the process name instead — a spawned shell reads
+<code>msks : python3.14 — Konsole</code> from a checkout named <code>msks</code>, and the
+consent launcher reads <code>msks : tmux : client — Konsole</code>; the <code>msks :</code>
+prefix is the directory, not msks.</p>
+<p>Konsole carries the title two ways. The one-checkbox way: Settings →
+Configure Konsole → General → <em>Show window title on the titlebar</em>, and the
+titlebar follows the OSC title (<code>msks tree-vm f8x2n — Konsole</code>). The
+tab-format way: Settings → Configure Konsole → Tab Bar → <em>Tab title
+format</em> (the local one) set to <code>%w</code> or <code>%w : %p</code>, which carries the
+window title into the tab title the titlebar already shows.</p>
 <h4 id="msks-term-popup-the-consent-decider-terminal"><code>msks-term-popup</code>: the consent-decider terminal<a class="headerlink" href="#msks-term-popup-the-consent-decider-terminal" title="Permanent link">&para;</a></h4>
 <p><code>msks-term-popup</code> is a shipped client command that runs the appended
 shell inside a local tmux session and answers the workspace's egress
