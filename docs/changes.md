@@ -8,6 +8,20 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Open-shell counts in the TUI (#858).** Every interactive
+  `msks ssh` writes a heartbeat session record under
+  `~/.local/state/msks/sessions` (relocatable with the `state_dir`
+  key / `MSKSC_STATE_DIR`), and the workspaces list shows the live
+  count beside a row's status word (`»2`) and on the detail strip
+  (`shells »2`). The count covers the shells open on the host the
+  TUI runs on, survives a tree restart, and a session killed
+  without cleanup stops counting within 15 seconds. A window the
+  tree opens now carries a default title when `terminal_title` is
+  unset — `msks <id> <token>`, the session record's five-character
+  token beside the workspace's id — where the terminal emulator's
+  own title used to stay. A configured `MSKSC_TERMINAL_TITLE` keeps
+  precedence and gains a `{session}` placeholder.
+
 - **Detail strip at the bottom of the workspaces list (#849).**
   A two-line strip renders at the bottom of the listing's box
   and carries the focused workspace's quick facts: name, id,

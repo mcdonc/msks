@@ -25,6 +25,7 @@ from textual.events import Click, Resize
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, Input, ListItem, ListView, Static
 
+from ..sshsessions import count_sessions
 from .consent_ui import (
     ConfirmScreen,
     FailurePanel,
@@ -317,11 +318,24 @@ class MainScreen(HelpKeys, Screen):
             rows, _ = await asyncio.gather(
                 self.app.data.workspaces(), self.load_storage()
             )
-            await self.rebuild_rows(rows)
+            await self.rebuild_rows(self.with_shell_counts(rows))
         except (Exception, SystemExit) as exc:
             self.app.flash(f"listing failed: {flash_safe(str(exc))}")
         finally:
             self.rows_loading = False
+
+    def with_shell_counts(self, rows: list[dict]) -> list[dict]:
+        """Land the host's open-shell counts on the rows (#858):
+        the session records' fresh count per workspace rides each
+        row as its ``shells`` field — the row marker and the
+        detail strip read it — keyed by the workspace's id, the
+        alias every session record pins under. The count is
+        client-side, per-host state, so it lands here on the
+        listing's refresh cadence rather than in the daemon's
+        row; a changed count changes the row, and the standing
+        comparison repaints it."""
+        counts = count_sessions()
+        return [dict(row, shells=counts.get(row["id"], 0)) for row in rows]
 
     async def load_storage(self) -> None:
         """Refresh the strip's storage cache (#849) off the

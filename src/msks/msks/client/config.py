@@ -103,6 +103,7 @@ GLOBAL_ENV_VARS: dict[str, str] = {
     "cafile": "MSKSC_CAFILE",
     "expected_image": "MSKSC_EXPECTED_IMAGE",
     "cache_dir": "MSKSC_CACHE_DIR",
+    "state_dir": "MSKSC_STATE_DIR",
     "identity_file": "MSKSC_IDENTITY_FILE",
     "pubkey_file": "MSKSC_PUBKEY_FILE",
     "terminal_title": "MSKSC_TERMINAL_TITLE",
@@ -744,6 +745,7 @@ class ClientConfig:
     cafile: str
     expected_image: str
     cache_dir: str | None
+    state_dir: str | None
     identity_file: str | None
     pubkey_file: str | None
     terminal_title: str | None
@@ -775,6 +777,7 @@ def resolve(
     cafile = resolved_scalar("cafile", entry, selection, doc, layer)
     image = resolved_scalar("expected_image", entry, selection, doc, layer)
     cache = resolved_global("cache_dir", doc, layer)
+    state = resolved_global("state_dir", doc, layer)
     identity = resolved_global("identity_file", doc, layer)
     pubkey = resolved_global("pubkey_file", doc, layer)
     title = resolved_global("terminal_title", doc, layer)
@@ -785,6 +788,7 @@ def resolve(
         cafile=cafile or "",
         expected_image=image or "",
         cache_dir=cache,
+        state_dir=state,
         identity_file=identity,
         pubkey_file=pubkey,
         terminal_title=title,
@@ -1006,6 +1010,11 @@ def render_template() -> str:
 # expected_image: msks/debian13:1.0  # the image msks ls compares
 #                                # against the daemon's /health (#160)
 # cache_dir: ~/.cache/msks      # per-workspace host-key caches (#251)
+# state_dir: ~/.local/state/msks  # the per-user state root: the
+#                                # session records every interactive
+#                                # msks ssh heartbeat there (#858),
+#                                # and the TUI counts them per
+#                                # workspace as open shells
 # identity_file: ~/.ssh/id_ed25519  # your own private key — the ssh
 #                                # identity a bare msks create plants
 #                                # into every workspace (#336); msks

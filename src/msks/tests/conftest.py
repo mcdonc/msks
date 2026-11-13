@@ -111,3 +111,27 @@ def devenv_shell_presets(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MSKSC_SOCKET", raising=False)
     monkeypatch.delenv("MSKSC_TOKEN", raising=False)
     monkeypatch.delenv("MSKSC_CAFILE", raising=False)
+    # MSKSC_STATE_DIR (#858) joins the cleared presets: the
+    # session-record root is host state an ambient export would
+    # pin, and the per-test isolation below points it at a
+    # throwaway tree anyway.
+    monkeypatch.delenv("MSKSC_STATE_DIR", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def isolated_client_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep the client's session records out of the home tree
+    (#858).
+
+    Every interactive ``msks ssh`` writes heartbeat records under
+    ``$MSKSC_STATE_DIR`` (default ``~/.local/state/msks``), and
+    the workspaces list counts them per workspace. The suite
+    points the root at a throwaway per-test directory, so a
+    run-loop test never writes into the operator's state and a
+    listing test never counts the host's live shells. Tests that
+    exercise the documented default-path resolution relocate it
+    themselves, the way the config tree's isolation does.
+    """
+    monkeypatch.setenv("MSKSC_STATE_DIR", str(tmp_path / "msks-state"))

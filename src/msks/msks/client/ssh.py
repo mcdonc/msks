@@ -55,6 +55,14 @@ with ``Permission denied (publickey)``. A probe login (``true`` as
 its remote command) retries behind the boot until the guest accepts
 the workspace key, and the real session — interactive or one-shot —
 then runs exactly once.
+
+An interactive session self-registers while it runs (#858):
+:func:`msks.client.sshsessions.record_session` holds one heartbeat
+record under the per-user state directory, so the workspaces list
+counts the host's open shells, and the token the record mints rides
+the spawned window's default title. A passthrough remote command
+and ``msks rsync`` register nothing — they are connections, not
+shells.
 """
 
 import asyncio
@@ -64,7 +72,7 @@ import shlex
 import subprocess
 import sys
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
@@ -75,6 +83,7 @@ from .rest import (
     ensure_running,
     fetch_ssh_key,
 )
+from .sshsessions import env_state_dir, record_session
 from .wintitle import title_spawned_window
 
 #: The remembered-passthrough setting's variable (#385): the
@@ -124,29 +133,6 @@ async def prepare(
         url, token, workspace_id, transport=transport, ssl_ctx=ssl_ctx
     )
     return key, booted
-
-
-def env_state_dir(variable: str) -> Path | None:
-    """One state-root variable's value, normalized or refused.
-
-    `MSKSC_CACHE_DIR` names its root directly (#251). A leading
-    ``~`` expands (the XDG fallback branches do the same); a
-    relative value names a different directory from every working
-    directory, which is exactly what a state root must not do, so
-    it is refused with the one-line fix rather than honored. An
-    empty value counts as unset — the same rule the shell preset
-    applies.
-    """
-    value = os.environ.get(variable, "")
-    if not value:
-        return None
-    root = Path(value).expanduser()
-    if not root.is_absolute():
-        raise SystemExit(
-            f"msks: {variable} must name an absolute path (got "
-            f"'{value}'); unset it or pass an absolute path"
-        )
-    return root
 
 
 def cache_dir() -> Path:
@@ -1378,12 +1364,19 @@ def run_workspace_ssh(
     workspace_id: str, passthrough: list[str], transport=None
 ) -> int:
     """One ssh session, from boot pre-flight to ssh's own exit
-    code. The window the TUI opened for this session (the spawn's
-    marker names it) takes its title from ``MSKSC_TERMINAL_TITLE``
-    before the session starts (#445); a typed invocation carries
-    no marker and keeps its terminal's title."""
-    title_spawned_window(workspace_id)
+    code. An interactive session registers itself in the
+    per-user session records (#858): one record keyed by the
+    workspace and this process's pid, heartbeated for the
+    session's life and unlinked at its end, so the workspaces
+    list counts the host's open shells — typed sessions and
+    TUI-spawned windows alike. The token the record mints names
+    the window the TUI opened for this session (#445): a
+    configured ``MSKSC_TERMINAL_TITLE`` keeps precedence, and a
+    session without a record (a passthrough remote command — a
+    connection, not a shell, registering nothing) drops the
+    session half of the default title."""
     passthrough = passthrough_args(passthrough)
+    interactive = not split_command(passthrough)[1]
     with staged_session(workspace_id, transport) as (
         booted,
         served,
@@ -1391,8 +1384,25 @@ def run_workspace_ssh(
         user,
         pin,
     ):
-        if booted:
-            probe_argv = probe_args(
+        guard = record_session(pin) if interactive else nullcontext(None)
+        with guard as token:
+            title_spawned_window(pin, token)
+            if booted:
+                probe_argv = probe_args(
+                    pin,
+                    served.server_address,
+                    served.identity_path,
+                    known_hosts,
+                    passthrough,
+                    user,
+                )
+                if probe_argv is not None:
+                    wait_for_identity(
+                        workspace_id,
+                        probe_argv,
+                        time.monotonic() + SSH_SEED_WAIT_S,
+                    )
+            argv = build_args(
                 pin,
                 served.server_address,
                 served.identity_path,
@@ -1400,18 +1410,4 @@ def run_workspace_ssh(
                 passthrough,
                 user,
             )
-            if probe_argv is not None:
-                wait_for_identity(
-                    workspace_id,
-                    probe_argv,
-                    time.monotonic() + SSH_SEED_WAIT_S,
-                )
-        argv = build_args(
-            pin,
-            served.server_address,
-            served.identity_path,
-            known_hosts,
-            passthrough,
-            user,
-        )
-        return exec_child(argv, "msks ssh: ssh not found on PATH")
+            return exec_child(argv, "msks ssh: ssh not found on PATH")

@@ -1849,6 +1849,103 @@ def test_run_workspace_ssh_runs_ssh_and_stops_the_agent(
     assert stopped == ["stopped"]  # the agent tears down after ssh exits
 
 
+def test_run_workspace_ssh_registers_the_interactive_session(
+    monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
+) -> None:
+    """#858: an interactive session self-registers — one record
+    under the state root, keyed by the workspace and the process's
+    pid, alive for exactly the ssh child's run — and the token it
+    mints rides the window title the spawn writes."""
+    from msks.client import sshsessions
+
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return KEY, False
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
+    )
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    titles: list[tuple] = []
+    monkeypatch.setattr(
+        ssh,
+        "title_spawned_window",
+        lambda ref, token=None: titles.append((ref, token)),
+    )
+    seen: list = []
+
+    def fake_run(argv, **kwargs) -> SimpleNamespace:
+        record = sshsessions.read_record(
+            sshsessions.record_path("alpha", os.getpid())
+        )
+        seen.append(record)
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(ssh.subprocess, "run", fake_run)
+    rc = ssh.run_workspace_ssh("alpha", [])
+    assert rc == 0
+    # The record stood for the session's whole run, keyed by the
+    # workspace and this process's pid, and the title carried its
+    # token beside the pin.
+    (record,) = seen
+    assert record is not None
+    assert record["workspace"] == "alpha"
+    assert record["pid"] == os.getpid()
+    assert titles == [("alpha", record["token"])]
+    assert len(record["token"]) == sshsessions.TOKEN_LEN
+    # The clean close unlinked it at once: the count drops with
+    # the session, not with the TTL.
+    assert not sshsessions.record_path("alpha", os.getpid()).exists()
+
+
+def test_run_workspace_ssh_registers_no_remote_command(
+    monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
+) -> None:
+    """#858: a passthrough remote command is a connection, not a
+    shell — it writes no record, and the window title it may
+    write drops the session half of the default."""
+    from msks.client import sshsessions
+
+    async def fake_prepare(*args, **kwargs) -> tuple[dict, bool]:
+        return KEY, False
+
+    monkeypatch.setattr(ssh, "prepare", fake_prepare)
+    monkeypatch.setattr(
+        ssh,
+        "known_hosts_path",
+        lambda ws, base=None, instance=None: str(tmp_path),
+    )
+
+    @contextmanager
+    def fake_serve(private, comment):
+        yield FakeAgent()
+
+    monkeypatch.setattr(ssh.agent, "serve", fake_serve)
+    titles: list[tuple] = []
+    monkeypatch.setattr(
+        ssh,
+        "title_spawned_window",
+        lambda ref, token=None: titles.append((ref, token)),
+    )
+
+    def fake_run(argv, **kwargs) -> SimpleNamespace:
+        assert not sshsessions.record_path("alpha", os.getpid()).exists()
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(ssh.subprocess, "run", fake_run)
+    rc = ssh.run_workspace_ssh("alpha", ["uname", "-a"])
+    assert rc == 0
+    assert titles == [("alpha", None)]
+    assert sshsessions.count_sessions() == {}
+
+
 def test_run_workspace_ssh_pins_under_the_served_id(
     monkeypatch: pytest.MonkeyPatch, client_env: None, tmp_path: Path
 ) -> None:

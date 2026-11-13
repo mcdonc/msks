@@ -23,6 +23,7 @@ CLIENT_VARS = (
     "MSKSC_CAFILE",
     "MSKSC_EXPECTED_IMAGE",
     "MSKSC_CACHE_DIR",
+    "MSKSC_STATE_DIR",
     "MSKSC_IDENTITY_FILE",
     "MSKSC_TERMINAL_OPEN_CMD",
     "MSKSC_TERMINAL_TITLE",
@@ -674,6 +675,30 @@ def test_terminal_command_prefers_the_variable(tmp_path, monkeypatch) -> None:
     with pytest.raises(ValueError, match="MSKSC_TERMINAL_OPEN_CMD"):
         monkeypatch.setenv("MSKSC_TERMINAL_OPEN_CMD", 'wezterm "')
         config.resolve(None, path)
+
+
+# --- state_dir ---
+
+
+def test_state_dir_resolves_the_global_tier(tmp_path, monkeypatch) -> None:
+    """The session-record root (#858) resolves the way every global
+    key does: the variable over the file, the file over none — and
+    only the file's winner is materialized, so every ``msks ssh``
+    child reads it from the environment either way."""
+    clean_env(monkeypatch)
+    path = write_config(tmp_path, "state_dir: /state/root\n")
+    conf = config.resolve(None, path)
+    assert conf.state_dir == "/state/root"
+    assert conf.env_layer["MSKSC_STATE_DIR"] == "/state/root"
+    monkeypatch.setenv("MSKSC_STATE_DIR", "/env/root")
+    conf = config.resolve(None, path)
+    assert conf.state_dir == "/env/root"
+    assert "MSKSC_STATE_DIR" not in conf.env_layer
+
+
+def test_no_state_dir_answers_none(tmp_path, monkeypatch) -> None:
+    clean_env(monkeypatch)
+    assert config.resolve(None, "none").state_dir is None
 
 
 # --- terminal_title ---
