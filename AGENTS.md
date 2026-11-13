@@ -314,7 +314,10 @@ voice; this rule is for `docs/` prose.
   _use_, _run_, _fail_, _report_. Nothing "names" a path, no option
   "rides" a command, no value "lands" in a cache, no key "sits" on a
   binding. "Names" is the strongest single tell: the tui.md rewrite
-  removed 23 uses of it.
+  removed 23 uses of it. "Ride" (every form) and "dial" (verb and
+  noun) are banned outright (#872): a value is _sent as_ the header,
+  a client _connects to_ the socket, the connection _is made as_
+  `root`. Never "rides as", "dials", or "the dial is `root`".
 - **Cut the filler.** "simply", "just", "note that", "it is worth
   noting" add nothing. Delete them.
 - **No `, so` or semicolon hinges on long sentences.** A comma-plus-so

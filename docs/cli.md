@@ -89,7 +89,7 @@ variables has a config-file equivalent.
 
 | Variable                   | Config file key      | Meaning                                                                                                                                                                                                                                                                            | Default                                                   |
 | -------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `MSKSC_URL`                | `url`                | The remote daemon's base URL, the TCP + TLS + token shape; the client dials TCP only when a URL gives one                                                                                                                                                                          | unset (the local socket answers, else the client refuses) |
+| `MSKSC_URL`                | `url`                | The remote daemon's base URL, the TCP + TLS + token shape; the client opens a TCP connection only when a URL gives one                                                                                                                                                             | unset (the local socket answers, else the client refuses) |
 | `MSKSC_SOCKET`             | `socket`             | The local listener's socket path: peer-credential authentication, with no token and no TLS                                                                                                                                                                                         | unset (the default socket is looked for)                  |
 | `MSKSC_TOKEN`              | `token_file`         | A daemon bearer token (see tokens below); a socket connection needs none                                                                                                                                                                                                           | — (required for a URL)                                    |
 | `MSKSC_CAFILE`             | `cafile`             | A PEM file to verify the daemon's TLS certificate; a socket connection verifies nothing (the kernel vouches for both ends)                                                                                                                                                         | unverified with warning                                   |
@@ -142,7 +142,7 @@ config-file daemon) looks for the default socket a same-host
 daemon binds (`$XDG_RUNTIME_DIR/msks/msksd.sock`) and connects
 through it with peer credentials alone. Finding none, it exits
 with the paths it looked for and the two settings that pick a
-daemon outright. The client never dials a TCP address
+daemon outright. The client never connects to a TCP address
 implicitly: a well-known port could belong to any daemon.
 
 The daemon serves TLS with a self-signed certificate. Point
@@ -484,7 +484,7 @@ the guest already serves. Pick a name the image uses for no one.
 
 The name is create-time and immutable, like `user_data`: a
 workspace created before records no user of its own. `msks ssh`
-and `msks rsync` dial it as `root`, and the image's `msks`
+and `msks rsync` connect to it as `root`, and the image's `msks`
 account stays reachable by giving it directly.
 
 `--start` boots the workspace right after creating it:
@@ -1125,7 +1125,7 @@ msks proxy add my-workspace -R 9200:localhost:9200
 # reverse: the workspace's gateway listens on 9200, and every guest
 # connection bridges to port 9200 on the daemon's host
 msks proxy add my-workspace -R 5432:db.internal:5432 --label db
-# the gateway's 5432 bridges to db.internal:5432, dialed by the daemon
+# the gateway's 5432 bridges to db.internal:5432; the daemon makes the connection
 ```
 
 The `-L` spec is `[BIND:]PORT:HOST:PORT`; the `-R` spec is `RPORT:HOST:TPORT`
@@ -1139,11 +1139,11 @@ msks: -L's host field names the workspace itself; only localhost or
 127.0.0.1 is allowed — to reach a daemon-side service, use -R
 ```
 
-The workspace cannot dial out on a forward's behalf (no agent runs inside it),
+The workspace cannot connect out on a forward's behalf (no agent runs inside it),
 so a forward always lands on the workspace itself. Reaching a daemon-side
 service is the `-R` direction.
 
-A remote proxy is the reverse of a forward one. The guest dials `host.msks`
+A remote proxy is the reverse of a forward one. The guest connects to `host.msks`
 on the listen port. The workspace's resolver answers that name with its DHCP
 gateway address (`ip route show default` inside the workspace prints the same
 address). The daemon bridges the connection to the daemon-side service the
@@ -1151,7 +1151,7 @@ spec names. With the example stored, `curl http://host.msks:9200` inside the
 workspace reaches the host service. A workspace created without
 egress holds no proxies: its row has no NIC to reach.
 
-The daemon dials a remote proxy's target itself. The consent machinery gates
+The daemon connects to a remote proxy's target itself. The consent machinery gates
 the guest's traffic through the tap, not the daemon's own connections. A
 remote row therefore reaches its target without a verdict.
 
@@ -1308,7 +1308,7 @@ alias, whichever way the workspace was addressed: `msks ssh
 <name>` and the TUI's shell action record the same `known_hosts`
 entry, and an operator's own `~/.ssh/config` `Host <name>` block
 no longer matches the session (the id is the hostname msks ssh
-dials; use the id in a matching block instead).
+connects to; use the id in a matching block instead).
 
 Host keys persist across stop/start on the workspace's overlay, so the
 first-connection entry keeps matching. When the daemon recreates the overlay
@@ -1368,7 +1368,7 @@ and the passthrough comes first.
 
 The login user is the workspace's recorded login user: the
 create-time `--user`, defaulting to the creating operator's name.
-A workspace created before records none, and the dial is `root`.
+A workspace created before records none, and the connection is made as `root`.
 ssh arguments that give a user (`-l root`, `-o User=root`)
 override it. The host argument ssh sees is the workspace id
 itself; the transport is the proxy, so the name never resolves.

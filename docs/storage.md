@@ -160,7 +160,7 @@ state disk    used 23.4G of 40G    free 16.6G    pressure ok
 - **Cost** is the disk blocks an artifact occupies: the sparse
   files' real footprint, never their nominal size. An overlay's
   cost sits a little above the root filesystem usage the
-  guest's own `df` reports (qcow2 bookkeeping rides along) and
+  guest's own `df` reports (qcow2 bookkeeping comes with it) and
   stays below its ceiling until the guest fills it.
 - **Ceiling** is the size fixed at create (`root_mib` /
   `home_mib`): the quota the guest's `df` shows its user.

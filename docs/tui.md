@@ -441,7 +441,7 @@ A `msks ssh` you type yourself keeps your terminal's title: the title
 applies only to the windows msks opens, and a same-terminal shell
 (the dead-launcher fallback) changes nothing.
 
-The title rides the standard OSC title sequence, and the launcher's
+The title uses the standard OSC title sequence, and the launcher's
 terminal decides what its titlebar shows. xterm (the built-in default
 launcher) and Ghostty show it. Konsole's titlebar shows the _tab_
 title, whose default format composes the working directory's name and
@@ -549,7 +549,7 @@ bottom.
 
 A plain drag selects text in tmux's buffer and copies it. The copy lands in
 tmux's paste buffer and in the system clipboard, so a paste in another
-window delivers the selection just made. The clipboard half rides an OSC 52
+window delivers the selection just made. The clipboard half is sent as an OSC 52
 write, which the outer terminal must take: Konsole builds since 2024, kitty,
 foot, wezterm, ghostty, and alacritty do. VTE terminals (gnome-terminal,
 Ptyxis) leave the sequence untouched, so there a plain drag copies into

@@ -124,7 +124,7 @@ takes the first entry, and an OpenAI-shaped client asking for
 In passthrough mode the request forwards verbatim to the
 upstream's own `/v1/messages` endpoint. The upstream must serve
 the Messages API itself for this route: Anthropic's API, or any
-Anthropic-compatible gateway. The entry's key rides as
+Anthropic-compatible gateway. The entry's key is sent as
 `x-api-key`, and the `anthropic-version` and `anthropic-beta`
 headers forward with `2023-06-01` as the default version. A
 passthrough entry pointed at an OpenAI-shaped upstream still
@@ -197,15 +197,15 @@ a home-volume backup carries no credential.
 
 **Log in with the paste-code flow.** `claude auth login`
 prints an authorize URL. Open it on your own machine; any
-browser works, and the guest is never dialed. Authorize, copy
+browser works, and the guest never opens it. Authorize, copy
 the code the page shows, and paste it at the guest CLI's
 prompt. A reboot drops the tokens (the tmpfs again), and the
 next session logs in the same way.
 
-**The flow.** The token exchange dials
-`platform.claude.com`. The session dials `api.anthropic.com`.
+**The flow.** The token exchange connects to
+`platform.claude.com`. The session connects to `api.anthropic.com`.
 claude-code's telemetry hosts (statsig, sentry) and its other
-non-essential calls dial too; exporting
+non-essential calls connect too; exporting
 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` keeps them from
 asking at all.
 
