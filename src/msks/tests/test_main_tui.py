@@ -4279,8 +4279,10 @@ def test_every_screen_carries_the_help_key() -> None:
     from msks.client.tui.secrets import SecretAuditScreen, SecretsScreen
 
     pages = set()
-    for module_info in pkgutil.iter_modules(tui_pkg.__path__):
-        module = importlib.import_module(f"msks.client.tui.{module_info.name}")
+    for module_info in pkgutil.walk_packages(
+        tui_pkg.__path__, "msks.client.tui."
+    ):
+        module = importlib.import_module(module_info.name)
         for obj in vars(module).values():
             if (
                 isinstance(obj, type)
