@@ -133,6 +133,9 @@ class MsksTuiApp(App):
     #rows ListItem { height: 1; padding: 0 1; }
     #rows ListItem Static { text-wrap: nowrap; }
     #empty { padding: 1 2; color: $text-muted; }
+    #detail { height: 2; padding: 0 1; background: $panel;
+              color: $text; text-wrap: nowrap;
+              text-overflow: ellipsis; }
     #header { height: 1; padding: 0 1; background: $panel;
               text-wrap: nowrap; text-overflow: ellipsis; }
     #header-meta { height: 1; padding: 0 1; background: $panel;

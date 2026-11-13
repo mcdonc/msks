@@ -2,12 +2,19 @@
 extracted from the app shell so :mod:`msks.client.tui.main_app`
 composes it. Create, start, stop, and remove happen here; Enter
 opens the focused workspace's page, and ``e`` opens the secrets
-page (#431).
+page (#431). A two-line detail strip at the listing's bottom
+(#849) carries the focused row's quick facts — identity,
+topology, egress, mounts, storage — painted from the standing
+rows and a storage cache the refresh cadence refills; the strip
+is display-only, so it takes no focus and no width from the
+table.
 
 Spatial navigation: arrows walk the rows in reading order, the
 page keys act on the focused row, and ``q`` or Escape quits the
 tree — no trap.
 """
+
+import asyncio
 
 from rich.markup import escape
 from textual.app import ComposeResult
@@ -34,6 +41,7 @@ from .rows import (
     LIST_FRAME_CELLS,
     NATURAL_DESCENDING,
     column_at,
+    detail_strip,
     expanded_columns,
     list_header,
     row_content,
@@ -137,10 +145,13 @@ class ColumnsHeader(Static):
 
 
 class MainScreen(HelpKeys, Screen):
-    """The tree's root (#309): every workspace one row; create,
-    start, stop, and remove happen here; Enter opens the
-    workspace's page, ``e`` the secrets page (#431), ``/`` the
-    typeahead jump (#470 L4), ``?`` the key overlay (#851). The
+    """The tree's root (#309): every workspace one row over a
+    two-line detail strip at the listing's bottom (#849) that
+    carries the focused row's quick facts; create, start, stop,
+    and remove happen here;
+    Enter opens the workspace's page, ``e`` the secrets page
+    (#431), ``/`` the typeahead jump (#470 L4), ``?`` the key
+    overlay (#851). The
     footer's descriptions stay short (#524): every binding must
     fit the 80-column footer a 24-row terminal shows — the longer
     words (``Jmp`` for the typeahead, ``Del`` for remove,
@@ -183,12 +194,22 @@ class MainScreen(HelpKeys, Screen):
         # The listing refresh's in-flight mark (#776): a skip, not
         # a cancel — see refresh_rows.
         self.rows_loading = False
+        # The detail strip's storage cache (#849): the last
+        # capacity report's per-workspace root-plus-home cost,
+        # refreshed on the listing's cadence — a selection move
+        # reads it and pays no roundtrip.
+        self.storage_used: dict[str, int] = {}
 
     def compose(self) -> ComposeResult:
         yield Static(id="status")
         with Vertical(id="listing"):
             yield ColumnsHeader(self.header_content(), self.pick_column)
             yield Static(id="empty")
+            # The detail strip (#849): the focused row's quick facts
+            # pinned at the listing's bottom — the rows list fills
+            # the box above it, so the strip keeps its place at the
+            # bottom whatever the fleet's size.
+            yield Static(id="detail")
         yield Footer()
 
     def header_content(self) -> str:
@@ -293,12 +314,36 @@ class MainScreen(HelpKeys, Screen):
 
     async def load_rows(self) -> None:
         try:
-            rows = await self.app.data.workspaces()
+            rows, _ = await asyncio.gather(
+                self.app.data.workspaces(), self.load_storage()
+            )
             await self.rebuild_rows(rows)
         except (Exception, SystemExit) as exc:
             self.app.flash(f"listing failed: {flash_safe(str(exc))}")
         finally:
             self.rows_loading = False
+
+    async def load_storage(self) -> None:
+        """Refresh the strip's storage cache (#849) off the
+        daemon's capacity report — the listing's own refresh
+        cadence, fetched beside the rows so the listing's repaint
+        never waits on the disk walk behind it (the daemon runs
+        the walk off its event loop; a parked list costs it a
+        background stat pass, not a stall). A report that will
+        not come (a daemon away) or will not read (one predating
+        the endpoint or its per-row fields answers another shape)
+        keeps the standing figures; the strip's storage cell reads
+        its honest dash until one lands. The silence is
+        deliberate: the strip is a detail beside a listing that
+        reports its own failures."""
+        try:
+            report = await self.app.data.storage()
+            self.storage_used = {
+                ws["id"]: ws["root_bytes"] + ws["home_bytes"]
+                for ws in report.get("workspaces") or []
+            }
+        except Exception, SystemExit:
+            return
 
     async def rebuild_rows(self, rows: list[dict]) -> None:
         """Swap in a freshly-built list (its mount awaited), the
@@ -314,6 +359,7 @@ class MainScreen(HelpKeys, Screen):
         ordered = sort_rows(rows, self.sort)
         if ordered == self.rows and self.rows_widget() is not None:
             self.sync_status()
+            self.paint_detail()
             return
         self.rows = ordered
         listing = self.query_one("#listing", Vertical)
@@ -323,11 +369,12 @@ class MainScreen(HelpKeys, Screen):
         fresh = ListView(*items, id="rows")
         if old is not None:
             await old.remove()  # frees the id before the fresh list mounts
-        await listing.mount(fresh)
+        await listing.mount(fresh, before=self.query_one("#detail", Static))
         fresh.focus()
         focus_attr(fresh, "row_key", focused)
         self.paint_rows()  # the bold cue lands on the row focus kept
         self.sync_status()
+        self.paint_detail()
 
     def row_item(self, row: dict) -> ListItem:
         """One listing row at the terminal's column widths, tagged
@@ -377,8 +424,11 @@ class MainScreen(HelpKeys, Screen):
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         """The focused row moved: repaint so the bold cue follows
-        it (#470 S3)."""
+        it (#470 S3), and the detail strip with it (#849) — the
+        strip reads the standing rows and the storage cache, so
+        the move pays no roundtrip."""
         self.paint_rows()
+        self.paint_detail()
 
     def rows_widget(self) -> ListView | None:
         """The listing list, or None during a rebuild's swap
@@ -417,6 +467,28 @@ class MainScreen(HelpKeys, Screen):
             empty.update("No workspaces — c creates one.")
         except NoMatches:
             pass
+
+    def paint_detail(self) -> None:
+        """The detail strip (#849): the focused row's quick facts
+        at the listing's bottom, painted from the standing rows
+        and the storage cache. The strip hides while no row stands
+        focused — the empty state owns that space. A screen going
+        away under the timer or a worker leaves the query empty —
+        teardown noise, not a crash."""
+        try:
+            strip = self.query_one("#detail", Static)
+        except NoMatches:
+            return
+        row = self.focused_row()
+        strip.display = row is not None
+        if row is not None:
+            strip.update(
+                detail_strip(
+                    row,
+                    self.storage_used.get(row["id"]),
+                    self.app.theme_variables,
+                )
+            )
 
     # -- the typeahead jump (#470 L4) ------------------------------------
 

@@ -1,8 +1,9 @@
 """The workspace tree's row rendering (#309, #347–#351): the
 listing's columns, the status colors, the relative created labels,
-and the header/status lines' content — pure text arithmetic over
-daemon rows: no Textual widgets, no screens, and no daemon
-imports, so every screen module renders through one vocabulary.
+the header/status lines' content, and the detail strip's lines
+(#849) — pure text arithmetic over daemon rows: no Textual
+widgets, no screens, and no daemon imports, so every screen
+module renders through one vocabulary.
 """
 
 import re
@@ -10,6 +11,8 @@ from datetime import UTC, datetime
 
 from rich.cells import cell_len
 from textual.content import Content, Span
+
+from ..volumes import MIB, human_bytes
 
 
 def workspace_label(row: dict) -> str:
@@ -22,14 +25,18 @@ def workspace_label(row: dict) -> str:
 #: column's width, so the columns line up down the list. The widths
 #: are the fixed minimums the 80-column frame budgets: at that width
 #: the border and the scrollbar together leave 74 cells for a row,
-#: and the widest label the created column reads (#350,
-#: ``yesterday``) must fit whole beside the columns before it. A
-#: wider terminal widens the growing columns past these minimums
-#: (:func:`expanded_columns`).
+#: two past the fixed span (#849's ID column sits ten wide where
+#: EGRESS sat twelve), and the widest label the created column
+#: reads (#350, ``yesterday``) must fit whole beside the columns
+#: before it. A wider terminal widens the growing columns past
+#: these minimums
+#: (:func:`expanded_columns`). The ID column (#849) carries a whole
+#: daemon id at ten cells; the egress posture it replaced moved to
+#: the detail strip.
 LIST_COLUMNS = (
     ("NAME", 22),
     ("STATUS", 10),
-    ("EGRESS", 12),
+    ("ID", 10),
     ("IMAGE", 12),
     ("CREATED", 10),
 )
@@ -75,8 +82,9 @@ COLUMN_GAP = "  "
 
 #: The cells a listing row's frame eats before its first column
 #: (#347, #349): the round border's two edges, the row's two-cell
-#: padding, and the scrollbar's two — at an 80-column terminal the
-#: 74 cells that remain are exactly the fixed columns' span, so
+#: padding, and the scrollbar's two — the workspaces' fixed span
+#: (#849) sits two cells under the 74 an 80-column terminal leaves
+#: a row, so the growing columns take those two at that width, and
 #: both listings (the workspaces', the secrets') compute their
 #: widened budgets from the terminal's width less this.
 LIST_FRAME_CELLS = 6
@@ -84,9 +92,9 @@ LIST_FRAME_CELLS = 6
 #: The columns the listing's spare width flows into when the
 #: terminal runs wider than the fixed columns' span (#347): the
 #: name and the image — the two columns whose content runs long
-#: (workspace names, image references) — while the status,
-#: egress, and created columns hold their vocabulary-sized shape
-#: whatever the terminal's width.
+#: (workspace names, image references) — while the status, id,
+#: and created columns hold their fixed shape whatever the
+#: terminal's width.
 GROWING_LABELS = frozenset({"NAME", "IMAGE"})
 
 
@@ -357,12 +365,14 @@ def row_cells(row: dict, columns=LIST_COLUMNS) -> tuple[str, ...]:
     """The row's column cells (#347) at the given columns' widths,
     each clipped to its column's width whatever the daemon's
     vocabulary grows; the created cell reads as a relative label
-    (#350)."""
+    (#350). The ID cell (#849) carries the immutable id — the
+    egress posture the column carried moved to the detail
+    strip."""
     widths = [width for _label, width in columns]
     return (
         clip(workspace_label(row), widths[0]),
         clip(status_with_issues(row), widths[1]),
-        clip(row.get("egress_mode") or "-", widths[2]),
+        clip(row["id"], widths[2]),
         clip(row.get("image_ref") or row.get("image_hash") or "-", widths[3]),
         clip(created_label(row.get("created_at")), widths[4]),
     )
@@ -468,11 +478,6 @@ def stamp_sort_key(descending: bool):
     return key
 
 
-def egress_sort_key(row: dict) -> str:
-    """The EGRESS column's value key (#854): the posture's name."""
-    return row.get("egress_mode") or ""
-
-
 #: The sort key builder per column (#854): CREATED builds its own
 #: per direction; every other column reads one of the keys above.
 def sort_key(column: str, descending: bool):
@@ -481,14 +486,15 @@ def sort_key(column: str, descending: bool):
     keys = {
         "NAME": name_sort_key,
         "STATUS": status_sort_key,
-        "EGRESS": egress_sort_key,
+        "ID": id_sort_key,
         "IMAGE": image_sort_key,
     }
     return keys[column]
 
 
 def id_sort_key(row: dict) -> str:
-    """The tiebreak every column shares (#854): the id alone."""
+    """The ID column's value key (#849) — and the tiebreak every
+    other column shares (#854): the id alone."""
     return row["id"]
 
 
@@ -763,6 +769,138 @@ def state_summary(rows: list[dict]) -> str | None:
         key=lambda status: (STATUS_SORT_RANK.get(status, after), status),
     )
     return " ".join(f"{counts[status]} {status}" for status in order)
+
+
+#: The detail strip's cell budgets (#849): the name leads with
+#: the NAME column's fixed minimum, the id's ten cells carry a whole
+#: daemon id, and the egress budget covers the posture's
+#: vocabulary — both lines hold inside an 80-column terminal's
+#: box with every fact whole.
+DETAIL_NAME_W = 22
+DETAIL_ID_W = 10
+DETAIL_EGRESS_W = 12
+
+#: The detail strip's field separator (#849): one cell each side
+#: of the dot, muted with the labels beside it.
+DETAIL_JOIN = " · "
+
+#: The strip's facts whose value rides the warning color (#849):
+#: the mounts-issue marker, the same cue the status cell carries.
+DETAIL_WARNED = frozenset({"mounts"})
+
+
+def mem_value(mem_mib) -> str:
+    """The memory fact in the strip's own unit: binary units
+    (:func:`human_bytes`), the same renderer the storage figure
+    uses, with the honest dash for a row that predates the
+    field."""
+    if mem_mib is None:
+        return "-"
+    return human_bytes(mem_mib * MIB)
+
+
+def detail_pairs(
+    row: dict, used_bytes: int | None
+) -> tuple[list[tuple], list[tuple]]:
+    """The strip's facts as (label, value) pairs, one list per
+    line (#849): the identity — the name (bare: the strip's own
+    answer to which row it describes), the id, the image — on
+    the first, the posture and costs — cpu, memory, the egress
+    mode, the mounts-issue count while any mount skips, the
+    storage the capacity report charges — on the second. Every
+    fact but storage reads the row the listing already holds."""
+    marker = issue_marker(row)
+    second = [
+        ("cpu", "-" if row.get("cpus") is None else str(row["cpus"])),
+        ("mem", mem_value(row.get("mem_mib"))),
+        (
+            "egress",
+            clip(row.get("egress_mode") or "-", DETAIL_EGRESS_W),
+        ),
+    ]
+    if marker is not None:
+        second.append(("mounts", marker))
+    second.append(
+        ("storage", "-" if used_bytes is None else human_bytes(used_bytes))
+    )
+    return (
+        [
+            (None, clip(workspace_label(row), DETAIL_NAME_W)),
+            ("id", clip(row["id"], DETAIL_ID_W)),
+            ("image", clip(meta_raw(row)[1], META_IMAGE_W)),
+        ],
+        second,
+    )
+
+
+def pair_spans(
+    label: str | None, value: str, end: int, offset: int, muted: str
+) -> list[Span]:
+    """One pair's spans (#849), placed by the pair's end in the
+    line: the muted label ahead of its value (a pair without a
+    label renders its value alone), and the warning color on a
+    warned pair's value — the ``✗N`` marker, the same cue the
+    status cell carries."""
+    if label is None:
+        return []
+    spans = [
+        Span(
+            offset + end - len(value) - len(label) - 1,
+            offset + end - len(value) - 1,
+            muted,
+        )
+    ]
+    if label in DETAIL_WARNED:
+        spans.append(
+            Span(offset + end - len(value), offset + end, ISSUE_MARKER_COLOR)
+        )
+    return spans
+
+
+def detail_line(
+    pairs: list[tuple], theme_variables: dict | None, offset: int = 0
+) -> tuple[str, list[Span]]:
+    """One strip line (#849): each fact's label muted in the
+    muted accent, its value beside it in the line's own
+    foreground, the dot joins muted with the labels — the
+    strip's own paint, distinct from the rows it summarizes. A
+    pair whose label is None (the id) renders its value alone.
+    ``offset`` shifts the spans onto the line's place in the
+    two-line whole."""
+    muted = muted_style(theme_variables or {})
+    spans: list[Span] = []
+    text = " "
+    for label, value in pairs:
+        if len(text) > 1:
+            text += DETAIL_JOIN
+            spans.append(
+                Span(
+                    offset + len(text) - len(DETAIL_JOIN),
+                    offset + len(text),
+                    muted,
+                )
+            )
+        text += value if label is None else f"{label} {value}"
+        spans.extend(pair_spans(label, value, len(text), offset, muted))
+    return text, spans
+
+
+def detail_strip(
+    row: dict, used_bytes: int | None, theme_variables: dict | None = None
+) -> Content:
+    """The listing's detail strip (#849): the focused row's quick
+    facts on two lines at the listing's bottom — every fact but
+    storage read off the row the listing holds, so a selection
+    move pays no roundtrip. The id opens the first line bare;
+    each fact behind it reads its muted label and its value in
+    the strip's own foreground, and the ``✗N`` mounts marker
+    rides the warning color."""
+    first_pairs, second_pairs = detail_pairs(row, used_bytes)
+    first, spans = detail_line(first_pairs, theme_variables)
+    second, more = detail_line(
+        second_pairs, theme_variables, offset=len(first) + 1
+    )
+    return Content(f"{first}\n{second}", [*spans, *more])
 
 
 def status_content(

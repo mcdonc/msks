@@ -12,7 +12,7 @@ my-workspace` opens that workspace's page directly.
 
 ## The workspace tree
 
-![The workspaces list: two rows, the status bar's count, state summary, and daemon URL](screens/workspaces-list.svg)
+![The workspaces list: two rows, the detail strip at the bottom of the box, and the status bar's count, state summary, and daemon URL](screens/workspaces-list.svg)
 
 The tree is rooted at the **workspaces list**: one row per workspace,
 newest first. Clicking a column header sorts the list by that column.
@@ -34,6 +34,18 @@ overlay. The workspaces list answers it too.
 The list re-reads the daemon every five seconds. A workspace changed
 from another surface (the CLI, another operator) appears without a
 keypress.
+
+The listing's bottom holds a two-line strip with the focused
+workspace's quick facts, under the rows. The first line carries the
+workspace's name, its id, and the image. The second carries the cpu
+count, the memory in binary units (`8G`), the egress mode, the
+mounts-issue count while any mount skips (`mounts ✗2`), and the
+storage the workspace charges the state disk. The strip paints its labels muted and its values in the bright
+foreground on the panel background, so it reads as its own bar at the
+bottom of the box. The storage figure is the root-plus-home cost `msks
+storage` reports, fetched with the list's five-second refresh and
+cached between refreshes. The strip follows the selection without a
+keypress, and an empty list hides it.
 
 The status bar above the list counts the workspaces and summarizes
 their states beside the count. A fleet in one state reads
