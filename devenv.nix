@@ -297,6 +297,11 @@ in
     exec = ''exec bash "$DEVENV_ROOT/scripts/jscpd-gate.sh" "$@"'';
   };
 
+  scripts.msks-lines = {
+    description = "Module-length gate: 2000-line ceiling, shrinking exemptions";
+    exec = ''exec bash "$DEVENV_ROOT/scripts/lines-gate.sh" "$@"'';
+  };
+
   scripts.msks-preflight = {
     description = "All pre-commit offenders in one pass, before the commit attempt (--fast skips the suite)";
     exec = ''exec bash "$DEVENV_ROOT/scripts/preflight.sh" "$@"'';
@@ -485,6 +490,21 @@ in
       name = "xenon";
       entry = "scripts/xenon-gate.sh";
       files = "^src/msks/msks/.*\\.py$|^scripts/.*\\.py$";
+      language = "system";
+      pass_filenames = false;
+    };
+    # Lines gate (#863): no module under the shipped package past
+    # the ceiling scripts/lines-gate.sh carries (2000 today; it only
+    # goes down). Over-ceiling files live on the shrinking
+    # scripts/lines-exemptions.txt list, which also triggers the
+    # hook — a list edit is exactly when the gate should re-run.
+    # Whole-tree like xenon above (a staged subset's pass is not
+    # the tree's pass); `files` stays as the run trigger.
+    lines-gate = {
+      enable = true;
+      name = "lines-gate";
+      entry = "bash scripts/lines-gate.sh";
+      files = "^src/msks/msks/.*\\.py$|^scripts/lines-exemptions\\.txt$";
       language = "system";
       pass_filenames = false;
     };

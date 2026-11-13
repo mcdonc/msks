@@ -223,6 +223,26 @@ not code.
 Run the gates after writing code and fix all findings in one pass.
 Widening a config file is a deliberate edit: the diff states why.
 
+## Lines gate
+
+`scripts/lines-gate.sh` fails when a module under `src/msks/msks/`
+exceeds the ceiling the script carries (2,000 lines; the ceiling only
+goes down). The gate names the file and its count and does nothing
+else. Do not grow the file past the ceiling, and do not reach for the
+exemption list first.
+
+Split the module into a package. Read it and group what belongs
+together: one responsibility per submodule, each submodule's docstring
+stating that responsibility. A mechanical cut (midpoint halves,
+fixed-size chunks) passes the gate and is still the wrong split. The
+import-graph rules apply to the new package: it gets a rank before it
+gets imports, and pair counts resnapshot in the same commit.
+
+`scripts/lines-exemptions.txt` is the last resort, for a file whose
+split cannot land in the change that crossed the ceiling. An entry
+whose file is at or under the ceiling fails the gate as stale; the
+commit that brings a listed file back under removes its entry.
+
 ## TUI spatial navigation (no focus traps)
 
 The textual TUI must use **spatial navigation** — arrow keys move focus

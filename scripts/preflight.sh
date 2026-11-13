@@ -17,6 +17,8 @@
 #     counts, fan-in ceiling, reachability, facades)
 #   - every xenon offender in the graded set (scripts/xenon-gate.sh)
 #   - the jscpd clone report (scripts/jscpd-gate.sh)
+#   - every module-length offender (scripts/lines-gate.sh: the
+#     2000-line ceiling and the shrinking exemption list)
 #   - a --collect-only pass before the suite (#690): a module that
 #     cannot import is named in seconds instead of a long suite run
 #     that fails the same way at the end
@@ -118,6 +120,7 @@ run_section "import-cycles" "$venv_python" scripts/check_import_cycles.py
 run_section "import-graph" "$venv_python" scripts/check_import_graph.py
 run_section "xenon" bash scripts/xenon-gate.sh
 run_section "jscpd" bash scripts/jscpd-gate.sh
+run_section "lines" bash scripts/lines-gate.sh
 
 # Everything under src/msks/ that differs from the fork point on
 # origin/main, plus staged, unstaged, and untracked files (new files
