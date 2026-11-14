@@ -317,18 +317,19 @@ def edit_stop_question(row: dict) -> str:
 
 def edit_note(row: dict) -> str:
     """The edit dialog's note (#331): the title, then the rule the
-    issue pins — which fields land live (home bytes move at
-    once), which wait for a boot (root growth and the new
-    topology), and what Apply does with a running workspace (asks
-    to stop it, #380), and which fields cannot change (the
-    create-time ones, marked * on their labels). The explicit
-    line breaks keep the form fitting 80x24 terminals whatever
-    the workspace's name carries."""
+    issue pins — which fields land live (home size moves now),
+    which wait for a boot (root growth and topology at next
+    boot), and what Apply does with a running workspace (asks
+    before stopping it, #380), and which fields cannot change
+    (the create-time ones, marked * on their labels). A ·
+    separator joins clauses within a line only; each line carries
+    one topic. The explicit line breaks keep the form fitting
+    80x24 terminals whatever the workspace's name carries."""
     label = clip(workspace_label(row), 40)
     return (
         f"edit {label}\n"
-        "Apply asks to stop a running VM · home bytes move at once\n"
-        "· root growth and topology at next boot · * = create-time"
+        "home size moves now · root growth and topology at next boot\n"
+        "apply asks before stopping a running VM · * = create-time"
     )
 
 
