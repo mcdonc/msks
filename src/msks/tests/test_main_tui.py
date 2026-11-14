@@ -2184,8 +2184,8 @@ async def test_the_page_opens_the_prefilled_edit_dialog(
             assert screen.query_one(f"#field-{field}", Input).disabled
         note = str(screen.query_one("#form-note", Static).content)
         assert "edit alpha" in note
-        assert "Apply asks to stop a running VM" in note
-        assert "home bytes move at once" in note
+        assert "apply asks before stopping a running VM" in note
+        assert "home size moves now" in note
         assert "* = create-time" in note
         labels = [
             str(item.query_one(Static).content)
