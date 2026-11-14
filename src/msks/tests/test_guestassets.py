@@ -876,14 +876,16 @@ def test_the_shrinkwrap_patch_rebases_the_install_lock_root() -> None:
 
     lock = {
         "name": "@earendil-works/pi-coding-agent-install",
-        "version": "1.4.0",
+        "version": "9.9.9-fixture",
         "packages": {
             "": {
                 "name": "@earendil-works/pi-coding-agent-install",
-                "dependencies": {"@earendil-works/pi-coding-agent": "1.4.0"},
+                "dependencies": {
+                    "@earendil-works/pi-coding-agent": "9.9.9-fixture"
+                },
             },
             "node_modules/@earendil-works/pi-coding-agent": {
-                "version": "1.4.0",
+                "version": "9.9.9-fixture",
                 "resolved": "https://registry.example/pi-coding-agent.tgz",
             },
             "node_modules/chalk": {"resolved": "https://x/y"},
@@ -891,7 +893,7 @@ def test_the_shrinkwrap_patch_rebases_the_install_lock_root() -> None:
     }
     pkg = {
         "name": "@earendil-works/pi-coding-agent",
-        "version": "1.4.0",
+        "version": "9.9.9-fixture",
         "license": "MIT",
         "engines": {"node": ">=22.19.0"},
         "dependencies": {"chalk": "5"},
@@ -925,18 +927,18 @@ def test_the_shrinkwrap_patch_guards_the_pin_pairing() -> None:
     lock = {
         "packages": {
             "": {"name": mod.INSTALL_ROOT_NAME},
-            mod.SELF_ENTRY: {"version": "1.3.9"},
+            mod.SELF_ENTRY: {"version": "9.8.9-fixture"},
         }
     }
     pkg = {
         "name": "@earendil-works/pi-coding-agent",
-        "version": "1.4.0",
+        "version": "9.9.9-fixture",
         "dependencies": {},
     }
     try:
         mod.rebase_lock_root(lock, pkg)
     except SystemExit as exc:
-        assert "1.3.9" in str(exc) and "1.4.0" in str(exc)
+        assert "9.8.9-fixture" in str(exc) and "9.9.9-fixture" in str(exc)
     else:
         raise AssertionError("the version drift passed silently")
 
