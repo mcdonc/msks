@@ -162,7 +162,7 @@ def action_content(
 PAGE_ACTIONS = (
     PageAction(
         ACTION_SHELL_WINDOW,
-        "Open a shell",
+        "Shell",
         "ssh in this terminal",
         "use",
     ),

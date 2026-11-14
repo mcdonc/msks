@@ -4940,7 +4940,7 @@ async def test_the_page_follows_a_status_moved_elsewhere(
         # page's per-second read can learn it.
         data.rows[0] = {**data.rows[0], "status": "running"}
         await wait_for(lambda: "workspace is running" in action_text(app, 6))
-        assert action_text(app, 7).strip() == "Stop         power it off"
+        assert action_text(app, 7).strip() == "Stop     power it off"
         assert "running" in header_text(app)
 
 
@@ -5036,21 +5036,19 @@ def test_action_rows_paint_two_tones() -> None:
     column = max(len(spec.name) for spec in PAGE_ACTIONS)
     start = 2 + column + 1
     shell = action_content(PAGE_ACTIONS[0], "running", {}, focused=True)
-    # The widest name takes the column whole — its description
-    # follows the column's single space alone.
-    assert str(shell) == "▸ Open a shell ssh in this terminal"
+    assert str(shell) == "▸ Shell    ssh in this terminal"
     assert str(shell).index("ssh in this terminal") == start
-    assert Span(2, 14, "$text bold") in shell.spans
+    assert Span(2, 7, "$text bold") in shell.spans
     assert Span(start, start + 20, muted) in shell.spans
     # Stopped, the shell stays live (#479 — the session boots the
     # workspace itself) and both power rows carry their
     # descriptions (#470 W2); Start keeps its bold beside it.
     shell_off = action_content(PAGE_ACTIONS[0], "stopped", {}, False)
-    assert str(shell_off) == "  Open a shell ssh in this terminal"
-    assert Span(2, 14, "$text bold") in shell_off.spans
+    assert str(shell_off) == "  Shell    ssh in this terminal"
+    assert Span(2, 7, "$text bold") in shell_off.spans
     assert Span(start, start + 20, muted) in shell_off.spans
     start_row = action_content(PAGE_ACTIONS[6], "stopped", {}, focused=False)
-    assert str(start_row) == "  Start        boot the workspace"
+    assert str(start_row) == "  Start    boot the workspace"
     assert str(start_row).index("boot the workspace") == start
     assert Span(2, 7, "$text bold") in start_row.spans
     assert Span(start, start + 18, muted) in start_row.spans
@@ -5059,14 +5057,16 @@ def test_action_rows_paint_two_tones() -> None:
     # emphasis sits).
     edit = action_content(PAGE_ACTIONS[2], "stopped", {}, focused=True)
     mounts = action_content(PAGE_ACTIONS[3], "stopped", {}, focused=False)
-    assert str(mounts) == "  Mounts       host shares at guest paths"
+    assert str(mounts) == "  Mounts   host shares at guest paths"
     assert str(mounts).index("host shares at guest paths") == start
-    # The renamed settings row (#882) pads like any other name.
-    assert str(edit) == "▸ Settings     sizes and topology"
+    # The widest name (Settings, after the row renames) takes
+    # the column whole — its description follows the column's
+    # single space alone.
+    assert str(edit) == "▸ Settings sizes and topology"
     assert str(edit).index("sizes and topology") == start
     assert not any(span.style == "$text bold" for span in edit.spans)
     stop = action_content(PAGE_ACTIONS[7], "stopped", {}, False)
-    assert str(stop) == "  Stop         workspace is stopped"
+    assert str(stop) == "  Stop     workspace is stopped"
     assert str(stop).index("workspace is stopped") == start
     assert Span(2, 6, muted) in stop.spans
     assert Span(start, start + 20, muted) in stop.spans
@@ -5991,7 +5991,7 @@ async def test_the_page_answers_the_lists_power_letters(monkeypatch) -> None:
         # instead of naming a skip.
         app.screen.on_list_view_selected(None)
         await wait_for(lambda: "opened a shell window" in consent_text(app))
-        assert "Open a shell skipped" not in consent_text(app)
+        assert "Shell skipped" not in consent_text(app)
 
 
 # --- the session-start unlock (#515) ---------------------------------

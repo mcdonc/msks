@@ -346,7 +346,7 @@ the dialog and changes nothing.
 
 ### Opening a shell
 
-By default, the page's **Open a shell** action runs `msks ssh` in the TUI's own
+By default, the page's **Shell** action runs `msks ssh` in the TUI's own
 terminal: the tree exits, the ssh session runs where it stood, and the tree
 restarts when the session returns the terminal. Configure `msks` to open
 shells in new windows using `terminal_open_cmd`, documented below.
@@ -374,7 +374,7 @@ the workspaces list.
 
 #### The shell action's terminal settings
 
-The workspace page's **Open a shell** action runs `msks ssh`: in the TUI's
+The workspace page's **Shell** action runs `msks ssh`: in the TUI's
 own terminal by default, or in a new window through a configured launcher.
 Two client settings shape those windows. Their environment-variable rows are
 in [the client environment table](cli.md#client-environment). Their file
@@ -382,7 +382,7 @@ keys are documented here.
 
 #### `terminal_open_cmd`
 
-`terminal_open_cmd` is the launcher the workspace page's **Open a shell**
+`terminal_open_cmd` is the launcher the workspace page's **Shell**
 action uses to open workspace shells in new terminal windows. It is the opt-in
 for hosts that want windows beside the running tree isntead of within. The msks
 invocation is appended after it, the way most terminals take a command after
