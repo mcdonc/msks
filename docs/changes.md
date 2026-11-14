@@ -12,7 +12,8 @@ tagged `vX.Y.Z`.
   description now sit in two aligned columns: every description
   starts at the same offset across the use, configure, and power
   groups, and the em-dash separator is gone. A dimmed power row's
-  reason takes the description's column.
+  reason takes the description's column. The edit dialog's row
+  now reads **Settings**.
 
 ### Fixed
 

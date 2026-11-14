@@ -323,7 +323,7 @@ what verdicts and rules cover.
 
 ### The edit page
 
-The page's **Edit settings** action opens the edit dialog: the create
+The page's **Settings** action opens the edit dialog: the create
 form's layout, seeded with the workspace's current values. ![The edit dialog: the sizes and topology, prefilled](screens/edit-dialog.svg)
 
 The sizes and topology (root, home, vcpus, memory) are editable. Submit
