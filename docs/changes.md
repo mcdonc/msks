@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.9.1] - 2026-11-14
+
 ### Added
 
 - **Workspace page quick keys (#880).** Every action row on
@@ -67,6 +69,11 @@ tagged `vX.Y.Z`.
   (`MSKSC_IDENTITY_FILE`, `identity_file`, or the ssh agent), the
   exact-match rule for `name:version` image refs, and the
   `login_user` account ssh logs in as.
+- **TUI form notes render whole (#894).** The proxies form's and
+  the mounts editor's standing notes fit the form's text width,
+  so no line clips to an ellipsis at an 80-column terminal. The
+  workspace edit note's wording is plainer in the same pass
+  (#892).
 
 ## \[v0.9.0] - 2026-11-13
 
