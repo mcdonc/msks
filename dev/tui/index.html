@@ -1426,11 +1426,15 @@ transition the daemon publishes, so a bind that fails while the page
 stands paints itself without a keypress.</p>
 <p><code>a</code> opens the add form: the workspace (the page's own, shown as its
 name), the direction (<code>forward (-L)</code> or <code>reverse (-R)</code>), the spec in
-the same grammar <code>msks proxy add</code> reads, and a label. A spec the CLI's own parser refuses keeps the
+the same grammar <code>msks proxy add</code> reads, and a label. <code>e</code>, Enter, or
+a click on the focused row opens the same form seeded with the row
+(its direction, its spec, and its label) and saves the row
+whole; the daemon closes the old listener and binds the new spec at
+once. A spec the CLI's own parser refuses keeps the
 form standing with the rule on its note line — a <code>-L</code> spec naming a
-host besides the workspace itself says so and points at <code>-R</code>. <code>D</code> or
-Enter removes the focused row after a confirmation; the listener
-closes at once. <code>q</code> or Escape returns to the workspace page.</p>
+host besides the workspace itself says so and points at <code>-R</code>. <code>D</code>
+removes the focused row after a confirmation; the listener closes at
+once. <code>q</code> or Escape returns to the workspace page.</p>
 <h3 id="the-images-page">The images page<a class="headerlink" href="#the-images-page" title="Permanent link">&para;</a></h3>
 <p><img alt="The image page: the catalog group, then the published channel" src="../screens/image-page.svg" /></p>
 <p><code>i</code>: the images page — a full page with its key bindings on the
@@ -1491,7 +1495,7 @@ decides. While no hold waits, the verdict keys do nothing and leave the
 footer until one arrives. See <a href="../cli/#msks-egress"><code>msks egress</code></a> for
 what verdicts and rules cover.</p>
 <h3 id="the-edit-page">The edit page<a class="headerlink" href="#the-edit-page" title="Permanent link">&para;</a></h3>
-<p>The page's <strong>Settings</strong> action opens the edit dialog: the create
+<p>The page's <strong>Edit</strong> action opens the edit dialog: the create
 form's layout, seeded with the workspace's current values. <img alt="The edit dialog: the sizes and topology, prefilled" src="../screens/edit-dialog.svg" /></p>
 <p>The sizes and topology (root, home, vcpus, memory) are editable. Submit
 sends the changed values to the same endpoint <code>msks resize</code> uses, and

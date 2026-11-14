@@ -1916,15 +1916,30 @@ tagged <code>vX.Y.Z</code>.</p>
   footer's descriptions abbreviate (the list's own style) so the
   whole key set fits one 80-column line, and the <code>?</code> help
   overlay lists every key.</li>
+<li><strong>Proxies page edit form (#890).</strong> <code>e</code>, Enter, or a click on a
+  row opens the add form's own shape seeded with that row
+  (direction, spec, label) and saves it through a new
+  <code>PATCH /api/v1/workspaces/{id}/proxies/{proxy_id}</code> route; the
+  daemon closes the old listener, rewrites the row, and binds
+  the new spec at once, with the create's own conflict rules.
+  <code>D</code> keeps the remove behind its confirmation.</li>
 </ul>
 <h3 id="changed">Changed<a class="headerlink" href="#changed" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Workspace page block (#881).</strong> The page's whole content (the
+<li>
+<p><strong>Workspace page edit action renamed (#890).</strong> The action row
+  that opens the sizes-and-topology dialog reads <code>Edit</code> (from
+  <code>Settings</code>), matching the <code>e</code>/Enter edit vocabulary the mounts
+  editor and the proxies page carry.</p>
+</li>
+<li>
+<p><strong>Workspace page block (#881).</strong> The page's whole content (the
   header lines, the status lines, and the action panel) sits in
   one 80-column block, centered on a wider terminal. At 80
   columns and under, the layout is unchanged. On a wider terminal,
   each meta field keeps its fixed clip, and the egress consent
-  page widens its own meta line as before.</li>
+  page widens its own meta line as before.</p>
+</li>
 <li><strong>Guest toolchain pins (#887).</strong> The Debian, Fedora, and
   NixOS guests ship pi 1.5.2 (from 1.4.0), herdr 0.9.5 (from
   0.9.1), and Claude Code 2.1.325 (from 2.1.281). Workspaces
