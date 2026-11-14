@@ -7888,6 +7888,18 @@ def test_the_footer_carries_every_quick_key_within_eighty(
     assert width <= 78  # 80 minus the footer's side padding
 
 
+def test_the_mounts_form_note_fits_the_forms_text_width() -> None:
+    """The mounts form's standing note renders whole (#894): the
+    shared form box is 64 columns, its border and padding leave
+    58 for text, and the note's nowrap-with-ellipsis clips
+    anything longer. Both verbs' every line stays inside."""
+    from msks.client.tui.mounts import form_note
+
+    for verb in ("add", "edit"):
+        for line in form_note(verb).splitlines():
+            assert len(line) <= 58
+
+
 async def test_the_mounts_editor_adds_edits_and_removes(
     monkeypatch,
 ) -> None:
