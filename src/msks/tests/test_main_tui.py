@@ -2094,7 +2094,7 @@ async def test_the_page_opens_the_prefilled_edit_dialog(
     async with app.run_test() as pilot:
         await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 8)
-        assert "Edit settings" in action_text(app, 2)
+        assert "Settings" in action_text(app, 2)
         screen = await open_edit(pilot, app)
         assert isinstance(screen, WorkspaceForm)
         assert isinstance(screen, EditScreen)
@@ -4773,7 +4773,7 @@ async def test_a_rebuild_over_a_standing_list_keeps_focus(
         rows = page.actions_widget()
         assert rows is not None and rows is not before  # a fresh list
         assert rows.index == 4  # the edit row kept by its key
-        assert "Edit settings" in action_text(app, 2)
+        assert "Settings" in action_text(app, 2)
         assert not rows.children[rows.index].disabled  # never a caption
 
 
@@ -4940,7 +4940,7 @@ async def test_the_page_follows_a_status_moved_elsewhere(
         # page's per-second read can learn it.
         data.rows[0] = {**data.rows[0], "status": "running"}
         await wait_for(lambda: "workspace is running" in action_text(app, 6))
-        assert action_text(app, 7).strip() == "Stop — power it off"
+        assert action_text(app, 7).strip() == "Stop     power it off"
         assert "running" in header_text(app)
 
 
@@ -5019,42 +5019,57 @@ def test_the_groups_captions_paint_above_each_tier() -> None:
 
 
 def test_action_rows_paint_two_tones() -> None:
-    """#367, #470 W1/W2/S3, #752: the name stands in the default
-    foreground — bold on the rows the status permits alone (the
-    shell in every state, #479 — its child boots a stopped
-    workspace — Start beside one that sits stopped) — the
-    description rides muted, and a power row the status dims
-    mutes the whole row behind its reason. Focus answers to the
-    bar and the marker alone: a focused row that is not primary
-    carries no bold."""
+    """#367, #470 W1/W2/S3, #752, #882: the name stands in the
+    default foreground — bold on the rows the status permits
+    alone (the shell in every state, #479 — its child boots a
+    stopped workspace — Start beside one that sits stopped) —
+    the description rides muted in its own column, one offset
+    left-aligned on every row, and a power row the status dims
+    mutes the whole row behind its reason, the reason in the
+    description's column. Focus answers to the bar and the
+    marker alone: a focused row that is not primary carries no
+    bold."""
     muted = rows_mod.muted_style({})
+    # #882: the name column takes the widest name the page
+    # paints, so every description starts at one offset — the
+    # marker cell (2) and the column's single space beside it.
+    column = max(len(spec.name) for spec in PAGE_ACTIONS)
+    start = 2 + column + 1
     shell = action_content(PAGE_ACTIONS[0], "running", {}, focused=True)
-    assert str(shell).startswith("▸ Open a shell — ssh in this terminal")
-    assert Span(2, 14, "$text bold") in shell.spans
-    assert Span(17, 37, muted) in shell.spans
+    assert str(shell) == "▸ Shell    ssh in this terminal"
+    assert str(shell).index("ssh in this terminal") == start
+    assert Span(2, 7, "$text bold") in shell.spans
+    assert Span(start, start + 20, muted) in shell.spans
     # Stopped, the shell stays live (#479 — the session boots the
     # workspace itself) and both power rows carry their
     # descriptions (#470 W2); Start keeps its bold beside it.
     shell_off = action_content(PAGE_ACTIONS[0], "stopped", {}, False)
-    assert str(shell_off).startswith("  Open a shell — ssh in this terminal")
-    assert Span(2, 14, "$text bold") in shell_off.spans
-    assert Span(17, 37, muted) in shell_off.spans
-    start = action_content(PAGE_ACTIONS[6], "stopped", {}, focused=False)
-    assert str(start).startswith("  Start — boot the workspace")
-    assert Span(2, 7, "$text bold") in start.spans
-    assert Span(10, 28, muted) in start.spans
+    assert str(shell_off) == "  Shell    ssh in this terminal"
+    assert Span(2, 7, "$text bold") in shell_off.spans
+    assert Span(start, start + 20, muted) in shell_off.spans
+    start_row = action_content(PAGE_ACTIONS[6], "stopped", {}, focused=False)
+    assert str(start_row) == "  Start    boot the workspace"
+    assert str(start_row).index("boot the workspace") == start
+    assert Span(2, 7, "$text bold") in start_row.spans
+    assert Span(start, start + 18, muted) in start_row.spans
     # A focused live row carries the marker alone (#752: the bold
     # cue answers to the primary rows, wherever the status's
     # emphasis sits).
     edit = action_content(PAGE_ACTIONS[2], "stopped", {}, focused=True)
     mounts = action_content(PAGE_ACTIONS[3], "stopped", {}, focused=False)
-    assert str(mounts).startswith("  Mounts — host shares at guest paths")
-    assert str(edit).startswith("▸ Edit settings — sizes and topology")
+    assert str(mounts) == "  Mounts   host shares at guest paths"
+    assert str(mounts).index("host shares at guest paths") == start
+    # The widest name (Settings, after the row renames) takes
+    # the column whole — its description follows the column's
+    # single space alone.
+    assert str(edit) == "▸ Settings sizes and topology"
+    assert str(edit).index("sizes and topology") == start
     assert not any(span.style == "$text bold" for span in edit.spans)
     stop = action_content(PAGE_ACTIONS[7], "stopped", {}, False)
-    assert str(stop).startswith("  Stop — workspace is stopped")
+    assert str(stop) == "  Stop     workspace is stopped"
+    assert str(stop).index("workspace is stopped") == start
     assert Span(2, 6, muted) in stop.spans
-    assert Span(9, 29, muted) in stop.spans
+    assert Span(start, start + 20, muted) in stop.spans
 
 
 async def test_a_row_that_leaves_the_listing_closes_the_page(
@@ -5976,7 +5991,7 @@ async def test_the_page_answers_the_lists_power_letters(monkeypatch) -> None:
         # instead of naming a skip.
         app.screen.on_list_view_selected(None)
         await wait_for(lambda: "opened a shell window" in consent_text(app))
-        assert "Open a shell skipped" not in consent_text(app)
+        assert "Shell skipped" not in consent_text(app)
 
 
 # --- the session-start unlock (#515) ---------------------------------
