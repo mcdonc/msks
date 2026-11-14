@@ -85,7 +85,7 @@ class WorkspaceScreen(HelpKeys, Screen):
     shell, ``m`` the mounts editor, ``p`` the proxies page,
     ``t`` the edit dialog, ``c`` the clone prompt. The footer's
     descriptions abbreviate so every key fits one 80-column
-    line, the #581 style (``Go``, ``Egr``, ``Mnts``, ``Fwd``);
+    line, the #581 style (``Go``, ``Egr``, ``Mnts``, ``Prx``);
     Enter keeps its footer hint (#470 S4). The page is
     the workspace's
     decider while it is open: holds land on its link, the header
@@ -109,7 +109,7 @@ class WorkspaceScreen(HelpKeys, Screen):
         Binding("e", "consent", "Egr"),
         Binding("h", "shell_page", "Shell"),
         Binding("m", "mounts_page", "Mnts"),
-        Binding("p", "proxies_page", "Fwd"),
+        Binding("p", "proxies_page", "Prx"),
         Binding("t", "settings_page", "Edit"),
         Binding("c", "clone_page", "Clone"),
         Binding("s", "quick_start", "Start"),

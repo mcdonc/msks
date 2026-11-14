@@ -7791,7 +7791,7 @@ def test_the_footer_carries_every_quick_key_within_eighty(
     key, description, and two-space gap sums inside one
     80-column line, with the footer's side padding spare. The
     descriptions abbreviate in the #581 style (``Go``, ``Egr``,
-    ``Mnts``, ``Fwd``), and Enter keeps its
+    ``Mnts``, ``Prx``), and Enter keeps its
     hint (#470 S4: the one key every screen answers)."""
     visible = [
         binding for binding in screen_bindings(WorkspaceScreen) if binding.show
@@ -7801,7 +7801,7 @@ def test_the_footer_carries_every_quick_key_within_eighty(
         "e": "Egr",
         "h": "Shell",
         "m": "Mnts",
-        "p": "Fwd",
+        "p": "Prx",
         "t": "Edit",
         "c": "Clone",
         "s": "Start",
