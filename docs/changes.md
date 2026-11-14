@@ -8,6 +8,11 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **Workspace page `m` key (#880).** The workspace page's `m`
+  opens the mounts editor, beside the `e` of the egress consent
+  page and the `p` of the proxies page. The footer and the `?`
+  help overlay list the key.
+
 - **Workspace page action rows (#882).** The name and the
   description now sit in two aligned columns: every description
   starts at the same offset across the use, configure, and power

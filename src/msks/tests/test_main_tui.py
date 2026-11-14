@@ -7658,6 +7658,35 @@ def mounts_text(app) -> str:
         return ""
 
 
+async def test_the_mounts_key_opens_the_mounts_editor(
+    monkeypatch,
+) -> None:
+    """#880: ``m`` on the workspace page opens the mounts editor —
+    the action row's own destination, one key away beside the
+    consent page's ``e`` and the proxies page's ``p``; the page's
+    own bindings list the key, so the footer and the ``?``
+    overlay carry it."""
+    from msks.client.tui.mounts import MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    app, _ = make_app(FakeData([mounted_row()]))
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        await press_until(
+            pilot, "m", lambda: isinstance(app.screen, MountsScreen)
+        )
+        # The editor's close returns to the page.
+        await pilot.press("escape")
+        await wait_for(lambda: not isinstance(app.screen, MountsScreen))
+
+    bindings = {
+        binding.key: binding.description
+        for binding in screen_bindings(WorkspaceScreen)
+    }
+    assert bindings["m"] == "Mounts"
+
+
 async def test_the_mounts_editor_adds_edits_and_removes(
     monkeypatch,
 ) -> None:

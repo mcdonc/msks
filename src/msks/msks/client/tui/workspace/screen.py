@@ -64,7 +64,9 @@ class WorkspaceScreen(HelpKeys, Screen):
     status line, and the page's actions — a shell in a new window
     (#341), the egress consent page (#454), the edit dialog, and
     start and stop; the egress-mode switch (#344) lives on the
-    consent page, its ``m``. The page is the workspace's
+    consent page, its own ``m`` — the page's ``m`` opens the
+    mounts editor (#880), beside the consent page's ``e`` and
+    the proxies page's ``p``. The page is the workspace's
     decider while it is open: holds land on its link, the header
     counts them, and the consent line flashes each first-seen
     hold's destination — the page pushes nothing on a hold's
@@ -79,6 +81,7 @@ class WorkspaceScreen(HelpKeys, Screen):
     BINDINGS = [
         Binding("enter", "run", "Run", priority=True),
         Binding("e", "consent", "Egress"),
+        Binding("m", "mounts_page", "Mounts"),
         Binding("p", "proxies_page", "Proxies"),
         Binding("s", "quick_start", "Start"),
         Binding("S", "quick_stop", "Stop"),
@@ -761,6 +764,12 @@ class WorkspaceScreen(HelpKeys, Screen):
         """``p``: the proxies page one key away — the action row's
         own destination."""
         await self.open_proxies()
+
+    async def action_mounts_page(self) -> None:
+        """``m`` (#880): the mounts editor one key away — the
+        action row's own destination, the third configure key
+        beside ``e`` and ``p``."""
+        await self.open_mounts()
 
     # -- the edit dialog (#331) ---------------------------------------
 
