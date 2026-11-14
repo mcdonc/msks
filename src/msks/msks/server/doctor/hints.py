@@ -43,10 +43,6 @@ def detect_package_manager() -> str | None:
 # Package hints and install hints
 # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Package hints and install hints
-# ---------------------------------------------------------------------------
-
 
 def cloud_hypervisor_hint(machine: str) -> str:
     """The paste-able upstream sequence (#557) for one machine's
@@ -76,26 +72,9 @@ def cloud_hypervisor_hint(machine: str) -> str:
 # dev tooling) — named for this host's machine: the release's
 # assets are per-architecture (#831), the same map hostsetup
 # downloads from.
-
-# Checks whose fix is not a distro package, so every manager
-# gets the same hint: the upstream source itself. Doctor runs on
-# deployment hosts (Debian and the like) where the repo's own dev
-# tooling is absent, so the hints stay host-usable — a command
-# sequence the operator can paste, one command a line. The
-# cloud-hypervisor entry carries both release binaries — the
-# daemon drives the VMM over its --api-socket HTTP API, while
-# ch-remote serves the operator's hands-on control (the demo and
-# dev tooling) — named for this host's machine: the release's
-# assets are per-architecture (#831), the same map hostsetup
-# downloads from.
 UPSTREAM_HINTS = {
     "cloud-hypervisor": cloud_hypervisor_hint(os.uname().machine),
 }
-
-# Alpine names its system-emulator package per target
-# architecture (#832): the KVM row's apk entry follows the
-# host's machine, the same per-arch shape the VMM hint's
-# release assets take (#831).
 
 # Alpine names its system-emulator package per target
 # architecture (#832): the KVM row's apk entry follows the
@@ -115,16 +94,6 @@ def apk_qemu_system_package(machine: str) -> str:
         machine, APK_QEMU_SYSTEM_PACKAGES["x86_64"]
     )
 
-
-# Each entry: check name → {manager → package}. A manager missing
-# from an entry falls back to the check name in the generic hint.
-# The package name differs from the binary it ships on several
-# rows: e2fsprogs ships mkfs.ext4/resize2fs/e2fsck, genisoimage
-# (Debian family) and cdrtools (pacman, brew) both serve mkisofs,
-# qemu-utils/qemu-img is Debian's name for the conversion tool,
-# and conntrack comes from conntrack-tools everywhere except apt.
-# cloud-hypervisor carries no row: Debian's archive has it not,
-# so its hint is the upstream release (UPSTREAM_HINTS).
 
 # Each entry: check name → {manager → package}. A manager missing
 # from an entry falls back to the check name in the generic hint.
@@ -320,13 +289,6 @@ def manager_install(manager: str, pkg: str) -> str:
 # manager the table lacks — brew on a brew-only Linux host,
 # above all — falls back to the Debian form, the documented
 # deployment host.
-
-# The /dev/kvm fix is a group add, not a package install (#559),
-# so its table keys on the detected manager the way the hint
-# table does, with one command shape per platform family. A
-# manager the table lacks — brew on a brew-only Linux host,
-# above all — falls back to the Debian form, the documented
-# deployment host.
 GROUP_ADD: dict[str, str] = {
     "apt": "sudo adduser {user} kvm",
     "dnf": "sudo usermod -aG kvm {user}",
@@ -342,8 +304,3 @@ def group_add_hint(user: str, manager: str | None) -> str:
     detected manager's platform."""
     shape = GROUP_ADD.get(manager or "", "sudo adduser {user} kvm")
     return shape.format(user=user)
-
-
-# ---------------------------------------------------------------------------
-# Probe helpers
-# ---------------------------------------------------------------------------

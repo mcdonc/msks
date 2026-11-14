@@ -28,10 +28,6 @@ from .probes import (
 )
 from .report import CheckResult, DoctorReport, format_report
 
-# ---------------------------------------------------------------------------
-# The check set
-# ---------------------------------------------------------------------------
-
 
 def add_path_note(report: DoctorReport) -> None:
     """The relogin note (#601): a session without the admin
@@ -171,10 +167,6 @@ def run_doctor(settings: Settings) -> DoctorReport:
 # Settings resolution and the console entry
 # ---------------------------------------------------------------------------
 
-# ---------------------------------------------------------------------------
-# Settings resolution and the console entry
-# ---------------------------------------------------------------------------
-
 
 def default_path_absent(exc: Exception) -> bool:
     """True when the load failure is the missing default-path file.
@@ -245,8 +237,3 @@ def report_document(report) -> list[dict]:
         }
         for result in report.results
     ]
-
-
-# ---------------------------------------------------------------------------
-# Report formatting
-# ---------------------------------------------------------------------------

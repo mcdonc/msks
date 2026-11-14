@@ -83,7 +83,7 @@ invocation_tokens: list[str] = []
 #: console child with the launcher the resolution carries. None
 #: when no bootstrap ran (a help screen — and then no TUI starts
 #: either).
-invoked_conf: ClientConfig | None = None  # noqa: F821 — annotated for the reader
+invoked_conf: ClientConfig | None = None  # noqa: F821 — string-annotated, config owns the class
 
 
 def one_line_interrupts(fn):

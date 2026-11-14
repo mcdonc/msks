@@ -116,11 +116,10 @@ def root(
     # the operator is reading, not connecting, and a broken config
     # file must not hide the help; and except on agent-card, whose
     # reference text is read the same way (#842 review).
-    global invoked_conf
     if not help_requested(cliapp.invocation_tokens) and not card_requested(
         cliapp.invocation_tokens
     ):
-        invoked_conf = bootstrap(daemon, config)
+        cliapp.invoked_conf = bootstrap(daemon, config)
         # The version-skew notice (#706): one best-effort /health
         # roundtrip per invocation, on the conditions
         # :func:`skew_probe_wanted` names (an in-process transport
@@ -131,7 +130,7 @@ def root(
     if ctx.invoked_subcommand is None:
         # The decorator's edge, same as every command: a Ctrl-C in
         # the tree is one line, not typer's silent 130.
-        return one_line_interrupts(run_main_tui)(conf=invoked_conf)
+        return one_line_interrupts(run_main_tui)(conf=cliapp.invoked_conf)
     return 0
 
 
@@ -165,7 +164,7 @@ def tui(
 ) -> int:
     """The full-screen workspace tree (#309): the workspaces list,
     each workspace's page, and the consent decider."""
-    return run_main_tui(workspace, conf=invoked_conf)
+    return run_main_tui(workspace, conf=cliapp.invoked_conf)
 
 
 @app.command("storage")

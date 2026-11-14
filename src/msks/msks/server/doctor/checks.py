@@ -166,10 +166,6 @@ def check_ssh(manager: str | None) -> CheckResult:
 # The consent terminal's documented floor (#379): display-popup
 # and the launch chain's bind-time-validated commands both need
 # tmux 3.2.
-
-# The consent terminal's documented floor (#379): display-popup
-# and the launch chain's bind-time-validated commands both need
-# tmux 3.2.
 TMUX_MIN_VERSION = (3, 2)
 
 
@@ -243,11 +239,6 @@ def check_tmux(manager: str | None) -> CheckResult:
         return tmux_unparseable(out, manager)
     return tmux_version_result(version, path, manager)
 
-
-# The definitive capability test for the two libraries: the
-# vendored ctypes binding (#542) dlopens libnetfilter_queue by
-# soname — the same load msks.net.nfqbind performs at import — so
-# it exercises exactly what the consent path loads at runtime.
 
 # The definitive capability test for the two libraries: the
 # vendored ctypes binding (#542) dlopens libnetfilter_queue by
@@ -362,8 +353,3 @@ def check_nfq_load(manager: str | None) -> CheckResult:
         ),
         hint=install_hint("libnetfilter_queue", manager),
     )
-
-
-# ---------------------------------------------------------------------------
-# The /dev/kvm group gate (#559)
-# ---------------------------------------------------------------------------

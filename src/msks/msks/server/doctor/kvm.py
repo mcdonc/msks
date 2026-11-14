@@ -124,29 +124,13 @@ def kvm_access_result(manager: str | None) -> CheckResult:
 #: guests, so the marker alone names every Apple-silicon Linux
 #: host, not just the ones the #649 limitation is about (#664);
 #: the NV-mode markers below decide which of them earn the row.
-
-#: The MIDR's implementer field names Apple's CPU business
-#: (0x61) — the silicon marker for the Asahi host class. Apple's
-#: Virtualization.framework passes the host MIDR through to its
-#: guests, so the marker alone names every Apple-silicon Linux
-#: host, not just the ones the #649 limitation is about (#664);
-#: the NV-mode markers below decide which of them earn the row.
 APPLE_IMPLEMENTER = 0x61
-#: Where a Linux arm64 kernel publishes cpu0's MIDR — the
-#: register file sysfs presents per CPU.
-
 #: Where a Linux arm64 kernel publishes cpu0's MIDR — the
 #: register file sysfs presents per CPU.
 MIDR_EL1 = Path("/sys/devices/system/cpu/cpu0/regs/identification/midr_el1")
 #: The kernel command line, where the kvm-arm.mode early option
 #: lands when the bootloader or the operator sets it.
-
-#: The kernel command line, where the kvm-arm.mode early option
-#: lands when the bootloader or the operator sets it.
 PROC_CMDLINE = Path("/proc/cmdline")
-#: Where sysfs publishes kvm's mode parameter on kernels that
-#: expose the option as a module parameter.
-
 #: Where sysfs publishes kvm's mode parameter on kernels that
 #: expose the option as a module parameter.
 KVM_MODE_PARAM = Path("/sys/module/kvm/parameters/mode")
@@ -156,19 +140,7 @@ KVM_MODE_PARAM = Path("/sys/module/kvm/parameters/mode")
 #: interrupts (#649). The Asahi tree's arm64 KVM accepts only
 #: none/protected/nvhe/nested; the numeric spelling the #649
 #: record first sketched is a malformed early option.
-
-#: The kvm-arm.mode value that runs arm64 KVM in nested-
-#: virtualization (NV) mode — the mode the Asahi kernel runs on
-#: Apple Silicon, whose vGIC does not yet deliver guest
-#: interrupts (#649). The Asahi tree's arm64 KVM accepts only
-#: none/protected/nvhe/nested; the numeric spelling the #649
-#: record first sketched is a malformed early option.
 KVM_MODE_NESTED = "nested"
-#: What KVM's init line in the kernel log names when NV mode is
-#: engaged (`VHE+NV2 mode initialized`, the NV generation
-#: varying with the hardware) — the running mode's own record,
-#: there whatever selected the mode.
-
 #: What KVM's init line in the kernel log names when NV mode is
 #: engaged (`VHE+NV2 mode initialized`, the NV generation
 #: varying with the hardware) — the running mode's own record,

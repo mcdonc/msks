@@ -406,8 +406,3 @@ class SecretsScreen(HelpKeys, Screen):
 
 
 #: The audit view's kind filter choices (#390): every kind a row
-#: can carry, in the issue's own order.
-AUDIT_KINDS = ("swap", "sighting", "mint", "revoke", "expiry", "unlock")
-
-#: The pickers' no-filter label.
-FILTER_ALL = "all"

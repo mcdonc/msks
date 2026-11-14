@@ -45,10 +45,6 @@ class DoctorReport:
         return [r for r in self.results if not r.ok and r.is_warning]
 
 
-# ---------------------------------------------------------------------------
-# Package manager detection (by binary presence, not /etc/os-release)
-# ---------------------------------------------------------------------------
-
 # Ordered by specificity: dnf before yum (Fedora ships both),
 # apt-get before apt (scripts prefer apt-get for non-interactive
 # use). The name recorded is the manager's own — "apt", not
