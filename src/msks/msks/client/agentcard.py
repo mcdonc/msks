@@ -30,7 +30,7 @@ chapter](api.md).
 ## Read state
 
 ```bash
-msks ls              # every workspace: id, name, status, image
+msks ls              # every workspace: id, name, status, image_ref
 msks storage         # disk artifacts and sizes per workspace
 msks image ls        # the image catalog
 msks secret ls       # minted secrets and their coverage
@@ -42,7 +42,7 @@ The lifecycle verbs block until the transition settles. When a verb
 exits, the status it reports is the workspace's status.
 
 ```bash
-msks create ws --pubkey key.pub --image debian:13 --start
+msks create ws --pubkey key.pub --image debian --start
 msks start ws
 msks stop ws
 msks clone ws fork
@@ -52,8 +52,11 @@ msks rm ws           # takes several workspaces, removed in order
 `create` plants an ssh identity into the workspace. msks generates
 no key: pass `--pubkey` with your public key file, or configure
 `identity_file` once in the client config. An unconfigured client
-refuses the create. A name is unique per daemon: a create over a
-name another workspace already holds exits 4.
+refuses the create. The `--image` ref is a `name:version` pair
+from `msks image ls`, a bare `name`, or the image's full hash.
+The pair must match a catalog row exactly. A bare name resolves to
+the newest version of that name. Workspace names are unique per
+daemon: a create over a held name is the exit-4 conflict.
 
 A workspace's `status` is one of these values:
 
@@ -81,6 +84,18 @@ Everything after the workspace reaches ssh or rsync verbatim. The
 command exits with the child's own exit code. An rsync path with an
 empty host (`:/src`, `user@:/src`) targets this workspace; the push
 and pull examples above are the pair.
+
+A session authenticates with the private half of the planted key.
+The client takes it from the ssh agent (`SSH_AUTH_SOCK`) when that
+agent holds the key. Otherwise it reads `MSKSC_IDENTITY_FILE`, an
+absolute path to the private key file. The file must be
+unencrypted and be the planted key's own half. A different key is
+refused with the remedy spelled out. The config-file key is
+`identity_file`. A harness that created with `--pubkey key.pub`
+exports the private key's absolute path before ssh or rsync.
+Sessions log in as the workspace's `login_user`. The `ls --json`
+row carries it. `create --user` sets it, and the creating user's
+name is the default. `-l root` is the recovery login.
 
 ## Egress consent from a script
 
@@ -118,6 +133,12 @@ above, from the stream or from `requests`. `--duration` is one of
 | 4    | name conflict: a create or clone over a held name               |
 | 5    | wrong state: the row's state or placement refuses the action    |
 | 130  | interrupted                                                     |
+
+Rows 3, 4, and 5 hold under `--json`. Without it, every API
+failure exits 1 and prints its detail on stderr: `msks: 409:
+workspace exists`. The codes 0, 2, and 130 hold either way. Code 2
+and a config the client cannot read keep text lines under `--json`
+(the config failure exits 1).
 
 Under `--json` a failure prints one object on stderr:
 

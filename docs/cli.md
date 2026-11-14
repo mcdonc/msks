@@ -424,7 +424,7 @@ below generate theirs):
 
 | Flag          | API field               | Meaning                                                                            |
 | ------------- | ----------------------- | ---------------------------------------------------------------------------------- |
-| `--image`     | `image`                 | Catalog ref: `name:version`, bare name, or hash                                    |
+| `--image`     | `image`                 | Catalog ref: `name:version`, bare name, or the image's full hash                   |
 | `--kernel`    | `kernel`                | Explicit kernel path (skips the catalog)                                           |
 | `--initrd`    | `initrd`                | Explicit initrd path                                                               |
 | `--rootfs`    | `rootfs`                | Explicit rootfs path (skips the catalog)                                           |
