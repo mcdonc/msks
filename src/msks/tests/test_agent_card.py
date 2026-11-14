@@ -106,8 +106,8 @@ def test_the_card_teaches_the_session_identity_and_json_only_exits() -> None:
     planted key's private half (the agent or
     ``MSKSC_IDENTITY_FILE``), that the status-mapped codes
     3, 4, and 5 are the ``--json`` exits, and that a bare image
-    name resolves where an exact ``name:version`` pair does
-    not."""
+    name resolves even when the exact ``name:version`` pair a
+    harness guesses does not."""
     card = agentcard.AGENT_CARD_MD
     flat = " ".join(card.split())
     assert "MSKSC_IDENTITY_FILE" in flat

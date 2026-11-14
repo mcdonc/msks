@@ -39,8 +39,7 @@ refuses the create. The `--image` ref is a `name:version` pair
 from `msks image ls`, a bare `name`, or the image's full hash.
 The pair must match a catalog row exactly. A bare name resolves to
 the newest version of that name. Workspace names are unique per
-daemon: a create over a name another workspace already holds is the
-exit-4 conflict.
+daemon: a create over a held name is the exit-4 conflict.
 
 A workspace's `status` is one of these values:
 
@@ -74,9 +73,9 @@ The client takes it from the ssh agent (`SSH_AUTH_SOCK`) when that
 agent holds the key. Otherwise it reads `MSKSC_IDENTITY_FILE`, an
 absolute path to the private key file. The file must be
 unencrypted and be the planted key's own half. A different key is
-a named refusal. The config-file key is `identity_file`. A
-harness that created with `--pubkey key.pub` exports the private
-key's absolute path before ssh or rsync.
+refused with the remedy spelled out. The config-file key is
+`identity_file`. A harness that created with `--pubkey key.pub`
+exports the private key's absolute path before ssh or rsync.
 Sessions log in as the workspace's `login_user`. The `ls --json`
 row carries it. `create --user` sets it, and the creating user's
 name is the default. `-l root` is the recovery login.
@@ -121,7 +120,8 @@ above, from the stream or from `requests`. `--duration` is one of
 Rows 3, 4, and 5 hold under `--json`. Without it, every API
 failure exits 1 and prints its detail on stderr: `msks: 409:
 workspace exists`. The codes 0, 2, and 130 hold either way. Code 2
-keeps its text line under `--json`.
+and a config the client cannot read keep text lines under `--json`
+(the config failure exits 1).
 
 Under `--json` a failure prints one object on stderr:
 

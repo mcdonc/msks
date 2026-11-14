@@ -10,7 +10,7 @@ tagged `vX.Y.Z`.
 
 - **`msks agent-card` (#877).** The card now says the exit codes
   3, 4, and 5 hold under `--json` only: without it, every API
-  failure exits 1 with a one-line stderr message. It also documents
+  failure exits 1 with its detail on stderr. It also documents
   how a session finds the workspace key's private half
   (`MSKSC_IDENTITY_FILE`, `identity_file`, or the ssh agent), the
   exact-match rule for `name:version` image refs, and the
