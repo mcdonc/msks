@@ -241,11 +241,10 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
 
     # -- the submit --------------------------------------------------------
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "do-mint":
-            self.submit()
-        else:
-            self.action_cancel()
+    def submit_id(self) -> str:
+        """The mint's own primary button — the shared button row
+        rides the name."""
+        return "do-mint"
 
     def action_cancel(self) -> None:
         """Cancel — never mid-flight (#393): the reply the daemon

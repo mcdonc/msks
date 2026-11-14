@@ -29,6 +29,12 @@ tagged `vX.Y.Z`.
   0.9.1), and Claude Code 2.1.325 (from 2.1.281). Workspaces
   built from new guest assets report the new versions; existing
   workspaces keep their baked toolchain until rebuilt.
+- **TUI mounts editor add and edit form (#886).** The mounts
+  editor's add and edit paths now use the same form style as
+  the proxies page's add form: a note line, the workspace fixed
+  at the top, labeled host path, guest path, and mode fields,
+  and Add/Cancel buttons. A field the CLI's parser refuses keeps
+  the form standing with the rule on the note line.
 - **Workspace page action rows (#882).** The name and the
   description now sit in two aligned columns: every description
   starts at the same offset across the use, configure, and power
