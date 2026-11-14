@@ -1560,8 +1560,14 @@ async def egress_env(env, tmp_path: Path, monkeypatch):
         nft_tool=str(stub_nft(tmp_path, tmp_path / "egress-nft.log")),
         dns_upstream="10.9.9.9",
     )
+    # The patch lands on the defining helper and the core reader
+    # both: the split package binds one copy per submodule (#874),
+    # and the macOS host has no /proc to satisfy the real read.
     monkeypatch.setattr(
-        manager_mod, "verify_forwarding", lambda path=None: None
+        manager_mod.helpers, "verify_forwarding", lambda path=None: None
+    )
+    monkeypatch.setattr(
+        manager_mod.core, "verify_forwarding", lambda path=None: None
     )
     manager = NetManager(
         app, dhcp_factory=FakeService, dns_factory=FakeService
