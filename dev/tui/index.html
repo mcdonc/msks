@@ -1391,11 +1391,19 @@ each key with an abbreviated description, the same style the
 workspaces list uses, so the whole key set fits one 80-column
 line. The <code>?</code> overlay lists them all.</p>
 <h3 id="the-mounts-page">The mounts page<a class="headerlink" href="#the-mounts-page" title="Permanent link">&para;</a></h3>
-<p>The <strong>mounts editor</strong> shows the workspace's mounts one row each, in the
-CLI's <code>HOST_PATH:GUEST_PATH:MODE</code> grammar with the mode always shown.
-<code>a</code> adds a row (a single-line input), Enter edits the focused row
-(seeded with its current spec), <code>D</code> removes it, and Escape closes the
-editor with the last saved set.</p>
+<p>The <strong>mounts editor</strong> uses the proxies page's own frame: a status
+line with the mount count beside the workspace's name, and a bordered
+list whose rows carry the spec in the CLI's <code>HOST_PATH:GUEST_PATH:MODE</code>
+grammar (mode always shown) beside its derived state. An empty list
+stands the columns down and says <code>No mounts — a adds one.</code></p>
+<p><code>a</code> adds a row. Enter, <code>e</code>, or a click on the focused row edits it —
+both paths through one form, the same style the proxies page's add
+form uses, centered on the page: the workspace fixed at the top, then
+the host path, the guest path, and the mode (<code>rw</code> or <code>ro</code>, a select).
+The form's note line carries the grammar. A field the CLI's own
+parser refuses keeps the form standing with the rule on that line.
+<code>D</code> removes the focused row, and <code>q</code> or Escape closes the editor with
+the last saved set.</p>
 <p>Every change posts the whole list to the daemon's mounts route. The reply
 repaints each row with its derived state (<code>healthy</code>, or the skip's kind and
 reason). A refusal appears on the editor's note line, and the refused list
