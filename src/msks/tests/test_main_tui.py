@@ -1881,7 +1881,7 @@ async def test_the_page_centers_its_action_block(monkeypatch) -> None:
         actions = app.screen.query_one("#actions")
         # At the 80-column frame the page's block fills the width
         # (#881): the small window keeps its full-width layout.
-        assert body.region.width == 80
+        assert body.region.width == page_mod.screen.PAGE_BLOCK_W
         assert body.region.x == 0
         assert actions.region.width == 64
         assert actions.region.x == 8  # centered at 80 columns
@@ -1928,21 +1928,25 @@ async def test_a_wider_terminal_caps_the_page_to_one_block(
         body = app.screen.query_one("#page-body")
         header = app.screen.query_one("#header")
         meta = app.screen.query_one("#header-meta", Static)
-        assert body.region.width == 80
+        block_w = page_mod.screen.PAGE_BLOCK_W
+        assert body.region.width == block_w
         assert body.region.x == 0  # the small window fills the width
         assert "…" in str(meta.content)  # the fixed clip at the frame
         await pilot.resize_terminal(120, 24)
         await pilot.pause()
         # The block centers as one unit: the header lines and the
-        # action panel share its edges.
-        assert body.region.width == 80
+        # action panel share its edges. The region carries the CSS
+        # rule's width and meta_width the Python constant's cap, so
+        # the pair cannot drift apart unseen (the #881 pairing).
+        assert body.region.width == block_w
         assert body.region.x == 20
         assert header.region.x == 20
+        assert app.screen.meta_width() == block_w - 2
         actions = app.screen.query_one("#actions")
         assert actions.region.width == 64
         assert actions.region.x == 28  # centered inside the block
-        # The meta line's budget caps with the block: the fixed
-        # clip stands at any width past it.
+        # The meta line's budget stops at the block's width: the
+        # fixed clip stands at any width past it.
         assert "…" in str(meta.content)
         await pilot.resize_terminal(80, 24)
         await pilot.pause()
