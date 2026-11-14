@@ -743,7 +743,7 @@ class ImportingScreen(ModalScreen):
         self.row = row
         self.done = done
         self.started = time.monotonic()
-        self._task = None
+        self._import_flight = None
         self._left = False
 
     def compose(self) -> ComposeResult:
@@ -761,7 +761,11 @@ class ImportingScreen(ModalScreen):
         # holds the message pump busy, and a second action on this
         # modal would wait on it).
         self._timer = self.set_interval(1.0, self.tick)
-        self._task = asyncio.create_task(self.run_import())
+        # Referenced under its own name (NOT ``_task`` — the
+        # DOM's prune hook: a node's ``_task`` is awaited at its
+        # removal, and an import that runs minutes would park the
+        # whole pump behind the cancelled modal).
+        self._import_flight = asyncio.create_task(self.run_import())
 
     def stop_timer(self) -> None:
         """Stop the elapsed timer — every path out of the modal

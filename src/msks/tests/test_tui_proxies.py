@@ -361,6 +361,38 @@ async def test_the_page_adds_through_the_form(monkeypatch) -> None:
         assert "-L 2201:localhost:22" in proxy_status(app)
 
 
+async def test_the_add_form_cancels_by_key(monkeypatch) -> None:
+    """Escape and q dismiss the add form — the shared FormWalk
+    cancel, dead keys on this form before the mixin owned the
+    action: the page keeps its rows and the daemon sees no
+    create."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    data.proxy_rows = [proxy_row()]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app)
+        await wait_for(lambda: proxy_children(app) == 1)
+        await pilot.press("a")
+        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        await press_until(
+            pilot, "escape", lambda: not isinstance(app.screen, ProxyAddScreen)
+        )
+        assert data.proxy_calls == []
+        await pilot.press("a")
+        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        # q cancels from the button row (an input with focus
+        # takes the letter as text — the walk's own rule).
+        app.screen.query_one("#do-cancel").focus()
+        await pilot.pause()
+        await press_until(
+            pilot, "q", lambda: not isinstance(app.screen, ProxyAddScreen)
+        )
+        assert data.proxy_calls == []
+        assert proxy_children(app) == 1
+
+
 async def test_the_form_refuses_a_foreign_host_home(
     monkeypatch,
 ) -> None:

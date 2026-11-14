@@ -6735,6 +6735,13 @@ async def test_q_on_the_importing_modal_closes_it(monkeypatch) -> None:
         )
         app.screen.action_cancel()
         await wait_for(lambda: type(app.screen).__name__ != "ImportingScreen")
+        # The park the cancel once hid (#888 review): the modal's
+        # removal awaited the screen's ``_task`` — the import
+        # itself — so the pump froze behind the closed modal for
+        # as long as the daemon downloads. With the flight under
+        # its own name, a pause completes while it still runs.
+        await asyncio.wait_for(pilot.pause(), 5)
+        assert not release.is_set()
         release.set()
         await wait_for(
             lambda: "imported debian:13.6 (aaaaaaaaaaaa)" in status_text(app)
@@ -7714,6 +7721,24 @@ def fill_mount_form(form, host: str, guest: str, mode: str = "rw") -> None:
     form.query_one("#field-mode", Select).value = mode
 
 
+class GatedMounts(FakeData):
+    """set_mounts with a manual gate on the first exchange alone:
+    it stalls until the test releases it, later exchanges run at
+    once — the in-flight window the serialization tests pin."""
+
+    def __init__(self, rows, gate):
+        super().__init__(rows)
+        self.gate = gate
+        self.first = True
+
+    async def set_mounts(self, workspace_id, mounts):
+        self.calls.append(("set-mounts", workspace_id, list(mounts)))
+        if self.first:
+            self.first = False
+            await self.gate.wait()
+        return await super().set_mounts(workspace_id, mounts)
+
+
 def mount_form_ready(app) -> bool:
     """The editor's form stands with its fields composed — the
     wait every form test shares (the screen instance exists the
@@ -8263,11 +8288,128 @@ async def test_a_markup_carrying_host_refusal_crashes_nothing(
         assert "takes a host path" in note and r"x\[/y]" in note
 
 
+async def test_the_mounts_editor_serializes_rapid_changes(
+    monkeypatch,
+) -> None:
+    """Two changes inside one exchange's flight window (#886):
+    the second waits the first out — the late-landing first
+    reply cannot roll the second change back out of the working
+    list, and the daemon ends holding both."""
+    import asyncio
+
+    from msks.client.tui.mounts import MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    gate = asyncio.Event()
+    data = GatedMounts([mounted_row()], gate)
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        await pilot.press("down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
+        )
+        editor = app.screen
+        # The first add's exchange stalls on the gate: the call is
+        # in, the reply is in the air.
+        await pilot.press("a")
+        await wait_for(lambda: mount_form_ready(app))
+        fill_mount_form(app.screen, "/srv/x", "/mnt/x")
+        submit_mount_form(app.screen)
+        await wait_for(
+            lambda: [call[0] for call in data.calls] == ["set-mounts"]
+        )
+        # The second add arrives while the first is in the air —
+        # the press rides the pump the parked exchange no longer
+        # holds (the form's dismiss task once landed on the DOM's
+        # prune hook, and a gated reply parked the pump with it).
+        await pilot.press("a")
+        await wait_for(lambda: mount_form_ready(app))
+        fill_mount_form(app.screen, "/srv/y", "/mnt/y")
+        submit_mount_form(app.screen)
+        # The second exchange parks at the editor's turnstile —
+        # no condition to wait for (its call lands only after the
+        # gate opens), so a brief settle, then the release.
+        await asyncio.sleep(0.2)
+        # Release the stalled first exchange: its reply lands, the
+        # waiting second exchange takes its turn and the daemon
+        # ends holding both adds.
+        gate.set()
+        # Four calls name both exchanges complete (the wrapper's
+        # and the fake's append apiece): the first reply landed,
+        # the waiting second exchange took its turn.
+        await wait_for(lambda: len(data.calls) == 4)
+        posted = data.calls[-1][2]
+        assert {m["host"] for m in posted} == {
+            "/srv/proj",
+            "/srv/gone",
+            "/srv/x",
+            "/srv/y",
+        }
+        await wait_for(
+            lambda: len(editor.query_one("#mount-rows").children) == 4
+        )
+        await wait_for(
+            lambda: (
+                "saved" in str(editor.query_one("#mount-note", Static).content)
+            ),
+            timeout=10,
+        )
+
+
+async def test_a_remove_beside_an_in_flight_add_lands(
+    monkeypatch,
+) -> None:
+    """A ``D`` pressed while an add's reply is in the air (#888
+    review): the remove waits the add out, then re-resolves its
+    row by the (host, guest) pair — the add's reply re-created
+    every mount dict — so the posted set keeps the add and drops
+    the pressed row."""
+    import asyncio
+
+    from msks.client.tui.mounts import MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    gate = asyncio.Event()
+    data = GatedMounts([mounted_row()], gate)
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        await pilot.press("down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
+        )
+        editor = app.screen
+        # The add's exchange stalls on the gate (focus on row 0,
+        # the healthy /srv/proj mount).
+        await pilot.press("a")
+        await wait_for(lambda: mount_form_ready(app))
+        fill_mount_form(app.screen, "/srv/x", "/mnt/x")
+        submit_mount_form(app.screen)
+        await wait_for(
+            lambda: [call[0] for call in data.calls] == ["set-mounts"]
+        )
+        # The remove arrives while the add is in the air.
+        await pilot.press("D")
+        await asyncio.sleep(0.2)
+        gate.set()
+        await wait_for(lambda: len(data.calls) == 4)
+        posted = data.calls[-1][2]
+        assert {m["host"] for m in posted} == {"/srv/gone", "/srv/x"}
+        await wait_for(
+            lambda: len(editor.query_one("#mount-rows").children) == 2
+        )
+
+
 async def test_the_mounts_editor_empty_list_names_the_add_key(
     monkeypatch,
 ) -> None:
-    """The mountless workspace's editor shows the placeholder that
-    names the add key, and remove on it decides nothing."""
+    """The mountless workspace's editor carries the proxies
+    page's own empty frame (#886): the count's status line, the
+    columns standing down, the empty state that names the add
+    key — and remove on it decides nothing."""
     from msks.client.tui.mounts import MountsScreen
 
     scripted_link(monkeypatch, [rules_frame()])
@@ -8280,17 +8422,33 @@ async def test_the_mounts_editor_empty_list_names_the_add_key(
         await press_until(
             pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
         )
-        content = str(
-            app.screen.query_one("#mount-rows")
-            .children[0]
-            .query_one(Static)
-            .content
-        )
-        assert "no mounts" in content
+        editor = app.screen
+        status = str(editor.query_one("#mount-status", Static).content)
+        assert "0 mounts" in status and "alpha" in status
+        assert "next start" in status
+        assert editor.query_one("#mount-columns", Static).display is False
+        empty = editor.query_one("#mount-empty", Static)
+        assert empty.display is True
+        assert "No mounts" in str(empty.content)
+        assert "a adds one" in str(empty.content)
         calls_before = list(data.calls)
-        await pilot.press("D")  # the placeholder: nothing to remove
-        await pilot.press("enter")  # nothing to edit
+        await pilot.press("D")  # nothing to remove
+        await pilot.press("enter")  # nothing to edit (the empty
+        # list holds the key)
+        await pilot.press("e")  # the visible key: no row, no form
         await pilot.pause()
+        assert data.calls == calls_before
+        assert isinstance(app.screen, MountsScreen)
+        # The swap-window branches: a removed list reads None,
+        # and the rebuild's guard decides quietly — the standing
+        # editor's own paint-heal rule carries the rest.
+        await editor.query_one("#mount-rows").remove()
+        assert editor.rows_widget() is None
+        await editor.rebuild_rows()
+        assert editor.rows_widget() is None
+        # A remove whose pair left the list decides quietly —
+        # no post, no crash.
+        await editor.removed({"host": "/gone/already", "guest": "/x"})
         assert data.calls == calls_before
 
 
@@ -8336,11 +8494,12 @@ async def test_the_mounts_editor_names_its_keys(monkeypatch) -> None:
         )
         footer = app.screen.query_one(Footer)
         # The footer's keys come from the screen's bindings: the
-        # three visible ones name the editor's actions.
+        # four visible ones name the editor's actions — add,
+        # edit, remove, close.
         shown = {
             binding.key for binding in app.screen.BINDINGS if binding.show
         }
-        assert shown == {"a", "D", "escape"}
+        assert shown == {"a", "e", "D", "q"}
         assert footer in app.screen.children
 
 

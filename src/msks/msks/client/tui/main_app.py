@@ -214,6 +214,16 @@ class MsksTuiApp(App):
     #proxy-rows ListItem { height: 1; padding: 0 1; }
     #proxy-rows ListItem Static { text-wrap: nowrap; }
     #proxy-empty { padding: 1 2; color: $text-muted; }
+    #mount-status { height: 1; padding: 0 1; background: $panel;
+                    color: $text-muted; text-wrap: nowrap;
+                    text-overflow: ellipsis; }
+    #mounts-listing { border: round $primary; background: $panel; }
+    #mount-columns { padding: 0 1; color: $text-muted; }
+    #mount-rows ListItem { height: 1; padding: 0 1; }
+    #mount-rows ListItem Static { text-wrap: nowrap; }
+    #mount-empty { padding: 1 2; color: $text-muted; }
+    #mount-note { height: 1; padding: 0 1; color: $text-muted;
+                  text-wrap: nowrap; text-overflow: ellipsis; }
     #audit-note { padding: 0 1; color: $text-muted; }
     #audit-status { height: 1; padding: 0 1; color: $text-muted;
                     text-wrap: nowrap; text-overflow: ellipsis; }
@@ -222,6 +232,7 @@ class MsksTuiApp(App):
     #audit-rows ListItem.sighting { color: $warning; text-style: bold; }
     MintScreen { align: center middle; }
     ProxyAddScreen { align: center middle; }
+    MountFormScreen { align: center middle; }
     .form-row.tall { height: auto; }
     .form-row.tall SelectionList { width: 1fr; height: 4;
                                    border: none; padding: 0;

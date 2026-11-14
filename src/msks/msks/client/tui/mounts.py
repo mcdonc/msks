@@ -17,16 +17,18 @@ at the next start; a ``skipped`` mount names its reason, and the
 reason stands until the config and the row agree again.
 """
 
+import asyncio
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
+from textual.css.query import NoMatches
 from textual.screen import ModalScreen
 from textual.widgets import (
     Button,
     Footer,
     Input,
-    Label,
     ListItem,
     ListView,
     Select,
@@ -37,13 +39,22 @@ from ..workspaces import mount_spec
 from .consent_ui import flash_safe
 from .detail import status_line
 from .forms import FormSelect, FormWalk
-from .rows import clip, workspace_label
+from .rows import (
+    COLUMN_GAP,
+    cell_pad,
+    clip,
+    list_header,
+    workspace_label,
+)
 
-#: The editor row's spec column budget: the share, the guest path,
-#: and the mode beside the state's word — the guest path is the
-#: long half and clips last (its head names the mount point's
-#: tree).
-SPEC_W = 44
+#: The editor's columns (#886): the spec beside its derived
+#: state — the proxies page's own frame, at widths the 80-column
+#: terminal holds (the widest spec clips its middle; the state's
+#: reason clips its tail).
+MOUNT_COLUMNS = (
+    ("SPEC", 44),
+    ("STATE", 26),
+)
 
 
 def mount_spec_text(mount: dict) -> str:
@@ -71,17 +82,27 @@ def issue_names(issue: dict, mount: dict) -> bool:
     ) == mount.get("guest")
 
 
-def mount_row_text(mount: dict, issues: list[dict]) -> str:
-    """One editor row's paint: the spec beside its state —
-    ``healthy`` attaches at the next start; anything else names
-    the kind and the reason."""
+def mount_cells(mount: dict, issues: list[dict]) -> tuple[str, ...]:
+    """One editor row's cells at the columns' widths: the spec
+    beside its derived state — ``healthy`` attaches at the next
+    start; anything else names the kind and the reason."""
     issue = issue_for(mount, issues)
-    if issue is None:
-        return f"{clip(mount_spec_text(mount), SPEC_W)}  healthy"
-    return (
-        f"{clip(mount_spec_text(mount), SPEC_W)}  "
-        f"{issue['kind']}: {issue['detail']}"
+    state = (
+        "healthy" if issue is None else f"{issue['kind']}: {issue['detail']}"
     )
+    widths = [width for _label, width in MOUNT_COLUMNS]
+    return (clip(mount_spec_text(mount), widths[0]), clip(state, widths[1]))
+
+
+def mount_row_text(mount: dict, issues: list[dict]) -> str:
+    """One editor row's paint: the padded cells, the proxies
+    page's own row shape."""
+    return COLUMN_GAP.join(
+        cell_pad(cell, width)
+        for cell, (_label, width) in zip(
+            mount_cells(mount, issues), MOUNT_COLUMNS, strict=True
+        )
+    ).rstrip()
 
 
 def mounts_line(row: dict, theme_variables: dict | None = None) -> Content:
@@ -121,6 +142,22 @@ def replaced_mount(mounts: list, mount: dict | None, entry: dict) -> list:
     return [entry if candidate is mount else candidate for candidate in mounts]
 
 
+def resolved_mount(mounts: list, mount: dict) -> dict | None:
+    """The pressed row's mount on the working list, re-resolved
+    by its (host, guest) pair — a reply that landed during the
+    remove's wait re-created every dict, and the pair is the
+    wire's own identity (the one the derived issues match on)."""
+    return next(
+        (
+            candidate
+            for candidate in mounts
+            if candidate.get("host") == mount.get("host")
+            and candidate.get("guest") == mount.get("guest")
+        ),
+        None,
+    )
+
+
 def clamp_index(focused: int, count: int) -> int | None:
     """The rebuilt list's focused index: the row focus kept, or
     the last row when the list shrank under it; None when the
@@ -139,9 +176,6 @@ def mount_state_text(mount: dict, issues: list[dict]) -> str:
     return f"{mount_spec_text(mount)}{state}"
 
 
-#: The form's standing note (#886): the one grammar the CLI's
-#: own ``msks mount`` reads — the proxy add form's note shape,
-#: the verb naming the path that opened the form.
 def form_note(verb: str) -> str:
     """The form's standing note (#886): the one grammar the
     CLI's own ``msks mount`` reads — the proxy add form's note
@@ -276,54 +310,92 @@ class MountsScreen(ModalScreen[dict | None]):
 
     BINDINGS = [
         Binding("a", "add", "Add"),
+        Binding("e", "edit", "Edit"),
         Binding("D", "remove", "Del"),
         Binding("enter", "edit", "Edit", show=False),
-        Binding("escape", "close", "Close"),
-        Binding("q", "close", "Close", show=False),
+        Binding("q", "close", "Close"),
+        Binding("escape", "close", "Close", show=False),
     ]
 
     def __init__(self, row: dict, data) -> None:
         super().__init__()
         self.row = row
         self.data = data
+        # The exchanges' turnstile: one read-mutate-post at a
+        # time, the old exclusive worker's own rule carried to
+        # the form's task callbacks — a second change that
+        # arrives mid-flight waits, so a late-landing reply can
+        # never roll a later change back out of the working list
+        # (its snapshot is taken under the same lock).
+        self.exchanges = asyncio.Lock()
 
     def compose(self) -> ComposeResult:
-        yield Label(f"{workspace_label(self.row)} — mounts (next start)")
-        yield ListView(id="mount-rows")
+        yield Static(id="mount-status")
+        with Vertical(id="mounts-listing"):
+            # The empty state rides the panel's top — an empty
+            # list still grows to fill the panel, so a message
+            # after it lands at the bottom, away from the eye.
+            yield Static("", id="mount-empty")
+            yield Static(list_header(MOUNT_COLUMNS), id="mount-columns")
+            yield ListView(id="mount-rows")
         yield Static("", id="mount-note")
         yield Footer()
 
     def on_mount(self) -> None:
-        self.rebuild()
-        self.query_one("#mount-rows", ListView).focus()
+        self.call_after_refresh(self.rebuild_rows)
 
     def mounts(self) -> list[dict]:
         """The editor's working list — the row's mounts."""
         return list(self.row.get("mounts") or [])
 
-    def rebuild(self) -> None:
-        """Repaint the rows from the row's mounts and their
-        derived state, keeping the focused row by index."""
-        rows = self.query_one("#mount-rows", ListView)
-        focused = rows.index if rows.index is not None else 0
-        items = self.editor_items()
-        rows.clear()
-        for item in items:
-            rows.append(item)
-        rows.index = clamp_index(focused, len(items))
+    def rows_widget(self) -> ListView | None:
+        """The rows list, or None in a rebuild's swap window."""
+        try:
+            return self.query_one("#mount-rows", ListView)
+        except NoMatches:
+            return None
+
+    async def rebuild_rows(self) -> None:
+        """Swap in a freshly-built rows list (its mount awaited),
+        preserving the focused row by index — the consent
+        queue's rebuild rule, carried to the editor: a
+        clear-and-append rebuild double-adds rows when two land
+        in one refresh window (the clear misses appends still
+        queued), and the awaited swap keeps every repaint whole."""
+        old = self.rows_widget()
+        if old is None:
+            return  # compose has not built the editor yet
+        focused = old.index if old.index is not None else 0
+        fresh = ListView(*self.editor_items(), id="mount-rows")
+        listing = self.query_one("#mounts-listing", Vertical)
+        await old.remove()  # frees the id before the fresh list mounts
+        await listing.mount(fresh)
+        fresh.index = clamp_index(focused, len(self.mounts()))
+        fresh.focus()
+        self.sync_status()
+
+    def sync_status(self) -> None:
+        """The editor's status line and empty state (#886) — the
+        proxies page's own frame: the mount count beside the
+        workspace's name, the columns standing only while rows
+        do, and the empty state naming the add key."""
+        count = len(self.mounts())
+        word = "mount" if count == 1 else "mounts"
+        self.query_one("#mount-status", Static).update(
+            f" {count} {word} · {workspace_label(self.row)} (next start)"
+        )
+        self.query_one("#mount-columns", Static).display = bool(count)
+        empty = self.query_one("#mount-empty", Static)
+        empty.display = not count
+        empty.update("No mounts — a adds one.")
 
     def editor_items(self) -> list[ListItem]:
-        """The list's rows: one per mount with its derived state,
-        or the empty placeholder that names the add key."""
+        """The list's rows: one per mount with its derived state."""
         issues = self.row.get("mount_issues") or []
-        items = [
+        return [
             ListItem(Static(mount_row_text(mount, issues)))
             for mount in self.mounts()
         ]
-        if items:
-            return items
-        prompt = "no mounts — press a to add HOST_PATH:GUEST_PATH[:MODE]"
-        return [ListItem(Static(prompt))]
 
     def note(self, text: str) -> None:
         """The editor's note line: what the last change did, or
@@ -331,11 +403,11 @@ class MountsScreen(ModalScreen[dict | None]):
         self.query_one("#mount-note", Static).update(text)
 
     def focused_mount(self) -> dict | None:
-        """The row under focus as its mount, None on the empty
-        placeholder or a swap window."""
-        rows = self.query_one("#mount-rows", ListView)
+        """The row under focus as its mount, None when nothing is
+        focused (an empty listing, or a rebuild's swap window)."""
+        rows = self.rows_widget()
         mounts = self.mounts()
-        if rows.index is None or not mounts:
+        if rows is None or rows.index is None or not mounts:
             return None
         if rows.index >= len(mounts):
             # The list shrank under the focus between the rebuild
@@ -358,11 +430,11 @@ class MountsScreen(ModalScreen[dict | None]):
         except (Exception, SystemExit) as exc:
             reason = f"refused: {exc}"
             self.row["mounts"] = undo
-            self.call_after_refresh(self.rebuild)
+            await self.rebuild_rows()
             self.call_after_refresh(lambda: self.note(reason))
             return
         self.row = fresh
-        self.call_after_refresh(self.rebuild)
+        await self.rebuild_rows()
         self.call_after_refresh(
             lambda: self.note(
                 "saved — applies at the next start"
@@ -388,10 +460,10 @@ class MountsScreen(ModalScreen[dict | None]):
         end, a cancel decides nothing."""
         if entry is None:
             return
-        before = self.mounts()
-        self.row["mounts"] = [*before, entry]
-        self.rebuild()
-        await self.post(before)
+        async with self.exchanges:
+            before = self.mounts()
+            self.row["mounts"] = [*before, entry]
+            await self.post(before)
 
     def action_edit(self) -> None:
         """Enter on a row opens the form seeded with the row's
@@ -408,11 +480,11 @@ class MountsScreen(ModalScreen[dict | None]):
         the new entry."""
         if entry is None:
             return
-        mount = self.focused_mount()
-        before = self.mounts()
-        self.row["mounts"] = replaced_mount(before, mount, entry)
-        self.rebuild()
-        await self.post(before)
+        async with self.exchanges:
+            mount = self.focused_mount()
+            before = self.mounts()
+            self.row["mounts"] = replaced_mount(before, mount, entry)
+            await self.post(before)
 
     def action_remove(self) -> None:
         """``D``: remove the focused row's mount — the remaining
@@ -420,12 +492,27 @@ class MountsScreen(ModalScreen[dict | None]):
         mount = self.focused_mount()
         if mount is None:
             return
-        before = self.mounts()
-        self.row["mounts"] = [
-            candidate for candidate in before if candidate is not mount
-        ]
-        self.rebuild()
-        self.run_worker(self.post(before), exclusive=True)
+        # Referenced under its own name (NOT ``_task`` — the
+        # DOM's prune hook: a node's ``_task`` is awaited at its
+        # removal, and a remove parked on the turnstile there
+        # would park the pump with it).
+        self._remove_flight = asyncio.create_task(self.removed(mount))
+
+    async def removed(self, mount: dict) -> None:
+        """The remove's exchange, through the same turnstile — a
+        remove that lands beside an in-flight add waits for it,
+        re-resolves its row by pair (:func:`resolved_mount`), and
+        a pair that left the list another way decides quietly
+        (nothing to remove)."""
+        async with self.exchanges:
+            before = self.mounts()
+            target = resolved_mount(before, mount)
+            if target is None:
+                return
+            self.row["mounts"] = [
+                candidate for candidate in before if candidate is not target
+            ]
+            await self.post(before)
 
     def action_close(self) -> None:
         """Close the editor; the page behind takes the row."""

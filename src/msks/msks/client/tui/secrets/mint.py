@@ -382,5 +382,9 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
         except NoMatches:
             pass  # a teardown race unmounted the field first
         self.dismiss()
-        # Referenced: an unreferenced task can be collected mid-await.
-        self._task = asyncio.create_task(self.submitted(row))
+        # Referenced under its own name: an unreferenced task can
+        # be collected mid-await — and NOT ``_task``, which the
+        # DOM's prune machinery reads (AwaitRemove awaits a
+        # node's ``_task`` at removal): a task parked on the
+        # mint's flight there would park the pump with it.
+        self._submitted_task = asyncio.create_task(self.submitted(row))

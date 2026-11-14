@@ -109,9 +109,12 @@ class FormWalk:
         the exchange runs as a task, so the modal closes without
         waiting on it)."""
         self.dismiss()
-        # Referenced: an unreferenced task can be collected
-        # mid-await.
-        self._task = asyncio.create_task(self.submitted(answer))
+        # Referenced under its own name: an unreferenced task can
+        # be collected mid-await — and NOT ``_task``, which the
+        # DOM's prune machinery reads (AwaitRemove awaits a
+        # node's ``_task`` at removal): a task parked on an
+        # exchange there would park the pump with it.
+        self._submitted_task = asyncio.create_task(self.submitted(answer))
 
 
 #: The create form's fields (#309): the create body's optional
