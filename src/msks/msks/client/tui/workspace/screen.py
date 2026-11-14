@@ -821,7 +821,7 @@ class WorkspaceScreen(HelpKeys, Screen):
 
     async def action_settings_page(self) -> None:
         """``t`` (#880): the edit dialog one key away — the
-        Settings row's own destination."""
+        Edit row's own destination."""
         await self.edit_workspace()
 
     async def action_clone_page(self) -> None:

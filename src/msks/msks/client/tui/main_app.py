@@ -231,7 +231,7 @@ class MsksTuiApp(App):
     #audit-rows ListItem { height: 1; }
     #audit-rows ListItem.sighting { color: $warning; text-style: bold; }
     MintScreen { align: center middle; }
-    ProxyAddScreen { align: center middle; }
+    ProxyFormScreen { align: center middle; }
     MountFormScreen { align: center middle; }
     .form-row.tall { height: auto; }
     .form-row.tall SelectionList { width: 1fr; height: 4;

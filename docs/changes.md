@@ -15,8 +15,20 @@ tagged `vX.Y.Z`.
   footer's descriptions abbreviate (the list's own style) so the
   whole key set fits one 80-column line, and the `?` help
   overlay lists every key.
+- **Proxies page edit form (#890).** `e`, Enter, or a click on a
+  row opens the add form's own shape seeded with that row
+  (direction, spec, label) and saves it through a new
+  `PATCH /api/v1/workspaces/{id}/proxies/{proxy_id}` route; the
+  daemon closes the old listener, rewrites the row, and binds
+  the new spec at once, with the create's own conflict rules.
+  `D` keeps the remove behind its confirmation.
 
 ### Changed
+
+- **Workspace page edit action renamed (#890).** The action row
+  that opens the sizes-and-topology dialog reads `Edit` (from
+  `Settings`), matching the `e`/Enter edit vocabulary the mounts
+  editor and the proxies page carry.
 
 - **Workspace page block (#881).** The page's whole content (the
   header lines, the status lines, and the action panel) sits in

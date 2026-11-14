@@ -1,21 +1,21 @@
-"""The tree's proxies surfaces (#809, part #807): the workspace's
-proxies page, its add form, and the workspace page's compact
-proxies line.
+"""The tree's proxies surfaces (#809, part #807, #890): the
+workspace's proxies page, its add and edit form, and the
+workspace page's compact proxies line.
 
 The page rides the same REST surface the ``msks proxy`` commands
 make, scoped to one workspace — its rows are that workspace's
 alone, and it opens from the workspace page (the action row, or
 ``p``). Every proxy transition the daemon publishes
 (``proxy.created``, ``proxy.listening``, ``proxy.failed``,
-``proxy.closed``, ``proxy.removed``) pokes a refresh through a
-plain-subscriber connection beside the standing interval, so a
-bind that fails while the page stands paints itself without a
-keypress.
+``proxy.closed``, ``proxy.removed``, ``proxy.updated``)
+pokes a refresh through a plain-subscriber connection beside the
+standing interval, so a bind that fails while the page stands
+paints itself without a keypress.
 
-Spatial navigation: the arrows walk the rows, ``a`` opens the add
-form, ``D`` or Enter removes the focused row behind a
-confirmation, ``q`` or Escape returns to the workspace page — no
-screen traps focus.
+Spatial navigation: the arrows walk the rows, ``a`` opens the
+add form, ``e`` or Enter opens the edit form on the focused row,
+``D`` removes the focused row behind a confirmation, ``q`` or
+Escape returns to the workspace page — no screen traps focus.
 """
 
 from textual.app import ComposeResult
@@ -24,7 +24,7 @@ from textual.containers import Horizontal, Vertical
 from textual.content import Content, Span
 from textual.css.query import NoMatches
 from textual.events import Resize
-from textual.screen import ModalScreen, Screen
+from textual.screen import Screen
 from textual.widgets import (
     Button,
     Footer,
@@ -47,7 +47,7 @@ from .consent_ui import (
 from .detail import (
     STATUS_LABEL_W,
 )
-from .forms import FormSelect, FormWalk
+from .forms import FormSelect, SeededForm
 from .help import HelpKeys
 from .link import AuditLink, proxy_frame
 from .rows import (
@@ -76,13 +76,17 @@ LISTENING_COLOR = "$success"
 #: line's red per unbindable port.
 FAILED_COLOR = "$error"
 
-#: The add form's standing note (#809): the two specs in the one
-#: grammar the CLI reads — ssh's own.
-ADD_NOTE = (
-    "add a proxy — the same specs `msks proxy add` reads\n"
-    "-L [BIND:]PORT:HOST:PORT · HOST localhost names the workspace\n"
-    "-R RPORT:HOST:TPORT · the gateway reaches a daemon-side service"
-)
+
+#: The form's standing note (#809, #890): the two specs in the
+#: one grammar the CLI reads — ssh's own — the verb naming the
+#: path that opened the form.
+def form_note(verb: str) -> str:
+    return (
+        f"{verb} a proxy — the same specs `msks proxy add` reads\n"
+        "-L [BIND:]PORT:HOST:PORT · HOST localhost names the workspace\n"
+        "-R RPORT:HOST:TPORT · the gateway reaches a daemon-side service"
+    )
+
 
 #: The direction select's two choices (#809): ssh's own letters.
 FORWARD_CHOICE = "-L"
@@ -95,18 +99,30 @@ REMOTE_CHOICE = "-R"
 PROXY_REFRESH_S = 5.0
 
 
+def bracketed_host(host: str) -> str:
+    """One host in the spec grammar's own spelling: an IPv6
+    literal arrives bracketed (the parser's own rule — the
+    brackets close the colons the spec's own separator would
+    otherwise eat), every other spelling (a hostname, IPv4)
+    stands as it reads."""
+    return f"[{host}]" if ":" in host else host
+
+
 def spec_text(row: dict) -> str:
     """One row's spec in the CLI's own grammar (#809): the exact
     words ``msks proxy add`` takes — the listing, the compact
-    line's tooltip-free cousin, and the add form's seeded input
+    line's tooltip-free cousin, and the edit form's seeded input
     share one vocabulary. A forward's bind appears only when the
     row names one (loopback is the default, unnamed); its host
-    field is the workspace's two spellings."""
+    field is the workspace's two spellings. An IPv6 literal
+    arrives bracketed, so the text parses back (#890 review)."""
     if row["direction"] == "remote":
-        target = row.get("target_host") or DEFAULT_TARGET_HOST
+        target = bracketed_host(row.get("target_host") or DEFAULT_TARGET_HOST)
         return f"-R {row['listen_port']}:{target}:{row['target_port']}"
     listen = row.get("listen_host") or DEFAULT_LISTEN_HOST
-    bind = "" if listen == DEFAULT_LISTEN_HOST else f"{listen}:"
+    bind = (
+        "" if listen == DEFAULT_LISTEN_HOST else f"{bracketed_host(listen)}:"
+    )
     return f"-L {bind}{row['listen_port']}:localhost:{row['target_port']}"
 
 
@@ -209,9 +225,10 @@ def proxies_line(rows: list[dict], theme_variables=None) -> Content:
 #: column's width, in row order — the workspaces listing's own
 #: shape. The workspace's own page names the workspace in its
 #: status line, so the rows spend no column on it. The fixed
-#: widths hold an 80-column terminal: the widest spec
-#: (``-L 0.0.0.0:2201:localhost:22``) clips its middle at the
-#: SPEC minimum and reads whole on a wider one.
+#: widths hold an 80-column terminal: the widest specs (a full
+#: IPv6 bind, ``-L [::1]:2201:localhost:22``, brackets and all)
+#: clip their middle at the SPEC minimum and read whole on a
+#: wider one.
 PROXY_COLUMNS = (
     ("SPEC", 28),
     ("LABEL", 10),
@@ -264,6 +281,31 @@ def parsed_body(direction: str, raw: str) -> dict:
     return parse_remote_spec(raw)
 
 
+def seed_spec(row: dict) -> str:
+    """The row's spec as the form's spec field reads it (#890):
+    the listing's own text with the direction's letter aside —
+    the select carries the letter, the field carries the rest."""
+    return spec_text(row).split(" ", 1)[1]
+
+
+def seeded_direction(seed: dict) -> str:
+    """The direction select's value for one seed row (#890): the
+    letter ssh gives the row's direction; the add path's own
+    forward default when no seed stands."""
+    return (
+        REMOTE_CHOICE if seed.get("direction") == "remote" else FORWARD_CHOICE
+    )
+
+
+def seeded_fields(seed: dict | None) -> tuple[str, str, str]:
+    """The form's seeded values for one row (#890): the note's
+    verb, the spec field's text, and the label field's text —
+    the add path's blank triple when no seed stands."""
+    if seed is None:
+        return "add", "", ""
+    return "edit", seed_spec(seed), str(seed.get("label") or "")
+
+
 class ProxyLink(AuditLink):
     """The proxies page's plain-subscriber connection (#809): the
     events socket without registration, the audit view's own
@@ -287,33 +329,29 @@ class ProxyLink(AuditLink):
         return False
 
 
-class ProxyAddScreen(FormWalk, ModalScreen[dict | None]):
-    """The add form (#809): the create form's pattern over the
-    proxy's own fields — the workspace fixed at the page that
-    opened it, the direction (ssh's two letters), the spec in the
-    CLI's own grammar, and a label. The spec parses with the
-    CLI's own parser, so a refusal here names itself on the note
-    in the same words the command prints and the daemon never
-    sees a half-parsed body. A body that lands dismisses with it;
-    the pushing page owns the exchange."""
-
-    # The walk's keys: named here, not on FormWalk — Textual
-    # merges BINDINGS from DOMNode bases alone (the mixin's
-    # note records the rule).
-    BINDINGS = [
-        Binding("up", "walk_previous", show=False),
-        Binding("down", "walk_next", show=False),
-        Binding("escape", "cancel", "Cancel", show=False),
-        Binding("q", "cancel", show=False),
-    ]
-
-    def __init__(self, scope: dict, submitted) -> None:
-        super().__init__(submitted)
-        self.scope = scope
+class ProxyFormScreen(SeededForm):
+    """The add and edit form (#809, #890): the create form's
+    pattern over the proxy's own fields — the workspace fixed at
+    the page that opened it, the direction (ssh's two letters),
+    the spec in the CLI's own grammar, and a label. The spec
+    parses with the CLI's own parser, so a refusal here names
+    itself on the note in the same words the command prints and
+    the daemon never sees a half-parsed body. An edit arrives
+    seeded with the focused row — its direction, its spec, its
+    label — the add form's own shape (the mounts editor's shared
+    form, one vocabulary across the pages; the walk's keys and
+    the seed live on the :class:`SeededForm` base). A body that
+    lands dismisses with it; the pushing page owns the exchange.
+    """
 
     def compose(self) -> ComposeResult:
+        seeded = self.seed or {}
+        verb, spec, label = seeded_fields(self.seed)
         with Vertical(id="form"):
-            yield Static(ADD_NOTE, id="form-note")
+            yield Static(
+                form_note(verb),
+                id="form-note",
+            )
             with Horizontal(classes="form-row"):
                 yield Static("workspace", classes="form-label")
                 # The workspace is the page's own, shown as the
@@ -327,7 +365,7 @@ class ProxyAddScreen(FormWalk, ModalScreen[dict | None]):
                         ("forward (-L)", FORWARD_CHOICE),
                         ("reverse (-R)", REMOTE_CHOICE),
                     ],
-                    value=FORWARD_CHOICE,
+                    value=seeded_direction(seeded),
                     allow_blank=False,
                     id="field-direction",
                     compact=True,
@@ -335,6 +373,7 @@ class ProxyAddScreen(FormWalk, ModalScreen[dict | None]):
             with Horizontal(classes="form-row"):
                 yield Static("spec", classes="form-label")
                 yield Input(
+                    value=spec,
                     placeholder="2201:localhost:22",
                     id="field-spec",
                     compact=True,
@@ -342,13 +381,17 @@ class ProxyAddScreen(FormWalk, ModalScreen[dict | None]):
             with Horizontal(classes="form-row"):
                 yield Static("label", classes="form-label")
                 yield Input(
+                    value=label,
                     placeholder="a note the listings show",
                     id="field-proxy-label",
                     compact=True,
                 )
             with Horizontal(id="form-buttons"):
                 yield Button(
-                    "Add", id="do-add", variant="primary", compact=True
+                    "Save" if verb == "edit" else "Add",
+                    id="do-add",
+                    variant="primary",
+                    compact=True,
                 )
                 yield Button("Cancel", id="do-cancel", compact=True)
         yield Footer()
@@ -384,16 +427,24 @@ class ProxyAddScreen(FormWalk, ModalScreen[dict | None]):
 
 
 class ProxiesScreen(HelpKeys, Screen):
-    """One workspace's proxies page (#809, part #807): the
+    """One workspace's proxies page (#809, part #807, #890): the
     workspace's proxy rows with their live status, opened from
-    its page (the action row, or ``p``). ``a`` opens the add form,
-    ``D`` or Enter removes the focused row behind a confirmation
-    (``D``, the workspaces list's own remove letter);
-    every proxy transition the daemon publishes pokes a refresh
-    beside the standing interval, so a bind that fails while the
-    page stands paints itself without a keypress. Arrows walk the
-    rows; ``q`` or Escape returns to the workspace page — no
-    trap."""
+    its page (the action row, or ``p``). ``a`` opens the add
+    form, ``e`` or Enter opens the edit form on the focused row
+    (the mounts editor's own letter, one vocabulary across the
+    pages), and ``D`` removes the focused row behind a
+    confirmation (``D``, the workspaces list's own remove
+    letter); every proxy transition the daemon publishes pokes a
+    refresh beside the standing interval, so a bind that fails
+    while the page stands paints itself without a keypress.
+    Arrows walk the rows; ``q`` or Escape returns to the
+    workspace page — no trap.
+
+    Enter reaches the edit through the list's own Selected (a
+    click on a row arrives the same way) and through the
+    screen's binding when the walk sits elsewhere — the mounts
+    editor's own pair, carried to this page.
+    """
 
     #: The ``?`` overlay's title (#851): the docs' name for the
     #: page.
@@ -401,8 +452,9 @@ class ProxiesScreen(HelpKeys, Screen):
 
     BINDINGS = [
         Binding("a", "add", "Add"),
+        Binding("e", "edit", "Edit"),
         Binding("D", "remove", "Del"),
-        Binding("enter", "remove", "Del", show=False, priority=True),
+        Binding("enter", "edit", "Edit", show=False),
         Binding("q", "back", "Back"),
         Binding("escape", "back", "Back", show=False),
         Binding("question_mark", "help", "Help", show=False),
@@ -625,11 +677,17 @@ class ProxiesScreen(HelpKeys, Screen):
             None,
         )
 
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Enter or a click on a row edits it — the list owns the
+        key (the binding is the same action for a focus walk that
+        lands elsewhere), the mounts editor's own rule."""
+        self.action_edit()
+
     def action_add(self) -> None:
         """``a``: the add form over the page, the workspace fixed
         to the page's own — the form's callback runs the exchange
         (async, the mint form's rule)."""
-        self.app.push_screen(ProxyAddScreen(self.workspace, self.added))
+        self.app.push_screen(ProxyFormScreen(self.workspace, self.added))
 
     async def added(self, body: dict | None) -> None:
         """The add form's callback: a body lands through the data
@@ -646,8 +704,39 @@ class ProxiesScreen(HelpKeys, Screen):
             self.flash(f"added {flash_safe(spec_text(row))}")
             self.refresh_rows()
 
+    def action_edit(self) -> None:
+        """``e`` or Enter: the form over the page seeded with the
+        focused row — its direction, its spec, its label — the
+        form's callback runs the exchange."""
+        row = self.focused_row()
+        if row is None:
+            self.flash("no proxy focused")
+            return
+        self.app.push_screen(
+            ProxyFormScreen(self.workspace, self.edited(row), seed=row)
+        )
+
+    def edited(self, row: dict):
+        """The edit form's callback: the row the form rewrites,
+        the body it dismissed with."""
+
+        async def answered(body: dict | None) -> None:
+            if body is None:
+                return
+            fresh = await self.guarded(
+                "edit",
+                self.app.data.update_proxy(
+                    row["workspace_id"], row["id"], body
+                ),
+            )
+            if fresh is not None:
+                self.flash(f"saved {flash_safe(spec_text(fresh))}")
+                self.refresh_rows()
+
+        return answered
+
     def action_remove(self) -> None:
-        """``D`` or Enter: ask first (a remove closes the listener
+        """``D``: ask first (a remove closes the listener
         at once), then delete through the data seam."""
         row = self.focused_row()
         if row is None:

@@ -62,6 +62,16 @@ async def free_port() -> int:
     return port
 
 
+async def free_ports(count: int) -> list[int]:
+    """Distinct ports the kernel confirms free — two draws in
+    one test that land on the same port would refuse a bind and
+    fail the test for the wrong reason."""
+    ports: set[int] = set()
+    while len(ports) < count:
+        ports.add(await free_port())
+    return sorted(ports)
+
+
 async def make_workspace(http, name: str, egress: bool = True) -> str:
     created = await http.post(
         "/api/v1/workspaces",
@@ -464,3 +474,321 @@ async def test_remote_same_port_across_workspaces_is_no_conflict(
     )
     assert repeat.status_code == 200
     assert repeat.json()["id"] == second.json()["id"]
+
+
+# --- the update route (#890) -----------------------------------------------
+
+
+async def test_update_rewrites_the_row_and_rebinds(client) -> None:
+    """A forward row's edit rewrites the row and swaps the live
+    listener: the old bind closes, the new one serves, and the
+    listing reads the new spec (a stopped workspace's forward
+    binds at once, the create's own rule)."""
+    http, _app, _stub = client
+    wid = await make_workspace(http, "ws-edit")
+    old_port, new_port = await free_ports(2)
+    created = await http.post(
+        f"/api/v1/workspaces/{wid}/proxies",
+        json={
+            "direction": "forward",
+            "listen_port": old_port,
+            "target_port": 22,
+            "label": "ssh",
+        },
+        headers=auth(),
+    )
+    proxy_id = created.json()["id"]
+    updated = await http.patch(
+        f"/api/v1/workspaces/{wid}/proxies/{proxy_id}",
+        json={
+            "direction": "forward",
+            "listen_port": new_port,
+            "target_port": 80,
+            "label": "web",
+        },
+        headers=auth(),
+    )
+    assert updated.status_code == 200
+    row = updated.json()
+    assert row["listen_port"] == new_port
+    assert row["target_port"] == 80
+    assert row["label"] == "web"
+    assert row["status"] == "listening"
+    # The old bind is gone; the new one takes a connection.
+    with contextlib.suppress(OSError):
+        reader, writer = await asyncio.open_connection("127.0.0.1", old_port)
+        writer.close()
+        assert False, "the old port still serves"
+    reader, writer = await asyncio.open_connection("127.0.0.1", new_port)
+    writer.close()
+    with contextlib.suppress(Exception):
+        await writer.wait_closed()
+    listed = await http.get("/api/v1/proxies", headers=auth())
+    assert listed.json() == [row]
+
+
+async def test_update_refuses_a_squatted_bind(client) -> None:
+    """The create's own conflict rules (#890): a bind another row
+    holds is the named refusal, the row being edited never counts
+    against itself — its own identical spec is the declarative ask
+    over again."""
+    http, _app, _stub = client
+    wid = await make_workspace(http, "ws-edit-conflict")
+    port_one, port_two = await free_ports(2)
+    one = await http.post(
+        f"/api/v1/workspaces/{wid}/proxies",
+        json={
+            "direction": "forward",
+            "listen_port": port_one,
+            "target_port": 22,
+        },
+        headers=auth(),
+    )
+    port = one.json()["listen_port"]
+    two = await http.post(
+        f"/api/v1/workspaces/{wid}/proxies",
+        json={
+            "direction": "forward",
+            "listen_port": port_two,
+            "target_port": 80,
+        },
+        headers=auth(),
+    )
+    squatted = await http.patch(
+        f"/api/v1/workspaces/{wid}/proxies/{two.json()['id']}",
+        json={
+            "direction": "forward",
+            "listen_port": port,
+            "target_port": 80,
+        },
+        headers=auth(),
+    )
+    assert squatted.status_code == 409
+    assert f"proxy {one.json()['id']}" in squatted.json()["detail"]
+    # The edited row's own bind is its own: the identical spec
+    # (and a relabel) lands.
+    same = await http.patch(
+        f"/api/v1/workspaces/{wid}/proxies/{two.json()['id']}",
+        json={
+            "direction": "forward",
+            "listen_port": two.json()["listen_port"],
+            "target_port": 80,
+            "label": "renamed",
+        },
+        headers=auth(),
+    )
+    assert same.status_code == 200
+    assert same.json()["label"] == "renamed"
+    assert same.json()["id"] == two.json()["id"]
+
+
+async def test_update_refuses_the_known_shapes(client) -> None:
+    """The create's own gates (#890): a workspace without a NIC,
+    a direction's mismatched host fields, and an id no row holds."""
+    http, _app, _stub = client
+    plain = await make_workspace(http, "ws-edit-plain", egress=False)
+    refused = await http.patch(
+        f"/api/v1/workspaces/{plain}/proxies/1",
+        json={"direction": "forward", "listen_port": 2201, "target_port": 22},
+        headers=auth(),
+    )
+    assert refused.status_code == 400
+    assert "no NIC" in refused.json()["detail"]
+    wid = await make_workspace(http, "ws-edit-shape")
+    created = await http.post(
+        f"/api/v1/workspaces/{wid}/proxies",
+        json={
+            "direction": "forward",
+            "listen_port": await free_port(),
+            "target_port": 22,
+        },
+        headers=auth(),
+    )
+    proxy_id = created.json()["id"]
+    mismatched = await http.patch(
+        f"/api/v1/workspaces/{wid}/proxies/{proxy_id}",
+        json={
+            "direction": "forward",
+            "listen_port": 2202,
+            "target_port": 22,
+            "target_host": "127.0.0.1",
+        },
+        headers=auth(),
+    )
+    assert mismatched.status_code == 400
+    assert "target_host" in mismatched.json()["detail"]
+    missing = await http.patch(
+        f"/api/v1/workspaces/{wid}/proxies/999",
+        json={"direction": "forward", "listen_port": 2203, "target_port": 22},
+        headers=auth(),
+    )
+    assert missing.status_code == 404
+    # An id another workspace owns answers as absent — the
+    # workspace-scoped read the delete carries.
+    other = await make_workspace(http, "ws-edit-other")
+    foreign = await http.patch(
+        f"/api/v1/workspaces/{other}/proxies/{proxy_id}",
+        json={"direction": "forward", "listen_port": 2204, "target_port": 22},
+        headers=auth(),
+    )
+    assert foreign.status_code == 404
+
+
+async def test_update_of_a_remote_row_waits_for_the_workspace(client) -> None:
+    """A remote row on a stopped workspace edits to another port
+    and records stopped — its next start brings the listener up
+    (the create's own rule for a row without an attachment)."""
+    http, _app, _stub = client
+    wid = await make_workspace(http, "ws-edit-waiting")
+    created = await http.post(
+        f"/api/v1/workspaces/{wid}/proxies",
+        json={
+            "direction": "remote",
+            "listen_port": 9200,
+            "target_port": 9200,
+        },
+        headers=auth(),
+    )
+    updated = await http.patch(
+        f"/api/v1/workspaces/{wid}/proxies/{created.json()['id']}",
+        json={
+            "direction": "remote",
+            "listen_port": 9201,
+            "target_port": 5432,
+            "target_host": "localhost",
+            "label": "db",
+        },
+        headers=auth(),
+    )
+    assert updated.status_code == 200
+    row = updated.json()
+    assert row["status"] == "stopped"
+    assert row["listen_port"] == 9201
+    assert row["target_host"] == "localhost"
+    assert row["label"] == "db"
+
+
+async def test_update_swaps_a_remote_admission(client, monkeypatch) -> None:
+    """A remote edit on a running workspace walks the listener
+    swap whole (#890): the old admission leaves with the old bind,
+    the fresh listener takes its admission with the create's own
+    closing step, and a swap that fails leaves the row standing
+    with the note the status carries."""
+    http, app, _stub = client
+    wid = await make_workspace(http, "ws-edit-live")
+    net = app.state.net
+    net._attachments[wid] = attachment("127.0.0.1")
+    port_old, port_new = await free_ports(2)
+    created = await http.post(
+        f"/api/v1/workspaces/{wid}/proxies",
+        json={
+            "direction": "remote",
+            "listen_port": port_old,
+            "target_port": 9200,
+        },
+        headers=auth(),
+    )
+    assert created.json()["status"] == "listening"
+    proxy_id = created.json()["id"]
+    # The edit's own two swaps: the old admission's refresh lands,
+    # the fresh bind's refresh refuses.
+    calls: list[str] = []
+    outcomes: list = [None, RuntimeError("nft refused")]
+
+    async def scripted(workspace_id):
+        calls.append(workspace_id)
+        outcome = outcomes.pop(0)
+        if outcome is not None:
+            raise outcome
+
+    monkeypatch.setattr(net, "refresh_proxies", scripted)
+    try:
+        updated = await http.patch(
+            f"/api/v1/workspaces/{wid}/proxies/{proxy_id}",
+            json={
+                "direction": "remote",
+                "listen_port": port_new,
+                "target_port": 5432,
+            },
+            headers=auth(),
+        )
+        assert updated.status_code == 200
+        assert updated.json()["status"] == "listening"
+        assert "admission refresh failed" in updated.json()["reason"]
+        assert calls == [wid, wid]
+        listed = await http.get("/api/v1/proxies", headers=auth())
+        assert listed.json()[0]["reason"] == updated.json()["reason"]
+    finally:
+        net._attachments.pop(wid, None)
+
+
+async def test_update_of_a_live_remote_row_lands_its_admission(
+    client,
+) -> None:
+    """A remote edit on a running workspace whose swap lands: the
+    fresh listener serves with no note beside its status (the
+    create's own closing step, word for word)."""
+    http, app, _stub = client
+    wid = await make_workspace(http, "ws-edit-lands")
+    net = app.state.net
+    net._attachments[wid] = attachment("127.0.0.1")
+    try:
+        port_old, port_new = await free_ports(2)
+        created = await http.post(
+            f"/api/v1/workspaces/{wid}/proxies",
+            json={
+                "direction": "remote",
+                "listen_port": port_old,
+                "target_port": 9200,
+            },
+            headers=auth(),
+        )
+        assert created.json()["status"] == "listening"
+        updated = await http.patch(
+            f"/api/v1/workspaces/{wid}/proxies/{created.json()['id']}",
+            json={
+                "direction": "remote",
+                "listen_port": port_new,
+                "target_port": 5432,
+            },
+            headers=auth(),
+        )
+        assert updated.status_code == 200
+        assert updated.json()["status"] == "listening"
+        assert updated.json()["reason"] is None
+        assert updated.json()["listen_port"] == port_new
+    finally:
+        net._attachments.pop(wid, None)
+
+
+async def test_update_of_a_row_that_left_mid_exchange(
+    client, monkeypatch
+) -> None:
+    """A row that leaves between the route's read and its write
+    (a remove landing inside the exchange) answers the same 404 —
+    the seam the suite arranges by handing the read a row no
+    database write can find (#890 review)."""
+    http, app, _stub = client
+    wid = await make_workspace(http, "ws-edit-race")
+    gone = {
+        "id": 7,
+        "workspace_id": wid,
+        "direction": "forward",
+        "listen_host": None,
+        "listen_port": 2201,
+        "target_host": None,
+        "target_port": 22,
+        "label": None,
+    }
+
+    async def standing(workspace_id: str, proxy_id: int) -> dict:
+        return gone
+
+    monkeypatch.setattr(app.state.model, "get_proxy", standing)
+    raced = await http.patch(
+        f"/api/v1/workspaces/{wid}/proxies/7",
+        json={"direction": "forward", "listen_port": 2202, "target_port": 22},
+        headers=auth(),
+    )
+    assert raced.status_code == 404
+    assert raced.json()["detail"] == "no such proxy"

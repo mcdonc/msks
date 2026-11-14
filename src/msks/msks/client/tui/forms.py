@@ -117,6 +117,28 @@ class FormWalk:
         self._submitted_task = asyncio.create_task(self.submitted(answer))
 
 
+class SeededForm(FormWalk, ModalScreen[dict | None]):
+    """The row editors' shared scaffold (#886, #890): one form a
+    pushing page scopes to its workspace — the walk's keys and
+    the one-row seed an edit hands in (None on the add path; the
+    note's verb and the button's label read it). The mounts
+    editor's form and the proxies page's form own this one shape
+    between them. The keys are declared on a DOMNode base, so
+    Textual's own merge carries them to every form below."""
+
+    BINDINGS = [
+        Binding("up", "walk_previous", show=False),
+        Binding("down", "walk_next", show=False),
+        Binding("escape", "cancel", "Cancel", show=False),
+        Binding("q", "cancel", show=False),
+    ]
+
+    def __init__(self, scope: dict, submitted, seed: dict | None = None):
+        super().__init__(submitted)
+        self.scope = scope
+        self.seed = seed
+
+
 #: The create form's fields (#309): the create body's optional
 #: inputs in walk order — a short label at the left of each
 #: row, the hint riding the input's placeholder (the image
