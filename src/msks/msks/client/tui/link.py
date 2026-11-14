@@ -46,8 +46,8 @@ UNUSABLE_TOKEN = "unusable token"
 def proxy_frame(msg: dict) -> bool:
     """Whether one decoded frame is a proxy transition (#809) —
     the events the proxy subsystem publishes: ``proxy.created``,
-    ``proxy.listening``, ``proxy.failed``, ``proxy.closed``,
-    ``proxy.removed``."""
+    ``proxy.updated``, ``proxy.listening``, ``proxy.failed``,
+    ``proxy.closed``, ``proxy.removed``."""
     return str(msg.get("event") or "").startswith("proxy.")
 
 

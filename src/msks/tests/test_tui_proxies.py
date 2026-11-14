@@ -14,6 +14,7 @@ from msks.client.tui.proxies import (
     ProxyFormScreen,
     ProxyLink,
     pair_text,
+    parsed_body,
     proxies_line,
     proxy_row_content,
     seed_spec,
@@ -70,7 +71,8 @@ def test_spec_text_reads_the_cli_grammar() -> None:
     """One row's spec is the exact grammar ``msks proxy add``
     reads: the direction's letter, the forward's bind only when
     the row names one, the host field's two spellings, and the
-    remote's daemon-side target."""
+    remote's daemon-side target. An IPv6 literal arrives
+    bracketed, so the text parses back (#890 review)."""
     assert (
         spec_text(proxy_row(listen_port=2201, target_port=22))
         == "-L 2201:localhost:22"
@@ -83,6 +85,12 @@ def test_spec_text_reads_the_cli_grammar() -> None:
     )
     assert (
         spec_text(
+            proxy_row(listen_port=2201, listen_host="::1", target_port=22)
+        )
+        == "-L [::1]:2201:localhost:22"
+    )
+    assert (
+        spec_text(
             proxy_row(
                 direction="remote",
                 listen_port=9200,
@@ -91,6 +99,17 @@ def test_spec_text_reads_the_cli_grammar() -> None:
             )
         )
         == "-R 9200:localhost:9200"
+    )
+    assert (
+        spec_text(
+            proxy_row(
+                direction="remote",
+                listen_port=9200,
+                target_host="::1",
+                target_port=9200,
+            )
+        )
+        == "-R 9200:[::1]:9200"
     )
 
 
@@ -170,11 +189,16 @@ def test_the_row_content_paints_the_status_cell() -> None:
 def test_seed_spec_strips_the_direction_letter() -> None:
     """The form's seeded spec is the listing's own text with the
     direction's letter aside — the select carries the letter, and
-    the field's text parses back through the same grammar."""
+    the field's text parses back through the CLI's own grammar
+    for every row shape the daemon serves (an IPv6 literal
+    bracketed, #890 review)."""
     assert seed_spec(proxy_row()) == "8888:localhost:8889"
     assert (
         seed_spec(proxy_row(listen_host="0.0.0.0"))
         == "0.0.0.0:8888:localhost:8889"
+    )
+    assert seed_spec(proxy_row(listen_host="::1")) == (
+        "[::1]:8888:localhost:8889"
     )
     assert (
         seed_spec(
@@ -186,6 +210,32 @@ def test_seed_spec_strips_the_direction_letter() -> None:
         )
         == "8888:localhost:8882"
     )
+    assert (
+        seed_spec(
+            proxy_row(direction="remote", target_host="::1", target_port=8882)
+        )
+        == "8888:[::1]:8882"
+    )
+    # The seeded text parses back through the CLI's own parsers —
+    # the round trip the edit path rides (a bracket the seed
+    # dropped would strand the form on its own refusal).
+    assert parsed_body("-L", seed_spec(proxy_row(listen_host="::1"))) == {
+        "direction": "forward",
+        "listen_host": "::1",
+        "listen_port": 8888,
+        "target_port": 8889,
+    }
+    assert parsed_body(
+        "-R",
+        seed_spec(
+            proxy_row(direction="remote", target_host="::1", target_port=8882)
+        ),
+    ) == {
+        "direction": "remote",
+        "listen_port": 8888,
+        "target_host": "::1",
+        "target_port": 8882,
+    }
 
 
 # -- the subscriber link ---------------------------------------------------

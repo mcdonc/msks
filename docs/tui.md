@@ -267,7 +267,7 @@ stands paints itself without a keypress.
 name), the direction (`forward (-L)` or `reverse (-R)`), the spec in
 the same grammar `msks proxy add` reads, and a label. `e`, Enter, or
 a click on the focused row opens the same form seeded with the row
-— its direction, its spec, and its label — and saves the row
+(its direction, its spec, and its label) and saves the row
 whole; the daemon closes the old listener and binds the new spec at
 once. A spec the CLI's own parser refuses keeps the
 form standing with the rule on its note line — a `-L` spec naming a

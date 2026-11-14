@@ -277,11 +277,8 @@ def router(app, hub) -> APIRouter:
         )
         if updated is None:
             # The row left between the read and the write (a
-            # remove landing inside the exchange) — a window the
-            # suite cannot arrange deterministically.
-            raise HTTPException(  # pragma: no cover
-                status_code=404, detail="no such proxy"
-            )
+            # remove landing inside the exchange).
+            raise HTTPException(status_code=404, detail="no such proxy")
         live = await app.state.proxies.start_one(updated, attachment)
         await hub.publish(
             "proxy.updated",

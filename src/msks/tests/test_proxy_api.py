@@ -759,3 +759,36 @@ async def test_update_of_a_live_remote_row_lands_its_admission(
         assert updated.json()["listen_port"] == port_new
     finally:
         net._attachments.pop(wid, None)
+
+
+async def test_update_of_a_row_that_left_mid_exchange(
+    client, monkeypatch
+) -> None:
+    """A row that leaves between the route's read and its write
+    (a remove landing inside the exchange) answers the same 404 —
+    the seam the suite arranges by handing the read a row no
+    database write can find (#890 review)."""
+    http, app, _stub = client
+    wid = await make_workspace(http, "ws-edit-race")
+    gone = {
+        "id": 7,
+        "workspace_id": wid,
+        "direction": "forward",
+        "listen_host": None,
+        "listen_port": 2201,
+        "target_host": None,
+        "target_port": 22,
+        "label": None,
+    }
+
+    async def standing(workspace_id: str, proxy_id: int) -> dict:
+        return gone
+
+    monkeypatch.setattr(app.state.model, "get_proxy", standing)
+    raced = await http.patch(
+        f"/api/v1/workspaces/{wid}/proxies/7",
+        json={"direction": "forward", "listen_port": 2202, "target_port": 22},
+        headers=auth(),
+    )
+    assert raced.status_code == 404
+    assert raced.json()["detail"] == "no such proxy"

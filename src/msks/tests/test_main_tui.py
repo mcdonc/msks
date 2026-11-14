@@ -286,9 +286,7 @@ class FakeData:
     ) -> dict:
         """One proxy update (#890) — recorded; a refusal a test
         armed raises the way the daemon's would, and an update
-        that lands rewrites the row in every later listing and
-        answers it with its live status the way the daemon's
-        does."""
+        that lands rewrites the row in every later listing."""
         self.proxy_updates.append((workspace_id, proxy_id, dict(body)))
         if self.proxy_refusal is not None:
             raise SystemExit(f"msks: 409: {self.proxy_refusal}")

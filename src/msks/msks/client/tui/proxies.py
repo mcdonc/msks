@@ -99,18 +99,30 @@ REMOTE_CHOICE = "-R"
 PROXY_REFRESH_S = 5.0
 
 
+def bracketed_host(host: str) -> str:
+    """One host in the spec grammar's own spelling: an IPv6
+    literal arrives bracketed (the parser's own rule — the
+    brackets close the colons the spec's own separator would
+    otherwise eat), every other spelling (a hostname, IPv4)
+    stands as it reads."""
+    return f"[{host}]" if ":" in host else host
+
+
 def spec_text(row: dict) -> str:
     """One row's spec in the CLI's own grammar (#809): the exact
     words ``msks proxy add`` takes — the listing, the compact
-    line's tooltip-free cousin, and the add form's seeded input
+    line's tooltip-free cousin, and the edit form's seeded input
     share one vocabulary. A forward's bind appears only when the
     row names one (loopback is the default, unnamed); its host
-    field is the workspace's two spellings."""
+    field is the workspace's two spellings. An IPv6 literal
+    arrives bracketed, so the text parses back (#890 review)."""
     if row["direction"] == "remote":
-        target = row.get("target_host") or DEFAULT_TARGET_HOST
+        target = bracketed_host(row.get("target_host") or DEFAULT_TARGET_HOST)
         return f"-R {row['listen_port']}:{target}:{row['target_port']}"
     listen = row.get("listen_host") or DEFAULT_LISTEN_HOST
-    bind = "" if listen == DEFAULT_LISTEN_HOST else f"{listen}:"
+    bind = (
+        "" if listen == DEFAULT_LISTEN_HOST else f"{bracketed_host(listen)}:"
+    )
     return f"-L {bind}{row['listen_port']}:localhost:{row['target_port']}"
 
 
