@@ -56,10 +56,9 @@ ACTION_CONSENT = "egress-consent"
 class PageAction(NamedTuple):
     """One fixed action row of the workspace page (#309, #367,
     #752): its kind, the name it paints, the muted description
-    in the row's description column (empty when the name stands
-    alone), and the group it belongs to — use, configure, or
-    power — whose name rides the muted caption row above the
-    group's rows."""
+    in the row's description column, and the group it belongs
+    to — use, configure, or power — whose name rides the muted
+    caption row above the group's rows."""
 
     kind: str
     name: str
