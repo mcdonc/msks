@@ -2,8 +2,8 @@
 #
 # One path per line, repo-relative; everything after the path is
 # the reason. Seeded empty: no shipped module is over the
-# 1,500-line ceiling (#874 wave one; the longest, cli.py, sits
-# at 1,455).
+# 1,000-line ceiling (#874; the longest, settings.py, sits at
+# 948).
 #
 # The list only shrinks. An entry joins only when a file must
 # exceed the ceiling and its split cannot land in the change that
