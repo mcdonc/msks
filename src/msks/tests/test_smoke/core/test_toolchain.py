@@ -97,7 +97,7 @@ async def test_local_agent_toolchain() -> None:
         await run_in_console(
             microvm,
             wid,
-            'test "$(pi --version)" = "1.4.0" && echo PI-$((6*7))',
+            'test "$(pi --version)" = "1.5.2" && echo PI-$((6*7))',
             "PI-42",
         )
         for home in ("/etc/skel", "/root"):
@@ -111,7 +111,7 @@ async def test_local_agent_toolchain() -> None:
         await run_in_console(
             microvm,
             wid,
-            'test "$(herdr --version)" = "herdr 0.9.1" && echo HERDR-$((6*7))',
+            'test "$(herdr --version)" = "herdr 0.9.5" && echo HERDR-$((6*7))',
             "HERDR-42",
         )
         # claude: the symlink chain down into the npm tree and, on
@@ -119,7 +119,7 @@ async def test_local_agent_toolchain() -> None:
         await run_in_console(
             microvm,
             wid,
-            'test "$(claude --version)" = "2.1.281 (Claude Code)" '
+            'test "$(claude --version)" = "2.1.325 (Claude Code)" '
             "&& echo CLAUDE-$((6*7))",
             "CLAUDE-42",
         )

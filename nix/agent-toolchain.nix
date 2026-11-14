@@ -37,22 +37,22 @@ let
   piTarball = pkgs.fetchurl {
     url =
       "https://registry.npmjs.org/@earendil-works/pi-coding-agent/-/"
-      + "pi-coding-agent-1.4.0.tgz";
-    hash = "sha256-0VXBbvb6AJYPv1iykRU26AsF8zcA4LFPvQiWft4MdCg=";
+      + "pi-coding-agent-1.5.2.tgz";
+    hash = "sha256-aRveGGJztFfZ0cQdD9R7V4U7XoXe0a3Rofa3jmbCYfQ=";
   };
 
   # The pi pin's lock (#616): upstream stopped shipping a
   # shrinkwrap inside the tarball, but keeps the pi.dev
   # installer's lock root in the monorepo — a package-lock.json
   # that pins the agent's whole runtime closure, digest-pinned to
-  # the v1.4.0 tag; the patch step rebases the lock's root onto
+  # the v1.5.2 tag; the patch step rebases the lock's root onto
   # the agent itself (the installer's root shape is not a build
   # root).
   piInstallLock = pkgs.fetchurl {
     url =
       "https://raw.githubusercontent.com/earendil-works/pi/"
-      + "v1.4.0/packages/coding-agent/install-lock/package-lock.json";
-    hash = "sha256-6yx2rCcPCZ8q88vGzNCMPSK/ViuRSvNpDRq7qYVGGt4=";
+      + "v1.5.2/packages/coding-agent/install-lock/package-lock.json";
+    hash = "sha256-V+O0deUvYwz5A/c7DSoCxAWHWvYc5KhF9IHcx5j1gAU=";
   };
 
   # The herdr pin (#266): the terminal workspace manager for AI
@@ -63,11 +63,11 @@ let
   herdrPins = {
     x86_64 = {
       asset = "herdr-linux-x86_64";
-      hash = "sha256-KgL+0WvrZR7wBuHUPwSPZSyk3FitBTzS1ERQVj1cVLc=";
+      hash = "sha256-FNnovItKngEY13wyJm921GHwm0A0LrI3UpYL2J9Zkp0=";
     };
     aarch64 = {
       asset = "herdr-linux-aarch64";
-      hash = "sha256-9Mz03nRfLLmjmpg+m6NwPa1Q7CpY3qgwJs6rchu9jZ4=";
+      hash = "sha256-F9dTby2lCFlSNoDvJ53/ysjkojX05G/o2mwuxEFBiXw=";
     };
   };
   herdrPin =
@@ -75,7 +75,7 @@ let
   agentHerdrBinary = pkgs.fetchurl {
     url =
       "https://github.com/ogulcancelik/herdr/releases/download/"
-      + "v0.9.1/${herdrPin.asset}";
+      + "v0.9.5/${herdrPin.asset}";
     hash = herdrPin.hash;
   };
 
@@ -84,7 +84,7 @@ let
   # the release binary alone carries none.
   agentHerdrLicense = pkgs.fetchurl {
     url =
-      "https://raw.githubusercontent.com/ogulcancelik/herdr/" + "v0.9.1/LICENSE";
+      "https://raw.githubusercontent.com/ogulcancelik/herdr/" + "v0.9.5/LICENSE";
     hash = "sha256-xx0jnfkXJvxRnG63LTGOxlggYnIysveWIZ6H3PNdCrQ=";
   };
 
@@ -98,11 +98,11 @@ let
   claudePins = {
     x86_64 = {
       package = "claude-code-linux-x64";
-      hash = "sha256-sNo8XYzhnBCEmFvKLkmqTG54rQYGwrSsfeYH2aMd10o=";
+      hash = "sha256-6HNdN1IfScMdZcPc2MDIur5tH19ywgZjRrOuiNMqwx0=";
     };
     aarch64 = {
       package = "claude-code-linux-arm64";
-      hash = "sha256-+Y9om+Ie9zQozNusulYaFMVrv1SgaQWjWvbdWYF8v3o=";
+      hash = "sha256-9QogTt4lU7YqgBusq2bWgS9Mgq3ye1+t9YnschlFnO8=";
     };
   };
   claudePin =
@@ -111,13 +111,13 @@ let
   agentClaudeWrapper = pkgs.fetchurl {
     url =
       "https://registry.npmjs.org/@anthropic-ai/claude-code/-/"
-      + "claude-code-2.1.281.tgz";
-    hash = "sha256-WNaCuYqB1qI77iv/2Y8WVMS/e75ESHP1IadUcd5tkpk=";
+      + "claude-code-2.1.325.tgz";
+    hash = "sha256-6ELe8fVTeO63NvQ/fhcqfrD+dnua5FIqnOcX/VQe4n8=";
   };
   agentClaudeBinary = pkgs.fetchurl {
     url =
       "https://registry.npmjs.org/@anthropic-ai/${claudePin.package}/-/"
-      + "${claudePin.package}-2.1.281.tgz";
+      + "${claudePin.package}-2.1.325.tgz";
     hash = claudePin.hash;
   };
 
@@ -184,9 +184,9 @@ let
   # reachable.
   piPackage = pkgs.buildNpmPackage {
     pname = "pi-coding-agent";
-    version = "1.4.0";
+    version = "1.5.2";
     src = patchedPiSource;
-    npmDepsHash = "sha256-dD5aGD0rNJtBVZWmcwf49bR7nBrTwhvwDx7i+XysxaM=";
+    npmDepsHash = "sha256-uDF5B2cSl8ikpCtlxfsFSCnJgD1Y695lGZZ5gsYM62E=";
     # The published package ships dist/ prebuilt; there is nothing
     # to compile.
     buildPhase = ''
