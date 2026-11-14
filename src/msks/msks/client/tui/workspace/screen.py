@@ -64,9 +64,14 @@ class WorkspaceScreen(HelpKeys, Screen):
     status line, and the page's actions — a shell in a new window
     (#341), the egress consent page (#454), the edit dialog, and
     start and stop; the egress-mode switch (#344) lives on the
-    consent page, its own ``m`` — the page's ``m`` opens the
-    mounts editor (#880), beside the consent page's ``e`` and
-    the proxies page's ``p``. The page is the workspace's
+    consent page, its own ``m`` — and the page binds one quick
+    key per action row (#880): ``e`` the consent page, ``h`` a
+    shell, ``m`` the mounts editor, ``p`` the proxies page,
+    ``t`` the edit dialog, ``c`` the clone prompt. The footer's
+    descriptions abbreviate so every key fits one 80-column
+    line, the list's own style (#581: ``Go``, ``Egr``, ``Mnts``,
+    ``Fwd``); Enter keeps its footer hint (#470 S4). The page is
+    the workspace's
     decider while it is open: holds land on its link, the header
     counts them, and the consent line flashes each first-seen
     hold's destination — the page pushes nothing on a hold's
@@ -79,10 +84,13 @@ class WorkspaceScreen(HelpKeys, Screen):
     help_title = "workspace page"
 
     BINDINGS = [
-        Binding("enter", "run", "Run", priority=True),
-        Binding("e", "consent", "Egress"),
-        Binding("m", "mounts_page", "Mounts"),
-        Binding("p", "proxies_page", "Proxies"),
+        Binding("enter", "run", "Go", priority=True),
+        Binding("e", "consent", "Egr"),
+        Binding("h", "shell_page", "Shell"),
+        Binding("m", "mounts_page", "Mnts"),
+        Binding("p", "proxies_page", "Fwd"),
+        Binding("t", "settings_page", "Edit"),
+        Binding("c", "clone_page", "Clone"),
         Binding("s", "quick_start", "Start"),
         Binding("S", "quick_stop", "Stop"),
         Binding("q", "back", "Back"),
@@ -767,9 +775,23 @@ class WorkspaceScreen(HelpKeys, Screen):
 
     async def action_mounts_page(self) -> None:
         """``m`` (#880): the mounts editor one key away — the
-        action row's own destination, the third configure key
-        beside ``e`` and ``p``."""
+        action row's own destination."""
         await self.open_mounts()
+
+    async def action_shell_page(self) -> None:
+        """``h`` (#880): the shell action one key away — the use
+        group's own destination."""
+        await self.open_shell_window()
+
+    async def action_settings_page(self) -> None:
+        """``t`` (#880): the edit dialog one key away — the
+        Settings row's own destination."""
+        await self.edit_workspace()
+
+    async def action_clone_page(self) -> None:
+        """``c`` (#880): the clone prompt one key away — the Clone
+        row's own destination."""
+        await self.clone_workspace()
 
     # -- the edit dialog (#331) ---------------------------------------
 

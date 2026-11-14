@@ -6,12 +6,17 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
-### Changed
+### Added
 
-- **Workspace page `m` key (#880).** The workspace page's `m`
-  opens the mounts editor, beside the `e` of the egress consent
-  page and the `p` of the proxies page. The footer and the `?`
-  help overlay list the key.
+- **Workspace page quick keys (#880).** Every action row on
+  the workspace page has a one-key shortcut: `e` the egress
+  consent page, `h` a shell, `m` the mounts editor, `p` the
+  proxies page, `t` the edit dialog, `c` the clone prompt. The
+  footer's descriptions abbreviate (the list's own style) so the
+  whole key set fits one 80-column line, and the `?` help
+  overlay lists every key.
+
+### Changed
 
 - **Workspace page action rows (#882).** The name and the
   description now sit in two aligned columns: every description

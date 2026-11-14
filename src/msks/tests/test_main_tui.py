@@ -7662,10 +7662,9 @@ async def test_the_mounts_key_opens_the_mounts_editor(
     monkeypatch,
 ) -> None:
     """#880: ``m`` on the workspace page opens the mounts editor —
-    the action row's own destination, one key away beside the
-    consent page's ``e`` and the proxies page's ``p``; the page's
-    own bindings list the key, so the footer and the ``?``
-    overlay carry it."""
+    the action row's own destination, one of the page's quick
+    keys; the page's own bindings list the key, so the footer
+    and the ``?`` overlay carry it."""
     from msks.client.tui.mounts import MountsScreen
 
     scripted_link(monkeypatch, [rules_frame()])
@@ -7684,7 +7683,84 @@ async def test_the_mounts_key_opens_the_mounts_editor(
         binding.key: binding.description
         for binding in screen_bindings(WorkspaceScreen)
     }
-    assert bindings["m"] == "Mounts"
+    assert bindings["m"] == "Mnts"
+
+
+async def test_the_quick_keys_open_their_rows_destinations(
+    monkeypatch,
+) -> None:
+    """#880: every action row has a quick key — ``h`` the shell
+    (the same window the use row opens), ``t`` the edit dialog,
+    ``c`` the clone prompt — each the row's own destination, so
+    the row and the key read one vocabulary."""
+    scripted_link(monkeypatch, [rules_frame()])
+    spawned: list[list[str]] = []
+
+    async def record(argv):
+        spawned.append(argv)
+
+        async def closed():
+            return 0
+
+        return SimpleNamespace(wait=closed)
+
+    monkeypatch.setattr(follow_mod, "spawn_window", record)
+    app, _ = make_app(FakeData([row(status="running")]))
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        # t: the edit dialog, the Settings row's destination.
+        await press_until(
+            pilot, "t", lambda: isinstance(app.screen, EditScreen)
+        )
+        await pilot.press("escape")
+        await wait_for(lambda: not isinstance(app.screen, EditScreen))
+        # c: the clone prompt, the Clone row's destination.
+        await press_until(
+            pilot, "c", lambda: isinstance(app.screen, CloneNameScreen)
+        )
+        await pilot.press("escape")
+        await wait_for(lambda: not isinstance(app.screen, CloneNameScreen))
+        # h: the shell window, the use row's destination.
+        await press_until(pilot, "h", lambda: len(spawned) == 1)
+        await wait_for(lambda: "opened a shell window" in consent_text(app))
+        assert on_page(app)  # the tree kept running
+
+
+def test_the_footer_carries_every_quick_key_within_eighty(
+    monkeypatch,
+) -> None:
+    """#880: the footer's own budget — every visible binding's
+    key, description, and two-space gap sums inside one
+    80-column line, with the footer's side padding spare. The
+    descriptions abbreviate in the list's own style (#581:
+    ``Go``, ``Egr``, ``Mnts``, ``Fwd``), and Enter keeps its
+    hint (#470 S4: the one key every screen answers)."""
+    visible = [
+        binding for binding in screen_bindings(WorkspaceScreen) if binding.show
+    ]
+    assert {binding.key: binding.description for binding in visible} == {
+        "enter": "Go",
+        "e": "Egr",
+        "h": "Shell",
+        "m": "Mnts",
+        "p": "Fwd",
+        "t": "Edit",
+        "c": "Clone",
+        "s": "Start",
+        "S": "Stop",
+        "q": "Back",
+    }
+    width = sum(
+        # The footer paints enter as the one-cell ``⏎`` glyph
+        # (the app's key formatter), not the five-letter word.
+        len("⏎" if binding.key == "enter" else binding.key)
+        + 1
+        + len(binding.description)
+        for binding in visible
+    )
+    width += 2 * (len(visible) - 1)  # the gaps between entries
+    assert width <= 78  # 80 minus the footer's side padding
 
 
 async def test_the_mounts_editor_adds_edits_and_removes(
