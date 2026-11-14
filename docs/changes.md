@@ -21,7 +21,7 @@ tagged `vX.Y.Z`.
 - **Workspace page block (#881).** The page's whole content (the
   header lines, the status lines, and the action panel) sits in
   one 80-column block, centered on a wider terminal. At 80
-  columns and under, the layout is unchanged. On a wider terminal
+  columns and under, the layout is unchanged. On a wider terminal,
   each meta field keeps its fixed clip, and the egress consent
   page widens its own meta line as before.
 - **Workspace page action rows (#882).** The name and the
