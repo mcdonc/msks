@@ -1469,7 +1469,7 @@ decides. While no hold waits, the verdict keys do nothing and leave the
 footer until one arrives. See <a href="../cli/#msks-egress"><code>msks egress</code></a> for
 what verdicts and rules cover.</p>
 <h3 id="the-edit-page">The edit page<a class="headerlink" href="#the-edit-page" title="Permanent link">&para;</a></h3>
-<p>The page's <strong>Edit settings</strong> action opens the edit dialog: the create
+<p>The page's <strong>Settings</strong> action opens the edit dialog: the create
 form's layout, seeded with the workspace's current values. <img alt="The edit dialog: the sizes and topology, prefilled" src="../screens/edit-dialog.svg" /></p>
 <p>The sizes and topology (root, home, vcpus, memory) are editable. Submit
 sends the changed values to the same endpoint <code>msks resize</code> uses, and
@@ -1487,7 +1487,7 @@ changed value with a note pointing at the field, instead of accepting
 it silently. A size left blank keeps its current value. Escape closes
 the dialog and changes nothing.</p>
 <h3 id="opening-a-shell">Opening a shell<a class="headerlink" href="#opening-a-shell" title="Permanent link">&para;</a></h3>
-<p>By default, the page's <strong>Open a shell</strong> action runs <code>msks ssh</code> in the TUI's own
+<p>By default, the page's <strong>Shell</strong> action runs <code>msks ssh</code> in the TUI's own
 terminal: the tree exits, the ssh session runs where it stood, and the tree
 restarts when the session returns the terminal. Configure <code>msks</code> to open
 shells in new windows using <code>terminal_open_cmd</code>, documented below.</p>
@@ -1510,13 +1510,13 @@ quits the tree. Ctrl+Q exits the client from any screen (the tree, a page, a
 form field, or a panel stacked over them), the same clean exit <code>q</code> takes at
 the workspaces list.</p>
 <h4 id="the-shell-actions-terminal-settings">The shell action's terminal settings<a class="headerlink" href="#the-shell-actions-terminal-settings" title="Permanent link">&para;</a></h4>
-<p>The workspace page's <strong>Open a shell</strong> action runs <code>msks ssh</code>: in the TUI's
+<p>The workspace page's <strong>Shell</strong> action runs <code>msks ssh</code>: in the TUI's
 own terminal by default, or in a new window through a configured launcher.
 Two client settings shape those windows. Their environment-variable rows are
 in <a href="../cli/#client-environment">the client environment table</a>. Their file
 keys are documented here.</p>
 <h4 id="terminal_open_cmd"><code>terminal_open_cmd</code><a class="headerlink" href="#terminal_open_cmd" title="Permanent link">&para;</a></h4>
-<p><code>terminal_open_cmd</code> is the launcher the workspace page's <strong>Open a shell</strong>
+<p><code>terminal_open_cmd</code> is the launcher the workspace page's <strong>Shell</strong>
 action uses to open workspace shells in new terminal windows. It is the opt-in
 for hosts that want windows beside the running tree isntead of within. The msks
 invocation is appended after it, the way most terminals take a command after
