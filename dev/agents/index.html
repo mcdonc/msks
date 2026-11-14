@@ -991,7 +991,7 @@ streams daemon lines. <code>msks agent-card</code> prints this card. The full
 references are <a href="../cli/">the CLI chapter</a> and <a href="../api/">the HTTP API
 chapter</a>.</p>
 <h2 id="read-state">Read state<a class="headerlink" href="#read-state" title="Permanent link">&para;</a></h2>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>msks<span class="w"> </span>ls<span class="w">              </span><span class="c1"># every workspace: id, name, status, image</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>msks<span class="w"> </span>ls<span class="w">              </span><span class="c1"># every workspace: id, name, status, image_ref</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>msks<span class="w"> </span>storage<span class="w">         </span><span class="c1"># disk artifacts and sizes per workspace</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>msks<span class="w"> </span>image<span class="w"> </span>ls<span class="w">        </span><span class="c1"># the image catalog</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>msks<span class="w"> </span>secret<span class="w"> </span>ls<span class="w">       </span><span class="c1"># minted secrets and their coverage</span>
@@ -999,7 +999,7 @@ chapter</a>.</p>
 <h2 id="lifecycle">Lifecycle<a class="headerlink" href="#lifecycle" title="Permanent link">&para;</a></h2>
 <p>The lifecycle verbs block until the transition settles. When a verb
 exits, the status it reports is the workspace's status.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>msks<span class="w"> </span>create<span class="w"> </span>ws<span class="w"> </span>--pubkey<span class="w"> </span>key.pub<span class="w"> </span>--image<span class="w"> </span>debian:13<span class="w"> </span>--start
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>msks<span class="w"> </span>create<span class="w"> </span>ws<span class="w"> </span>--pubkey<span class="w"> </span>key.pub<span class="w"> </span>--image<span class="w"> </span>debian<span class="w"> </span>--start
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>msks<span class="w"> </span>start<span class="w"> </span>ws
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>msks<span class="w"> </span>stop<span class="w"> </span>ws
 </span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>msks<span class="w"> </span>clone<span class="w"> </span>ws<span class="w"> </span>fork
@@ -1008,8 +1008,11 @@ exits, the status it reports is the workspace's status.</p>
 <p><code>create</code> plants an ssh identity into the workspace. msks generates
 no key: pass <code>--pubkey</code> with your public key file, or configure
 <code>identity_file</code> once in the client config. An unconfigured client
-refuses the create. A name is unique per daemon: a create over a
-name another workspace already holds exits 4.</p>
+refuses the create. The <code>--image</code> ref is a <code>name:version</code> pair
+from <code>msks image ls</code>, a bare <code>name</code>, or the image's full hash.
+The pair must match a catalog row exactly. A bare name resolves to
+the newest version of that name. Workspace names are unique per
+daemon: a create over a held name is the exit-4 conflict.</p>
 <p>A workspace's <code>status</code> is one of these values:</p>
 <table>
 <thead>
@@ -1063,6 +1066,17 @@ name another workspace already holds exits 4.</p>
 command exits with the child's own exit code. An rsync path with an
 empty host (<code>:/src</code>, <code>user@:/src</code>) targets this workspace; the push
 and pull examples above are the pair.</p>
+<p>A session authenticates with the private half of the planted key.
+The client takes it from the ssh agent (<code>SSH_AUTH_SOCK</code>) when that
+agent holds the key. Otherwise it reads <code>MSKSC_IDENTITY_FILE</code>, an
+absolute path to the private key file. The file must be
+unencrypted and be the planted key's own half. A different key is
+refused with the remedy spelled out. The config-file key is
+<code>identity_file</code>. A harness that created with <code>--pubkey key.pub</code>
+exports the private key's absolute path before ssh or rsync.
+Sessions log in as the workspace's <code>login_user</code>. The <code>ls --json</code>
+row carries it. <code>create --user</code> sets it, and the creating user's
+name is the default. <code>-l root</code> is the recovery login.</p>
 <h2 id="egress-consent-from-a-script">Egress consent from a script<a class="headerlink" href="#egress-consent-from-a-script" title="Permanent link">&para;</a></h2>
 <p>A workspace in the <code>allow</code> posture (the default) needs no consent:
 flows pass. Consent exists in the <code>interactive</code> posture, where each
@@ -1122,6 +1136,11 @@ above, from the stream or from <code>requests</code>. <code>--duration</code> is
 </tr>
 </tbody>
 </table>
+<p>Rows 3, 4, and 5 hold under <code>--json</code>. Without it, every API
+failure exits 1 and prints its detail on stderr: <code>msks: 409:
+workspace exists</code>. The codes 0, 2, and 130 hold either way. Code 2
+and a config the client cannot read keep text lines under <code>--json</code>
+(the config failure exits 1).</p>
 <p>Under <code>--json</code> a failure prints one object on stderr:</p>
 <div class="language-json highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">{</span><span class="w"> </span><span class="nt">"error"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="mi">404</span><span class="p">,</span><span class="w"> </span><span class="nt">"detail"</span><span class="p">:</span><span class="w"> </span><span class="s2">"no such workspace"</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">}</span>
 </span></code></pre></div>
