@@ -17,8 +17,8 @@
 # and the parsing expectations run against the real binary, so
 # upstream changes surface here instead of in a user's
 # terminal. The tag run lives in release.yml (macos-acceptance)
-# and installs the wheel the release just staged — the artifact
-# users install.
+# and installs the staged wheel — the artifact users install;
+# its green gates both publishes (#896).
 #
 # What no GitHub runner can cover: the Lima VM itself. Apple's
 # VZ framework does not nest, and the arm64 runners are M1-class
@@ -31,8 +31,8 @@ on:
   pull_request:
     paths:
       - "src/msks/msks/client/**"
-      - "src/msks/msks/server/hostsetup_macos.py"
-      - "src/msks/msks/server/hostsetup.py"
+      - "src/msks/msks/server/hostsetup/**"
+      - "src/msks/msks/server/hostsetup_macos/**"
       - "src/msks/msks/server/tls.py"
       - "src/msks/tests/test_hostsetup_macos*.py"
       - ".github/workflows/macos.yml"
@@ -41,8 +41,8 @@ on:
     branches: [main]
     paths:
       - "src/msks/msks/client/**"
-      - "src/msks/msks/server/hostsetup_macos.py"
-      - "src/msks/msks/server/hostsetup.py"
+      - "src/msks/msks/server/hostsetup/**"
+      - "src/msks/msks/server/hostsetup_macos/**"
       - "src/msks/msks/server/tls.py"
       - "src/msks/tests/test_hostsetup_macos*.py"
       - ".github/workflows/macos.yml"

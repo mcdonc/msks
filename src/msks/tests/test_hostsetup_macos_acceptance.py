@@ -12,10 +12,12 @@ macOS surface: nobody hand-verifies it between releases.
 Gated twice: darwin only, and ``MSKS_MACOS_ACCEPTANCE=1`` — the
 harness loads a real LaunchAgent and writes into the real brew
 prefix, so it must never run in a plain developer checkout. The
-module is self-contained (no imports from the sibling unit-test
-tree): the release workflow copies it out of the checkout and
-runs it against the installed wheel, where the checkout's tree
-must not shadow the code under test.
+release workflow copies this module and its sibling
+``test_hostsetup_macos`` (whose ``patch_phase`` the vm_shell seam
+patches through, #875's split) out of the checkout and runs them
+against the installed wheel, where the checkout's tree must not
+shadow the code under test; the sibling imports only the wheel,
+pytest, and the stdlib, so the pair imports whole there.
 
 The LaunchAgent test runs under its own label, never the real
 tool's: a disposable host cannot have a real agent under

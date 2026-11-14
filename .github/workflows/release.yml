@@ -11,8 +11,8 @@
 # 2. macos-acceptance — the harness against the staged wheel
 #              (#740): the wheel installed on a real macOS
 #              runner, driving the acceptance tests against the
-#              shipped code. Its green is the gate both publishes
-#              wait on; its ordinary run is 75–95 seconds.
+#              shipped code. Its green is the gate both
+#              publishes wait on.
 # 3. pypi    — publish the wheel through the registered trusted
 #              publisher (the pending publisher names this file
 #              and the `pypi` environment; no token lives in the
@@ -204,10 +204,10 @@ jobs:
   # sys.path, and the tree's code would shadow the wheel under
   # test. The acceptance test's sibling module copies alongside
   # it (#875's split gave it `from test_hostsetup_macos import
-  # patch_phase`); the sibling imports only the wheel and the
-  # stdlib, so it imports cleanly there while the checkout stays
-  # off sys.path, and pytest still targets the acceptance file
-  # alone.
+  # patch_phase`); the sibling imports only the wheel, pytest,
+  # and the stdlib, so the pair imports cleanly there while the
+  # checkout stays off sys.path, and pytest still targets the
+  # acceptance file alone.
   macos-acceptance:
     runs-on: macos-15
     timeout-minutes: 30
