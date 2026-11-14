@@ -241,6 +241,15 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # Enabled means installed (#796): the package's console
+    # scripts (msks, msksd, msks-term-popup, the msks-setup-*
+    # tools) go on the system PATH for every user — the same
+    # derivation the unit below execs, so the system closure
+    # gains nothing beyond the daemon it already carries. The
+    # gate keeps import-alone inert; checks.module pins both
+    # branches.
+    environment.systemPackages = [ cfg.package ];
+
     assertions = [
       {
         assertion = cfg.stateDir == "/var/lib/msksd";

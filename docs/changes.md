@@ -307,6 +307,14 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **`services.msksd.enable` puts the msks binaries on the system
+  PATH (#796).** Enabling the service adds the daemon package to
+  `environment.systemPackages`, and `msks` and `msks-term-popup` are on
+  the system PATH for every user of the host. Importing the module
+  without enabling still installs nothing. The installation chapter
+  gained a [NixOS hosts](installation.md#nixos-hosts) section
+  documenting the module.
+
 - **New workspaces default to 4 vCPUs (#791).** A create that
   leaves the count unset boots 4 vCPUs, up from 2. The 1–64 bound
   is unchanged, an explicit `--cpus` still wins, and existing

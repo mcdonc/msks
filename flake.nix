@@ -46,8 +46,10 @@
 
       # Eval-only guards (#231): both egress branches of the module
       # evaluate, the unit exists, and the capability grant follows
-      # the branch. Evaluated at flake-eval time, asserted in the
-      # check's build.
+      # the branch. #796 adds the PATH semantics: enabling puts the
+      # daemon package on the system PATH, and the disabled module
+      # contributes nothing to it. Evaluated at flake-eval time,
+      # asserted in the check's build.
       evalConfig =
         msksd-config:
         (import (pkgs.path + "/nixos") {
@@ -73,7 +75,25 @@
           uplink = null;
         };
       };
+      inert = evalConfig { enable = false; };
       hasTun = c: builtins.any (m: m == "tun") c.boot.kernelModules;
+      # Package names compared as strings in the check's build:
+      # the enabled eval's PATH must carry the exact package the
+      # unit execs. The inert eval's PATH is not empty — a minimal
+      # NixOS config carries its own defaults (systemd, sudo,
+      # nixos-rebuild) — and inertness means the module adds no
+      # msks derivation to it, so the assert matches the wheel's
+      # package name instead of the whole list. `.name`, not
+      # toString: a name carries no context, so the check's build
+      # inputs stay the handful the ExecStart strings already
+      # pulled in.
+      pkgOn = on.services.msksd.package.name;
+      pathOn = pkgs.lib.concatStringsSep " " (
+        map (p: p.name) on.environment.systemPackages
+      );
+      pathInert = pkgs.lib.concatStringsSep " " (
+        map (p: p.name) inert.environment.systemPackages
+      );
     in
     {
       packages.${system} = {
@@ -99,6 +119,7 @@
             tunOn = pkgs.lib.boolToString (hasTun on);
             tunOff = pkgs.lib.boolToString (hasTun off);
             fwdOn = on.boot.kernel.sysctl."net.ipv4.ip_forward" or null;
+            inherit pkgOn pathOn pathInert;
           }
           ''
             test -n "$execOn" && test -n "$execOff" || {
@@ -124,6 +145,16 @@
             test "$tunOn" = "true" || { echo "fail: egress branch missing the tun module"; exit 1; }
             test "$tunOff" = "false" || { echo "fail: vsock-only branch loads the egress modules"; exit 1; }
             test "$fwdOn" = "1" || { echo "fail: egress branch lost ip_forward"; exit 1; }
+            case " $pathOn " in
+              *" $pkgOn "*) ;;
+              *) echo "fail: enabled branch lost the msksd package on the system PATH"; exit 1 ;;
+            esac
+            case " $pathInert " in
+              *-msks-*)
+                echo "fail: inert branch put the msks package on the system PATH"
+                exit 1
+                ;;
+            esac
             touch "$out"
           '';
     };
