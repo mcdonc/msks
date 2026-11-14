@@ -18,8 +18,6 @@ confirmation, ``q`` or Escape returns to the workspace page — no
 screen traps focus.
 """
 
-import asyncio
-
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -383,21 +381,6 @@ class ProxyAddScreen(FormWalk, ModalScreen[dict | None]):
         if label:
             body["label"] = label
         self.dismiss_with(body)
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "do-add":
-            self.submit()
-        else:
-            self.dismiss_with(None)
-
-    def dismiss_with(self, answer) -> None:
-        """Dismiss and hand the answer to the callback (async —
-        the exchange runs as a task, so the modal closes without
-        waiting on it)."""
-        self.dismiss()
-        # Referenced: an unreferenced task can be collected
-        # mid-await.
-        self._task = asyncio.create_task(self.submitted(answer))
 
 
 class ProxiesScreen(HelpKeys, Screen):

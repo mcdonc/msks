@@ -6735,6 +6735,13 @@ async def test_q_on_the_importing_modal_closes_it(monkeypatch) -> None:
         )
         app.screen.action_cancel()
         await wait_for(lambda: type(app.screen).__name__ != "ImportingScreen")
+        # The park the cancel once hid (#888 review): the modal's
+        # removal awaited the screen's ``_task`` — the import
+        # itself — so the pump froze behind the closed modal for
+        # as long as the daemon downloads. With the flight under
+        # its own name, a pause completes while it still runs.
+        await asyncio.wait_for(pilot.pause(), 5)
+        assert not release.is_set()
         release.set()
         await wait_for(
             lambda: "imported debian:13.6 (aaaaaaaaaaaa)" in status_text(app)
@@ -7613,23 +7620,14 @@ def test_the_detail_strip_lines() -> None:
 def test_the_mounts_editor_boundary_branches() -> None:
     """The editor's boundary arithmetic, pinned without the UI:
     an empty list holds no focus, and a focus past the list's end
-    (the list shrank under it) reads no mount."""
-    from msks.client.tui.mounts import MountsScreen, clamp_index
+    (the list shrank under it) clamps to the last row. The form's
+    own parse path (the CLI parser over the composed fields) is
+    pinned by the composed editor's tests — an un-composed form
+    cannot paint the note its refusals name."""
+    from msks.client.tui.mounts import clamp_index
 
     assert clamp_index(0, 0) is None
     assert clamp_index(9, 2) == 1
-
-    # The un-composed screen decides nothing: a focus index the
-    # mounts do not carry reads no mount, and an edited spec with
-    # no focused row changes nothing.
-    screen = MountsScreen(mounted_row(), FakeData([]))
-    assert screen.entry("/srv/a:/mnt/a") == {
-        "host": "/srv/a",
-        "guest": "/mnt/a",
-    }
-    # A bare name — the retired #620 form (#685) — is not
-    # enterable either: the composed editor's test pins that
-    # refusal (this un-composed screen cannot paint the note).
 
 
 def test_the_mounts_line_names_each_state() -> None:
@@ -7713,6 +7711,49 @@ def mounts_text(app) -> str:
         return str(app.screen.query_one("#mounts", Static).content)
     except Exception:
         return ""
+
+
+def fill_mount_form(form, host: str, guest: str, mode: str = "rw") -> None:
+    """Seed the mount form's fields (#886) — the values a hand
+    would type, the mode picked as the select's value."""
+    form.query_one("#field-host", Input).value = host
+    form.query_one("#field-guest", Input).value = guest
+    form.query_one("#field-mode", Select).value = mode
+
+
+class GatedMounts(FakeData):
+    """set_mounts with a manual gate on the first exchange alone:
+    it stalls until the test releases it, later exchanges run at
+    once — the in-flight window the serialization tests pin."""
+
+    def __init__(self, rows, gate):
+        super().__init__(rows)
+        self.gate = gate
+        self.first = True
+
+    async def set_mounts(self, workspace_id, mounts):
+        self.calls.append(("set-mounts", workspace_id, list(mounts)))
+        if self.first:
+            self.first = False
+            await self.gate.wait()
+        return await super().set_mounts(workspace_id, mounts)
+
+
+def mount_form_ready(app) -> bool:
+    """The editor's form stands with its fields composed — the
+    wait every form test shares (the screen instance exists the
+    moment it is pushed; its widgets a tick later)."""
+    from msks.client.tui.mounts import MountFormScreen
+
+    return isinstance(app.screen, MountFormScreen) and bool(
+        app.screen.query("#field-host")
+    )
+
+
+def submit_mount_form(form) -> None:
+    """Press the form's Add (or Save) button — the submit path
+    every editor test shares."""
+    form.query_one("#do-add", Button).press()
 
 
 async def test_the_mounts_key_opens_the_mounts_editor(
@@ -7824,10 +7865,10 @@ async def test_the_mounts_editor_adds_edits_and_removes(
     monkeypatch,
 ) -> None:
     """The editor (#620, part #624): the action row pushes the
-    list editor; add types the CLI's own spec grammar, the save
-    posts the whole list and repaints the rows' derived state,
-    remove drops the focused row, and the page's mounts line
-    follows the reply."""
+    list editor; add fills the form's fields (#886) — the proxy
+    add form's shape — the save posts the whole list and repaints
+    the rows' derived state, remove drops the focused row, and
+    the page's mounts line follows the reply."""
     from msks.client.tui.mounts import MountsScreen
 
     scripted_link(monkeypatch, [rules_frame()])
@@ -7846,12 +7887,15 @@ async def test_the_mounts_editor_adds_edits_and_removes(
         rows = app.screen.query_one("#mount-rows")
         assert "healthy" in str(rows.children[0].query_one(Static).content)
         assert "skipped" in str(rows.children[1].query_one(Static).content)
-        # Add one: the spec dialog takes the CLI grammar.
+        # Add one: the form's fields compose the CLI's grammar.
         await pilot.press("a")
-        await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
-        editor = app.screen
-        editor.query_one("#mount-spec", Input).value = "/srv/refs:/srv/refs:ro"
-        await pilot.press("enter")
+        await wait_for(lambda: mount_form_ready(app))
+        form = app.screen
+        assert (
+            str(form.query_one("#field-workspace", Static).content) == "alpha"
+        )
+        fill_mount_form(form, "/srv/refs", "/srv/refs", "ro")
+        submit_mount_form(form)
         await wait_for(
             lambda: (
                 (
@@ -7934,10 +7978,9 @@ async def test_the_mounts_editor_names_a_refusal(monkeypatch) -> None:
             pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
         )
         await pilot.press("a")
-        await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
-        editor = app.screen
-        editor.query_one("#mount-spec", Input).value = "/srv/x:/mnt/x"
-        await pilot.press("enter")
+        await wait_for(lambda: mount_form_ready(app))
+        fill_mount_form(app.screen, "/srv/x", "/mnt/x")
+        submit_mount_form(app.screen)
         await wait_for(
             lambda: (
                 "outside the allowed"
@@ -7962,8 +8005,8 @@ async def test_the_mounts_editor_names_a_refusal(monkeypatch) -> None:
 
 
 async def test_a_mounts_dialog_cancel_decides_nothing(monkeypatch) -> None:
-    """Escape in the spec dialog decides nothing: the editor keeps
-    its list and posts nothing."""
+    """Escape in the form decides nothing: the editor keeps its
+    list and posts nothing."""
     from msks.client.tui.mounts import MountsScreen
 
     scripted_link(monkeypatch, [rules_frame()])
@@ -7978,6 +8021,7 @@ async def test_a_mounts_dialog_cancel_decides_nothing(monkeypatch) -> None:
         )
         calls_before = list(data.calls)
         await pilot.press("a")
+        await wait_for(lambda: mount_form_ready(app))
         await pilot.press("escape")
         await pilot.pause()
         assert data.calls == calls_before  # no exchange ran
@@ -7986,8 +8030,8 @@ async def test_a_mounts_dialog_cancel_decides_nothing(monkeypatch) -> None:
 
 async def test_the_mounts_editor_edits_in_place(monkeypatch) -> None:
     """The edit path (#620, part #624): Enter on a row opens the
-    spec dialog seeded with the row's spec, and the filled line
-    replaces that mount — the post carries the edited list."""
+    form seeded with the row's mount, and the filled fields
+    replace that mount — the post carries the edited list."""
     from msks.client.tui.mounts import MountsScreen
 
     scripted_link(monkeypatch, [rules_frame()])
@@ -8001,13 +8045,13 @@ async def test_the_mounts_editor_edits_in_place(monkeypatch) -> None:
             pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
         )
         await pilot.press("enter")  # edit the focused row (proj)
-        await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
-        editor = app.screen
-        assert editor.query_one("#mount-spec", Input).value == (
-            "/srv/proj:/mnt/proj:rw"
-        )
-        editor.query_one("#mount-spec", Input).value = "/srv/proj:/data:ro"
-        await pilot.press("enter")
+        await wait_for(lambda: mount_form_ready(app))
+        form = app.screen
+        assert form.query_one("#field-host", Input).value == "/srv/proj"
+        assert form.query_one("#field-guest", Input).value == "/mnt/proj"
+        assert form.query_one("#field-mode", Select).value == "rw"
+        fill_mount_form(form, "/srv/proj", "/data", "ro")
+        submit_mount_form(form)
         await wait_for(
             lambda: (
                 (
@@ -8030,9 +8074,10 @@ async def test_the_mounts_editor_edits_in_place(monkeypatch) -> None:
 async def test_the_mounts_editor_edit_cancel_and_refusal(
     monkeypatch,
 ) -> None:
-    """The edit dialog's cancel decides nothing, and a spec the
-    local shape rules refuse names itself without a post."""
-    from msks.client.tui.mounts import MountsScreen
+    """The edit form's cancel decides nothing, and a host path
+    the local shape rules refuse names itself on the form's note
+    without a post."""
+    from msks.client.tui.mounts import MountFormScreen, MountsScreen
 
     scripted_link(monkeypatch, [rules_frame()])
     data = FakeData([mounted_row()])
@@ -8045,31 +8090,73 @@ async def test_the_mounts_editor_edit_cancel_and_refusal(
             pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
         )
         calls_before = list(data.calls)
-        # Cancel: the dialog's escape decides nothing.
+        # Cancel: the form's escape decides nothing.
         await pilot.press("enter")
-        await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
+        await wait_for(lambda: mount_form_ready(app))
         await pilot.press("escape")
         await pilot.pause()
         assert data.calls == calls_before
-        # A refused spec in the edit path names itself.
+        # A refused host path in the edit path keeps the form
+        # standing with the rule on its note.
         await pilot.press("enter")
-        await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
-        editor = app.screen
-        editor.query_one("#mount-spec", Input).value = "bad"
-        await pilot.press("enter")
+        await wait_for(lambda: mount_form_ready(app))
+        form = app.screen
+        fill_mount_form(form, "bad", "/mnt/b")
+        submit_mount_form(form)
         await pilot.pause()
         assert data.calls == calls_before
-        assert "HOST_PATH:GUEST_PATH" in str(
-            app.screen.query_one("#mount-note", Static).content
+        assert isinstance(app.screen, MountFormScreen)  # still standing
+        assert "takes a host path" in str(
+            form.query_one("#form-note", Static).content
         )
 
 
 async def test_the_mounts_editor_refuses_a_bad_spec_locally(
     monkeypatch,
 ) -> None:
-    """A spec line the CLI's shape rules refuse names itself on
-    the note line and posts nothing — the daemon owns only the
-    gate and rule checks."""
+    """Fields the CLI's shape rules refuse name themselves on the
+    form's note and post nothing — the daemon owns only the gate
+    and rule checks."""
+    from msks.client.tui.mounts import MountFormScreen, MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([mounted_row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        await pilot.press("down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
+        )
+        calls_before = list(data.calls)
+        await pilot.press("a")
+        await wait_for(lambda: mount_form_ready(app))
+        form = app.screen
+        fill_mount_form(form, "not-a-spec", "/mnt/x")
+        submit_mount_form(form)
+        await pilot.pause()
+        assert data.calls == calls_before
+        assert isinstance(app.screen, MountFormScreen)  # still standing
+        assert "takes a host path" in str(
+            form.query_one("#form-note", Static).content
+        )
+        # A guest path that is not absolute names itself too.
+        fill_mount_form(form, "/srv/x", "relative")
+        submit_mount_form(form)
+        await pilot.pause()
+        assert data.calls == calls_before
+        assert "must be absolute" in str(
+            form.query_one("#form-note", Static).content
+        )
+
+
+async def test_the_mount_form_names_its_required_fields(
+    monkeypatch,
+) -> None:
+    """A blank host or guest keeps the form standing with the
+    rule on its note (#886) — the proxy add form's own note shape
+    — and the Cancel button decides nothing."""
     from msks.client.tui.mounts import MountsScreen
 
     scripted_link(monkeypatch, [rules_frame()])
@@ -8084,34 +8171,245 @@ async def test_the_mounts_editor_refuses_a_bad_spec_locally(
         )
         calls_before = list(data.calls)
         await pilot.press("a")
-        await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
-        editor = app.screen
-        editor.query_one("#mount-spec", Input).value = "not-a-spec"
-        await pilot.press("enter")
+        await wait_for(lambda: mount_form_ready(app))
+        form = app.screen
+        fill_mount_form(form, "", "/mnt/x")
+        submit_mount_form(form)
         await pilot.pause()
-        assert data.calls == calls_before
-        assert "HOST_PATH:GUEST_PATH" in str(
-            app.screen.query_one("#mount-note", Static).content
+        assert "host path is the form's one required field" in str(
+            form.query_one("#form-note", Static).content
         )
-        # A bare name — the retired #620 named form (#685) — is
-        # not enterable: the refusal names the host-path grammar.
-        await pilot.press("a")
-        await wait_for(lambda: type(app.screen).__name__ == "MountEditScreen")
-        editor = app.screen
-        editor.query_one("#mount-spec", Input).value = "bare:/mnt/b"
-        await pilot.press("enter")
+        fill_mount_form(form, "/srv/x", "")
+        submit_mount_form(form)
         await pilot.pause()
+        assert "guest path is the form's one required field" in str(
+            form.query_one("#form-note", Static).content
+        )
         assert data.calls == calls_before
-        assert "takes a host path" in str(
-            app.screen.query_one("#mount-note", Static).content
+        form.query_one("#do-cancel", Button).press()
+        await pilot.pause()
+        assert isinstance(app.screen, MountsScreen)
+        assert data.calls == calls_before
+
+
+async def test_the_mount_form_walks_and_submits_by_key(
+    monkeypatch,
+) -> None:
+    """The form's arrows walk its controls in reading order — the
+    tree's spatial rule — and the whole add lands by key alone:
+    Enter walks the two inputs, Down crosses the mode select to
+    the Add button, Enter presses it."""
+    from msks.client.tui.mounts import MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([mounted_row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        await pilot.press("down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
+        )
+        await pilot.press("a")
+        await wait_for(lambda: mount_form_ready(app))
+        form = app.screen
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is form.query_one("#field-guest", Input)
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is form.query_one("#field-mode", Select)
+        await pilot.press("down")
+        await pilot.pause()
+        assert app.focused is form.query_one("#do-add", Button)
+        await pilot.press("up", "up", "up")
+        await pilot.pause()
+        assert app.focused is form.query_one("#field-host", Input)
+        # The whole add by key: the fields typed, the walk to the
+        # Add button, Enter pressed.
+        await pilot.press(*"/srv/keys")
+        await pilot.press("enter")  # host -> guest
+        await pilot.press(*"/mnt/keys")
+        await pilot.press("enter")  # guest -> mode
+        await pilot.press("down")  # mode -> Add
+        await pilot.press("enter")  # Add pressed
+        await wait_for(
+            lambda: (
+                (
+                    "set-mounts",
+                    WS,
+                    [
+                        *[
+                            {"host": h, "guest": g, "mode": "rw"}
+                            for h, g in (
+                                ("/srv/proj", "/mnt/proj"),
+                                ("/srv/gone", "/mnt/gone"),
+                            )
+                        ],
+                        {
+                            "host": "/srv/keys",
+                            "guest": "/mnt/keys",
+                            "mode": "rw",
+                        },
+                    ],
+                )
+                in data.calls
+            )
+        )
+
+
+async def test_a_markup_carrying_host_refusal_crashes_nothing(
+    monkeypatch,
+) -> None:
+    """The parser's refusal embeds the raw host path; one
+    carrying a closing markup tag lands on the note escaped —
+    the form stands, the TUI with it."""
+    from msks.client.tui.mounts import MountFormScreen, MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([mounted_row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        await pilot.press("down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
+        )
+        await pilot.press("a")
+        await wait_for(lambda: mount_form_ready(app))
+        form = app.screen
+        fill_mount_form(form, "x[/y]", "/mnt/x")
+        submit_mount_form(form)
+        await pilot.pause()
+        assert isinstance(app.screen, MountFormScreen)  # still standing
+        note = str(form.query_one("#form-note", Static).content)
+        assert "takes a host path" in note and r"x\[/y]" in note
+
+
+async def test_the_mounts_editor_serializes_rapid_changes(
+    monkeypatch,
+) -> None:
+    """Two changes inside one exchange's flight window (#886):
+    the second waits the first out — the late-landing first
+    reply cannot roll the second change back out of the working
+    list, and the daemon ends holding both."""
+    import asyncio
+
+    from msks.client.tui.mounts import MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    gate = asyncio.Event()
+    data = GatedMounts([mounted_row()], gate)
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        await pilot.press("down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
+        )
+        editor = app.screen
+        # The first add's exchange stalls on the gate: the call is
+        # in, the reply is in the air.
+        await pilot.press("a")
+        await wait_for(lambda: mount_form_ready(app))
+        fill_mount_form(app.screen, "/srv/x", "/mnt/x")
+        submit_mount_form(app.screen)
+        await wait_for(
+            lambda: [call[0] for call in data.calls] == ["set-mounts"]
+        )
+        # The second add arrives while the first is in the air —
+        # the press rides the pump the parked exchange no longer
+        # holds (the form's dismiss task once landed on the DOM's
+        # prune hook, and a gated reply parked the pump with it).
+        await pilot.press("a")
+        await wait_for(lambda: mount_form_ready(app))
+        fill_mount_form(app.screen, "/srv/y", "/mnt/y")
+        submit_mount_form(app.screen)
+        # The second exchange parks at the editor's turnstile —
+        # no condition to wait for (its call lands only after the
+        # gate opens), so a brief settle, then the release.
+        await asyncio.sleep(0.2)
+        # Release the stalled first exchange: its reply lands, the
+        # waiting second exchange takes its turn and the daemon
+        # ends holding both adds.
+        gate.set()
+        # Four calls name both exchanges complete (the wrapper's
+        # and the fake's append apiece): the first reply landed,
+        # the waiting second exchange took its turn.
+        await wait_for(lambda: len(data.calls) == 4)
+        posted = data.calls[-1][2]
+        assert {m["host"] for m in posted} == {
+            "/srv/proj",
+            "/srv/gone",
+            "/srv/x",
+            "/srv/y",
+        }
+        await wait_for(
+            lambda: len(editor.query_one("#mount-rows").children) == 4
+        )
+        await wait_for(
+            lambda: (
+                "saved" in str(editor.query_one("#mount-note", Static).content)
+            ),
+            timeout=10,
+        )
+
+
+async def test_a_remove_beside_an_in_flight_add_lands(
+    monkeypatch,
+) -> None:
+    """A ``D`` pressed while an add's reply is in the air (#888
+    review): the remove waits the add out, then re-resolves its
+    row by the (host, guest) pair — the add's reply re-created
+    every mount dict — so the posted set keeps the add and drops
+    the pressed row."""
+    import asyncio
+
+    from msks.client.tui.mounts import MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    gate = asyncio.Event()
+    data = GatedMounts([mounted_row()], gate)
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        await pilot.press("down", "down", "down")
+        await press_until(
+            pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
+        )
+        editor = app.screen
+        # The add's exchange stalls on the gate (focus on row 0,
+        # the healthy /srv/proj mount).
+        await pilot.press("a")
+        await wait_for(lambda: mount_form_ready(app))
+        fill_mount_form(app.screen, "/srv/x", "/mnt/x")
+        submit_mount_form(app.screen)
+        await wait_for(
+            lambda: [call[0] for call in data.calls] == ["set-mounts"]
+        )
+        # The remove arrives while the add is in the air.
+        await pilot.press("D")
+        await asyncio.sleep(0.2)
+        gate.set()
+        await wait_for(lambda: len(data.calls) == 4)
+        posted = data.calls[-1][2]
+        assert {m["host"] for m in posted} == {"/srv/gone", "/srv/x"}
+        await wait_for(
+            lambda: len(editor.query_one("#mount-rows").children) == 2
         )
 
 
 async def test_the_mounts_editor_empty_list_names_the_add_key(
     monkeypatch,
 ) -> None:
-    """The mountless workspace's editor shows the placeholder that
-    names the add key, and remove on it decides nothing."""
+    """The mountless workspace's editor carries the proxies
+    page's own empty frame (#886): the count's status line, the
+    columns standing down, the empty state that names the add
+    key — and remove on it decides nothing."""
     from msks.client.tui.mounts import MountsScreen
 
     scripted_link(monkeypatch, [rules_frame()])
@@ -8124,17 +8422,33 @@ async def test_the_mounts_editor_empty_list_names_the_add_key(
         await press_until(
             pilot, "enter", lambda: isinstance(app.screen, MountsScreen)
         )
-        content = str(
-            app.screen.query_one("#mount-rows")
-            .children[0]
-            .query_one(Static)
-            .content
-        )
-        assert "no mounts" in content
+        editor = app.screen
+        status = str(editor.query_one("#mount-status", Static).content)
+        assert "0 mounts" in status and "alpha" in status
+        assert "next start" in status
+        assert editor.query_one("#mount-columns", Static).display is False
+        empty = editor.query_one("#mount-empty", Static)
+        assert empty.display is True
+        assert "No mounts" in str(empty.content)
+        assert "a adds one" in str(empty.content)
         calls_before = list(data.calls)
-        await pilot.press("D")  # the placeholder: nothing to remove
-        await pilot.press("enter")  # nothing to edit
+        await pilot.press("D")  # nothing to remove
+        await pilot.press("enter")  # nothing to edit (the empty
+        # list holds the key)
+        await pilot.press("e")  # the visible key: no row, no form
         await pilot.pause()
+        assert data.calls == calls_before
+        assert isinstance(app.screen, MountsScreen)
+        # The swap-window branches: a removed list reads None,
+        # and the rebuild's guard decides quietly — the standing
+        # editor's own paint-heal rule carries the rest.
+        await editor.query_one("#mount-rows").remove()
+        assert editor.rows_widget() is None
+        await editor.rebuild_rows()
+        assert editor.rows_widget() is None
+        # A remove whose pair left the list decides quietly —
+        # no post, no crash.
+        await editor.removed({"host": "/gone/already", "guest": "/x"})
         assert data.calls == calls_before
 
 
@@ -8180,11 +8494,12 @@ async def test_the_mounts_editor_names_its_keys(monkeypatch) -> None:
         )
         footer = app.screen.query_one(Footer)
         # The footer's keys come from the screen's bindings: the
-        # three visible ones name the editor's actions.
+        # four visible ones name the editor's actions — add,
+        # edit, remove, close.
         shown = {
             binding.key for binding in app.screen.BINDINGS if binding.show
         }
-        assert shown == {"a", "D", "escape"}
+        assert shown == {"a", "e", "D", "q"}
         assert footer in app.screen.children
 
 

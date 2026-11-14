@@ -222,11 +222,20 @@ line. The `?` overlay lists them all.
 
 ### The mounts page
 
-The **mounts editor** shows the workspace's mounts one row each, in the
-CLI's `HOST_PATH:GUEST_PATH:MODE` grammar with the mode always shown.
-`a` adds a row (a single-line input), Enter edits the focused row
-(seeded with its current spec), `D` removes it, and Escape closes the
-editor with the last saved set.
+The **mounts editor** uses the proxies page's own frame: a status
+line with the mount count beside the workspace's name, and a bordered
+list whose rows carry the spec in the CLI's `HOST_PATH:GUEST_PATH:MODE`
+grammar (mode always shown) beside its derived state. An empty list
+stands the columns down and says `No mounts — a adds one.`
+
+`a` adds a row. Enter, `e`, or a click on the focused row edits it —
+both paths through one form, the same style the proxies page's add
+form uses, centered on the page: the workspace fixed at the top, then
+the host path, the guest path, and the mode (`rw` or `ro`, a select).
+The form's note line carries the grammar. A field the CLI's own
+parser refuses keeps the form standing with the rule on that line.
+`D` removes the focused row, and `q` or Escape closes the editor with
+the last saved set.
 
 Every change posts the whole list to the daemon's mounts route. The reply
 repaints each row with its derived state (`healthy`, or the skip's kind and

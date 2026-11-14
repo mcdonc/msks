@@ -241,11 +241,10 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
 
     # -- the submit --------------------------------------------------------
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "do-mint":
-            self.submit()
-        else:
-            self.action_cancel()
+    def submit_id(self) -> str:
+        """The mint's own primary button — the shared button row
+        rides the name."""
+        return "do-mint"
 
     def action_cancel(self) -> None:
         """Cancel — never mid-flight (#393): the reply the daemon
@@ -383,5 +382,9 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
         except NoMatches:
             pass  # a teardown race unmounted the field first
         self.dismiss()
-        # Referenced: an unreferenced task can be collected mid-await.
-        self._task = asyncio.create_task(self.submitted(row))
+        # Referenced under its own name: an unreferenced task can
+        # be collected mid-await — and NOT ``_task``, which the
+        # DOM's prune machinery reads (AwaitRemove awaits a
+        # node's ``_task`` at removal): a task parked on the
+        # mint's flight there would park the pump with it.
+        self._submitted_task = asyncio.create_task(self.submitted(row))

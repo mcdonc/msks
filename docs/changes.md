@@ -29,6 +29,13 @@ tagged `vX.Y.Z`.
   0.9.1), and Claude Code 2.1.325 (from 2.1.281). Workspaces
   built from new guest assets report the new versions; existing
   workspaces keep their baked toolchain until rebuilt.
+- **TUI mounts editor restyle (#886).** The mounts editor and its
+  add/edit form now use the proxies page's style: a status line with
+  the mount count beside the workspace's name, a bordered SPEC/STATE
+  column list, and an empty state that names the add key. The form
+  (host path, guest path, mode) centers on the page; a field the
+  CLI's parser refuses keeps the form standing with the rule on its
+  note line.
 - **Workspace page action rows (#882).** The name and the
   description now sit in two aligned columns: every description
   starts at the same offset across the use, configure, and power
@@ -38,6 +45,9 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **TUI proxy add form cancel (#888).** The form's Escape and
+  `q` keys now dismiss it. Both bindings existed but had no
+  action behind them, so the keys did nothing.
 - **`msks agent-card` (#877).** The card now says the exit codes
   3, 4, and 5 hold under `--json` only: without it, every API
   failure exits 1 with its detail on stderr. It also documents

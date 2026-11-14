@@ -83,6 +83,39 @@ class FormWalk:
         action is the app's, the screen hosts the binding)."""
         self.app.action_focus_next()
 
+    def submit_id(self) -> str:
+        """The primary button's id — the button row's submit
+        target; the forms whose button reads differently override
+        (the mint form's own name, the workspace form's mode
+        pair)."""
+        return "do-add"
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """The buttons' row: the primary button submits, Cancel
+        decides nothing (a form that guards its cancel overrides
+        :meth:`action_cancel` — the mint form never cancels
+        mid-flight)."""
+        if event.button.id == self.submit_id():
+            self.submit()
+        else:
+            self.action_cancel()
+
+    def action_cancel(self) -> None:
+        """Escape or q — the cancel button's own answer."""
+        self.dismiss_with(None)
+
+    def dismiss_with(self, answer) -> None:
+        """Dismiss and hand the answer to the callback (async —
+        the exchange runs as a task, so the modal closes without
+        waiting on it)."""
+        self.dismiss()
+        # Referenced under its own name: an unreferenced task can
+        # be collected mid-await — and NOT ``_task``, which the
+        # DOM's prune machinery reads (AwaitRemove awaits a
+        # node's ``_task`` at removal): a task parked on an
+        # exchange there would park the pump with it.
+        self._submitted_task = asyncio.create_task(self.submitted(answer))
+
 
 #: The create form's fields (#309): the create body's optional
 #: inputs in walk order — a short label at the left of each
@@ -389,15 +422,6 @@ class WorkspaceForm(FormWalk, ModalScreen[dict | None]):
         self.query_one(f"#field-{self.first_field()}", Input).focus()
         self.form_mounted()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == self.submit_id():
-            self.submit()
-        else:
-            self.dismiss_with(None)
-
-    def action_cancel(self) -> None:
-        self.dismiss_with(None)
-
     def note(self, text: str) -> None:
         """The form's note line: its title, or the local
         refusal that keeps a half-filled body home."""
@@ -427,14 +451,6 @@ class WorkspaceForm(FormWalk, ModalScreen[dict | None]):
         body = self.body()
         if body is not None:
             self.dismiss_with(body)
-
-    def dismiss_with(self, body: dict | None) -> None:
-        """Dismiss and hand the body to the callback (async — the
-        exchange runs as a task, so the modal closes without
-        waiting on it)."""
-        self.dismiss()
-        # Referenced: an unreferenced task can be collected mid-await.
-        self._task = asyncio.create_task(self.submitted(body))
 
 
 class CreateScreen(WorkspaceForm):
