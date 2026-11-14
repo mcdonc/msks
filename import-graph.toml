@@ -29,6 +29,9 @@ entry_points = [
   "msks.client.term_popup",
   "msks.client.tui.decide_app",
   "msks.conformance",
+  # #874 wave two: the CLI became a package; python -m msks.client.cli
+  # resolves through its own __main__ beside the console script.
+  "msks.client.cli.__main__",
 ]
 
 # Re-export surfaces: modules whose re-exported names may be
@@ -70,6 +73,10 @@ facades = [
   # fan-in ceiling over rows and consent_ui).
   "msks.client.tui.secrets",
   "msks.client.tui.secrets.ui",
+  # #874 wave two: the CLI split into a package (cliapp, wscommands,
+  # groupcommands, invoke); cliapp is the leaf the command groups
+  # decorate onto and the jsonio seam the groups share.
+  "msks.client.cli.cliapp",
   # #874: the workspace page split into a package (lines, actions,
   # screen); the main screen and app keep importing the page's
   # surface through the package root.

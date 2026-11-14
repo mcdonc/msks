@@ -2780,7 +2780,7 @@ def test_the_tui_subcommand_dispatches(monkeypatch) -> None:
         launched.append(open_ref)
         return 0
 
-    monkeypatch.setattr(cli, "run_main_tui", fake_run)
+    monkeypatch.setattr(cli.wscommands, "run_main_tui", fake_run)
     assert cli.main(["tui"]) == 0
     assert cli.main(["tui", "my-workspace"]) == 0
     assert launched == [None, "my-workspace"]
@@ -2795,7 +2795,7 @@ def test_a_bare_msks_launches_the_tui(monkeypatch) -> None:
         launched.append(open_ref)
         return 0
 
-    monkeypatch.setattr(cli, "run_main_tui", fake_run)
+    monkeypatch.setattr(cli.wscommands, "run_main_tui", fake_run)
     assert cli.main([]) == 0
     assert launched == [None]
 

@@ -326,7 +326,9 @@ def test_the_root_callback_probes_only_on_a_real_dial(
     client_env(monkeypatch)
     probed = []
     monkeypatch.setattr(
-        cli, "notice_daemon_version_skew", lambda: probed.append(True)
+        cli.wscommands,
+        "notice_daemon_version_skew",
+        lambda: probed.append(True),
     )
     with pytest.raises(SystemExit):
         # No transport: the unreachable https://daemon answers the
@@ -341,7 +343,7 @@ def test_the_root_callback_probes_only_on_a_real_dial(
     # The offline image group never dials for the probe — image
     # check runs a child conformance process, and a configured
     # but unreachable daemon must not stall it.
-    monkeypatch.setattr(cli, "cmd_image_ls", lambda *a, **k: 0)
+    monkeypatch.setattr(cli.groupcommands, "cmd_image_ls", lambda *a, **k: 0)
     rc = cli.main(["image", "ls"])
     assert rc == 0 and probed == [True]
 
@@ -1890,7 +1892,7 @@ def test_main_interrupt_is_one_line(
     def interrupted(*args, **kwargs) -> int:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli, "cmd_ls", interrupted)
+    monkeypatch.setattr(cli.wscommands, "cmd_ls", interrupted)
     with pytest.raises(SystemExit) as excinfo:
         cli.main(["ls"])
     assert excinfo.value.code == 130
@@ -4833,9 +4835,12 @@ def test_typer_commands_route_to_their_bodies(
         "cmd_image_info",
         "cmd_image_check",
     ):
-        monkeypatch.setattr(cli, name, routed(name))
-    monkeypatch.setattr(cli, "run_workspace_forward", routed("forward"))
-    monkeypatch.setattr(cli, "run_main_tui", routed("tui"))
+        home = cli.wscommands if name == "cmd_storage" else cli.groupcommands
+        monkeypatch.setattr(home, name, routed(name))
+    monkeypatch.setattr(
+        cli.wscommands, "run_workspace_forward", routed("forward")
+    )
+    monkeypatch.setattr(cli.wscommands, "run_main_tui", routed("tui"))
 
     async def fake_rules(workspace_id, as_json=False, transport=None) -> int:
         calls.append(("rules", (workspace_id, as_json), {}))
@@ -4903,7 +4908,7 @@ def test_help_exits_through_system_exit_zero(
 
 def test_a_bare_msks_is_the_tree_tui(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        cli, "run_main_tui", lambda workspace=None, conf=None: 9
+        cli.wscommands, "run_main_tui", lambda workspace=None, conf=None: 9
     )
     assert cli.main([]) == 9
 
@@ -4921,7 +4926,7 @@ def test_the_tree_carries_the_invocations_resolution(
         seen.append(conf)
         return 0
 
-    monkeypatch.setattr(cli, "run_main_tui", routed)
+    monkeypatch.setattr(cli.wscommands, "run_main_tui", routed)
     client_env(monkeypatch)
     path = tmp_path / "msks.yaml"
     path.write_text(
@@ -4955,7 +4960,7 @@ def test_a_help_shaped_option_value_is_not_a_help_exit(
     help screen's SystemExit(0) on top of executed work."""
     ran: list = []
     monkeypatch.setattr(
-        cli,
+        cli.groupcommands,
         "cmd_secret_mint",
         lambda refs, name, dests, ttl, sf, as_json=False, transport=None: (
             ran.append(name),
@@ -4990,7 +4995,7 @@ def test_a_bare_msks_interrupt_is_one_line(
     def interrupted(conf=None) -> int:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli, "run_main_tui", interrupted)
+    monkeypatch.setattr(cli.wscommands, "run_main_tui", interrupted)
     with pytest.raises(SystemExit) as excinfo:
         cli.main([])
     assert excinfo.value.code == 130
@@ -6357,7 +6362,7 @@ def test_interrupt_in_json_mode_is_the_document(
     def boom(refs, name, dests, ttl, sf, as_json=False, transport=None):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(cli, "cmd_secret_mint", boom)
+    monkeypatch.setattr(cli.groupcommands, "cmd_secret_mint", boom)
     rc = cli.main(
         [
             "secret",

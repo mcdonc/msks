@@ -6,6 +6,7 @@ smoke suite's console drive.
 
 import asyncio
 import contextlib
+import importlib
 import io
 import os
 import ssl
@@ -675,14 +676,17 @@ def test_main_without_a_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_module_entry_runs(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(sys, "argv", ["msks"])
-    source = Path(cli.__file__).read_text()
+    importlib.import_module("msks.client.cli.__main__")
+    entry = Path(cli.__file__).with_name("__main__.py")
+    source = entry.read_text()
     # Executing the source in a fresh namespace avoids runpy's
     # already-imported RuntimeWarning while still running the module
-    # entry block. __package__ lets the exec'd relative import resolve.
+    # entry block. __package__ lets the exec'd relative import resolve
+    # (#874: the entry moved to the package's own __main__).
     with pytest.raises(SystemExit):
         exec(
-            compile(source, cli.__file__, "exec"),
-            {"__name__": "__main__", "__package__": "msks.client"},
+            compile(source, str(entry), "exec"),
+            {"__name__": "__main__", "__package__": "msks.client.cli"},
         )
 
 
