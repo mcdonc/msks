@@ -155,7 +155,7 @@ class ConsentPage(HelpKeys, Screen):
             header_meta(
                 self.host.row,
                 self.app.theme_variables,
-                self.host.meta_width(),
+                self.meta_width(),
             ),
             id="header-meta",
         )
@@ -512,6 +512,17 @@ class ConsentPage(HelpKeys, Screen):
 
     # -- the status line ---------------------------------------------------
 
+    def meta_width(self) -> int | None:
+        """The meta line's available cells: this page fills the
+        terminal, so the budget follows the terminal's width
+        alone (#752) — the workspace page beneath caps its own
+        copy inside its centered block (#881). A width the layout
+        has not settled yet (compose, before the first layout)
+        paints the fixed budgets; ``started`` repaints with the
+        settled width."""
+        width = self.size.width - 2
+        return width if width > 0 else None
+
     def paint_header(self) -> None:
         """The page's header — the workspace page's own two lines
         (#460): the name with its status and the pending-egress
@@ -532,7 +543,7 @@ class ConsentPage(HelpKeys, Screen):
                 header_meta(
                     self.host.row,
                     self.app.theme_variables,
-                    self.host.meta_width(),
+                    self.meta_width(),
                 )
             )
         except NoMatches:

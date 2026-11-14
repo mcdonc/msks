@@ -175,6 +175,13 @@ first line carries their count after the status (`alpha · ● running ·
 count comes from the [session records](#open-shells-and-the-session-records)
 and follows the page's per-second row refresh.
 
+The page's whole content sits in one 80-column block: the header
+lines, the status lines, and the action panel. At 80 columns and
+under, the block fills the terminal. A wider terminal centers the
+block, and the page reads on a single axis at any width. The meta
+line's budget stops at the block's width. On a terminal wider than
+the block, each field keeps its fixed clip.
+
 Below the header, two status lines share one shape: a muted label,
 then the value. The consent line shows the mode and one granted
 scope with its expiry. Two or more grants show as a count with the
@@ -298,6 +305,9 @@ The page carries the same two-line header as the workspace page beneath
 it: the workspace's name with its status (and the pending-hold count
 while any hold waits), then the id, image hash, host, and created date,
 muted. The workspace's identity stays visible while verdicts are made.
+The consent page fills the terminal's width. Its meta line widens past
+the 80-column frame. The workspace page beneath caps its own copy in
+its centered block.
 
 Keys on the page: the arrows navigate the held requests and cross into the
 verdict rows beneath (and back). `a`/`d` allow or deny the focused hold for
