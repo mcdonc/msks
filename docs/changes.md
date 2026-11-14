@@ -24,6 +24,11 @@ tagged `vX.Y.Z`.
   columns and under, the layout is unchanged. On a wider terminal,
   each meta field keeps its fixed clip, and the egress consent
   page widens its own meta line as before.
+- **Guest toolchain pins (#887).** The Debian, Fedora, and
+  NixOS guests ship pi 1.5.2 (from 1.4.0), herdr 0.9.5 (from
+  0.9.1), and Claude Code 2.1.325 (from 2.1.281). Workspaces
+  built from new guest assets report the new versions; existing
+  workspaces keep their baked toolchain until rebuilt.
 - **Workspace page action rows (#882).** The name and the
   description now sit in two aligned columns: every description
   starts at the same offset across the use, configure, and power
