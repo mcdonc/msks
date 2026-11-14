@@ -67,7 +67,13 @@ from msks.client.tui.workspace import (
 from msks.server.api.rows import HOME_FREE_STATUSES
 from msks.spec.mounts import parse_mounts
 from rich.cells import cell_len
-from test_consent_page import FakeFactory, FakeWS, press_until, wait_for
+from test_consent_page import (
+    FakeFactory,
+    FakeWS,
+    call_until,
+    press_until,
+    wait_for,
+)
 from test_consent_tui import frame
 from test_consent_tui import (
     request_frame as shared_request_frame,
@@ -5603,6 +5609,15 @@ def test_the_column_under_a_header_click() -> None:
     )
 
 
+async def click_until(pilot, header, offset, landed) -> None:
+    """Click the header until its sort lands — a click issued
+    while the layout settles can miss the header on a starved
+    runner (the macOS CI dropped one twice, #880's runs), so the
+    test retries: call_until's loop and budget, the same shape
+    press_until gives the keys."""
+    await call_until(lambda: pilot.click(header, offset=offset), landed)
+
+
 async def test_a_header_click_sorts_the_listing(monkeypatch) -> None:
     """#854: a click on a header column takes that column's sort at
     its natural direction, a click on the active column flips the
@@ -5619,13 +5634,14 @@ async def test_a_header_click_sorts_the_listing(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await wait_for(lambda: "alpha" in row_text(app, 0))  # created desc
         header = app.query_one("#columns")
-        await pilot.click(header, offset=(0, 0))  # NAME, natural ascending
-        await wait_for(lambda: "alpha" in row_text(app, 0))
+        await click_until(  # NAME, natural ascending
+            pilot, header, (0, 0), lambda: "NAME ↑" in str(header.content)
+        )
         assert "bravo" in row_text(app, 1)
-        assert "NAME ↑" in str(header.content)
-        await pilot.click(header, offset=(0, 0))  # the active column flips
+        await click_until(  # the active column flips
+            pilot, header, (0, 0), lambda: "NAME ↓" in str(header.content)
+        )
         await wait_for(lambda: "bravo" in row_text(app, 0))
-        assert "NAME ↓" in str(header.content)
         # The standing refresh holds the sort: the daemon serves
         # the rows the other way round, the listing stays
         # name-descending.
@@ -5666,11 +5682,21 @@ async def test_a_header_click_maps_by_the_drawn_columns(
         gutter = header.content_region.x - header.region.x
         name_width = screen.columns[0][1]
         status_start = gutter + name_width + len(rows_mod.COLUMN_GAP)
-        await pilot.click(header, offset=(status_start - 1, 0))  # gap's end
-        assert screen.sort == ("NAME", False)
-        await pilot.click(header, offset=(status_start, 0))  # first S
-        assert screen.sort == ("STATUS", False)
-        assert "STATUS ↑" in str(header.content)
+        await click_until(  # the gap's last cell picks the column behind
+            pilot,
+            header,
+            (status_start - 1, 0),
+            lambda: screen.sort == ("NAME", False),
+        )
+        await click_until(  # the column's first drawn character picks it
+            pilot,
+            header,
+            (status_start, 0),
+            lambda: (
+                screen.sort == ("STATUS", False)
+                and "STATUS ↑" in str(header.content)
+            ),
+        )
         # The lifecycle order: running ranks before stopped.
         await wait_for(lambda: "alpha" in row_text(app, 0))
         assert "bravo" in row_text(app, 1)
