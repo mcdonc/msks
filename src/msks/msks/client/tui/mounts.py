@@ -177,13 +177,16 @@ def mount_state_text(mount: dict, issues: list[dict]) -> str:
 
 
 def form_note(verb: str) -> str:
-    """The form's standing note (#886): the one grammar the
+    """The form's standing note (#886, #894): the one grammar the
     CLI's own ``msks mount`` reads — the proxy add form's note
-    shape, the verb naming the path that opened the form."""
+    shape, the verb naming the path that opened the form. Every
+    line fits the form's 58 text columns — its 64-column box
+    minus the border and the padding — or the note's ellipsis
+    clips the line's tail."""
     return (
         f"{verb} a mount — the same specs `msks mount` reads\n"
-        "HOST_PATH:GUEST_PATH[:MODE] · the host path is absolute "
-        "or ~-shaped\n"
+        "HOST_PATH:GUEST_PATH[:MODE]\n"
+        "the host path is absolute or ~-shaped\n"
         "MODE ro or rw · rw is the default"
     )
 

@@ -77,14 +77,16 @@ LISTENING_COLOR = "$success"
 FAILED_COLOR = "$error"
 
 
-#: The form's standing note (#809, #890): the two specs in the
+#: The form's standing note (#809, #890, #894): the two specs in the
 #: one grammar the CLI reads — ssh's own — the verb naming the
-#: path that opened the form.
+#: path that opened the form. Every line fits the form's 58 text
+#: columns — its 64-column box minus the border and the padding —
+#: or the note's ellipsis clips the line's tail.
 def form_note(verb: str) -> str:
     return (
         f"{verb} a proxy — the same specs `msks proxy add` reads\n"
-        "-L [BIND:]PORT:HOST:PORT · HOST localhost names the workspace\n"
-        "-R RPORT:HOST:TPORT · the gateway reaches a daemon-side service"
+        "-L [BIND:]PORT:HOST:PORT · HOST localhost = the workspace\n"
+        "-R RPORT:HOST:TPORT · the gateway reaches the daemon side"
     )
 
 

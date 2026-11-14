@@ -13,6 +13,7 @@ from msks.client.tui.proxies import (
     ProxiesScreen,
     ProxyFormScreen,
     ProxyLink,
+    form_note,
     pair_text,
     parsed_body,
     proxies_line,
@@ -65,6 +66,16 @@ def proxy_row(
 
 
 # -- the pure helpers ------------------------------------------------------
+
+
+def test_form_note_fits_the_forms_text_width() -> None:
+    """The standing note renders whole: the form's box is 64
+    columns, its border and padding leave 58 for text, and the
+    note's nowrap-with-ellipsis clips anything longer (#894).
+    Both verbs' every line stays inside."""
+    for verb in ("add", "edit"):
+        for line in form_note(verb).splitlines():
+            assert len(line) <= 58
 
 
 def test_spec_text_reads_the_cli_grammar() -> None:
