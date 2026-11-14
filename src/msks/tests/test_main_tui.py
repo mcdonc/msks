@@ -67,7 +67,13 @@ from msks.client.tui.workspace import (
 from msks.server.api.rows import HOME_FREE_STATUSES
 from msks.spec.mounts import parse_mounts
 from rich.cells import cell_len
-from test_consent_page import FakeFactory, FakeWS, press_until, wait_for
+from test_consent_page import (
+    FakeFactory,
+    FakeWS,
+    call_until,
+    press_until,
+    wait_for,
+)
 from test_consent_tui import frame
 from test_consent_tui import (
     request_frame as shared_request_frame,
@@ -1147,6 +1153,11 @@ async def test_keys_without_a_focused_row_flash() -> None:
     async with app.run_test() as pilot:
         await wait_for(lambda: list_children(app) == 0)
         await pilot.press("s")
+        await wait_for(lambda: "no workspace focused" in status_text(app))
+        # Enter's own guard: the priority binding reaches the page
+        # opener with no row focused, and it answers the same flash
+        # (#309) — its lines' one deterministic cover.
+        await pilot.press("enter")
         await wait_for(lambda: "no workspace focused" in status_text(app))
         await pilot.press("D")
         await pilot.pause()
@@ -5603,6 +5614,15 @@ def test_the_column_under_a_header_click() -> None:
     )
 
 
+async def click_until(pilot, header, offset, landed) -> None:
+    """Click the header until its sort lands — a click issued
+    while the layout settles can miss the header on a starved
+    runner (the macOS CI dropped one twice, #880's runs), so the
+    test retries: call_until's loop and budget, the same shape
+    press_until gives the keys."""
+    await call_until(lambda: pilot.click(header, offset=offset), landed)
+
+
 async def test_a_header_click_sorts_the_listing(monkeypatch) -> None:
     """#854: a click on a header column takes that column's sort at
     its natural direction, a click on the active column flips the
@@ -5619,13 +5639,14 @@ async def test_a_header_click_sorts_the_listing(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await wait_for(lambda: "alpha" in row_text(app, 0))  # created desc
         header = app.query_one("#columns")
-        await pilot.click(header, offset=(0, 0))  # NAME, natural ascending
-        await wait_for(lambda: "alpha" in row_text(app, 0))
+        await click_until(  # NAME, natural ascending
+            pilot, header, (0, 0), lambda: "NAME ↑" in str(header.content)
+        )
         assert "bravo" in row_text(app, 1)
-        assert "NAME ↑" in str(header.content)
-        await pilot.click(header, offset=(0, 0))  # the active column flips
+        await click_until(  # the active column flips
+            pilot, header, (0, 0), lambda: "NAME ↓" in str(header.content)
+        )
         await wait_for(lambda: "bravo" in row_text(app, 0))
-        assert "NAME ↓" in str(header.content)
         # The standing refresh holds the sort: the daemon serves
         # the rows the other way round, the listing stays
         # name-descending.
@@ -5666,11 +5687,21 @@ async def test_a_header_click_maps_by_the_drawn_columns(
         gutter = header.content_region.x - header.region.x
         name_width = screen.columns[0][1]
         status_start = gutter + name_width + len(rows_mod.COLUMN_GAP)
-        await pilot.click(header, offset=(status_start - 1, 0))  # gap's end
-        assert screen.sort == ("NAME", False)
-        await pilot.click(header, offset=(status_start, 0))  # first S
-        assert screen.sort == ("STATUS", False)
-        assert "STATUS ↑" in str(header.content)
+        await click_until(  # the gap's last cell picks the column behind
+            pilot,
+            header,
+            (status_start - 1, 0),
+            lambda: screen.sort == ("NAME", False),
+        )
+        await click_until(  # the column's first drawn character picks it
+            pilot,
+            header,
+            (status_start, 0),
+            lambda: (
+                screen.sort == ("STATUS", False)
+                and "STATUS ↑" in str(header.content)
+            ),
+        )
         # The lifecycle order: running ranks before stopped.
         await wait_for(lambda: "alpha" in row_text(app, 0))
         assert "bravo" in row_text(app, 1)
@@ -5892,9 +5923,10 @@ async def test_every_footer_names_its_enter_binding(monkeypatch) -> None:
 
 async def test_every_footer_fits_the_smallest_terminal(monkeypatch) -> None:
     """#524: every footer the tree shows fits an 80-column
-    terminal. The widest shapes — the list's ten bindings and
-    the consent page's eight with a hold waiting — abbreviate or
-    drop what would not fit: the list's long words shorten
+    terminal. The widest shapes — the list's and the workspace
+    page's ten bindings, the consent page's eight with a hold
+    waiting — abbreviate or drop what would not fit: the list's
+    long words shorten
     (#581's ``Jmp``, ``Del``, and ``Rload``) and the command
     palette stays off
     (the tree registers no commands, and its docked key is twelve
@@ -7656,6 +7688,111 @@ def mounts_text(app) -> str:
         return str(app.screen.query_one("#mounts", Static).content)
     except Exception:
         return ""
+
+
+async def test_the_mounts_key_opens_the_mounts_editor(
+    monkeypatch,
+) -> None:
+    """#880: ``m`` on the workspace page opens the mounts editor —
+    the action row's own destination, one of the page's quick
+    keys; the page's own bindings list the key, so the footer
+    and the ``?`` overlay carry it."""
+    from msks.client.tui.mounts import MountsScreen
+
+    scripted_link(monkeypatch, [rules_frame()])
+    app, _ = make_app(FakeData([mounted_row()]))
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        await press_until(
+            pilot, "m", lambda: isinstance(app.screen, MountsScreen)
+        )
+        # The editor's close returns to the page.
+        await pilot.press("escape")
+        await wait_for(lambda: not isinstance(app.screen, MountsScreen))
+
+    bindings = {
+        binding.key: binding.description
+        for binding in screen_bindings(WorkspaceScreen)
+    }
+    assert bindings["m"] == "Mnts"
+
+
+async def test_the_quick_keys_open_their_rows_destinations(
+    monkeypatch,
+) -> None:
+    """#880: every action row has a quick key — ``h`` the shell
+    (the same window the use row opens), ``t`` the edit dialog,
+    ``c`` the clone prompt — each the row's own destination, so
+    the row and the key read one vocabulary."""
+    scripted_link(monkeypatch, [rules_frame()])
+    spawned: list[list[str]] = []
+
+    async def record(argv):
+        spawned.append(argv)
+
+        async def closed():
+            return 0
+
+        return SimpleNamespace(wait=closed)
+
+    monkeypatch.setattr(follow_mod, "spawn_window", record)
+    app, _ = make_app(FakeData([row(status="running")]))
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        # t: the edit dialog, the Settings row's destination.
+        await press_until(
+            pilot, "t", lambda: isinstance(app.screen, EditScreen)
+        )
+        await pilot.press("escape")
+        await wait_for(lambda: not isinstance(app.screen, EditScreen))
+        # c: the clone prompt, the Clone row's destination.
+        await press_until(
+            pilot, "c", lambda: isinstance(app.screen, CloneNameScreen)
+        )
+        await pilot.press("escape")
+        await wait_for(lambda: not isinstance(app.screen, CloneNameScreen))
+        # h: the shell window, the use row's destination.
+        await press_until(pilot, "h", lambda: len(spawned) == 1)
+        await wait_for(lambda: "opened a shell window" in consent_text(app))
+        assert on_page(app)  # the tree kept running
+
+
+def test_the_footer_carries_every_quick_key_within_eighty(
+    monkeypatch,
+) -> None:
+    """#880: the footer's own budget — every visible binding's
+    key, description, and two-space gap sums inside one
+    80-column line, with the footer's side padding spare. The
+    descriptions abbreviate in the #581 style (``Go``, ``Egr``,
+    ``Mnts``, ``Fwd``), and Enter keeps its
+    hint (#470 S4: the one key every screen answers)."""
+    visible = [
+        binding for binding in screen_bindings(WorkspaceScreen) if binding.show
+    ]
+    assert {binding.key: binding.description for binding in visible} == {
+        "enter": "Go",
+        "e": "Egr",
+        "h": "Shell",
+        "m": "Mnts",
+        "p": "Fwd",
+        "t": "Edit",
+        "c": "Clone",
+        "s": "Start",
+        "S": "Stop",
+        "q": "Back",
+    }
+    width = sum(
+        # The footer paints enter as the one-cell ``⏎`` glyph
+        # (the app's key formatter), not the five-letter word.
+        len("⏎" if binding.key == "enter" else binding.key)
+        + 1
+        + len(binding.description)
+        for binding in visible
+    )
+    width += 2 * (len(visible) - 1)  # the gaps between entries
+    assert width <= 78  # 80 minus the footer's side padding
 
 
 async def test_the_mounts_editor_adds_edits_and_removes(

@@ -205,8 +205,13 @@ sizes-and-topology edit dialog, the mounts editor, the proxies page,
 and **Clone**:
 the full-fork copy of [the cloning chapter](cloning.md), taken
 with a name prompt. The daemon owns the stopped-source rule — a
-refusal names itself on the page's consent line. The `p` key opens
-the proxies page from the workspace page.
+refusal names itself on the page's consent line. Every action
+row also has a quick key. `e` opens the egress consent page,
+`h` opens a shell, `m` the mounts editor, `p` the proxies page,
+`t` the edit dialog, and `c` the clone prompt. The footer shows
+each key with an abbreviated description, the same style the
+workspaces list uses, so the whole key set fits one 80-column
+line. The `?` overlay lists them all.
 
 ### The mounts page
 

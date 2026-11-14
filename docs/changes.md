@@ -6,6 +6,16 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Added
+
+- **Workspace page quick keys (#880).** Every action row on
+  the workspace page has a one-key shortcut: `e` the egress
+  consent page, `h` a shell, `m` the mounts editor, `p` the
+  proxies page, `t` the edit dialog, `c` the clone prompt. The
+  footer's descriptions abbreviate (the list's own style) so the
+  whole key set fits one 80-column line, and the `?` help
+  overlay lists every key.
+
 ### Changed
 
 - **Workspace page action rows (#882).** The name and the
