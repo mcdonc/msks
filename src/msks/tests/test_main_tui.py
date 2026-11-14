@@ -1154,6 +1154,11 @@ async def test_keys_without_a_focused_row_flash() -> None:
         await wait_for(lambda: list_children(app) == 0)
         await pilot.press("s")
         await wait_for(lambda: "no workspace focused" in status_text(app))
+        # Enter's own guard: the priority binding reaches the page
+        # opener with no row focused, and it answers the same flash
+        # (#309) — its lines' one deterministic cover.
+        await pilot.press("enter")
+        await wait_for(lambda: "no workspace focused" in status_text(app))
         await pilot.press("D")
         await pilot.pause()
         assert "remove" not in [call[0] for call in data.calls]
