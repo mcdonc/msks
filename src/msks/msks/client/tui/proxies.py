@@ -225,9 +225,10 @@ def proxies_line(rows: list[dict], theme_variables=None) -> Content:
 #: column's width, in row order — the workspaces listing's own
 #: shape. The workspace's own page names the workspace in its
 #: status line, so the rows spend no column on it. The fixed
-#: widths hold an 80-column terminal: the widest spec
-#: (``-L 0.0.0.0:2201:localhost:22``) clips its middle at the
-#: SPEC minimum and reads whole on a wider one.
+#: widths hold an 80-column terminal: the widest specs (a full
+#: IPv6 bind, ``-L [::1]:2201:localhost:22``, brackets and all)
+#: clip their middle at the SPEC minimum and read whole on a
+#: wider one.
 PROXY_COLUMNS = (
     ("SPEC", 28),
     ("LABEL", 10),
