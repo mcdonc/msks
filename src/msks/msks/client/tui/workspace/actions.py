@@ -172,7 +172,7 @@ PAGE_ACTIONS = (
         "decide holds and review rules",
         "configure",
     ),
-    PageAction("edit", "Settings", "sizes and topology", "configure"),
+    PageAction("edit", "Edit", "sizes and topology", "configure"),
     PageAction(
         "mounts",
         "Mounts",

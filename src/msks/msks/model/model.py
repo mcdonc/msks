@@ -590,6 +590,35 @@ class Model:
                 return None
             return proxy_dict(row)
 
+    async def update_proxy(
+        self,
+        workspace_id: str,
+        proxy_id: int,
+        direction: str,
+        listen_host: str | None,
+        listen_port: int,
+        target_host: str | None,
+        target_port: int,
+        label: str | None = None,
+    ) -> dict | None:
+        """Rewrite one proxy row (#890); None when the workspace
+        does not own it. The caller has validated the fields
+        against the direction's rules; the row is replaced whole,
+        the listener swap is the caller's."""
+        maker = sessionmaker_for(self.engine())
+        async with maker() as session:
+            row = await session.get(WorkspaceProxy, proxy_id)
+            if row is None or row.workspace_id != workspace_id:
+                return None
+            row.direction = direction
+            row.listen_host = listen_host
+            row.listen_port = listen_port
+            row.target_host = target_host
+            row.target_port = target_port
+            row.label = label
+            await session.commit()
+            return proxy_dict(row)
+
     async def delete_proxy(self, workspace_id: str, proxy_id: int) -> bool:
         """Remove one proxy row; False when the workspace does not
         own it."""

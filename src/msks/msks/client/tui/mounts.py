@@ -38,7 +38,7 @@ from textual.widgets import (
 from ..workspaces import mount_spec
 from .consent_ui import flash_safe
 from .detail import status_line
-from .forms import FormSelect, FormWalk
+from .forms import FormSelect, SeededForm
 from .rows import (
     COLUMN_GAP,
     cell_pad,
@@ -188,7 +188,7 @@ def form_note(verb: str) -> str:
     )
 
 
-class MountFormScreen(FormWalk, ModalScreen[dict | None]):
+class MountFormScreen(SeededForm):
     """The mount form (#886): the proxy add form's shape over the
     mount's own fields — the workspace fixed at the page that
     opened it, the host path, the guest path, and the mode. The
@@ -196,26 +196,8 @@ class MountFormScreen(FormWalk, ModalScreen[dict | None]):
     parser, so a refusal here names itself on the note in the
     same words the command prints and the daemon never sees a
     half-parsed body. An entry that lands dismisses with it; the
-    pushing editor owns the exchange."""
-
-    # The walk's keys: named here, not on FormWalk — Textual
-    # merges BINDINGS from DOMNode bases alone (the mixin's
-    # note records the rule).
-    BINDINGS = [
-        Binding("up", "walk_previous", show=False),
-        Binding("down", "walk_next", show=False),
-        Binding("escape", "cancel", "Cancel", show=False),
-        Binding("q", "cancel", show=False),
-    ]
-
-    def __init__(self, scope: dict, submitted, seed: dict | None = None):
-        super().__init__(submitted)
-        self.scope = scope
-        # The row being edited, None on the add path — the seed
-        # and the verb it picks. Not ``mount``: the name is the
-        # DOM's own (Widget.mount), and a screen that shadows it
-        # breaks the tree that composes it.
-        self.seed = seed
+    pushing editor owns the exchange. The walk's keys and the
+    edit seed live on the shared :class:`SeededForm` base."""
 
     def compose(self) -> ComposeResult:
         seeded = self.seed or {}

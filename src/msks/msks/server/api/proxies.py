@@ -1,6 +1,6 @@
-"""The workspace proxy routes (#807, #808): create, list, and
-remove the persisted forward and remote TCP proxies, with each
-row's live status.
+"""The workspace proxy routes (#807, #808, #890): create,
+list, update, and remove the persisted forward and remote TCP
+proxies, with each row's live status.
 
 Routes stay thin: the model layer owns the rows, the proxy
 subsystem owns the listeners, and the net manager owns the
@@ -212,6 +212,100 @@ def router(app, hub) -> APIRouter:
             # The answer the create reads back carries the note a
             # later listing would show, not the pre-swap snapshot.
             live = with_live_status(app.state.proxies, created)
+        return live
+
+    @api.patch(
+        "/api/v1/workspaces/{workspace_id}/proxies/{proxy_id}",
+        dependencies=[Depends(require_token)],
+    )
+    async def update_proxy(
+        workspace_id: str, proxy_id: int, body: ProxyCreate
+    ) -> dict:
+        """Rewrite one proxy row (#890) — the create's own body,
+        the create's own gates: the direction's host fields, and
+        a bind another row holds (the row being edited never
+        counts against itself). The listener swap is the delete
+        and the create back to back: the old bind closes, its
+        admission goes with it, the fresh row records, and a
+        running workspace takes the new listener at once."""
+        row = await workspace_or_404(app, workspace_id)
+        workspace_id = row["id"]
+        if not row.get("egress"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"workspace {workspace_id} has no NIC "
+                    "(created without egress)"
+                ),
+            )
+        refusal = direction_refusal(body)
+        if refusal is not None:
+            raise HTTPException(status_code=400, detail=refusal)
+        proxy = await app.state.model.get_proxy(workspace_id, proxy_id)
+        if proxy is None:
+            raise HTTPException(status_code=404, detail="no such proxy")
+        holder = conflicting_row(
+            await app.state.model.list_proxies(), body, workspace_id
+        )
+        if holder is not None and holder["id"] != proxy_id:
+            raise HTTPException(
+                status_code=409, detail=conflict_detail(holder, body)
+            )
+        attachment = app.state.net.attachment(workspace_id)
+        await app.state.proxies.stop_one(proxy_id)
+        if proxy["direction"] == "remote" and attachment is not None:
+            # The old bind's admission leaves with its listener —
+            # the delete's own step, ahead of the row's rewrite.
+            await app.state.net.refresh_proxies(workspace_id)
+        updated = await app.state.model.update_proxy(
+            workspace_id,
+            proxy_id,
+            body.direction,
+            (
+                body.listen_host or DEFAULT_LISTEN_HOST
+                if body.direction == "forward"
+                else None
+            ),
+            body.listen_port,
+            (
+                body.target_host or DEFAULT_TARGET_HOST
+                if body.direction == "remote"
+                else None
+            ),
+            body.target_port,
+            body.label,
+        )
+        if updated is None:
+            # The row left between the read and the write (a
+            # remove landing inside the exchange) — a window the
+            # suite cannot arrange deterministically.
+            raise HTTPException(  # pragma: no cover
+                status_code=404, detail="no such proxy"
+            )
+        live = await app.state.proxies.start_one(updated, attachment)
+        await hub.publish(
+            "proxy.updated",
+            {
+                "id": workspace_id,
+                "proxy": proxy_id,
+                "direction": updated["direction"],
+                "listen_port": updated["listen_port"],
+                "target_port": updated["target_port"],
+            },
+        )
+        if body.direction == "remote" and live["status"] == "listening":
+            # The create's own closing step, word for word: only a
+            # live bind gains an admission, and a failed swap
+            # leaves the row and its listener standing with the
+            # note the status carries.
+            try:
+                await app.state.net.refresh_proxies(workspace_id)
+                app.state.proxies.clear_admission(proxy_id)
+            except Exception as exc:
+                app.state.proxies.note_admission(
+                    proxy_id, f"admission refresh failed: {exc}"
+                )
+            live = with_live_status(app.state.proxies, updated)
         return live
 
     @api.delete(

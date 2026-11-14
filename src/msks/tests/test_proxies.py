@@ -336,6 +336,22 @@ async def test_proxy_rows_crud_and_cascade(tmp_path: Path) -> None:
         k: v for k, v in row.items() if k != "created_at"
     }
     assert await model.get_proxy("ws-b", row["id"]) is None
+    # The update rewrites the row whole (#890); a workspace that
+    # does not own the row decides nothing.
+    rewritten = await model.update_proxy(
+        "ws-a", row["id"], "remote", None, 9200, "localhost", 9200, "db"
+    )
+    assert rewritten["direction"] == "remote"
+    assert rewritten["listen_host"] is None
+    assert rewritten["listen_port"] == 9200
+    assert rewritten["target_host"] == "localhost"
+    assert rewritten["label"] == "db"
+    assert (
+        await model.update_proxy(
+            "ws-b", row["id"], "forward", None, 2202, None, 22, None
+        )
+        is None
+    )
     assert await model.delete_proxy("ws-b", row["id"]) is False
     assert await model.delete_proxy("ws-a", row["id"]) is True
     assert await model.list_proxies("ws-a") == []

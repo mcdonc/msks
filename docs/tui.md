@@ -265,11 +265,15 @@ stands paints itself without a keypress.
 
 `a` opens the add form: the workspace (the page's own, shown as its
 name), the direction (`forward (-L)` or `reverse (-R)`), the spec in
-the same grammar `msks proxy add` reads, and a label. A spec the CLI's own parser refuses keeps the
+the same grammar `msks proxy add` reads, and a label. `e`, Enter, or
+a click on the focused row opens the same form seeded with the row
+— its direction, its spec, and its label — and saves the row
+whole; the daemon closes the old listener and binds the new spec at
+once. A spec the CLI's own parser refuses keeps the
 form standing with the rule on its note line — a `-L` spec naming a
-host besides the workspace itself says so and points at `-R`. `D` or
-Enter removes the focused row after a confirmation; the listener
-closes at once. `q` or Escape returns to the workspace page.
+host besides the workspace itself says so and points at `-R`. `D`
+removes the focused row after a confirmation; the listener closes at
+once. `q` or Escape returns to the workspace page.
 
 ### The images page
 
@@ -347,7 +351,7 @@ what verdicts and rules cover.
 
 ### The edit page
 
-The page's **Settings** action opens the edit dialog: the create
+The page's **Edit** action opens the edit dialog: the create
 form's layout, seeded with the workspace's current values. ![The edit dialog: the sizes and topology, prefilled](screens/edit-dialog.svg)
 
 The sizes and topology (root, home, vcpus, memory) are editable. Submit

@@ -216,6 +216,7 @@ class FakeData:
         self.proxy_calls: list[tuple] = []
         self.proxy_refusal: str | None = None
         self.proxy_removes: list[tuple] = []
+        self.proxy_updates: list[tuple] = []
         # The detail strip's surface (#849): the capacity report's
         # per-workspace rows and the fetches the list's refresh
         # cadence makes against it.
@@ -279,6 +280,34 @@ class FakeData:
         }
         self.proxy_rows.append(dict(row))
         return dict(row)
+
+    async def update_proxy(
+        self, workspace_id: str, proxy_id: int, body: dict
+    ) -> dict:
+        """One proxy update (#890) — recorded; a refusal a test
+        armed raises the way the daemon's would, and an update
+        that lands rewrites the row in every later listing and
+        answers it with its live status the way the daemon's
+        does."""
+        self.proxy_updates.append((workspace_id, proxy_id, dict(body)))
+        if self.proxy_refusal is not None:
+            raise SystemExit(f"msks: 409: {self.proxy_refusal}")
+        if "proxy-update" in self.fail:
+            raise RuntimeError(self.refusal)
+        fresh = {
+            "id": proxy_id,
+            "workspace_id": workspace_id,
+            "status": "listening",
+            "reason": None,
+            **body,
+        }
+        self.proxy_rows = [
+            fresh
+            if (r["workspace_id"], r["id"]) == (workspace_id, proxy_id)
+            else r
+            for r in self.proxy_rows
+        ]
+        return dict(fresh)
 
     async def remove_proxy(self, workspace_id: str, proxy_id: int) -> dict:
         """One proxy remove (#809) — recorded, the row gone from
@@ -2130,7 +2159,7 @@ async def test_the_page_opens_the_prefilled_edit_dialog(
     async with app.run_test() as pilot:
         await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 8)
-        assert "Settings" in action_text(app, 2)
+        assert "Edit" in action_text(app, 2)
         screen = await open_edit(pilot, app)
         assert isinstance(screen, WorkspaceForm)
         assert isinstance(screen, EditScreen)
@@ -4809,7 +4838,7 @@ async def test_a_rebuild_over_a_standing_list_keeps_focus(
         rows = page.actions_widget()
         assert rows is not None and rows is not before  # a fresh list
         assert rows.index == 4  # the edit row kept by its key
-        assert "Settings" in action_text(app, 2)
+        assert "Edit" in action_text(app, 2)
         assert not rows.children[rows.index].disabled  # never a caption
 
 
@@ -4976,7 +5005,7 @@ async def test_the_page_follows_a_status_moved_elsewhere(
         # page's per-second read can learn it.
         data.rows[0] = {**data.rows[0], "status": "running"}
         await wait_for(lambda: "workspace is running" in action_text(app, 6))
-        assert action_text(app, 7).strip() == "Stop     power it off"
+        assert action_text(app, 7).strip() == "Stop    power it off"
         assert "running" in header_text(app)
 
 
@@ -5072,7 +5101,7 @@ def test_action_rows_paint_two_tones() -> None:
     column = max(len(spec.name) for spec in PAGE_ACTIONS)
     start = 2 + column + 1
     shell = action_content(PAGE_ACTIONS[0], "running", {}, focused=True)
-    assert str(shell) == "▸ Shell    ssh to this workspace"
+    assert str(shell) == "▸ Shell   ssh to this workspace"
     assert str(shell).index("ssh to this workspace") == start
     assert Span(2, 7, "$text bold") in shell.spans
     assert Span(start, start + 21, muted) in shell.spans
@@ -5080,11 +5109,11 @@ def test_action_rows_paint_two_tones() -> None:
     # workspace itself) and both power rows carry their
     # descriptions (#470 W2); Start keeps its bold beside it.
     shell_off = action_content(PAGE_ACTIONS[0], "stopped", {}, False)
-    assert str(shell_off) == "  Shell    ssh to this workspace"
+    assert str(shell_off) == "  Shell   ssh to this workspace"
     assert Span(2, 7, "$text bold") in shell_off.spans
     assert Span(start, start + 21, muted) in shell_off.spans
     start_row = action_content(PAGE_ACTIONS[6], "stopped", {}, focused=False)
-    assert str(start_row) == "  Start    boot the workspace"
+    assert str(start_row) == "  Start   boot the workspace"
     assert str(start_row).index("boot the workspace") == start
     assert Span(2, 7, "$text bold") in start_row.spans
     assert Span(start, start + 18, muted) in start_row.spans
@@ -5093,16 +5122,16 @@ def test_action_rows_paint_two_tones() -> None:
     # emphasis sits).
     edit = action_content(PAGE_ACTIONS[2], "stopped", {}, focused=True)
     mounts = action_content(PAGE_ACTIONS[3], "stopped", {}, focused=False)
-    assert str(mounts) == "  Mounts   host shares at guest paths"
+    assert str(mounts) == "  Mounts  host shares at guest paths"
     assert str(mounts).index("host shares at guest paths") == start
-    # The widest name (Settings, after the row renames) takes
-    # the column whole — its description follows the column's
-    # single space alone.
-    assert str(edit) == "▸ Settings sizes and topology"
+    # The widest name (Proxies, after the Settings row's rename
+    # to Edit) takes the column whole — its description follows
+    # the column's single space alone.
+    assert str(edit) == "▸ Edit    sizes and topology"
     assert str(edit).index("sizes and topology") == start
     assert not any(span.style == "$text bold" for span in edit.spans)
     stop = action_content(PAGE_ACTIONS[7], "stopped", {}, False)
-    assert str(stop) == "  Stop     workspace is stopped"
+    assert str(stop) == "  Stop    workspace is stopped"
     assert str(stop).index("workspace is stopped") == start
     assert Span(2, 6, muted) in stop.spans
     assert Span(start, start + 20, muted) in stop.spans
@@ -7807,7 +7836,7 @@ async def test_the_quick_keys_open_their_rows_destinations(
     async with app.run_test() as pilot:
         await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 8)
-        # t: the edit dialog, the Settings row's destination.
+        # t: the edit dialog, the Edit row's destination.
         await press_until(
             pilot, "t", lambda: isinstance(app.screen, EditScreen)
         )

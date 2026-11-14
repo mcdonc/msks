@@ -411,6 +411,22 @@ class TuiData:
             json_body=body,
         )
 
+    async def update_proxy(
+        self, workspace_id: str, proxy_id: int, body: dict
+    ) -> dict:
+        """PATCH one proxy row (#890) — the proxies page's edit
+        form: the row rewritten whole, the answer carries the row
+        with its live status."""
+        return await api_call(
+            "PATCH",
+            env_url(),
+            env_token(),
+            f"/api/v1/workspaces/{workspace_id}/proxies/{proxy_id}",
+            transport=self.transport,
+            ssl_ctx=shared_ssl(),
+            json_body=body,
+        )
+
     async def remove_proxy(self, workspace_id: str, proxy_id: int) -> dict:
         """DELETE one proxy row (#809) — the proxies page's remove,
         the same exchange ``msks proxy rm`` makes: the listener

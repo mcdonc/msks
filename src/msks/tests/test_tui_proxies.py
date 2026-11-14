@@ -11,11 +11,12 @@ import json
 
 from msks.client.tui.proxies import (
     ProxiesScreen,
-    ProxyAddScreen,
+    ProxyFormScreen,
     ProxyLink,
     pair_text,
     proxies_line,
     proxy_row_content,
+    seed_spec,
     spec_text,
     status_text,
 )
@@ -164,6 +165,27 @@ def test_the_row_content_paints_the_status_cell() -> None:
     assert any(span.style == "$error" for span in line.spans)
     stopped = proxy_row(status="stopped")
     assert proxy_row_content(stopped).spans == []
+
+
+def test_seed_spec_strips_the_direction_letter() -> None:
+    """The form's seeded spec is the listing's own text with the
+    direction's letter aside — the select carries the letter, and
+    the field's text parses back through the same grammar."""
+    assert seed_spec(proxy_row()) == "8888:localhost:8889"
+    assert (
+        seed_spec(proxy_row(listen_host="0.0.0.0"))
+        == "0.0.0.0:8888:localhost:8889"
+    )
+    assert (
+        seed_spec(
+            proxy_row(
+                direction="remote",
+                target_host="localhost",
+                target_port=8882,
+            )
+        )
+        == "8888:localhost:8882"
+    )
 
 
 # -- the subscriber link ---------------------------------------------------
@@ -328,7 +350,7 @@ async def test_the_page_adds_through_the_form(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await open_proxies(pilot, app)
         await pilot.press("a")
-        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
         # The scope fixes the workspace: the field is the name it
         # reads, and the walk starts at the spec.
         form = app.screen
@@ -339,7 +361,7 @@ async def test_the_page_adds_through_the_form(monkeypatch) -> None:
         form.query_one("#field-proxy-label", Input).value = "ssh"
         await pilot.press("enter")  # the label field's submit walks on
         await press_until(
-            pilot, "enter", lambda: not isinstance(app.screen, ProxyAddScreen)
+            pilot, "enter", lambda: not isinstance(app.screen, ProxyFormScreen)
         )
         await wait_for(
             lambda: (
@@ -375,19 +397,21 @@ async def test_the_add_form_cancels_by_key(monkeypatch) -> None:
         await open_proxies(pilot, app)
         await wait_for(lambda: proxy_children(app) == 1)
         await pilot.press("a")
-        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
         await press_until(
-            pilot, "escape", lambda: not isinstance(app.screen, ProxyAddScreen)
+            pilot,
+            "escape",
+            lambda: not isinstance(app.screen, ProxyFormScreen),
         )
         assert data.proxy_calls == []
         await pilot.press("a")
-        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
         # q cancels from the button row (an input with focus
         # takes the letter as text — the walk's own rule).
         app.screen.query_one("#do-cancel").focus()
         await pilot.pause()
         await press_until(
-            pilot, "q", lambda: not isinstance(app.screen, ProxyAddScreen)
+            pilot, "q", lambda: not isinstance(app.screen, ProxyFormScreen)
         )
         assert data.proxy_calls == []
         assert proxy_children(app) == 1
@@ -406,7 +430,7 @@ async def test_the_form_refuses_a_foreign_host_home(
     async with app.run_test() as pilot:
         await open_proxies(pilot, app)
         await pilot.press("a")
-        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
         form = app.screen
         form.query_one("#field-spec", Input).value = "2201:db.internal:22"
         form.query_one("#do-add").press()
@@ -426,12 +450,12 @@ async def test_the_form_picks_the_remote_parser(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await open_proxies(pilot, app)
         await pilot.press("a")
-        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
         form = app.screen
         form.query_one("#field-direction", Select).value = "-R"
         form.query_one("#field-spec", Input).value = "9200:localhost:9200"
         await press_until(
-            pilot, "enter", lambda: not isinstance(app.screen, ProxyAddScreen)
+            pilot, "enter", lambda: not isinstance(app.screen, ProxyFormScreen)
         )
         await wait_for(lambda: len(data.proxy_calls) == 1)
         assert data.proxy_calls[0][1] == {
@@ -696,12 +720,12 @@ async def test_a_markup_carrying_spec_refusal_crashes_nothing(
     async with app.run_test() as pilot:
         await open_proxies(pilot, app)
         await pilot.press("a")
-        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
         form = app.screen
         form.query_one("#field-spec", Input).value = "2201:local[/host:22"
         form.query_one("#do-add").press()
         await pilot.pause()
-        assert isinstance(app.screen, ProxyAddScreen)  # still standing
+        assert isinstance(app.screen, ProxyFormScreen)  # still standing
         note = str(form.query_one("#form-note", Static).content)
         assert "use -R" in note and "local" in note
 
@@ -718,7 +742,7 @@ async def test_the_walk_crosses_the_direction_select(monkeypatch) -> None:
     async with app.run_test() as pilot:
         await open_proxies(pilot, app)
         await pilot.press("a")
-        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
         form = app.screen
         form.query_one("#field-direction").focus()
         await pilot.pause()
@@ -743,7 +767,7 @@ async def test_a_blank_spec_names_the_one_required_field(
     async with app.run_test() as pilot:
         await open_proxies(pilot, app)
         await pilot.press("a")
-        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
         form = app.screen
         form.query_one("#do-add").press()
         await pilot.pause()
@@ -752,7 +776,7 @@ async def test_a_blank_spec_names_the_one_required_field(
         )
         form.query_one("#do-cancel").press()
         await pilot.pause()
-        assert not isinstance(app.screen, ProxyAddScreen)
+        assert not isinstance(app.screen, ProxyFormScreen)
         assert data.proxy_calls == []
 
 
@@ -807,11 +831,11 @@ async def test_a_refused_create_flashes_on_the_status_line(
     async with app.run_test() as pilot:
         await open_proxies(pilot, app)
         await pilot.press("a")
-        await wait_for(lambda: isinstance(app.screen, ProxyAddScreen))
+        await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
         form = app.screen
         form.query_one("#field-spec", Input).value = "2201:localhost:22"
         await press_until(
-            pilot, "enter", lambda: not isinstance(app.screen, ProxyAddScreen)
+            pilot, "enter", lambda: not isinstance(app.screen, ProxyFormScreen)
         )
         await wait_for(lambda: "add failed" in proxy_status(app))
         assert proxy_children(app) == 0
@@ -905,8 +929,8 @@ async def test_the_data_seam_makes_the_daemons_exchanges(
     monkeypatch,
 ) -> None:
     """The page's data seam rides the daemon's own routes: the
-    workspace's listing, the create, and the remove — one
-    MockTransport exchange each."""
+    workspace's listing, the create, the update, and the remove —
+    one MockTransport exchange each."""
     import httpx
     from msks.client.tui import data as data_mod
 
@@ -919,6 +943,11 @@ async def test_the_data_seam_makes_the_daemons_exchanges(
         if request.method == "POST":
             return httpx.Response(
                 200, json=proxy_row(listen_port=2201, target_port=22)
+            )
+        if request.method == "PATCH":
+            return httpx.Response(
+                200,
+                json=proxy_row(listen_port=2301, target_port=23, label="web"),
             )
         return httpx.Response(
             200, json={"id": 1, "workspace_id": WS, "removed": True}
@@ -934,10 +963,196 @@ async def test_the_data_seam_makes_the_daemons_exchanges(
         {"direction": "forward", "listen_port": 2201, "target_port": 22},
     )
     assert created["status"] == "listening"
+    updated = await data.update_proxy(
+        WS,
+        1,
+        {
+            "direction": "forward",
+            "listen_port": 2301,
+            "target_port": 23,
+            "label": "web",
+        },
+    )
+    assert updated["label"] == "web"
     removed = await data.remove_proxy(WS, 1)
     assert removed["removed"] is True
     assert seen == [
         ("GET", f"/api/v1/workspaces/{WS}/proxies"),
         ("POST", f"/api/v1/workspaces/{WS}/proxies"),
+        ("PATCH", f"/api/v1/workspaces/{WS}/proxies/1"),
         ("DELETE", f"/api/v1/workspaces/{WS}/proxies/1"),
     ]
+
+
+# -- the edit form (#890) ---------------------------------------------------
+
+
+async def test_the_page_edits_the_focused_row(monkeypatch) -> None:
+    """``e`` opens the add form's own shape seeded with the focused
+    row — its direction, its spec, its label — the Save button and
+    the edit note naming the path; a changed spec lands through
+    the data seam and the page refreshes with the flash naming
+    the saved row."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    data.proxy_rows = [
+        proxy_row(
+            id=2,
+            direction="remote",
+            listen_port=8881,
+            target_host="localhost",
+            target_port=8882,
+            label="db",
+        )
+    ]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app)
+        await wait_for(lambda: proxy_children(app) == 1)
+        await pilot.press("e")
+        await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
+        form = app.screen
+        # The seed: the row's direction, its spec in the CLI's own
+        # grammar, its label — and the verb on the note.
+        assert str(form.query_one("#form-note", Static).content).startswith(
+            "edit a proxy"
+        )
+        assert form.query_one("#field-direction", Select).value == "-R"
+        assert form.query_one("#field-spec", Input).value == (
+            "8881:localhost:8882"
+        )
+        assert form.query_one("#field-proxy-label", Input).value == "db"
+        assert str(form.query_one("#do-add").label) == "Save"
+        form.query_one("#field-spec", Input).value = "9200:localhost:9200"
+        await pilot.press("enter")
+        await press_until(
+            pilot, "enter", lambda: not isinstance(app.screen, ProxyFormScreen)
+        )
+        await wait_for(
+            lambda: (
+                data.proxy_updates
+                == [
+                    (
+                        WS,
+                        2,
+                        {
+                            "direction": "remote",
+                            "listen_port": 9200,
+                            "target_host": "localhost",
+                            "target_port": 9200,
+                            "label": "db",
+                        },
+                    )
+                ]
+            )
+        )
+        await wait_for(
+            lambda: "saved -R 9200:localhost:9200" in proxy_status(app)
+        )
+
+
+async def test_enter_or_a_click_on_a_row_edits_it(monkeypatch) -> None:
+    """Enter on the focused row opens the edit form (the list's
+    own Selected — the remove never rode Enter again), and a click
+    on a row arrives the same way, seeded with the row."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    data.proxy_rows = [proxy_row(label="ssh")]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app)
+        await wait_for(lambda: proxy_children(app) == 1)
+        await pilot.press("enter")
+        await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
+        form = app.screen
+        assert form.query_one("#field-spec", Input).value == (
+            "8888:localhost:8889"
+        )
+        assert form.query_one("#field-direction", Select).value == "-L"
+        await pilot.press("escape")
+        await wait_for(lambda: isinstance(app.screen, ProxiesScreen))
+        # A click on the row selects it — the same Selected the
+        # Enter press made.
+        await pilot.click(app.screen.rows_widget().children[0])
+        await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
+        assert app.screen.query_one("#field-spec", Input).value == (
+            "8888:localhost:8889"
+        )
+        assert data.proxy_updates == []  # nothing landed yet
+
+
+async def test_the_edit_form_cancels_by_key(monkeypatch) -> None:
+    """Escape dismisses the edit form — the page keeps its rows
+    and the daemon sees no update."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    data.proxy_rows = [proxy_row()]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app)
+        await wait_for(lambda: proxy_children(app) == 1)
+        await pilot.press("e")
+        await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
+        await press_until(
+            pilot,
+            "escape",
+            lambda: not isinstance(app.screen, ProxyFormScreen),
+        )
+        assert data.proxy_updates == []
+        assert proxy_children(app) == 1
+
+
+async def test_a_refused_edit_flashes_on_the_status_line(
+    monkeypatch,
+) -> None:
+    """A refused edit — the daemon's named 409 among them — flashes
+    on the page's status line; the listing stands."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    data.proxy_rows = [proxy_row()]
+    data.proxy_refusal = (
+        "a forward proxy on port 2201 already exists (workspace "
+        f"{WS}, proxy 7)"
+    )
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app)
+        await wait_for(lambda: proxy_children(app) == 1)
+        await pilot.press("e")
+        await wait_for(lambda: isinstance(app.screen, ProxyFormScreen))
+        form = app.screen
+        form.query_one("#field-spec", Input).value = "2201:localhost:22"
+        await press_until(
+            pilot, "enter", lambda: not isinstance(app.screen, ProxyFormScreen)
+        )
+        await wait_for(lambda: "edit failed" in proxy_status(app))
+        assert data.proxy_updates == [
+            (
+                WS,
+                1,
+                {
+                    "direction": "forward",
+                    "listen_port": 2201,
+                    "target_port": 22,
+                },
+            )
+        ]
+
+
+async def test_the_page_names_an_unfocused_edit(monkeypatch) -> None:
+    """``e`` with nothing focused (the empty page) names itself on
+    the status line and calls nothing."""
+    scripted_link(monkeypatch, [])
+    quiet_link(monkeypatch)
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_proxies(pilot, app)
+        await wait_for(lambda: proxy_children(app) == 0)
+        await pilot.press("e")
+        await wait_for(lambda: "no proxy focused" in proxy_status(app))
+        assert data.proxy_updates == []

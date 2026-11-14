@@ -84,7 +84,8 @@ for example. A `listening` remote row whose admission swap failed carries
 the cause the same way. The listener serves, and the guest cannot reach it.
 
 Each transition publishes an event on the daemon's hub (`proxy.created`,
-`proxy.listening`, `proxy.failed`, `proxy.closed`, `proxy.removed`). The TUI
+`proxy.updated`, `proxy.listening`, `proxy.failed`, `proxy.closed`,
+`proxy.removed`). The TUI
 subscribes, so its proxy surfaces move without a keypress.
 
 ## Managing proxies from the CLI
@@ -185,8 +186,10 @@ grammar, the label, and the live status. Press `a` to add one.
 
 The form holds the direction (`forward (-L)` or `reverse (-R)`), the spec in
 the same grammar `msks proxy add` reads, and a label. A spec the parser refuses
-keeps the form standing, with the rule on the note line. `D` (or Enter, on the
-focused row) removes it behind a confirmation. `q` or Escape returns to the
+keeps the form standing, with the rule on the note line. `e` or Enter opens the
+same form seeded with the focused row (its direction, its spec, and its label)
+and saves the row whole; the daemon swaps the listener to the new spec at once.
+`D` removes the focused row behind a confirmation. `q` or Escape returns to the
 workspace page.
 
 The page re-reads the listing every five seconds and on every proxy
