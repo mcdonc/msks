@@ -18,6 +18,13 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **Workspace page block (#881).** The page's whole content —
+  the header lines, the status lines, and the action panel —
+  sits in one 80-column block, centered on a wider terminal, so
+  the page reads on a single axis at any width. At 80 columns
+  and under the layout is unchanged. The page's meta line keeps
+  the fixed clip past the block; the egress consent page, which
+  fills the terminal, still widens its own meta line.
 - **Workspace page action rows (#882).** The name and the
   description now sit in two aligned columns: every description
   starts at the same offset across the use, configure, and power

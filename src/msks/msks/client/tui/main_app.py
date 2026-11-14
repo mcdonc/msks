@@ -144,6 +144,8 @@ class MsksTuiApp(App):
     #consent, #mounts, #proxy-line { height: 1; padding: 0 1;
                         text-wrap: nowrap;
                         text-overflow: ellipsis; }
+    WorkspaceScreen { align: center top; }
+    #page-body { width: 80; max-width: 100%; height: 1fr; }
     #page { height: 1fr; align: center middle; }
     #actions { width: 64; height: auto; max-width: 100%;
               max-height: 100%; background: $panel;

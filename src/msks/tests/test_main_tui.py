@@ -1877,7 +1877,12 @@ async def test_the_page_centers_its_action_block(monkeypatch) -> None:
         await wait_for(lambda: action_children(app) == 8)
         await pilot.pause()  # lay the centered block out
         page = app.screen.query_one("#page")
+        body = app.screen.query_one("#page-body")
         actions = app.screen.query_one("#actions")
+        # At the 80-column frame the page's block fills the width
+        # (#881): the small window keeps its full-width layout.
+        assert body.region.width == 80
+        assert body.region.x == 0
         assert actions.region.width == 64
         assert actions.region.x == 8  # centered at 80 columns
         # The block sits in the middle of the pane, not packed at
@@ -1895,11 +1900,16 @@ async def test_the_page_centers_its_action_block(monkeypatch) -> None:
         assert "caption" in actions.children[0].classes
 
 
-async def test_a_wider_terminal_widens_the_meta_line(monkeypatch) -> None:
-    """#752: the meta line's budgets follow the terminal's width
-    — a resize repaints the line at once, the whole id, image,
-    and host reading on the wider frame, the fixed clip back at
-    80 columns."""
+async def test_a_wider_terminal_caps_the_page_to_one_block(
+    monkeypatch,
+) -> None:
+    """#881: the page's whole content — the header lines, the
+    status lines, and the action panel — holds one block capped
+    at 80 cells, centered on a wider terminal, so the page reads
+    on a single axis at any width. The meta line's budget caps
+    with the block (#752's growth past the frame is the consent
+    page's alone, a page that fills its terminal), and the
+    80-column window keeps the full-width layout."""
     scripted_link(monkeypatch, [rules_frame()])
     data = FakeData(
         [
@@ -1915,17 +1925,28 @@ async def test_a_wider_terminal_widens_the_meta_line(monkeypatch) -> None:
     async with app.run_test(size=(80, 24)) as pilot:
         await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 8)
+        body = app.screen.query_one("#page-body")
+        header = app.screen.query_one("#header")
         meta = app.screen.query_one("#header-meta", Static)
-        assert "…" in str(meta.content)
+        assert body.region.width == 80
+        assert body.region.x == 0  # the small window fills the width
+        assert "…" in str(meta.content)  # the fixed clip at the frame
         await pilot.resize_terminal(120, 24)
         await pilot.pause()
-        text = str(meta.content)
-        assert "a1b2c3d4e5f6g7h8" in text
-        assert "debian-testing:13.6" in text
-        assert "workstation-3.lab" in text
-        assert "…" not in text
+        # The block centers as one unit: the header lines and the
+        # action panel share its edges.
+        assert body.region.width == 80
+        assert body.region.x == 20
+        assert header.region.x == 20
+        actions = app.screen.query_one("#actions")
+        assert actions.region.width == 64
+        assert actions.region.x == 28  # centered inside the block
+        # The meta line's budget caps with the block: the fixed
+        # clip stands at any width past it.
+        assert "…" in str(meta.content)
         await pilot.resize_terminal(80, 24)
         await pilot.pause()
+        assert body.region.x == 0
         assert "…" in str(meta.content)
 
 
@@ -2604,7 +2625,7 @@ async def test_the_new_terminal_action_spawns_an_ssh_child(
     async with app.run_test() as pilot:
         await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 8)
-        assert "ssh in this terminal" in action_text(app, 0)
+        assert "ssh to this workspace" in action_text(app, 0)
         await press_until(pilot, "enter", lambda: len(spawned) == 1)
         assert spawned[0] == [
             "kitty",
@@ -5047,17 +5068,17 @@ def test_action_rows_paint_two_tones() -> None:
     column = max(len(spec.name) for spec in PAGE_ACTIONS)
     start = 2 + column + 1
     shell = action_content(PAGE_ACTIONS[0], "running", {}, focused=True)
-    assert str(shell) == "▸ Shell    ssh in this terminal"
-    assert str(shell).index("ssh in this terminal") == start
+    assert str(shell) == "▸ Shell    ssh to this workspace"
+    assert str(shell).index("ssh to this workspace") == start
     assert Span(2, 7, "$text bold") in shell.spans
-    assert Span(start, start + 20, muted) in shell.spans
+    assert Span(start, start + 21, muted) in shell.spans
     # Stopped, the shell stays live (#479 — the session boots the
     # workspace itself) and both power rows carry their
     # descriptions (#470 W2); Start keeps its bold beside it.
     shell_off = action_content(PAGE_ACTIONS[0], "stopped", {}, False)
-    assert str(shell_off) == "  Shell    ssh in this terminal"
+    assert str(shell_off) == "  Shell    ssh to this workspace"
     assert Span(2, 7, "$text bold") in shell_off.spans
-    assert Span(start, start + 20, muted) in shell_off.spans
+    assert Span(start, start + 21, muted) in shell_off.spans
     start_row = action_content(PAGE_ACTIONS[6], "stopped", {}, focused=False)
     assert str(start_row) == "  Start    boot the workspace"
     assert str(start_row).index("boot the workspace") == start

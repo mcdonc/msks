@@ -163,7 +163,7 @@ PAGE_ACTIONS = (
     PageAction(
         ACTION_SHELL_WINDOW,
         "Shell",
-        "ssh in this terminal",
+        "ssh to this workspace",
         "use",
     ),
     PageAction(
