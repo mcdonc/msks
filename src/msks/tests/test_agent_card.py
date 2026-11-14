@@ -100,6 +100,17 @@ def test_the_agent_card_command_prints_the_card(
     assert capsys.readouterr().out == agentcard.AGENT_CARD_MD
 
 
+def test_the_card_teaches_the_session_identity_and_json_only_exits() -> None:
+    """The #877 corrections stay on the card: a harness that
+    knows only this text must learn that a session needs the
+    planted key's private half (the agent or
+    ``MSKSC_IDENTITY_FILE``), and that the status-mapped codes
+    3, 4, and 5 are the ``--json`` exits."""
+    card = agentcard.AGENT_CARD_MD
+    assert "MSKSC_IDENTITY_FILE" in card
+    assert "Rows 3, 4, and 5 hold under `--json`" in card
+
+
 def test_card_requested_wants_the_first_positional() -> None:
     """The exemption keys on the first positional token: no
     positional (a bare option scan) or a ``--`` barrier means no
