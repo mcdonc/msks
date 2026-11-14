@@ -6,6 +6,14 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Changed
+
+- **Workspace page action rows (#882).** The name and the
+  description now sit in two aligned columns: every description
+  starts at the same offset across the use, configure, and power
+  groups, and the em-dash separator is gone. A dimmed power row's
+  reason takes the description's column.
+
 ### Fixed
 
 - **`msks agent-card` (#877).** The card now says the exit codes

@@ -56,9 +56,10 @@ ACTION_CONSENT = "egress-consent"
 class PageAction(NamedTuple):
     """One fixed action row of the workspace page (#309, #367,
     #752): its kind, the name it paints, the muted description
-    behind the em dash (empty when the name stands alone), and
-    the group it belongs to — use, configure, or power — whose
-    name rides the muted caption row above the group's rows."""
+    in the row's description column (empty when the name stands
+    alone), and the group it belongs to — use, configure, or
+    power — whose name rides the muted caption row above the
+    group's rows."""
 
     kind: str
     name: str
@@ -82,34 +83,44 @@ def action_label(kind: str) -> str:
     )
 
 
+def name_column() -> int:
+    """The name column's width (#882): the widest name the page
+    paints, so every row's description starts at one offset
+    across the use, configure, and power groups."""
+    return max(len(spec.name) for spec in PAGE_ACTIONS)
+
+
 def dimmed_action_content(
     name: str, note: str, marker: str, muted: str
 ) -> Content:
     """A dimmed power row's paint (#367): the whole row muted,
-    its reason riding in the description's place."""
-    text = f"{marker} {name} — {note}"
-    offset = 2 + len(name)
+    its reason riding in the description's column (#882)."""
+    column = name_column()
+    text = f"{marker} {name:<{column}} {note}"
+    start = 2 + column + 1
     return Content(
         text,
-        [Span(2, offset, muted), Span(offset + 3, len(text), muted)],
+        [Span(2, 2 + len(name), muted), Span(start, len(text), muted)],
     )
 
 
 def live_action_content(
     name: str, desc: str, marker: str, muted: str, primary: bool
 ) -> Content:
-    """A live action row's paint (#367, #470 W1/S3, #752): the
-    name bold on the page's primary rows alone — the action the
-    current status permits — the description muted behind an em
-    dash (every live row carries one, #470 W2). Focus carries its
-    own cues: the list's highlight bar and the marker cell, so
-    bold answers one question only."""
-    text = f"{marker} {name} — {desc}"
-    offset = 2 + len(name)
+    """A live action row's paint (#367, #470 W1/S3, #752, #882):
+    the name in its column — bold on the page's primary rows
+    alone, the action the current status permits — the
+    description muted behind the column's single space, its left
+    edge one offset on every row (:func:`name_column` sizes the
+    column to the widest name the page paints). Focus carries
+    its own cues: the list's highlight bar and the marker cell,
+    so bold answers one question only."""
+    column = name_column()
+    text = f"{marker} {name:<{column}} {desc}"
     spans = []
     if primary:
-        spans.append(Span(2, offset, "$text bold"))
-    spans.append(Span(offset + 3, len(text), muted))
+        spans.append(Span(2, 2 + len(name), "$text bold"))
+    spans.append(Span(2 + column + 1, len(text), muted))
     return Content(text, spans)
 
 
