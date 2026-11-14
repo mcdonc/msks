@@ -40,6 +40,21 @@ from msks.server.hostsetup import cloud_hypervisor_assets
 from msks.settings import Settings, VmmSettings
 from msks.spec.version import __version__
 
+
+def patch_phase(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: object
+) -> None:
+    """Patch *name* on every doctor submodule that carries it.
+
+    The split package binds each probe and check in the submodule
+    that defines or imports it, so a patch on the package root
+    reaches nothing a check calls; walking SUBMODULES with
+    ``raising=False`` rebinds every copy the checks see."""
+    for sub in doctor_mod.SUBMODULES:
+        monkeypatch.setattr(sub, name, value, raising=False)
+    monkeypatch.setattr(doctor_mod, name, value, raising=False)
+
+
 # ---------------------------------------------------------------------------
 # Report types
 # ---------------------------------------------------------------------------
@@ -152,6 +167,7 @@ def test_the_table_bakes_this_machines_packages(
     Uname = collections.namedtuple("Uname", "machine")
     monkeypatch.setattr(doctor_mod.os, "uname", lambda: Uname("aarch64"))
     try:
+        importlib.reload(doctor_mod.hints)
         importlib.reload(doctor_mod)
         assert (
             doctor_mod.install_hint("qemu-kvm", "apk")
@@ -170,6 +186,7 @@ def test_the_table_bakes_this_machines_packages(
         # identity — compare strings or fields across that
         # boundary, never instances.
         monkeypatch.undo()
+        importlib.reload(doctor_mod.hints)
         importlib.reload(doctor_mod)
 
 
@@ -298,7 +315,7 @@ def test_check_binary_missing_names_use_and_hint(
     monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: None)
     # a host whose /usr/sbin really carries the tool must not
     # rescue the miss (the daemon-shaped extension stays out)
-    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
+    patch_phase(monkeypatch, "admin_dir_candidate", lambda name: None)
     result = check_binary(
         "mkisofs", ["mkisofs", "--version"], "apt", use="seed disks (#41)"
     )
@@ -314,7 +331,7 @@ def test_check_binary_missing_warns_when_graded(
     monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: None)
     # a host whose /usr/sbin really carries the tool must not
     # rescue the miss (the daemon-shaped extension stays out)
-    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
+    patch_phase(monkeypatch, "admin_dir_candidate", lambda name: None)
     result = check_binary(
         "ssh", ["ssh", "-V"], "apt", is_warning=True, use="debug"
     )
@@ -337,9 +354,7 @@ def test_check_binary_probe_failure_carries_stderr(
     monkeypatch.setattr(
         doctor_mod.shutil, "which", lambda name: "/usr/bin/nft"
     )
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (1, "", "boom")
-    )
+    patch_phase(monkeypatch, "run", lambda cmd, timeout=10.0: (1, "", "boom"))
     result = check_binary("nft", ["nft", "--version"], None)
     assert result.ok is False
     assert "probe failed: boom" in result.message
@@ -347,8 +362,8 @@ def test_check_binary_probe_failure_carries_stderr(
 
 def test_check_binary_probe_ok(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: "/usr/bin/ip")
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (0, "iproute2", "")
+    patch_phase(
+        monkeypatch, "run", lambda cmd, timeout=10.0: (0, "iproute2", "")
     )
     result = check_binary("ip", ["ip", "-V"], None)
     assert result.ok is True
@@ -363,7 +378,7 @@ def test_check_ssh_missing_warns(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: None)
     # a host whose /usr/sbin really carries the tool must not
     # rescue the miss (the daemon-shaped extension stays out)
-    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
+    patch_phase(monkeypatch, "admin_dir_candidate", lambda name: None)
     result = check_ssh(None)
     assert result.ok is False and result.is_warning is True
     assert "msks forward" in result.message
@@ -375,8 +390,8 @@ def test_check_ssh_accepts_rc1_version_banner(
     monkeypatch.setattr(
         doctor_mod.shutil, "which", lambda name: "/usr/bin/ssh"
     )
-    monkeypatch.setattr(
-        doctor_mod,
+    patch_phase(
+        monkeypatch,
         "run",
         lambda cmd, timeout=10.0: (1, "", "OpenSSH_9.6p1, OpenSSL 3"),
     )
@@ -390,8 +405,8 @@ def test_check_ssh_rejects_other_banner(
     monkeypatch.setattr(
         doctor_mod.shutil, "which", lambda name: "/usr/bin/ssh"
     )
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (1, "", "dropbear")
+    patch_phase(
+        monkeypatch, "run", lambda cmd, timeout=10.0: (1, "", "dropbear")
     )
     result = check_ssh(None)
     assert result.ok is False
@@ -405,8 +420,8 @@ def test_check_ssh_stdout_banner_names_detail(
     monkeypatch.setattr(
         doctor_mod.shutil, "which", lambda name: "/usr/bin/ssh"
     )
-    monkeypatch.setattr(
-        doctor_mod,
+    patch_phase(
+        monkeypatch,
         "run",
         lambda cmd, timeout=10.0: (0, "OpenSSH_9.6 (wrapper)", ""),
     )
@@ -419,8 +434,8 @@ def test_check_ssh_rejects_rc2(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         doctor_mod.shutil, "which", lambda name: "/usr/bin/ssh"
     )
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (2, "", "OpenSSH_9")
+    patch_phase(
+        monkeypatch, "run", lambda cmd, timeout=10.0: (2, "", "OpenSSH_9")
     )
     result = check_ssh(None)
     assert result.ok is False
@@ -448,7 +463,7 @@ def test_check_tmux_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     # a host whose admin dirs really carry the tool must not
     # rescue the miss (merged-usr Fedora shows /usr/bin under
     # /usr/sbin); the daemon-shaped extension stays out
-    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
+    patch_phase(monkeypatch, "admin_dir_candidate", lambda name: None)
     result = check_tmux("apt")
     assert result.ok is False and result.is_warning is False
     assert result.hint == "sudo apt install tmux"
@@ -456,8 +471,8 @@ def test_check_tmux_missing(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_check_tmux_ok_at_floor(monkeypatch: pytest.MonkeyPatch) -> None:
     tmux_on_path(monkeypatch)
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (0, "tmux 3.2", "")
+    patch_phase(
+        monkeypatch, "run", lambda cmd, timeout=10.0: (0, "tmux 3.2", "")
     )
     result = check_tmux(None)
     assert result.ok is True
@@ -466,8 +481,8 @@ def test_check_tmux_ok_at_floor(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_check_tmux_old_is_error(monkeypatch: pytest.MonkeyPatch) -> None:
     tmux_on_path(monkeypatch)
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (0, "tmux 3.1b", "")
+    patch_phase(
+        monkeypatch, "run", lambda cmd, timeout=10.0: (0, "tmux 3.1b", "")
     )
     result = check_tmux(None)
     assert result.ok is False and result.is_warning is False
@@ -476,8 +491,8 @@ def test_check_tmux_old_is_error(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_check_tmux_unparseable(monkeypatch: pytest.MonkeyPatch) -> None:
     tmux_on_path(monkeypatch)
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (0, "mystery", "")
+    patch_phase(
+        monkeypatch, "run", lambda cmd, timeout=10.0: (0, "mystery", "")
     )
     result = check_tmux(None)
     assert result.ok is False
@@ -486,8 +501,8 @@ def test_check_tmux_unparseable(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_check_tmux_probe_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     tmux_on_path(monkeypatch)
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (1, "", "denied")
+    patch_phase(
+        monkeypatch, "run", lambda cmd, timeout=10.0: (1, "", "denied")
     )
     result = check_tmux(None)
     assert result.ok is False
@@ -503,9 +518,7 @@ def test_library_found_by_pkg_config(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         doctor_mod.shutil, "which", which_map({"pkg-config", "ldconfig"})
     )
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (0, "", "")
-    )
+    patch_phase(monkeypatch, "run", lambda cmd, timeout=10.0: (0, "", ""))
     result = check_library("libnetfilter_queue", None)
     assert result.ok is True
     assert "pkg-config" in result.message
@@ -525,7 +538,7 @@ def test_library_pkg_config_miss_falls_to_ldconfig(
     monkeypatch.setattr(
         doctor_mod.shutil, "which", which_map({"pkg-config", "ldconfig"})
     )
-    monkeypatch.setattr(doctor_mod, "run", fake_run)
+    patch_phase(monkeypatch, "run", fake_run)
     result = check_library("libnetfilter_queue", None)
     assert result.ok is True
     assert "ldconfig" in result.message
@@ -542,7 +555,7 @@ def test_library_probers_miss_falls_to_import(
     monkeypatch.setattr(
         doctor_mod.shutil, "which", which_map({"pkg-config", "ldconfig"})
     )
-    monkeypatch.setattr(doctor_mod, "run", fake_run)
+    patch_phase(monkeypatch, "run", fake_run)
     assert library_probe_result("libnfnetlink") == "ctypes load"
 
 
@@ -550,9 +563,7 @@ def test_library_absent_probers_falls_to_import(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(doctor_mod.shutil, "which", which_map(set()))
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (0, "", "")
-    )
+    patch_phase(monkeypatch, "run", lambda cmd, timeout=10.0: (0, "", ""))
     assert library_probe_result("libnfnetlink") == "ctypes load"
 
 
@@ -560,9 +571,7 @@ def test_library_missing_everywhere(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         doctor_mod.shutil, "which", which_map({"pkg-config", "ldconfig"})
     )
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (1, "", "no")
-    )
+    patch_phase(monkeypatch, "run", lambda cmd, timeout=10.0: (1, "", "no"))
     result = check_library("libnetfilter_queue", "apt")
     assert result.ok is False
     assert result.hint == "sudo apt install libnetfilter-queue1"
@@ -573,9 +582,7 @@ def test_nfq_load_passes(monkeypatch: pytest.MonkeyPatch) -> None:
     # the load probe's answer, and off Linux the check answers the
     # platform contract before any probe runs.
     monkeypatch.setattr(doctor_mod.sys, "platform", "linux")
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (0, "", "")
-    )
+    patch_phase(monkeypatch, "run", lambda cmd, timeout=10.0: (0, "", ""))
     result = doctor_mod.check_nfq_load(None)
     assert result.ok is True
     assert "ctypes load" in result.message
@@ -596,7 +603,7 @@ def test_nfq_load_miss_names_the_runtime_package(
         return (0, "", "")
 
     monkeypatch.setattr(doctor_mod.sys, "platform", "linux")
-    monkeypatch.setattr(doctor_mod, "run", refuse)
+    patch_phase(monkeypatch, "run", refuse)
     result = doctor_mod.check_nfq_load("apt")
     assert result.ok is False
     assert result.hint == "sudo apt install libnetfilter-queue1"
@@ -605,9 +612,7 @@ def test_nfq_load_miss_names_the_runtime_package(
 def test_nfq_load_miss_without_a_manager_names_the_library(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (1, "", "")
-    )
+    patch_phase(monkeypatch, "run", lambda cmd, timeout=10.0: (1, "", ""))
     result = doctor_mod.check_nfq_load(None)
     assert result.ok is False
     assert "libnetfilter_queue" in result.message
@@ -634,7 +639,7 @@ def test_probe_which_finds_sbin_tools_the_session_lacks(
     without the admin directories still reports the daemon's
     truth; an explicit settings path is never extended."""
     monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: None)
-    monkeypatch.setattr(doctor_mod, "PATH_EXTRA_DIRS", ("/mock/sbin",))
+    patch_phase(monkeypatch, "PATH_EXTRA_DIRS", ("/mock/sbin",))
     root = pathlib.Path("/mock/sbin")
     real_is_file = pathlib.Path.is_file
     real_access = os.access
@@ -670,7 +675,7 @@ def test_the_real_probe_execs_a_rescued_tool(
     tool.write_text("#!/bin/sh\necho 'faketool 9.9'\n")
     tool.chmod(0o755)
     monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: None)
-    monkeypatch.setattr(doctor_mod, "PATH_EXTRA_DIRS", (str(sbin),))
+    patch_phase(monkeypatch, "PATH_EXTRA_DIRS", (str(sbin),))
     monkeypatch.delenv("PATH", raising=False)
     result = doctor_mod.check_binary(
         "faketool", ["faketool", "--version"], None
@@ -712,7 +717,7 @@ def test_a_rescued_tool_adds_the_relogin_note(
             else f"/usr/bin/{name}"
         ),
     )
-    monkeypatch.setattr(doctor_mod, "PATH_EXTRA_DIRS", ("/mock/sbin",))
+    patch_phase(monkeypatch, "PATH_EXTRA_DIRS", ("/mock/sbin",))
     real_is_file = pathlib.Path.is_file
     monkeypatch.setattr(
         pathlib.Path,
@@ -734,7 +739,7 @@ def test_a_rescued_tool_adds_the_relogin_note(
     assert report.passed is True  # the note never fails the run
 
     # A session that carries the directories gets no note at all.
-    monkeypatch.setattr(doctor_mod, "PATH_EXTRA_DIRS", ("/usr/sbin", "/sbin"))
+    patch_phase(monkeypatch, "PATH_EXTRA_DIRS", ("/usr/sbin", "/sbin"))
     monkeypatch.setenv("PATH", "/usr/local/bin:/usr/sbin:/usr/bin")
     report = run_doctor(Settings())
     assert "PATH" not in [r.name for r in report.results]
@@ -779,11 +784,11 @@ def kvm_seam(
     — on a Mac dev host the rows would answer the platform miss
     the report ships there, not the host state under test."""
     monkeypatch.setattr(doctor_mod.sys, "platform", "linux")
-    monkeypatch.setattr(
-        doctor_mod, "executing_user", lambda: ("op", 1000, 1000, "/home/op")
+    patch_phase(
+        monkeypatch, "executing_user", lambda: ("op", 1000, 1000, "/home/op")
     )
-    monkeypatch.setattr(doctor_mod, "group_present", lambda name: True)
-    monkeypatch.setattr(doctor_mod, "in_group", lambda user, name: member)
+    patch_phase(monkeypatch, "group_present", lambda name: True)
+    patch_phase(monkeypatch, "in_group", lambda user, name: member)
     monkeypatch.setattr(
         doctor_mod.os.path, "exists", lambda path: path == "/dev/kvm"
     )
@@ -828,15 +833,15 @@ def apple_seam(
     midr_path = tmp_path / "midr_el1"
     if midr is not None:
         midr_path.write_text(midr)
-    monkeypatch.setattr(doctor_mod, "MIDR_EL1", midr_path)
+    patch_phase(monkeypatch, "MIDR_EL1", midr_path)
     cmdline_path = tmp_path / "cmdline"
     if cmdline is not None:
         cmdline_path.write_text(cmdline)
-    monkeypatch.setattr(doctor_mod, "PROC_CMDLINE", cmdline_path)
+    patch_phase(monkeypatch, "PROC_CMDLINE", cmdline_path)
     param_path = tmp_path / "kvm-mode"
     if mode_param is not None:
         param_path.write_text(mode_param)
-    monkeypatch.setattr(doctor_mod, "KVM_MODE_PARAM", param_path)
+    patch_phase(monkeypatch, "KVM_MODE_PARAM", param_path)
     outer_run = doctor_mod.run
 
     def probe(cmd: list[str], timeout: float = 10.0):
@@ -848,7 +853,7 @@ def apple_seam(
             return (0, kernel_log, "")
         return outer_run(cmd, timeout)
 
-    monkeypatch.setattr(doctor_mod, "run", probe)
+    patch_phase(monkeypatch, "run", probe)
 
 
 def test_the_apple_kvm_row_warns_on_apple_silicon(
@@ -1070,7 +1075,7 @@ def test_the_kvm_row_names_the_missing_group(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     kvm_seam(monkeypatch)
-    monkeypatch.setattr(doctor_mod, "group_present", lambda name: False)
+    patch_phase(monkeypatch, "group_present", lambda name: False)
     result = kvm_access_result("apt")
     assert result.ok is False
     assert "kvm group is absent" in result.message
@@ -1125,7 +1130,7 @@ def all_found(monkeypatch: pytest.MonkeyPatch) -> None:
         "which",
         lambda name: f"/usr/bin/{name}" if name else None,
     )
-    monkeypatch.setattr(doctor_mod, "run", probes_ok)
+    patch_phase(monkeypatch, "run", probes_ok)
 
 
 def test_run_doctor_grades_and_settings_names(
@@ -1167,9 +1172,9 @@ def test_a_missing_vmm_report_prints_the_install_sequence(
     # a host whose admin dirs really carry the VMM must not
     # rescue the miss (the landed /usr/local/bin copy shows under
     # a symlinked /usr/local/sbin); the extension stays out
-    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
-    monkeypatch.setattr(doctor_mod, "run", probes_ok)
-    monkeypatch.setattr(doctor_mod, "detect_package_manager", lambda: "apt")
+    patch_phase(monkeypatch, "admin_dir_candidate", lambda name: None)
+    patch_phase(monkeypatch, "run", probes_ok)
+    patch_phase(monkeypatch, "detect_package_manager", lambda: "apt")
     report = run_doctor(Settings())
     assert any(
         r.name == "cloud-hypervisor" for r in report.errors
@@ -1248,15 +1253,13 @@ def test_run_doctor_warning_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     # a host whose /usr/sbin really carries the pair must not
     # rescue the miss (the daemon-shaped extension stays out)
-    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
-    monkeypatch.setattr(doctor_mod, "run", probes_ok)
+    patch_phase(monkeypatch, "admin_dir_candidate", lambda name: None)
+    patch_phase(monkeypatch, "run", probes_ok)
     kvm_seam(monkeypatch)  # the kvm row's answer is host state
     # The apple-kvm row reads cpu0's MIDR — real host state on an
     # Apple dev machine; the full-run tests pin it off so the
     # report is the same on every host.
-    monkeypatch.setattr(
-        doctor_mod, "MIDR_EL1", pathlib.Path("/nonexistent-midr")
-    )
+    patch_phase(monkeypatch, "MIDR_EL1", pathlib.Path("/nonexistent-midr"))
     report = run_doctor(Settings())
     warn_names = {r.name for r in report.warnings}
     assert warn_names == {"ssh", "rsync"}
@@ -1271,9 +1274,9 @@ def test_run_doctor_error_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     # The daemon-shaped extension stays out: a host whose /usr/sbin
     # really carries nft (CI runners) must not rescue the miss.
-    monkeypatch.setattr(doctor_mod, "admin_dir_candidate", lambda name: None)
+    patch_phase(monkeypatch, "admin_dir_candidate", lambda name: None)
     kvm_seam(monkeypatch)  # the kvm row's answer is host state
-    monkeypatch.setattr(doctor_mod, "run", probes_ok)
+    patch_phase(monkeypatch, "run", probes_ok)
     report = run_doctor(Settings())
     assert report.passed is False
     assert [r.name for r in report.errors] == ["nft"]
@@ -1286,8 +1289,8 @@ def test_run_doctor_error_fails(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_settings_for_doctor_loads(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings()
-    monkeypatch.setattr(
-        doctor_mod, "load_settings", lambda config, generate: settings
+    patch_phase(
+        monkeypatch, "load_settings", lambda config, generate: settings
     )
     assert settings_for_doctor("x.yaml") == (settings, None)
 
@@ -1300,7 +1303,7 @@ def test_settings_for_doctor_default_path_miss_is_silent(
             "config file not found: /home/u/.config/msksd/msksd.yaml"
         )
 
-    monkeypatch.setattr(doctor_mod, "load_settings", refuse)
+    patch_phase(monkeypatch, "load_settings", refuse)
     settings, notice = settings_for_doctor(None)
     assert notice is None
     assert settings == Settings.from_env()
@@ -1314,7 +1317,7 @@ def test_settings_for_doctor_broken_default_warns(
     def refuse(config, generate):
         raise ValueError("bad yaml at line 3")
 
-    monkeypatch.setattr(doctor_mod, "load_settings", refuse)
+    patch_phase(monkeypatch, "load_settings", refuse)
     settings, notice = settings_for_doctor(None)
     assert notice is not None and notice.is_warning
     assert "bad yaml" in notice.message
@@ -1326,7 +1329,7 @@ def test_settings_for_doctor_explicit_failure_warns(
     def refuse(config, generate):
         raise ValueError("bad yaml")
 
-    monkeypatch.setattr(doctor_mod, "load_settings", refuse)
+    patch_phase(monkeypatch, "load_settings", refuse)
     settings, notice = settings_for_doctor("/tmp/msksd.yaml")
     assert notice is not None and notice.is_warning
     assert "bad yaml" in notice.message
@@ -1339,11 +1342,9 @@ def test_doctor_main_exit_codes_and_output(
     kvm_seam(monkeypatch)  # the kvm row's answer is host state
     # Ditto the apple-kvm row's MIDR: pinned off so the check
     # count (17) holds on Apple dev machines.
-    monkeypatch.setattr(
-        doctor_mod, "MIDR_EL1", pathlib.Path("/nonexistent-midr")
-    )
-    monkeypatch.setattr(
-        doctor_mod, "load_settings", lambda config, generate: Settings()
+    patch_phase(monkeypatch, "MIDR_EL1", pathlib.Path("/nonexistent-midr"))
+    patch_phase(
+        monkeypatch, "load_settings", lambda config, generate: Settings()
     )
     assert doctor_main(None) == 0
     out = capsys.readouterr().out
@@ -1356,8 +1357,8 @@ def test_doctor_main_appends_config_notice(
 ) -> None:
     all_found(monkeypatch)
     kvm_seam(monkeypatch)  # the kvm row's answer is host state
-    monkeypatch.setattr(
-        doctor_mod,
+    patch_phase(
+        monkeypatch,
         "load_settings",
         lambda config, generate: (_ for _ in ()).throw(ValueError("boom")),
     )
@@ -1370,11 +1371,9 @@ def test_doctor_main_error_exits_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(doctor_mod.shutil, "which", lambda name: None)
-    monkeypatch.setattr(
-        doctor_mod, "run", lambda cmd, timeout=10.0: (1, "", "no")
-    )
-    monkeypatch.setattr(
-        doctor_mod, "load_settings", lambda config, generate: Settings()
+    patch_phase(monkeypatch, "run", lambda cmd, timeout=10.0: (1, "", "no"))
+    patch_phase(
+        monkeypatch, "load_settings", lambda config, generate: Settings()
     )
     assert doctor_main(None) == 1
 
@@ -1440,7 +1439,7 @@ def test_a_multiline_hint_aligns_its_commands() -> None:
 def test_format_report_all_passed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(doctor_mod, "detect_package_manager", lambda: "apt")
+    patch_phase(monkeypatch, "detect_package_manager", lambda: "apt")
     report = DoctorReport([ok("a"), ok("b")])
     assert "All 2 checks passed." in format_report(report)
 
@@ -1448,7 +1447,7 @@ def test_format_report_all_passed(
 def test_format_report_counts_and_blocks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(doctor_mod, "detect_package_manager", lambda: None)
+    patch_phase(monkeypatch, "detect_package_manager", lambda: None)
     report = DoctorReport(
         [
             ok("a"),
@@ -1470,7 +1469,7 @@ def test_format_report_counts_and_blocks(
 def test_format_report_errors_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(doctor_mod, "detect_package_manager", lambda: "apt")
+    patch_phase(monkeypatch, "detect_package_manager", lambda: "apt")
     report = DoctorReport([ok("a"), err("c")])
     text = format_report(report)
     assert "1 passed, 1 error" in text
@@ -1530,7 +1529,7 @@ def test_main_dispatches_doctor(monkeypatch: pytest.MonkeyPatch) -> None:
         calls["json"] = as_json
         return 7
 
-    monkeypatch.setattr(doctor_mod, "doctor_main", fake_doctor)
+    patch_phase(monkeypatch, "doctor_main", fake_doctor)
     assert main_mod.main(["doctor", "--config=none"]) == 7
     assert calls == {"config": "none", "json": False}
 
@@ -1599,18 +1598,14 @@ def test_doctor_json_prints_rows(
     keeps the prose report's convention."""
     import json
 
-    from msks.server import doctor
-
     rows = [
         CheckResult("good", True, "fine"),
         CheckResult("warned", False, "meh", is_warning=True),
         CheckResult("bad", False, "broken", hint="fix it"),
     ]
-    monkeypatch.setattr(
-        doctor, "run_doctor", lambda settings: DoctorReport(rows)
-    )
-    monkeypatch.setattr(
-        doctor, "settings_for_doctor", lambda config: (object(), None)
+    patch_phase(monkeypatch, "run_doctor", lambda settings: DoctorReport(rows))
+    patch_phase(
+        monkeypatch, "settings_for_doctor", lambda config: (object(), None)
     )
     rc = doctor_main(None, as_json=True)
     doc = json.loads(capsys.readouterr().out)

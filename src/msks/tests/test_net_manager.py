@@ -22,6 +22,16 @@ from msks.settings import (
 )
 from netstubs import NFT_FAIL_AT, NFT_STDERR, log_lines, stub_ip, stub_nft
 
+
+def patch_phase(
+    monkeypatch: pytest.MonkeyPatch, name: str, value: object
+) -> None:
+    """Patch *name* on every net-manager submodule that carries it."""
+    for sub in manager_mod.SUBMODULES:
+        monkeypatch.setattr(sub, name, value, raising=False)
+    monkeypatch.setattr(manager_mod, name, value, raising=False)
+
+
 #: The real default probe path, saved before this module's autouse
 #: fixture seams it out (#424): the wiring test restores it.
 REAL_DEFAULT_PROBE = NetManager.default_probe
@@ -91,9 +101,7 @@ async def net_app(tmp_path: Path, monkeypatch):
         vmm=VmmSettings(state_dir=tmp_path / "state"),
     )
     app = build_app(settings)
-    monkeypatch.setattr(
-        manager_mod, "verify_forwarding", lambda path=None: None
-    )
+    patch_phase(monkeypatch, "verify_forwarding", lambda path=None: None)
     manager = NetManager(
         app, dhcp_factory=FakeService, dns_factory=FakeService
     )
@@ -162,7 +170,7 @@ async def test_start_records_an_unavailable_daemon(
     def no_privilege(path=None):
         raise MicrovmError("net.ipv4.ip_forward is not enabled (reads '0')")
 
-    monkeypatch.setattr(manager_mod, "verify_forwarding", no_privilege)
+    patch_phase(monkeypatch, "verify_forwarding", no_privilege)
     await app.state.net.start()
     assert app.state.net._state == "unavailable"
     assert "egress unavailable" in capsys.readouterr().out
@@ -759,9 +767,7 @@ async def gated_app(tmp_path: Path, monkeypatch):
         vmm=VmmSettings(state_dir=tmp_path / "state"),
     )
     app = build_app(settings)
-    monkeypatch.setattr(
-        manager_mod, "verify_forwarding", lambda path=None: None
-    )
+    patch_phase(monkeypatch, "verify_forwarding", lambda path=None: None)
     consumers: list[FakeConsumer] = []
 
     def factory(workspace_id, queue_num, net):
@@ -1511,9 +1517,7 @@ async def llm_seamed_net_app(tmp_path: Path, monkeypatch, listeners: dict):
         vmm=VmmSettings(state_dir=tmp_path / "state"),
     )
     app = build_app(settings)
-    monkeypatch.setattr(
-        manager_mod, "verify_forwarding", lambda path=None: None
-    )
+    patch_phase(monkeypatch, "verify_forwarding", lambda path=None: None)
 
     def factory(attachment):
         listener = RecordingListener(attachment.tap_ip)
@@ -1593,9 +1597,7 @@ async def test_a_refused_llm_bind_leaves_the_boot_alive(
         llm=LlmSettings(models=("*:http://up.stream/v1:sk-x",)),
     )
     app = build_app(settings)
-    monkeypatch.setattr(
-        manager_mod, "verify_forwarding", lambda path=None: None
-    )
+    patch_phase(monkeypatch, "verify_forwarding", lambda path=None: None)
     manager = NetManager(
         app,
         dhcp_factory=FakeService,
@@ -1645,9 +1647,7 @@ async def test_a_boot_survives_an_unbindable_llm_address(
     first request, never here."""
     app, _ip, _nft = net_app
     app.state.settings.llm.models = ("*:http://up.stream/v1:sk-x",)
-    monkeypatch.setattr(
-        manager_mod, "verify_forwarding", lambda path=None: None
-    )
+    patch_phase(monkeypatch, "verify_forwarding", lambda path=None: None)
     manager = NetManager(
         app, dhcp_factory=FakeService, dns_factory=FakeService
     )
@@ -2068,9 +2068,7 @@ async def test_attach_starts_the_probe_listener_and_detach_stops_it(
         listeners[attachment.workspace_id] = listener
         return listener
 
-    monkeypatch.setattr(
-        manager_mod, "verify_forwarding", lambda path=None: None
-    )
+    patch_phase(monkeypatch, "verify_forwarding", lambda path=None: None)
     manager = NetManager(
         app,
         dhcp_factory=FakeService,
@@ -2097,9 +2095,7 @@ async def test_a_refused_probe_bind_leaves_the_boot_alive(
         raise OSError("address in use")
 
     app, _ip, _nft = net_app
-    monkeypatch.setattr(
-        manager_mod, "verify_forwarding", lambda path=None: None
-    )
+    patch_phase(monkeypatch, "verify_forwarding", lambda path=None: None)
     manager = NetManager(
         app,
         dhcp_factory=FakeService,

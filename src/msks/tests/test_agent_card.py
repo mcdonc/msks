@@ -129,7 +129,7 @@ def test_agent_card_prints_without_a_bootstrap(
     def refused(*args, **kwargs):
         raise AssertionError("the bootstrap ran for agent-card")
 
-    monkeypatch.setattr(cli, "bootstrap", refused)
+    monkeypatch.setattr(cli.wscommands, "bootstrap", refused)
     rc = cli.main(["agent-card"])
     assert rc == 0
     captured = capsys.readouterr()

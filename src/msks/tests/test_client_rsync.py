@@ -448,7 +448,7 @@ def test_cli_parses_the_rsync_passthrough(
     interspersed-off parse — #315)."""
     calls: list = []
     monkeypatch.setattr(
-        cli,
+        cli.wscommands,
         "run_workspace_rsync",
         lambda ws, passthrough, transport=None: (
             calls.append(passthrough),
@@ -464,7 +464,7 @@ def test_cli_dispatch_reaches_the_rsync_body(
 ) -> None:
     calls: list = []
     monkeypatch.setattr(
-        cli,
+        cli.wscommands,
         "run_workspace_rsync",
         lambda ws, passthrough, transport=None: (
             calls.append((ws, passthrough)),

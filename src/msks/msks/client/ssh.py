@@ -66,24 +66,93 @@ shells.
 """
 
 import asyncio
-import hashlib
 import os
 import shlex
 import subprocess
 import sys
 import time
 from contextlib import contextmanager, nullcontext
-from pathlib import Path
-
-from cryptography.hazmat.primitives import serialization
 
 from . import agent
 from .env import env_token, env_url, is_unix, ssl_context
+from .forwarding import (
+    config_quote as config_quote,
+)
+from .forwarding import (
+    effective_forwarding,
+    forward_agent_args,
+    forward_agent_value,
+    option_value,
+    without_forwarding,
+)
+
+# The identity leaf (#874): re-exported here — the suites and the
+# command modules keep the imports they always had.
+from .identity import (
+    ENCRYPTED_CREATE_RECOVERY as ENCRYPTED_CREATE_RECOVERY,
+)
+from .identity import (
+    ENCRYPTED_SESSION_RECOVERY as ENCRYPTED_SESSION_RECOVERY,
+)
+from .identity import (
+    agent_held as agent_held,
+)
+from .identity import (
+    cache_dir as cache_dir,
+)
+from .identity import (
+    cache_key as cache_key,
+)
+from .identity import (
+    configured_file as configured_file,
+)
+from .identity import (
+    configured_identity_file as configured_identity_file,
+)
+from .identity import (
+    configured_pubkey_file as configured_pubkey_file,
+)
+from .identity import (
+    derived_public as derived_public,
+)
+from .identity import (
+    instance_token as instance_token,
+)
+from .identity import (
+    known_hosts_path as known_hosts_path,
+)
+from .identity import (
+    named_identity_file as named_identity_file,
+)
+from .identity import (
+    operator_identity as operator_identity,
+)
+from .identity import (
+    operator_match as operator_match,
+)
+from .identity import (
+    repin_notice as repin_notice,
+)
+from .identity import (
+    resolve_private as resolve_private,
+)
+from .identity import (
+    rotation_cause as rotation_cause,
+)
+from .identity import (
+    rotation_token as rotation_token,
+)
+from .identity import (
+    session_pin as session_pin,
+)
+from .identity import (
+    unheld_identity_line as unheld_identity_line,
+)
 from .rest import (
     ensure_running,
     fetch_ssh_key,
 )
-from .sshsessions import env_state_dir, record_session
+from .sshsessions import record_session
 from .wintitle import title_spawned_window
 
 #: The remembered-passthrough setting's variable (#385): the
@@ -133,371 +202,6 @@ async def prepare(
         url, token, workspace_id, transport=transport, ssl_ctx=ssl_ctx
     )
     return key, booted
-
-
-def cache_dir() -> Path:
-    """The client cache root: `MSKSC_CACHE_DIR` when set, else
-    XDG_CACHE_HOME or ~/.cache, under msks.
-
-    The variable names the root itself — the per-workspace
-    directories are created below it — so a checkout (the devenv
-    shell points it at the worktree's own state, #251) or an
-    operator takes the whole cache out of the shared XDG tree.
-    """
-    override = env_state_dir("MSKSC_CACHE_DIR")
-    if override is not None:
-        return override
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
-    return Path(base) / "msks"
-
-
-#: The operator identity's setting (#336): the config key
-#: ``identity_file`` / the variable ``MSKSC_IDENTITY_FILE`` name a
-#: private key file — the operator's own ssh key, the one a bare
-#: ``msks create`` plants into every workspace. The config names a
-#: path (the ``token_file`` pattern) and the private material
-#: itself never moves: msks reads the file where it lives and
-#: writes no copy anywhere.
-IDENTITY_FILE_ENV = "MSKSC_IDENTITY_FILE"
-
-#: The public-half setting (#495): the config key
-#: ``pubkey_file`` / the variable ``MSKSC_PUBKEY_FILE`` name a
-#: public key file — the one line a create plants as the identity
-#: when the private half is nowhere msks can read it (encrypted at
-#: its file, held by the operator's agent): the create reads no
-#: private material at all, and sessions resolve through the
-#: agent rung (#490). Global-only, like identity_file.
-PUBKEY_FILE_ENV = "MSKSC_PUBKEY_FILE"
-
-#: The encrypted-key refusal's recoveries (#490), by calling
-#: context: a session consults the operator's agent ahead of the
-#: file, so adding the key to the agent is the first recovery,
-#: while the create reads the private half itself and offers the
-#: decrypt and ``--pubkey`` pair (the create can derive nothing
-#: from a file it cannot read — the agent holds no rung there).
-ENCRYPTED_SESSION_RECOVERY = (
-    "Add the key to your agent (ssh-add), decrypt a copy "
-    "(ssh-keygen -p -f <copy> -P <passphrase> -N ''), or pass "
-    "--pubkey at create"
-)
-ENCRYPTED_CREATE_RECOVERY = (
-    "Decrypt a copy (ssh-keygen -p -f <copy> -P <passphrase> "
-    "-N ''), point pubkey_file at the key's public half, or pass "
-    "--pubkey at create"
-)
-
-
-def configured_file(variable: str) -> Path | None:
-    """One configured key file's path (``identity_file``,
-    ``pubkey_file``), ``~`` expanded, or None when unset — an
-    empty value counts as unset, the same rule the shell presets
-    apply. A relative value is refused (the same rule the state
-    roots carry): a key that resolves per working directory would
-    plant a different identity from every directory."""
-    value = os.environ.get(variable, "")
-    if not value:
-        return None
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        raise SystemExit(
-            f"msks: {variable} must name an absolute path (got "
-            f"'{value}'); unset it, pass an absolute path, or "
-            "lead with ~"
-        )
-    return path
-
-
-def configured_identity_file() -> Path | None:
-    """The operator-named identity file (``identity_file`` /
-    ``MSKSC_IDENTITY_FILE``) — the path rules live in
-    :func:`configured_file`."""
-    return configured_file(IDENTITY_FILE_ENV)
-
-
-def configured_pubkey_file() -> Path | None:
-    """The operator-named public key file (``pubkey_file`` /
-    ``MSKSC_PUBKEY_FILE``, #495) — the same path rules
-    :func:`configured_identity_file` applies."""
-    return configured_file(PUBKEY_FILE_ENV)
-
-
-def named_identity_file(path: Path, recovery: str) -> str:
-    """The strict form for the file the operator named: a missing,
-    unreadable, encrypted, or unstagedable key is one line naming
-    the setting and the fix — the operator pointed at it, so a
-    silent skip would read as the key matching nothing.
-    ``recovery`` names the recoveries the calling context offers
-    for an encrypted key: the session resolves through the
-    operator's agent first (#490), the create reads the file
-    itself."""
-    try:
-        pem = path.read_text(encoding="utf-8")
-        private = agent.load_private(pem)
-    except OSError as exc:
-        raise SystemExit(
-            f"msks: the operator identity file {path} is not readable: "
-            f"{exc} — point identity_file / {IDENTITY_FILE_ENV} at "
-            "your private key file"
-        ) from exc
-    except TypeError as exc:
-        raise SystemExit(
-            f"msks: the operator identity file {path} is encrypted "
-            f"({exc}); msks never types a passphrase. {recovery}"
-        ) from exc
-    except ValueError as exc:
-        raise SystemExit(
-            f"msks: the operator identity file {path} is not a private "
-            f"key msks can stage ({exc}). msks stages unencrypted keys "
-            "in the OpenSSH format — ed25519, ecdsa (P-256/P-384/"
-            "P-521), or rsa; convert a copy with ssh-keygen -p -f "
-            "<copy>, or pass --pubkey at create"
-        ) from exc
-    if not agent.signable(private):
-        raise SystemExit(
-            f"msks: the operator identity file {path} holds a key type "
-            "msks cannot stage (msks stages ed25519, ecdsa "
-            "(P-256/P-384/P-521), and rsa keys). Plant its public half "
-            "with --pubkey at create, or keep signing with your own ssh"
-        )
-    return pem
-
-
-def operator_identity(recovery: str) -> tuple[str, Path] | None:
-    """The operator's identity: ``(pem, source path)`` or None
-    when no file is configured.
-
-    One rung, deterministic and file-based (#336, #486): the file
-    ``identity_file`` / ``MSKSC_IDENTITY_FILE`` names — the
-    operator's explicit choice, checked strictly. There is no
-    agent discovery and no scanning of the operator's own
-    ``~/.ssh`` (which key of yours msks should use is a choice you
-    make, not a guess msks makes), and msks never generates a key
-    (#486): the create refuses when nothing is configured. ``recovery``
-    is the encrypted-key refusal's
-    recoveries for the calling context
-    (:data:`ENCRYPTED_SESSION_RECOVERY` or
-    :data:`ENCRYPTED_CREATE_RECOVERY`).
-    """
-    configured = configured_identity_file()
-    if configured is None:
-        return None
-    return named_identity_file(configured, recovery), configured
-
-
-def agent_held(served: list[str]) -> str | None:
-    """The operator's agent socket when the agent holds the
-    session's key (#490) — the rung ahead of every file: when
-    ``SSH_AUTH_SOCK`` names a live agent, the identities it lists
-    (:func:`msks.client.agent.listed_lines`) are compared against
-    the public half the session needs, on key material and never
-    on file paths (the agent may hold the same key under any
-    name). A match points the session at the operator's agent —
-    the private half, encrypted or not, never enters the msks
-    process. No agent, a dead socket, or no match declines to the
-    file rungs unchanged."""
-    socket_path = agent.environment_agent()
-    if socket_path is None:
-        return None
-    lines = agent.listed_lines(socket_path)
-    if lines is None:
-        return None
-    for line in lines:
-        if line.split()[:2] == served:
-            return socket_path
-    return None
-
-
-def operator_match(served: list[str]) -> str | None:
-    """The operator identity's PEM when its public half matches the
-    row's served line — the rung that keeps ``msks ssh``, ``msks
-    rsync``, and the console's pubkey auth working on a workspace
-    planted with the operator's key (#336), including one
-    re-created under the same name (a new id, the same key)."""
-    resolved = operator_identity(ENCRYPTED_SESSION_RECOVERY)
-    if resolved is None:
-        return None
-    pem, _source = resolved
-    if derived_public(agent.load_private(pem)) == served:
-        return pem
-    return None
-
-
-def resolve_private(key: dict, workspace_id: str) -> str:
-    """The operator identity's PEM for the row's served line, or
-    the one-line refusal — the file rung under the agent (#490,
-    #497). The operator's agent answers first
-    (:func:`agent_held`); this rung stages the identity file
-    whose public half matches the row's line (the #336 operator
-    identity — a workspace re-created under the same name keeps
-    its access: a new id, the same key). A workspace planted with
-    a key this client holds nowhere fails as one named line, not
-    ssh's opaque ``Permission denied (publickey)`` — losing the
-    half loses ssh and the console alike (a seeded guest
-    challenges the console with the same key), so the line names
-    the ways back in.
-    """
-    served = key["public_key"].split()[:2]
-    operator = operator_match(served)
-    if operator is not None:
-        return operator
-    raise SystemExit(unheld_identity_line(workspace_id))
-
-
-def unheld_identity_line(workspace_id: str) -> str:
-    """The recovery line for a session whose key this client holds
-    nowhere: the rungs it tried and the ways back in."""
-    return (
-        f"msks: this client holds no private half for {workspace_id} "
-        "— the agent lists none (ssh-add the key), and identity_file "
-        f"/ {IDENTITY_FILE_ENV} names none or a different key.\n"
-        "Add the key to your agent (ssh-add), point identity_file at "
-        "it, or log in with it directly (ssh -i, or the Host msks-* "
-        "alias). The console keeps working either way: it is the "
-        "token-gated root autologin (#481), not a key login."
-    )
-
-
-def derived_public(private) -> list[str]:
-    """The public line's identifying fields (algorithm, key body) of
-    a loaded private half — the comment is provenance, not identity,
-    so it stays out of the comparison."""
-    line = (
-        private.public_key()
-        .public_bytes(
-            encoding=serialization.Encoding.OpenSSH,
-            format=serialization.PublicFormat.OpenSSH,
-        )
-        .decode()
-    )
-    return line.split()[:2]
-
-
-def instance_token(key: dict) -> str | None:
-    """The workspace instance's compact stamp (#245), or None.
-
-    The daemon returns ``created_at`` with the identity; hashing it
-    keeps the cache directory short while still naming the
-    instance — two workspaces created under one name stamp
-    differently, so each instance gets its own host-key cache. A
-    key without the field (an older daemon, a test fixture) yields
-    None and the caller falls back to the name-keyed path.
-    """
-    created_at = key.get("created_at")
-    if not created_at:
-        return None
-    return hashlib.sha1(created_at.encode()).hexdigest()[:8]
-
-
-def rotation_token(key: dict) -> str | None:
-    """The cache rotation suffix the row's markers compose (#697,
-    #803): ``e<N>`` for a recreated disk set, ``r<N>`` for a
-    re-baked seed, both when both. None when the row carries
-    neither marker — the directory the pre-rotation clients used,
-    so an unserved marker (a daemon one version behind) churns
-    nothing on upgrade. The seed's marker is a counter, not the
-    bake's content hash: a mount set leaving and returning bakes
-    the same content twice and still lands a fresh directory,
-    because the guest re-keys on the *change*, not the value."""
-    parts = []
-    if key.get("disk_epoch"):
-        parts.append(f"e{key['disk_epoch']}")
-    if key.get("seed_epoch"):
-        parts.append(f"r{key['seed_epoch']}")
-    if not parts:
-        return None
-    return ".".join(parts)
-
-
-def cache_key(key: dict, ref: str) -> tuple[str, str | None]:
-    """The host-key cache's directory key: the workspace's immutable
-    id when the daemon serves it (#246 — the id names the instance,
-    so two workspaces created under one name never share a cache),
-    else the typed reference with the #245 created_at stamp
-    separating instances (a daemon one version behind). A nonzero
-    disk epoch (#697) joins the key as a suffix: the daemon
-    recreated the workspace's root overlay, the guest's ssh host
-    keys regenerated with it, and the rotated directory re-pins
-    fresh instead of refusing. A seed epoch (#803) joins the
-    same way: a bake or renewal re-provisions the guest under a
-    new instance-id and the stock cloud-init ssh module
-    regenerates its host keys, so the counter rotates the
-    directory; both markers compose (a reset workspace that then
-    renews carries both suffixes).
-    """
-    if key.get("id"):
-        return key["id"], rotation_token(key)
-    return ref, instance_token(key)
-
-
-def session_pin(key: dict, ref: str) -> str:
-    """The one host alias every ssh invocation pins under (#697):
-    the workspace's immutable id when the daemon serves it, else
-    the typed reference. ``msks ssh tree`` and the TUI's
-    ``msks ssh <id>`` used to pin the same workspace under two
-    aliases — one could refuse a regenerated host key while the
-    other silently re-pinned — so the session's hostname and
-    known_hosts alias come from here, never from what was typed.
-    """
-    return key.get("id") or ref
-
-
-def rotation_cause(key: dict) -> str:
-    """The re-pin notice's cause half (#697, #803): the markers the
-    row carries name why the guest's host keys may differ from any
-    earlier pin. Both markers present names both — the client
-    cannot know which one moved since its last session, and a
-    reset-then-renewed workspace would otherwise read the reset's
-    cause on every later renewal."""
-    if key.get("disk_epoch") and key.get("seed_epoch"):
-        return "disks were recreated or the seed renewed"
-    if key.get("disk_epoch"):
-        return "disks were recreated"
-    return "re-provisioned (a renewed seed)"
-
-
-def repin_notice(key: dict, pin: str, hosts: str) -> None:
-    """The one-line notice a rotated cache directory prints once
-    (#697, #803): the rotated directory starts empty and the first
-    successful connect writes the entry, so the notice rides the
-    one session that re-pins and every later session keeps
-    quiet. The cause names itself: a renewed seed re-provisions
-    the guest and the stock cloud-init ssh module regenerates its
-    host keys there."""
-    if not (key.get("disk_epoch") or key.get("seed_epoch")):
-        return
-    if Path(hosts).is_file():
-        return
-    label = key.get("name") or pin
-    print(
-        f"msks: {label}'s {rotation_cause(key)}; pinning fresh host keys",
-        file=sys.stderr,
-    )
-
-
-def known_hosts_path(
-    workspace_id: str, base: Path | None = None, instance: str | None = None
-) -> str:
-    """The per-workspace known_hosts file, its directory created.
-
-    Host keys persist across stop/start on the workspace's overlay
-    (#110), so one accept-new entry per workspace keeps matching.
-    The directory keys on the workspace instance (#246): a current
-    daemon serves the workspace's immutable id with the identity
-    and the cache lives under that — a recreated workspace is a new
-    id and starts with a fresh cache instead of refusing its own
-    first-boot host keys. The #245 ``instance`` stamp keeps the
-    same separation for daemons that serve no id (the fallback keys
-    on the typed reference). An unusable cache (the path taken by
-    a file, an unwritable directory) is operator-shaped: one line,
-    not a traceback.
-    """
-    directory = f"{workspace_id}.{instance}" if instance else workspace_id
-    root = (base if base is not None else cache_dir()) / directory
-    try:
-        root.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        raise SystemExit(f"msks ssh: cannot create {root}: {exc}") from exc
-    return str(root / "known_hosts")
 
 
 def passthrough_args(args: list[str]) -> list[str]:
@@ -552,16 +256,6 @@ def names_login(arg: str) -> bool:
     return arg == "-l" or (arg.startswith("-l") and len(arg) > 2)
 
 
-def option_value(index: int, arg: str, args: list[str]) -> str | None:
-    """The value of the ``-o`` at ``index`` — inline (``-oUser=x``)
-    or the next argument — or None when ``arg`` names no option."""
-    if arg.startswith("-o") and arg != "-o":
-        return arg[2:]
-    if arg == "-o" and index + 1 < len(args):
-        return args[index + 1]
-    return None
-
-
 def names_user(value: str) -> bool:
     """Whether an ssh ``-o`` value sets the login user. ssh_config
     keywords are case-insensitive (``user=`` is ``User=``), so the
@@ -594,353 +288,6 @@ def configured_ssh_options() -> list[str]:
             "the -- separator — export the options themselves"
         )
     return words
-
-
-def operator_agent_socket(command: str = "msks ssh") -> str:
-    """The operator's agent socket, for forwarding into the guest —
-    the one the operator's environment names
-    (:func:`msks.client.agent.environment_agent`).
-
-    Forwarding was asked for — on the command line or through the
-    config's remembered options — so an environment that names no
-    live agent is an error here: ssh would otherwise forward the
-    session's transient agent, and the operator's keys — the whole
-    point of ``-A`` — would quietly not be there.
-    """
-    socket = agent.environment_agent()
-    if socket is None:
-        named = os.environ.get("SSH_AUTH_SOCK", "") or "unset"
-        raise SystemExit(
-            f"{command}: -A (or ForwardAgent=yes, or the config's "
-            "ssh_options) forwards the operator's agent, and "
-            f"SSH_AUTH_SOCK ({named}) names no agent socket — start "
-            "one (ssh-agent, or the desktop agent) or drop the "
-            "forwarding option"
-        )
-    return socket
-
-
-def forward_agent_value(value: str) -> str | None:
-    """The forwarding target an ssh ``-o`` value names, when it is a
-    ForwardAgent setting (any whitespace separates keyword and
-    value, as ssh's option parser accepts). The target is returned
-    as written — normalization is :func:`normalized_target`'s
-    job, so a passthrough token survives verbatim."""
-    for sep in ("=", " ", "\t"):
-        if value.lower().startswith("forwardagent" + sep):
-            return value[len("forwardagent") + 1 :]
-    return None
-
-
-def normalized_target(target: str) -> str:
-    """A ForwardAgent target as ssh reads it: outer whitespace
-    trimmed, surrounding double quotes stripped (ssh's parser drops
-    them), a leading ``=`` from the spaced ``key = value`` spelling
-    dropped, lowercase — so a comparison here matches ssh's own
-    keyword-value parsing."""
-    return target.strip().strip('"').lstrip("=").strip().lower()
-
-
-#: ssh short options that carry a value attached or beside them —
-#: scanning a bundled token stops at the first of these (the rest
-#: is that option's value, not more flags). The union across
-#: supported ssh generations, from ``ssh -h``: B b c D E e F I i
-#: J L l m O o p Q R S W w.
-VALUE_TAKING_SHORTS = "BDEFIJLOPQRSWbceilmopw"
-
-
-def flags_until_value(arg: str) -> str:
-    """The leading short flags of a bundled token, up to the first
-    option that carries its value attached — the rest of the token
-    is that value, not more flags (``-JAdmin@h`` names a jump
-    host, not a bundle)."""
-    for pos, ch in enumerate(arg):
-        if ch in VALUE_TAKING_SHORTS:
-            return arg[:pos]
-    return arg
-
-
-def is_flag_bundle(arg: str) -> bool:
-    """Whether the token is a bundled short-flag cluster this pass
-    decomposes: not an ssh long option, not a value-attached option
-    form (``-o``/``-l`` own everything after themselves), and at
-    least one flag before any attached value."""
-    if len(arg) < 3 or not arg.startswith("-"):
-        return False
-    if arg.startswith(("--", "-o", "-l")):
-        return False
-    return flags_until_value(arg[1:]) != ""
-
-
-def bundle_flags(arg: str) -> str:
-    """The flag characters of a bundled token (empty when the token
-    is no bundle)."""
-    return flags_until_value(arg[1:]) if is_flag_bundle(arg) else ""
-
-
-def bundled_option_value(
-    arg: str, index: int, options: list[str]
-) -> str | None:
-    """The ``-o`` value a bundled token carries, when its flag
-    portion ends in ``o``: the attached remainder
-    (``-voForwardAgent=yes``) or the next argv token
-    (``-vo ForwardAgent=yes``) — ssh accepts both, and the value
-    counts as a ForwardAgent setting the same as a plain ``-o``'s
-    would. The flag portion is non-empty by precondition (the
-    caller checks :func:`is_flag_bundle`)."""
-    flags = flags_until_value(arg[1:])
-    rest = arg[1 + len(flags) :]
-    if not rest.startswith("o"):
-        return None
-    attached = rest[1:]
-    if attached:
-        return attached
-    if index + 1 < len(options):
-        return options[index + 1]
-    return None
-
-
-def option_values(options: list[str]):
-    """Every ssh ``-o`` value on the line, in argv order — from
-    plain ``-o`` tokens (inline or beside their value) and the
-    ``-o`` a flag bundle carries."""
-    for index, arg in enumerate(options):
-        value = option_value(index, arg, options)
-        if value is None and is_flag_bundle(arg):
-            value = bundled_option_value(arg, index, options)
-        if value is not None:
-            yield value
-
-
-def forward_agent_settings(options: list[str]):
-    """Every ForwardAgent value on the line, in argv order, in
-    every spelling ssh accepts."""
-    for value in option_values(options):
-        target = forward_agent_value(value)
-        if target is not None:
-            yield target
-
-
-def named_forward_agent_target(options: list[str]) -> str | None:
-    """The explicit socket some ForwardAgent setting on the line
-    names, when one does: any target that is not yes/no/
-    SSH_AUTH_SOCK — a path (absolute or relative), or a value that
-    fails at dial time, which is stock's own answer (an empty value
-    is stock's usage error). A stated socket is sticky in stock ssh:
-    it wins over every flag and value in any order, so its presence
-    means the operator already chose the socket and the rewrite
-    stands down entirely."""
-    for target in forward_agent_settings(options):
-        if normalized_target(target) not in ("yes", "no", "ssh_auth_sock"):
-            return target
-    return None
-
-
-def assigns_forwarding(flag_chars: str, result: bool | None) -> bool | None:
-    """Fold each bundled flag character into the running
-    assignment — ``A`` asks, ``a`` disables, later characters win
-    as later flags do."""
-    for ch in flag_chars:
-        if ch == "A":
-            result = True
-        elif ch == "a":
-            result = False
-    return result
-
-
-def last_flag_requests(options: list[str]) -> bool | None:
-    """The last ``-A``/``-a`` on the line, bundles included — True
-    when the last one asks for forwarding, False when it disables,
-    None when no flag appears. ssh's flags assign unconditionally
-    in argv order, over every plain value (``-o no -A`` and
-    ``-A -o no`` both forward)."""
-    result: bool | None = None
-    for arg in options:
-        if arg == "-A":
-            result = True
-        elif arg == "-a":
-            result = False
-        else:
-            result = assigns_forwarding(bundle_flags(arg), result)
-    return result
-
-
-def effective_forwarding(options: list[str]) -> bool | None:
-    """Whether the line, read as stock ssh reads it, asks for agent
-    forwarding: the last ``-A``/``-a`` flag decides over every
-    plain value; with no flag, the first ForwardAgent value does
-    (plain values are first-obtained — ``-o no -o yes`` stays
-    off)."""
-    flag = last_flag_requests(options)
-    if flag is not None:
-        return flag
-    for target in forward_agent_settings(options):
-        return normalized_target(target) == "yes"
-    return None
-
-
-def forward_agent_args(
-    options: list[str], command: str = "msks ssh"
-) -> list[str]:
-    """The passthrough's ssh options with command-line agent
-    forwarding pointed at the operator's agent socket, mirroring
-    stock ssh's own precedence exactly:
-
-    - a ForwardAgent value that names a socket (anything but
-      yes/no/SSH_AUTH_SOCK) is sticky — stock ssh resolves it over
-      every flag and value in any order — so the rewrite stands
-      down entirely and the operator's own spelling rides
-      untouched;
-    - otherwise the last ``-A``/``-a`` decides (flags assign
-      unconditionally in order), and with no flag the first
-      ForwardAgent value does (first-obtained) — a line stock
-      resolves to off, or that names no forwarding at all, passes
-      through untouched;
-    - a line that resolves to forwarding gets the operator's
-      socket stated at the FRONT of the options: a stated path wins
-      over every flag and value behind it, so the user's own
-      spellings (a trailing ``-a``, a ``no``, a bundled ``-vA``)
-      ride along inert and stock resolves the operator's agent.
-
-    This session authenticates through the transient workspace agent
-    (``IdentityAgent``), and ssh forwards *that* socket when asked
-    to forward at all — which is why a resolved request is answered
-    with the operator's socket explicitly: the workspace identity
-    stays an authentication credential; the guest receives the
-    operator's real keys and nothing else. #123's own-key sessions
-    authenticate through the operator's agent or an identity file;
-    the rewrite then states the same socket ssh would forward
-    anyway, and this pass reads as a no-op.
-
-    ``command`` names the calling command for the missing-agent
-    refusal (``msks rsync`` asks through here too, #385).
-    """
-    if named_forward_agent_target(options) is not None:
-        return list(options)
-    if effective_forwarding(options) is not True:
-        return list(options)
-    return [
-        "-o",
-        "ForwardAgent=" + config_quote(operator_agent_socket(command)),
-        *options,
-    ]
-
-
-def without_forwarding(options: list[str]) -> list[str]:
-    """The config's options with every ForwardAgent setting
-    dropped — plain ``-A``/``-a`` tokens, ``ForwardAgent`` ``-o``
-    pairs in both spellings, the ``-o`` a flag bundle carries with
-    its value, and the ``A``/``a`` characters of remaining bundles'
-    flag clusters.
-
-    :func:`with_config_options` calls this when the command line
-    names a forwarding setting of its own: stock ssh resolves a
-    stated socket over every later flag and lets a later ``-A``
-    reassign a plain ``-a``, so a remembered ``-A`` riding behind
-    the operator's own ``-a`` would win by stock's own rules — the
-    one precedence the "command line overrides the config" rule
-    cannot get by ordering alone, so the config's forwarding is
-    lifted out instead. A bundle whose flag cluster holds nothing
-    but ``A``/``a`` (``-aA``) drops whole; one that keeps other
-    flags (``-vA`` → ``-v``) keeps them.
-    """
-    out: list[str] = []
-    index = 0
-    while index < len(options):
-        kept, step = forwarding_step(index, options[index], options)
-        out += kept
-        index += step
-    return out
-
-
-def forwarding_step(
-    index: int, arg: str, options: list[str]
-) -> tuple[list[str], int]:
-    """One argument's (surviving tokens, argv advance): a
-    ForwardAgent setting's span drops with its value consumed, a
-    forwarding flag drops alone, a bundle keeps its other flags,
-    and everything else rides untouched."""
-    span = forwarding_span(index, arg, options)
-    if span is not None:
-        return [], span
-    return forwarding_kept(arg), 1
-
-
-def forwarding_kept(arg: str) -> list[str]:
-    """One non-setting argument's surviving form."""
-    if arg in ("-A", "-a"):
-        return []
-    if is_flag_bundle(arg):
-        stripped = strip_bundle_a(arg)
-        return [stripped] if stripped is not None else []
-    return [arg]
-
-
-def forwarding_span(index: int, arg: str, options: list[str]) -> int | None:
-    """The argv span to drop for a ForwardAgent setting at *index*:
-    the ``-o`` — plain or bundle-carried — with its value, two
-    tokens when the value sits in the next argv slot, one when it
-    is attached — or None when the argument names no ForwardAgent
-    setting. A dropped ``-o`` takes its value with it: the value
-    left behind would land in the remote command's place."""
-    value = option_value(index, arg, options)
-    if value is not None:
-        return plain_forwarding_span(arg, value)
-    if is_flag_bundle(arg):
-        return bundle_forwarding_span(index, arg, options)
-    return None
-
-
-def plain_forwarding_span(arg: str, value: str) -> int | None:
-    """The span of a plain or inline ``-o`` carrying a ForwardAgent
-    setting — its value sits beside a plain ``-o`` or rides
-    attached (``-oForwardAgent=...``)."""
-    if forward_agent_value(value) is None:
-        return None
-    return 2 if arg == "-o" else 1
-
-
-def bundle_forwarding_span(
-    index: int, arg: str, options: list[str]
-) -> int | None:
-    """The span of a flag bundle whose flag cluster ends in ``o``
-    (``-vo ForwardAgent=yes``): the value rides attached or in the
-    next argv slot."""
-    flags = flags_until_value(arg[1:])
-    rest = arg[1 + len(flags) :]
-    if not rest.startswith("o"):
-        return None
-    if rest[1:]:
-        return setting_span(forward_agent_value(rest[1:]), 1)
-    return beside_forwarding_span(index, options)
-
-
-def beside_forwarding_span(index: int, options: list[str]) -> int | None:
-    """The span when the setting's value sits in the next argv
-    slot — a dangling end of argv names no setting to drop."""
-    if index + 1 >= len(options):
-        return None
-    return setting_span(forward_agent_value(options[index + 1]), 2)
-
-
-def setting_span(target: str | None, span: int) -> int | None:
-    """*span* when the value names a ForwardAgent setting, None
-    when it names none."""
-    return span if target is not None else None
-
-
-def strip_bundle_a(arg: str) -> str | None:
-    """A flag bundle with its ``A``/``a`` characters gone — None
-    when nothing of the token survives (the cluster held nothing
-    but forwarding flags). Only the cluster's flag characters are
-    touched: an attached value (``-vJA`` — ``A`` belongs to
-    ``J``'s value) keeps every character it had."""
-    flags = flags_until_value(arg[1:])
-    rest = arg[1 + len(flags) :]
-    kept = flags.replace("A", "").replace("a", "")
-    if not kept:
-        return None
-    return "-" + kept + rest
 
 
 def with_config_options(options: list[str]) -> list[str]:
@@ -982,14 +329,6 @@ def forward_agent_option(options: list[str]) -> list[str]:
                 return [arg, options[index + 1]]
             return [arg]
     return []
-
-
-def config_quote(value: str) -> str:
-    """Double-quote a value for an ``-o`` option when it carries
-    whitespace: double quotes are honored everywhere ssh parses
-    option values (the parser strips them itself, and the shell
-    strips the remainder), keeping the value whole."""
-    return f'"{value}"' if any(c.isspace() for c in value) else value
 
 
 def proxy_command(workspace_id: str) -> str:

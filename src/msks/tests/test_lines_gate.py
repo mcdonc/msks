@@ -42,29 +42,29 @@ def run_gate(root, *args):
     )
 
 
-def test_ceiling_passes_at_1500(tmp_path):
-    root = make_tree(tmp_path, {"src/msks/msks/big.py": 1500})
+def test_ceiling_passes_at_1000(tmp_path):
+    root = make_tree(tmp_path, {"src/msks/msks/big.py": 1000})
     assert run_gate(root).returncode == 0
 
 
-def test_ceiling_fails_at_1501(tmp_path):
-    root = make_tree(tmp_path, {"src/msks/msks/big.py": 1501})
+def test_ceiling_fails_at_1001(tmp_path):
+    root = make_tree(tmp_path, {"src/msks/msks/big.py": 1001})
     done = run_gate(root)
     assert done.returncode == 1
     assert "src/msks/msks/big.py" in done.stderr
-    assert "1501" in done.stderr
+    assert "1001" in done.stderr
 
 
 def test_nested_module_grades_with_the_top_level(tmp_path):
     root = make_tree(
         tmp_path,
-        {"src/msks/msks/client/deep.py": 1501},
+        {"src/msks/msks/client/deep.py": 1001},
     )
     assert run_gate(root).returncode == 1
 
 
 def test_exempted_over_ceiling_file_passes(tmp_path):
-    root = make_tree(tmp_path, {"src/msks/msks/big.py": 1501})
+    root = make_tree(tmp_path, {"src/msks/msks/big.py": 1001})
     exempt = tmp_path / "exemptions.txt"
     exempt.write_text(
         "# a recorded, dated exception\n"
@@ -74,7 +74,7 @@ def test_exempted_over_ceiling_file_passes(tmp_path):
 
 
 def test_stale_exemption_fails(tmp_path):
-    root = make_tree(tmp_path, {"src/msks/msks/big.py": 1500})
+    root = make_tree(tmp_path, {"src/msks/msks/big.py": 1000})
     exempt = tmp_path / "exemptions.txt"
     exempt.write_text("src/msks/msks/big.py split pending #863\n")
     done = run_gate(root, "--exemptions", str(exempt))
@@ -92,11 +92,11 @@ def test_exemption_for_absent_file_fails(tmp_path):
 
 
 def test_unterminated_final_line_counts(tmp_path):
-    """A 1,501-line file whose last line lacks its newline still
+    """A 1,001-line file whose last line lacks its newline still
     trips the gate: counting is ``grep -c ''``, not ``wc -l``."""
     root = tmp_path / "tree"
     (root / "src/msks/msks").mkdir(parents=True)
-    (root / "src/msks/msks/big.py").write_text("x = 1\n" * 1500 + "x = 1")
+    (root / "src/msks/msks/big.py").write_text("x = 1\n" * 1000 + "x = 1")
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     assert run_gate(root).returncode == 1
 

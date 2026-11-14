@@ -29,6 +29,9 @@ entry_points = [
   "msks.client.term_popup",
   "msks.client.tui.decide_app",
   "msks.conformance",
+  # #874 wave two: the CLI became a package; python -m msks.client.cli
+  # resolves through its own __main__ beside the console script.
+  "msks.client.cli.__main__",
 ]
 
 # Re-export surfaces: modules whose re-exported names may be
@@ -47,11 +50,33 @@ facades = [
   # importing LocalCloudHypervisor and close_console_stream through
   # the package root.
   "msks.microvm.local",
+  # #874 wave two: the net manager split into a package (helpers,
+  # core, forward, switch, consent mixins); the composer keeps
+  # importing the manager surface through the package root, and
+  # the mixins take the egress vocabulary from their own helpers
+  # leaf to hold the spec.egress fan-in ceiling.
+  "msks.net.manager",
+  "msks.net.manager.helpers",
   # #874: the client config module split its validator and
   # template out; the mac setup and the CLI keep importing
   # parse_config_doc and bootstrap through the module they
   # always did.
   "msks.client.config",
+  # #874 wave two: the ssh module split its identity and forwarding
+  # halves out; the command modules and the suites keep importing
+  # those names through msks.client.ssh.
+  "msks.client.ssh",
+  # #874 wave two: the secrets surfaces split into a package
+  # (cells, screen, audit, mint, sentinel); the main screen keeps
+  # importing SecretsScreen through the package root, and ui is
+  # the package's single borrow seam for its TUI siblings (the
+  # fan-in ceiling over rows and consent_ui).
+  "msks.client.tui.secrets",
+  "msks.client.tui.secrets.ui",
+  # #874 wave two: the CLI split into a package (cliapp, wscommands,
+  # groupcommands, invoke); cliapp is the leaf the command groups
+  # decorate onto and the jsonio seam the groups share.
+  "msks.client.cli.cliapp",
   # #874: the workspace page split into a package (lines, actions,
   # screen); the main screen and app keep importing the page's
   # surface through the package root.
@@ -248,7 +273,9 @@ spec = 23
 # spec grew by one import: the resolver answers the probe name (#424);
 # one more name — covers moved home to the ports vocabulary beside
 # ports_for (#452), so the interceptor's web gate reads it from the leaf
-spec = 26
+# #874 wave two: the manager split spreads the same spec imports
+# across its helper, core, and switch submodules.
+spec = 34
 
 [snapshot.persist]
 identity = 2
@@ -285,8 +312,10 @@ client = 7
 hostshares = 2
 # #464: msksd doctor reads the daemon's own tool-name settings
 # (load_settings) beside serve's — the checks name what the
-# daemon will actually exec.
-config = 4
+# daemon will actually exec. #874 wave two: the doctor split
+# spreads load_settings across its run submodule and the package
+# root's suite seam.
+config = 6
 events = 4
 # #481: the console endpoint's identity-validation gate went with
 # the prelude. #486: the create route's mint went with the daemon
