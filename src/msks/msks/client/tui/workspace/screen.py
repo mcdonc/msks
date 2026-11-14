@@ -69,8 +69,8 @@ class WorkspaceScreen(HelpKeys, Screen):
     shell, ``m`` the mounts editor, ``p`` the proxies page,
     ``t`` the edit dialog, ``c`` the clone prompt. The footer's
     descriptions abbreviate so every key fits one 80-column
-    line, the list's own style (#581: ``Go``, ``Egr``, ``Mnts``,
-    ``Fwd``); Enter keeps its footer hint (#470 S4). The page is
+    line, the #581 style (``Go``, ``Egr``, ``Mnts``, ``Fwd``);
+    Enter keeps its footer hint (#470 S4). The page is
     the workspace's
     decider while it is open: holds land on its link, the header
     counts them, and the consent line flashes each first-seen

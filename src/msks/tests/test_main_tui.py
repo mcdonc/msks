@@ -5918,9 +5918,10 @@ async def test_every_footer_names_its_enter_binding(monkeypatch) -> None:
 
 async def test_every_footer_fits_the_smallest_terminal(monkeypatch) -> None:
     """#524: every footer the tree shows fits an 80-column
-    terminal. The widest shapes — the list's ten bindings and
-    the consent page's eight with a hold waiting — abbreviate or
-    drop what would not fit: the list's long words shorten
+    terminal. The widest shapes — the list's and the workspace
+    page's ten bindings, the consent page's eight with a hold
+    waiting — abbreviate or drop what would not fit: the list's
+    long words shorten
     (#581's ``Jmp``, ``Del``, and ``Rload``) and the command
     palette stays off
     (the tree registers no commands, and its docked key is twelve
@@ -7759,8 +7760,8 @@ def test_the_footer_carries_every_quick_key_within_eighty(
     """#880: the footer's own budget — every visible binding's
     key, description, and two-space gap sums inside one
     80-column line, with the footer's side padding spare. The
-    descriptions abbreviate in the list's own style (#581:
-    ``Go``, ``Egr``, ``Mnts``, ``Fwd``), and Enter keeps its
+    descriptions abbreviate in the #581 style (``Go``, ``Egr``,
+    ``Mnts``, ``Fwd``), and Enter keeps its
     hint (#470 S4: the one key every screen answers)."""
     visible = [
         binding for binding in screen_bindings(WorkspaceScreen) if binding.show
