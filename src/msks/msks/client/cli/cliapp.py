@@ -9,8 +9,12 @@ commands of its own.
 import enum
 import functools
 import sys
+from typing import TYPE_CHECKING
 
 import typer
+
+if TYPE_CHECKING:
+    from ..config import ClientConfig
 
 from ..jsonio import json_mode
 from ..jsonio import set_json_mode as set_json_mode
@@ -83,7 +87,7 @@ invocation_tokens: list[str] = []
 #: console child with the launcher the resolution carries. None
 #: when no bootstrap ran (a help screen — and then no TUI starts
 #: either).
-invoked_conf: ClientConfig | None = None  # noqa: F821 — string-annotated, config owns the class
+invoked_conf: ClientConfig | None = None
 
 
 def one_line_interrupts(fn):

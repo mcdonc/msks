@@ -403,6 +403,3 @@ class SecretsScreen(HelpKeys, Screen):
         self.refresh_rows()
         self.flash(minted_note(row))
         self.app.push_screen(SentinelPanel(row))
-
-
-#: The audit view's kind filter choices (#390): every kind a row

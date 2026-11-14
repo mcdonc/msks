@@ -46,7 +46,6 @@ import subprocess as subprocess  # noqa: F401 — suite seam
 
 # The composition submodule is ``main`` (run_doctor, doctor_main);
 # ``run`` stays the probes' function name the suites patch.
-import sys as _sys  # noqa: E402
 import sys as sys  # noqa: F401 — suite seam
 
 from ...config import load_settings as load_settings
@@ -135,7 +134,7 @@ from .report import (
     summary_line,
 )
 
-_main_module = _sys.modules[__name__ + ".main"]  # noqa: E402
+_main_module = sys.modules[__name__ + ".main"]  # noqa: E402
 
 SUBMODULES = (
     report,
