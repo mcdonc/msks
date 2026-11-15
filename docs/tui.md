@@ -70,7 +70,8 @@ chapter lists every kind of skip). `↻2` counts the changes the
 workspace's next start applies: a mounts edit the last start has not
 taken, a sizes or topology edit no boot has taken, and a remote proxy
 row no listener can serve while the workspace is not running (a
-forward proxy binds at once and never waits). `»3` counts the
+forward proxy binds at once and never waits; the proxy half counts
+once, however many rows wait). `»3` counts the
 workspace's open shells on this
 host. The [open shells section](#open-shells-and-the-session-records)
 below owns the shells count's whole story; the workspace's page carries

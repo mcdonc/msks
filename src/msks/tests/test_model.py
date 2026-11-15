@@ -1351,3 +1351,29 @@ async def test_proxy_pending_counts_read_the_status_rule(app_for) -> None:
     assert (await model.get_workspace("ws-px"))["proxies_pending"] == 2
     await model.delete_proxy("ws-px", 1)
     assert (await model.get_workspace("ws-px"))["proxies_pending"] == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("created", 3),
+        ("starting", 3),
+        ("stopping", 3),
+        ("paused", 3),
+        ("absent", 3),
+        ("unknown", 3),
+        ("running", 0),
+    ],
+)
+def test_pending_proxy_count_reads_any_non_running_word(
+    status: str, expected: int
+) -> None:
+    """The rule reads the status word alone (#900): every status
+    but running counts the remote half waiting. The product
+    drives only the lifecycle words, but the watcher maps the
+    seam's own words (a paused row, an absent VM) onto the same
+    rule, and a paused row's tap is a resume's business, not a
+    start's; the count still names the half that waits."""
+    from msks.model.serialize import pending_proxy_count
+
+    assert pending_proxy_count(status, 3) == expected
