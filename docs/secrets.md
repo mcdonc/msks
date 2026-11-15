@@ -359,9 +359,14 @@ Three surfaces run the flow:
   a cold one with the key present unlocks itself, and the
   passphrase prompt (when the file is encrypted) is the modal
   the session opens with. A tree opened while the daemon
-  answers nothing keeps the offer: the flow re-runs once when
-  the listing's refresh first answers, and the prompt lands
-  then (#920). The secrets page's `u` action runs
+  answers nothing keeps the offer: each outage arms one re-run,
+  and the listing's first answered refresh after it fires the
+  flow again, with the prompt landing then (#920). The prompt
+  stays the session's one. An unlock asked by hand through the
+  `u` action spends it, and the tree never asks twice on its
+  own. The re-run's outcome names itself on the screen that
+  stands: the page's status line when a page is open. The
+  secrets page's `u` action runs
   the same flow on demand, so a window that lapsed mid-session
   heals the moment it is seen. The page's STATE column
   (`locked` / `open`) and `msks secret ls`'s state column carry

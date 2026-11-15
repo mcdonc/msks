@@ -10,7 +10,10 @@ and which status line flashes the outcome. A start that met an
 unreachable daemon re-runs once when the daemon first answers
 (#920): the flow's fetch never ran to an outcome, so the app
 arms the re-run and the listing's first answered refresh fires
-it — the same flow, the same prompt rule.
+it — the same flow, the same prompt rule. The flows serialize
+on the app's turnstile and share one prompt seam: whichever
+surface asks, the ask spends the session's prompt, and the
+automatic re-run answers a spent prompt as a cancel.
 
 An agent-held key cannot unlock (#510): ssh-agent exposes
 signing, and the unwrap needs the private scalar directly, so
