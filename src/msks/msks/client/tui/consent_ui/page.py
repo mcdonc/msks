@@ -47,7 +47,8 @@ class ConsentPage(HelpKeys, Screen):
     Two zones in reading order: the held requests (rows with
     countdowns, the queue the overlay owned) above the in-effect
     verdicts (the rules rows), under the workspace page's own
-    two-line header (#460 — the name with its status and the
+    two-line header (#460 — the name with its status, the
+    pending-changes marker while changes wait (#912), and the
     pending-egress count, the id, image, host, and created date
     muted beneath, so the identity stays visible while verdicts
     are made), the mode line and static allowlist, and a status

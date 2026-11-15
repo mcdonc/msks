@@ -412,7 +412,7 @@ def pending_marker(row: dict) -> str | None:
     half — a mounts edit the last start has not taken, and a
     sizes or topology edit no boot has taken — else ``None``.
     The list's status cell leads its word with it, and the
-    workspace page's header carries it beside its status
+    workspace page's header leads its status with it
     (#912). A remote
     proxy row never counts (#909): its bind waits for every
     start, not just the next one. It is standing configuration

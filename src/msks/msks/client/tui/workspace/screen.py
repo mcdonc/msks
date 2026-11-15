@@ -761,6 +761,13 @@ class WorkspaceScreen(HelpKeys, Screen):
             self.row["status"] = reply["status"]
             self.paint_header()
             self.paint_actions()
+            # The reply carries the status alone, and a start may
+            # have applied the changes the header's pending marker
+            # counts (#912): pull the fresh row at once instead of
+            # letting the marker claim a wait beside the start that
+            # just ended it (a skipped mount keeps its wait, and
+            # the fresh row says so).
+            self.refresh_row()
             self.flash(
                 flash_safe(f"{workspace_label(self.row)} {reply['status']}")
             )
@@ -776,11 +783,18 @@ class WorkspaceScreen(HelpKeys, Screen):
 
     def mounts_edited(self, row: dict | None) -> None:
         """The editor's close: the row it returns (every save
-        refreshes it) repaints the page's mounts line."""
+        refreshes it) repaints the page's mounts line and the
+        header — a save may raise or clear the pending-changes
+        marker (#912). The reply row carries the daemon's facts
+        alone, so the client-side shells count lands on it the
+        way the listing lands it (#858), keeping that header
+        segment standing through the repaint."""
         if row is None:
             return
+        row["shells"] = count_sessions().get(self.row["id"], 0)
         self.row = row
         self.paint_mounts()
+        self.paint_header()
 
     async def open_proxies(self) -> None:
         """Push the workspace's proxies page (#809) over this one
@@ -868,22 +882,33 @@ class WorkspaceScreen(HelpKeys, Screen):
         self.paint_actions()
         await self.apply_edit(body)
 
+    def merge_resize_reply(self, reply: dict) -> None:
+        """Land the resize reply's row facts (#331, #912): the
+        sizes the exchange moved, then the daemon's derived
+        pending flags — a sizes edit raises the header's pending
+        marker, so the fresh flag lands with the sizes instead of
+        waiting for the tick's row refresh. A reply from a daemon
+        older than a fact omits it; the row's own fact fills the
+        gap — the page's row keeps a value and the outcome line
+        prints whole instead of dying on the missing key."""
+        for field in ("root_mib", "home_mib", "cpus", "mem_mib"):
+            if field not in reply:
+                reply[field] = self.row[field]
+            self.row[field] = reply[field]
+        for flag in ("mounts_pending", "sizes_pending"):
+            if flag in reply:
+                self.row[flag] = reply[flag]
+
     async def apply_edit(self, body: dict) -> None:
-        """The resize exchange (#331): the reply's sizes land in the
-        page's row and the outcome line names what moved."""
+        """The resize exchange (#331): the reply's row facts land
+        in the page's row and the outcome line names what
+        moved."""
         reply = await self.guarded_page_flash(
             "edit", self.app.data.resize(self.row["id"], body)
         )
         if reply is None:
             return
-        for field in ("root_mib", "home_mib", "cpus", "mem_mib"):
-            # A reply from a daemon older than a field omits it; the
-            # row's own fact fills the gap — the page's row keeps a
-            # value and the outcome line prints whole instead of
-            # dying on the missing key.
-            if field not in reply:
-                reply[field] = self.row[field]
-            self.row[field] = reply[field]
+        self.merge_resize_reply(reply)
         self.paint_header()
         self.flash(flash_safe(resize_message(reply, body)))
 

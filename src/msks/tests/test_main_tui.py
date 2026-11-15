@@ -3607,6 +3607,16 @@ def test_the_line_helpers() -> None:
     shelled = rows_mod.header_name({**row(), "shells": 2})
     assert "2 shells open" in shelled.plain
     assert "1 shell open" in rows_mod.header_name({**row(), "shells": 1}).plain
+    # The whole first line composed (#912): the marker leads the
+    # status, both trailing segments follow it, and the plain
+    # text holds the exact line the page paints.
+    composed = rows_mod.header_name(
+        {**row(status="running"), "sizes_pending": True, "shells": 2}, 3
+    )
+    assert (
+        "↻1 ● running  ·  egress to decide: 3  ·  2 shells open"
+        in composed.plain
+    )
     # A wide-character name keeps the span on the status: the
     # offsets are codepoints, like the listing's span.
     wide = rows_mod.header_name(row(name="北" * 16))
@@ -5066,13 +5076,14 @@ async def test_the_headers_marker_follows_the_pending_changes(
     async with app.run_test() as pilot:
         await open_page(pilot, app)
         await wait_for(lambda: "↻2 ● stopped" in header_text(app))
-        # The next start applies both halves: the cleared flags
-        # reach the page on its per-second row refresh, and the
-        # marker leaves with the status kept whole.
-        data.rows[0]["mounts_pending"] = False
-        data.rows[0]["sizes_pending"] = False
+        # The page's own start applies both halves: the reply
+        # paints the running status, the row refresh it triggers
+        # lands the cleared flags, and the marker leaves while
+        # the status word stays whole.
+        await pilot.press("s")
         await wait_for(lambda: "↻" not in header_text(app))
-        assert "● stopped" in header_text(app)
+        assert "● running" in header_text(app)
+        assert ("start", WS) in data.calls
 
 
 async def test_the_headers_count_follows_the_queue(monkeypatch) -> None:
