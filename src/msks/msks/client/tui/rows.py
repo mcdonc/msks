@@ -407,14 +407,16 @@ def shell_marker(row: dict) -> str | None:
 
 
 def pending_marker(row: dict) -> str | None:
-    """The pending-changes marker (#898, #909): ``↻N``, N counting
-    the changes the next start applies, one per waiting half — a
-    mounts edit the last start has not taken, and a sizes or
-    topology edit no boot has taken — else ``None``. A remote
-    proxy row never counts (#909): its bind waits for every
-    start, not just the next one. It is standing configuration
-    rather than a pending change, and the proxies page's
-    per-row status carries the waiting."""
+    """The pending-changes marker (#898, #909, #912): ``↻N``, N
+    counting the changes the next start applies, one per waiting
+    half — a mounts edit the last start has not taken, and a
+    sizes or topology edit no boot has taken — else ``None``.
+    The list's status cell leads its word with it, and the
+    workspace page's header leads its status with it (#912).
+    A remote proxy row never counts (#909): its bind waits for
+    every start, not just the next one. It is standing
+    configuration rather than a pending change, and the proxies
+    page's per-row status carries the waiting."""
     count = int(bool(row.get("mounts_pending"))) + int(
         bool(row.get("sizes_pending"))
     )
@@ -605,35 +607,59 @@ def column_at(columns, offset: int) -> str:
     return columns[-1][0]
 
 
-def header_name(
-    row: dict, pending: int = 0, theme_variables: dict | None = None
-) -> Content:
-    """The header's first line (#351, #470 S1): the workspace's
-    name in the default foreground, its status behind the cue dot
-    beside it in the status color (the list's status coloring),
-    and — while holds wait on the page's queue — the pending-egress
-    count (#354): the segment leaves with the last hold. While
-    shells are open on this host, their count rides the same line
-    (#858): the page lands it on the row beside its per-second
-    refresh, and the segment leaves with the last shell. The name
-    rides a Content's plain text, so a markup-carrying name
-    cannot shift the span."""
-    name = workspace_label(row)
-    status = status_text(row["status"])
-    text = f" {name}  ·  {status}"
+def header_segments(row: dict, pending: int) -> str:
+    """The header's first line's trailing segments (#354, #858):
+    the pending-egress count while holds wait on the page's
+    queue, then the host's open-shell count while any shell is
+    live — each a ``·``-separated pair the line appends after
+    the status, each leaving with its last count."""
+    text = ""
     if pending:
         text += f"  ·  egress to decide: {pending}"
     shells = row.get("shells") or 0
     if shells:
         noun = "shell" if shells == 1 else "shells"
         text += f"  ·  {shells} {noun} open"
-    offset = 1 + len(name) + len("  ·  ")
-    span = Span(
-        offset,
-        offset + len(status),
-        status_color(row["status"], theme_variables),
+    return text
+
+
+def header_name(
+    row: dict, pending: int = 0, theme_variables: dict | None = None
+) -> Content:
+    """The header's first line (#351, #470 S1): the workspace's
+    name in the default foreground, its status behind the cue dot
+    beside it in the status color (the list's status coloring),
+    the pending-egress count and the open-shell count behind the
+    status (:func:`header_segments`), and — while changes wait
+    for the next start — the pending-changes marker leading the
+    status (#912): the list's own ``↻N``, the same count over the
+    same flags, in the muted accent the list paints it; the page
+    keeps its cue dot where the list's narrow cell drops it. The
+    name rides a Content's plain text, so a markup-carrying name
+    cannot shift the span."""
+    name = workspace_label(row)
+    status = status_text(row["status"])
+    marker = pending_marker(row)
+    lead = f"{marker} " if marker else ""
+    text = f" {name}  ·  {lead}{status}" + header_segments(row, pending)
+    offset = 1 + len(name) + len("  ·  ") + len(lead)
+    spans: list[Span] = []
+    if marker:
+        spans.append(
+            Span(
+                offset - len(lead),
+                offset - 1,
+                muted_style(theme_variables or {}),
+            )
+        )
+    spans.append(
+        Span(
+            offset,
+            offset + len(status),
+            status_color(row["status"], theme_variables),
+        )
     )
-    return Content(text, [span])
+    return Content(text, spans)
 
 
 #: Each meta field's cell budget (#470 S2, #523): the line clips

@@ -8,6 +8,12 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Pending-changes marker on the workspace page (#912).** The
+  workspace page's header now carries the `↻N` marker ahead of
+  its status while changes wait for the next start, the same
+  count the workspaces list's status column carries. The marker
+  leaves when the next start applies the change. See
+  `docs/tui.md` → the workspace page section.
 - **The TUI stands through a daemon outage (#904).** The
   workspace TUI stays open when msksd goes away. The list's
   status line carries a `daemon down — retrying` marker while

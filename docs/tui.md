@@ -195,11 +195,16 @@ demand, both at mint time and after.
 The **workspace page** operates on an already-created workspace. Its
 two-line header: the workspace's name on the first line with its status
 beside it, in the state's color, then the id, image, host, and
-created date on the second. While shells are open on this host, the
-first line carries their count after the status (`alpha · ● running ·
-2 shells open`); the segment leaves with the last shell's close. The
-count comes from the [session records](#open-shells-and-the-session-records)
-and follows the page's per-second row refresh.
+created date on the second. While changes wait for the next start,
+the first line carries the pending-changes marker ahead of the
+status (`alpha · ↻1 ● stopped`). It is the same `↻N` the workspaces
+list's status column carries, over the same two flags. The marker
+leaves when the next start applies the change. While shells are
+open on this host, the first line carries their count after the
+status (`alpha · ● running · 2 shells open`); the segment leaves
+with the last shell's close. The count comes from the
+[session records](#open-shells-and-the-session-records) and
+follows the page's per-second row refresh.
 
 The page's header lines and status lines fill the terminal's
 width. The action panel sits centered in its own 64-column block
