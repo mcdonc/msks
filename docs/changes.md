@@ -10,8 +10,8 @@ tagged `vX.Y.Z`.
 
 - **The unlock note renders whole (#916).** The passphrase
   prompt's note fits the form's 50-column text width:
-  `unlock <key file>: one prompt per session`. Key names up to
-  18 characters render whole. See `docs/secrets.md` → the
+  `<key file> passphrase for secrets unlock`. Key names up to
+  20 characters render whole. See `docs/secrets.md` → the
   unlock window.
 
 ### Added

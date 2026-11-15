@@ -6665,8 +6665,8 @@ async def test_the_unlock_note_fits_the_dialog() -> None:
     """The unlock note renders whole (#916): the fixed words
     leave room for a realistic key name inside the form's
     50-column text width (width 56 less the border and the
-    padding), so the one-prompt-per-session fact the acceptance
-    bar names (#515) does not die to the ellipsis the old
+    padding), so the name-led note — the key file's passphrase
+    and its purpose — does not die to the ellipsis the old
     102-column note always hit."""
     from pathlib import Path
 
@@ -6678,7 +6678,7 @@ async def test_the_unlock_note_fits_the_dialog() -> None:
         await pilot.pause()
         note = app.screen.query_one("#pass-note", Static)
         assert str(note.content) == (
-            "unlock id_ed25519_github: one prompt per session"
+            "id_ed25519_github passphrase for secrets unlock"
         )
         # The note's own region width is the budget the CSS
         # gives it (the form's text width); the name is the only
