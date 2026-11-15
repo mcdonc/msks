@@ -14,10 +14,11 @@ harness loads a real LaunchAgent and writes into the real brew
 prefix, so it must never run in a plain developer checkout. The
 release workflow copies this module and its sibling
 ``test_hostsetup_macos`` (whose ``patch_phase`` the vm_shell seam
-patches through, #875's split) out of the checkout and runs them
-against the installed wheel, where the checkout's tree must not
-shadow the code under test; the sibling imports only the wheel,
-pytest, and the stdlib, so the pair imports whole there.
+patches through, #875's split) out of the checkout and runs the
+acceptance module against the installed wheel — the sibling only
+rides its import — where the checkout's tree must not shadow the
+code under test; the sibling imports only the wheel, pytest, and
+the stdlib, so the pair imports whole there.
 
 The LaunchAgent test runs under its own label, never the real
 tool's: a disposable host cannot have a real agent under
