@@ -205,6 +205,12 @@ class FakeData:
         # writes it, and the pair with the row's mounts is the
         # pending story the reply's flag derives from.
         self.attached_mounts: dict[str, list[dict]] = {}
+        # The booted-sizes record (#898): the sizes each row's
+        # last start booted, the fake's model of the daemon's
+        # booted_sizes column — empty until a start writes it,
+        # and the pair with the row's own sizes is the pending
+        # story the reply's flag derives from.
+        self.booted_sizes: dict[str, dict] = {}
         # The published list's arch filter (#717): the scripted
         # /health document — None is a daemon predating the
         # machine field, and the filter steps aside.
@@ -420,8 +426,22 @@ class FakeData:
             if body.get(field) is not None and body[field] != fresh[field]:
                 fresh[field] = body[field]
                 changes.append(moved.format(value=body[field]))
+        fresh["sizes_pending"] = self.pending_sizes(fresh)
         reply = {k: v for k, v in fresh.items() if k not in self.resize_omit}
         return {**reply, "changes": changes}
+
+    def pending_sizes(self, row: dict) -> bool:
+        """The row's sizes flag (#898), derived the way
+        ``workspace_dict`` derives it: the row's deferred half
+        (cpus, memory, root) against the sizes its last start
+        booted — None until a start writes the record, so a
+        never-started row stands pending the way a configured
+        mount set does."""
+        return {
+            "cpus": row.get("cpus"),
+            "mem_mib": row.get("mem_mib"),
+            "root_mib": row.get("root_mib"),
+        } != self.booted_sizes.get(row["id"])
 
     def pending_mounts(self, row: dict) -> bool:
         """The row's pending flag (#756, #759), derived the way
@@ -476,6 +496,17 @@ class FakeData:
             )
         ]
         fresh["mounts_pending"] = self.pending_mounts(fresh)
+        # The booted-sizes snapshot lands with the running status
+        # (#898): the sizes this launch booted, and the served row
+        # carries the flag the pair derives — a resize while
+        # stopped stays pending until the next start reconciles
+        # it.
+        self.booted_sizes[workspace_id] = {
+            "cpus": fresh.get("cpus"),
+            "mem_mib": fresh.get("mem_mib"),
+            "root_mib": fresh.get("root_mib"),
+        }
+        fresh["sizes_pending"] = self.pending_sizes(fresh)
         return result
 
     async def stop(self, workspace_id: str) -> dict:
@@ -7502,30 +7533,33 @@ def test_the_list_row_marks_unresolved_mounts() -> None:
     )
 
     # status_text prefixes the status's dot; the marker rides the
-    # issue count.
-    assert status_with_issues(mounted_row()) == "✗1 stopped"
+    # issue count. The row's skipped mount keeps its pair split
+    # (mounts_pending), so the pending marker composes with it.
+    assert status_with_issues(mounted_row()) == "✗1 ↻1 stopped"
     assert status_with_issues(row()) == "● stopped"
     assert issue_marker(mounted_row()) == "✗1"
     assert issue_marker(row()) is None
     # The marker splits the status cell's span: the count keeps
     # the warning color while the word behind it rides its own
     # class's color — muted for a stopped row, success for a
-    # running one.
+    # running one. The composed cell (✗, pending, word) clips at
+    # the STATUS column: the pending marker's head and the word's
+    # tail share the clipped span.
     stopped = row_content(mounted_row())
-    assert "✗1 stopped" in stopped.plain
+    assert "✗1 ↻…opped" in stopped.plain
     stopped_spans = {
         stopped.plain[span.start : span.end]: span.style
         for span in stopped.spans
     }
     assert stopped_spans["✗1"] == ISSUE_MARKER_COLOR
-    assert stopped_spans[" stopped"] == muted_style({})
+    assert stopped_spans[" ↻…opped"] == muted_style({})
     running = row_content(mounted_row(status="running"))
     running_spans = {
         running.plain[span.start : span.end]: span.style
         for span in running.spans
     }
     assert running_spans["✗1"] == ISSUE_MARKER_COLOR
-    assert running_spans[" running"] == "$success"
+    assert running_spans[" ↻…nning"] == "$success"
     # A healthy row keeps one span across the whole status cell.
     healthy = row_content(row())
     (span,) = healthy.spans
@@ -7552,10 +7586,10 @@ def test_the_list_row_marks_open_shells() -> None:
     assert shell_marker(row()) is None
     assert shell_marker({**row(), "shells": 0}) is None
     assert status_with_issues(shelled) == "»2 running"
-    # Behind the mounts marker, ahead of the word — the ✗1
+    # Behind the mounts markers, ahead of the word — the ✗1
     # precedent, composed.
     both = {**mounted_row(), "shells": 2}
-    assert status_with_issues(both) == "✗1 »2 stopped"
+    assert status_with_issues(both) == "✗1 ↻1 »2 stopped"
     spanned = row_content(shelled)
     assert "»2 running" in spanned.plain
     spans = {
@@ -7571,12 +7605,51 @@ def test_the_list_row_marks_open_shells() -> None:
     }
     assert both_spans["✗1"] == rows_mod.ISSUE_MARKER_COLOR
     # The composed cell clips at the STATUS column's width, and the
-    # clip eats the second marker (its color must not ride the
-    # characters the clip rearranged): the word's span carries the
-    # clipped cell whole, muted for a stopped row.
-    assert "✗1 »…" in both_spanned.plain
+    # clip eats the trailing markers (their colors must not ride
+    # the characters the clip rearranged): the word's span carries
+    # the clipped cell whole, muted for a stopped row.
+    assert "✗1 ↻…opped" in both_spanned.plain
     assert "»2" not in both_spans
-    assert both_spans[" »…opped"] == rows_mod.muted_style({})
+    assert both_spans[" ↻…opped"] == rows_mod.muted_style({})
+
+
+def test_the_list_row_marks_pending_changes() -> None:
+    """The listing's status cell carries the pending count
+    (#898): a row with changes the next start applies reads
+    `↻N` beside its status word — one count per waiting change,
+    a mounts edit and a sizes edit — composed between the
+    mounts-issue marker and the open-shells count, each marker
+    its own color (the pending count muted: information, not a
+    warning) and the word behind them its own class's color. A
+    caught-up row prints nothing."""
+    from msks.client.tui.rows import (
+        pending_marker,
+        row_content,
+        status_with_issues,
+    )
+
+    resized = {**row(), "sizes_pending": True}
+    assert pending_marker(resized) == "↻1"
+    assert pending_marker(row()) is None
+    assert status_with_issues(resized) == "↻1 stopped"
+    # Both halves wait: the count reads two, the flags compose.
+    both_halves = {**mounted_row(), "sizes_pending": True}
+    assert status_with_issues(both_halves) == "✗1 ↻2 stopped"
+    spanned = row_content(resized)  # one marker: the cell fits whole
+    spans = {
+        spanned.plain[span.start : span.end]: span.style
+        for span in spanned.spans
+    }
+    assert spans["↻1"] == rows_mod.muted_style({})
+    assert spans[" stopped"] == rows_mod.muted_style({})
+    # Every marker composed, the word behind them (a clip would
+    # eat the tail markers the same way the ✗1/»2 pair clips).
+    all_three = {**mounted_row(), "sizes_pending": True, "shells": 3}
+    assert status_with_issues(all_three) == "✗1 ↻2 »3 stopped"
+    # The strip carries the same cue beside its costs (#898), the
+    # pair labeled the way the mounts count is.
+    strip = detail_mod.detail_strip(resized, None)
+    assert "next ↻1" in strip.plain
 
 
 def test_the_detail_strip_lines() -> None:
@@ -7712,6 +7785,28 @@ async def test_the_fake_derives_mounts_pending_like_the_daemon() -> None:
     assert trimmed["mounts_pending"] is True
     readded = await data.set_mounts(WS, mounts)
     assert readded["mounts_pending"] is False
+
+
+async def test_the_fake_derives_sizes_pending_like_the_daemon() -> None:
+    """The fake's sizes scripting (#898): the reply's flag comes
+    from the row's sizes against the sizes its last start
+    booted — the same derivation ``workspace_dict`` serves. A
+    never-started row stands pending, a start reconciles the
+    pair, a resize while stopped splits it, and the next start
+    takes it back."""
+    data = FakeData([row()])
+    assert data.rows[0].get("sizes_pending") is None  # unserved yet
+    await data.start(WS)
+    assert data.rows[0]["sizes_pending"] is False
+    resized = await data.resize(WS, {"cpus": 4})
+    assert resized["sizes_pending"] is True
+    assert resized["changes"] == ["cpus set to 4"]
+    await data.start(WS)
+    assert data.rows[0]["sizes_pending"] is False
+    # The home volume moves at once: a home-only resize is no
+    # boot's business, and the flag keeps its place.
+    await data.resize(WS, {"home_mib": 40960})
+    assert data.rows[0]["sizes_pending"] is False
 
 
 async def test_the_fakes_start_snapshot_skips_issued_mounts() -> None:
@@ -8914,6 +9009,12 @@ async def test_a_refresh_in_flight_skips_instead_of_cancelling(
         # skipped, not queued, not cancelling the first.
         while not screen.rows_loading:
             await pilot.pause()
+        # The gated flight is inside its fetch before the second
+        # refresh arrives — the skip answers the in-flight mark,
+        # and a slow host schedules the worker after the mark
+        # flips (the first macOS verify run since the #897 filter
+        # fix caught the race).
+        await wait_for(lambda: fetches == 1)
         screen.refresh_rows()
         assert fetches == 1  # the gated flight alone
         gate.set()

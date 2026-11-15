@@ -26,6 +26,7 @@ from .rows import (
     clip,
     issue_marker,
     muted_style,
+    pending_marker,
     shell_marker,
     workspace_label,
 )
@@ -265,14 +266,18 @@ def mem_value(mem_mib) -> str:
 
 
 def marker_pairs(row: dict) -> list[tuple]:
-    """The strip's marker pairs (#849, #858): the mounts count
-    while any mount skips, then the shells count while any shell
-    is live — the same ✗N/»N cues the status cell carries, read
-    beside the costs."""
+    """The strip's marker pairs (#849, #858, #898): the mounts
+    count while any mount skips, then the pending count while a
+    change waits for the next start, then the shells count while
+    any shell is live — the same ✗N/↻N/»N cues the status cell
+    carries, read beside the costs."""
     pairs: list[tuple] = []
     marker = issue_marker(row)
     if marker is not None:
         pairs.append(("mounts", marker))
+    marker = pending_marker(row)
+    if marker is not None:
+        pairs.append(("next", marker))
     shells = shell_marker(row)
     if shells is not None:
         pairs.append(("shells", shells))

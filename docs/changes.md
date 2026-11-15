@@ -6,6 +6,21 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Added
+
+- **Pending-changes marker on workspace rows (#898).** A
+  workspace whose edits wait for its next start now shows it in
+  the TUI's list: a `↻N` marker ahead of the status word counts
+  the waiting changes (a mounts edit, a sizes or topology
+  edit), and the focused row's facts strip carries the same
+  count as `next ↻N`. Every workspace row carries a new
+  `sizes_pending` flag, derived like `mounts_pending`: the
+  row's deferred sizes (root growth, vcpus, memory) against
+  the ones the last start booted. After an upgrade every
+  existing workspace reads pending until its next start: no
+  record of a last boot exists yet. The marker leaves as each
+  one starts.
+
 ## \[v0.9.1] - 2026-11-14
 
 ### Added

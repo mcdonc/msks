@@ -431,6 +431,18 @@ def router(app) -> APIRouter:
             await app.state.model.set_attached_mounts(
                 workspace_id, [mount.as_dict() for mount in attachable]
             )
+            # The booted-sizes snapshot lands beside it (#898):
+            # the deferred half the launch ran (root growth and
+            # the topology; home bytes applied at resize and ride
+            # nothing) — the record the row's sizes read against
+            # for the pending story, the same launch-read row the
+            # spec took.
+            await app.state.model.set_booted_sizes(
+                workspace_id,
+                row["cpus"],
+                row["mem_mib"],
+                row["root_mib"],
+            )
             await app.state.model.set_status(workspace_id, "running")
         return {"id": workspace_id, "status": "running"}
 

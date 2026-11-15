@@ -1225,3 +1225,92 @@ async def test_migration_0016_adds_secret_blobs(tmp_path: Path) -> None:
             engine.dispose()
     command.downgrade(config, "0015")
     assert "secret_blobs" not in tables()
+
+
+# --- the booted-sizes snapshot and the pending flag (#898) -----------------
+
+
+async def test_booted_sizes_roundtrip_and_pending(app_for) -> None:
+    """set_booted_sizes writes the snapshot; the row's
+    ``sizes_pending`` reads the pair the way ``mounts_pending``
+    reads its own (#756): a row no start has booted stands
+    pending, the snapshot the launch's sizes wrote reconciles it,
+    a later edit splits it again, and the next snapshot takes it
+    back. An absent row answers False."""
+    app = app_for()
+    model = app.state.model
+    model.migrate()
+    await model.create_workspace(
+        VmSpec(workspace_id="ws-s", kernel="/k", rootfs="/r")
+    )
+    row = await model.get_workspace("ws-s")
+    assert row["sizes_pending"] is True  # no start has booted one
+    sizes = {
+        "cpus": row["cpus"],
+        "mem_mib": row["mem_mib"],
+        "root_mib": row["root_mib"],
+    }
+    assert await model.set_booted_sizes("ws-s", **sizes) is True
+    row = await model.get_workspace("ws-s")
+    assert row["sizes_pending"] is False
+    # A resize while stopped splits the pair — the deferred half
+    # is cpus, memory, and root (the set_topology/set_sizes
+    # writes the resize route makes); the home volume's bytes
+    # applied at resize and ride nothing, so a home-only move is
+    # not a boot's business.
+    assert await model.set_topology("ws-s", 8, None) is True
+    row = await model.get_workspace("ws-s")
+    assert row["cpus"] == 8
+    assert row["sizes_pending"] is True
+    # A home-only move keeps the flag where it stood.
+    assert await model.set_sizes("ws-s", None, 40960) is True
+    assert (await model.get_workspace("ws-s"))["sizes_pending"] is True
+    await model.set_booted_sizes(
+        "ws-s", cpus=8, mem_mib=sizes["mem_mib"], root_mib=sizes["root_mib"]
+    )
+    assert (await model.get_workspace("ws-s"))["sizes_pending"] is False
+    assert await model.set_booted_sizes("ws-gone", **sizes) is False
+
+
+def test_booted_sizes_of_reads_only_its_shape() -> None:
+    """The snapshot parser (#898): the column's NULL and a value
+    that is not the JSON object the writer wrote both read as no
+    snapshot — a hand-edited or corrupt column leaves the row
+    pending, never a crash on every read."""
+    from msks.model.serialize import booted_sizes_of
+    from msks.model.workspaces import Workspace
+
+    def bare(**column):
+        return Workspace(
+            id="ws-x",
+            name=None,
+            kernel="/k",
+            rootfs="/r",
+            cmdline="",
+            cpus=4,
+            mem_mib=8192,
+            root_mib=10240,
+            home_mib=20480,
+            egress=True,
+            egress_mode="allow",
+            secret_coverage="all",
+            disk_epoch=0,
+            seed_epoch=0,
+            status="stopped",
+            **column,
+        )
+
+    assert booted_sizes_of(bare()) is None
+    assert booted_sizes_of(bare(booted_sizes="not json")) is None
+    assert booted_sizes_of(bare(booted_sizes="[1, 2]")) is None
+    assert booted_sizes_of(
+        bare(booted_sizes='{"cpus": 4, "mem_mib": 8192, "root_mib": 10240}')
+    ) == {"cpus": 4, "mem_mib": 8192, "root_mib": 10240}
+    # A snapshot the writer's own shape lost a field of still
+    # reads — the missing key answers None, a value no row's
+    # sizes equal.
+    assert booted_sizes_of(bare(booted_sizes='{"cpus": 4}')) == {
+        "cpus": 4,
+        "mem_mib": None,
+        "root_mib": None,
+    }

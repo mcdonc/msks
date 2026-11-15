@@ -131,6 +131,16 @@ class Workspace(Base):
     # two agree until an edit or a skip splits them, and the next
     # start writes the record that reconciles them.
     attached_mounts: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The sizes the workspace's last start booted (#898): JSON
+    # ``{"cpus", "mem_mib", "root_mib"}`` — the half a resize
+    # defers to a boot (root growth and the vcpu/memory
+    # topology; home bytes move at once and ride nothing). NULL
+    # is a workspace that never started, and the pair with the
+    # row's own sizes is the resize pending story: the two agree
+    # until an edit splits them, and the next start writes the
+    # record that reconciles them — the attached_mounts shape
+    # (#756), carried to sizes.
+    booted_sizes: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The host's timezone captured at create (#633): the zone
     # name the seed's first-boot block sets the guest's clock to.
     # NULL is a UTC-or-unreadable host — nothing rides and the
