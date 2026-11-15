@@ -31,9 +31,9 @@ Every page answers `?` with a key overlay: the page's bindings,
 hidden ones included, each with its label. Any key closes the
 overlay. The workspaces list answers it too.
 
-A destructive action asks first, in a dialog that shows `y / n`
-beside the question. `y` (or Enter) takes the action; `n`, `q`, or
-Escape leaves everything as it was.
+Actions that change or discard data ask first, in a dialog that
+shows `y / n` beside the question. `y` (or Enter) takes the
+action. `n`, `q`, or Escape leaves everything as it was.
 
 The list re-reads the daemon every five seconds. A workspace changed
 from another surface (the CLI, another operator) appears without a

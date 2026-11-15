@@ -86,7 +86,7 @@ class ModeScreen(PickerScreen):
 class ConfirmScreen(ModalScreen[bool]):
     """A yes/no question (#280): ``y``/Enter answers True, ``n``/
     ``q``/Escape answers False. The question stands with a
-    ``y / n`` hint beside it (#913) — the answer keys show at
+    ``y / n`` hint beside it (#913): the answer keys show at
     the point of decision. The callback given at construction
     runs as a task with the answer."""
 
@@ -105,7 +105,7 @@ class ConfirmScreen(ModalScreen[bool]):
 
     def compose(self) -> ComposeResult:
         # The hint belongs to the shared screen, not to any
-        # caller's question string: every confirm names its
+        # caller's question string: every confirm shows its
         # answer keys (#913).
         yield Static(f"{self.question}  y / n", id="question")
 
