@@ -385,7 +385,13 @@ class MsksTuiApp(App):
         try:
             async with self.unlock_lock:
                 message = await unlock_flow(
-                    self.data, self.ask_passphrase_once
+                    self.data,
+                    self.ask_passphrase_once,
+                    spent_line=(
+                        "secrets stay locked — this session's "
+                        "passphrase prompt was already asked; the "
+                        "secrets page's u action asks again"
+                    ),
                 )
             if message is not None:
                 self.flash_standing(unlock_flash(message))
@@ -444,15 +450,17 @@ class MsksTuiApp(App):
 
     def flash_standing(self, message: str) -> None:
         """Flash where the operator stands (#920): the pages
-        paint their own status lines, the list paints the app's —
-        the re-run's outcome names itself on the screen its
-        prompt landed over instead of a line buried under the
-        page."""
-        screen_flash = getattr(self.screen, "flash", None)
-        if screen_flash is not None:
-            screen_flash(message)
-        else:
-            self.flash(message)
+        paint their own status lines, the list paints the app's.
+        The walk takes the nearest status line down the open
+        stack — a modal over a page (the audit view, the sentinel
+        panel) flashes the page's line beneath it, which the
+        modal's close reveals."""
+        for screen in reversed(self.screen_stack):
+            screen_flash = getattr(screen, "flash", None)
+            if screen_flash is not None:
+                screen_flash(message)
+                return
+        self.flash(message)
 
     async def push_remembered(self) -> None:
         """Open the remembered workspace's page against a fresh

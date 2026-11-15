@@ -2244,7 +2244,8 @@ async def test_the_re_run_takes_its_turn_after_a_page_unlock(
         app.screen.query_one("#pass-field", Input).value = "pw"
         await pilot.press("enter")
         await wait_for(lambda: data.pending_fetches == 3)
-        await wait_for(lambda: "stay locked" in page_status(app))
+        await wait_for(lambda: "already asked" in page_status(app))
+        assert "stay locked" in page_status(app)
         assert not pass_field_up(app)
         assert data.unlock_calls == []
 
