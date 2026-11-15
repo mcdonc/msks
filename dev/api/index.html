@@ -1204,9 +1204,7 @@ carries <code>sizes_pending</code> the same way: whether the row's deferred size
 growth and the vcpu/memory topology) differ from the ones the last start
 booted — True until a start takes them. A workspace no start has booted reads
 True, so a row from a database that predates the field reads True until its
-next start. The row also carries <code>proxies_pending</code>: the workspace's remote
-proxy rows while it sits in any status but running, whose binds are the
-workspace's own tap and wait for the next start. <code>msks
+next start. <code>msks
 mount</code>/<code>umount</code> and the TUI's editor use this route.</p>
 <ul>
 <li><code>GET</code>/<code>PUT …/home</code>: export and import the home volume as a
