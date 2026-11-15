@@ -232,7 +232,9 @@ class FakeData:
     async def workspaces(self) -> list[dict]:
         self.fetches += 1
         if "workspaces" in self.fail:
-            raise RuntimeError("daemon away")
+            # The daemon-away shape (#904): the seam's reach
+            # failure, the kind that drives the down marker.
+            raise data_mod.RestFailure("daemon away", reach=True)
         return [dict(r) for r in self.rows]
 
     async def storage(self) -> dict:
@@ -276,7 +278,9 @@ class FakeData:
         its live status the way the daemon's does."""
         self.proxy_calls.append((workspace_id, dict(body)))
         if self.proxy_refusal is not None:
-            raise SystemExit(f"msks: 409: {self.proxy_refusal}")
+            raise data_mod.RestFailure(
+                f"msks: 409: {self.proxy_refusal}", reach=False
+            )
         row = {
             "id": self.proxy_id(),
             "workspace_id": workspace_id,
@@ -296,7 +300,9 @@ class FakeData:
         that lands rewrites the row in every later listing."""
         self.proxy_updates.append((workspace_id, proxy_id, dict(body)))
         if self.proxy_refusal is not None:
-            raise SystemExit(f"msks: 409: {self.proxy_refusal}")
+            raise data_mod.RestFailure(
+                f"msks: 409: {self.proxy_refusal}", reach=False
+            )
         if "proxy-update" in self.fail:
             raise RuntimeError(self.refusal)
         fresh = {
@@ -346,7 +352,7 @@ class FakeData:
         raises the way the daemon's would."""
         self.removed.append(digest)
         if self.remove_refusal is not None:
-            raise SystemExit(self.remove_refusal)
+            raise data_mod.RestFailure(self.remove_refusal, reach=False)
         self.images_rows = [
             row for row in self.images_rows if row["hash"] != digest
         ]
@@ -358,7 +364,7 @@ class FakeData:
         daemon's pointer file moves it."""
         self.default_calls.append(ref)
         if self.default_refusal is not None:
-            raise SystemExit(self.default_refusal)
+            raise data_mod.RestFailure(self.default_refusal, reach=False)
         for image in self.images_rows:
             image["default"] = image["hash"] == ref
         return {"hash": ref}
@@ -368,7 +374,7 @@ class FakeData:
         armed raises the way the daemon's would."""
         self.import_calls.append(source)
         if self.import_refusal is not None:
-            raise SystemExit(self.import_refusal)
+            raise data_mod.RestFailure(self.import_refusal, reach=False)
         return {
             "ref": "debian:13.6",
             "hash": "a" * 64,
@@ -490,7 +496,7 @@ class FakeData:
         save keeps the flag where it stood."""
         self.calls.append(("set-mounts", workspace_id, mounts))
         if self.mounts_refusal is not None:
-            raise SystemExit(self.mounts_refusal)
+            raise data_mod.RestFailure(self.mounts_refusal, reach=False)
         for row in self.rows:
             if row["id"] == workspace_id:
                 row["mounts"] = [dict(m) for m in mounts]
@@ -1231,6 +1237,152 @@ async def test_a_listing_failure_flashes() -> None:
     async with app.run_test() as pilot:
         await wait_for(lambda: "listing failed" in status_text(app))
         await pilot.pause()
+
+
+async def test_the_tree_stands_while_the_daemon_is_away(
+    monkeypatch,
+) -> None:
+    """#904: a daemon that answers nothing quits neither the tree
+    nor the loop. The REST seam's one-line exits (the reach
+    refusal the CLI prints) arrive through the listing's gather
+    children, and a SystemExit escaping a task ends the whole
+    event loop however the awaiting screen guards — the seam
+    carries them as RestFailure, the first failure flashes, and
+    the marker stands on the status line until the daemon
+    answers again."""
+    monkeypatch.setenv("MSKSC_URL", "https://127.0.0.1:9660")
+    monkeypatch.setenv("MSKSC_TOKEN", "t" * 32)
+
+    def dead(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("all attempts refused")
+
+    data = data_mod.TuiData(transport=httpx.MockTransport(dead))
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: "listing failed" in status_text(app))
+        assert "cannot reach" in status_text(app)
+        # The standing default line carries the down marker once
+        # the flash's window lapses (the 0.5s interval repaints
+        # it); the tree is standing, not exiting.
+        app.flash_line.until = 0.0
+        await pilot.pause(1.0)
+        assert "daemon down — retrying" in status_text(app)
+        assert app.is_running
+
+
+async def test_the_daemon_down_marker_recovers(monkeypatch) -> None:
+    """#904: the marker leaves and the recovery flashes once when
+    a refresh answers again; a failure that finds the marker
+    already standing stays quiet — the marker is the state, the
+    same line every tick is noise beside it."""
+    scripted_link(monkeypatch, [])
+    monkeypatch.setenv("MSKSC_URL", "https://127.0.0.1:8660")
+    data = FakeData([row()])
+    data.fail.add("workspaces")
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(lambda: "listing failed" in status_text(app))
+        # A second failing refresh: no new flash, the marker is
+        # the standing state on the default line.
+        app.flash_line.until = 0.0
+        app.screen.action_refresh()
+        await wait_for(lambda: "daemon down — retrying" in status_text(app))
+        assert "listing failed" not in status_text(app)
+        # The daemon answers again: the marker leaves, the rows
+        # return, and the recovery flashes once.
+        data.fail.discard("workspaces")
+        app.screen.action_refresh()
+        await wait_for(
+            lambda: "daemon back — listing resumed" in status_text(app)
+        )
+        app.flash_line.until = 0.0
+        await wait_for(lambda: "daemon down" not in status_text(app))
+        assert list_children(app) == 1
+
+
+async def test_a_refusal_owns_no_marker(monkeypatch) -> None:
+    """#904: a daemon that answers with a refusal is answering —
+    the refusal flashes on every failing tick (the listing's own
+    report, no quieter for repeating) and the down marker never
+    stands; a refusal that lands while an outage's marker stands
+    clears it, the refusal's own flash naming the new state."""
+    scripted_link(monkeypatch, [])
+    monkeypatch.setenv("MSKSC_URL", "https://127.0.0.1:8660")
+    data = FakeData([row()])
+    data.fail.add("workspaces")
+    app, _ = make_app(data)
+    async with app.run_test():
+        await wait_for(
+            lambda: "listing failed: daemon away" in status_text(app)
+        )
+        app.flash_line.until = 0.0
+        app.screen.action_refresh()
+        await wait_for(lambda: "daemon down — retrying" in status_text(app))
+
+        # The daemon answers, but with a refusal.
+        async def refused() -> list[dict]:
+            raise data_mod.RestFailure("msks: 401: token refused", reach=False)
+
+        data.workspaces = refused
+        app.screen.action_refresh()
+        await wait_for(
+            lambda: (
+                "listing failed: msks: 401: token refused" in status_text(app)
+            )
+        )
+        app.flash_line.until = 0.0
+        await wait_for(lambda: "daemon down" not in status_text(app))
+        assert not app.screen.daemon_down
+        # The refusal keeps flashing every failing tick — the
+        # listing's standing report, not a state.
+        app.screen.action_refresh()
+        await wait_for(
+            lambda: (
+                "listing failed: msks: 401: token refused" in status_text(app)
+            )
+        )
+        assert "daemon down" not in status_text(app)
+
+
+async def test_the_rest_seam_carries_the_exit_contract_failures(
+    monkeypatch,
+) -> None:
+    """#904: every TuiData call routes through the one door that
+    carries the seam's exit-contract failures as RestFailure —
+    the unreachable line and the HTTP refusal alike — with the
+    message the CLI prints, so a screen's guard flashes it and
+    the tree stands. The failure's kind rides with it: an
+    unanswered dial is a reach failure, an HTTP refusal is not —
+    the daemon is answering — and the listing's down marker
+    states only the outage."""
+    monkeypatch.setenv("MSKSC_URL", "https://127.0.0.1:9660")
+    monkeypatch.setenv("MSKSC_TOKEN", "t" * 32)
+
+    def dead(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("all attempts refused")
+
+    data = data_mod.TuiData(transport=httpx.MockTransport(dead))
+    with pytest.raises(data_mod.RestFailure) as reached:
+        await data.workspaces()
+    assert "cannot reach https://127.0.0.1:9660" in str(reached.value)
+    assert reached.value.reach
+
+    def refused(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": "workspace is running"})
+
+    data = data_mod.TuiData(transport=httpx.MockTransport(refused))
+    with pytest.raises(data_mod.RestFailure) as conflict:
+        await data.stop("ws-1")
+    assert "409" in str(conflict.value)
+    assert "workspace is running" in str(conflict.value)
+    assert not conflict.value.reach
+    # A healthy call passes the door untouched.
+    serving = data_mod.TuiData(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json=[])
+        )
+    )
+    assert await serving.workspaces() == []
 
 
 async def test_keys_without_a_focused_row_flash() -> None:
@@ -3940,6 +4092,39 @@ def test_the_skew_marker_wins_cells_before_the_url() -> None:
     )
     assert fat in mixed.plain
     assert cell_len(mixed.plain) <= 78
+
+
+def test_the_down_marker_shares_the_tail_with_the_skew() -> None:
+    """#904: the daemon-down marker rides last beside a standing
+    skew marker, both keep the warning color and their cells, and
+    the line keeps its one-row span at 80 columns."""
+    long_url = "https://msks-daemon.really-long-hostname.example.internal:8660"
+    marker = detail_mod.skew_marker({"version": "9.9.9"})
+    content = detail_mod.status_content(
+        4,
+        long_url,
+        "1 running 3 stopped",
+        skew=marker,
+        down=detail_mod.DAEMON_DOWN_MARKER,
+    )
+    assert marker in content.plain
+    assert detail_mod.DAEMON_DOWN_MARKER in content.plain
+    assert content.plain.index(marker) < content.plain.index(
+        detail_mod.DAEMON_DOWN_MARKER
+    )
+    assert cell_len(content.plain) <= 78
+    warn = [
+        s for s in content.spans if s.style == detail_mod.SKEW_MARKER_COLOR
+    ]
+    assert len(warn) == 2
+    covered = {content.plain[s.start : s.end] for s in warn}
+    assert covered == {marker, detail_mod.DAEMON_DOWN_MARKER}
+    # Alone, the down marker takes the same tail.
+    solo = detail_mod.status_content(
+        2, long_url, None, down=detail_mod.DAEMON_DOWN_MARKER
+    )
+    assert detail_mod.DAEMON_DOWN_MARKER in solo.plain
+    assert cell_len(solo.plain) <= 78
 
 
 async def test_the_version_skew_marker_appears_and_leaves(

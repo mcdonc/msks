@@ -382,7 +382,7 @@ class MsksTuiApp(App):
         ref = self.follow.reopen
         try:
             rows = await self.data.workspaces()
-        except Exception, SystemExit:
+        except Exception:
             return
         for row in rows:
             if ref in (row["id"], row.get("name")):

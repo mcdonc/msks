@@ -8,6 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The TUI stands through a daemon outage (#904).** The
+  workspace TUI stays open when msksd goes away. The list's
+  status line carries a `daemon down — retrying` marker while
+  the five-second refresh finds no answer. Every refresh tick
+  is a retry, and a one-line flash notes the recovery when the
+  daemon answers again. A daemon that answers with a refusal
+  (a revoked token, a failing endpoint) flashes its reason on
+  every refresh. The down marker never stands for a refusal:
+  the daemon is answering. See `docs/tui.md` → the status bar
+  section.
 - **Pending-changes marker on workspace rows (#898).** A
   workspace whose edits wait for its next start now shows it in
   the TUI's list: a `↻N` marker ahead of the status word counts

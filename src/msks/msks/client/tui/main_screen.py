@@ -33,7 +33,9 @@ from .consent_ui import (
     focus_attr,
     focused_attr,
 )
+from .data import RestFailure
 from .detail import (
+    DAEMON_DOWN_MARKER,
     detail_strip,
     skew_marker,
     state_summary,
@@ -66,16 +68,15 @@ def created_note(row: dict) -> str:
 
 async def guarded_flash(app, label: str, work):
     """Await one screen action, flashing the failure instead of
-    tearing the TUI down (SystemExit included — the REST seam's
-    error surface, the daemon's named refusal among them). The
-    refusal text is escaped for a status-line flash (``flash_safe``
-    — the daemon echoes operator-typed references, a workspace
-    name among them, back, and one carrying rich markup — a
-    truncated closing tag included — would otherwise crash the
-    screen)."""
+    tearing the screen's state down (the seam's RestFailure, the
+    daemon's named refusal among them). The refusal text is
+    escaped for a status-line flash (``flash_safe`` — the daemon
+    echoes operator-typed references, a workspace name among
+    them, back, and one carrying rich markup — a truncated
+    closing tag included — would otherwise crash the screen)."""
     try:
         return await work
-    except (Exception, SystemExit) as exc:
+    except Exception as exc:
         app.flash(f"{label} failed: {flash_safe(str(exc))}")
         return None
 
@@ -207,6 +208,13 @@ class MainScreen(HelpKeys, Screen):
         # answer's both-words form, standing on the status line
         # beside the URL until the versions agree again.
         self.version_skew: str | None = None
+        # The listing's reach state (#904): True while the daemon
+        # answers nothing — the marker stands on the status line
+        # and every refresh tick is a retry, the same cadence the
+        # healthy listing already keeps. The first failing
+        # refresh flashes its reason and the recovery flashes
+        # once; the marker carries the state between them.
+        self.daemon_down = False
 
     def compose(self) -> ComposeResult:
         yield Static(id="status")
@@ -321,6 +329,8 @@ class MainScreen(HelpKeys, Screen):
         self.run_worker(self.load_rows)
 
     async def load_rows(self) -> None:
+        failure: str | None = None
+        reach = False
         try:
             rows, _, _ = await asyncio.gather(
                 self.app.data.workspaces(),
@@ -328,10 +338,55 @@ class MainScreen(HelpKeys, Screen):
                 self.load_skew(),
             )
             await self.rebuild_rows(self.with_shell_counts(rows))
-        except (Exception, SystemExit) as exc:
-            self.app.flash(f"listing failed: {flash_safe(str(exc))}")
+        except Exception as exc:
+            failure = flash_safe(str(exc))
+            reach = isinstance(exc, RestFailure) and exc.reach
         finally:
             self.rows_loading = False
+        self.land_reach(failure, reach)
+
+    def land_reach(self, failure: str | None, reach: bool) -> None:
+        """Land one refresh's reach outcome (#904): a daemon that
+        answers nothing enters the down state — the marker stands
+        on the status line, the transition's flash naming the
+        reason — and a refresh that answers leaves it, the flash
+        naming the recovery. A refresh that finds the state
+        standing decides nothing: the marker is the report, and
+        the same line every five seconds is noise beside it. The
+        standing interval keeps its cadence while the marker
+        stands, so every tick is a reconnect attempt. A failure
+        that is not an outage — a daemon that answers with a
+        refusal, a listing the client cannot build — owns no
+        marker: the daemon is answering, the refusal names
+        itself, and a marker that stood from an outage before
+        this answer leaves with the refusal's own flash."""
+        if failure is None:
+            self.land_recovery()
+        elif reach:
+            self.land_outage(failure)
+        else:
+            self.daemon_down = False
+            self.app.flash(f"listing failed: {failure}")
+            self.sync_status()
+
+    def land_recovery(self) -> None:
+        """A refresh that answered while the marker stood: the
+        marker leaves and the recovery flashes once."""
+        if not self.daemon_down:
+            return
+        self.daemon_down = False
+        self.app.flash("daemon back — listing resumed")
+        self.sync_status()
+
+    def land_outage(self, failure: str) -> None:
+        """A refresh the daemon did not answer: the down state on
+        the transition, quiet while it stands — the marker is the
+        report between flashes."""
+        if self.daemon_down:
+            return
+        self.daemon_down = True
+        self.app.flash(f"listing failed: {failure}")
+        self.sync_status()
 
     def with_shell_counts(self, rows: list[dict]) -> list[dict]:
         """Land the host's open-shell counts on the rows (#858):
@@ -365,7 +420,7 @@ class MainScreen(HelpKeys, Screen):
                 ws["id"]: ws["root_bytes"] + ws["home_bytes"]
                 for ws in report.get("workspaces") or []
             }
-        except Exception, SystemExit:
+        except Exception:
             return
 
     async def load_skew(self) -> None:
@@ -496,7 +551,11 @@ class MainScreen(HelpKeys, Screen):
             count = len(self.rows)
             summary = state_summary(self.rows)
             default = status_content(
-                count, self.app.url, summary, skew=self.version_skew
+                count,
+                self.app.url,
+                summary,
+                skew=self.version_skew,
+                down=DAEMON_DOWN_MARKER if self.daemon_down else None,
             )
             text = self.app.flash_line.text(default)
             self.query_one("#status", Static).update(text)
@@ -671,7 +730,7 @@ class MainScreen(HelpKeys, Screen):
             return
         try:
             result = await self.app.data.create(body)
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.app.push_screen(
                 FailurePanel("create", body.get("name"), str(exc))
             )

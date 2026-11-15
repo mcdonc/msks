@@ -586,7 +586,7 @@ class ImagesScreen(HelpKeys, Screen):
             return  # a closed page fetches nothing, rebuilds nothing
         try:
             catalog = await self.app.data.images()
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.land(exc, verb="catalog read")
             return
         if self._left:
@@ -694,7 +694,7 @@ class ImagesScreen(HelpKeys, Screen):
             return
         try:
             await self.app.data.set_default_image(row["hash"])
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.app.push_screen(
                 FailurePanel("default", row.get("hash"), str(exc))
             )
@@ -709,7 +709,7 @@ class ImagesScreen(HelpKeys, Screen):
             return
         try:
             await self.app.data.remove_image(row["hash"])
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.app.push_screen(
                 FailurePanel("delete", row.get("hash"), str(exc))
             )
@@ -793,7 +793,7 @@ class ImportingScreen(ModalScreen):
     async def run_import(self) -> None:
         try:
             record = await self.app.data.import_image(self.row["url"])
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.stop_timer()
             self.leave()
             self.app.push_screen(

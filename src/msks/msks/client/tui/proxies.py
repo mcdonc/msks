@@ -568,7 +568,7 @@ class ProxiesScreen(HelpKeys, Screen):
     async def load_rows(self) -> None:
         try:
             rows = await self.app.data.workspace_proxies(self.workspace["id"])
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.flash(f"listing failed: {flash_safe(str(exc))}")
         else:
             await self.rebuild_rows(rows)
@@ -658,7 +658,7 @@ class ProxiesScreen(HelpKeys, Screen):
         page's status line."""
         try:
             return await work
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.flash(f"{label} failed: {flash_safe(str(exc))}")
             return None
 

@@ -197,6 +197,15 @@ STATUS_LINE_W = 78
 #: keeps on a row, beside a URL the line paints muted.
 SKEW_MARKER_COLOR = "$warning"
 
+#: The status line's part separator (#853): the cells between
+#: the count, the summary, the URL, and the standing markers.
+STATUS_JOIN = "  ·  "
+
+#: The daemon-down marker (#904): what the listing's status line
+#: carries while the daemon answers nothing — the standing
+#: interval keeps its cadence, so every refresh tick is a retry.
+DAEMON_DOWN_MARKER = "daemon down — retrying"
+
 #: Each version word's cell ceiling in the skew marker (#852): a
 #: release word fits whole; a longer one (a proxy's junk string)
 #: clips both ends rather than push the marker past the line's
@@ -439,7 +448,7 @@ def summary_fit(
     and nothing else on the line shows the skew."""
     if summary is None:
         return None
-    whole = "  ·  ".join([head, summary, url_text, *tail])
+    whole = STATUS_JOIN.join([head, summary, url_text, *tail])
     over = cell_len(whole) - STATUS_LINE_W
     if over <= 0:
         return summary
@@ -451,24 +460,27 @@ def fitted_url(
     url: str, head: str, summary: str | None, tail: list[str], floor: int
 ) -> str:
     """The URL at its clip budget (#853, #852): the line's
-    remainder after the count, the summary, and the marker. The
+    remainder after the count, the summary, and the markers. The
     first pass crops at ``URL_FLOOR_W`` — the summary clips
     before the URL goes past its floor — and the re-fit pass,
     run after the summary gave what it could, takes the floor
     down to one cell while a marker stands: the URL yields its
     last cells before the marker loses its last one."""
     before = [head, summary] if summary else [head]
-    spent = cell_len("  ·  ".join([*before, *tail])) + len("  ·  ")
+    spent = cell_len(STATUS_JOIN.join([*before, *tail])) + len(STATUS_JOIN)
     return clip(url, max(floor, min(URL_W, STATUS_LINE_W - spent)))
 
 
-def status_line_spans(head: str, skew: str | None, line: str) -> list[Span]:
+def status_line_spans(head: str, markers: list[str], line: str) -> list[Span]:
     """The standing line's spans: the count in the bold default
-    foreground, the version-skew marker in the warning color
-    while one stands (#852)."""
+    foreground, each standing marker in the warning color from
+    the line's end (#852, #904) — the skew marker first, the
+    daemon-down marker last."""
     spans = [Span(0, len(head), "$text bold")]
-    if skew:
-        spans.append(Span(len(line) - len(skew), len(line), SKEW_MARKER_COLOR))
+    end = len(line)
+    for marker in reversed(markers):
+        spans.append(Span(end - len(marker), end, SKEW_MARKER_COLOR))
+        end -= len(marker) + len(STATUS_JOIN)
     return spans
 
 
@@ -478,6 +490,7 @@ def status_content(
     summary: str | None = None,
     noun: str = "workspace",
     skew: str | None = None,
+    down: str | None = None,
 ) -> Content:
     """The status line's standing content (#349, #853): the row
     count — the fact that moves while the operator works — set in
@@ -489,15 +502,15 @@ def status_content(
     budget is what the line's span leaves after the count and the
     summary, so a long summary crops the URL — both ends kept —
     before the summary gives a cell up. The version-skew marker
-    (#852) rides last in the warning color and outranks both: the
-    URL crops to its floor first, then the summary clips — the
-    marker never gives a cell, because every row already shows
-    the fleet's shape and nothing else on the line shows the
-    skew. The secrets page's placeholder count rides the same
-    shape (#390)."""
+    (#852) rides after the URL in the warning color and outranks
+    both: the URL crops to its floor first, then the summary
+    clips — the markers never give a cell, because every row
+    already shows the fleet's shape and nothing else on the line
+    shows the skew or the daemon's reach (#904). The secrets
+    page's placeholder count rides the same shape (#390)."""
     plural = "" if count == 1 else "s"
     head = f" {count} {noun}{plural}"
-    tail = [skew] if skew else []
+    tail = list(filter(None, (skew, down)))
     url_text = fitted_url(url, head, summary, tail, URL_FLOOR_W)
     summary_text = summary_fit(head, summary, url_text, tail)
     # The re-fit pass: a summary the fit clipped or dropped frees
@@ -513,5 +526,5 @@ def status_content(
         if summary_text is not None
         else [head, url_text, *tail]
     )
-    line = "  ·  ".join(parts)
-    return Content(line, status_line_spans(head, skew, line))
+    line = STATUS_JOIN.join(parts)
+    return Content(line, status_line_spans(head, tail, line))

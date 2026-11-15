@@ -152,7 +152,7 @@ class SecretsScreen(HelpKeys, Screen):
     async def load_rows(self) -> None:
         try:
             rows = await self.app.data.secrets()
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.flash(f"listing failed: {flash_safe(str(exc))}")
             return
         await self.rebuild_rows(rows)
@@ -239,7 +239,7 @@ class SecretsScreen(HelpKeys, Screen):
         status line, which the pushed page hides (#343)."""
         try:
             return await work
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.flash(f"{label} failed: {flash_safe(str(exc))}")
             return None
 

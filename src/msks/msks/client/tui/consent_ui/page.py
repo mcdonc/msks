@@ -646,9 +646,9 @@ class ConsentPage(HelpKeys, Screen):
 
     async def decide_focused(self, decision: str, duration: str) -> None:
         """Send the verdict for the focused hold through the data
-        seam; a failure flashes, never crashes the tree (SystemExit
-        included — the REST seam's error surface). A key pressed
-        inside a rebuild's swap window reads as nothing focused."""
+        seam; a failure (the seam's RestFailure among them) flashes,
+        never crashes the tree. A key pressed inside a rebuild's
+        swap window reads as nothing focused."""
         request_id = focused_request_id(self.hold_rows())
         if request_id is None:
             self.flash("no hold focused")
@@ -693,7 +693,7 @@ class ConsentPage(HelpKeys, Screen):
             await self.host.app.data.decide(
                 self.workspace_id, request_id, decision, duration
             )
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.flash(f"decide failed: {flash_safe(str(exc))}")
 
     async def action_revoke(self) -> None:
@@ -716,7 +716,7 @@ class ConsentPage(HelpKeys, Screen):
         refreshed ``egress.rules`` frame, never optimistically."""
         try:
             await self.host.app.data.revoke(self.workspace_id, request_id)
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.flash(f"revoke failed: {flash_safe(str(exc))}")
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:

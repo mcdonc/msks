@@ -412,7 +412,7 @@ class MountsScreen(ModalScreen[dict | None]):
         undo = self.mounts() if before is None else before
         try:
             fresh = await self.data.set_mounts(self.row["id"], self.mounts())
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             reason = f"refused: {exc}"
             self.row["mounts"] = undo
             await self.rebuild_rows()
