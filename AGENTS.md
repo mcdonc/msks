@@ -466,7 +466,8 @@ create noise — do not add changelog entries for them.
 
 ### When to garden for a release
 
-Right before pushing the tag — do this as its own commit on `main`:
+Right before pushing the tag — as two commits on `main` (either order,
+both in or before the commit you tag):
 
 1. Rename `## \[Unreleased]` → `## \[vX.Y.Z] - YYYY-MM-DD`
    (today's date). The `v` prefix and bracket form **must match the tag exactly**;
@@ -476,12 +477,18 @@ Right before pushing the tag — do this as its own commit on `main`:
    backslashes first, so `## \[v1.0.5] - 2026-07-07` matches tag `v1.0.5` (a
    bare `## [v1.0.5]` would still match, but don't write it that way).
 2. Insert a fresh, empty `## \[Unreleased]` heading directly above it.
-3. Commit, e.g. `chore(changelog): cut vX.Y.Z`.
-4. Tag and cut: `devenv --quiet -O dotenv.enable:bool false shell -- git tag vX.Y.Z && devenv --quiet -O dotenv.enable:bool false shell -- scripts/cut-release.sh vX.Y.Z`. The script pushes the tag ALONE, waits for its Deploy Docs run to finish green, then pushes main — pushing tag and main together races the docs workflow's concurrency group and silently loses the versioned snapshot (#805). Re-running the script after an interrupted cut is safe.
+3. Bump the version in the four files the release wheel reads —
+   `pyproject.toml`, `src/msks/msks/spec/version.py`, `nix/msks-pkg.nix`,
+   and `uv.lock` (`uv lock` refreshes the lock's own entry) — and commit
+   it, e.g. `chore(release): the vX.Y.Z version bump`.
+4. Commit the changelog, e.g. `chore(changelog): cut vX.Y.Z`.
+5. Tag and cut: `devenv --quiet -O dotenv.enable:bool false shell -- git tag vX.Y.Z && devenv --quiet -O dotenv.enable:bool false shell -- scripts/cut-release.sh vX.Y.Z`. The script pushes the tag ALONE, waits for its Deploy Docs run to finish green, then pushes main — pushing tag and main together races the docs workflow's concurrency group and silently loses the versioned snapshot (#805). The script refuses a tag whose tree disagrees with the tag's version or lacks its changelog section, before anything is pushed (#922). Re-running the script after an interrupted cut is safe.
 
-**Critical sequencing:** `release.yml` checks out `docs/changes.md` at the tagged
-commit, so the `[Unreleased]` → `[vX.Y.Z]` rename **must land in (or before) the
-commit you tag**. If you tag a commit that still has the changes under
+**Critical sequencing:** `release.yml` checks out the tagged
+commit's tree, so both the `[Unreleased]` → `[vX.Y.Z]` rename **and the
+version bump must land in (or before) the commit you tag**. A tag whose
+`pyproject.toml` version disagrees fails the workflow's wheel gate seven
+seconds in (#922). If you tag a commit that still has the changes under
 `[Unreleased]`, the workflow finds no `## [vX.Y.Z]` section and the release body
 falls back to pure auto-generated notes — the human-authored section is silently lost.
 
