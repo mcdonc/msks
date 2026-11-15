@@ -29,6 +29,15 @@ tagged `vX.Y.Z`.
   many rows wait. A forward proxy binds daemon-side at
   once and never counts.
 
+### Changed
+
+- **Workspace page width (#902).** The page's header lines and
+  status lines fill the terminal's width; the action panel keeps
+  its centered block. On a terminal wider than 80 columns, the
+  spare width fills the clipped meta fields whole (the id
+  first), and the mounts and proxies lines use the full width
+  before any ellipsis.
+
 ## \[v0.9.1] - 2026-11-14
 
 ### Added

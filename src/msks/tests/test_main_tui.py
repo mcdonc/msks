@@ -1965,9 +1965,9 @@ async def test_the_page_centers_its_action_block(monkeypatch) -> None:
         page = app.screen.query_one("#page")
         body = app.screen.query_one("#page-body")
         actions = app.screen.query_one("#actions")
-        # At the 80-column frame the page's block fills the width
-        # (#881): the small window keeps its full-width layout.
-        assert body.region.width == page_mod.screen.PAGE_BLOCK_W
+        # At the 80-column frame the data lines fill the width
+        # (#902): the small window keeps its full-width layout.
+        assert body.region.width == 80
         assert body.region.x == 0
         assert actions.region.width == 64
         assert actions.region.x == 8  # centered at 80 columns
@@ -1986,16 +1986,15 @@ async def test_the_page_centers_its_action_block(monkeypatch) -> None:
         assert "caption" in actions.children[0].classes
 
 
-async def test_a_wider_terminal_caps_the_page_to_one_block(
+async def test_a_wider_terminal_grants_the_data_lines_its_width(
     monkeypatch,
 ) -> None:
-    """#881: the page's whole content — the header lines, the
-    status lines, and the action panel — holds one block capped
-    at 80 cells, centered on a wider terminal, so the page reads
-    on a single axis at any width. The meta line's budget caps
-    with the block (#752's growth past the frame is the consent
-    page's alone, a page that fills its terminal), and the
-    80-column window keeps the full-width layout."""
+    """#902: the page's data lines fill the width the terminal
+    grants — the header lines and the meta, mounts, and proxies
+    lines edge to edge, the action panel centered in its own
+    64-cell block beneath (#366). The meta line's budget grows
+    past the 80-column frame (#752), and every field reads
+    whole; at and under the frame the fixed clip stands."""
     scripted_link(monkeypatch, [rules_frame()])
     data = FakeData(
         [
@@ -2014,30 +2013,102 @@ async def test_a_wider_terminal_caps_the_page_to_one_block(
         body = app.screen.query_one("#page-body")
         header = app.screen.query_one("#header")
         meta = app.screen.query_one("#header-meta", Static)
-        block_w = page_mod.screen.PAGE_BLOCK_W
-        assert body.region.width == block_w
+        assert body.region.width == 80
         assert body.region.x == 0  # the small window fills the width
         assert "…" in str(meta.content)  # the fixed clip at the frame
         await pilot.resize_terminal(120, 24)
         await pilot.pause()
-        # The block centers as one unit: the header lines and the
-        # action panel share its edges. The region carries the CSS
-        # rule's width and meta_width the Python constant's cap, so
-        # the pair cannot drift apart unseen (the #881 pairing).
-        assert body.region.width == block_w
-        assert body.region.x == 20
-        assert header.region.x == 20
-        assert app.screen.meta_width() == block_w - 2
+        # The data lines fill the granted width edge to edge, and
+        # the meta line's budget follows it: every meta field
+        # reads whole past the frame (#752's widening, #902's
+        # grant).
+        assert body.region.width == 120
+        assert body.region.x == 0
+        assert header.region.x == 0
+        assert app.screen.meta_width() == 118
+        await wait_for(lambda: "…" not in str(meta.content))
+        text = str(meta.content)
+        assert "a1b2c3d4e5f6g7h8" in text
+        assert "debian-testing:13.6" in text
+        assert "workstation-3.lab" in text
         actions = app.screen.query_one("#actions")
         assert actions.region.width == 64
-        assert actions.region.x == 28  # centered inside the block
-        # The meta line's budget stops at the block's width: the
-        # fixed clip stands at any width past it.
-        assert "…" in str(meta.content)
+        assert actions.region.x == 28  # centered on the terminal
+        # Back at the frame the fixed clip returns: the budget
+        # reads the screen's own width again.
         await pilot.resize_terminal(80, 24)
         await pilot.pause()
-        assert body.region.x == 0
-        assert "…" in str(meta.content)
+        assert body.region.width == 80
+        await wait_for(lambda: "…" in str(meta.content))
+
+
+async def test_wide_terminals_read_the_mounts_and_proxies_lines(
+    monkeypatch,
+) -> None:
+    """#902: the mounts and proxies lines use the width the
+    terminal grants before any ellipsis — mounts and port pairs
+    that clip at the 80-column frame read whole on a wider
+    one."""
+    scripted_link(monkeypatch, [])
+    mounts = [
+        {
+            "host": f"/srv/long-path-{n}",
+            "guest": f"/mnt/where-{n}",
+            "mode": "rw",
+        }
+        for n in range(3)
+    ]
+    data = FakeData(
+        [
+            {
+                **row(),
+                "mounts": [dict(m) for m in mounts],
+                "mounts_pending": True,
+            }
+        ]
+    )
+    data.proxy_rows = [
+        {
+            "id": index,
+            "workspace_id": WS,
+            "direction": "forward",
+            "listen_port": port,
+            "target_port": port + 1,
+            "status": "listening",
+            "reason": None,
+        }
+        for index, port in enumerate(range(8880, 8887), start=1)
+    ]
+    app, _ = make_app(data)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await open_page(pilot, app)
+        mounts_line = app.screen.query_one("#mounts", Static)
+        proxies_line = app.screen.query_one("#proxy-line", Static)
+
+        def painted(widget: Static) -> str:
+            return "".join(seg.text for seg in widget.render_line(0))
+
+        await wait_for(lambda: "8880" in painted(proxies_line))
+        await wait_for(lambda: "long-path-0" in painted(mounts_line))
+        # At the frame both lines cut with an ellipsis: the third
+        # mount and the last pairs stand beyond it.
+        clipped_mounts = painted(mounts_line)
+        clipped_proxies = painted(proxies_line)
+        assert "…" in clipped_mounts
+        assert "long-path-2" not in clipped_mounts
+        assert "…" in clipped_proxies
+        assert "8886 -> 8887" not in clipped_proxies
+        await pilot.resize_terminal(140, 24)
+        await pilot.pause()
+        # The granted width holds every mount, the pending note,
+        # and every pair whole.
+        wide_mounts = painted(mounts_line)
+        wide_proxies = painted(proxies_line)
+        assert "…" not in wide_mounts
+        assert "/srv/long-path-2:/mnt/where-2:rw" in wide_mounts
+        assert "applies at next start" in wide_mounts
+        assert "…" not in wide_proxies
+        assert "8886 -> 8887" in wide_proxies
 
 
 def test_the_meta_budgets_fill_clipped_fields_in_order() -> None:

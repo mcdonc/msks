@@ -2,9 +2,9 @@
 
 The header's two lines, the consent status line, and the
 actions — shell, consent page, edit, start, stop — the page
-carries while it is the workspace's decider. The whole page
-sits one block, capped at :data:`PAGE_BLOCK_W` cells and
-centered on a wider terminal (#881).
+carries while it is the workspace's decider. The page's data
+lines fill the width the terminal grants (#902); the action
+panel sits centered in its own block beneath them (#366).
 """
 
 from __future__ import annotations
@@ -56,20 +56,6 @@ from .actions import (
 )
 from .lines import consent_line
 
-#: The page's block width (#881): the cells the page's whole
-#: content — the header lines, the status lines, and the action
-#: panel — holds as one block. A terminal at and under it is
-#: filled edge to edge (the default 80-column window's layout);
-#: a wider one centers the block, so the page reads on a single
-#: axis at any width. The ``#page-body`` rule in
-#: :mod:`msks.client.tui.main_app`'s CSS carries the same number,
-#: and the wide-terminal tests pin the pair together. The meta
-#: line's budget caps with the block, so past it the fixed frame
-#: layout (``META_FRAME_W``, #752) is the page's whole budget —
-#: the growth past the frame is the consent page's alone, a page
-#: that fills its terminal.
-PAGE_BLOCK_W = 80
-
 
 class WorkspaceScreen(HelpKeys, Screen):
     """One workspace's page (#309): the header's two lines (#351
@@ -93,12 +79,12 @@ class WorkspaceScreen(HelpKeys, Screen):
     hold's destination — the page pushes nothing on a hold's
     arrival; the operator opens the consent page with ``e`` or
     the action row and decides there (the consent page's own
-    docstring owns that page's shape). The page's whole content
-    — the header lines, the status lines, and the action panel —
-    sits one block capped at :data:`PAGE_BLOCK_W` cells,
-    centered on a wider terminal (#881): the page reads on a
-    single axis at any width, and a terminal at and under the
-    cap keeps the full-width layout."""
+    docstring owns that page's shape). The page's data lines —
+    the header lines and the status lines — fill the width the
+    terminal grants (#902): the mounts and proxies lines read
+    whole before any ellipsis, and the meta line's fields widen
+    past the 80-column frame (#752) to their whole values. The
+    action panel keeps its own centered block (#366)."""
 
     #: The ``?`` overlay's title (#851): the docs' name for the
     #: page.
@@ -159,12 +145,9 @@ class WorkspaceScreen(HelpKeys, Screen):
 
     def compose(self) -> ComposeResult:
         link = self.link_or_stub()
-        # The page's one block (#881): the header lines, the status
-        # lines, and the action panel share it — capped at
-        # PAGE_BLOCK_W cells, centered on a wider terminal, and
-        # filling one at and under it (the screen's own alignment
-        # does the centering; the ``#page-body`` rule carries the
-        # cap).
+        # The page's data lines fill the terminal's width (#902):
+        # the ``#page-body`` rule grants them all of it, and the
+        # action panel centers in its own block beneath (#366).
         with Vertical(id="page-body"):
             yield Static(
                 header_name(
@@ -257,14 +240,13 @@ class WorkspaceScreen(HelpKeys, Screen):
         self.paint_header()
 
     def meta_width(self) -> int | None:
-        """The meta line's available cells: the page's block width
-        (#881) less the line's own padding. The block caps at
-        :data:`PAGE_BLOCK_W` on a wider terminal, so the line's
-        budgets cap with it — past the cap the fixed frame layout
-        is the page's whole budget. A width the layout has not
-        settled yet (compose, before the first layout) paints the
-        fixed budgets."""
-        width = min(self.size.width, PAGE_BLOCK_W) - 2
+        """The meta line's available cells: the screen's width
+        less the line's own padding (#902). The data lines fill
+        the width the terminal grants, so past the 80-column
+        frame the #752 widening fills each field to its whole
+        value. A width the layout has not settled yet (compose,
+        before the first layout) paints the fixed budgets."""
+        width = self.size.width - 2
         return width if width > 0 else None
 
     def on_unmount(self) -> None:
