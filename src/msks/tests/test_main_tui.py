@@ -9009,6 +9009,12 @@ async def test_a_refresh_in_flight_skips_instead_of_cancelling(
         # skipped, not queued, not cancelling the first.
         while not screen.rows_loading:
             await pilot.pause()
+        # The gated flight is inside its fetch before the second
+        # refresh arrives — the skip answers the in-flight mark,
+        # and a slow host schedules the worker after the mark
+        # flips (the first macOS verify run since the #897 filter
+        # fix caught the race).
+        await wait_for(lambda: fetches == 1)
         screen.refresh_rows()
         assert fetches == 1  # the gated flight alone
         gate.set()
