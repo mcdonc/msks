@@ -506,6 +506,22 @@ entries under it.
   all commits go on the worktree's own branch within the worktree.
 - Worktrees should have a directory name no longer than 16 characters.
 
+## Integration branch `pyside-gui` (#924)
+
+The GUI client (#924) develops on the integration branch `pyside-gui`, not
+on `main`. Every issue under that effort follows the same flow:
+
+- Start work with `/workon <ISSUE#> --base pyside-gui`, so the worktree cuts
+  from `origin/pyside-gui`.
+- Rebase against `origin/pyside-gui` (the worktree records it as
+  `workon.base`), never against `main`.
+- Create every PR with `gh pr create --base pyside-gui`. A PR opened without
+  `--base` targets `main` by default.
+- Merge with `/merge <PR#> --expect-base pyside-gui`; the guard refuses a PR
+  whose base is anything else.
+- Nothing merges into `main` until #924's acceptance criteria pass. When
+  they do, one PR merges `pyside-gui` into `main`.
+
 ## Pull request titles
 
 - Every PR created to address a GitHub issue must include that issue's
