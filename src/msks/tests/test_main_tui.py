@@ -180,6 +180,7 @@ class FakeData:
         # The unlock flow's surface (#515): the pending reply and
         # the uploads the flow sends.
         self.pending_rows: list[dict] = []
+        self.pending_fetches = 0
         self.unlock_calls: list[list[dict]] = []
         # The unlock upload's gate (#515 review): a test holding
         # the upload mid-POST — the passphrase answer's screen
@@ -616,9 +617,12 @@ class FakeData:
 
     async def pending_secrets(self) -> list[dict]:
         """The pending ciphertext rows (#515) — the unlock flow's
-        fetch, recorded like every exchange."""
+        fetch, recorded like every exchange. The armed failure is
+        the daemon-away reach shape (#904): the one whose
+        recovery re-runs the start unlock (#920)."""
+        self.pending_fetches += 1
         if "pending" in self.fail:
-            raise RuntimeError(self.refusal)
+            raise data_mod.RestFailure(self.refusal, reach=True)
         return [dict(r) for r in self.pending_rows]
 
     async def unlock_secrets(self, values: list[dict]) -> dict:

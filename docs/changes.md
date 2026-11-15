@@ -8,6 +8,13 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **The TUI start unlock survives a daemon outage (#920).** A
+  tree opened before msksd answers now unlocks by itself once
+  the daemon arrives: the start flow's outage arms one re-run,
+  and the listing's first answered refresh fires it. The
+  passphrase prompt still fires only when the daemon reports
+  locked rows, and the automatic prompt stays once per session.
+  See `docs/secrets.md` → the unlock window.
 - **`pubkey_file` docs name the unlock's key requirement (#918).** The
   docs and the first-run config template's comments claimed
   `pubkey_file` alone covers a key you keep encrypted. The secrets

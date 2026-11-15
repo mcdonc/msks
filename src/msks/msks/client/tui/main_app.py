@@ -313,6 +313,19 @@ class MsksTuiApp(App):
         # with an unawaited exit (the reaper drops each at its
         # close; the asyncio watcher does the reaping itself).
         self.reapers: set = set()
+        # The start unlock's armed re-run (#920): True when the
+        # flow failed against a daemon that answered nothing —
+        # the listing's next answered refresh (#904's recovery
+        # tick) fires the flow once more, so a tree opened before
+        # msksd stands still unlocks when the daemon arrives. The
+        # arm needs a session that has not spent its passphrase
+        # prompt: the prompt is one per session whatever the
+        # daemon does.
+        self.unlock_retry = False
+        # The session's passphrase, spent (#515, #920): True once
+        # the modal has asked — answered or cancelled — so a
+        # failure after the prompt never re-arms a second ask.
+        self.passphrase_asked = False
 
     def hold_child(self, proc) -> None:
         """Hold one spawned launcher until it exits (#341): the
@@ -359,17 +372,49 @@ class MsksTuiApp(App):
         passphrase prompt (when the file is encrypted) is the
         session's one, and the outcome flashes on the list's
         status line. A daemon that cannot be reached or refuses
-        is a named flash, not a retry and not a failed tree."""
+        is a named flash, not a retry and not a failed tree —
+        with one carry (#920): a daemon that answered nothing
+        arms a re-run, and the listing's first answered refresh
+        fires it, so a tree opened before msksd stands still
+        unlocks once the daemon arrives."""
         try:
             message = await unlock_flow(self.data, self.ask_passphrase)
             if message is not None:
                 self.flash(unlock_flash(message))
+        except RestFailure as exc:
+            self.flash(unlock_flash(f"unlock failed: {exc}"))
+            self.arm_unlock_retry(exc)
         except (Exception, SystemExit) as exc:
             self.flash(unlock_flash(f"unlock failed: {exc}"))
 
+    def arm_unlock_retry(self, failure: RestFailure) -> None:
+        """Arm the start unlock's one re-run (#920): the flow
+        failed against a daemon that answered nothing, and a
+        session that has not spent its passphrase prompt may
+        still open the store when the daemon answers. A refusal —
+        the daemon answering — arms nothing, and a spent prompt
+        arms nothing: the one-prompt rule survives the retry."""
+        if failure.reach and not self.passphrase_asked:
+            self.unlock_retry = True
+
+    def unlock_daemon_back(self) -> None:
+        """The listing answered the daemon again (#904, #920):
+        fire the armed re-run once — the same flow, the same
+        prompt rule, silent unless an outcome lands. The arm
+        clears first, so one answered refresh serves one re-run;
+        an outage the re-run itself hits arms the next answered
+        refresh the same way."""
+        if not self.unlock_retry:
+            return
+        self.unlock_retry = False
+        self.run_worker(self.unlock_at_start, group="unlock")
+
     async def ask_passphrase(self, path) -> str | None:
         """The passphrase modal over whatever screen stands — the
-        one prompt the session asks (#515)."""
+        one prompt the session asks (#515): asked once, answered
+        or cancelled, the session never asks again on its own
+        (#920)."""
+        self.passphrase_asked = True
         answer = await self.push_screen(
             PassphraseScreen(path), wait_for_dismiss=True
         )

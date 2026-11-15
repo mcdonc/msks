@@ -6,7 +6,11 @@ identity file's private half decrypts the pending rows the daemon
 reports locked, and the plaintext rides the authenticated API
 back. The flow is one shared coroutine both surfaces call — the
 only difference is where the one passphrase prompt modal lands
-and which status line flashes the outcome.
+and which status line flashes the outcome. A start that met an
+unreachable daemon re-runs once when the daemon first answers
+(#920): the flow's fetch never ran to an outcome, so the app
+arms the re-run and the listing's first answered refresh fires
+it — the same flow, the same prompt rule.
 
 An agent-held key cannot unlock (#510): ssh-agent exposes
 signing, and the unwrap needs the private scalar directly, so

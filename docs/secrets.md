@@ -358,7 +358,10 @@ Three surfaces run the flow:
   against the daemon's locked rows: a warm cache stays silent,
   a cold one with the key present unlocks itself, and the
   passphrase prompt (when the file is encrypted) is the modal
-  the session opens with. The secrets page's `u` action runs
+  the session opens with. A tree opened while the daemon
+  answers nothing keeps the offer: the flow re-runs once when
+  the listing's refresh first answers, and the prompt lands
+  then (#920). The secrets page's `u` action runs
   the same flow on demand, so a window that lapsed mid-session
   heals the moment it is seen. The page's STATE column
   (`locked` / `open`) and `msks secret ls`'s state column carry
