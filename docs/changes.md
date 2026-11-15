@@ -8,6 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The TUI stands through a daemon outage (#904).** The
+  workspace TUI stays open when msksd goes away: the status
+  line carries a `daemon down — retrying` marker while the
+  listing's refresh finds no answer, every refresh tick is a
+  retry, and a one-line flash names the recovery when the
+  daemon answers again. The screens' data seam now carries the
+  REST layer's one-line failures as catchable exceptions, so
+  an unreachable daemon flashes its reason instead of quitting
+  the tree.
 - **Pending-changes marker on workspace rows (#898).** A
   workspace whose edits wait for its next start now shows it in
   the TUI's list: a `↻N` marker ahead of the status word counts

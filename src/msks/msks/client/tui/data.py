@@ -3,10 +3,14 @@ through the same client conventions ``msksc`` uses — the TUI holds
 no direct daemon-state access.
 
 One :class:`TuiData` method per screen action, each the same
-exchange the matching CLI subcommand makes. Every call opens its
-own client on the shared TLS context (the TOFU warning prints once,
-before the first screen draws), and the screens plug fakes here for
-the tests.
+exchange the matching CLI subcommand makes, and all of them
+through :meth:`TuiData.rest` — the tree's one door to the seam,
+where the CLI's exit-contract failure becomes
+:class:`RestFailure` (#904): the screens' guards flash the message
+and the tree stands. Every call opens its own client on the
+shared TLS context (the TOFU warning prints once, before the
+first screen draws), and the screens plug fakes here for the
+tests.
 """
 
 from ..create import create_workspace_core, invoking_user
@@ -15,48 +19,70 @@ from ..rest import api_call, fetch_health
 from .consent_ui import shared_ssl
 
 
+class RestFailure(Exception):
+    """One REST call's failure as the tree holds it (#904).
+
+    The REST seam raises :class:`SystemExit` — the CLI's
+    contract, one readable line and then the process ends — and
+    inside the tree that same failure must stay catchable: a
+    task that raises ``SystemExit`` takes the whole event loop
+    down whatever the awaiting screen catches (asyncio re-raises
+    it from the task's step), so a daemon that went away was
+    quitting the TUI on the listing's first refresh. The seam
+    carries the same message as a plain exception: the screens'
+    guards flash it, and the tree stands to retry on its next
+    tick.
+    """
+
+
 class TuiData:
     """The screens' daemon calls; one instance per app run."""
 
     def __init__(self, transport=None) -> None:
         self.transport = transport
 
+    async def carried(self, awaitable):
+        """Await one seam call, carrying its exit-contract failure
+        as :class:`RestFailure` (#904) — the message unchanged, so
+        a screen's flash reads the same line the CLI prints."""
+        try:
+            return await awaitable
+        except SystemExit as exc:
+            raise RestFailure(str(exc)) from exc
+
+    async def rest(
+        self, method: str, path: str, body: dict | None = None
+    ) -> dict:
+        """One REST exchange through the invocation's own URL,
+        token, and shared TLS context — the same call the matching
+        CLI subcommand makes, its failure carried (#904)."""
+        return await self.carried(
+            api_call(
+                method,
+                env_url(),
+                env_token(),
+                path,
+                json_body=body,
+                transport=self.transport,
+                ssl_ctx=shared_ssl(),
+            )
+        )
+
     async def workspaces(self) -> list[dict]:
         """GET the workspaces listing — the main screen's rows."""
-        return await api_call(
-            "GET",
-            env_url(),
-            env_token(),
-            "/api/v1/workspaces",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-        )
+        return await self.rest("GET", "/api/v1/workspaces")
 
     async def storage(self) -> dict:
         """GET the capacity report (#849) — the list's detail
         strip: the per-workspace root-plus-home cost ``msks
         storage`` reports, fetched on the listing's refresh
         cadence and cached between refreshes."""
-        return await api_call(
-            "GET",
-            env_url(),
-            env_token(),
-            "/api/v1/storage",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-        )
+        return await self.rest("GET", "/api/v1/storage")
 
     async def images(self) -> list[dict]:
         """GET the image catalog — the create form's image select
         (the same listing ``msksc image ls`` prints)."""
-        return await api_call(
-            "GET",
-            env_url(),
-            env_token(),
-            "/api/v1/images",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-        )
+        return await self.rest("GET", "/api/v1/images")
 
     async def health(self) -> dict | None:
         """GET /health best-effort (#717): the daemon host's
@@ -72,69 +98,41 @@ class TuiData:
 
     async def create_defaults(self) -> dict:
         """GET the create defaults — the root/home sizes a create
-        lands on when its body leaves them unset (the create
+        lands on when the body leaves them unset (the create
         form's size placeholders hint them)."""
-        return await api_call(
-            "GET",
-            env_url(),
-            env_token(),
-            "/api/v1/create-defaults",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-        )
+        return await self.rest("GET", "/api/v1/create-defaults")
 
     async def remove_image(self, digest: str) -> dict:
         """DELETE one image by hash — the image page's D key
         (#571), the same exchange the CLI's image rm makes."""
-        return await api_call(
-            "DELETE",
-            env_url(),
-            env_token(),
-            f"/api/v1/images/{digest}",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-        )
+        return await self.rest("DELETE", f"/api/v1/images/{digest}")
 
     async def import_image(self, source: str) -> dict:
         """POST one image import — the TUI's Import image action
         (#565): the source is a published channel URL; the daemon
         downloads, verifies, and floor-checks the archive."""
-        return await api_call(
-            "POST",
-            env_url(),
-            env_token(),
-            "/api/v1/images",
-            json_body={"source": source},
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-        )
+        return await self.rest("POST", "/api/v1/images", {"source": source})
 
     async def set_default_image(self, ref: str) -> dict:
         """POST the default designation — the image page's ``d``
         key, the same exchange the CLI's ``image default`` makes:
         the ref is the row's full hash, and the daemon's pointer
         file is the whole designation."""
-        return await api_call(
-            "POST",
-            env_url(),
-            env_token(),
-            "/api/v1/images/default",
-            json_body={"ref": ref},
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-        )
+        return await self.rest("POST", "/api/v1/images/default", {"ref": ref})
 
     async def create(self, body: dict) -> dict:
         """POST one workspace (the create form's fields) with the
         operator's configured key for its identity (#486) — the
         row."""
         body.setdefault("user", invoking_user())
-        return await create_workspace_core(
-            env_url(),
-            env_token(),
-            body,
-            self.transport,
-            ssl_ctx=shared_ssl(),
+        return await self.carried(
+            create_workspace_core(
+                env_url(),
+                env_token(),
+                body,
+                self.transport,
+                ssl_ctx=shared_ssl(),
+            )
         )
 
     async def clone(self, workspace_id: str, name: str) -> dict:
@@ -142,14 +140,10 @@ class TuiData:
         The daemon owns the stopped-source rule: a workspace that
         is not stopped answers the named 409, which the page
         flashes."""
-        return await api_call(
+        return await self.rest(
             "POST",
-            env_url(),
-            env_token(),
             f"/api/v1/workspaces/{workspace_id}/clone",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-            json_body={"name": name},
+            {"name": name},
         )
 
     async def resize(self, workspace_id: str, body: dict) -> dict:
@@ -157,14 +151,8 @@ class TuiData:
         (#331), the same exchange ``msks resize`` makes. The daemon
         owns the stopped-workspace rule: a workspace that is not
         stopped answers the named 409, which the page flashes."""
-        return await api_call(
-            "POST",
-            env_url(),
-            env_token(),
-            f"/api/v1/workspaces/{workspace_id}/resize",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-            json_body=body,
+        return await self.rest(
+            "POST", f"/api/v1/workspaces/{workspace_id}/resize", body
         )
 
     async def set_mounts(self, workspace_id: str, mounts: list) -> dict:
@@ -172,49 +160,28 @@ class TuiData:
         exchange ``msks mount`` makes. The daemon validates against
         its gates and answers with the refreshed row, whose
         derived state the editor paints."""
-        return await api_call(
+        return await self.rest(
             "POST",
-            env_url(),
-            env_token(),
             f"/api/v1/workspaces/{workspace_id}/mounts",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-            json_body={"mounts": mounts},
+            {"mounts": mounts},
         )
 
     async def start(self, workspace_id: str) -> dict:
         """POST the boot — the same call ``msks start`` makes."""
-        return await api_call(
-            "POST",
-            env_url(),
-            env_token(),
-            f"/api/v1/workspaces/{workspace_id}/start",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
+        return await self.rest(
+            "POST", f"/api/v1/workspaces/{workspace_id}/start"
         )
 
     async def stop(self, workspace_id: str) -> dict:
         """POST the graceful power-off — ``msks stop``."""
-        return await api_call(
-            "POST",
-            env_url(),
-            env_token(),
-            f"/api/v1/workspaces/{workspace_id}/stop",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
+        return await self.rest(
+            "POST", f"/api/v1/workspaces/{workspace_id}/stop"
         )
 
     async def remove(self, workspace_id: str) -> dict:
         """DELETE the workspace and its persistent data — ``msks
         rm`` for one row."""
-        return await api_call(
-            "DELETE",
-            env_url(),
-            env_token(),
-            f"/api/v1/workspaces/{workspace_id}",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-        )
+        return await self.rest("DELETE", f"/api/v1/workspaces/{workspace_id}")
 
     async def set_egress_mode(
         self, workspace_id: str, mode: str, *, confirm_empty: bool = False
@@ -227,14 +194,10 @@ class TuiData:
         body: dict = {"mode": mode}
         if confirm_empty:
             body["confirm_empty"] = True
-        return await api_call(
+        return await self.rest(
             "PUT",
-            env_url(),
-            env_token(),
             f"/api/v1/workspaces/{workspace_id}/egress/policy",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-            json_body=body,
+            body,
         )
 
     async def decide(
@@ -247,97 +210,56 @@ class TuiData:
         """POST one verdict on a held request — the egress consent
         page's decide, the same exchange ``msks egress decide``
         makes."""
-        return await api_call(
+        return await self.rest(
             "POST",
-            env_url(),
-            env_token(),
             f"/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-            json_body={"decision": decision, "duration": duration},
+            {"decision": decision, "duration": duration},
         )
 
     async def revoke(self, workspace_id: str, request_id: str) -> dict:
         """DELETE one in-effect verdict — the egress consent
         page's revoke, the same exchange ``msks egress revoke``
         makes."""
-        return await api_call(
+        return await self.rest(
             "DELETE",
-            env_url(),
-            env_token(),
             f"/api/v1/workspaces/{workspace_id}/egress/requests/{request_id}",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
         )
 
     async def secrets(self) -> list[dict]:
         """GET the placeholder rows (#390) — the secrets page's
         rows, the same listing ``msks secret ls`` prints (no
         sentinels)."""
-        return await api_call(
-            "GET",
-            env_url(),
-            env_token(),
-            "/api/v1/secrets",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-        )
+        return await self.rest("GET", "/api/v1/secrets")
 
     async def secret(self, placeholder_id: int) -> dict:
         """GET one placeholder row with its sentinel (#440) — the
         page's Enter-on-a-row fetch, the same exchange
         ``GET /api/v1/secrets/<id>`` serves: the listing omits
         sentinels, this reply carries the row's."""
-        return await api_call(
-            "GET",
-            env_url(),
-            env_token(),
-            f"/api/v1/secrets/{placeholder_id}",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-        )
+        return await self.rest("GET", f"/api/v1/secrets/{placeholder_id}")
 
     async def revoke_secret(self, placeholder_id: int) -> dict:
         """DELETE one placeholder row (#390) — the secrets page's
         revoke, the same exchange ``msks secret revoke`` makes: the
         row retires everywhere at once."""
-        return await api_call(
-            "DELETE",
-            env_url(),
-            env_token(),
-            f"/api/v1/secrets/{placeholder_id}",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-        )
+        return await self.rest("DELETE", f"/api/v1/secrets/{placeholder_id}")
 
     async def renew_secret(self, placeholder_id: int, ttl_s: int) -> dict:
         """POST one placeholder's renewal (#390) — the secrets
         page's renew, the same exchange ``msks secret renew``
         makes: the lifetime extends in place, the sentinel and the
         row's identity stay as they are."""
-        return await api_call(
+        return await self.rest(
             "POST",
-            env_url(),
-            env_token(),
             f"/api/v1/secrets/{placeholder_id}/renew",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-            json_body={"ttl_s": ttl_s},
+            {"ttl_s": ttl_s},
         )
 
     async def mint_secret(self, body: dict) -> dict:
         """POST one placeholder mint (#393) — the secrets page's
         form, the same exchange ``msks secret mint`` makes: the
         reply carries the row with its sentinel."""
-        return await api_call(
-            "POST",
-            env_url(),
-            env_token(),
-            "/api/v1/secrets",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-            json_body=body,
-        )
+        return await self.rest("POST", "/api/v1/secrets", body)
 
     async def pending_secrets(self) -> list[dict]:
         """GET the pending ciphertext rows (#515) — the unlock
@@ -345,14 +267,7 @@ class TuiData:
         /api/v1/secrets/pending`` serves: the rows' blobs and
         lock state, with the session window the unlock POST
         requires opened by the serve."""
-        return await api_call(
-            "GET",
-            env_url(),
-            env_token(),
-            "/api/v1/secrets/pending",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-        )
+        return await self.rest("GET", "/api/v1/secrets/pending")
 
     async def unlock_secrets(self, values: list[dict]) -> dict:
         """POST the decrypted values back (#515) — the unlock
@@ -360,55 +275,33 @@ class TuiData:
         /api/v1/secrets/unlock`` takes: the values enter the
         daemon's timeout-scoped cache and each row re-encrypts
         fresh blobs to its current recipients."""
-        return await api_call(
-            "POST",
-            env_url(),
-            env_token(),
-            "/api/v1/secrets/unlock",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-            json_body={"values": values},
+        return await self.rest(
+            "POST", "/api/v1/secrets/unlock", {"values": values}
         )
 
     async def secret_audit(self) -> list[dict]:
         """GET the recorded audit rows (#390) — the secrets page's
         audit view replays them newest first, the same listing
         ``/api/v1/secrets/audit`` serves."""
-        return await api_call(
-            "GET",
-            env_url(),
-            env_token(),
-            "/api/v1/secrets/audit",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-        )
+        return await self.rest("GET", "/api/v1/secrets/audit")
 
     async def workspace_proxies(self, workspace_id: str) -> list[dict]:
         """GET one workspace's proxy rows with live status (#809) —
         the page's scoped listing and the workspace page's compact
         line, the same exchange ``GET
         /api/v1/workspaces/<id>/proxies`` serves."""
-        return await api_call(
-            "GET",
-            env_url(),
-            env_token(),
-            f"/api/v1/workspaces/{workspace_id}/proxies",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
+        return await self.rest(
+            "GET", f"/api/v1/workspaces/{workspace_id}/proxies"
         )
 
     async def create_proxy(self, workspace_id: str, body: dict) -> dict:
         """POST one proxy row (#809) — the proxies page's add form,
         the same exchange ``msks proxy add`` makes: the answer
         carries the row with its live status."""
-        return await api_call(
+        return await self.rest(
             "POST",
-            env_url(),
-            env_token(),
             f"/api/v1/workspaces/{workspace_id}/proxies",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-            json_body=body,
+            body,
         )
 
     async def update_proxy(
@@ -417,25 +310,17 @@ class TuiData:
         """PATCH one proxy row (#890) — the proxies page's edit
         form: the row rewritten whole, the answer carries the row
         with its live status."""
-        return await api_call(
+        return await self.rest(
             "PATCH",
-            env_url(),
-            env_token(),
             f"/api/v1/workspaces/{workspace_id}/proxies/{proxy_id}",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
-            json_body=body,
+            body,
         )
 
     async def remove_proxy(self, workspace_id: str, proxy_id: int) -> dict:
         """DELETE one proxy row (#809) — the proxies page's remove,
         the same exchange ``msks proxy rm`` makes: the listener
         closes at once."""
-        return await api_call(
+        return await self.rest(
             "DELETE",
-            env_url(),
-            env_token(),
             f"/api/v1/workspaces/{workspace_id}/proxies/{proxy_id}",
-            transport=self.transport,
-            ssl_ctx=shared_ssl(),
         )

@@ -34,6 +34,7 @@ from .consent_ui import (
     focused_attr,
 )
 from .detail import (
+    DAEMON_DOWN_MARKER,
     detail_strip,
     skew_marker,
     state_summary,
@@ -207,6 +208,13 @@ class MainScreen(HelpKeys, Screen):
         # answer's both-words form, standing on the status line
         # beside the URL until the versions agree again.
         self.version_skew: str | None = None
+        # The listing's reach state (#904): True while the daemon
+        # answers nothing — the marker stands on the status line
+        # and every refresh tick is a retry, the same cadence the
+        # healthy listing already keeps. The first failing
+        # refresh flashes its reason and the recovery flashes
+        # once; the marker carries the state between them.
+        self.daemon_down = False
 
     def compose(self) -> ComposeResult:
         yield Static(id="status")
@@ -321,6 +329,7 @@ class MainScreen(HelpKeys, Screen):
         self.run_worker(self.load_rows)
 
     async def load_rows(self) -> None:
+        failure: str | None = None
         try:
             rows, _, _ = await asyncio.gather(
                 self.app.data.workspaces(),
@@ -329,9 +338,31 @@ class MainScreen(HelpKeys, Screen):
             )
             await self.rebuild_rows(self.with_shell_counts(rows))
         except (Exception, SystemExit) as exc:
-            self.app.flash(f"listing failed: {flash_safe(str(exc))}")
+            failure = flash_safe(str(exc))
         finally:
             self.rows_loading = False
+        self.land_reach(failure)
+
+    def land_reach(self, failure: str | None) -> None:
+        """Land one refresh's reach outcome (#904): a failure
+        enters the down state — the marker stands on the status
+        line, the transition's flash naming the reason — and a
+        refresh that answers leaves it, the flash naming the
+        recovery. A refresh that finds the state standing decides
+        nothing: the marker is the report, and the same line every
+        five seconds is noise beside it. The standing interval
+        keeps its cadence while the marker stands, so every tick
+        is a reconnect attempt."""
+        down = failure is not None
+        if down == self.daemon_down:
+            return
+        self.daemon_down = down
+        self.app.flash(
+            f"listing failed: {failure}"
+            if down
+            else "daemon back — listing resumed"
+        )
+        self.sync_status()
 
     def with_shell_counts(self, rows: list[dict]) -> list[dict]:
         """Land the host's open-shell counts on the rows (#858):
@@ -496,7 +527,11 @@ class MainScreen(HelpKeys, Screen):
             count = len(self.rows)
             summary = state_summary(self.rows)
             default = status_content(
-                count, self.app.url, summary, skew=self.version_skew
+                count,
+                self.app.url,
+                summary,
+                skew=self.version_skew,
+                down=DAEMON_DOWN_MARKER if self.daemon_down else None,
             )
             text = self.app.flash_line.text(default)
             self.query_one("#status", Static).update(text)
