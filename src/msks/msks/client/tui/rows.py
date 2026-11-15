@@ -408,13 +408,13 @@ def shell_marker(row: dict) -> str | None:
 
 def pending_marker(row: dict) -> str | None:
     """The pending-changes marker (#898, #900): ``↻N``, N counting
-    the changes the next start applies — a mounts edit the last
-    start has not taken, a sizes or topology edit no boot has
-    taken, and a remote proxy row no listener can serve while
-    the workspace is not running — else ``None``. The flags are
-    the daemon's own derivations off the row's recorded
-    snapshots, so a row a daemon before #898 serves carries only
-    the proxy half."""
+    the changes the next start applies, one per waiting half — a
+    mounts edit the last start has not taken, a sizes or topology
+    edit no boot has taken, and a remote proxy row no listener
+    can serve while the workspace is not running (the half counts
+    once however many rows wait) — else ``None``. The two
+    snapshot halves are #898-and-older fields; a daemon before
+    #900 serves a row that carries no proxy half."""
     count = (
         int(bool(row.get("mounts_pending")))
         + int(bool(row.get("sizes_pending")))

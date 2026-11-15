@@ -25,7 +25,8 @@ tagged `vX.Y.Z`.
   bind is the workspace's own tap), and the `↻N` marker counts
   it: every workspace row carries `proxies_pending`, the
   count of remote proxy rows while the workspace sits in any
-  status but running. A forward proxy binds daemon-side at
+  status but running. The marker counts the half once, however
+  many rows wait. A forward proxy binds daemon-side at
   once and never counts.
 
 ## \[v0.9.1] - 2026-11-14
