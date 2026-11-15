@@ -71,8 +71,9 @@ def render_template() -> str:
 #                                # the form for a key you keep
 #                                # encrypted: create reads no private
 #                                # half, and ssh sessions sign through
-#                                # your agent. The secrets unlock
-#                                # still reads identity_file (#510).
+#                                # your agent when it holds the key.
+#                                # The secrets unlock still reads
+#                                # identity_file (#510).
 #                                # --pubkey overrides it for one
 #                                # create. Global-only, like
 #                                # identity_file

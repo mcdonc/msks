@@ -3,7 +3,7 @@
 After the installation process has resulted in a running `msksd` systemd user
 service, it's almost ready to use. But you need to supply your ssh keypair and
 import at least one image used as a base for workspace creation before you can
-succesfully create one.
+successfully create one.
 
 ## Make sure it's running
 
@@ -63,7 +63,7 @@ pubkey_file: ~/.ssh/id_ed25519.pub # the public half
 When your key sits in your ssh agent, `pubkey_file` alone serves `msks
 create` and every ssh session: the agent signs, and msks reads no private
 half. The secrets unlock is the exception. It opens the private half from
-the file `identity_file` points at, so set both files on a client that
+the file `identity_file` points at. Set both files on a client that
 unlocks secrets.
 
 ### `identity_file`: the private half
@@ -96,10 +96,11 @@ secrets page and re-askable there.
 `pubkey_file` names a `.pub` file, and a create with it set plants that one
 line as the workspace's identity and reads no private material at all. This is
 the form for a key you keep encrypted on disk: the public half sits in the
-`.pub` file while the private half answers from your agent for ssh sessions.
-The secrets unlock still needs `identity_file` on the client that runs it.
+`.pub` file, and ssh sessions sign through your agent when it holds the
+key. The secrets unlock still needs `identity_file` on the client that
+runs it.
 
-`msks console` will wok to access a wokspace if you've lost your key.
+`msks console` will work to access a workspace if you've lost your key.
 
 ### Where the private half lives at runtime
 

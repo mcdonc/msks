@@ -73,9 +73,11 @@ def identity_examples() -> str:
         "create reads no\n"
         "#                                 # private half, and ssh "
         "sessions sign\n"
-        "#                                 # through your agent. The "
-        "secrets unlock\n"
-        "#                                 # still reads identity_file\n"
+        "#                                 # through your agent when it "
+        "holds the\n"
+        "#                                 # key. The secrets unlock "
+        "still reads\n"
+        "#                                 # identity_file\n"
     )
 
 
