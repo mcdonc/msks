@@ -6,6 +6,8 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+## \[v0.9.2] - 2026-11-15
+
 ### Fixed
 
 - **The TUI start unlock survives a daemon outage (#920).** A
