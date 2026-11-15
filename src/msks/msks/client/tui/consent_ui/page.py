@@ -515,11 +515,11 @@ class ConsentPage(HelpKeys, Screen):
     def meta_width(self) -> int | None:
         """The meta line's available cells: this page fills the
         terminal, so the budget follows the terminal's width
-        alone (#752) — the workspace page beneath caps its own
-        copy inside its centered block (#881). A width the layout
-        has not settled yet (compose, before the first layout)
-        paints the fixed budgets; ``started`` repaints with the
-        settled width."""
+        alone (#752) — the workspace page beneath widens its own
+        copy the same way (#902). A width the layout has not
+        settled yet (compose, before the first layout) paints the
+        fixed budgets; ``started`` repaints with the settled
+        width."""
         width = self.size.width - 2
         return width if width > 0 else None
 
