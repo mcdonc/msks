@@ -1314,3 +1314,66 @@ def test_booted_sizes_of_reads_only_its_shape() -> None:
         "mem_mib": None,
         "root_mib": None,
     }
+
+
+async def test_proxy_pending_counts_read_the_status_rule(app_for) -> None:
+    """The proxy half of the pending story (#900): a workspace's
+    remote rows wait while it sits in any status but running, the
+    reads serve the count (the id path, the name path, and the
+    listing), and a forward row never waits (its bind is
+    daemon-side and happens at once)."""
+    app = app_for()
+    model = app.state.model
+    model.migrate()
+    await model.create_workspace(
+        VmSpec(workspace_id="ws-px", kernel="/k", rootfs="/r"),
+        name="proxied",
+    )
+    assert (await model.get_workspace("ws-px"))["proxies_pending"] == 0
+    await model.create_proxy(
+        "ws-px", "remote", None, 9200, "127.0.0.1", 9200, None
+    )
+    await model.create_proxy("ws-px", "forward", None, 2201, None, 22, "ssh")
+    # Stopped: the remote row waits, the forward row does not —
+    # and the name ref reads the same derivation.
+    assert (await model.get_workspace("ws-px"))["proxies_pending"] == 1
+    assert (await model.get_workspace("proxied"))["proxies_pending"] == 1
+    listed = await model.list_workspaces()
+    assert listed[0]["proxies_pending"] == 1
+    await model.set_status("ws-px", "running")
+    assert (await model.get_workspace("ws-px"))["proxies_pending"] == 0
+    # A second remote row counts whole, and the remove drops its
+    # waiting row.
+    await model.create_proxy(
+        "ws-px", "remote", None, 9201, "127.0.0.1", 9201, None
+    )
+    await model.set_status("ws-px", "stopped")
+    assert (await model.get_workspace("ws-px"))["proxies_pending"] == 2
+    await model.delete_proxy("ws-px", 1)
+    assert (await model.get_workspace("ws-px"))["proxies_pending"] == 1
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("created", 3),
+        ("starting", 3),
+        ("stopping", 3),
+        ("paused", 3),
+        ("absent", 3),
+        ("unknown", 3),
+        ("running", 0),
+    ],
+)
+def test_pending_proxy_count_reads_any_non_running_word(
+    status: str, expected: int
+) -> None:
+    """The rule reads the status word alone (#900): every status
+    but running counts the remote half waiting. The product
+    drives only the lifecycle words, but the watcher maps the
+    seam's own words (a paused row, an absent VM) onto the same
+    rule, and a paused row's tap is a resume's business, not a
+    start's; the count still names the half that waits."""
+    from msks.model.serialize import pending_proxy_count
+
+    assert pending_proxy_count(status, 3) == expected

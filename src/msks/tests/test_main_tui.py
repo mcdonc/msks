@@ -285,6 +285,7 @@ class FakeData:
             **body,
         }
         self.proxy_rows.append(dict(row))
+        self.refresh_pending(workspace_id)
         return dict(row)
 
     async def update_proxy(
@@ -311,6 +312,7 @@ class FakeData:
             else r
             for r in self.proxy_rows
         ]
+        self.refresh_pending(workspace_id)
         return dict(fresh)
 
     async def remove_proxy(self, workspace_id: str, proxy_id: int) -> dict:
@@ -324,6 +326,7 @@ class FakeData:
             for r in self.proxy_rows
             if (r["workspace_id"], r["id"]) != (workspace_id, proxy_id)
         ]
+        self.refresh_pending(workspace_id)
         return {"id": proxy_id, "workspace_id": workspace_id, "removed": True}
 
     async def images(self) -> list[dict]:
@@ -443,6 +446,27 @@ class FakeData:
             "root_mib": row.get("root_mib"),
         } != self.booted_sizes.get(row["id"])
 
+    def pending_proxies(self, row: dict) -> int:
+        """The row's proxy count (#900), derived the way the
+        model's reads derive it: the workspace's remote rows
+        while it sits in any status but running (a remote bind is
+        the workspace's own tap, which only a run holds)."""
+        if row["status"] == "running":
+            return 0
+        return sum(
+            1
+            for proxy in self.proxy_rows
+            if proxy["workspace_id"] == row["id"]
+            and proxy["direction"] == "remote"
+        )
+
+    def refresh_pending(self, workspace_id: str) -> None:
+        """Re-derive the workspace row's proxy pending count after
+        a mutation moved a proxy row or its status (#900)."""
+        for row in self.rows:
+            if row["id"] == workspace_id:
+                row["proxies_pending"] = self.pending_proxies(row)
+
     def pending_mounts(self, row: dict) -> bool:
         """The row's pending flag (#756, #759), derived the way
         ``workspace_dict`` derives it: the configured set against
@@ -507,6 +531,7 @@ class FakeData:
             "root_mib": fresh.get("root_mib"),
         }
         fresh["sizes_pending"] = self.pending_sizes(fresh)
+        self.refresh_pending(workspace_id)
         return result
 
     async def stop(self, workspace_id: str) -> dict:
@@ -514,6 +539,9 @@ class FakeData:
         result = self.reply("stop", {"id": workspace_id, "status": "stopped"})
         fresh = next(r for r in self.rows if r["id"] == workspace_id)
         fresh["status"] = "stopped"  # the daemon's row follows the shutdown
+        # The stop leaves the remote rows unserved again (#900):
+        # the next start re-establishes them.
+        self.refresh_pending(workspace_id)
         return result
 
     async def remove(self, workspace_id: str) -> dict:
@@ -7632,9 +7660,20 @@ def test_the_list_row_marks_pending_changes() -> None:
     assert pending_marker(resized) == "↻1"
     assert pending_marker(row()) is None
     assert status_with_issues(resized) == "↻1 stopped"
-    # Both halves wait: the count reads two, the flags compose.
-    both_halves = {**mounted_row(), "sizes_pending": True}
-    assert status_with_issues(both_halves) == "✗1 ↻2 stopped"
+    # The proxy half rides the same count: a remote row waiting
+    # for the next start is the third change the marker counts.
+    waiting_proxy = {**row(), "proxies_pending": 2}
+    assert pending_marker(waiting_proxy) == "↻1"
+    assert status_with_issues(waiting_proxy) == "↻1 stopped"
+    assert pending_marker({**row(), "proxies_pending": 0}) is None
+    # All the halves wait: the count reads three, the flags
+    # compose.
+    all_halves = {
+        **mounted_row(),
+        "sizes_pending": True,
+        "proxies_pending": 1,
+    }
+    assert status_with_issues(all_halves) == "✗1 ↻3 stopped"
     spanned = row_content(resized)  # one marker: the cell fits whole
     spans = {
         spanned.plain[span.start : span.end]: span.style
@@ -7644,8 +7683,13 @@ def test_the_list_row_marks_pending_changes() -> None:
     assert spans[" stopped"] == rows_mod.muted_style({})
     # Every marker composed, the word behind them (a clip would
     # eat the tail markers the same way the ✗1/»2 pair clips).
-    all_three = {**mounted_row(), "sizes_pending": True, "shells": 3}
-    assert status_with_issues(all_three) == "✗1 ↻2 »3 stopped"
+    all_three = {
+        **mounted_row(),
+        "sizes_pending": True,
+        "proxies_pending": 1,
+        "shells": 3,
+    }
+    assert status_with_issues(all_three) == "✗1 ↻3 »3 stopped"
     # The strip carries the same cue beside its costs (#898), the
     # pair labeled the way the mounts count is.
     strip = detail_mod.detail_strip(resized, None)
@@ -7807,6 +7851,32 @@ async def test_the_fake_derives_sizes_pending_like_the_daemon() -> None:
     # boot's business, and the flag keeps its place.
     await data.resize(WS, {"home_mib": 40960})
     assert data.rows[0]["sizes_pending"] is False
+
+
+async def test_the_fake_derives_proxy_pending_like_the_daemon() -> None:
+    """The fake's proxy scripting (#900): the workspace row's
+    count comes from its remote rows against its status — the
+    same derivation the model's reads serve. A remote create on
+    a stopped row counts, a start clears it, a stop restores it,
+    the remove drops it, and a forward row never counts."""
+    data = FakeData([row()])
+    assert data.rows[0].get("proxies_pending") is None  # unserved yet
+    await data.create_proxy(
+        WS,
+        {"direction": "remote", "listen_port": 9200, "target_port": 9200},
+    )
+    assert data.rows[0]["proxies_pending"] == 1
+    await data.create_proxy(
+        WS,
+        {"direction": "forward", "listen_port": 2201, "target_port": 22},
+    )
+    assert data.rows[0]["proxies_pending"] == 1  # the forward binds at once
+    await data.start(WS)
+    assert data.rows[0]["proxies_pending"] == 0
+    await data.stop(WS)
+    assert data.rows[0]["proxies_pending"] == 1
+    await data.remove_proxy(WS, 1)
+    assert data.rows[0]["proxies_pending"] == 0
 
 
 async def test_the_fakes_start_snapshot_skips_issued_mounts() -> None:

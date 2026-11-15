@@ -147,6 +147,25 @@ def booted_sizes_of(row: Workspace) -> dict | None:
     }
 
 
+def pending_proxy_count(workspace_status: str, remote_proxies: int) -> int:
+    """The proxy half of the pending story (#900): a remote
+    proxy's bind is the workspace's own tap, which exists only
+    while the workspace runs — so while the workspace sits in
+    any other status its whole remote half waits for the next
+    start, and the count is the remote rows themselves. A
+    forward row binds daemon-side at once (a stopped workspace
+    included) and never waits, and a failed bind is failure, not
+    waiting. The rule reads the row's status word, not the
+    listener: one state puts the two apart — a daemon restart
+    under a surviving VMM leaves the row ``running`` while the
+    fresh process holds no listeners, and the count reads 0
+    until the next start re-establishes them (the proxies page's
+    per-row status names it)."""
+    if workspace_status == "running":
+        return 0
+    return remote_proxies
+
+
 def workspace_dict(row: Workspace) -> dict:
     """The API-facing dict for a workspace row. The mounts list
     serves the parsed form: a row a pre-#685 daemon wrote keeps
