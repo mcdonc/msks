@@ -78,7 +78,7 @@ tagged_version=$(
 [[ $tagged_version != *".dev"* ]] ||
   die "pyproject.toml at $tag carries the dev marker $tagged_version — cut a release from a finished version, not an in-progress one"
 [[ $tagged_version == "${tag#v}" ]] ||
-  die "pyproject.toml at $tag carries version $tagged_version, not ${tag#v} — land the version bump in or before the tagged commit: pyproject.toml, src/msks/msks/spec/version.py, nix/msks-pkg.nix, uv.lock"
+  die "pyproject.toml at $tag carries version $tagged_version, not ${tag#v} — land the version bump in or before the tagged commit: pyproject.toml, src/msks/msks/spec/version.py, nix/msks-pkg.nix, uv.lock; a $tag already on origin at the wrong commit needs the surgery first: git push origin :refs/tags/$tag, then re-tag at the bump and re-run"
 
 # The release workflow extracts this section from the tagged tree
 # and refuses the release without it (#564, #3142's silent-loss
@@ -102,15 +102,18 @@ fi
 # The push event takes a moment to register its workflow run; the
 # server-side branch filter names the tag's runs (a tag push's
 # headBranch is the tag), immune to any number of dev deploys
-# queued in between.
+# queued in between. The tries and the sleep carry test knobs
+# (``CUT_RELEASE_TRIES`` / ``CUT_RELEASE_POLL_S``): the suite's
+# pass-path test lets the lookup fail fast instead of waiting
+# out the minute a real cut's slowest case takes.
 run_id=""
-for _ in $(seq 1 30); do
+for _ in $(seq 1 "${CUT_RELEASE_TRIES:-30}"); do
   run_id=$(
     gh run list --workflow "Deploy Docs" --branch "$tag" --limit 1 \
       --json databaseId --jq ".[0].databaseId" 2>/dev/null || true
   )
   [[ -n $run_id ]] && break
-  sleep 2
+  sleep "${CUT_RELEASE_POLL_S:-2}"
 done
 [[ -n $run_id ]] ||
   die "no Deploy Docs run appeared for $tag (check the Actions tab)"

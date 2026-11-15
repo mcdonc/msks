@@ -466,7 +466,8 @@ create noise — do not add changelog entries for them.
 
 ### When to garden for a release
 
-Right before pushing the tag — do this as its own commit on `main`:
+Right before pushing the tag — as two commits on `main` (either order,
+both in or before the commit you tag):
 
 1. Rename `## \[Unreleased]` → `## \[vX.Y.Z] - YYYY-MM-DD`
    (today's date). The `v` prefix and bracket form **must match the tag exactly**;
