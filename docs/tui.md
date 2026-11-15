@@ -39,8 +39,9 @@ The listing's bottom holds a two-line strip with the focused
 workspace's quick facts, under the rows. The first line carries the
 workspace's name, its id, and the image. The second carries the cpu
 count, the memory in binary units (`8G`), the egress mode, the
-mounts-issue count while any mount skips (`mounts ✗2`), and the
-storage the workspace charges the state disk. The strip paints its labels muted and its values in the bright
+mounts-issue count while any mount skips (`mounts ✗2`), the pending
+change count while a change waits for the next start (`next ↻1`),
+and the storage the workspace charges the state disk. The strip paints its labels muted and its values in the bright
 foreground on the panel background, so it reads as its own bar at the
 bottom of the box. The storage figure is the root-plus-home cost `msks
 storage` reports, fetched with the list's five-second refresh and
@@ -63,12 +64,16 @@ connection that fails leaves the standing marker in place. The URL and the
 state summary crop before the marker does, so the marker stays
 readable at 80 columns.
 
-A row can carry two markers ahead of its status word. `✗1` counts
+A row can carry three markers ahead of its status word. `✗1` counts
 the workspace's mounts that skipped at the last start (the mounts
-chapter lists every kind of skip). `»2` counts the workspace's open
-shells on this host. The [open shells section](#open-shells-and-the-session-records)
-below owns the count's whole story; the workspace's page carries the
-count in its header. Both markers follow the five-second refresh.
+chapter lists every kind of skip). `↻2` counts the changes the
+workspace's next start applies: a mounts edit the last start has not
+taken, a sizes or topology edit no boot has taken (the workspace row
+carries both flags, and the `mounts` chapter's pending story owns
+the mounts half). `»3` counts the workspace's open shells on this
+host. The [open shells section](#open-shells-and-the-session-records)
+below owns the shells count's whole story; the workspace's page carries
+the count in its header. The markers follow the five-second refresh.
 
 ### Open shells and the session records
 

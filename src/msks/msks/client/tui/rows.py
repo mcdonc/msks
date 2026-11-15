@@ -386,6 +386,12 @@ ISSUE_MARKER_COLOR = "$warning"
 #: whatever color the status word's own class paints the word.
 SHELL_MARKER_COLOR = "$success"
 
+#: The pending-changes marker's color (#898): the muted accent —
+#: a waiting change is information, not the warning a skip
+#: carries nor the live signal a shell count keeps, and the
+#: status word's own class keeps the word behind it.
+PENDING_MARKER_COLOR = "$text-muted"
+
 
 def issue_marker(row: dict) -> str | None:
     """The mounts-issue count's marker (#620, part #624, #850):
@@ -406,16 +412,34 @@ def shell_marker(row: dict) -> str | None:
     return f"»{shells}" if shells else None
 
 
+def pending_marker(row: dict) -> str | None:
+    """The pending-changes marker (#898): ``↻N``, N counting the
+    changes the next start applies — a mounts edit the last
+    start has not taken, a sizes or topology edit no boot has
+    taken — else ``None``. Both flags are the daemon's own
+    derivations off the row's recorded snapshots, so a row a
+    daemon before #898 serves carries only the mounts half."""
+    count = int(bool(row.get("mounts_pending"))) + int(
+        bool(row.get("sizes_pending"))
+    )
+    return f"↻{count}" if count else None
+
+
 def standing_markers(row: dict) -> list[tuple[str, str]]:
     """The status cell's leading markers with their colors (#620,
-    #858): the mounts-issue count first — the established
-    marker, ahead of the word — then the open-shells count, each
-    keeping its own color whatever the status word's own class
-    paints the word behind them."""
+    #858, #898): the mounts-issue count first — the established
+    marker, ahead of the word — then the pending-changes count
+    (the two start-facts beside each other: what skipped, what
+    waits), then the open-shells count, each keeping its own
+    color whatever the status word's own class paints the word
+    behind them."""
     markers = []
     marker = issue_marker(row)
     if marker is not None:
         markers.append((marker, ISSUE_MARKER_COLOR))
+    marker = pending_marker(row)
+    if marker is not None:
+        markers.append((marker, PENDING_MARKER_COLOR))
     marker = shell_marker(row)
     if marker is not None:
         markers.append((marker, SHELL_MARKER_COLOR))
@@ -428,9 +452,9 @@ def status_with_issues(row: dict) -> str:
     beside a plain status word — ahead, where a trailing one
     would middle-clip the word it marks — and a row with live
     shells carries the open-shells count beside it the same way
-    (`✗1 »2 running`). The workspace's page names each mount
-    issue. A healthy, shell-free row prints the status dot and
-    word alone."""
+    (`✗1 ↻2 »3 running`). The workspace's page names each mount
+    issue. A healthy, caught-up, shell-free row prints the status
+    dot and word alone."""
     markers = [text for text, _color in standing_markers(row)]
     if not markers:
         return status_text(row["status"])
@@ -440,13 +464,14 @@ def status_with_issues(row: dict) -> str:
 def status_spans(
     markers: list[tuple[str, str]], offset: int, status: str, color: str
 ) -> list[Span]:
-    """The status cell's spans (#850, #858): each standing marker
-    its own color over its slice of the cell's head, the status
-    word behind them — the separator spaces included, the #850
-    convention — its own class's color. A marker the cell's clip
-    ate (a composed cell wider than the STATUS column) paints
-    nothing: the word's span carries the clipped cell whole, so
-    no marker's color rides characters the clip rearranged."""
+    """The status cell's spans (#850, #858, #898): each standing
+    marker its own color over its slice of the cell's head, the
+    status word behind them — the separator spaces included, the
+    #850 convention — its own class's color. A marker the cell's
+    clip ate (a composed cell wider than the STATUS column)
+    paints nothing: the word's span carries the clipped cell
+    whole, so no marker's color rides characters the clip
+    rearranged."""
     end = offset + len(status)
     spans: list[Span] = []
     word_start = offset
@@ -478,10 +503,10 @@ def row_content(
     columns (the name cell's own length fixes the span's offset:
     a wide-character name pads with fewer characters than its
     display width). A row with standing markers splits its status
-    cell's span (#850, #858): each marker — the ``✗N`` mounts
-    count, the ``»N`` open-shells count — keeps its own color
-    while the status word behind them rides its own class's
-    color."""
+    cell's span (#850, #858, #898): each marker — the ``✗N``
+    mounts count, the ``↻N`` pending count, the ``»N`` open-shells
+    count — keeps its own color while the status word behind them
+    rides its own class's color."""
     cells = row_cells(row, columns)
     name, status, *_ = cells
     line = padded_cells(cells, columns).rstrip()

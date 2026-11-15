@@ -147,7 +147,10 @@ the allowed roots, and one that does not resolve under them, are named
 carries `mounts`, the derived `mount_issues`, and `mounts_pending`. The
 `mount_issues` field holds the skip state that `msks ls` and the TUI render.
 The `mounts_pending` field says whether the configured set differs from the
-set the last start attached, and the next-start notes key on it. `msks
+set the last start attached, and the next-start notes key on it. The row
+carries `sizes_pending` the same way: whether the row's deferred sizes (root
+growth and the vcpu/memory topology) differ from the ones the last start
+booted — True until a start takes them. `msks
 mount`/`umount` and the TUI's editor use this route.
 
 - `GET`/`PUT …/home`: export and import the home volume as a

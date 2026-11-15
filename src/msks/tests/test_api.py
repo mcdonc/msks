@@ -4915,3 +4915,44 @@ async def test_the_probe_read_skips_an_unchanged_blob_rewrite(
     third = await http.get("/api/v1/probe", headers=auth())
     assert third.status_code == 200
     assert calls  # the rotation forced the rewrite
+
+
+async def test_start_reconciles_the_sizes_pending_story(client) -> None:
+    """The row's ``sizes_pending`` flag (#898), end to end: a
+    create stands pending (no start has booted its sizes), a
+    start's snapshot reconciles the pair, a topology resize while
+    stopped splits it again, and the next start takes it back —
+    the mounts pending story (#756) on sizes."""
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-sz", "kernel": "/k", "rootfs": "/r", "cpus": 2},
+        headers=auth(),
+    )
+    assert created.status_code == 201
+    wid = created.json()["id"]
+    assert created.json()["sizes_pending"] is True
+
+    async def fetched() -> dict:
+        listed = await http.get("/api/v1/workspaces", headers=auth())
+        return next(r for r in listed.json() if r["id"] == wid)
+
+    started = await http.post(
+        f"/api/v1/workspaces/{wid}/start", headers=auth()
+    )
+    assert started.status_code == 200
+    assert (await fetched())["sizes_pending"] is False
+    # The resize route owns free statuses: stop first, then the
+    # topology move that splits the pair.
+    stopped = await http.post(f"/api/v1/workspaces/{wid}/stop", headers=auth())
+    assert stopped.status_code == 200
+    resized = await http.post(
+        f"/api/v1/workspaces/{wid}/resize",
+        json={"cpus": 4},
+        headers=auth(),
+    )
+    assert resized.status_code == 200
+    assert resized.json()["sizes_pending"] is True
+    assert (await fetched())["sizes_pending"] is True
+    await http.post(f"/api/v1/workspaces/{wid}/start", headers=auth())
+    assert (await fetched())["sizes_pending"] is False

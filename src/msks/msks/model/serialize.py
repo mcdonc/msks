@@ -127,6 +127,26 @@ def audit_dict(row: SecretAudit) -> dict:
     }
 
 
+def booted_sizes_of(row: Workspace) -> dict | None:
+    """The booted-sizes snapshot as a dict (#898), None when the
+    column is empty or unreadable. The dict carries exactly the
+    deferred half's three fields, so a comparison against the
+    row's own sizes is a field-for-field equality."""
+    if not row.booted_sizes:
+        return None
+    try:
+        parsed = json.loads(row.booted_sizes)
+    except ValueError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return {
+        "cpus": parsed.get("cpus"),
+        "mem_mib": parsed.get("mem_mib"),
+        "root_mib": parsed.get("root_mib"),
+    }
+
+
 def workspace_dict(row: Workspace) -> dict:
     """The API-facing dict for a workspace row. The mounts list
     serves the parsed form: a row a pre-#685 daemon wrote keeps
@@ -136,8 +156,17 @@ def workspace_dict(row: Workspace) -> dict:
     ``mounts_pending`` (#756) compares the configured set against
     the set the last start attached: True while the two disagree
     (an edit the next start takes, a mount never yet attached),
-    False once they agree again."""
+    False once they agree again. ``sizes_pending`` (#898) reads
+    the same shape on sizes: the row's deferred half (root
+    growth and the vcpu/memory topology) against the snapshot
+    the last start booted — True while they disagree or no start
+    has booted one, False once a start takes the row's sizes."""
     configured = parse_mounts(row.mounts)
+    desired = {
+        "cpus": row.cpus,
+        "mem_mib": row.mem_mib,
+        "root_mib": row.root_mib,
+    }
     return {
         "id": row.id,
         "name": row.name,
@@ -161,6 +190,7 @@ def workspace_dict(row: Workspace) -> dict:
         "mounts": [mount.as_dict() for mount in configured],
         "mounts_pending": set(configured)
         != set(parse_mounts(row.attached_mounts)),
+        "sizes_pending": desired != booted_sizes_of(row),
         "user_data": row.user_data,
         "ssh_pubkey": row.ssh_pubkey,
         "login_user": row.login_user,
