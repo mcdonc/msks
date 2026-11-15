@@ -1781,7 +1781,7 @@ variables has a config-file equivalent.</p>
 <tr>
 <td><code>MSKSC_PUBKEY_FILE</code></td>
 <td><code>pubkey_file</code></td>
-<td>Your key's public half, what a bare <code>msks create</code> plants instead of reading <code>identity_file</code>. The form for a key you keep encrypted (your agent holds it; msks reads no private half); same naming rule, global-only</td>
+<td>Your key's public half, what a bare <code>msks create</code> plants instead of reading <code>identity_file</code>. The form for a key you keep encrypted: create reads no private half, ssh sessions sign through your agent when it holds the key, and the secrets unlock still needs <code>identity_file</code>; same naming rule, global-only</td>
 <td>unset (<code>identity_file</code> answers)</td>
 </tr>
 <tr>
@@ -1816,8 +1816,10 @@ file (<a href="../first-run/#the-key-files">the identity section</a>
 owns the agent requirement this form carries). A create with it
 set plants that one line as the identity and reads no private
 material at all. It is the form for a key you keep encrypted:
-the public half is in a <code>.pub</code> file while the private half
-answers from your agent.</p>
+the public half is in a <code>.pub</code> file, and ssh sessions sign
+through your agent when it holds the key. The secrets unlock
+opens the private half from the file <code>MSKSC_IDENTITY_FILE</code>
+points at. Set both variables on a client that unlocks secrets.</p>
 <p>A missing <code>MSKSC_TOKEN</code> is an error before any network activity (the client
 gives the variable and exits), unless the daemon is reached through the
 local socket, where the kernel vouches for the client and no token exists to

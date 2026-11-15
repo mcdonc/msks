@@ -2009,6 +2009,11 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong><code>pubkey_file</code> docs name the unlock's key requirement (#918).</strong> The
+  docs and the first-run config template's comments claimed
+  <code>pubkey_file</code> alone covers a key you keep encrypted. The secrets
+  unlock still reads the private half from <code>identity_file</code>, and those
+  passages now say so.</li>
 <li><strong>The unlock note renders whole (#916).</strong> The passphrase
   prompt's note fits the form's 50-column text width:
   <code>&lt;key file&gt; passphrase for secrets unlock</code>. Key names up to

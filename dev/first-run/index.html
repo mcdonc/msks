@@ -996,7 +996,7 @@
 <p>After the installation process has resulted in a running <code>msksd</code> systemd user
 service, it's almost ready to use. But you need to supply your ssh keypair and
 import at least one image used as a base for workspace creation before you can
-succesfully create one.</p>
+successfully create one.</p>
 <h2 id="make-sure-its-running">Make sure it's running<a class="headerlink" href="#make-sure-its-running" title="Permanent link">&para;</a></h2>
 <p>Before trying to connect to <code>msksd</code> via the client, make sure it's running.</p>
 <p>On Linux, to see status and log output from the account the daemon runs as
@@ -1033,9 +1033,11 @@ again.</p>
 <div class="language-yaml highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">identity_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/id_ed25519</span><span class="w"> </span><span class="c1"># the private half</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nt">pubkey_file</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.ssh/id_ed25519.pub</span><span class="w"> </span><span class="c1"># the public half</span>
 </span></code></pre></div>
-<p>If your identity is typically in your ssh agent, you needn't specify the
-<code>identity-file</code>, just the pubkey_file. But it's more foolproof to specify both
-at first.</p>
+<p>When your key sits in your ssh agent, <code>pubkey_file</code> alone serves <code>msks
+create</code> and every ssh session: the agent signs, and msks reads no private
+half. The secrets unlock is the exception. It opens the private half from
+the file <code>identity_file</code> points at. Set both files on a client that
+unlocks secrets.</p>
 <h3 id="identity_file-the-private-half"><code>identity_file</code>: the private half<a class="headerlink" href="#identity_file-the-private-half" title="Permanent link">&para;</a></h3>
 <p><code>identity_file</code> names your private key file, read in place. msks derives the
 public half from it at create, and the key file is never copied into msks's
@@ -1043,10 +1045,11 @@ state</p>
 <p>But session resolution consults your own ssh-agent first. When <code>SSH_AUTH_SOCK</code>
 names a live agent holding that key, every session signs through the agent and
 the file's encryption stops mattering. The match is on key material, so the
-file it came from and its name do not matter (<code>ssh-add</code> it). If your key is
-saved in your ssh-agent, you needn't name the private half of your key in msks
-config, only the public one (<code>pubkey_file</code>), and the private half need not be
-on disk.</p>
+file it came from and its name do not matter (<code>ssh-add</code> it). Sessions then
+work from <code>pubkey_file</code> alone, and the private half need not be on disk. The
+secrets unlock still reads the private half from the file <code>identity_file</code>
+points at. The passphrase paragraph below covers what happens when that file
+is encrypted.</p>
 <p>If your ssh key is not already in an agent, a key no agent holds is staged
 in memory as an unencrypted OpenSSH-format key (<code>ed25519</code>, <code>ecdsa</code>
 P-256/P-384/P-521, or <code>rsa</code>). msks never types a passphrase.</p>
@@ -1059,8 +1062,10 @@ secrets page and re-askable there.</p>
 <p><code>pubkey_file</code> names a <code>.pub</code> file, and a create with it set plants that one
 line as the workspace's identity and reads no private material at all. This is
 the form for a key you keep encrypted on disk: the public half sits in the
-<code>.pub</code> file while the private half answers from your agent.</p>
-<p><code>msks console</code> will wok to access a wokspace if you've lost your key.</p>
+<code>.pub</code> file, and ssh sessions sign through your agent when it holds the
+key. The secrets unlock still needs <code>identity_file</code> on the client that
+runs it.</p>
+<p><code>msks console</code> will work to access a workspace if you've lost your key.</p>
 <h3 id="where-the-private-half-lives-at-runtime">Where the private half lives at runtime<a class="headerlink" href="#where-the-private-half-lives-at-runtime" title="Permanent link">&para;</a></h3>
 <p>An agent-held key stays in the agent: msks asks it to sign, and the file on
 disk is never opened. A key msks stages itself runs in a transient in-process
