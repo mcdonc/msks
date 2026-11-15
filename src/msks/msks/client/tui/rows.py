@@ -386,12 +386,6 @@ ISSUE_MARKER_COLOR = "$warning"
 #: whatever color the status word's own class paints the word.
 SHELL_MARKER_COLOR = "$success"
 
-#: The pending-changes marker's color (#898): the muted accent —
-#: a waiting change is information, not the warning a skip
-#: carries nor the live signal a shell count keeps, and the
-#: status word's own class keeps the word behind it.
-PENDING_MARKER_COLOR = "$text-muted"
-
 
 def issue_marker(row: dict) -> str | None:
     """The mounts-issue count's marker (#620, part #624, #850):
@@ -425,21 +419,25 @@ def pending_marker(row: dict) -> str | None:
     return f"↻{count}" if count else None
 
 
-def standing_markers(row: dict) -> list[tuple[str, str]]:
+def standing_markers(row: dict, muted: str) -> list[tuple[str, str]]:
     """The status cell's leading markers with their colors (#620,
     #858, #898): the mounts-issue count first — the established
     marker, ahead of the word — then the pending-changes count
     (the two start-facts beside each other: what skipped, what
     waits), then the open-shells count, each keeping its own
     color whatever the status word's own class paints the word
-    behind them."""
+    behind them. The pending marker rides the caller's resolved
+    muted accent (:func:`muted_style`) — information, not the
+    warning a skip carries nor the live signal a shell count
+    keeps, and a widget-css ``$text-muted`` span would not
+    resolve, the very trap :func:`muted_style` exists for."""
     markers = []
     marker = issue_marker(row)
     if marker is not None:
         markers.append((marker, ISSUE_MARKER_COLOR))
     marker = pending_marker(row)
     if marker is not None:
-        markers.append((marker, PENDING_MARKER_COLOR))
+        markers.append((marker, muted))
     marker = shell_marker(row)
     if marker is not None:
         markers.append((marker, SHELL_MARKER_COLOR))
@@ -455,7 +453,7 @@ def status_with_issues(row: dict) -> str:
     (`✗1 ↻2 »3 running`). The workspace's page names each mount
     issue. A healthy, caught-up, shell-free row prints the status
     dot and word alone."""
-    markers = [text for text, _color in standing_markers(row)]
+    markers = [text for text, _color in standing_markers(row, "")]
     if not markers:
         return status_text(row["status"])
     return " ".join([*markers, row["status"]])
@@ -512,7 +510,8 @@ def row_content(
     line = padded_cells(cells, columns).rstrip()
     offset = len(cell_pad(name, columns[0][1])) + len(COLUMN_GAP)
     color = status_color(row["status"], theme_variables)
-    spans = status_spans(standing_markers(row), offset, status, color)
+    muted = muted_style(theme_variables or {})
+    spans = status_spans(standing_markers(row, muted), offset, status, color)
     if focused:
         spans.append(Span(0, len(name), "$text bold"))
     return Content(line, spans)

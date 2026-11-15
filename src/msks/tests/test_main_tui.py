@@ -7623,7 +7623,6 @@ def test_the_list_row_marks_pending_changes() -> None:
     warning) and the word behind them its own class's color. A
     caught-up row prints nothing."""
     from msks.client.tui.rows import (
-        PENDING_MARKER_COLOR,
         pending_marker,
         row_content,
         status_with_issues,
@@ -7641,7 +7640,7 @@ def test_the_list_row_marks_pending_changes() -> None:
         spanned.plain[span.start : span.end]: span.style
         for span in spanned.spans
     }
-    assert spans["↻1"] == PENDING_MARKER_COLOR
+    assert spans["↻1"] == rows_mod.muted_style({})
     assert spans[" stopped"] == rows_mod.muted_style({})
     # Every marker composed, the word behind them (a clip would
     # eat the tail markers the same way the ✗1/»2 pair clips).

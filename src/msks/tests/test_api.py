@@ -1064,6 +1064,10 @@ async def test_failed_start_leaves_the_row_startable(client) -> None:
     assert response.status_code == 503
     row = await http.get("/api/v1/workspaces/ws-f", headers=auth())
     assert row.json()["status"] == "stopped"
+    # The failed launch wrote no booted-sizes snapshot (#898): a
+    # start that never booted reconciles nothing, and the row
+    # keeps standing pending the way it did before the attempt.
+    assert row.json()["sizes_pending"] is True
 
 
 async def test_delete_falls_back_to_kill(client) -> None:
