@@ -31,6 +31,7 @@ from msks.client.tui import rows as rows_mod
 from msks.client.tui import workspace as page_mod
 from msks.client.tui.consent import ConsentController
 from msks.client.tui.consent_ui import (
+    ConfirmScreen,
     FailurePanel,
     FlashLine,
     panel_safe,
@@ -2725,6 +2726,34 @@ async def test_tui_data_clone_posts_through_the_real_api(
         row = await data.clone(source_id, "fork")
         assert row["name"] == "fork"
         assert row["id"] != source_id
+
+
+async def test_the_confirm_dialog_names_its_answer_keys() -> None:
+    """Every confirm question stands with ``y / n`` beside it
+    (#913): the hint comes from the shared screen itself, so no
+    caller bakes the keys into its question string."""
+    app, _ = make_app(FakeData([]))
+    seen: list[bool] = []
+
+    async def answered(value: bool) -> None:
+        seen.append(value)
+
+    async with app.run_test() as pilot:
+        await wait_for(lambda: on_main(app))
+        app.push_screen(
+            ConfirmScreen(
+                "remove flug (0fb2ccb833) and all its persistent data?",
+                answered,
+            )
+        )
+        await pilot.pause()
+        assert (
+            str(app.screen.query_one("#question", Static).content)
+            == "remove flug (0fb2ccb833) and all "
+            "its persistent data?  y / n"
+        )
+        await pilot.press("n")
+        await wait_for(lambda: seen == [False])
 
 
 async def test_an_edit_on_a_running_workspace_asks_and_stops_first(
