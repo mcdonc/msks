@@ -17,9 +17,9 @@ tagged `vX.Y.Z`.
   `sizes_pending` flag, derived like `mounts_pending`: the
   row's deferred sizes (root growth, vcpus, memory) against
   the ones the last start booted. After an upgrade every
-  existing workspace reads pending until its next start — no
-  record of a last boot exists yet — and the marker leaves as
-  each one starts.
+  existing workspace reads pending until its next start: no
+  record of a last boot exists yet. The marker leaves as each
+  one starts.
 
 ## \[v0.9.1] - 2026-11-14
 

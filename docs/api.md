@@ -150,10 +150,9 @@ The `mounts_pending` field says whether the configured set differs from the
 set the last start attached, and the next-start notes key on it. The row
 carries `sizes_pending` the same way: whether the row's deferred sizes (root
 growth and the vcpu/memory topology) differ from the ones the last start
-booted — True until a start takes them. A row from a database that predates
-the field (or any workspace never started) reads True until its next start:
-no record of a last boot exists to agree with. `msks
-mount`/`umount` and the TUI's editor use this route.
+booted — True until a start takes them. A workspace no start has booted reads
+True, so a row from a database that predates the field reads True until its
+next start. `msks mount`/`umount` and the TUI's editor use this route.
 
 - `GET`/`PUT …/home`: export and import the home volume as a
   byte stream, the same stream `msks home import`/`export`
