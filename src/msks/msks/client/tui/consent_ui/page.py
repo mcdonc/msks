@@ -525,7 +525,8 @@ class ConsentPage(HelpKeys, Screen):
 
     def paint_header(self) -> None:
         """The page's header — the workspace page's own two lines
-        (#460): the name with its status and the pending-egress
+        (#460): the name with its status, the pending-changes
+        marker while changes wait (#912), and the pending-egress
         count, the id, image, host, and created date muted beneath.
         The row is the host's (its per-second read keeps both
         pages' headers following a workspace another surface may

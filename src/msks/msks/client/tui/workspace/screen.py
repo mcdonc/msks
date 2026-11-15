@@ -61,8 +61,10 @@ class WorkspaceScreen(HelpKeys, Screen):
     """One workspace's page (#309): the header's two lines (#351
     — the name with its status on the first, the id, image, host,
     and created date muted on the second, the pending-egress
-    count beside the status while holds wait, #354, and the
-    host's open-shell count the same way, #858), the consent
+    count beside the status while holds wait, #354, the
+    host's open-shell count the same way, #858, and the
+    pending-changes marker leading the status while changes
+    wait for the next start, #912), the consent
     status line, and the page's actions — a shell in a new window
     (#341), the egress consent page (#454), the edit dialog, and
     start and stop; the egress-mode switch (#344) lives on the

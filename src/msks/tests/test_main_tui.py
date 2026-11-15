@@ -3570,6 +3570,34 @@ def test_the_line_helpers() -> None:
     (running_span,) = running.spans
     assert running.plain[running_span.start : running_span.end] == "● running"
     assert running_span.style == "$success"
+    # The pending-changes marker leads the status the way the
+    # list's cell does (#912): both waiting halves count, the
+    # marker keeps the muted accent, and the status behind it
+    # keeps its own color with its span moved past the marker.
+    resized = {**row(), "sizes_pending": True}
+    headed = rows_mod.header_name(resized)
+    assert "↻1 ● stopped" in headed.plain
+    headed_spans = {
+        headed.plain[span.start : span.end]: span.style
+        for span in headed.spans
+    }
+    assert headed_spans["↻1"] == rows_mod.muted_style({})
+    assert headed_spans["● stopped"] == rows_mod.muted_style({})
+    running_pending = rows_mod.header_name(
+        {
+            **row(status="running"),
+            "mounts_pending": True,
+            "sizes_pending": True,
+        }
+    )
+    assert "↻2 ● running" in running_pending.plain
+    pending_spans = {
+        running_pending.plain[span.start : span.end]: span.style
+        for span in running_pending.spans
+    }
+    assert pending_spans["↻2"] == rows_mod.muted_style({})
+    assert pending_spans["● running"] == "$success"
+    assert "↻" not in name.plain
     assert "egress to decide" not in name.plain
     assert "egress to decide: 2" in rows_mod.header_name(row(), 2).plain
     # The open-shells segment (#858): the count rides the same
@@ -5014,6 +5042,36 @@ async def test_the_headers_count_follows_the_shells(monkeypatch) -> None:
         # page's per-second refresh drops the segment.
         sshsessions.remove_record(record)
         await wait_for(lambda: "shell open" not in header_text(app))
+        assert "● stopped" in header_text(app)
+
+
+async def test_the_headers_marker_follows_the_pending_changes(
+    monkeypatch,
+) -> None:
+    """#912 on the workspace page: the header leads the status
+    with the pending-changes marker while changes wait for the
+    next start — the same count the list's status cell carries —
+    and the marker leaves when the next start applies them."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData(
+        [
+            {
+                **row(),
+                "mounts_pending": True,
+                "sizes_pending": True,
+            }
+        ]
+    )
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: "↻2 ● stopped" in header_text(app))
+        # The next start applies both halves: the cleared flags
+        # reach the page on its per-second row refresh, and the
+        # marker leaves with the status kept whole.
+        data.rows[0]["mounts_pending"] = False
+        data.rows[0]["sizes_pending"] = False
+        await wait_for(lambda: "↻" not in header_text(app))
         assert "● stopped" in header_text(app)
 
 
