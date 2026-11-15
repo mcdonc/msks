@@ -214,6 +214,9 @@ def probed_health(transport) -> dict | None:
         print("msks: interrupted", file=sys.stderr)
         raise SystemExit(130) from None
     except Exception:
+        # A best-effort probe keeps its raw catch: any failure the
+        # probe touches is the caller's silence (the docstring
+        # names the family), never its refusal.
         return None
 
 

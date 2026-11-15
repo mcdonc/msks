@@ -1185,6 +1185,29 @@ async def test_a_storage_report_that_will_not_come_keeps_the_dash() -> None:
         assert "listing failed" not in status_text(app)
 
 
+async def test_a_report_that_answers_another_shape_keeps_the_strip(
+    monkeypatch,
+) -> None:
+    """A capacity report from a daemon predating the per-row
+    fields (#849, #908 review): the strip keeps its standing
+    figures and its honest dash, and the listing's own refresh
+    keeps running beside it — the shape skew is the strip's
+    silence, never the listing's stall."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    data.storage_rows = [{"id": WS}]  # the row predates the fields
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 1)
+        await wait_for(lambda: data.storage_fetches >= 1)
+        await wait_for(lambda: " alpha · id ws-a" in detail_text(app))
+        assert "storage -" in detail_text(app)
+        assert "listing failed" not in status_text(app)
+        # The listing's refresh keeps landing after the skew read.
+        await pilot.pause()
+        assert list_children(app) == 1
+
+
 async def test_start_stop_and_remove_from_the_list(monkeypatch) -> None:
     scripted_link(monkeypatch, [])
     data = FakeData([row()])

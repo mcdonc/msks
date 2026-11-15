@@ -422,6 +422,10 @@ class MainScreen(HelpKeys, Screen):
             }
         except RestFailure:
             return
+        except AttributeError, KeyError, TypeError:
+            # A daemon predating the endpoint or its per-row fields
+            # answers another shape; the standing figures stay.
+            return
 
     async def load_skew(self) -> None:
         """Land the version-skew marker (#852): the daemon's

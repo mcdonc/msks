@@ -111,6 +111,14 @@ PREDATES_SHARES_DETAIL = "mounts entry has unknown keys: ['host']"
 PREDATES_SHARES_MESSAGE = "msks: this daemon predates shares; upgrade msksd"
 
 
+def junk_message(client: httpx.AsyncClient, exc: ValueError) -> str:
+    """The unparseable-answer line: something answered the dial
+    with a 2xx page the API cannot read (a captive portal, an
+    intercepting proxy's block page) — an outage in #904's terms,
+    not a refusal."""
+    return f"msks: {client.base_url} answered a body that is not JSON: {exc}"
+
+
 def status_message(exc: httpx.HTTPStatusError) -> str:
     """The API-status line: the daemon's detail, verbatim — the
     one deliberate rewrite being the version-skew refusal (#667,
@@ -128,8 +136,9 @@ async def guarded(client: httpx.AsyncClient, exchange):
 
     The JSON calls and the #80 byte streams share this map: a
     timeout names the daemon and the possibility it still finishes,
-    a dead dial names the daemon, and an HTTP status carries the
-    daemon's detail verbatim.
+    a dead dial names the daemon, an HTTP status carries the
+    daemon's detail verbatim, and a 2xx body that will not parse
+    names the daemon and the junk that answered for it.
     """
     try:
         return await exchange()
@@ -137,6 +146,8 @@ async def guarded(client: httpx.AsyncClient, exchange):
         raise SystemExit(timeout_message(client, exc)) from exc
     except httpx.TransportError as exc:
         raise SystemExit(reach_message(client, exc)) from exc
+    except ValueError as exc:
+        raise SystemExit(junk_message(client, exc)) from exc
     except httpx.HTTPStatusError as exc:
         raise ApiExit(
             status_message(exc),
@@ -156,9 +167,9 @@ async def request(
     async def exchange():
         response = await client.request(method, path, json=json_body)
         response.raise_for_status()
-        return response
+        return response.json()
 
-    return (await guarded(client, exchange)).json()
+    return await guarded(client, exchange)
 
 
 async def api_call(
@@ -243,9 +254,9 @@ async def upload(client: httpx.AsyncClient, path: str, content) -> dict:
             headers={"content-type": "application/octet-stream"},
         )
         response.raise_for_status()
-        return response
+        return response.json()
 
-    return (await guarded(client, exchange)).json()
+    return await guarded(client, exchange)
 
 
 def error_detail(response: httpx.Response) -> str:

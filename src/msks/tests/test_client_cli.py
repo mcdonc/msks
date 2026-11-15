@@ -1369,6 +1369,22 @@ def test_api_call_non_json_body_falls_back_to_text() -> None:
         )
 
 
+def test_api_call_unparseable_answer_names_the_daemon() -> None:
+    """A 2xx body that is not JSON (#908 review): the dial reached
+    something (a captive portal, an intercepting proxy's block
+    page), and the seam's error contract must carry it the way it
+    carries a dead dial — one readable line and the caller's own
+    failure handling, never a JSONDecodeError loose in a worker
+    whose narrowed catch no longer swallows it."""
+    transport = mock(
+        lambda req: httpx.Response(200, text="<html>blocked</html>")
+    )
+    with pytest.raises(SystemExit, match="not JSON"):
+        asyncio.run(
+            rest.api_call("GET", "https://d", "t", "/x", transport=transport)
+        )
+
+
 def test_cmd_ls_unreachable_daemon(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

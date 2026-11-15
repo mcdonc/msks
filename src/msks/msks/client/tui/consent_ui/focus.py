@@ -6,6 +6,7 @@ id across re-renders, and the attribute the focused row carries.
 
 from __future__ import annotations
 
+from textual.css.query import NoMatches
 from textual.widgets import ListView
 
 
@@ -14,7 +15,7 @@ def focused_rule_or_none(screen) -> str | None:
     rebuild's swap window) or nothing focused."""
     try:
         return focused_rule_id(screen.query_one("#rule-rows", ListView))
-    except Exception:
+    except NoMatches:
         return None
 
 
