@@ -6661,6 +6661,31 @@ async def test_an_encrypted_key_prompts_once_at_start(
         assert values == [{"placeholder_id": 7, "value": "tok"}]
 
 
+async def test_the_unlock_note_fits_the_dialog() -> None:
+    """The unlock note renders whole (#916): the fixed words
+    leave room for a realistic key name inside the form's
+    50-column text width (width 56 less the border and the
+    padding), so the name-led note — the key file's passphrase
+    and its purpose — does not die to the ellipsis the old
+    102-column note always hit."""
+    from pathlib import Path
+
+    from msks.client.tui.unlock import PassphraseScreen
+
+    app, _ = make_app(FakeData([]))
+    async with app.run_test(size=(80, 24)) as pilot:
+        app.push_screen(PassphraseScreen(Path("id_ed25519_github")))
+        await pilot.pause()
+        note = app.screen.query_one("#pass-note", Static)
+        assert str(note.content) == (
+            "id_ed25519_github passphrase for secrets unlock"
+        )
+        # The note's own region width is the budget the CSS
+        # gives it (the form's text width); the name is the only
+        # variable part, and it must fit inside it.
+        assert len(str(note.content)) <= note.region.width
+
+
 async def test_a_refused_unlock_flashes_at_start(
     tmp_path, monkeypatch
 ) -> None:

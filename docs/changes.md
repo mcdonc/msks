@@ -6,6 +6,14 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Fixed
+
+- **The unlock note renders whole (#916).** The passphrase
+  prompt's note fits the form's 50-column text width:
+  `<key file> passphrase for secrets unlock`. Key names up to
+  20 characters render whole. See `docs/secrets.md` → the
+  unlock window.
+
 ### Added
 
 - **Confirm dialogs show their answer keys (#913).** Every TUI
