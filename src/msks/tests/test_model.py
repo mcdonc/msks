@@ -1314,3 +1314,36 @@ def test_booted_sizes_of_reads_only_its_shape() -> None:
         "mem_mib": None,
         "root_mib": None,
     }
+
+
+async def test_proxy_pending_counts_read_the_status_rule(app_for) -> None:
+    """The proxy half of the pending story (#900): a workspace's
+    remote rows wait while it sits in any status but running, the
+    reads serve the count, and a forward row never waits (its
+    bind is daemon-side and happens at once)."""
+    app = app_for()
+    model = app.state.model
+    model.migrate()
+    await model.create_workspace(
+        VmSpec(workspace_id="ws-px", kernel="/k", rootfs="/r")
+    )
+    assert (await model.get_workspace("ws-px"))["proxies_pending"] == 0
+    await model.create_proxy(
+        "ws-px", "remote", None, 9200, "127.0.0.1", 9200, None
+    )
+    await model.create_proxy("ws-px", "forward", None, 2201, None, 22, "ssh")
+    # Stopped: the remote row waits, the forward row does not.
+    assert (await model.get_workspace("ws-px"))["proxies_pending"] == 1
+    listed = await model.list_workspaces()
+    assert listed[0]["proxies_pending"] == 1
+    await model.set_status("ws-px", "running")
+    assert (await model.get_workspace("ws-px"))["proxies_pending"] == 0
+    # A second remote row counts whole, and the name ref serves
+    # the same derivation.
+    await model.create_proxy(
+        "ws-px", "remote", None, 9201, "127.0.0.1", 9201, None
+    )
+    await model.set_status("ws-px", "stopped")
+    assert (await model.get_workspace("ws-px"))["proxies_pending"] == 2
+    await model.delete_proxy("ws-px", 1)
+    assert (await model.get_workspace("ws-px"))["proxies_pending"] == 1

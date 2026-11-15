@@ -4960,3 +4960,59 @@ async def test_start_reconciles_the_sizes_pending_story(client) -> None:
     assert (await fetched())["sizes_pending"] is True
     await http.post(f"/api/v1/workspaces/{wid}/start", headers=auth())
     assert (await fetched())["sizes_pending"] is False
+
+
+async def test_the_listing_serves_the_proxy_pending_half(client) -> None:
+    """The proxy half of the pending story (#900), end to end: a
+    remote proxy on a stopped workspace leaves the row counting
+    one waiting change, the start that brings its listener up
+    clears it, the stop that drops the tap restores it, and a
+    forward proxy never counts (its bind is daemon-side at once)."""
+    from test_proxy_api import free_port
+
+    http, _app, _stub = client
+    created = await http.post(
+        "/api/v1/workspaces",
+        json={"id": "ws-pp", "kernel": "/k", "rootfs": "/r"},
+        headers=auth(),
+    )
+    wid = created.json()["id"]
+
+    async def listed() -> dict:
+        rows = await http.get("/api/v1/workspaces", headers=auth())
+        return next(r for r in rows.json() if r["id"] == wid)
+
+    remote = await http.post(
+        f"/api/v1/workspaces/{wid}/proxies",
+        json={
+            "direction": "remote",
+            "listen_port": 9200,
+            "target_port": 9200,
+        },
+        headers=auth(),
+    )
+    assert remote.status_code == 200
+    forward = await http.post(
+        f"/api/v1/workspaces/{wid}/proxies",
+        json={
+            "direction": "forward",
+            "listen_port": await free_port(),
+            "target_port": 22,
+        },
+        headers=auth(),
+    )
+    assert forward.status_code == 200
+    assert (await listed())["proxies_pending"] == 1
+    started = await http.post(
+        f"/api/v1/workspaces/{wid}/start", headers=auth()
+    )
+    assert started.status_code == 200
+    assert (await listed())["proxies_pending"] == 0
+    await http.post(f"/api/v1/workspaces/{wid}/stop", headers=auth())
+    assert (await listed())["proxies_pending"] == 1
+    removed = await http.delete(
+        f"/api/v1/workspaces/{wid}/proxies/{remote.json()['id']}",
+        headers=auth(),
+    )
+    assert removed.status_code == 200
+    assert (await listed())["proxies_pending"] == 0

@@ -68,9 +68,10 @@ A row can carry three markers ahead of its status word. `✗1` counts
 the workspace's mounts that skipped at the last start (the mounts
 chapter lists every kind of skip). `↻2` counts the changes the
 workspace's next start applies: a mounts edit the last start has not
-taken, a sizes or topology edit no boot has taken (the workspace row
-carries both flags, and the `mounts` chapter's pending story owns
-the mounts half). `»3` counts the workspace's open shells on this
+taken, a sizes or topology edit no boot has taken, and a remote proxy
+row no listener can serve while the workspace is not running (a
+forward proxy binds at once and never waits). `»3` counts the
+workspace's open shells on this
 host. The [open shells section](#open-shells-and-the-session-records)
 below owns the shells count's whole story; the workspace's page carries
 the count in its header. The markers follow the five-second refresh.

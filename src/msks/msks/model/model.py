@@ -20,6 +20,7 @@ from .keys import hash_token, new_token
 from .proxies import WorkspaceProxy
 from .secret_ops import SecretOpsMixin
 from .serialize import (
+    pending_proxy_count,
     proxy_dict,
     resolve_workspace,
     workspace_dict,
@@ -221,6 +222,17 @@ class Model(SecretOpsMixin):
             await session.commit()
             return workspace_dict(row)
 
+    async def remote_proxy_counts(self, session) -> dict[str, int]:
+        """Each workspace's remote proxy rows (#900) — the raw half
+        of the pending derivation; the status rule
+        (:func:`pending_proxy_count`) applies per served row."""
+        counts: dict[str, int] = {}
+        rows = await session.scalars(select(WorkspaceProxy))
+        for row in rows:
+            if row.direction == "remote":
+                counts[row.workspace_id] = counts.get(row.workspace_id, 0) + 1
+        return counts
+
     async def get_workspace(self, ref: str) -> dict | None:
         """One workspace row by reference — its immutable id or its
         unique name (#246) — None when neither matches.
@@ -234,11 +246,23 @@ class Model(SecretOpsMixin):
         async with maker() as session:
             row = await session.get(Workspace, ref)
             if row is not None:
-                return workspace_dict(row)
+                served = workspace_dict(row)
+                remote = await self.remote_proxy_counts(session)
+                served["proxies_pending"] = pending_proxy_count(
+                    row.status, remote.get(row.id, 0)
+                )
+                return served
             row = await session.scalar(
                 select(Workspace).where(Workspace.name == ref)
             )
-            return None if row is None else workspace_dict(row)
+            if row is None:
+                return None
+            served = workspace_dict(row)
+            remote = await self.remote_proxy_counts(session)
+            served["proxies_pending"] = pending_proxy_count(
+                row.status, remote.get(row.id, 0)
+            )
+            return served
 
     async def list_workspaces(self) -> list[dict]:
         """All workspace rows, oldest first."""
@@ -247,7 +271,15 @@ class Model(SecretOpsMixin):
             rows = await session.scalars(
                 select(Workspace).order_by(Workspace.created_at, Workspace.id)
             )
-            return [workspace_dict(row) for row in rows]
+            remote = await self.remote_proxy_counts(session)
+            served = []
+            for row in rows:
+                fresh = workspace_dict(row)
+                fresh["proxies_pending"] = pending_proxy_count(
+                    row.status, remote.get(row.id, 0)
+                )
+                served.append(fresh)
+            return served
 
     async def set_status(self, workspace_id: str, status: str) -> bool:
         """Record an observed lifecycle status; False when absent."""
