@@ -112,6 +112,49 @@ and the complexity-gate splits create many single-use helpers where
 it reads as ceremony. Underscores stay on names that genuinely
 shadow or collude with builtins.
 
+## Exception handling: no bare return from a raw catch
+
+A handler that catches the raw `Exception` class must not
+answer with an implicit `None`: neither a bare `return` nor
+`return None`. The same holds for `BaseException` and for a bare
+`except:`, which also traps `KeyboardInterrupt` and
+`SystemExit`. The silent `None` turns every error into the same
+answer: a daemon outage and a `TypeError` vanish the same way,
+and the caller cannot tell a failure from an answer.
+
+```python
+Wrong:
+    try:
+        rows = await self.data.workspaces()
+    except Exception:
+        return
+
+Right:
+    try:
+        rows = await self.data.workspaces()
+    except RestFailure:
+        return  # the listing's own refresh names the failure
+```
+
+Catch the narrowest type the call can actually raise: the seam's
+named error (`RestFailure` in the TUI, `ApiExit` in the CLI) for a
+REST exchange, `OSError` for a file read,
+`subprocess.SubprocessError` for a child process. When a failure
+must be absorbed, make it visible somewhere: log it, flash it, or
+return an explicit failure value. A handler that flashes or logs
+the error first is fine. Its `return` is control flow, not the
+answer.
+
+Two designs keep the raw catch, and the comment beside it names
+the design: a best-effort probe (any failure it touches is the
+caller's silence, as `fetch_health` and `probed_health` document)
+and a fire-and-forget task (a raising body must not reach the
+event loop, as the popup scheduler's show worker pins).
+
+The rule governs shipped code under `src/msks/msks/`. A test
+helper may flatten every failure into a sentinel value; that is
+the harness's own contract, not a swallow.
+
 ## Coverage gates
 
 Local `unit-tests` reproduces the CI coverage gate exactly at the

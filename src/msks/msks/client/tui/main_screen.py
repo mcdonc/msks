@@ -420,7 +420,11 @@ class MainScreen(HelpKeys, Screen):
                 ws["id"]: ws["root_bytes"] + ws["home_bytes"]
                 for ws in report.get("workspaces") or []
             }
-        except Exception:
+        except RestFailure:
+            return
+        except AttributeError, KeyError, TypeError:
+            # A daemon predating the endpoint or its per-row fields
+            # answers another shape; the standing figures stay.
             return
 
     async def load_skew(self) -> None:

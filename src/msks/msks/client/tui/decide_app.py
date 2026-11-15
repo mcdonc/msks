@@ -653,6 +653,11 @@ class ConsentDeciderApp(App[None]):
                     return
                 await asyncio.sleep(POPUP_SHOW_RETRY_DELAY)
         except Exception:  # noqa: BLE001 - fire-and-forget
+            # The swallow is the design, pinned by the scheduler
+            # test (test_decide_app.py's
+            # test_the_scheduler_dedupe_and_a_raising_show): a
+            # raising show ends this worker quietly, and the
+            # reopen key still reaches the decider.
             return
 
     def show_popup(self) -> bool:

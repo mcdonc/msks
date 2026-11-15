@@ -237,6 +237,12 @@ class PageData:
     async def workspaces(self) -> list[dict]:
         return [dict(PAGE_ROW)]
 
+    async def workspace_proxies(self, workspace_id: str) -> list[dict]:
+        """The compact proxies line's backstop read (#809): the
+        consent page's fake answers empty, the line this fake's
+        pages paint carries no port pairs."""
+        return []
+
     async def set_egress_mode(
         self, workspace_id: str, mode: str, *, confirm_empty: bool = False
     ) -> dict:

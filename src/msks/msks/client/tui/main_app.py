@@ -37,7 +37,7 @@ from textual.screen import Screen
 from ..config import ClientConfig
 from ..env import display_url, env_token, env_url
 from .consent_ui import FlashLine, flash_safe, shared_ssl
-from .data import TuiData
+from .data import RestFailure, TuiData
 from .follow import TuiFollow, run_follow_up
 from .main_screen import MainScreen
 from .unlock import PassphraseScreen, unlock_flash, unlock_flow
@@ -382,7 +382,7 @@ class MsksTuiApp(App):
         ref = self.follow.reopen
         try:
             rows = await self.data.workspaces()
-        except Exception:
+        except RestFailure:
             return
         for row in rows:
             if ref in (row["id"], row.get("name")):

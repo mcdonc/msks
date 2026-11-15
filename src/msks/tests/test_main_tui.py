@@ -228,6 +228,10 @@ class FakeData:
         # cadence makes against it.
         self.storage_rows: list[dict] = []
         self.storage_fetches = 0
+        # The compact proxies line's fetches (#809): the workspace
+        # page's backstop read, counted for the tests that arm a
+        # refusal against it.
+        self.proxies_fetches = 0
 
     async def workspaces(self) -> list[dict]:
         self.fetches += 1
@@ -243,7 +247,7 @@ class FakeData:
         when a test arms it."""
         self.storage_fetches += 1
         if "storage" in self.fail:
-            raise RuntimeError(self.refusal)
+            raise data_mod.RestFailure(self.refusal, reach=True)
         return {
             "state": {
                 "total": 0,
@@ -263,8 +267,9 @@ class FakeData:
     async def workspace_proxies(self, workspace_id: str) -> list[dict]:
         """One workspace's proxy rows (#809) — the page's scoped
         listing and the workspace page's compact line."""
+        self.proxies_fetches += 1
         if "workspace-proxies" in self.fail:
-            raise RuntimeError(self.refusal)
+            raise data_mod.RestFailure(self.refusal, reach=True)
         return [
             dict(r)
             for r in self.proxy_rows
@@ -1180,6 +1185,29 @@ async def test_a_storage_report_that_will_not_come_keeps_the_dash() -> None:
         assert "listing failed" not in status_text(app)
 
 
+async def test_a_report_that_answers_another_shape_keeps_the_strip(
+    monkeypatch,
+) -> None:
+    """A capacity report from a daemon predating the per-row
+    fields (#849, #908 review): the strip keeps its standing
+    figures and its honest dash, and the listing's own refresh
+    keeps running beside it — the shape skew is the strip's
+    silence, never the listing's stall."""
+    scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    data.storage_rows = [{"id": WS}]  # the row predates the fields
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: list_children(app) == 1)
+        await wait_for(lambda: data.storage_fetches >= 1)
+        await wait_for(lambda: " alpha · id ws-a" in detail_text(app))
+        assert "storage -" in detail_text(app)
+        assert "listing failed" not in status_text(app)
+        # The listing's refresh keeps landing after the skew read.
+        await pilot.pause()
+        assert list_children(app) == 1
+
+
 async def test_start_stop_and_remove_from_the_list(monkeypatch) -> None:
     scripted_link(monkeypatch, [])
     data = FakeData([row()])
@@ -1677,6 +1705,12 @@ async def test_the_create_form_plants_the_configured_pubkey_file(
             return httpx.Response(
                 200, json={"root_mib": 10240, "home_mib": 20480}
             )
+        if request.method == "GET" and request.url.path == ("/api/v1/storage"):
+            # The daemon's capacity report (#849): the detail
+            # strip reads workspaces off it, and a reply that is
+            # not a report object would be a daemon bug — the
+            # handler answers the real shape.
+            return httpx.Response(200, json={"workspaces": []})
         return httpx.Response(200, json=[])
 
     data = data_mod.TuiData(transport=httpx.MockTransport(handler))
@@ -4992,6 +5026,41 @@ async def test_a_page_that_cannot_refresh_keeps_its_row(monkeypatch) -> None:
         await wait_for(lambda: on_page(app))
         await wait_for(lambda: "api.example:443" in consent_text(app))
         assert WS in meta_text(app)  # the stale row still paints
+
+
+async def test_a_proxy_read_that_will_not_come_keeps_the_line(
+    monkeypatch,
+) -> None:
+    """A refused proxies listing keeps the page's compact line as
+    it was (#809): the seam's RestFailure answers nothing, and the
+    painted ports stand beside a standing page."""
+    scripted_link(monkeypatch, [rules_frame()])
+    data = FakeData([row()])
+    data.proxy_rows = [
+        {
+            "id": 1,
+            "workspace_id": WS,
+            "direction": "forward",
+            "listen_port": 9990,
+            "target_port": 9991,
+            "status": "listening",
+            "reason": None,
+        }
+    ]
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        page = await open_page(pilot, app)
+        line = page.query_one("#proxy-line", Static)
+
+        def painted() -> str:
+            return "".join(seg.text for seg in line.render_line(0))
+
+        await wait_for(lambda: "9990" in painted())
+        data.fail.add("workspace-proxies")
+        page.refresh_proxies()
+        await wait_for(lambda: data.proxies_fetches >= 2)
+        await pilot.pause()
+        assert "9990" in painted()  # the refusal keeps the painted ports
 
 
 async def test_the_headers_count_follows_the_shells(monkeypatch) -> None:
