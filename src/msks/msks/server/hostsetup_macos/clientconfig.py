@@ -69,10 +69,15 @@ def identity_examples() -> str:
         "#                                 # every workspace\n"
         "# pubkey_file: ~/.ssh/id_ed25519.pub  # your key's public "
         "half, for a\n"
-        "#                                 # key you keep encrypted "
-        "(your agent\n"
-        "#                                 # holds it; msks reads no "
-        "private half)\n"
+        "#                                 # key you keep encrypted: "
+        "create reads no\n"
+        "#                                 # private half, and ssh "
+        "sessions sign\n"
+        "#                                 # through your agent when it "
+        "holds the\n"
+        "#                                 # key. The secrets unlock "
+        "still reads\n"
+        "#                                 # identity_file\n"
     )
 
 

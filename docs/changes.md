@@ -8,6 +8,11 @@ tagged `vX.Y.Z`.
 
 ### Fixed
 
+- **`pubkey_file` docs name the unlock's key requirement (#918).** The
+  docs and the first-run config template's comments claimed
+  `pubkey_file` alone covers a key you keep encrypted. The secrets
+  unlock still reads the private half from `identity_file`, and those
+  passages now say so.
 - **The unlock note renders whole (#916).** The passphrase
   prompt's note fits the form's 50-column text width:
   `<key file> passphrase for secrets unlock`. Key names up to
