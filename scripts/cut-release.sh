@@ -19,11 +19,13 @@
 #
 # Re-running after an interrupted cut is safe: a tag already on
 # origin at the same commit continues (HEAD may have moved past
-# it — the version bump lands next), anything else dies loudly,
-# and main is never pushed until the versioned docs deploy green.
+# it — the tag's tree is what released, and main's later commits
+# ride the next cut), anything else dies loudly, and main is
+# never pushed until the versioned docs deploy green.
 #
-# Usage (from the repo root, inside the devenv shell, with the cut
-# commit made locally on main and the tag pointing at it):
+# Usage (from the repo root, inside the devenv shell, with the
+# changelog cut and the version bump in the tagged commit on
+# main, and the tag pointing at it):
 #   scripts/cut-release.sh vX.Y.Z
 set -euo pipefail
 
@@ -52,13 +54,31 @@ on_origin=$(git ls-remote origin "refs/tags/$tag" | cut -f1)
 tagged=$(git rev-parse "$tag")
 if [[ $(git rev-parse "$tag^{commit}") != "$(git rev-parse HEAD)" ]]; then
   # The one legal off-HEAD shape: a retry after main moved past
-  # the cut (the version bump lands next), with origin already
-  # holding this tag at the cut commit.
+  # the cut (the bump already lives inside the tagged commit —
+  # the release workflow checks out the tag, so a bump landing
+  # after it never releases), with origin already holding this
+  # tag at the cut commit.
   [[ -n $on_origin && $on_origin == "$tagged" ]] ||
     die "tag $tag does not point at HEAD; re-create it on the cut commit"
   git merge-base --is-ancestor "$tag" HEAD ||
     die "tag $tag is not an ancestor of HEAD; re-create it on the cut commit"
 fi
+
+# The release workflow's wheel gate, run here before the push
+# (#922): the workflow checks out the tag, so the version bump
+# must live in or before the tagged commit — a bump landing after
+# it releases nothing (the v0.9.2 cut learned this from a red
+# seven-second run). The tagged tree's pyproject answers; a dev
+# marker names the in-progress release it belongs to, and a
+# disagreement names the four files the bump commit carries.
+tagged_version=$(
+  git show "$tag":pyproject.toml | python -c \
+    'import sys, tomllib; print(tomllib.loads(sys.stdin.read())["project"]["version"])'
+) || die "pyproject.toml at $tag does not read; check the tagged tree"
+[[ $tagged_version != *".dev"* ]] ||
+  die "pyproject.toml at $tag carries the dev marker $tagged_version — cut a release from a finished version, not an in-progress one"
+[[ $tagged_version == "${tag#v}" ]] ||
+  die "pyproject.toml at $tag carries version $tagged_version, not ${tag#v} — land the version bump in or before the tagged commit: pyproject.toml, src/msks/msks/spec/version.py, nix/msks-pkg.nix, uv.lock"
 
 # The release workflow extracts this section from the tagged tree
 # and refuses the release without it (#564, #3142's silent-loss
