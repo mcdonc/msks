@@ -1,14 +1,23 @@
 # Release (#564): the wheel publishes to PyPI, guest images
 # publish to a hash-keyed channel, and the version release carries
-# the small manifest that ties them together.
+# the small manifest that ties them together. Nothing publishes
+# before the macOS acceptance harness passes (#896): the PyPI
+# publish and the GitHub release both wait on it.
 #
 # Jobs, ordered so each has what it needs:
 #
-# 1. wheel   — build the wheel, publish to PyPI through the
-#              registered trusted publisher (the pending publisher
-#              names this file and the `pypi` environment; no
-#              token lives in the repo).
-# 2. release — create the version release: the changelog's
+# 1. wheel   — build the wheel and stage it as the artifact the
+#              harness, the publish, and the release job read.
+# 2. macos-acceptance — the harness against the staged wheel
+#              (#740): the wheel installed on a real macOS
+#              runner, driving the acceptance tests against the
+#              shipped code. Its green is the gate both
+#              publishes wait on.
+# 3. pypi    — publish the wheel through the registered trusted
+#              publisher (the pending publisher names this file
+#              and the `pypi` environment; no token lives in the
+#              repo).
+# 4. release — create the version release: the changelog's
 #              human-authored section (scripts/release_notes.py
 #              extracts it at the tag) prepended to GitHub's
 #              auto-generated notes, with the wheel, its checksum,
@@ -17,7 +26,7 @@
 #              provisional keeps the channel URL answering while
 #              the image legs build; images-merge clobbers it with
 #              the merged manifest.
-# 3. images  — the hash-keyed channel, two legs (one per arch:
+# 5. images  — the hash-keyed channel, two legs (one per arch:
 #              x86_64 on ubuntu-latest, aarch64 on
 #              ubuntu-24.04-arm — GitHub's arm64 runners) walking
 #              that arch's flavors in order. Per flavor the nix
@@ -30,7 +39,7 @@
 #              uploads to an immutable release tagged
 #              images/<hash> whose title names the flavor and arch
 #              and body links what changed.
-# 4. images-merge — the single manifest writer: reads both legs'
+# 6. images-merge — the single manifest writer: reads both legs'
 #              row artifacts (disjoint by construction — each leg
 #              writes only its arch's flavors, so the merge cannot
 #              race itself) and attaches images.json — ref, hash,
@@ -38,16 +47,6 @@
 #              built_from for every flavor — to the version
 #              release, so `msks image import <url>` pulls straight
 #              from the channel with no manual download.
-# 5. macos-acceptance — post-publish verification on the
-#              artifact Mac users install (#740): the wheel the
-#              wheel job just staged, installed on a real macOS
-#              runner, driving the acceptance harness. It runs
-#              beside the release job (both need only the wheel)
-#              and gates nothing — the publish already happened;
-#              its red is the operator's signal to react, minutes
-#              after the tag instead of at a user's terminal.
-#              The tag's checkout supplies the tests; the wheel
-#              supplies the code.
 name: Release
 
 on:
@@ -59,13 +58,13 @@ permissions:
   contents: read
 
 jobs:
+  # Builds and stages; talks to no registry (#896) — the pypi
+  # job owns the publish, behind the harness.
   wheel:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
-      id-token: write
-    environment: pypi
     steps:
       - uses: actions/checkout@v5
 
@@ -106,20 +105,20 @@ jobs:
           python -m pip install --quiet build
           python -m build
 
-      - name: Publish to PyPI (trusted publisher)
-        uses: pypa/gh-action-pypi-publish@release/v1
-
-      - name: Stage the wheel for the release job
+      - name: Stage the wheel for the harness and the publishes
         uses: actions/upload-artifact@v4
         with:
           name: wheel
           path: dist/
           retention-days: 1
 
+  # The GitHub release waits on the harness too (#896): a red
+  # harness holds the wheel, its checksum, and the provisional
+  # manifest until the wheel proves it installs on a Mac.
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    needs: wheel
+    needs: [wheel, macos-acceptance]
     permissions:
       contents: write
     steps:
@@ -195,17 +194,21 @@ jobs:
             dist/* images.json \
             || gh release upload "$TAG" dist/* images.json --clobber
 
+  # The gate both publishes wait on (#740, #896): the staged
+  # wheel, installed on a real macOS runner, driving the
+  # acceptance harness — the same one macos.yml runs per-PR,
+  # against the shipped code instead of the tree. A red harness
+  # holds PyPI and the GitHub release until it passes or someone
+  # intervenes. The modules run from a copy outside the checkout:
+  # pytest would otherwise put the checkout's src/ first on
+  # sys.path, and the tree's code would shadow the wheel under
+  # test. The acceptance test's sibling module copies alongside
+  # it (#875's split gave it `from test_hostsetup_macos import
+  # patch_phase`); the sibling imports only the wheel, pytest,
+  # and the stdlib, so the pair imports cleanly there while the
+  # checkout stays off sys.path, and pytest still targets the
+  # acceptance file alone.
   macos-acceptance:
-    # Post-publish verification on the artifact users install
-    # (#740): the staged wheel, installed on a real macOS
-    # runner, driving the acceptance harness — the same one
-    # macos.yml runs per-PR, against the shipped code instead
-    # of the tree. It runs beside the release job (both need
-    # only the wheel) and gates nothing — the publish already
-    # happened. The module runs from a copy outside the
-    # checkout: pytest would otherwise put the checkout's src/
-    # first on sys.path, and the tree's code would shadow the
-    # wheel under test.
     runs-on: macos-15
     timeout-minutes: 30
     needs: wheel
@@ -234,10 +237,36 @@ jobs:
           MSKS_MACOS_ACCEPTANCE: "1"
         run: |
           mkdir -p /tmp/acceptance
-          cp src/msks/tests/test_hostsetup_macos_acceptance.py \
+          cp src/msks/tests/test_hostsetup_macos.py \
+            src/msks/tests/test_hostsetup_macos_acceptance.py \
             /tmp/acceptance/
           cd /tmp
           python -m pytest acceptance/test_hostsetup_macos_acceptance.py -v
+
+  # The PyPI publish alone behind the harness (#896): the wheel
+  # job stages the artifact, the harness proves it installs, and
+  # only then does the package reach PyPI. The trusted publisher
+  # binds the repository, this file's name, and the `pypi`
+  # environment — not the job — so the publish's move from the
+  # wheel job into this one keeps the registration valid with no
+  # PyPI-side change.
+  pypi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [wheel, macos-acceptance]
+    permissions:
+      contents: read
+      id-token: write
+    environment: pypi
+    steps:
+      - name: Download the wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist/
+
+      - name: Publish to PyPI (trusted publisher)
+        uses: pypa/gh-action-pypi-publish@release/v1
 
   images:
     strategy:
