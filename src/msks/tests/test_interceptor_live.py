@@ -21,6 +21,7 @@ import ssl
 import sys
 import tempfile
 import time
+import traceback
 from pathlib import Path
 
 import h2.config
@@ -632,9 +633,57 @@ async def test_the_live_probe_chain(tmp_path, monkeypatch) -> None:
         await service.stop_listener("ws-live")
 
 
-async def pending_request(app) -> dict:
+async def live_gate_state(app, client, interceptor) -> str:
+    """What the consent gate's pieces stand at when a hold never
+    came: the client task's own outcome (an exception carries its
+    traceback, and reading it here stops asyncio from swallowing
+    it as never-retrieved), the master run task's fate, the armed
+    map, and every consent row the workspace holds — a hold that
+    landed then died reads from the rows, a runner-level socket
+    failure reads from the task."""
+    parts = []
+    if client is None:
+        parts.append("client task: unknown (not passed)")
+    elif not client.done():
+        parts.append("client task: still in flight after the poll")
+    elif client.cancelled():
+        parts.append("client task: cancelled")
+    elif (exc := client.exception()) is None:
+        parts.append(f"client task: returned {client.result()!r}")
+    else:
+        parts.append(
+            "client task: raised "
+            + "".join(traceback.format_exception(exc)).strip()
+        )
+    master = getattr(interceptor, "_task", None)
+    if master is None:
+        parts.append("master run task: none")
+    elif not master.done():
+        parts.append("master run task: running")
+    elif master.cancelled():
+        parts.append("master run task: cancelled")
+    elif master.exception() is None:
+        parts.append("master run task: returned")
+    else:
+        parts.append(f"master run task: raised {master.exception()!r}")
+    armed = getattr(interceptor, "_armed", None)
+    specs = sorted(a.spec for a in armed.values()) if armed else []
+    parts.append(f"armed: {specs}")
+    try:
+        rows = await app.state.model.egress_consent.list_requests("ws-live")
+        parts.append(f"consent rows: {rows!r}")
+    except Exception as exc:  # noqa: BLE001 - the diagnostic must
+        # never replace the assertion it decorates
+        parts.append(f"consent rows: unreadable ({exc!r})")
+    return "; ".join(parts)
+
+
+async def pending_request(app, client=None, interceptor=None) -> dict:
     """The workspace's first pending consent row, polled until it
-    appears (the gate creates it when the ClientHello holds)."""
+    appears (the gate creates it when the ClientHello holds). On
+    timeout the assertion carries :func:`live_gate_state`, so the
+    report names where the hold died instead of leaving a blind
+    30-second poll."""
     deadline = time.monotonic() + 30.0
     while time.monotonic() < deadline:
         rows = await app.state.model.egress_consent.list_requests(
@@ -643,7 +692,8 @@ async def pending_request(app) -> dict:
         if rows:
             return rows[0]
         await asyncio.sleep(0.05)
-    raise AssertionError("no pending consent request appeared")
+    state = await live_gate_state(app, client, interceptor)
+    raise AssertionError(f"no pending consent request appeared; {state}")
 
 
 @pytest.mark.timeout(180)
@@ -716,7 +766,7 @@ async def test_the_live_consent_gate(tmp_path, monkeypatch) -> None:
         task = asyncio.create_task(
             asyncio.to_thread(https_get, port, API, "/echo", auth, ws_ca)
         )
-        request = await pending_request(app)
+        request = await pending_request(app, task, interceptor)
         assert request["dest_host"] == API
         # The port the redirect stand-in preserved: the origin's
         # ephemeral port here (production's redirect hands 443).
@@ -752,7 +802,7 @@ async def test_the_live_consent_gate(tmp_path, monkeypatch) -> None:
         task = asyncio.create_task(
             asyncio.to_thread(https_get, port, OTHER, "/echo", auth, ws_ca)
         )
-        request = await pending_request(app)
+        request = await pending_request(app, task, interceptor)
         assert request["dest_host"] == OTHER
         await app.state.consent.resolve(
             request["id"], "denied", "tester", "5m"
