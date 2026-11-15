@@ -1987,6 +1987,12 @@ tagged <code>vX.Y.Z</code>.</p>
 <h2 id="unreleased">[Unreleased]<a class="headerlink" href="#unreleased" title="Permanent link">&para;</a></h2>
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>Pending-changes marker on the workspace page (#912).</strong> The
+  workspace page's header now carries the <code>↻N</code> marker ahead of
+  its status while changes wait for the next start, the same
+  count the workspaces list's status column carries. The marker
+  leaves when the next start applies the change. See
+  <code>docs/tui.md</code> → the workspace page section.</li>
 <li><strong>The TUI stands through a daemon outage (#904).</strong> The
   workspace TUI stays open when msksd goes away. The list's
   status line carries a <code>daemon down — retrying</code> marker while
