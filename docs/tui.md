@@ -76,7 +76,7 @@ A daemon that answers with a refusal is a different case: the
 daemon is up, the listing just cannot be served. The refusal
 flashes on every failing refresh (`listing failed: msks: 401: …`)
 and the down marker never stands for it. A refusal that arrives
-while the marker stands clears it — the daemon is answering again.
+while the marker stands clears it: the daemon is answering again.
 
 Both markers can stand together: the version-skew marker comes
 first, the down marker last. The workspace's own page reports its
