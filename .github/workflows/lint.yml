@@ -16,7 +16,7 @@ name: Lint
 # ignore — the unit tests do not read Markdown.
 on:
   push:
-    branches: [main]
+    branches: [main, pyside-gui] # pyside-gui: GUI integration branch (#924); drop when it merges to main
   pull_request:
 
 permissions:

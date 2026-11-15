@@ -37,7 +37,7 @@ name: Smoke (Fedora)
 
 on:
   push:
-    branches: [main]
+    branches: [main, pyside-gui] # pyside-gui: GUI integration branch (#924); drop when it merges to main
     paths:
       - .github/workflows/smoke-fedora.yml
       - devenv.nix
