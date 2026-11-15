@@ -186,9 +186,10 @@ The page's header lines and status lines fill the terminal's
 width. The action panel sits centered in its own 64-column block
 beneath them. At 80 columns and under, the meta line's fields
 keep their fixed clips, and a status line that runs past the
-width ends in an ellipsis. On a wider terminal, each meta field
-widens to its whole value, and the mounts and proxies lines use
-the full width before an ellipsis cuts them.
+width ends in an ellipsis. On a wider terminal, the spare width
+fills the clipped meta fields whole (the id first), and the
+mounts and proxies lines use the full width before an ellipsis
+cuts them.
 
 Below the header, two status lines share one shape: a muted label,
 then the value. The consent line shows the mode and one granted

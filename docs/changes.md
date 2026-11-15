@@ -29,6 +29,15 @@ tagged `vX.Y.Z`.
   many rows wait. A forward proxy binds daemon-side at
   once and never counts.
 
+### Changed
+
+- **Workspace page width (#902).** The page's header lines and
+  status lines fill the terminal's width; the action panel keeps
+  its centered block. On a terminal wider than 80 columns, the
+  spare width fills the clipped meta fields whole (the id
+  first), and the mounts and proxies lines use the full width
+  before any ellipsis.
+
 ## \[v0.9.1] - 2026-11-14
 
 ### Added
@@ -50,22 +59,17 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
-- **Workspace page width (#902).** The page's header lines and
-  status lines fill the terminal's width; the action panel keeps
-  its centered block. On a terminal wider than 80 columns, each
-  meta field widens to its whole value, and the mounts and
-  proxies lines use the full width before any ellipsis.
-
 - **Workspace page edit action renamed (#890).** The action row
   that opens the sizes-and-topology dialog reads `Edit` (from
   `Settings`), matching the `e`/Enter edit vocabulary the mounts
   editor and the proxies page carry.
 
-- **Workspace page block (#881).** The page's action panel
-  sits centered in its own 64-column block under the header
-  lines. At 80 columns and under, the layout is unchanged. On a
-  wider terminal, the egress consent page widens its own meta
-  line as before.
+- **Workspace page block (#881).** The page's whole content (the
+  header lines, the status lines, and the action panel) sits in
+  one 80-column block, centered on a wider terminal. At 80
+  columns and under, the layout is unchanged. On a wider terminal,
+  each meta field keeps its fixed clip, and the egress consent
+  page widens its own meta line as before.
 - **Guest toolchain pins (#887).** The Debian, Fedora, and
   NixOS guests ship pi 1.5.2 (from 1.4.0), herdr 0.9.5 (from
   0.9.1), and Claude Code 2.1.325 (from 2.1.281). Workspaces
