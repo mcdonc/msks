@@ -72,9 +72,11 @@ class PassphraseScreen(ModalScreen[str | None]):
             # (width 56 less the border and padding) for a
             # realistic key name — the #894 lesson: fixed words
             # leave room for the variable name, or the note's
-            # point dies to the ellipsis (#916).
+            # point dies to the ellipsis (#916). The tail is the
+            # acceptance bar's own phrase (#515): one prompt per
+            # session, 18 columns of name budget.
             yield Static(
-                f"unlock {escape(self.path.name)}: one passphrase per session",
+                f"unlock {escape(self.path.name)}: one prompt per session",
                 id="pass-note",
             )
             with Horizontal(classes="pass-row"):

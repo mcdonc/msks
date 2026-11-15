@@ -6662,25 +6662,28 @@ async def test_an_encrypted_key_prompts_once_at_start(
 
 
 async def test_the_unlock_note_fits_the_dialog() -> None:
-    """The unlock note reads in full (#916): the fixed words
+    """The unlock note renders whole (#916): the fixed words
     leave room for a realistic key name inside the form's
     50-column text width (width 56 less the border and the
-    padding), so the one-passphrase-per-session fact does not
-    die to the ellipsis the old 102-column note always hit."""
+    padding), so the one-prompt-per-session fact the acceptance
+    bar names (#515) does not die to the ellipsis the old
+    102-column note always hit."""
     from pathlib import Path
 
     from msks.client.tui.unlock import PassphraseScreen
 
     app, _ = make_app(FakeData([]))
     async with app.run_test(size=(80, 24)) as pilot:
-        app.push_screen(PassphraseScreen(Path("id_ed25519")))
+        app.push_screen(PassphraseScreen(Path("id_ed25519_github")))
         await pilot.pause()
         note = app.screen.query_one("#pass-note", Static)
         assert str(note.content) == (
-            "unlock id_ed25519: one passphrase per session"
+            "unlock id_ed25519_github: one prompt per session"
         )
-        # The form's text width: 56 less border (2) and padding (4).
-        assert len(str(note.content)) <= 50
+        # The note's own region width is the budget the CSS
+        # gives it (the form's text width); the name is the only
+        # variable part, and it must fit inside it.
+        assert len(str(note.content)) <= note.region.width
 
 
 async def test_a_refused_unlock_flashes_at_start(
