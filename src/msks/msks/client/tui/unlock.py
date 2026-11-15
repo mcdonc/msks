@@ -68,10 +68,13 @@ class PassphraseScreen(ModalScreen[str | None]):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="pass-form"):
+            # The note must fit the form's 50-column text width
+            # (width 56 less the border and padding) for a
+            # realistic key name — the #894 lesson: fixed words
+            # leave room for the variable name, or the note's
+            # point dies to the ellipsis (#916).
             yield Static(
-                f"unlock: the identity file {escape(self.path.name)} is "
-                "passphrase-encrypted — one prompt unlocks every "
-                "row this session",
+                f"unlock {escape(self.path.name)}: one passphrase per session",
                 id="pass-note",
             )
             with Horizontal(classes="pass-row"):

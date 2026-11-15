@@ -8,6 +8,11 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The unlock note reads in full (#916).** The passphrase prompt's
+  note now fits the form's 50-column text width:
+  `unlock <key file>: one passphrase per session`. The old note ran
+  past 100 columns and always died to the form's ellipsis. See
+  `docs/secrets.md` → the unlock window.
 - **Confirm dialogs show their answer keys (#913).** Every TUI
   confirmation shows `y / n` beside its question. `y` (or
   Enter) confirms. `n`, `q`, or Escape cancels. See
