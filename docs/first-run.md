@@ -60,9 +60,11 @@ identity_file: ~/.ssh/id_ed25519 # the private half
 pubkey_file: ~/.ssh/id_ed25519.pub # the public half
 ```
 
-If your identity is typically in your ssh agent, you needn't specify the
-`identity-file`, just the pubkey_file. But it's more foolproof to specify both
-at first.
+When your key sits in your ssh agent, `pubkey_file` alone serves `msks
+create` and every ssh session: the agent signs, and msks reads no private
+half. The secrets unlock is the exception. It opens the private half from
+the file `identity_file` points at, so set both files on a client that
+unlocks secrets.
 
 ### `identity_file`: the private half
 
@@ -73,10 +75,11 @@ state
 But session resolution consults your own ssh-agent first. When `SSH_AUTH_SOCK`
 names a live agent holding that key, every session signs through the agent and
 the file's encryption stops mattering. The match is on key material, so the
-file it came from and its name do not matter (`ssh-add` it). If your key is
-saved in your ssh-agent, you needn't name the private half of your key in msks
-config, only the public one (`pubkey_file`), and the private half need not be
-on disk.
+file it came from and its name do not matter (`ssh-add` it). Sessions then
+work from `pubkey_file` alone, and the private half need not be on disk. The
+secrets unlock still reads the private half from the file `identity_file`
+points at. The passphrase paragraph below covers what happens when that file
+is encrypted.
 
 If your ssh key is not already in an agent, a key no agent holds is staged
 in memory as an unencrypted OpenSSH-format key (`ed25519`, `ecdsa`
@@ -93,7 +96,8 @@ secrets page and re-askable there.
 `pubkey_file` names a `.pub` file, and a create with it set plants that one
 line as the workspace's identity and reads no private material at all. This is
 the form for a key you keep encrypted on disk: the public half sits in the
-`.pub` file while the private half answers from your agent.
+`.pub` file while the private half answers from your agent for ssh sessions.
+The secrets unlock still needs `identity_file` on the client that runs it.
 
 `msks console` will wok to access a wokspace if you've lost your key.
 

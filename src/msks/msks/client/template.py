@@ -69,8 +69,10 @@ def render_template() -> str:
 #                                # what a bare create plants instead
 #                                # of reading identity_file (#495):
 #                                # the form for a key you keep
-#                                # encrypted (your agent holds it;
-#                                # msks never reads the private half).
+#                                # encrypted: create reads no private
+#                                # half, and ssh sessions sign through
+#                                # your agent. The secrets unlock
+#                                # still reads identity_file (#510).
 #                                # --pubkey overrides it for one
 #                                # create. Global-only, like
 #                                # identity_file
