@@ -36,6 +36,7 @@ from ..consent_ui import (
     sighting_flash,
     switch_mode_path,
 )
+from ..data import RestFailure
 from ..detail import header_meta
 from ..follow import FLOW_SHELL
 from ..forms import EDIT_FREE_STATUSES, EditScreen, edit_stop_question
@@ -228,7 +229,7 @@ class WorkspaceScreen(HelpKeys, Screen):
             self.proxy_rows = await self.app.data.workspace_proxies(
                 self.row["id"]
             )
-        except Exception:
+        except RestFailure:
             return
         self.paint_proxies()
 
@@ -470,7 +471,7 @@ class WorkspaceScreen(HelpKeys, Screen):
     async def load_row(self) -> None:
         try:
             rows = await self.app.data.workspaces()
-        except Exception:
+        except RestFailure:
             return  # the page keeps its row; the header stays as it was
         fresh = next(
             (row for row in rows if row["id"] == self.row["id"]), None

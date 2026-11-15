@@ -420,7 +420,7 @@ class MainScreen(HelpKeys, Screen):
                 ws["id"]: ws["root_bytes"] + ws["home_bytes"]
                 for ws in report.get("workspaces") or []
             }
-        except Exception:
+        except RestFailure:
             return
 
     async def load_skew(self) -> None:
