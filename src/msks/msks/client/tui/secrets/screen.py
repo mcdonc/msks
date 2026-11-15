@@ -17,7 +17,7 @@ from textual.widgets import Footer, ListItem, ListView, Static
 from ..detail import status_content
 from ..help import HelpKeys
 from ..link import AuditLink
-from ..unlock import PassphraseScreen, unlock_flash, unlock_flow
+from ..unlock import unlock_flash, unlock_flow
 from .audit import SecretAuditScreen
 from .cells import (
     SECRET_COLUMNS,
@@ -268,23 +268,21 @@ class SecretsScreen(HelpKeys, Screen):
 
     async def run_unlock(self) -> None:
         """The action's awaited half: the outcome flashes on this
-        page's status line and the rows repaint their state."""
-        message = await self.guarded(
-            "unlock",
-            unlock_flow(self.app.data, self.ask_passphrase, explicit=True),
-        )
+        page's status line and the rows repaint their state. The
+        app's unlock turnstile holds the run (#920): the
+        automatic re-run and this action take the flow one at a
+        time, and the prompt is the app's one seam — whichever
+        surface asks it, the ask spends the session's prompt."""
+        async with self.app.unlock_lock:
+            message = await self.guarded(
+                "unlock",
+                unlock_flow(
+                    self.app.data, self.app.ask_passphrase, explicit=True
+                ),
+            )
         if message is not None:
             self.flash(unlock_flash(message))
             self.refresh_rows()
-
-    async def ask_passphrase(self, path) -> str | None:
-        """The one prompt per session (#515): the masked modal
-        over the page, answered by Enter with the typed
-        passphrase or cancelled with Escape."""
-        answer = await self.app.push_screen(
-            PassphraseScreen(path), wait_for_dismiss=True
-        )
-        return answer or None
 
     def action_revoke(self) -> None:
         """Ask first (#390: a revoke retires the row everywhere at

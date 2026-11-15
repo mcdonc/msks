@@ -313,6 +313,24 @@ class MsksTuiApp(App):
         # with an unawaited exit (the reaper drops each at its
         # close; the asyncio watcher does the reaping itself).
         self.reapers: set = set()
+        # The start unlock's armed re-run (#920): True when the
+        # flow failed against a daemon that answered nothing —
+        # the listing's next answered refresh (#904's recovery
+        # tick) fires the flow once more, so a tree opened before
+        # msksd stands still unlocks when the daemon arrives. The
+        # arm needs a session that has not spent its passphrase
+        # prompt: the prompt is one per session whatever the
+        # daemon does.
+        self.unlock_retry = False
+        # The session's passphrase, spent (#515, #920): True once
+        # the modal has asked — answered or cancelled — so a
+        # failure after the prompt never re-arms a second ask.
+        self.passphrase_asked = False
+        # The unlock flows' turnstile (#920): the automatic
+        # re-run and the secrets page's ``u`` action take the
+        # flow one at a time — two flows loose in one session
+        # could each reach the prompt and stack their modals.
+        self.unlock_lock = asyncio.Lock()
 
     def hold_child(self, proc) -> None:
         """Hold one spawned launcher until it exits (#341): the
@@ -357,23 +375,92 @@ class MsksTuiApp(App):
         """The session-start unlock (#515): the configured
         identity file against the daemon's locked rows — the
         passphrase prompt (when the file is encrypted) is the
-        session's one, and the outcome flashes on the list's
-        status line. A daemon that cannot be reached or refuses
-        is a named flash, not a retry and not a failed tree."""
+        session's one, and the outcome flashes on the standing
+        screen's status line. A daemon that cannot be reached or
+        refuses is a named flash, not a retry and not a failed
+        tree — with one carry (#920): a daemon that answered
+        nothing arms a re-run, and the listing's first answered
+        refresh fires it, so a tree opened before msksd stands
+        still unlocks once the daemon arrives."""
         try:
-            message = await unlock_flow(self.data, self.ask_passphrase)
+            async with self.unlock_lock:
+                message = await unlock_flow(
+                    self.data,
+                    self.ask_passphrase_once,
+                    spent_line=(
+                        "secrets stay locked — this session's "
+                        "passphrase prompt was already asked; the "
+                        "secrets page's u action asks again"
+                    ),
+                )
             if message is not None:
-                self.flash(unlock_flash(message))
+                self.flash_standing(unlock_flash(message))
+        except RestFailure as exc:
+            self.flash_standing(unlock_flash(f"unlock failed: {exc}"))
+            self.arm_unlock_retry(exc)
         except (Exception, SystemExit) as exc:
-            self.flash(unlock_flash(f"unlock failed: {exc}"))
+            self.flash_standing(unlock_flash(f"unlock failed: {exc}"))
+
+    def arm_unlock_retry(self, failure: RestFailure) -> None:
+        """Arm the start unlock's one re-run (#920): the flow
+        failed against a daemon that answered nothing, and a
+        session that has not spent its passphrase prompt may
+        still open the store when the daemon answers. A refusal —
+        the daemon answering — arms nothing, and a spent prompt
+        arms nothing: the one-prompt rule survives the retry."""
+        if failure.reach and not self.passphrase_asked:
+            self.unlock_retry = True
+
+    def unlock_daemon_back(self) -> None:
+        """The listing answered the daemon again (#904, #920):
+        fire the armed re-run once — the same flow, the same
+        prompt rule, silent unless an outcome lands. The arm
+        clears first, so one answered refresh serves one re-run.
+        A session that spent its prompt in between — the page's
+        ``u`` action asked while the arm stood — drops the arm:
+        the one prompt is the session's, whichever surface asked
+        it. An outage the re-run itself hits arms the next
+        answered refresh the same way."""
+        if not self.unlock_retry:
+            return
+        spent, self.unlock_retry = self.passphrase_asked, False
+        if spent:
+            return
+        self.run_worker(self.unlock_at_start, group="unlock")
+
+    async def ask_passphrase_once(self, path) -> str | None:
+        """The automatic flow's prompt seam (#920): a session
+        whose prompt another surface already asked answers as a
+        cancel — the operator's ``u`` may still ask by hand, the
+        tree never asks twice."""
+        if self.passphrase_asked:
+            return None
+        return await self.ask_passphrase(path)
 
     async def ask_passphrase(self, path) -> str | None:
         """The passphrase modal over whatever screen stands — the
-        one prompt the session asks (#515)."""
+        one prompt the session asks (#515): asked once, answered
+        or cancelled, the automatic flows never ask again
+        (#920)."""
+        self.passphrase_asked = True
         answer = await self.push_screen(
             PassphraseScreen(path), wait_for_dismiss=True
         )
         return answer or None
+
+    def flash_standing(self, message: str) -> None:
+        """Flash where the operator stands (#920): the pages
+        paint their own status lines, the list paints the app's.
+        The walk takes the nearest status line down the open
+        stack — a modal over a page (the audit view, the sentinel
+        panel) flashes the page's line beneath it, which the
+        modal's close reveals."""
+        for screen in reversed(self.screen_stack):
+            screen_flash = getattr(screen, "flash", None)
+            if screen_flash is not None:
+                screen_flash(message)
+                return
+        self.flash(message)
 
     async def push_remembered(self) -> None:
         """Open the remembered workspace's page against a fresh

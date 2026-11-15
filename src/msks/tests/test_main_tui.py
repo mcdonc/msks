@@ -82,6 +82,7 @@ from test_consent_tui import (
 from test_consent_tui import (
     rules_frame as shared_rules_frame,
 )
+from testkeys import encrypted
 from testkeys import mint as MINT
 from textual import events
 from textual.binding import Binding
@@ -180,7 +181,12 @@ class FakeData:
         # The unlock flow's surface (#515): the pending reply and
         # the uploads the flow sends.
         self.pending_rows: list[dict] = []
+        self.pending_fetches = 0
         self.unlock_calls: list[list[dict]] = []
+        # The pending fetch's gate (#920): a test holding a
+        # fetch mid-flight — the fire-time decision meets a flow
+        # still awaiting its answer.
+        self.pending_gate: object | None = None
         # The unlock upload's gate (#515 review): a test holding
         # the upload mid-POST — the passphrase answer's screen
         # resume must not cancel it.
@@ -616,9 +622,14 @@ class FakeData:
 
     async def pending_secrets(self) -> list[dict]:
         """The pending ciphertext rows (#515) — the unlock flow's
-        fetch, recorded like every exchange."""
+        fetch, recorded like every exchange. The armed failure is
+        the daemon-away reach shape (#904): the one whose
+        recovery re-runs the start unlock (#920)."""
+        self.pending_fetches += 1
+        if self.pending_gate is not None:
+            await self.pending_gate.wait()
         if "pending" in self.fail:
-            raise RuntimeError(self.refusal)
+            raise data_mod.RestFailure(self.refusal, reach=True)
         return [dict(r) for r in self.pending_rows]
 
     async def unlock_secrets(self, values: list[dict]) -> dict:
@@ -6634,19 +6645,11 @@ async def test_an_encrypted_key_prompts_once_at_start(
     """The acceptance bar (#510): the session's one passphrase
     prompt — the modal at start, answered once, the row unlocked
     through it."""
-    from cryptography.hazmat.primitives import serialization
     from textual.widgets import Input
 
     pem, pub = MINT("ed25519")
-    enc = serialization.load_ssh_private_key(
-        pem.encode(), password=None
-    ).private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.OpenSSH,
-        encryption_algorithm=serialization.BestAvailableEncryption(b"pw"),
-    )
     mine = tmp_path / "enc-key"
-    mine.write_bytes(enc)
+    mine.write_text(encrypted(pem))
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
     monkeypatch.delenv("MSKSC_PUBKEY_FILE", raising=False)
     data = FakeData([row()])

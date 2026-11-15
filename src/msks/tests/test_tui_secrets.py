@@ -12,6 +12,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+from msks.client.tui import data as data_mod
 from msks.client.tui import rows as rows_mod
 from msks.client.tui import secrets as secrets_mod
 from msks.client.tui.link import AuditLink
@@ -47,7 +48,7 @@ from test_main_tui import (
     on_failure,
     row,
 )
-from testkeys import mint
+from testkeys import encrypted, mint
 from textual import events
 from textual.geometry import Size
 from textual.widgets import Button, Input, Select, Static
@@ -2050,3 +2051,231 @@ async def test_the_page_names_corruption_for_the_re_mint(
             )
         )
         assert data2.unlock_calls == []
+
+
+# --- the start unlock's re-run (#920) ---------------------------------
+
+
+def plant_encrypted_key(monkeypatch, tmp_path) -> str:
+    """The configured identity, passphrase-encrypted under
+    ``pw`` (#515): the key file named by MSKSC_IDENTITY_FILE and
+    the public line, for wrapping blobs."""
+    pem, pub = mint("ed25519")
+    mine = tmp_path / "enc-key"
+    mine.write_text(encrypted(pem))
+    monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(mine))
+    monkeypatch.delenv("MSKSC_PUBKEY_FILE", raising=False)
+    return pub
+
+
+async def test_the_start_unlock_re_runs_when_the_daemon_answers(
+    tmp_path, monkeypatch
+) -> None:
+    """#920: a tree opened before msksd stands still unlocks —
+    the start flow's outage arms a re-run, the listing's first
+    answered refresh fires it, the passphrase prompt lands over
+    the list, and the upload carries the plaintext."""
+    pub = plant_encrypted_key(monkeypatch, tmp_path)
+    data = FakeData([row()])
+    data.pending_rows = [pending_blob_row(9, "github_api", pub)]
+    data.fail.update({"workspaces", "pending"})
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        # The tree opened against a daemon that answers nothing:
+        # the start unlock failed its fetch and armed. The wait
+        # on the count is race-free because the failed fetch,
+        # the flash, and the arm run as one task step with no
+        # await between them — keep it that way.
+        await wait_for(lambda: data.pending_fetches == 1)
+        assert app.unlock_retry
+        # The daemon arrives: the listing's answered refresh
+        # fires the armed re-run, and the prompt lands.
+        data.fail.clear()
+        app.screen.action_refresh()
+        await wait_for(lambda: pass_field_up(app))
+        app.screen.query_one("#pass-field", Input).value = "pw"
+        await pilot.press("enter")
+        await wait_for(lambda: data.unlock_calls)
+        (values,) = data.unlock_calls
+        assert values == [{"placeholder_id": 9, "value": "tok"}]
+        assert data.pending_fetches == 2
+        assert not app.unlock_retry
+        # A later answered refresh runs nothing more: one
+        # re-run, one fetch.
+        before = data.fetches
+        app.screen.action_refresh()
+        await wait_for(lambda: data.fetches > before)
+        await pilot.pause()
+        assert data.pending_fetches == 2
+
+
+async def test_a_refusal_arms_no_re_run(tmp_path, monkeypatch) -> None:
+    """#920: a daemon that answers with a refusal is answering —
+    the start flow's failure names itself and arms nothing, so
+    an answered refresh runs nothing more."""
+    _pub = plant_key(monkeypatch, tmp_path)
+    data = FakeData([row()])
+
+    async def refused() -> list[dict]:
+        data.pending_fetches += 1
+        raise data_mod.RestFailure("msks: 403: no window", reach=False)
+
+    data.pending_secrets = refused
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: data.pending_fetches == 1)
+        assert not app.unlock_retry
+        before = data.fetches
+        app.screen.action_refresh()
+        await wait_for(lambda: data.fetches > before)
+        await pilot.pause()
+        assert data.pending_fetches == 1
+
+
+async def test_a_spent_prompt_never_re_arms(tmp_path, monkeypatch) -> None:
+    """#920: the one-prompt rule survives the retry's own
+    failures — a session that answered the modal and lost the
+    daemon at the upload never asks again: the outage after a
+    spent prompt arms nothing."""
+    pub = plant_encrypted_key(monkeypatch, tmp_path)
+    data = FakeData([row()])
+    data.pending_rows = [pending_blob_row(9, "github_api", pub)]
+    tried: list[list[dict]] = []
+
+    async def lost_daemon(values: list[dict]) -> dict:
+        tried.append([dict(v) for v in values])
+        raise data_mod.RestFailure("daemon away", reach=True)
+
+    data.unlock_secrets = lost_daemon
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: pass_field_up(app))
+        app.screen.query_one("#pass-field", Input).value = "pw"
+        await pilot.press("enter")
+        await wait_for(lambda: tried)
+        assert app.passphrase_asked
+        assert not app.unlock_retry
+        # The answered refreshes that follow run nothing more.
+        before = data.fetches
+        app.screen.action_refresh()
+        await wait_for(lambda: data.fetches > before)
+        await pilot.pause()
+        assert data.pending_fetches == 1
+        assert not pass_field_up(app)
+
+
+async def test_a_page_unlock_spends_the_session_prompt(
+    tmp_path, monkeypatch
+) -> None:
+    """#920: the arm and the page's ``u`` share one prompt. The
+    page's ask spends the session's prompt, the armed re-run
+    drops at the listing's next answered refresh, and no second
+    modal ever stacks over the page's own."""
+    pub = plant_encrypted_key(monkeypatch, tmp_path)
+    data = FakeData([row()])
+    data.pending_rows = [pending_blob_row(9, "github_api", pub)]
+    data.fail.update({"workspaces", "pending"})
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: app.unlock_retry)
+        # The pending rows answer again (the page's fetch needs
+        # them) while the listing still finds no daemon — the
+        # arm stands, and the operator asks by hand.
+        data.fail.discard("pending")
+        await open_secrets(pilot, app)
+        await pilot.press("u")
+        await wait_for(lambda: pass_field_up(app))
+        assert app.passphrase_asked
+        # The listing answers with the page's modal standing: the
+        # arm drops, and no re-run fires behind the page's ask.
+        data.fail.discard("workspaces")
+        app.screen_stack[0].refresh_rows()
+        await wait_for(lambda: not app.unlock_retry)
+        app.screen.query_one("#pass-field", Input).value = "pw"
+        await pilot.press("enter")
+        await wait_for(lambda: data.unlock_calls)
+        assert data.pending_fetches == 2
+        await wait_for(lambda: on_secrets(app))
+        assert not pass_field_up(app)
+
+
+async def test_the_re_run_takes_its_turn_after_a_page_unlock(
+    tmp_path, monkeypatch
+) -> None:
+    """#920: the fire can land while the page's own run still
+    awaits its fetch — the turnstile serializes the two flows,
+    the page's prompt is the session's one, and the re-run's own
+    turn answers a spent prompt as a cancel: one modal, ever."""
+    import asyncio
+
+    pub = plant_encrypted_key(monkeypatch, tmp_path)
+    data = FakeData([row()])
+    data.pending_rows = [pending_blob_row(9, "github_api", pub)]
+    data.fail.update({"workspaces", "pending"})
+    gate = asyncio.Event()
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: app.unlock_retry)
+        # The pending rows answer again behind a gate (the page's
+        # fetch stands mid-flight) while the listing still finds
+        # no daemon; the operator asks by hand.
+        data.fail.discard("pending")
+        data.pending_gate = gate
+        await open_secrets(pilot, app)
+        await pilot.press("u")
+        await wait_for(lambda: data.pending_fetches == 2)
+        # The listing answers: the re-run takes its fire and
+        # waits its turn — no third fetch while the page's run
+        # holds the turnstile.
+        data.fail.discard("workspaces")
+        app.screen_stack[0].refresh_rows()
+        await wait_for(lambda: not app.unlock_retry)
+        await pilot.pause()
+        assert data.pending_fetches == 2
+
+        # The upload meets an outage: the rows stay locked, and
+        # the re-run's turn finds the prompt spent.
+        async def lost(values):
+            raise data_mod.RestFailure("daemon away", reach=True)
+
+        data.unlock_secrets = lost
+        gate.set()
+        await wait_for(lambda: pass_field_up(app))
+        app.screen.query_one("#pass-field", Input).value = "pw"
+        await pilot.press("enter")
+        await wait_for(lambda: data.pending_fetches == 3)
+        await wait_for(lambda: "already asked" in page_status(app))
+        assert "stay locked" in page_status(app)
+        assert not pass_field_up(app)
+        assert data.unlock_calls == []
+
+
+async def test_an_outage_the_re_run_hits_arms_the_next_answer(
+    tmp_path, monkeypatch
+) -> None:
+    """#920: a daemon that arrives and leaves again — the
+    re-run's own fetch may meet the next outage, and the
+    answered refresh after it serves the re-run the same way
+    the first one did."""
+    pub = plant_encrypted_key(monkeypatch, tmp_path)
+    data = FakeData([row()])
+    data.pending_rows = [pending_blob_row(9, "github_api", pub)]
+    data.fail.update({"workspaces", "pending"})
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        await wait_for(lambda: app.unlock_retry)
+        # The daemon arrives for the listing only: the re-run's
+        # fetch meets the outage again and re-arms.
+        data.fail.discard("workspaces")
+        app.screen.action_refresh()
+        await wait_for(lambda: data.pending_fetches == 2)
+        await wait_for(lambda: app.unlock_retry)
+        # The daemon stays up now: the next answered refresh
+        # serves the re-run, and the prompt lands.
+        data.fail.clear()
+        app.screen.action_refresh()
+        await wait_for(lambda: pass_field_up(app))
+        app.screen.query_one("#pass-field", Input).value = "pw"
+        await pilot.press("enter")
+        await wait_for(lambda: data.unlock_calls)
+        assert data.pending_fetches == 3

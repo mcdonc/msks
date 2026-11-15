@@ -6,7 +6,14 @@ identity file's private half decrypts the pending rows the daemon
 reports locked, and the plaintext rides the authenticated API
 back. The flow is one shared coroutine both surfaces call — the
 only difference is where the one passphrase prompt modal lands
-and which status line flashes the outcome.
+and which status line flashes the outcome. A start that met an
+unreachable daemon re-runs once when the daemon first answers
+(#920): the flow's fetch never ran to an outcome, so the app
+arms the re-run and the listing's first answered refresh fires
+it — the same flow, the same prompt rule. The flows serialize
+on the app's turnstile and share one prompt seam: whichever
+surface asks, the ask spends the session's prompt, and the
+automatic re-run answers a spent prompt as a cancel.
 
 An agent-held key cannot unlock (#510): ssh-agent exposes
 signing, and the unwrap needs the private scalar directly, so
@@ -117,23 +124,37 @@ class PassphraseScreen(ModalScreen[str | None]):
         self.dismiss(answer)
 
 
-async def session_identity(path, ask_passphrase):
+def prompt_refusal(path: Path, spent_line: str | None) -> str:
+    """The empty prompt answer's named line (#515, #920): the
+    spent line the automatic re-run passes — a prompt another
+    surface already asked — else the cancel line that names
+    the passphrase the file needs."""
+    if spent_line:
+        return spent_line
+    return (
+        "secrets stay locked — the unlock needs the "
+        f"key file's passphrase ({path.name})"
+    )
+
+
+async def session_identity(path, ask_passphrase, spent_line=None):
     """The configured key loaded for this session (#515): the
     pair of the unwrap-ready identity and the outcome line that
     ends the flow early — the loaded identity, or the named
     refusal (a cancelled prompt, an unreadable file, a key the
     crypto refuses). *ask_passphrase* owns the encrypted-key
-    prompt: the modal in the tree, a constant in tests."""
+    prompt: the modal in the tree, a constant in tests.
+    *spent_line* re-answers an empty answer the caller knows
+    was a spent prompt rather than a cancel (#920): the
+    automatic re-run passes it; the cancel line stays the
+    default."""
     try:
         key_pem = read_identity_pem(path)
         answer = ""
         if key_is_encrypted(key_pem):
             answer = await ask_passphrase(path)
             if not answer:
-                return None, (
-                    "secrets stay locked — the unlock needs the "
-                    f"key file's passphrase ({path.name})"
-                )
+                return None, prompt_refusal(path, spent_line)
         return load_identity(key_pem, lambda: answer), None
     except SystemExit as exc:
         return None, str(exc)
@@ -188,7 +209,7 @@ def quiet_line(explicit: bool, named: str) -> str | None:
 
 
 async def unlock_flow(
-    data, ask_passphrase, explicit: bool = False
+    data, ask_passphrase, explicit: bool = False, spent_line=None
 ) -> str | None:
     """The shared session unlock (#515): the configured identity
     against the daemon's locked rows. Returns the outcome line to
@@ -196,7 +217,8 @@ async def unlock_flow(
     configured, or the daemon already holds every row's
     plaintext) — *explicit* turns both quiet cases into named
     lines, the page's ``u`` action answering an operator who
-    asked."""
+    asked. *spent_line* rides to the prompt's refusal
+    (:func:`session_identity`)."""
     path = configured_identity_file()
     if path is None:
         return quiet_line(
@@ -211,7 +233,9 @@ async def unlock_flow(
             explicit,
             "nothing to unlock — the daemon holds every row's plaintext",
         )
-    identity, refused = await session_identity(path, ask_passphrase)
+    identity, refused = await session_identity(
+        path, ask_passphrase, spent_line
+    )
     if refused is not None:
         return refused
     unlocked, left, corrupt = decrypt_rows(rows, identity)

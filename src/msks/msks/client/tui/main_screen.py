@@ -359,9 +359,18 @@ class MainScreen(HelpKeys, Screen):
         refusal, a listing the client cannot build — owns no
         marker: the daemon is answering, the refusal names
         itself, and a marker that stood from an outage before
-        this answer leaves with the refusal's own flash."""
+        this answer leaves with the refusal's own flash.
+
+        An answered refresh also serves the start unlock's armed
+        re-run (#920): the arm and the marker are two states — a
+        fetch that failed between two answered listings (the
+        daemon arriving mid-tick) still wants its re-run — so the
+        app's own arm decides, and every answered refresh hands
+        it the moment. The arm clears when it fires, so the
+        handoff on a later tick decides nothing."""
         if failure is None:
             self.land_recovery()
+            self.app.unlock_daemon_back()
         elif reach:
             self.land_outage(failure)
         else:
