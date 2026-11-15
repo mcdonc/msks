@@ -1245,8 +1245,9 @@ keypress.</p>
 workspace's quick facts, under the rows. The first line carries the
 workspace's name, its id, and the image. The second carries the cpu
 count, the memory in binary units (<code>8G</code>), the egress mode, the
-mounts-issue count while any mount skips (<code>mounts ✗2</code>), and the
-storage the workspace charges the state disk. The strip paints its labels muted and its values in the bright
+mounts-issue count while any mount skips (<code>mounts ✗2</code>), the pending
+change count while a change waits for the next start (<code>next ↻1</code>),
+and the storage the workspace charges the state disk. The strip paints its labels muted and its values in the bright
 foreground on the panel background, so it reads as its own bar at the
 bottom of the box. The storage figure is the root-plus-home cost <code>msks
 storage</code> reports, fetched with the list's five-second refresh and
@@ -1266,12 +1267,16 @@ five-second refresh and leaves when the versions agree. A <code>/health</code>
 connection that fails leaves the standing marker in place. The URL and the
 state summary crop before the marker does, so the marker stays
 readable at 80 columns.</p>
-<p>A row can carry two markers ahead of its status word. <code>✗1</code> counts
+<p>A row can carry three markers ahead of its status word. <code>✗1</code> counts
 the workspace's mounts that skipped at the last start (the mounts
-chapter lists every kind of skip). <code>»2</code> counts the workspace's open
-shells on this host. The <a href="#open-shells-and-the-session-records">open shells section</a>
-below owns the count's whole story; the workspace's page carries the
-count in its header. Both markers follow the five-second refresh.</p>
+chapter lists every kind of skip). <code>↻2</code> counts the changes the
+workspace's next start applies: a mounts edit the last start has not
+taken, a sizes or topology edit no boot has taken (the workspace row
+carries both flags, and the <code>mounts</code> chapter's pending story owns
+the mounts half). <code>»3</code> counts the workspace's open shells on this
+host. The <a href="#open-shells-and-the-session-records">open shells section</a>
+below owns the shells count's whole story; the workspace's page carries
+the count in its header. The markers follow the five-second refresh.</p>
 <h3 id="open-shells-and-the-session-records">Open shells and the session records<a class="headerlink" href="#open-shells-and-the-session-records" title="Permanent link">&para;</a></h3>
 <p>Every interactive <code>msks ssh</code> writes one small record under the msks
 state directory. That includes a window the tree opened and a

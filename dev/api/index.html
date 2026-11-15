@@ -1199,8 +1199,12 @@ the allowed roots, and one that does not resolve under them, are named
 carries <code>mounts</code>, the derived <code>mount_issues</code>, and <code>mounts_pending</code>. The
 <code>mount_issues</code> field holds the skip state that <code>msks ls</code> and the TUI render.
 The <code>mounts_pending</code> field says whether the configured set differs from the
-set the last start attached, and the next-start notes key on it. <code>msks
-mount</code>/<code>umount</code> and the TUI's editor use this route.</p>
+set the last start attached, and the next-start notes key on it. The row
+carries <code>sizes_pending</code> the same way: whether the row's deferred sizes (root
+growth and the vcpu/memory topology) differ from the ones the last start
+booted — True until a start takes them. A workspace no start has booted reads
+True, so a row from a database that predates the field reads True until its
+next start. <code>msks mount</code>/<code>umount</code> and the TUI's editor use this route.</p>
 <ul>
 <li><code>GET</code>/<code>PUT …/home</code>: export and import the home volume as a
   byte stream, the same stream <code>msks home import</code>/<code>export</code>
