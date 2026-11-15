@@ -660,13 +660,21 @@ async def live_gate_state(app, client, interceptor) -> str:
         parts.append("master run task: none")
     elif not master.done():
         parts.append("master run task: running")
+    elif master.cancelled():
+        parts.append("master run task: cancelled")
+    elif master.exception() is None:
+        parts.append("master run task: returned")
     else:
-        fate = "cancelled" if master.cancelled() else repr(master.exception())
-        parts.append(f"master run task: done ({fate})")
+        parts.append(f"master run task: raised {master.exception()!r}")
     armed = getattr(interceptor, "_armed", None)
-    parts.append(f"armed: {sorted(armed) if armed else []}")
-    rows = await app.state.model.egress_consent.list_requests("ws-live")
-    parts.append(f"consent rows: {rows!r}")
+    specs = sorted(a.spec for a in armed.values()) if armed else []
+    parts.append(f"armed: {specs}")
+    try:
+        rows = await app.state.model.egress_consent.list_requests("ws-live")
+        parts.append(f"consent rows: {rows!r}")
+    except Exception as exc:  # noqa: BLE001 - the diagnostic must
+        # never replace the assertion it decorates
+        parts.append(f"consent rows: unreadable ({exc!r})")
     return "; ".join(parts)
 
 
