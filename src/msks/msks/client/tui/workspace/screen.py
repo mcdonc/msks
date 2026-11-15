@@ -228,7 +228,7 @@ class WorkspaceScreen(HelpKeys, Screen):
             self.proxy_rows = await self.app.data.workspace_proxies(
                 self.row["id"]
             )
-        except Exception, SystemExit:
+        except Exception:
             return
         self.paint_proxies()
 
@@ -455,7 +455,7 @@ class WorkspaceScreen(HelpKeys, Screen):
         list's status line, which the pushed page hides (#343)."""
         try:
             return await work
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.flash(f"{label} failed: {flash_safe(str(exc))}")
             return None
 
@@ -470,7 +470,7 @@ class WorkspaceScreen(HelpKeys, Screen):
     async def load_row(self) -> None:
         try:
             rows = await self.app.data.workspaces()
-        except Exception, SystemExit:
+        except Exception:
             return  # the page keeps its row; the header stays as it was
         fresh = next(
             (row for row in rows if row["id"] == self.row["id"]), None
@@ -941,7 +941,7 @@ class WorkspaceScreen(HelpKeys, Screen):
             reply = await self.app.data.set_egress_mode(
                 self.row["id"], mode, confirm_empty=confirm_empty
             )
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.flash_visible(f"mode switch failed: {flash_safe(str(exc))}")
             return
         self.row["egress_mode"] = reply.get("mode") or mode

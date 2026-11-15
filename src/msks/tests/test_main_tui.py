@@ -278,7 +278,9 @@ class FakeData:
         its live status the way the daemon's does."""
         self.proxy_calls.append((workspace_id, dict(body)))
         if self.proxy_refusal is not None:
-            raise SystemExit(f"msks: 409: {self.proxy_refusal}")
+            raise data_mod.RestFailure(
+                f"msks: 409: {self.proxy_refusal}", reach=False
+            )
         row = {
             "id": self.proxy_id(),
             "workspace_id": workspace_id,
@@ -298,7 +300,9 @@ class FakeData:
         that lands rewrites the row in every later listing."""
         self.proxy_updates.append((workspace_id, proxy_id, dict(body)))
         if self.proxy_refusal is not None:
-            raise SystemExit(f"msks: 409: {self.proxy_refusal}")
+            raise data_mod.RestFailure(
+                f"msks: 409: {self.proxy_refusal}", reach=False
+            )
         if "proxy-update" in self.fail:
             raise RuntimeError(self.refusal)
         fresh = {
@@ -348,7 +352,7 @@ class FakeData:
         raises the way the daemon's would."""
         self.removed.append(digest)
         if self.remove_refusal is not None:
-            raise SystemExit(self.remove_refusal)
+            raise data_mod.RestFailure(self.remove_refusal, reach=False)
         self.images_rows = [
             row for row in self.images_rows if row["hash"] != digest
         ]
@@ -360,7 +364,7 @@ class FakeData:
         daemon's pointer file moves it."""
         self.default_calls.append(ref)
         if self.default_refusal is not None:
-            raise SystemExit(self.default_refusal)
+            raise data_mod.RestFailure(self.default_refusal, reach=False)
         for image in self.images_rows:
             image["default"] = image["hash"] == ref
         return {"hash": ref}
@@ -370,7 +374,7 @@ class FakeData:
         armed raises the way the daemon's would."""
         self.import_calls.append(source)
         if self.import_refusal is not None:
-            raise SystemExit(self.import_refusal)
+            raise data_mod.RestFailure(self.import_refusal, reach=False)
         return {
             "ref": "debian:13.6",
             "hash": "a" * 64,
@@ -492,7 +496,7 @@ class FakeData:
         save keeps the flag where it stood."""
         self.calls.append(("set-mounts", workspace_id, mounts))
         if self.mounts_refusal is not None:
-            raise SystemExit(self.mounts_refusal)
+            raise data_mod.RestFailure(self.mounts_refusal, reach=False)
         for row in self.rows:
             if row["id"] == workspace_id:
                 row["mounts"] = [dict(m) for m in mounts]

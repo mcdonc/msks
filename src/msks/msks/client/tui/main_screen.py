@@ -68,16 +68,15 @@ def created_note(row: dict) -> str:
 
 async def guarded_flash(app, label: str, work):
     """Await one screen action, flashing the failure instead of
-    tearing the TUI down (SystemExit included — the REST seam's
-    error surface, the daemon's named refusal among them). The
-    refusal text is escaped for a status-line flash (``flash_safe``
-    — the daemon echoes operator-typed references, a workspace
-    name among them, back, and one carrying rich markup — a
-    truncated closing tag included — would otherwise crash the
-    screen)."""
+    tearing the screen's state down (the seam's RestFailure, the
+    daemon's named refusal among them). The refusal text is
+    escaped for a status-line flash (``flash_safe`` — the daemon
+    echoes operator-typed references, a workspace name among
+    them, back, and one carrying rich markup — a truncated
+    closing tag included — would otherwise crash the screen)."""
     try:
         return await work
-    except (Exception, SystemExit) as exc:
+    except Exception as exc:
         app.flash(f"{label} failed: {flash_safe(str(exc))}")
         return None
 
@@ -339,7 +338,7 @@ class MainScreen(HelpKeys, Screen):
                 self.load_skew(),
             )
             await self.rebuild_rows(self.with_shell_counts(rows))
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             failure = flash_safe(str(exc))
             reach = isinstance(exc, RestFailure) and exc.reach
         finally:
@@ -421,7 +420,7 @@ class MainScreen(HelpKeys, Screen):
                 ws["id"]: ws["root_bytes"] + ws["home_bytes"]
                 for ws in report.get("workspaces") or []
             }
-        except Exception, SystemExit:
+        except Exception:
             return
 
     async def load_skew(self) -> None:
@@ -731,7 +730,7 @@ class MainScreen(HelpKeys, Screen):
             return
         try:
             result = await self.app.data.create(body)
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.app.push_screen(
                 FailurePanel("create", body.get("name"), str(exc))
             )

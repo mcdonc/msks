@@ -195,7 +195,7 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
         stands, and the daemon-wide mint needs no list."""
         try:
             rows = await self.app.data.workspaces()
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.note(f"workspace list failed: {flash_safe(str(exc))}")
             return
         self.query_one("#field-workspaces", WorkspacePicker).add_options(
@@ -358,7 +358,7 @@ class MintScreen(FormWalk, ModalScreen[dict | None]):
         self.note("minting…")
         try:
             row = await self.app.data.mint_secret(body)
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.refused("mint", body["name"], exc)
             return
         self.dismiss_with(row)

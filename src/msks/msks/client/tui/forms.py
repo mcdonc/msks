@@ -507,7 +507,7 @@ class CreateScreen(WorkspaceForm):
         defaults."""
         try:
             rows = await self.app.data.images()
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.note(f"image list failed: {escape(str(exc))}")
         else:
             self.query_one("#field-image", Select).set_options(
@@ -515,7 +515,7 @@ class CreateScreen(WorkspaceForm):
             )
         try:
             defaults = await self.app.data.create_defaults()
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.note(f"defaults failed: {escape(str(exc))}")
         else:
             self.size_placeholders(defaults)

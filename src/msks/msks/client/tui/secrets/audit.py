@@ -131,7 +131,7 @@ class SecretAuditScreen(HelpKeys, Screen):
         live stream alone still stands."""
         try:
             rows = await self.data.secret_audit()
-        except (Exception, SystemExit) as exc:
+        except Exception as exc:
             self.seed_failed = flash_safe(str(exc))
             self.sync_status()
             return
