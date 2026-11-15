@@ -1977,6 +1977,14 @@ tagged <code>vX.Y.Z</code>.</p>
   existing workspace reads pending until its next start: no
   record of a last boot exists yet. The marker leaves as each
   one starts.</li>
+<li><strong>Unapplied proxies in the pending count (#900).</strong> A remote
+  proxy on a stopped workspace waits for the next start (its
+  bind is the workspace's own tap), and the <code>↻N</code> marker counts
+  it: every workspace row carries <code>proxies_pending</code>, the
+  count of remote proxy rows while the workspace sits in any
+  status but running. The marker counts the half once, however
+  many rows wait. A forward proxy binds daemon-side at
+  once and never counts.</li>
 </ul>
 <h2 id="v091-2026-11-14">[v0.9.1] - 2026-11-14<a class="headerlink" href="#v091-2026-11-14" title="Permanent link">&para;</a></h2>
 <h3 id="added_1">Added<a class="headerlink" href="#added_1" title="Permanent link">&para;</a></h3>
