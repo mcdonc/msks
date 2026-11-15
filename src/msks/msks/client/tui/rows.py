@@ -407,18 +407,16 @@ def shell_marker(row: dict) -> str | None:
 
 
 def pending_marker(row: dict) -> str | None:
-    """The pending-changes marker (#898, #900): ``↻N``, N counting
+    """The pending-changes marker (#898, #909): ``↻N``, N counting
     the changes the next start applies, one per waiting half — a
-    mounts edit the last start has not taken, a sizes or topology
-    edit no boot has taken, and a remote proxy row no listener
-    can serve while the workspace is not running (the half counts
-    once however many rows wait) — else ``None``. The two
-    snapshot halves are #898-and-older fields; a daemon before
-    #900 serves a row that carries no proxy half."""
-    count = (
-        int(bool(row.get("mounts_pending")))
-        + int(bool(row.get("sizes_pending")))
-        + int(bool(row.get("proxies_pending")))
+    mounts edit the last start has not taken, and a sizes or
+    topology edit no boot has taken — else ``None``. A remote
+    proxy row never counts (#909): its bind waits for every
+    start, not just the next one, so it is standing
+    configuration rather than a pending change, and the proxies
+    page's per-row status carries the waiting."""
+    count = int(bool(row.get("mounts_pending"))) + int(
+        bool(row.get("sizes_pending"))
     )
     return f"↻{count}" if count else None
 

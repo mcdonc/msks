@@ -289,7 +289,6 @@ class FakeData:
             **body,
         }
         self.proxy_rows.append(dict(row))
-        self.refresh_pending(workspace_id)
         return dict(row)
 
     async def update_proxy(
@@ -318,7 +317,6 @@ class FakeData:
             else r
             for r in self.proxy_rows
         ]
-        self.refresh_pending(workspace_id)
         return dict(fresh)
 
     async def remove_proxy(self, workspace_id: str, proxy_id: int) -> dict:
@@ -332,7 +330,6 @@ class FakeData:
             for r in self.proxy_rows
             if (r["workspace_id"], r["id"]) != (workspace_id, proxy_id)
         ]
-        self.refresh_pending(workspace_id)
         return {"id": proxy_id, "workspace_id": workspace_id, "removed": True}
 
     async def images(self) -> list[dict]:
@@ -452,27 +449,6 @@ class FakeData:
             "root_mib": row.get("root_mib"),
         } != self.booted_sizes.get(row["id"])
 
-    def pending_proxies(self, row: dict) -> int:
-        """The row's proxy count (#900), derived the way the
-        model's reads derive it: the workspace's remote rows
-        while it sits in any status but running (a remote bind is
-        the workspace's own tap, which only a run holds)."""
-        if row["status"] == "running":
-            return 0
-        return sum(
-            1
-            for proxy in self.proxy_rows
-            if proxy["workspace_id"] == row["id"]
-            and proxy["direction"] == "remote"
-        )
-
-    def refresh_pending(self, workspace_id: str) -> None:
-        """Re-derive the workspace row's proxy pending count after
-        a mutation moved a proxy row or its status (#900)."""
-        for row in self.rows:
-            if row["id"] == workspace_id:
-                row["proxies_pending"] = self.pending_proxies(row)
-
     def pending_mounts(self, row: dict) -> bool:
         """The row's pending flag (#756, #759), derived the way
         ``workspace_dict`` derives it: the configured set against
@@ -537,7 +513,6 @@ class FakeData:
             "root_mib": fresh.get("root_mib"),
         }
         fresh["sizes_pending"] = self.pending_sizes(fresh)
-        self.refresh_pending(workspace_id)
         return result
 
     async def stop(self, workspace_id: str) -> dict:
@@ -545,9 +520,6 @@ class FakeData:
         result = self.reply("stop", {"id": workspace_id, "status": "stopped"})
         fresh = next(r for r in self.rows if r["id"] == workspace_id)
         fresh["status"] = "stopped"  # the daemon's row follows the shutdown
-        # The stop leaves the remote rows unserved again (#900):
-        # the next start re-establishes them.
-        self.refresh_pending(workspace_id)
         return result
 
     async def remove(self, workspace_id: str) -> dict:
@@ -7905,7 +7877,9 @@ def test_the_list_row_marks_pending_changes() -> None:
     mounts-issue marker and the open-shells count, each marker
     its own color (the pending count muted: information, not a
     warning) and the word behind them its own class's color. A
-    caught-up row prints nothing."""
+    caught-up row prints nothing, and a remote proxy row never
+    counts (#909): its waiting is standing configuration, the
+    proxies page's own status word."""
     from msks.client.tui.rows import (
         pending_marker,
         row_content,
@@ -7916,20 +7890,13 @@ def test_the_list_row_marks_pending_changes() -> None:
     assert pending_marker(resized) == "↻1"
     assert pending_marker(row()) is None
     assert status_with_issues(resized) == "↻1 stopped"
-    # The proxy half rides the same count: a remote row waiting
-    # for the next start is the third change the marker counts.
+    # The dropped proxy half reads as no change at all (#909):
+    # remote rows waiting cannot move the count.
     waiting_proxy = {**row(), "proxies_pending": 2}
-    assert pending_marker(waiting_proxy) == "↻1"
-    assert status_with_issues(waiting_proxy) == "↻1 stopped"
-    assert pending_marker({**row(), "proxies_pending": 0}) is None
-    # All the halves wait: the count reads three, the flags
-    # compose.
-    all_halves = {
-        **mounted_row(),
-        "sizes_pending": True,
-        "proxies_pending": 1,
-    }
-    assert status_with_issues(all_halves) == "✗1 ↻3 stopped"
+    assert pending_marker(waiting_proxy) is None
+    # Both halves wait: the count reads two, the flags compose.
+    both_halves = {**mounted_row(), "sizes_pending": True}
+    assert status_with_issues(both_halves) == "✗1 ↻2 stopped"
     spanned = row_content(resized)  # one marker: the cell fits whole
     spans = {
         spanned.plain[span.start : span.end]: span.style
@@ -7942,10 +7909,9 @@ def test_the_list_row_marks_pending_changes() -> None:
     all_three = {
         **mounted_row(),
         "sizes_pending": True,
-        "proxies_pending": 1,
         "shells": 3,
     }
-    assert status_with_issues(all_three) == "✗1 ↻3 »3 stopped"
+    assert status_with_issues(all_three) == "✗1 ↻2 »3 stopped"
     # The strip carries the same cue beside its costs (#898), the
     # pair labeled the way the mounts count is.
     strip = detail_mod.detail_strip(resized, None)
@@ -8109,30 +8075,23 @@ async def test_the_fake_derives_sizes_pending_like_the_daemon() -> None:
     assert data.rows[0]["sizes_pending"] is False
 
 
-async def test_the_fake_derives_proxy_pending_like_the_daemon() -> None:
-    """The fake's proxy scripting (#900): the workspace row's
-    count comes from its remote rows against its status — the
-    same derivation the model's reads serve. A remote create on
-    a stopped row counts, a start clears it, a stop restores it,
-    the remove drops it, and a forward row never counts."""
+async def test_the_fake_never_serves_a_proxy_pending_half() -> None:
+    """The fake's proxy scripting against the dropped proxy half
+    (#909): a workspace row carries no ``proxies_pending`` field
+    anywhere in its lifecycle — the remote rows a stop leaves
+    unserved never read as a pending change."""
     data = FakeData([row()])
     assert data.rows[0].get("proxies_pending") is None  # unserved yet
     await data.create_proxy(
         WS,
         {"direction": "remote", "listen_port": 9200, "target_port": 9200},
     )
-    assert data.rows[0]["proxies_pending"] == 1
-    await data.create_proxy(
-        WS,
-        {"direction": "forward", "listen_port": 2201, "target_port": 22},
-    )
-    assert data.rows[0]["proxies_pending"] == 1  # the forward binds at once
     await data.start(WS)
-    assert data.rows[0]["proxies_pending"] == 0
+    assert data.rows[0].get("proxies_pending") is None
     await data.stop(WS)
-    assert data.rows[0]["proxies_pending"] == 1
+    assert data.rows[0].get("proxies_pending") is None
     await data.remove_proxy(WS, 1)
-    assert data.rows[0]["proxies_pending"] == 0
+    assert data.rows[0].get("proxies_pending") is None
 
 
 async def test_the_fakes_start_snapshot_skips_issued_mounts() -> None:
