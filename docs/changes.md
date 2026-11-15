@@ -10,7 +10,8 @@ tagged `vX.Y.Z`.
 
 - **Confirm dialogs show their answer keys (#913).** Every TUI
   confirmation shows `y / n` beside its question. `y` (or
-  Enter) confirms. `n`, `q`, or Escape cancels.
+  Enter) confirms. `n`, `q`, or Escape cancels. See
+  `docs/tui.md` → the workspace tree.
 - **Pending-changes marker on the workspace page (#912).** The
   workspace page's header now carries the `↻N` marker ahead of
   its status while changes wait for the next start, the same
