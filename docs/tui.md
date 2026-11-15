@@ -88,9 +88,9 @@ the workspace's mounts that skipped at the last start (the mounts
 chapter lists every kind of skip). `↻2` counts the changes the
 workspace's next start applies: a mounts edit the last start has not
 taken and a sizes or topology edit no boot has taken. A remote proxy
-row never counts: its bind waits for every start, so it is standing
-configuration, and the proxies page's own `stopped` status carries
-the waiting. `»3` counts the
+row never counts. Its bind waits for every start, not just the next
+one, and the proxies page's own `stopped` status carries the waiting.
+`»3` counts the
 workspace's open shells on this
 host. The [open shells section](#open-shells-and-the-session-records)
 below owns the shells count's whole story; the workspace's page carries

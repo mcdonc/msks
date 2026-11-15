@@ -412,9 +412,9 @@ def pending_marker(row: dict) -> str | None:
     mounts edit the last start has not taken, and a sizes or
     topology edit no boot has taken — else ``None``. A remote
     proxy row never counts (#909): its bind waits for every
-    start, not just the next one, so it is standing
-    configuration rather than a pending change, and the proxies
-    page's per-row status carries the waiting."""
+    start, not just the next one. It is standing configuration
+    rather than a pending change, and the proxies page's
+    per-row status carries the waiting."""
     count = int(bool(row.get("mounts_pending"))) + int(
         bool(row.get("sizes_pending"))
     )

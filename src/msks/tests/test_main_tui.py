@@ -8086,6 +8086,9 @@ async def test_the_fake_never_serves_a_proxy_pending_half() -> None:
         WS,
         {"direction": "remote", "listen_port": 9200, "target_port": 9200},
     )
+    # The sharpest case (#909): a stopped row holding a remote
+    # proxy, the state that used to read as one pending change.
+    assert data.rows[0].get("proxies_pending") is None
     await data.start(WS)
     assert data.rows[0].get("proxies_pending") is None
     await data.stop(WS)
