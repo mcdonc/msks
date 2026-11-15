@@ -15,6 +15,7 @@ tests.
 
 from ..create import create_workspace_core, invoking_user
 from ..env import env_token, env_url
+from ..jsonio import ApiExit
 from ..rest import api_call, fetch_health
 from .consent_ui import shared_ssl
 
@@ -31,8 +32,16 @@ class RestFailure(Exception):
     quitting the TUI on the listing's first refresh. The seam
     carries the same message as a plain exception: the screens'
     guards flash it, and the tree stands to retry on its next
-    tick.
+    tick. ``reach`` names the failure's kind: True when the
+    daemon answered nothing at all (an unreachable daemon, a
+    timeout), False when it answered with a refusal — a listing
+    the daemon cannot serve is an answer, not an outage, and the
+    listing's down marker (#904) states it only for the outage.
     """
+
+    def __init__(self, message: str, *, reach: bool) -> None:
+        super().__init__(message)
+        self.reach = reach
 
 
 class TuiData:
@@ -41,14 +50,20 @@ class TuiData:
     def __init__(self, transport=None) -> None:
         self.transport = transport
 
-    async def carried(self, awaitable):
+    async def carried(self, build):
         """Await one seam call, carrying its exit-contract failure
         as :class:`RestFailure` (#904) — the message unchanged, so
-        a screen's flash reads the same line the CLI prints."""
+        a screen's flash reads the same line the CLI prints.
+        ``build`` makes the call (its argument evaluation
+        included) inside the guard, so every failure the
+        invocation's own environment can raise arrives carried
+        too."""
         try:
-            return await awaitable
+            return await build()
+        except ApiExit as exc:
+            raise RestFailure(str(exc), reach=False) from exc
         except SystemExit as exc:
-            raise RestFailure(str(exc)) from exc
+            raise RestFailure(str(exc), reach=True) from exc
 
     async def rest(
         self, method: str, path: str, body: dict | None = None
@@ -57,7 +72,7 @@ class TuiData:
         token, and shared TLS context — the same call the matching
         CLI subcommand makes, its failure carried (#904)."""
         return await self.carried(
-            api_call(
+            lambda: api_call(
                 method,
                 env_url(),
                 env_token(),
@@ -126,7 +141,7 @@ class TuiData:
         row."""
         body.setdefault("user", invoking_user())
         return await self.carried(
-            create_workspace_core(
+            lambda: create_workspace_core(
                 env_url(),
                 env_token(),
                 body,

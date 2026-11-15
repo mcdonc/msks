@@ -33,6 +33,7 @@ from .consent_ui import (
     focus_attr,
     focused_attr,
 )
+from .data import RestFailure
 from .detail import (
     DAEMON_DOWN_MARKER,
     detail_strip,
@@ -330,6 +331,7 @@ class MainScreen(HelpKeys, Screen):
 
     async def load_rows(self) -> None:
         failure: str | None = None
+        reach = False
         try:
             rows, _, _ = await asyncio.gather(
                 self.app.data.workspaces(),
@@ -339,29 +341,52 @@ class MainScreen(HelpKeys, Screen):
             await self.rebuild_rows(self.with_shell_counts(rows))
         except (Exception, SystemExit) as exc:
             failure = flash_safe(str(exc))
+            reach = isinstance(exc, RestFailure) and exc.reach
         finally:
             self.rows_loading = False
-        self.land_reach(failure)
+        self.land_reach(failure, reach)
 
-    def land_reach(self, failure: str | None) -> None:
-        """Land one refresh's reach outcome (#904): a failure
-        enters the down state — the marker stands on the status
-        line, the transition's flash naming the reason — and a
-        refresh that answers leaves it, the flash naming the
-        recovery. A refresh that finds the state standing decides
-        nothing: the marker is the report, and the same line every
-        five seconds is noise beside it. The standing interval
-        keeps its cadence while the marker stands, so every tick
-        is a reconnect attempt."""
-        down = failure is not None
-        if down == self.daemon_down:
+    def land_reach(self, failure: str | None, reach: bool) -> None:
+        """Land one refresh's reach outcome (#904): a daemon that
+        answers nothing enters the down state — the marker stands
+        on the status line, the transition's flash naming the
+        reason — and a refresh that answers leaves it, the flash
+        naming the recovery. A refresh that finds the state
+        standing decides nothing: the marker is the report, and
+        the same line every five seconds is noise beside it. The
+        standing interval keeps its cadence while the marker
+        stands, so every tick is a reconnect attempt. A failure
+        that is not an outage — a daemon that answers with a
+        refusal, a listing the client cannot build — owns no
+        marker: the daemon is answering, the refusal names
+        itself, and a marker that stood from an outage before
+        this answer leaves with the refusal's own flash."""
+        if failure is None:
+            self.land_recovery()
+        elif reach:
+            self.land_outage(failure)
+        else:
+            self.daemon_down = False
+            self.app.flash(f"listing failed: {failure}")
+            self.sync_status()
+
+    def land_recovery(self) -> None:
+        """A refresh that answered while the marker stood: the
+        marker leaves and the recovery flashes once."""
+        if not self.daemon_down:
             return
-        self.daemon_down = down
-        self.app.flash(
-            f"listing failed: {failure}"
-            if down
-            else "daemon back — listing resumed"
-        )
+        self.daemon_down = False
+        self.app.flash("daemon back — listing resumed")
+        self.sync_status()
+
+    def land_outage(self, failure: str) -> None:
+        """A refresh the daemon did not answer: the down state on
+        the transition, quiet while it stands — the marker is the
+        report between flashes."""
+        if self.daemon_down:
+            return
+        self.daemon_down = True
+        self.app.flash(f"listing failed: {failure}")
         self.sync_status()
 
     def with_shell_counts(self, rows: list[dict]) -> list[dict]:

@@ -64,6 +64,25 @@ connection that fails leaves the standing marker in place. The URL and the
 state summary crop before the marker does, so the marker stays
 readable at 80 columns.
 
+When msksd stops answering, the TUI stays open. The status line
+carries a `daemon down — retrying` marker in the warning color, and
+the first failing refresh flashes its reason. The five-second
+refresh keeps running while the marker stands, so every tick is a
+reconnect attempt. When the daemon answers again, the listing
+resumes, the marker leaves, and a one-line flash notes the
+recovery. The rows on screen stay while the daemon is away.
+
+A daemon that answers with a refusal is a different case: the
+daemon is up, the listing just cannot be served. The refusal
+flashes on every failing refresh (`listing failed: msks: 401: …`)
+and the down marker never stands for it. A refusal that arrives
+while the marker stands clears it — the daemon is answering again.
+
+Both markers can stand together: the version-skew marker comes
+first, the down marker last. The workspace's own page reports its
+events-socket drops on its consent line while it is open, so the
+page carries its own reconnect state.
+
 A row can carry three markers ahead of its status word. `✗1` counts
 the workspace's mounts that skipped at the last start (the mounts
 chapter lists every kind of skip). `↻2` counts the changes the

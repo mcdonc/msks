@@ -448,7 +448,7 @@ def summary_fit(
     and nothing else on the line shows the skew."""
     if summary is None:
         return None
-    whole = "  ·  ".join([head, summary, url_text, *tail])
+    whole = STATUS_JOIN.join([head, summary, url_text, *tail])
     over = cell_len(whole) - STATUS_LINE_W
     if over <= 0:
         return summary
