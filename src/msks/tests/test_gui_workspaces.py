@@ -26,6 +26,7 @@ if importlib.util.find_spec("PySide6") is None:
 
 from msks.client import ages as ages_mod  # noqa: E402
 from msks.client import data as clientdata  # noqa: E402
+from msks.client.gui import rows as gui_rows  # noqa: E402
 
 #: The poll cadence for the offscreen event loop, seconds — the
 #: timer test pumps Qt's queue until the tick lands.
@@ -510,6 +511,98 @@ def test_the_columns_fill_the_pane(qt) -> None:
         for column in range(len(qt.screen_mod.COLUMNS))
     )
     assert total == screen.table.viewport().width()
+    window.close()
+
+
+def select_cell(qt, screen, row: int, column: int) -> None:
+    """One clicked cell, as the operator's click leaves it: the
+    selection on it and the current cell with it."""
+    index = screen.table.model().index(row, column)
+    screen.table.selectionModel().select(
+        index,
+        qt.QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+    )
+    screen.table.setCurrentIndex(index)
+
+
+def test_an_unchanged_listing_rebuilds_nothing(qt) -> None:
+    """The standing refresh leaves an unchanged listing alone
+    (#939, the TUI listing's own #470 L2 rule): the same answer
+    again rebuilds no item — the very objects stand — so the
+    highlight the operator's click left cannot wander between
+    rows while nothing interacts. The image reads by its whole
+    value, so an elided display still counts as unchanged."""
+    screen, window, _bridge = make_screen(qt)
+    # The default offscreen window is narrow: the hash row's
+    # image shows ellipsized.
+    assert "…" in screen.table.item(1, 3).text()
+    name = screen.table.item(0, 0)
+    select_cell(qt, screen, 0, 1)
+    screen.on_succeeded("workspaces-list", daemon_rows())
+    assert screen.table.item(0, 0) is name  # nothing was rebuilt
+    assert len(screen.table.selectedIndexes()) == 1
+    assert screen.table.currentIndex().column() == 1
+    window.close()
+
+
+def test_the_selection_follows_the_workspace(qt) -> None:
+    """A rebuild the listing needs carries the hold by
+    workspace id (#939): the clicked cell lands on its
+    workspace's row wherever the new order puts it, and a
+    workspace the new listing drops simply loses the hold."""
+    screen, window, _bridge = make_screen(qt)
+    select_cell(qt, screen, 1, 1)  # beta's status cell
+    rows = daemon_rows()
+    screen.on_succeeded(
+        "workspaces-list", [rows[1], rows[0], rows[2]]
+    )  # beta first now
+    current = screen.table.currentIndex()
+    assert (current.row(), current.column()) == (0, 1)  # beta moved up
+    assert screen.table.item(0, 0).text() == "beta"
+    assert len(screen.table.selectedIndexes()) == 1
+    # beta leaves the listing: the hold goes with it, quietly.
+    screen.on_succeeded("workspaces-list", daemon_rows()[:1])
+    assert screen.table.selectedIndexes() == []
+    window.close()
+
+
+def test_the_unchanged_and_hold_reads_defensively(qt) -> None:
+    """The unchanged check and the hold read only what stands
+    (#939): a missing cell reads as changed, never as a crash —
+    and a selected cell on a row whose name item is gone reads
+    as no hold at all."""
+    screen, window, _bridge = make_screen(qt)
+    models = gui_rows.workspace_rows(daemon_rows())
+    assert screen.rows_unchanged(models) is True
+    assert not screen.rows_unchanged(models[:1])  # fewer rows
+    changed = [dict(daemon_rows()[0], name="renamed")]
+    assert not screen.rows_unchanged(
+        gui_rows.workspace_rows(changed)
+    )  # a cell moved
+    screen.table.setItem(0, qt.screen_mod.IMAGE_COLUMN, None)
+    assert not screen.rows_unchanged(models)  # a missing cell
+    select_cell(qt, screen, 1, 1)
+    screen.table.setItem(1, qt.screen_mod.NAME_COLUMN, None)
+    held, now = screen.held_cells()
+    assert held == [] and now is None
+    window.close()
+
+
+def test_every_cell_renders_but_never_edits(qt) -> None:
+    """The listing is a view over the daemon's state (#939): no
+    cell opens an editor — an edit would paint a value only the
+    display holds, and the next refresh would throw it away.
+    Every cell stays selectable and enabled: the click that
+    phase 4's detail page will ride still lands."""
+    screen, window, _bridge = make_screen(qt)
+    for row in range(screen.table.rowCount()):
+        for column in range(len(qt.screen_mod.COLUMNS)):
+            flags = screen.table.item(row, column).flags()
+            editable = qt.QtCore.Qt.ItemFlag.ItemIsEditable
+            selectable = qt.QtCore.Qt.ItemFlag.ItemIsSelectable
+            enabled = qt.QtCore.Qt.ItemFlag.ItemIsEnabled
+            assert not flags & editable
+            assert flags & selectable and flags & enabled
     window.close()
 
 

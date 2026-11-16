@@ -56,6 +56,11 @@ IMAGE_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
 #: relative label's spelling.
 CREATED_ROLE = QtCore.Qt.ItemDataRole.UserRole + 2
 
+#: The workspace's id on every row's name item (#939): the
+#: selection follows the workspace, not the row slot, across a
+#: refresh's rebuild.
+ROW_ID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 3
+
 #: The cell margin the contents sizing pays (#939): the budget
 #: an ellipsized cell's text renders within.
 CELL_MARGIN = 8
@@ -69,6 +74,17 @@ STATUS_COLUMN = 1
 ID_COLUMN = 2
 IMAGE_COLUMN = 3
 CREATED_COLUMN = 4
+
+
+def read_only_item(
+    item: QtWidgets.QTableWidgetItem,
+) -> QtWidgets.QTableWidgetItem:
+    """One cell that renders but never edits (#939): the
+    listing is a view over the daemon's state, and an edit would
+    paint a value only the display holds — the next refresh
+    throws it away. The cell stays selectable and enabled."""
+    item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
+    return item
 
 
 def state_text(model: WorkspaceRow) -> str:
@@ -190,26 +206,140 @@ class WorkspaceList(QtWidgets.QWidget):
         model in the order the daemon served, the label its own
         column, the marker beside the state word in the status
         one, and the id, image, and created cells beside them.
-        Sorting pauses for the fill and resumes after, so the
-        rebuild cannot re-order rows mid-swap."""
+        An unchanged listing repaints nothing — the TUI
+        listing's own rule (#470 L2) — because a rebuild under a
+        sort moves the row slots while the selection holds its
+        slot, and the highlight would wander off the workspace
+        the operator clicked. A rebuild the listing does need
+        carries the selection by workspace id, so the highlight
+        follows its row wherever the order lands it. Sorting
+        pauses for the fill and resumes after, so the rebuild
+        cannot re-order rows mid-swap."""
+        if self.rows_unchanged(models):
+            return
+        held = self.held_cells()
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(models))
         for index, model in enumerate(models):
+            name = read_only_item(QtWidgets.QTableWidgetItem(model.label))
+            name.setData(ROW_ID_ROLE, model.id)
+            self.table.setItem(index, NAME_COLUMN, name)
             self.table.setItem(
-                index, NAME_COLUMN, QtWidgets.QTableWidgetItem(model.label)
+                index, STATUS_COLUMN, read_only_item(StateItem(model))
             )
-            self.table.setItem(index, STATUS_COLUMN, StateItem(model))
             self.table.setItem(
-                index, ID_COLUMN, QtWidgets.QTableWidgetItem(model.id)
+                index,
+                ID_COLUMN,
+                read_only_item(QtWidgets.QTableWidgetItem(model.id)),
             )
-            self.table.setItem(index, IMAGE_COLUMN, ImageItem(model.image))
+            self.table.setItem(
+                index, IMAGE_COLUMN, read_only_item(ImageItem(model.image))
+            )
             self.table.setItem(
                 index,
                 CREATED_COLUMN,
-                CreatedItem(model),
+                read_only_item(CreatedItem(model)),
             )
         self.table.setSortingEnabled(True)
         self.size_columns()
+        self.restore_cells(held)
+
+    def rows_unchanged(self, models: list[WorkspaceRow]) -> bool:
+        """Whether the table already reads exactly as the models
+        do (#939): same rows, same order, same cells — the image
+        by its whole value, an elided display and all. An
+        unchanged answer this way rebuilds nothing."""
+        if self.table.rowCount() != len(models):
+            return False
+        return all(
+            self.row_unchanged(row, model) for row, model in enumerate(models)
+        )
+
+    def row_unchanged(self, row: int, model: WorkspaceRow) -> bool:
+        """One row's cells against its model (#939): every text
+        cell equal, the image equal by its whole value."""
+        checks = (
+            (NAME_COLUMN, model.label),
+            (STATUS_COLUMN, state_text(model)),
+            (ID_COLUMN, model.id),
+            (CREATED_COLUMN, model.created),
+        )
+        for column, text in checks:
+            item = self.table.item(row, column)
+            if item is None or item.text() != text:
+                return False
+        image = self.table.item(row, IMAGE_COLUMN)
+        return image is not None and image.data(IMAGE_ROLE) == model.image
+
+    def held_cells(self) -> tuple[list[tuple[str, int]], tuple | None]:
+        """What the operator holds on the table (#939): every
+        selected cell and the current one, each as its
+        workspace's id and its column — the form that survives a
+        rebuild. A row with no name item holds nothing."""
+        held = []
+        for index in self.table.selectedIndexes():
+            name = self.table.item(index.row(), NAME_COLUMN)
+            if name is not None:
+                held.append((name.data(ROW_ID_ROLE), index.column()))
+        current = self.table.currentIndex()
+        now = None
+        if current.isValid():
+            name = self.table.item(current.row(), NAME_COLUMN)
+            if name is not None:
+                now = (name.data(ROW_ID_ROLE), current.column())
+        return held, now
+
+    def restore_cells(
+        self, held: tuple[list[tuple[str, int]], tuple | None]
+    ) -> None:
+        """The held cells back on the rebuilt table (#939): each
+        on its workspace's row in its new place, the selection
+        whole and the current cell with it. A workspace the new
+        listing dropped simply loses its hold."""
+        cells, now = held
+        rows = self.row_ids()
+        self.restore_selection(cells, rows)
+        self.restore_current(now, rows)
+
+    def row_ids(self) -> dict[str, int]:
+        """The workspace id per table row (#939): where each
+        hold lands after a rebuild."""
+        return {
+            self.table.item(row, NAME_COLUMN).data(ROW_ID_ROLE): row
+            for row in range(self.table.rowCount())
+        }
+
+    def restore_selection(
+        self, cells: list[tuple[str, int]], rows: dict[str, int]
+    ) -> None:
+        """The held selection back (#939): the whole set at once,
+        so a hold the new listing dropped clears rather than
+        lingers on whatever row landed under its slot."""
+        selection = QtCore.QItemSelection()
+        for workspace, column in cells:
+            row = rows.get(workspace)
+            if row is not None:
+                index = self.table.model().index(row, column)
+                selection.select(index, index)
+        self.table.selectionModel().select(
+            selection,
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+
+    def restore_current(
+        self, now: tuple[str, int] | None, rows: dict[str, int]
+    ) -> None:
+        """The held current cell back (#939): on its workspace's
+        row when the listing still carries it, else gone — not
+        onto whatever row landed under the old slot."""
+        if now is None:
+            return
+        if now[0] in rows:
+            self.table.setCurrentIndex(
+                self.table.model().index(rows[now[0]], now[1])
+            )
+        else:
+            self.table.selectionModel().clearCurrentIndex()
 
     def size_columns(self) -> None:
         """The columns' widths (#939): every column at least as
