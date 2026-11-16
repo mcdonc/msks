@@ -171,8 +171,9 @@ def test_the_scale_knobs_read_the_environment(
     assert app.scale_from_env("MSKS_GUI_TEST_SCALE", 1.5) == 1.25
     monkeypatch.delenv("MSKS_GUI_TEST_SCALE")
     assert app.scale_from_env("MSKS_GUI_TEST_SCALE", 1.5) == 1.5
-    monkeypatch.setenv("MSKS_GUI_TEST_SCALE", "huge")
-    assert app.scale_from_env("MSKS_GUI_TEST_SCALE", 1.5) == 1.5
+    for unusable in ("huge", "nan", "inf", "-inf", "1e999", "0", "-1.5"):
+        monkeypatch.setenv("MSKS_GUI_TEST_SCALE", unusable)
+        assert app.scale_from_env("MSKS_GUI_TEST_SCALE", 1.5) == 1.5, unusable
     # The knobs the window reads, named: a preset value is the
     # operator's own choice (#937's spirit).
     assert app.FONT_SCALE_ENV == "MSKSC_GUI_FONT_SCALE"

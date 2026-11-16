@@ -51,6 +51,11 @@ RANK_ROLE = QtCore.Qt.ItemDataRole.UserRole
 #: column, and the whole value is what the column sorts by.
 IMAGE_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
 
+#: The created cell's sort data (#939): the parsed creation
+#: moment — a header click orders by date, never by the
+#: relative label's spelling.
+CREATED_ROLE = QtCore.Qt.ItemDataRole.UserRole + 2
+
 #: The cell margin the contents sizing pays (#939): the budget
 #: an ellipsized cell's text renders within.
 CELL_MARGIN = 8
@@ -102,6 +107,21 @@ class ImageItem(QtWidgets.QTableWidgetItem):
         return self.data(IMAGE_ROLE) < other.data(IMAGE_ROLE)
 
 
+class CreatedItem(QtWidgets.QTableWidgetItem):
+    """The created cell (#939): the relative label reads, the
+    parsed moment sorts — a header click orders by date, never
+    by the label's spelling (``10mo ago`` sits a year away from
+    ``1y ago`` in text order). A missing stamp reads as the
+    oldest and sinks on the newest-first read."""
+
+    def __init__(self, model: WorkspaceRow) -> None:
+        super().__init__(model.created)
+        self.setData(CREATED_ROLE, model.created_rank)
+
+    def __lt__(self, other: QtWidgets.QTableWidgetItem) -> bool:
+        return self.data(CREATED_ROLE) < other.data(CREATED_ROLE)
+
+
 class WorkspaceList(QtWidgets.QWidget):
     """The main window's central screen (#939): the table of row
     models, a manual refresh button, and the status line a
@@ -150,6 +170,7 @@ class WorkspaceList(QtWidgets.QWidget):
         layout.addLayout(row)
         self.setLayout(layout)
 
+    @QtCore.Slot()
     def refresh(self) -> None:
         """One listing refresh through the bridge (#939) — the
         timer's tick and the button's click share it, and the
@@ -185,7 +206,7 @@ class WorkspaceList(QtWidgets.QWidget):
             self.table.setItem(
                 index,
                 CREATED_COLUMN,
-                QtWidgets.QTableWidgetItem(model.created),
+                CreatedItem(model),
             )
         self.table.setSortingEnabled(True)
         self.size_columns()

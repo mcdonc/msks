@@ -10,6 +10,7 @@ the presenter's row models and refreshes them through the
 bridge.
 """
 
+import math
 import os
 import subprocess
 import sys
@@ -84,14 +85,19 @@ def scale_from_env(name: str, default: float) -> float:
     """The scale the environment names, else the default
     (#939): a presentation knob, not a config gate — a value
     that does not parse as a number reads as the default, and
-    the window opens rather than refusing."""
+    so does one that parses but is not usable (``nan``, an
+    infinity, anything at or under zero), so the window opens
+    rather than refusing."""
     raw = os.environ.get(name)
     if raw is None:
         return default
     try:
-        return float(raw)
+        value = float(raw)
     except ValueError:
         return default
+    if math.isfinite(value) and value > 0:
+        return value
+    return default
 
 
 def gui_session_present() -> bool:

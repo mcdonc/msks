@@ -386,6 +386,55 @@ def test_the_tick_stops_with_the_closed_window(qt) -> None:
     window.close()
 
 
+def test_the_created_sorts_by_date_not_by_label(qt) -> None:
+    """The CREATED column sorts by the parsed moment (#939,
+    #854's rule): the relative labels' text order and their
+    date order disagree — ``1y ago`` sits a year from
+    ``10mo ago`` in text order — and the newest-first read, the
+    natural one, sinks the row with no stamp."""
+    screen, window, _bridge = make_screen(qt)
+    screen.on_succeeded(
+        "workspaces-list",
+        [
+            {
+                "id": "ws-1",
+                "name": "ayear",
+                "status": "stopped",
+                "created_at": "2025-01-15T00:00:00",
+                "mount_issues": [],
+            },
+            {
+                "id": "ws-2",
+                "name": "amonth",
+                "status": "stopped",
+                "created_at": "2025-12-15T00:00:00",
+                "mount_issues": [],
+            },
+            {
+                "id": "ws-3",
+                "name": "today",
+                "status": "stopped",
+                "created_at": "2026-01-04T09:00:00",
+                "mount_issues": [],
+            },
+            {
+                "id": "ws-4",
+                "name": "nostamp",
+                "status": "stopped",
+                "created_at": None,
+                "mount_issues": [],
+            },
+        ],
+    )
+    screen.table.sortItems(4, qt.QtCore.Qt.SortOrder.DescendingOrder)
+    labels = [screen.table.item(row, 0).text() for row in range(4)]
+    assert labels == ["today", "amonth", "ayear", "nostamp"]
+    screen.table.sortItems(4, qt.QtCore.Qt.SortOrder.AscendingOrder)
+    labels = [screen.table.item(row, 0).text() for row in range(4)]
+    assert labels == ["nostamp", "ayear", "amonth", "today"]
+    window.close()
+
+
 def test_the_columns_fit_their_longest_values(qt) -> None:
     """The columns' minimums (#939): every column stands at
     least as wide as its longest value — the header's own label

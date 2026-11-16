@@ -25,7 +25,7 @@ tagged `vX.Y.Z`.
   platform default and its height at 2× the listing's size
   hint; set `MSKSC_GUI_FONT_SCALE` or
   `MSKSC_GUI_HEIGHT_SCALE` to change either (see
-  `docs/cli.md` → the environment variables).
+  `docs/cli.md` → Client environment).
 
 ### Fixed
 

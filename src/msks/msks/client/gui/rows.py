@@ -11,7 +11,7 @@ coverage gate lands on it whole: no widgets, no daemon imports.
 
 from dataclasses import dataclass
 
-from ..ages import created_label
+from ..ages import created_label, parse_stamp
 
 #: The state word's sort order (#938), mirroring the TUI's
 #: ``STATUS_SORT_ORDER`` (#854): the lifecycle order an operator
@@ -48,6 +48,7 @@ class WorkspaceRow:
     id: str
     image: str
     created: str
+    created_rank: float
 
 
 def workspace_label(row: dict) -> str:
@@ -80,6 +81,17 @@ def image_text(row: dict) -> str:
     return row.get("image_ref") or row.get("image_hash") or "-"
 
 
+def created_sort_key(created_at: str | None) -> float:
+    """The CREATED column's sort key (#854's rule, the GUI's
+    read): the parsed creation timestamp — never the relative
+    label, whose text order and date order disagree. A stamp
+    that is missing or does not parse reads as the oldest, so
+    it sinks on the newest-first read, the TUI's own standing
+    order."""
+    stamp = parse_stamp(created_at) if created_at else None
+    return stamp.timestamp() if stamp is not None else 0.0
+
+
 def workspace_row(row: dict) -> WorkspaceRow:
     """One daemon row as its row model (#938): the label, the
     state word with its rank, the marker, and the id, image, and
@@ -93,6 +105,7 @@ def workspace_row(row: dict) -> WorkspaceRow:
         id=row["id"],
         image=image_text(row),
         created=created_label(row.get("created_at")),
+        created_rank=created_sort_key(row.get("created_at")),
     )
 
 

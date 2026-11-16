@@ -86,6 +86,7 @@ def test_the_model_carries_what_the_widget_renders() -> None:
         id=WS,
         image="debian:13.6",
         created="2d ago",
+        created_rank=gui_rows.created_sort_key("2026-01-02T03:04:05"),
     )
 
 
@@ -133,6 +134,23 @@ def test_the_created_reads_the_shared_ladder() -> None:
     assert fresh.created == "today"
     missing = gui_rows.workspace_row(daemon_row(created_at=None))
     assert missing.created == "-"
+
+
+def test_the_created_sort_key_reads_the_moment() -> None:
+    """The CREATED column's sort key (#939, #854's rule): the
+    parsed moment, never the relative label — the labels'
+    text order and date order disagree — with a missing or
+    unparseable stamp reading as the oldest."""
+    assert gui_rows.created_sort_key(None) == 0.0
+    assert gui_rows.created_sort_key("not a stamp") == 0.0
+    assert gui_rows.created_sort_key("") == 0.0
+    older = gui_rows.created_sort_key("2025-01-15T00:00:00")
+    newer = gui_rows.created_sort_key("2026-01-04T09:00:00")
+    assert 0.0 < older < newer
+    model = gui_rows.workspace_row(daemon_row())
+    assert model.created_rank == gui_rows.created_sort_key(
+        "2026-01-02T03:04:05"
+    )
 
 
 def test_the_state_ranks_in_the_lifecycle_order() -> None:
