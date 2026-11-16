@@ -811,6 +811,33 @@ def test_the_actions_follow_the_hold(qt) -> None:
     window.close()
 
 
+def test_the_action_slots_stand_guard(qt) -> None:
+    """The action slots guard their own gate (#940): a call with
+    no workspace held sends nothing, a second action while a
+    flight is out sends nothing, and a hold on a row with no
+    name item reads as no hold. The buttons carry the same gates
+    for clicks; the slots carry them for whatever calls a slot —
+    a keyboard shortcut later, a test today."""
+    screen, window, bridge = make_screen(qt)
+    screen.table.clearSelection()
+    screen.table.selectionModel().clearCurrentIndex()
+    bridge.calls.clear()
+    screen.start_selected()  # nothing held
+    screen.stop_selected()
+    assert bridge.calls == []
+    select_cell(qt, screen, 0, 1)
+    screen.start_button.click()  # the flight opens
+    bridge.calls.clear()
+    screen.stop_selected()  # the flight holds the gate
+    screen.start_selected()
+    assert bridge.calls == []
+    # A selected row whose name item is gone holds nothing.
+    screen.on_succeeded("workspaces-start", {})  # land the flight
+    screen.table.setItem(0, qt.screen_mod.NAME_COLUMN, None)
+    assert screen.held_workspace() is None
+    window.close()
+
+
 def test_the_grid_shows_no_vertical_dividers(qt) -> None:
     """No vertical dividers between cells (#939): the grid goes
     off whole, and the row's own bottom rule — the palette's
