@@ -214,7 +214,21 @@ def test_the_gui_window_opens_offscreen(
     )
     default_size = qapp.font().pointSizeF()
 
-    monkeypatch.setattr(QtWidgets.QApplication, "exec", lambda self: 0)
+    # The shown window outlives run() only inside Qt: the local
+    # goes with the frame, and a parentless widget is
+    # Python-owned — the exec stand-in records it while it
+    # lives, for the opening-size pin below.
+    opened: dict[str, object] = {}
+
+    def record_and_exit(self: QtWidgets.QApplication) -> int:
+        opened["windows"] = [
+            widget
+            for widget in self.topLevelWidgets()
+            if isinstance(widget, QtWidgets.QMainWindow)
+        ]
+        return 0
+
+    monkeypatch.setattr(QtWidgets.QApplication, "exec", record_and_exit)
     assert app.run() == 0
     qapp = QtWidgets.QApplication.instance()
     assert qapp is not None
@@ -223,6 +237,15 @@ def test_the_gui_window_opens_offscreen(
     # write on the application font before any widget built.
     assert qapp.font().pointSizeF() == pytest.approx(
         default_size * app.FONT_SCALE
+    )
+    # The opening height (#939): the screen's own size hint
+    # doubled, the width the hint's own — the window opens on a
+    # listing that out-talls the shell around it.
+    windows = opened["windows"]
+    assert len(windows) == 1
+    screen = windows[0].centralWidget()
+    assert windows[0].height() == round(
+        screen.sizeHint().height() * app.HEIGHT_SCALE
     )
     # The style pin (#937): whatever the session would name, the
     # window runs Fusion — the wheel ships it inside QtWidgets,
@@ -289,12 +312,31 @@ def test_open_window_reuses_an_existing_app(
         def connect(self, slot: object) -> None:
             stops.append(slot)
 
+    class FakeSize:
+        """The window size's shape for the opening-size pin
+        (#939): the Qt calls the window path makes."""
+
+        def width(self) -> int:
+            return 640
+
+        def height(self) -> int:
+            return 480
+
     class FakeWindow:
         def setWindowTitle(self, title: str) -> None:
             shown.append(title)
 
         def setCentralWidget(self, widget: object) -> None:
             central.append(widget)
+
+        def adjustSize(self) -> None:
+            pass  # the fake already carries its opening size
+
+        def size(self) -> FakeSize:
+            return FakeSize()
+
+        def resize(self, width: int, height: int) -> None:
+            shown.append(f"sized {width}x{height}")
 
         def show(self) -> None:
             shown.append("shown")
@@ -366,6 +408,9 @@ def test_open_window_reuses_an_existing_app(
     # The font scale (#939): the default 9pt doubles to 18 —
     # one write on the application font, before any widget.
     assert "font 18.0" in shown
+    # The opening size (#939): the width the layout named, the
+    # height doubled.
+    assert "sized 640x960" in shown
     # The override landed before the constructor could consult
     # the session theme.
     assert os.environ["QT_STYLE_OVERRIDE"] == "Fusion"
@@ -407,8 +452,24 @@ def test_open_window_keeps_a_user_style_choice(
         def setCentralWidget(self, widget: object) -> None:
             central.append(widget)
 
+        def adjustSize(self) -> None:
+            pass
+
+        def size(self) -> FakeSize:
+            return FakeSize()
+
+        def resize(self, width: int, height: int) -> None:
+            pass
+
         def show(self) -> None:
             pass
+
+    class FakeSize:
+        def width(self) -> int:
+            return 640
+
+        def height(self) -> int:
+            return 480
 
     class FakeScreen:
         def __init__(self, bridge: object) -> None:

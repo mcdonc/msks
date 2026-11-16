@@ -65,6 +65,13 @@ FUSION_STYLE = "Fusion"
 #: before the first widget reads it.
 FONT_SCALE = 2.0
 
+#: The window's opening height scale (#939): a main window
+#: shrinks to its central widget's size hint when it shows, and
+#: the empty listing's hint alone leaves the window short. The
+#: window opens at the layout's own height doubled, its width
+#: the layout's own.
+HEIGHT_SCALE = 2.0
+
 
 def gui_session_present() -> bool:
     """Whether this macOS user owns a GUI login session: the
@@ -185,6 +192,13 @@ def open_window(QtWidgets: ModuleType) -> int:
     from .workspaces import WorkspaceList
 
     window.setCentralWidget(WorkspaceList(bridge))
+    # The opening size (#939): ``adjustSize`` pins the central
+    # widget's size hint as the window's own geometry before
+    # the show shrinks to it, and the resize doubles the height
+    # — the listing's hint alone opens short.
+    window.adjustSize()
+    size = window.size()
+    window.resize(size.width(), round(size.height() * HEIGHT_SCALE))
     window.show()
     code = app.exec()
     bridge.stop()
