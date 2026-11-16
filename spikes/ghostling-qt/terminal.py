@@ -892,20 +892,25 @@ class TerminalWidget(QWidget):
                     ctypes.byref(selection),
                 )
             elif kind == ghostty.SEL_RELEASE:
-                dragged = ctypes.c_bool()
-                ok = lib.selection_gesture_get(
-                    self.selection_gesture,
-                    self.terminal,
-                    ghostty.SEL_DATA_DRAGGED,
-                    ctypes.byref(dragged),
-                )
-                if ok == ghostty.SUCCESS and not dragged.value:
-                    # A click without a drag clears the selection.
-                    lib.terminal_set(
-                        self.terminal, ghostty.OPT_SELECTION, None
-                    )
-                else:
+                if self._press_count >= 2:
+                    # Word and line selections bypassed the gesture, so
+                    # its dragged flag knows nothing; keep them.
                     self._publish_primary()
+                else:
+                    dragged = ctypes.c_bool()
+                    ok = lib.selection_gesture_get(
+                        self.selection_gesture,
+                        self.terminal,
+                        ghostty.SEL_DATA_DRAGGED,
+                        ctypes.byref(dragged),
+                    )
+                    if ok == ghostty.SUCCESS and not dragged.value:
+                        # A click without a drag clears the selection.
+                        lib.terminal_set(
+                            self.terminal, ghostty.OPT_SELECTION, None
+                        )
+                    else:
+                        self._publish_primary()
             if kind in (ghostty.SEL_DRAG, ghostty.SEL_RELEASE):
                 self.refresh()
         finally:
