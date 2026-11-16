@@ -8,6 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI workspace detail page (#945).** Opening a row in the
+  workspace list — a double-click or Enter on it — swaps to that
+  workspace's page: the mounts with their derived state and
+  next-start note, the daemon's health facts, and the recent
+  events, refreshed on the listing's own cadence plus a manual
+  button. A failed refresh flashes while the page keeps its
+  content; Back (or Escape) returns to the list, and a
+  workspace another surface deleted closes its page behind a
+  notice.
 - **The GUI start and stop actions (#940).** The workspace
   list's Start and Stop buttons act on the selected workspace
   over the same bridge the refresh uses; Stop asks for
