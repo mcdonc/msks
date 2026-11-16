@@ -213,7 +213,7 @@ def test_the_sections_compose() -> None:
     assert model.mounts[0].state == detail_mod.SKIPPED
     assert model.pending_note == detail_mod.PENDING_NOTE
     assert model.health[0] == ("status", "ok")
-    assert len(model.events) == 3
+    assert len(model.events) == 5
     nameless = detail_mod.detail_sections(
         daemon_row(name=None, mounts=[]), None, []
     )
