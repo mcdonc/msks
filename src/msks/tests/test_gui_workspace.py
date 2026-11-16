@@ -307,7 +307,7 @@ def test_back_returns_to_the_list(qt) -> None:
     back = next(
         button
         for button in page.findChildren(qt.QtWidgets.QPushButton)
-        if button.text() == "Back"
+        if button.accessibleName() == "Back"
     )
     back.click()
     assert shell.currentWidget() is shell.listing

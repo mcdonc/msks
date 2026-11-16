@@ -39,6 +39,13 @@ HEALTH_KEY = "detail-health"
 #: between renders without growing without bound.
 FRAMES_BUFFER = 100
 
+#: The back arrow's size, pixels (#945): the theme's own
+#: left-pointing arrow drawn large against the row's text —
+#: the window's fonts run one and a half times the platform
+#: default (#939), and a small glyph reads as decoration, not
+#: a control.
+BACK_ICON_PX = 24
+
 #: The mounts table's columns (#945), in display order — the
 #: entry's own fields, the state beside the reason the gate
 #: named.
@@ -187,10 +194,20 @@ class WorkspaceDetail(QtWidgets.QWidget):
 
     def build_chrome(self) -> None:
         """The page's controls at the window's top (#945): back
-        to the list, the manual refresh, and the status line a
-        failed refresh flashes — the same top row the listing's
-        own actions sit in."""
-        back_button = QtWidgets.QPushButton("Back", self)
+        to the list — the theme's own left-pointing arrow, drawn
+        large, its tooltip and accessible name carrying the word
+        — the manual refresh, and the status line a failed
+        refresh flashes, the same top row the listing's own
+        actions sit in."""
+        back_button = QtWidgets.QPushButton(self)
+        back_button.setIcon(
+            self.style().standardIcon(
+                QtWidgets.QStyle.StandardPixmap.SP_ArrowBack
+            )
+        )
+        back_button.setIconSize(QtCore.QSize(BACK_ICON_PX, BACK_ICON_PX))
+        back_button.setToolTip("Back to the workspace list")
+        back_button.setAccessibleName("Back")
         back_button.clicked.connect(self.go_back)
         self.back_button = back_button
         refresh_button = QtWidgets.QPushButton("Refresh", self)
