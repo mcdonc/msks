@@ -148,11 +148,16 @@ class PtySession:
                 self.reap()
             if self.child_pid is not None:
                 try:
-                    os.kill(self.child_pid, signal.SIGKILL)
-                except ProcessLookupError:
+                    # Escalate on the process group: the forkpty child
+                    # leads its own group, and grandchildren that trapped
+                    # HUP would survive a direct-child kill.
+                    os.killpg(os.getpgid(self.child_pid), signal.SIGKILL)
+                except ProcessLookupError, PermissionError:
                     pass
                 try:
-                    os.waitpid(self.child_pid, 0)
+                    _, status = os.waitpid(self.child_pid, 0)
+                    if os.WIFSIGNALED(status):
+                        self.exit_status = 128 + os.WTERMSIG(status)
                 except ChildProcessError:
                     pass
                 self.child_pid = None

@@ -1045,7 +1045,7 @@ class TerminalWidget(QWidget):
             return False
         if url.startswith("www."):
             url = "https://" + url
-        if not url.startswith(("http://", "https://", "ftp://")):
+        if not url.lower().startswith(("http://", "https://", "ftp://")):
             return False
         QDesktopServices.openUrl(QUrl(url))
         return True

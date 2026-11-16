@@ -141,7 +141,13 @@ def test_digit_keys() -> None:
 
     for digit in "0123456789":
         code = 48 + int(digit)
-        assert _QT_KEYS.get(code) is not None, f"key {digit} unmapped"
+        mapped = _QT_KEYS.get(code)
+        assert mapped is not None, f"key {digit} unmapped"
+        import ghostty as _ghostty
+
+        assert mapped == _ghostty.KEY[f"DIGIT_{digit}"], (
+            f"key {digit} maps to {mapped}"
+        )
     assert all(_QT_KEYS.get(code) is None for code in range(0, 10))
     print("keys: digit codes mapped at 48-57")
 
