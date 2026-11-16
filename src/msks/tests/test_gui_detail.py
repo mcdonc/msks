@@ -58,6 +58,17 @@ def frames() -> list[dict]:
             },
         },
         {"event": "workspace.status", "data": {"id": WS, "status": "running"}},
+        # The stream's second id convention: the consent frames.
+        {
+            "event": "egress.request",
+            "data": {"workspace_id": WS, "host": "example.com", "port": 443},
+        },
+        # A payload family the section keeps: the line reads the
+        # payload, not the name alone.
+        {
+            "event": "proxy.failed",
+            "data": {"id": WS, "listen_port": 8080, "reason": "refused"},
+        },
     ]
 
 
@@ -155,20 +166,33 @@ def test_the_events_section_reads_the_workspace_tail() -> None:
         "workspace.status",
         "mount.skipped",
         "workspace.status",
+        "egress.request",  # named under the second convention
+        "proxy.failed",
     ]
     assert [entry.line for entry in events] == [
         "status starting",
         "/mnt/gone skipped",
         "status running",
+        "egress.request host=example.com port=443",
+        "proxy.failed listen_port=8080 reason=refused",
     ]
-    # The tail keeps its limit, and unknown streams read their
-    # name.
-    many = frames() + [{"event": "something.else", "data": {"id": WS, "n": 1}}]
+    # The tail keeps its limit; an empty payload reads the name
+    # alone, and another workspace stays out under either id
+    # convention.
+    many = frames() + [{"event": "bare.tap", "data": {"id": WS}}]
     trimmed = detail_mod.event_entries(many, WS, limit=3)
     assert len(trimmed) == 3
     assert trimmed[-1] == detail_mod.EventEntry(
-        kind="something.else", line="something.else"
+        kind="bare.tap", line="bare.tap"
     )
+    other = [
+        {"event": "workspace.status", "data": {"id": "ws-b", "status": "up"}},
+        {
+            "event": "egress.request",
+            "data": {"workspace_id": "ws-b", "host": "x", "port": 1},
+        },
+    ]
+    assert detail_mod.event_entries(other, WS) == ()
 
 
 def test_the_sections_compose() -> None:
@@ -184,6 +208,7 @@ def test_the_sections_compose() -> None:
         mounts_pending=True,
     )
     model = detail_mod.detail_sections(row, {"status": "ok"}, frames())
+    assert model.id == WS  # the key every action calls
     assert model.label == "alpha"
     assert model.mounts[0].state == detail_mod.SKIPPED
     assert model.pending_note == detail_mod.PENDING_NOTE

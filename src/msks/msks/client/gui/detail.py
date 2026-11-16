@@ -130,18 +130,15 @@ def pending_note(row: dict) -> str | None:
 
 def health_pairs(doc: dict | None) -> tuple[tuple[str, str], ...]:
     """The health section (#944): the daemon's health doc as
-    label/value facts — its status, version, machine, and image —
-    the same doc the client's tree reads for the version-skew
-    notice. No doc yet reads as an empty section."""
+    label/value facts — its status, version, machine, and image,
+    each reading the honest dash when the doc carries nothing.
+    The doc's fastapi field is plumbing, not an operator fact,
+    and stays off the section. No doc yet reads as an empty
+    section."""
     if not doc:
         return ()
-    facts = []
-    for key in ("status", "version", "machine"):
-        if doc.get(key) is not None:
-            facts.append((key, str(doc[key])))
-    image = doc.get("image")
-    facts.append(("image", image if image else "-"))
-    return tuple(facts)
+    keys = ("status", "version", "machine", "image")
+    return tuple((key, str(doc.get(key) or "-")) for key in keys)
 
 
 def event_line(frame: dict) -> str:
@@ -155,7 +152,7 @@ def event_line(frame: dict) -> str:
         return f"status {data.get('status', '?')}"
     if kind.startswith("mount."):
         return mount_event_line(kind, data)
-    return kind
+    return payload_line(kind, data)
 
 
 def mount_event_line(kind: str, data: dict) -> str:
@@ -163,6 +160,19 @@ def mount_event_line(kind: str, data: dict) -> str:
     names beside the skip's kind."""
     guest = data.get("guest") or "?"
     return f"{guest} {kind.partition('.')[2]}"
+
+
+def payload_line(kind: str, data: dict) -> str:
+    """A kept frame's generic line (#944): the stream name with
+    its payload's fields as ``key=value`` pairs, the id fields
+    the filter matched on left out — a family the section keeps
+    reads what its payload names, not its name alone."""
+    fields = " ".join(
+        f"{key}={value}"
+        for key, value in sorted(data.items())
+        if key not in ("id", "workspace_id")
+    )
+    return f"{kind} {fields}".rstrip()
 
 
 def event_entries(
