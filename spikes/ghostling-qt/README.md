@@ -104,8 +104,9 @@ The library is found through `GHOSTTY_VT_LIB` if set, then
   mouse for the drag and a timer scrolls on overshoot). A finished
   drag publishes its text to the PRIMARY selection, and middle-click
   pastes it back — the X11 select-then-middle-click convention.
-  Remaining selection gaps: double-click word selection and
-  clipboard OSC 52. No Kitty graphics, no scrollbar dragging, no
+  Double-click selects the word under the cursor through the
+  library's word selector. Remaining selection gap: clipboard
+  OSC 52. No Kitty graphics, no scrollbar dragging, no
   numpad-specific keys, no ligatures.
 - The XTVERSION effect is not registered: ctypes cannot return a
   16-byte struct from a callback, so `CSI > q` goes unanswered.

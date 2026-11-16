@@ -306,6 +306,18 @@ class SelectionFormatOptions(ctypes.Structure):
     ]
 
 
+class SelectWordOptions(ctypes.Structure):
+    """Word-selection request; null boundary codepoints mean the
+    library's defaults."""
+
+    _fields_ = [
+        ("size", ctypes.c_size_t),
+        ("ref", GridRef),
+        ("boundary_codepoints", ctypes.POINTER(ctypes.c_uint32)),
+        ("boundary_codepoints_len", ctypes.c_size_t),
+    ]
+
+
 class PointCoordinate(ctypes.Structure):
     _fields_ = [("x", ctypes.c_uint16), ("y", ctypes.c_uint32)]
 
@@ -594,6 +606,13 @@ class Lib:
             ctypes.c_char_p,
             sz,
             ctypes.POINTER(sz),
+        )
+        self.terminal_select_word = self._fn(
+            "ghostty_terminal_select_word",
+            r,
+            v,
+            ctypes.POINTER(SelectWordOptions),
+            ctypes.POINTER(Selection),
         )
         self.build_info = self._fn("ghostty_build_info", r, i, v)
 

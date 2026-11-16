@@ -341,6 +341,8 @@ class TerminalWidget(QWidget):
         self._sel_dragged = False
         self._wheel_accum = 0
         self._drag_position = QPointF(0, 0)
+        self._last_press_ms = 0
+        self._last_press_cell: tuple[int, int] | None = None
         # Autoscroll while a selection drag overshoots the top or
         # bottom edge: a timer scrolls the viewport and re-sends the
         # drag gesture at the clamped position, and the grid-anchored
@@ -700,6 +702,49 @@ class TerminalWidget(QWidget):
         row = max(0, min(self.rows - 1, int(position.y()) // self.cell_height))
         return col, row
 
+    def _select_word_at(self, position: QPointF) -> None:
+        """Double-click: select the word under the cursor through the
+        library's word selector, and apply it as the selection."""
+        lib = self.lib
+        col, row = self._cell_at(position)
+        point = ghostty.Point(
+            tag=ghostty.POINT_VIEWPORT,
+            value=ghostty.PointValue(
+                coordinate=ghostty.PointCoordinate(x=col, y=row)
+            ),
+        )
+        ref = ghostty.GridRef()
+        ref.size = ctypes.sizeof(ref)
+        if (
+            lib.terminal_grid_ref(
+                self.terminal,
+                point,
+                ctypes.byref(ref),
+            )
+            != ghostty.SUCCESS
+        ):
+            return
+        options = ghostty.SelectWordOptions(
+            size=ctypes.sizeof(ghostty.SelectWordOptions), ref=ref
+        )
+        selection = ghostty.Selection()
+        selection.size = ctypes.sizeof(selection)
+        if (
+            lib.terminal_select_word(
+                self.terminal,
+                ctypes.byref(options),
+                ctypes.byref(selection),
+            )
+            == ghostty.SUCCESS
+        ):
+            lib.terminal_set(
+                self.terminal,
+                ghostty.OPT_SELECTION,
+                ctypes.byref(selection),
+            )
+            self._sel_dragged = True
+            self.refresh()
+
     def _autoscroll_tick(self) -> None:
         """Scroll while the drag position overshoots an edge, then
         extend the selection into the revealed rows."""
@@ -1012,12 +1057,23 @@ class TerminalWidget(QWidget):
             event.button() == Qt.MouseButton.LeftButton
             and not self._mouse_tracking()
         ):
+            now = event.timestamp()
+            cell = self._cell_at(event.position())
+            is_double = (
+                now - self._last_press_ms <= 400
+                and cell == self._last_press_cell
+            )
+            self._last_press_ms = now
+            self._last_press_cell = cell
             self._sel_dragged = False
             self._drag_position = event.position()
             # Keep receiving moves outside the widget so a drag that
             # overshoots an edge keeps autoscrolling.
             self.grabMouse()
             self._autoscroll.start()
+            if is_double:
+                self._select_word_at(event.position())
+                return
             self._selection_gesture(ghostty.SEL_PRESS, event.position())
         self._send_mouse(
             ghostty.MOUSE_PRESS,

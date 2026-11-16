@@ -339,6 +339,14 @@ def test_widget() -> None:
                 failures.append(f"middle-click paste sent {sent!r}")
             else:
                 print("paste: middle-click pastes PRIMARY")
+            # Double-click word selection through the library's word
+            # selector.
+            widget._select_word_at(QPointF(cw * 3.5, ch * (widget.rows - 1.5)))
+            word = widget._selection_text()
+            if "filler" not in word.split():
+                failures.append(f"word selection was {word!r}")
+            else:
+                print(f"selection: double-click word ({word.strip()!r})")
         except Exception as exc:  # noqa: BLE001 - report and stop
             failures.append(f"widget check raised: {exc}")
         finally:
