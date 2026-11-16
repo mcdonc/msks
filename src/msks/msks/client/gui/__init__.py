@@ -6,9 +6,10 @@ transport (:mod:`.data`, PySide6-free), the workspace list's
 presenter (:mod:`.rows`, phase 3 of #924 — plain row models,
 PySide6-free), and the workspace detail view's presenter
 (:mod:`.detail`, phase 4 — plain section models,
-PySide6-free). The screen widget
-(:mod:`.workspaces`, #939) and the asyncio worker
-(:mod:`.bridge`) are pinned by nothing here — both import the
+PySide6-free). The screen widgets
+(:mod:`.workspaces`, #939 — the list; :mod:`.workspace`, #945
+— the detail page and the shell that swaps the two) and the
+asyncio worker (:mod:`.bridge`) are pinned by nothing here — both import the
 Qt binding at module scope, and this package's own init runs
 at CLI parse time on every command (``wscommands`` imports
 ``.app`` through it), so pinning either would break a base

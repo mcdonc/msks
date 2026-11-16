@@ -260,7 +260,8 @@ def open_window(QtWidgets: ModuleType) -> int:
     bridge (phase 2 of #924): started with the window, stopped
     on close — ``aboutToQuit`` first, then the return path, both
     through the idempotent stop — and opens on the workspace
-    list (#939): the screen is the central widget the bridge's
+    screens (#939, #945): the shell — the list and the detail
+    page over one bridge — is the central widget the bridge's
     answers land on.
     """
     # allow-deferred-import — the bridge brings PySide6 with it
@@ -303,9 +304,9 @@ def open_window(QtWidgets: ModuleType) -> int:
     # path loads it after the guards — the same reachability
     # the gate counts, and the stub tests patch the name off
     # the module.
-    from .workspaces import WorkspaceList
+    from .workspace import WorkspaceShell
 
-    window.setCentralWidget(WorkspaceList(bridge))
+    window.setCentralWidget(WorkspaceShell(bridge))
     # The opening geometry (#939): the last-closed rect wins —
     # a saved geometry the screens still show — and the fixed
     # 1280 by 720 is the first-open shape until a close

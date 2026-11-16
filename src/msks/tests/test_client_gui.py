@@ -423,7 +423,7 @@ def test_open_window_reuses_an_existing_app(
     would."""
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("the gui extra is not installed on this host")
-    from msks.client.gui import workspaces as workspaces_mod
+    from msks.client.gui import workspace as workspace_mod
     from msks.client.gui.bridge import Bridge
 
     shown: list[str] = []
@@ -469,14 +469,15 @@ def test_open_window_reuses_an_existing_app(
             shown.append("shown")
 
     class FakeScreen:
-        """The screen the window opens on (#939): the stub the
-        window path takes for the real widget, recording the
-        bridge it was built over."""
+        """The shell the window opens on (#945): the stub the
+        window path takes for the real widget — the list and
+        the detail page's stack — recording the bridge it was
+        built over."""
 
         def __init__(self, bridge: object) -> None:
             built.append(bridge)
 
-    monkeypatch.setattr(workspaces_mod, "WorkspaceList", FakeScreen)
+    monkeypatch.setattr(workspace_mod, "WorkspaceShell", FakeScreen)
 
     class FakeFont:
         """The app font's shape for the scale pin (#939): a point
@@ -572,7 +573,7 @@ def test_open_window_keeps_a_user_style_choice(
     with the choice preset in the swapped-out environment."""
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("the gui extra is not installed on this host")
-    from msks.client.gui import workspaces as workspaces_mod
+    from msks.client.gui import workspace as workspace_mod
     from msks.client.gui.bridge import Bridge
 
     styles: list[str] = []
@@ -614,7 +615,7 @@ def test_open_window_keeps_a_user_style_choice(
         def __init__(self, bridge: object) -> None:
             pass
 
-    monkeypatch.setattr(workspaces_mod, "WorkspaceList", FakeScreen)
+    monkeypatch.setattr(workspace_mod, "WorkspaceShell", FakeScreen)
 
     class FakeApp:
         aboutToQuit = FakeSignal()
