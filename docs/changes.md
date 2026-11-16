@@ -8,6 +8,24 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI start and stop actions (#940).** The workspace
+  list's Start and Stop buttons act on the selected workspace
+  over the same bridge the refresh uses; Stop asks for
+  confirmation, with No as the default, and a refusal sends
+  nothing to the daemon. The list refreshes when an action
+  finishes, flashing the outcome the daemon's answer carries; a
+- **The GUI start and stop actions (#940).** The workspace
+  list's Start and Stop buttons act on the selected workspace
+  over the same bridge the refresh uses; Stop asks for
+  confirmation, with No as the default, and a refusal sends
+  nothing to the daemon. The list refreshes when an action
+  finishes, flashing the outcome the daemon's answer carries; a
+  failed action flashes the status line and the rows stand. A
+  selectable detail line at the listing's bottom follows the
+  selection: the held workspace's identity, posture, and costs
+  on one `·`-separated row (id, image, cpu, memory, egress
+  mode, the mounts and pending markers, and the storage cost
+  the capacity report charges).
 - **`msks gui` (#928).** The desktop GUI client opens its
   phase-1 window shell on Linux and macOS: a PySide6 front end
   over the daemon's REST API, with the workspace screens to

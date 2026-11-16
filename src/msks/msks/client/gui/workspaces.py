@@ -20,7 +20,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..data import RestFailure
 from .bridge import Bridge
-from .rows import WorkspaceRow, workspace_rows
+from .rows import WorkspaceRow, detail_text, workspace_rows
 
 #: The standing refresh cadence (#939), milliseconds — the TUI's
 #: own listing interval (#470 L2, five seconds): the list reloads
@@ -32,6 +32,16 @@ REFRESH_MS = 5000
 #: screen answers only its own key, whatever else shares the
 #: bridge.
 LIST_KEY = "workspaces-list"
+
+#: The action calls' keys (#940): start and stop on the
+#: selection, each its own flight.
+START_KEY = "workspaces-start"
+STOP_KEY = "workspaces-stop"
+
+#: The capacity report's key (#849, the GUI's read): the detail
+#: strip's storage figure, fetched beside the rows and cached
+#: between listings.
+STORAGE_KEY = "workspaces-storage"
 
 #: How long a flashed refusal stays on the status line,
 #: milliseconds — long enough to read, gone before it reads as
@@ -85,6 +95,37 @@ def read_only_item(
     throws it away. The cell stays selectable and enabled."""
     item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
     return item
+
+
+def action_reply_text(label: str, reply: object) -> str:
+    """The action's own flash (#940, the TUI's #776 mask): the
+    workspace's label beside the status the daemon's answer
+    carries — the outcome shows the moment the action lands,
+    whatever the next listing flight does. An answer without a
+    readable status still names its workspace."""
+    status = reply.get("status") if isinstance(reply, dict) else None
+    return f"{label} {status}" if status else label
+
+
+def cost_of(ws: dict) -> int | None:
+    """One report entry's root-plus-home cost (#849), or None
+    for an entry that predates the per-row fields."""
+    if "root_bytes" not in ws or "home_bytes" not in ws:
+        return None
+    return ws["root_bytes"] + ws["home_bytes"]
+
+
+def workspace_costs(report: dict) -> dict[str, int]:
+    """The capacity report's per-workspace costs (#849): the
+    root-plus-home bytes, keyed by id. An entry that predates
+    the per-row fields reads as nothing, so the standing figures
+    keep until a fuller report lands."""
+    costs: dict[str, int] = {}
+    for ws in report.get("workspaces") or []:
+        cost = cost_of(ws)
+        if cost is not None and "id" in ws:
+            costs[ws["id"]] = cost
+    return costs
 
 
 def state_text(model: WorkspaceRow) -> str:
@@ -211,15 +252,50 @@ class WorkspaceList(QtWidgets.QWidget):
         self.table.viewport().installEventFilter(self)
         self.refresh_button = QtWidgets.QPushButton("Refresh", self)
         self.refresh_button.clicked.connect(self.refresh)
+        # The actions on the selection (#940): start and stop,
+        # enabled while a workspace is held and no action flight
+        # is out. The flight remembers its target — the flash
+        # names it whatever the listing does meanwhile.
+        self.action_pending = False
+        self.action_flight: tuple[str, str] | None = None
+        self.start_button = QtWidgets.QPushButton("Start", self)
+        self.start_button.clicked.connect(self.start_selected)
+        self.stop_button = QtWidgets.QPushButton("Stop", self)
+        self.stop_button.clicked.connect(self.stop_selected)
+        self.table.selectionModel().selectionChanged.connect(self.sync_actions)
         self.status = QtWidgets.QLabel("", self)
+        self.flash_outage = False  # the standing flash's kind
+        # The detail strip (#849's shape, #940's GUI read): the
+        # held row's quick facts on one line at the listing's
+        # bottom. Every fact but storage reads the row models
+        # the fill keeps; storage reads the cached capacity
+        # report, fetched beside the rows.
+        self.rows_by_id: dict[str, WorkspaceRow] = {}
+        self.storage_used: dict[str, int] = {}
+        self.storage_pending = False
+        self.detail = QtWidgets.QLabel("", self)
+        self.detail.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        # A long row clips in place: the strip's width follows
+        # the window's, never the text's — a wide digest cannot
+        # widen the window under the listing.
+        self.detail.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        self.sync_actions()
         self.timer = QtCore.QTimer(self)
         self.timer.setInterval(REFRESH_MS)
         self.timer.timeout.connect(self.refresh)
         row = QtWidgets.QHBoxLayout()
+        row.addWidget(self.start_button)
+        row.addWidget(self.stop_button)
         row.addWidget(self.refresh_button)
         row.addWidget(self.status, stretch=1)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.table)
+        layout.addWidget(self.detail)
         layout.addLayout(row)
         self.setLayout(layout)
 
@@ -253,6 +329,13 @@ class WorkspaceList(QtWidgets.QWidget):
         rows a listing ever shows hold the first row. Sorting
         pauses for the fill and resumes after, so the rebuild
         cannot re-order rows mid-swap."""
+        # The model map and the strip refresh on every answer
+        # (#940): the unchanged-listing skip spares the table's
+        # rebuild, not the strip's facts — a change the five
+        # displayed cells cannot show (a sizes edit's pending
+        # count, a cpu change) still reads on the next line.
+        self.rows_by_id = {model.id: model for model in models}
+        self.update_detail()
         if self.rows_unchanged(models):
             return
         was_empty = self.table.rowCount() == 0
@@ -260,37 +343,47 @@ class WorkspaceList(QtWidgets.QWidget):
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(models))
         for index, model in enumerate(models):
-            name = read_only_item(QtWidgets.QTableWidgetItem(model.label))
-            name.setData(ROW_ID_ROLE, model.id)
-            self.table.setItem(index, NAME_COLUMN, name)
-            self.table.setItem(
-                index, STATUS_COLUMN, read_only_item(StateItem(model))
-            )
-            self.table.setItem(
-                index,
-                ID_COLUMN,
-                read_only_item(QtWidgets.QTableWidgetItem(model.id)),
-            )
-            self.table.setItem(
-                index, IMAGE_COLUMN, read_only_item(ImageItem(model.image))
-            )
-            self.table.setItem(
-                index,
-                CREATED_COLUMN,
-                read_only_item(CreatedItem(model)),
-            )
+            self.fill_row(index, model)
         self.table.setSortingEnabled(True)
         self.size_columns()
+        self.settle_hold(was_empty, held)
+
+    def settle_hold(
+        self, was_empty: bool, held: tuple[set[str], tuple | None]
+    ) -> None:
+        """The hold after a rebuild (#939): the first rows a
+        listing ever shows hold the first row — the standing
+        sort puts the newest workspace there, the one a create
+        just made, so the keyboard and the eye start somewhere.
+        Later answers carry the operator's hold by workspace id
+        instead, moving nothing already held."""
         if was_empty and self.table.rowCount() > 0:
-            # The first rows hold the first row (#939): the
-            # standing sort puts the newest workspace there —
-            # the one a create just made — so the keyboard and
-            # the eye start somewhere. Later answers move
-            # nothing the operator already holds.
             first = self.table.item(0, NAME_COLUMN).data(ROW_ID_ROLE)
             self.restore_rows(({first}, (first, NAME_COLUMN)))
         else:
             self.restore_rows(held)
+
+    def fill_row(self, index: int, model: WorkspaceRow) -> None:
+        """One row's five cells (#939, #940): read-only items,
+        the workspace's id on the name cell for the hold, the
+        status and created cells carrying their sort data."""
+        name = read_only_item(QtWidgets.QTableWidgetItem(model.label))
+        name.setData(ROW_ID_ROLE, model.id)
+        self.table.setItem(index, NAME_COLUMN, name)
+        self.table.setItem(
+            index, STATUS_COLUMN, read_only_item(StateItem(model))
+        )
+        self.table.setItem(
+            index,
+            ID_COLUMN,
+            read_only_item(QtWidgets.QTableWidgetItem(model.id)),
+        )
+        self.table.setItem(
+            index, IMAGE_COLUMN, read_only_item(ImageItem(model.image))
+        )
+        self.table.setItem(
+            index, CREATED_COLUMN, read_only_item(CreatedItem(model))
+        )
 
     def rows_unchanged(self, models: list[WorkspaceRow]) -> bool:
         """Whether the table already reads exactly as the models
@@ -472,31 +565,173 @@ class WorkspaceList(QtWidgets.QWidget):
 
     @QtCore.Slot(str, object)
     def on_succeeded(self, key: str, result: object) -> None:
-        """One answered refresh (#939): the table rebuilds from
-        the daemon rows — the presenter's plain data in — and the
-        status line clears: the flash names a failure the next
-        answer resolved. Another key's answer is not this
-        screen's to take."""
+        """One answered call (#939, #940): a listing rebuilds the
+        table — the presenter's plain data in — with the status
+        line clearing (the flash names a failure the next answer
+        resolved); an action's answer lands the flight and
+        refreshes the listing, which shows what the action moved.
+        Another key's answer is not this screen's to take."""
+        if key in (START_KEY, STOP_KEY):
+            label = self.action_flight[1] if self.action_flight else ""
+            self.action_landed()
+            self.flash(action_reply_text(label, result))
+            self.refresh()
+            return
+        if key == STORAGE_KEY:
+            self.storage_landed(result)
+            return
         if key != LIST_KEY:
             return
+        self.listing_landed(result)
+
+    def listing_landed(self, result: object) -> None:
+        """One answered listing (#939, #940): the table rebuilds
+        from the answer, and a standing outage resolves — the
+        daemon answered. A refusal or an action's outcome flash
+        runs its own span (#776's mask): a listing answer landing
+        inside it cannot wipe the outcome the operator just
+        read."""
         self.pending = False
         self.set_rows(workspace_rows(result))
-        self.clear_flash()
+        if self.flash_outage:
+            self.clear_flash()
+        self.load_storage()
 
     @QtCore.Slot(str, object)
     def on_failed(self, key: str, failure: RestFailure) -> None:
-        """One refused refresh (#939): the failure flashes on the
-        status line — an outage (the daemon answered nothing)
+        """One refused call (#939, #940): the failure flashes on
+        the status line — an outage (the daemon answered nothing)
         stands until an answer resolves it — and the rows already
         on screen stand: the operator keeps the list the last
-        answer built. Another key's failure is not this screen's
-        to show."""
+        answer built, and a failed action takes nothing away
+        either. Another key's failure is not this screen's to
+        show."""
+        if key in (START_KEY, STOP_KEY):
+            self.action_landed()
+            self.flash(str(failure), outage=failure.reach)
+            return
+        if key == STORAGE_KEY:
+            # The TUI strip's own silence (#849): the strip is a
+            # detail beside a listing that reports its failures —
+            # the standing figures stay, an honest dash until one
+            # lands.
+            self.storage_pending = False
+            return
         if key != LIST_KEY:
             return
         self.pending = False
         self.flash(str(failure), outage=failure.reach)
 
+    def held_workspace(self) -> tuple[str, str] | None:
+        """The workspace the actions sit on (#940): the current
+        row's — else the first selected row's — id and label."""
+        rows = sorted({index.row() for index in self.table.selectedIndexes()})
+        if not rows:
+            return None
+        row = self.table.currentIndex().row()
+        if row not in rows:
+            row = rows[0]
+        name = self.table.item(row, NAME_COLUMN)
+        if name is None:
+            return None
+        return name.data(ROW_ID_ROLE), name.text()
+
+    @QtCore.Slot()
+    def sync_actions(self) -> None:
+        """The action buttons' state (#940): enabled while a
+        workspace is held and no action flight is out. The strip
+        rides the same signal: the hold moved, the detail
+        follows."""
+        usable = self.held_workspace() is not None
+        self.start_button.setEnabled(usable and not self.action_pending)
+        self.stop_button.setEnabled(usable and not self.action_pending)
+        self.update_detail()
+
+    def update_detail(self) -> None:
+        """The detail strip's content (#849, the GUI's read):
+        the held row's one line — nothing held, the strip
+        blanks."""
+        held = self.held_workspace()
+        model = self.rows_by_id.get(held[0]) if held else None
+        if model is None:
+            self.detail.setText("")
+            return
+        self.detail.setText(
+            detail_text(model, self.storage_used.get(model.id))
+        )
+
+    def load_storage(self) -> None:
+        """The strip's storage cache refresh (#849): one flight
+        out beside the rows, cached between listings — the
+        listing's repaint never waits on the disk walk behind
+        the capacity report."""
+        if self.storage_pending:
+            return
+        self.storage_pending = True
+        self.bridge.call(STORAGE_KEY, "storage")
+
+    def storage_landed(self, report: object) -> None:
+        """The capacity report into the strip's cache (#849):
+        the per-workspace root-plus-home cost, keyed by id. A
+        report that predates the per-row fields keeps the
+        standing figures."""
+        self.storage_pending = False
+        self.storage_used = workspace_costs(report or {})
+        self.update_detail()
+
+    def action_landed(self) -> None:
+        """An action flight's end (#940): the buttons take clicks
+        again and the flight's target clears."""
+        self.action_pending = False
+        self.action_flight = None
+        self.sync_actions()
+
+    @QtCore.Slot()
+    def start_selected(self) -> None:
+        """The Start action (#940): the held workspace starts
+        through the bridge, and the list refreshes when the
+        daemon answers."""
+        workspace = self.held_workspace()
+        if workspace is None or self.action_pending:
+            return
+        self.action_pending = True
+        self.action_flight = workspace
+        self.sync_actions()
+        self.bridge.call(START_KEY, "start", workspace[0])
+
+    @QtCore.Slot()
+    def stop_selected(self) -> None:
+        """The Stop action (#940): the held workspace stops after
+        the operator confirms — a refusal sends nothing to the
+        daemon."""
+        workspace = self.held_workspace()
+        if workspace is None or self.action_pending:
+            return
+        if not self.confirm_stop(workspace[1]):
+            return
+        self.action_pending = True
+        self.action_flight = workspace
+        self.sync_actions()
+        self.bridge.call(STOP_KEY, "stop", workspace[0])
+
+    def confirm_stop(self, label: str) -> bool:
+        """Stop's confirmation (#940): the question names the
+        workspace, and No is the default — a stop is the
+        operator's call, not the pointer's."""
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Stop workspace",
+            f"Stop {label}?",
+            (
+                QtWidgets.QMessageBox.StandardButton.Yes
+                | QtWidgets.QMessageBox.StandardButton.No
+            ),
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        return answer == QtWidgets.QMessageBox.StandardButton.Yes
+
     def flash(self, message: str, *, outage: bool = False) -> None:
+        self.flash_outage = outage
         """The status line's flash (#939, #904): the message
         shows; a refusal clears itself after the flash span, an
         outage stands for the next answer to resolve. Each flash
@@ -521,6 +756,7 @@ class WorkspaceList(QtWidgets.QWidget):
         named. The serial bump retires any timeout still
         pending."""
         self.flash_seq += 1
+        self.flash_outage = False
         self.status.clear()
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:

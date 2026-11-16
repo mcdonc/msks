@@ -26,6 +26,11 @@ def daemon_row(
     image_ref: str | None = "debian:13.6",
     image_hash: str | None = "b" * 64,
     created_at: str | None = "2026-01-02T03:04:05",
+    cpus: int | None = 2,
+    mem_mib: int | None = 8192,
+    egress_mode: str | None = "allow",
+    mounts_pending: bool = False,
+    sizes_pending: bool = False,
 ) -> dict:
     """One daemon row as the listing serves it (#938's fakes):
     the fields the presenter reads. The issue list defaults to
@@ -40,6 +45,11 @@ def daemon_row(
         "image_ref": image_ref,
         "image_hash": image_hash,
         "created_at": created_at,
+        "cpus": cpus,
+        "mem_mib": mem_mib,
+        "egress_mode": egress_mode,
+        "mounts_pending": mounts_pending,
+        "sizes_pending": sizes_pending,
     }
     if issues is not None:
         row["mount_issues"] = list(issues)
@@ -87,6 +97,10 @@ def test_the_model_carries_what_the_widget_renders() -> None:
         image="debian:13.6",
         created="2d ago",
         created_rank=gui_rows.created_sort_key("2026-01-02T03:04:05"),
+        cpus=2,
+        mem_mib=8192,
+        egress_mode="allow",
+        pending_count=0,
     )
 
 
@@ -195,6 +209,46 @@ def test_the_helpers_match_the_tui_over_the_same_rows() -> None:
     for row in rows:
         assert gui_rows.workspace_label(row) == tui_rows.workspace_label(row)
         assert gui_rows.issue_marker(row) == tui_rows.issue_marker(row)
+
+
+def test_the_pending_count_counts_waiting_halves() -> None:
+    """The pending marker's count (#898's rule, the GUI's read):
+    one per waiting half — a mounts edit the last start has not
+    taken, a sizes or topology edit no boot has taken."""
+    none = gui_rows.workspace_row(daemon_row())
+    assert none.pending_count == 0
+    mounts = gui_rows.workspace_row(daemon_row(mounts_pending=True))
+    assert mounts.pending_count == 1
+    both = gui_rows.workspace_row(
+        daemon_row(mounts_pending=True, sizes_pending=True)
+    )
+    assert both.pending_count == 2
+
+
+def test_the_detail_line_reads_the_model() -> None:
+    """The detail strip's single line (#849's facts, the GUI's
+    read): identity, posture, and costs ``·``-separated, the
+    markers while either counts, the storage figure from the
+    cache, dashes for fields a row predates."""
+    model = gui_rows.workspace_row(
+        daemon_row(
+            status="running",
+            issues=[{"kind": "skipped"}],
+            mounts_pending=True,
+        )
+    )
+    assert gui_rows.detail_text(model, 10737418241) == (
+        f"alpha  ·  id {WS}  ·  image debian:13.6  ·  cpu 2  ·  "
+        "mem 8G  ·  egress allow  ·  mounts ✗1  ·  next ↻1  ·  "
+        "storage 10G"
+    )
+    bare = gui_rows.workspace_row(
+        daemon_row(cpus=None, mem_mib=None, egress_mode=None)
+    )
+    assert gui_rows.detail_text(bare, None) == (
+        f"alpha  ·  id {WS}  ·  image debian:13.6  ·  "
+        "cpu -  ·  mem -  ·  egress -  ·  storage -"
+    )
 
 
 def test_the_module_imports_nothing_from_pyside6() -> None:

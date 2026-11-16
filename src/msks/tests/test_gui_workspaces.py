@@ -88,6 +88,11 @@ def daemon_rows() -> list[dict]:
             "image_hash": "a" * 64,
             "created_at": "2026-01-02T03:04:05",
             "mount_issues": [],
+            "cpus": 2,
+            "mem_mib": 8192,
+            "egress_mode": "allow",
+            "mounts_pending": False,
+            "sizes_pending": False,
         },
         {
             "id": "ws-2",
@@ -97,6 +102,11 @@ def daemon_rows() -> list[dict]:
             "image_hash": "b" * 64,
             "created_at": "2026-01-04T09:00:00",
             "mount_issues": [{"kind": "skipped"}],
+            "cpus": 4,
+            "mem_mib": 16384,
+            "egress_mode": "allow",
+            "mounts_pending": True,
+            "sizes_pending": False,
         },
         {
             "id": "ws-3",
@@ -106,6 +116,11 @@ def daemon_rows() -> list[dict]:
             "image_hash": None,
             "created_at": None,
             "mount_issues": [],
+            "cpus": None,
+            "mem_mib": None,
+            "egress_mode": None,
+            "mounts_pending": False,
+            "sizes_pending": False,
         },
     ]
 
@@ -282,8 +297,11 @@ def test_a_failed_refresh_flashes_and_keeps_the_rows(qt) -> None:
     )
     assert "409" in screen.status.text()
     assert screen.table.rowCount() == 3  # the rows stand
+    # A refusal runs its own span (#940): a listing answer
+    # landing inside it does not wipe it — only a standing
+    # outage resolves on an answer.
     screen.on_succeeded("workspaces-list", daemon_rows()[:1])
-    assert screen.status.text() == ""  # the answer cleared it
+    assert "409" in screen.status.text()
     window.close()
 
 
@@ -724,6 +742,307 @@ def test_the_hold_keeps_its_color_unfocused(qt) -> None:
         qt.QtGui.QPalette.ColorRole.HighlightedText,
     ):
         assert palette.color(inactive, role) == palette.color(active, role)
+    window.close()
+
+
+def test_start_runs_on_the_selection_and_refreshes(qt) -> None:
+    """The Start action (#940): the held workspace starts through
+    the bridge, the buttons lock while the flight is out, the
+    outcome the daemon's answer carries flashes at once (the
+    TUI's own #776 mask), and the list refreshes when the daemon
+    answers."""
+    screen, window, bridge = make_screen(qt)
+    bridge.calls.clear()
+    assert screen.start_button.isEnabled()  # the first-row hold
+    screen.start_button.click()
+    assert bridge.calls == [("workspaces-start", "start", ("ws-2",))]
+    assert not screen.start_button.isEnabled()  # one flight at a time
+    screen.on_succeeded(
+        "workspaces-start", {"id": "ws-2", "status": "running"}
+    )
+    assert screen.status.text() == "beta running"  # the outcome
+    assert bridge.calls[-1] == ("workspaces-list", "workspaces", ())
+    assert screen.start_button.isEnabled()
+    window.close()
+
+
+def test_an_action_landing_over_a_listing_flight(qt) -> None:
+    """The interleaving (#940): a tick's listing flight is out
+    when the action's answer lands. The action flashes its own
+    outcome at once; the swallowed refresh is served by the
+    in-flight listing's answer; the listing's own pending flag
+    survives untouched, so the next tick runs.
+    An answer without a readable status still names its
+    workspace."""
+    screen, window, bridge = make_screen(qt)
+    screen.refresh()  # the listing flight opens
+    bridge.calls.clear()
+    screen.start_button.click()
+    assert bridge.calls == [("workspaces-start", "start", ("ws-2",))]
+    screen.on_succeeded(
+        "workspaces-start", {"id": "ws-2", "status": "running"}
+    )
+    assert screen.status.text() == "beta running"  # shown at once
+    assert bridge.calls == [("workspaces-start", "start", ("ws-2",))]
+    # no new listing went out — the in-flight one serves it
+    assert screen.pending  # and its flag stands
+    assert screen.start_button.isEnabled()
+    # The unreadable-answer arcs still name the workspace —
+    # each on a flight of its own, the target on it.
+    screen.start_button.click()
+    screen.on_succeeded("workspaces-start", {"no": "status"})
+    assert screen.status.text() == "beta"
+    screen.start_button.click()
+    screen.on_succeeded("workspaces-start", None)
+    assert screen.status.text() == "beta"
+    window.close()
+
+
+def test_a_failed_action_over_a_listing_flight(qt) -> None:
+    """The failed interleaving (#940): a listing flight is out
+    when the action refuses. The failure flashes, the rows
+    stand, the buttons take clicks again, and the listing's own
+    pending flag survives untouched."""
+    screen, window, bridge = make_screen(qt)
+    screen.refresh()  # the listing flight opens
+    bridge.calls.clear()
+    screen.start_button.click()
+    screen.on_failed(
+        "workspaces-start",
+        clientdata.RestFailure("409: workspace is running", reach=False),
+    )
+    assert "409" in screen.status.text()
+    assert screen.table.rowCount() == 3  # the rows stand
+    assert screen.pending  # the listing flight still holds
+    assert screen.start_button.isEnabled()
+    window.close()
+
+
+def test_stop_asks_before_it_runs(qt, monkeypatch) -> None:
+    """The Stop action's gate (#940): the question names the
+    workspace with No as the default, and a refusal sends
+    nothing to the daemon — a confirmation runs the stop, and
+    the list refreshes when it lands."""
+    asked: list[tuple] = []
+
+    def refuse_or_allow(parent, title, text, buttons=None, default=None):
+        asked.append((title, text, buttons, default))
+        no = qt.QtWidgets.QMessageBox.StandardButton.No
+        yes = qt.QtWidgets.QMessageBox.StandardButton.Yes
+        return no if len(asked) == 1 else yes
+
+    monkeypatch.setattr(qt.QtWidgets.QMessageBox, "question", refuse_or_allow)
+    screen, window, bridge = make_screen(qt)
+    bridge.calls.clear()
+    screen.stop_button.click()
+    assert bridge.calls == []  # the refusal sent nothing
+    assert screen.stop_button.isEnabled()
+    screen.stop_button.click()
+    assert bridge.calls == [("workspaces-stop", "stop", ("ws-2",))]
+    assert "beta" in asked[1][1]  # the question named the workspace
+    assert (
+        asked[0][3] == qt.QtWidgets.QMessageBox.StandardButton.No
+    )  # No is the default
+    screen.on_succeeded("workspaces-stop", {})
+    assert bridge.calls[-1] == ("workspaces-list", "workspaces", ())
+    window.close()
+
+
+def test_a_failing_action_flashes_and_the_list_survives(qt) -> None:
+    """A refused action (#940): the failure flashes the status
+    line a refused refresh uses, the rows already on screen
+    stand, and the buttons take clicks again."""
+    screen, window, _bridge = make_screen(qt)
+    screen.on_failed(
+        "workspaces-start",
+        clientdata.RestFailure("409: workspace is running", reach=False),
+    )
+    assert "409" in screen.status.text()
+    assert screen.table.rowCount() == 3  # the rows stand
+    assert screen.start_button.isEnabled()
+    assert screen.stop_button.isEnabled()
+    window.close()
+
+
+def test_the_actions_follow_the_hold(qt) -> None:
+    """The actions sit on the selection (#940): no rows, no
+    buttons; the first-row hold arms them; a listing that drops
+    the held workspace disarms them."""
+    bridge = StubBridge()
+    screen = qt.screen_mod.WorkspaceList(bridge)
+    window = qt.QtWidgets.QMainWindow()
+    window.setCentralWidget(screen)
+    window.show()
+    assert not screen.start_button.isEnabled()
+    assert not screen.stop_button.isEnabled()
+    screen.on_succeeded("workspaces-list", daemon_rows())
+    assert screen.start_button.isEnabled()  # the first-row hold
+    # The listing drops the held workspace (beta): the hold
+    # goes with it.
+    dropped = [daemon_rows()[0], daemon_rows()[2]]
+    screen.on_succeeded("workspaces-list", dropped)
+    assert not screen.start_button.isEnabled()  # the hold went
+    assert not screen.stop_button.isEnabled()
+    window.close()
+
+
+def test_the_action_slots_stand_guard(qt) -> None:
+    """The action slots guard their own gate (#940): a call with
+    no workspace held sends nothing, a second action while a
+    flight is out sends nothing, and a hold on a row with no
+    name item reads as no hold. The buttons carry the same gates
+    for clicks; the slots carry them for whatever calls a slot —
+    a keyboard shortcut later, a test today."""
+    screen, window, bridge = make_screen(qt)
+    screen.table.clearSelection()
+    screen.table.selectionModel().clearCurrentIndex()
+    bridge.calls.clear()
+    screen.start_selected()  # nothing held
+    screen.stop_selected()
+    assert bridge.calls == []
+    select_cell(qt, screen, 0, 1)
+    screen.start_button.click()  # the flight opens
+    bridge.calls.clear()
+    screen.stop_selected()  # the flight holds the gate
+    screen.start_selected()
+    assert bridge.calls == []
+    # A selected row whose name item is gone holds nothing.
+    screen.on_succeeded("workspaces-start", {})  # land the flight
+    screen.table.setItem(0, qt.screen_mod.NAME_COLUMN, None)
+    assert screen.held_workspace() is None
+    window.close()
+
+
+def test_the_detail_strip_follows_the_hold(qt) -> None:
+    """The detail strip (#849's facts, #940's GUI read): the held
+    row's identity, posture, and costs on one ``·``-separated
+    line — the markers beside the facts, an honest dash for a
+    row that predates a field, storage a dash until the capacity
+    report lands — and the text selectable, so an id or a digest
+    copies out. A moved hold moves the strip; no hold blanks
+    it."""
+    screen, window, bridge = make_screen(qt)
+    # The strip's text reads with the mouse: selectable.
+    flags = screen.detail.textInteractionFlags()
+    assert flags & qt.QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+    # make_screen's first-row hold: beta, the mounts marker, the
+    # pending count, no storage yet.
+    line = screen.detail.text()
+    assert line.startswith("beta  ·  id ws-2  ·  image ")
+    for fact in ("cpu 4", "mem 16G", "egress allow"):
+        assert fact in line
+    assert "mounts ✗1" in line and "next ↻1" in line
+    assert "storage -" in line
+    # The listing's answer fetched the capacity report beside
+    # the rows; its answer fills the figure.
+    assert ("workspaces-storage", "storage", ()) in bridge.calls
+    screen.on_succeeded(
+        "workspaces-storage",
+        {
+            "workspaces": [
+                {"id": "ws-2", "root_bytes": 10737418240, "home_bytes": 1}
+            ]
+        },
+    )
+    assert "storage 10G" in screen.detail.text()
+    # A moved hold moves the strip; a row that predates fields
+    # reads its dashes.
+    select_cell(qt, screen, 2, 0)  # ws-3, the oldest
+    line = screen.detail.text()
+    assert line.startswith("ws-3  ·  id ws-3  ·  image -")
+    for fact in ("cpu -", "mem -", "egress -", "storage -"):
+        assert fact in line
+    # No hold blanks the strip.
+    screen.table.clearSelection()
+    screen.table.selectionModel().clearCurrentIndex()
+    assert screen.detail.text() == ""
+    window.close()
+
+
+def test_the_storage_cache_keeps_standing_figures(qt) -> None:
+    """The strip's storage cache (#849): a refused report keeps
+    the standing figures in silence — the strip is a detail
+    beside a listing that reports its own failures — and a
+    report that predates the per-row fields keeps them too; a
+    later listing refetches beside the rows."""
+    screen, window, bridge = make_screen(qt)
+    screen.on_succeeded(
+        "workspaces-storage",
+        {
+            "workspaces": [
+                {"id": "ws-2", "root_bytes": 2147483648, "home_bytes": 0}
+            ]
+        },
+    )
+    assert "storage 2G" in screen.detail.text()
+    screen.on_failed(
+        "workspaces-storage",
+        clientdata.RestFailure("daemon away", reach=True),
+    )
+    assert "storage 2G" in screen.detail.text()
+    assert screen.status.text() == ""  # the silence
+    # Entries that predate the per-row fields — no bytes, or
+    # no id — read as nothing; the good entry lands.
+    screen.on_succeeded(
+        "workspaces-storage",
+        {
+            "workspaces": [
+                {"id": "ws-9"},
+                {"root_bytes": 1, "home_bytes": 1},
+                {"id": "ws-2", "root_bytes": 1073741824, "home_bytes": 1},
+            ]
+        },
+    )
+    assert "storage 1G" in screen.detail.text()
+    screen.on_succeeded("workspaces-storage", {"workspaces": []})
+    assert "storage -" in screen.detail.text()
+    # The next listing answer takes another storage flight out.
+    bridge.calls.clear()
+    screen.on_succeeded("workspaces-list", daemon_rows())
+    assert ("workspaces-storage", "storage", ()) in bridge.calls
+    window.close()
+
+
+def test_a_posture_change_alone_refreshes_the_strip(qt) -> None:
+    """The unchanged-listing skip spares the table, not the
+    strip (#940): an answer whose five displayed cells read the
+    same but whose posture facts changed — a pending change
+    landed — still refreshes the model map and the strip. The
+    strip cannot lie about facts the columns never show."""
+    screen, window, _bridge = make_screen(qt)
+    assert "next ↻1" in screen.detail.text()  # beta's wait
+    settled = [dict(row) for row in daemon_rows()]
+    settled[1]["mounts_pending"] = False  # the wait landed
+    screen.on_succeeded("workspaces-list", settled)
+    assert "next" not in screen.detail.text()
+    assert screen.table.rowCount() == 3  # the table stood whole
+    window.close()
+
+
+def test_a_stale_listing_answer_keeps_the_outcome_flash(qt) -> None:
+    """The very interleaving the outcome flash masks (#940,
+    #776): a tick's listing flight is out when the action's
+    answer flashes; the stale listing answer that follows — its
+    rows matching, so nothing repaints — must not wipe the
+    outcome. Only a standing outage clears on an answer."""
+    screen, window, bridge = make_screen(qt)
+    screen.refresh()  # the listing flight opens
+    bridge.calls.clear()
+    screen.start_button.click()
+    screen.on_succeeded(
+        "workspaces-start", {"id": "ws-2", "status": "running"}
+    )
+    assert screen.status.text() == "beta running"
+    # The stale listing answer lands: same rows, no rebuild.
+    screen.on_succeeded("workspaces-list", daemon_rows())
+    assert screen.status.text() == "beta running"  # it stood
+    # A standing outage, though, an answer resolves.
+    screen.on_failed(
+        "workspaces-list",
+        clientdata.RestFailure("daemon away", reach=True),
+    )
+    screen.on_succeeded("workspaces-list", daemon_rows())
+    assert screen.status.text() == ""
     window.close()
 
 
