@@ -57,6 +57,14 @@ WINDOW_TITLE = "msks"
 # so the window looks the same wherever it opens.
 FUSION_STYLE = "Fusion"
 
+#: The window's font scale (#939): the platform's default point
+#: size (9–10 on most hosts) reads small beside a terminal's
+#: own face, and smaller still on a high-resolution display, so
+#: the window runs its fonts at twice the default size — one
+#: scale for the whole window, applied to the application font
+#: before the first widget reads it.
+FONT_SCALE = 2.0
+
 
 def gui_session_present() -> bool:
     """Whether this macOS user owns a GUI login session: the
@@ -157,6 +165,13 @@ def open_window(QtWidgets: ModuleType) -> int:
     )
     if mine:
         app.setStyle(FUSION_STYLE)
+    # The font scale sits on the application before the first
+    # widget builds (#939): every screen the window opens — the
+    # table, the button, the status line — inherits the doubled
+    # size without a per-widget hand-tune.
+    font = app.font()
+    font.setPointSizeF(font.pointSizeF() * FONT_SCALE)
+    app.setFont(font)
     bridge = Bridge(GuiData())
     bridge.start()
     app.aboutToQuit.connect(bridge.stop)

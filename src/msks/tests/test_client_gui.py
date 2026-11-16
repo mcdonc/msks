@@ -206,11 +206,24 @@ def test_the_gui_window_opens_offscreen(
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     import PySide6.QtWidgets as QtWidgets
 
+    # The app exists before the entry runs: run() reuses it, so
+    # the test can snapshot the platform's default point size
+    # and pin the window's font scale against it (#939).
+    qapp = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
+        ["msks-gui-test"]
+    )
+    default_size = qapp.font().pointSizeF()
+
     monkeypatch.setattr(QtWidgets.QApplication, "exec", lambda self: 0)
     assert app.run() == 0
     qapp = QtWidgets.QApplication.instance()
     assert qapp is not None
     assert qapp.platformName() == "offscreen"
+    # The font scale (#939): the platform default doubled — one
+    # write on the application font before any widget built.
+    assert qapp.font().pointSizeF() == pytest.approx(
+        default_size * app.FONT_SCALE
+    )
     # The style pin (#937): whatever the session would name, the
     # window runs Fusion — the wheel ships it inside QtWidgets,
     # so no session style engine loads alongside it.
@@ -296,14 +309,34 @@ def test_open_window_reuses_an_existing_app(
 
     monkeypatch.setattr(workspaces_mod, "WorkspaceList", FakeScreen)
 
+    class FakeFont:
+        """The app font's shape for the scale pin (#939): a point
+        size the window path reads and rewrites."""
+
+        def __init__(self, size: float) -> None:
+            self.size = size
+
+        def pointSizeF(self) -> float:
+            return self.size
+
+        def setPointSizeF(self, size: float) -> None:
+            self.size = size
+
     class FakeApp:
         aboutToQuit = FakeSignal()
+        the_font = FakeFont(9.0)
 
         def __init__(self, argv: list[str]) -> None:
             shown.append("created")
 
         def setStyle(self, name: str) -> None:
             styles.append(name)
+
+        def font(self) -> FakeFont:
+            return self.the_font
+
+        def setFont(self, font: FakeFont) -> None:
+            shown.append(f"font {font.size}")
 
         def exec(self) -> int:
             shown.append("exec")
@@ -330,6 +363,9 @@ def test_open_window_reuses_an_existing_app(
         Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]
     assert shown.count("created") == 1  # the pre-made one only
     assert styles == ["Fusion"]  # the session never picks the style
+    # The font scale (#939): the default 9pt doubles to 18 —
+    # one write on the application font, before any widget.
+    assert "font 18.0" in shown
     # The override landed before the constructor could consult
     # the session theme.
     assert os.environ["QT_STYLE_OVERRIDE"] == "Fusion"
@@ -393,6 +429,18 @@ def test_open_window_keeps_a_user_style_choice(
         def setStyle(self, name: str) -> None:
             styles.append(name)
 
+        def font(self) -> object:
+            return self  # the font-shape pair the scale reads
+
+        def pointSizeF(self) -> float:
+            return 10.0
+
+        def setPointSizeF(self, size: float) -> None:
+            styles.append(f"font {size:g}")
+
+        def setFont(self, font: object) -> None:
+            pass
+
         def exec(self) -> int:
             return 0
 
@@ -409,4 +457,6 @@ def test_open_window_keeps_a_user_style_choice(
     finally:
         Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]
     assert os.environ["QT_STYLE_OVERRIDE"] == "Chosen"
-    assert styles == []  # no Fusion forced over the choice
+    # The style write never happened — the choice stands — but
+    # the font scale still applied (#939): 10pt doubled.
+    assert styles == ["font 20"]
