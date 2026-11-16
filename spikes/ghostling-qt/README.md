@@ -121,7 +121,7 @@ The library is found through `GHOSTTY_VT_LIB` if set, then
   read-back direction, a program querying the clipboard, is not
   implemented). Hyperlinks: OSC 8 URIs resolve through the grid API,
   plain-text URLs are found by a per-row scan during paint, hovering
-  one shows the pointing hand, Shift+Click opens it in the desktop
+  one shows the pointing hand, Ctrl+Click opens it in the desktop
   browser, and right-clicking one offers Copy Link Address.
 - Find (`Ctrl+Shift+F`) through the library's search API: an overlay
   bar restarts the search as the needle changes (ASCII letters match

@@ -1570,7 +1570,7 @@ class TerminalWidget(QWidget):
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt name)
         if (
             event.button() == Qt.MouseButton.LeftButton
-            and event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+            and event.modifiers() & Qt.KeyboardModifier.ControlModifier
             and not self._mouse_tracking()
         ):
             if self._open_link_at(event.position()):
