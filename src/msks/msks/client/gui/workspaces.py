@@ -403,7 +403,11 @@ class WorkspaceList(QtWidgets.QWidget):
         row when the listing still carries it, else gone — not
         onto whatever row landed under the old slot."""
         if now is None:
-            return
+            return  # pragma: no cover — no current cell to hold:
+            # the first-row hold sets one from the first listing
+            # that shows rows, and an empty answer skips the
+            # rebuild whole, so only a Qt-internal clear (none
+            # our UI performs) reaches this arm.
         if now[0] in rows:
             self.table.setCurrentIndex(
                 self.table.model().index(rows[now[0]], now[1])
