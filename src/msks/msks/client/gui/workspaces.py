@@ -20,7 +20,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..data import RestFailure
 from .bridge import Bridge
-from .rows import WorkspaceRow, detail_lines, workspace_rows
+from .rows import WorkspaceRow, detail_text, workspace_rows
 
 #: The standing refresh cadence (#939), milliseconds — the TUI's
 #: own listing interval (#470 L2, five seconds): the list reloads
@@ -263,8 +263,17 @@ class WorkspaceList(QtWidgets.QWidget):
         self.rows_by_id: dict[str, WorkspaceRow] = {}
         self.storage_used: dict[str, int] = {}
         self.storage_pending = False
-        self.detail_first = QtWidgets.QLabel("", self)
-        self.detail_second = QtWidgets.QLabel("", self)
+        self.detail = QtWidgets.QLabel("", self)
+        self.detail.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        # A long row clips in place: the strip's width follows
+        # the window's, never the text's — a wide digest cannot
+        # widen the window under the listing.
+        self.detail.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         self.sync_actions()
         self.timer = QtCore.QTimer(self)
         self.timer.setInterval(REFRESH_MS)
@@ -276,8 +285,7 @@ class WorkspaceList(QtWidgets.QWidget):
         row.addWidget(self.status, stretch=1)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.table)
-        layout.addWidget(self.detail_first)
-        layout.addWidget(self.detail_second)
+        layout.addWidget(self.detail)
         layout.addLayout(row)
         self.setLayout(layout)
 
@@ -616,17 +624,16 @@ class WorkspaceList(QtWidgets.QWidget):
 
     def update_detail(self) -> None:
         """The detail strip's content (#849, the GUI's read):
-        the held row's two lines — nothing held, the strip
+        the held row's one line — nothing held, the strip
         blanks."""
         held = self.held_workspace()
         model = self.rows_by_id.get(held[0]) if held else None
         if model is None:
-            self.detail_first.setText("")
-            self.detail_second.setText("")
+            self.detail.setText("")
             return
-        first, second = detail_lines(model, self.storage_used.get(model.id))
-        self.detail_first.setText(first)
-        self.detail_second.setText(second)
+        self.detail.setText(
+            detail_text(model, self.storage_used.get(model.id))
+        )
 
     def load_storage(self) -> None:
         """The strip's storage cache refresh (#849): one flight

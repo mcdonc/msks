@@ -911,24 +911,25 @@ def test_the_action_slots_stand_guard(qt) -> None:
 
 
 def test_the_detail_strip_follows_the_hold(qt) -> None:
-    """The detail strip (#849's shape, #940's GUI read): the held
-    row's identity on the first line, its posture and costs on
-    the second — the markers beside the facts, an honest dash
-    for a row that predates a field, storage a dash until the
-    capacity report lands. A moved hold moves the strip; no
-    hold blanks it."""
+    """The detail strip (#849's facts, #940's GUI read): the held
+    row's identity, posture, and costs on one ``·``-separated
+    line — the markers beside the facts, an honest dash for a
+    row that predates a field, storage a dash until the capacity
+    report lands — and the text selectable, so an id or a digest
+    copies out. A moved hold moves the strip; no hold blanks
+    it."""
     screen, window, bridge = make_screen(qt)
+    # The strip's text reads with the mouse: selectable.
+    flags = screen.detail.textInteractionFlags()
+    assert flags & qt.QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
     # make_screen's first-row hold: beta, the mounts marker, the
     # pending count, no storage yet.
-    first = screen.detail_first.text()
-    second = screen.detail_second.text()
-    assert first.startswith("beta  ·  id ws-2  ·  image ")
-    assert "cpu 4" in second
-    assert "mem 16G" in second
-    assert "egress allow" in second
-    assert "mounts ✗1" in second
-    assert "next ↻1" in second
-    assert "storage -" in second
+    line = screen.detail.text()
+    assert line.startswith("beta  ·  id ws-2  ·  image ")
+    for fact in ("cpu 4", "mem 16G", "egress allow"):
+        assert fact in line
+    assert "mounts ✗1" in line and "next ↻1" in line
+    assert "storage -" in line
     # The listing's answer fetched the capacity report beside
     # the rows; its answer fills the figure.
     assert ("workspaces-storage", "storage", ()) in bridge.calls
@@ -940,21 +941,18 @@ def test_the_detail_strip_follows_the_hold(qt) -> None:
             ]
         },
     )
-    assert "storage 10G" in screen.detail_second.text()
+    assert "storage 10G" in screen.detail.text()
     # A moved hold moves the strip; a row that predates fields
     # reads its dashes.
     select_cell(qt, screen, 2, 0)  # ws-3, the oldest
-    assert screen.detail_first.text().startswith(
-        "ws-3  ·  id ws-3  ·  image -"
-    )
-    second = screen.detail_second.text()
-    assert "cpu -" in second and "mem -" in second
-    assert "egress -" in second and "storage -" in second
+    line = screen.detail.text()
+    assert line.startswith("ws-3  ·  id ws-3  ·  image -")
+    for fact in ("cpu -", "mem -", "egress -", "storage -"):
+        assert fact in line
     # No hold blanks the strip.
     screen.table.clearSelection()
     screen.table.selectionModel().clearCurrentIndex()
-    assert screen.detail_first.text() == ""
-    assert screen.detail_second.text() == ""
+    assert screen.detail.text() == ""
     window.close()
 
 
@@ -973,15 +971,15 @@ def test_the_storage_cache_keeps_standing_figures(qt) -> None:
             ]
         },
     )
-    assert "storage 2G" in screen.detail_second.text()
+    assert "storage 2G" in screen.detail.text()
     screen.on_failed(
         "workspaces-storage",
         clientdata.RestFailure("daemon away", reach=True),
     )
-    assert "storage 2G" in screen.detail_second.text()
+    assert "storage 2G" in screen.detail.text()
     assert screen.status.text() == ""  # the silence
     screen.on_succeeded("workspaces-storage", {"workspaces": []})
-    assert "storage -" in screen.detail_second.text()
+    assert "storage -" in screen.detail.text()
     # The next listing answer takes another storage flight out.
     bridge.calls.clear()
     screen.on_succeeded("workspaces-list", daemon_rows())

@@ -119,22 +119,21 @@ def workspace_row(row: dict) -> WorkspaceRow:
     )
 
 
-def detail_lines(
-    model: WorkspaceRow, used_bytes: int | None
-) -> tuple[str, str]:
-    """The detail strip's two lines (#849's shape, the GUI's
-    read): the identity — the name bare, the id, the image — on
-    the first, the posture and costs — cpu, memory, the egress
-    mode, the mounts and pending markers while either counts,
-    the storage the capacity report charges — on the second.
-    Every fact but storage reads the row model; storage reads
-    the screen's cached report, an honest dash until one
-    lands."""
-    first = f"{model.label}  ·  id {model.id}  ·  image {model.image}"
-    second = "  ·  ".join(
-        f"{label} {value}" for label, value in detail_pairs(model, used_bytes)
+def detail_text(model: WorkspaceRow, used_bytes: int | None) -> str:
+    """The detail strip's single line (#849's facts, the GUI's
+    read): the identity — the name bare, the id, the image —
+    then the posture and costs — cpu, memory, the egress mode,
+    the mounts and pending markers while either counts, the
+    storage the capacity report charges — one ``·``-separated
+    row the operator can select and copy whole. Every fact but
+    storage reads the row model; storage reads the screen's
+    cached report, an honest dash until one lands."""
+    pairs = [(None, model.label), ("id", model.id), ("image", model.image)]
+    pairs += detail_pairs(model, used_bytes)
+    return "  ·  ".join(
+        value if label is None else f"{label} {value}"
+        for label, value in pairs
     )
-    return first, second
 
 
 def detail_pairs(

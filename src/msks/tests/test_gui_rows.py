@@ -225,9 +225,9 @@ def test_the_pending_count_counts_waiting_halves() -> None:
     assert both.pending_count == 2
 
 
-def test_the_detail_lines_read_the_model(qt_rows=None) -> None:
-    """The detail strip's lines (#849's shape, the GUI's read):
-    identity on the first, posture and costs on the second, the
+def test_the_detail_line_reads_the_model() -> None:
+    """The detail strip's single line (#849's facts, the GUI's
+    read): identity, posture, and costs ``·``-separated, the
     markers while either counts, the storage figure from the
     cache, dashes for fields a row predates."""
     model = gui_rows.workspace_row(
@@ -237,17 +237,18 @@ def test_the_detail_lines_read_the_model(qt_rows=None) -> None:
             mounts_pending=True,
         )
     )
-    first, second = gui_rows.detail_lines(model, 10737418241)
-    assert first == f"alpha  ·  id {WS}  ·  image debian:13.6"
-    assert second == (
-        "cpu 2  ·  mem 8G  ·  egress allow  ·  mounts ✗1  ·  "
-        "next ↻1  ·  storage 10G"
+    assert gui_rows.detail_text(model, 10737418241) == (
+        f"alpha  ·  id {WS}  ·  image debian:13.6  ·  cpu 2  ·  "
+        "mem 8G  ·  egress allow  ·  mounts ✗1  ·  next ↻1  ·  "
+        "storage 10G"
     )
     bare = gui_rows.workspace_row(
         daemon_row(cpus=None, mem_mib=None, egress_mode=None)
     )
-    first, second = gui_rows.detail_lines(bare, None)
-    assert second == "cpu -  ·  mem -  ·  egress -  ·  storage -"
+    assert gui_rows.detail_text(bare, None) == (
+        f"alpha  ·  id {WS}  ·  image debian:13.6  ·  "
+        "cpu -  ·  mem -  ·  egress -  ·  storage -"
+    )
 
 
 def test_the_module_imports_nothing_from_pyside6() -> None:
