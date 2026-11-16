@@ -172,6 +172,12 @@ class WorkspaceList(QtWidgets.QWidget):
             -1, QtCore.Qt.SortOrder.AscendingOrder
         )
         self.table.setSortingEnabled(True)
+        # A click takes the whole row (#939): no cell edits, so
+        # the unit the operator selects is the workspace — the
+        # row highlight a listing of records reads by.
+        self.table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
         self.refresh_button = QtWidgets.QPushButton("Refresh", self)
         self.refresh_button.clicked.connect(self.refresh)
         self.status = QtWidgets.QLabel("", self)
@@ -217,7 +223,7 @@ class WorkspaceList(QtWidgets.QWidget):
         cannot re-order rows mid-swap."""
         if self.rows_unchanged(models):
             return
-        held = self.held_cells()
+        held = self.held_rows()
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(models))
         for index, model in enumerate(models):
@@ -242,7 +248,7 @@ class WorkspaceList(QtWidgets.QWidget):
             )
         self.table.setSortingEnabled(True)
         self.size_columns()
-        self.restore_cells(held)
+        self.restore_rows(held)
 
     def rows_unchanged(self, models: list[WorkspaceRow]) -> bool:
         """Whether the table already reads exactly as the models
@@ -271,16 +277,16 @@ class WorkspaceList(QtWidgets.QWidget):
         image = self.table.item(row, IMAGE_COLUMN)
         return image is not None and image.data(IMAGE_ROLE) == model.image
 
-    def held_cells(self) -> tuple[list[tuple[str, int]], tuple | None]:
-        """What the operator holds on the table (#939): every
-        selected cell and the current one, each as its
-        workspace's id and its column — the form that survives a
-        rebuild. A row with no name item holds nothing."""
-        held = []
+    def held_rows(self) -> tuple[set[str], tuple[str, int] | None]:
+        """What the operator holds on the table (#939): the rows
+        selected — as their workspaces' ids — and the current
+        cell, the form that survives a rebuild. A row with no
+        name item holds nothing."""
+        held: set[str] = set()
         for index in self.table.selectedIndexes():
             name = self.table.item(index.row(), NAME_COLUMN)
             if name is not None:
-                held.append((name.data(ROW_ID_ROLE), index.column()))
+                held.add(name.data(ROW_ID_ROLE))
         current = self.table.currentIndex()
         now = None
         if current.isValid():
@@ -289,16 +295,16 @@ class WorkspaceList(QtWidgets.QWidget):
                 now = (name.data(ROW_ID_ROLE), current.column())
         return held, now
 
-    def restore_cells(
-        self, held: tuple[list[tuple[str, int]], tuple | None]
+    def restore_rows(
+        self, held: tuple[set[str], tuple[str, int] | None]
     ) -> None:
-        """The held cells back on the rebuilt table (#939): each
-        on its workspace's row in its new place, the selection
-        whole and the current cell with it. A workspace the new
-        listing dropped simply loses its hold."""
-        cells, now = held
+        """The held rows back on the rebuilt table (#939): each
+        whole row on its workspace's new place, the current cell
+        with it. A workspace the new listing dropped simply loses
+        its hold."""
+        held_rows, now = held
         rows = self.row_ids()
-        self.restore_selection(cells, rows)
+        self.restore_selection(held_rows, rows)
         self.restore_current(now, rows)
 
     def row_ids(self) -> dict[str, int]:
@@ -309,18 +315,19 @@ class WorkspaceList(QtWidgets.QWidget):
             for row in range(self.table.rowCount())
         }
 
-    def restore_selection(
-        self, cells: list[tuple[str, int]], rows: dict[str, int]
-    ) -> None:
-        """The held selection back (#939): the whole set at once,
-        so a hold the new listing dropped clears rather than
-        lingers on whatever row landed under its slot."""
+    def restore_selection(self, held: set[str], rows: dict[str, int]) -> None:
+        """The held rows back (#939): the whole set at once, each
+        row every cell of it, so a hold the new listing dropped
+        clears rather than lingers on whatever row landed under
+        its slot."""
         selection = QtCore.QItemSelection()
-        for workspace, column in cells:
+        for workspace in held:
             row = rows.get(workspace)
             if row is not None:
-                index = self.table.model().index(row, column)
-                selection.select(index, index)
+                selection.select(
+                    self.table.model().index(row, 0),
+                    self.table.model().index(row, len(COLUMNS) - 1),
+                )
         self.table.selectionModel().select(
             selection,
             QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,

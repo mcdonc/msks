@@ -515,14 +515,19 @@ def test_the_columns_fill_the_pane(qt) -> None:
 
 
 def select_cell(qt, screen, row: int, column: int) -> None:
-    """One clicked cell, as the operator's click leaves it: the
-    selection on it and the current cell with it."""
-    index = screen.table.model().index(row, column)
+    """One clicked cell, as the view's row selection leaves it
+    (#939): the whole row selected, the current cell on the
+    click."""
+    model = screen.table.model()
+    selection = qt.QtCore.QItemSelection(
+        model.index(row, 0),
+        model.index(row, len(qt.screen_mod.COLUMNS) - 1),
+    )
     screen.table.selectionModel().select(
-        index,
+        selection,
         qt.QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
     )
-    screen.table.setCurrentIndex(index)
+    screen.table.setCurrentIndex(model.index(row, column))
 
 
 def test_an_unchanged_listing_rebuilds_nothing(qt) -> None:
@@ -540,7 +545,9 @@ def test_an_unchanged_listing_rebuilds_nothing(qt) -> None:
     select_cell(qt, screen, 0, 1)
     screen.on_succeeded("workspaces-list", daemon_rows())
     assert screen.table.item(0, 0) is name  # nothing was rebuilt
-    assert len(screen.table.selectedIndexes()) == 1
+    assert len(screen.table.selectedIndexes()) == len(
+        qt.screen_mod.COLUMNS
+    )  # the whole row still holds
     assert screen.table.currentIndex().column() == 1
     window.close()
 
@@ -559,7 +566,8 @@ def test_the_selection_follows_the_workspace(qt) -> None:
     current = screen.table.currentIndex()
     assert (current.row(), current.column()) == (0, 1)  # beta moved up
     assert screen.table.item(0, 0).text() == "beta"
-    assert len(screen.table.selectedIndexes()) == 1
+    selected_rows = {index.row() for index in screen.table.selectedIndexes()}
+    assert selected_rows == {0}  # beta's whole row, wherever it landed
     # beta leaves the listing: the hold goes with it, quietly.
     screen.on_succeeded("workspaces-list", daemon_rows()[:1])
     assert screen.table.selectedIndexes() == []
@@ -583,8 +591,28 @@ def test_the_unchanged_and_hold_reads_defensively(qt) -> None:
     assert not screen.rows_unchanged(models)  # a missing cell
     select_cell(qt, screen, 1, 1)
     screen.table.setItem(1, qt.screen_mod.NAME_COLUMN, None)
-    held, now = screen.held_cells()
-    assert held == [] and now is None
+    held, now = screen.held_rows()
+    assert held == set() and now is None
+    window.close()
+
+
+def test_a_click_takes_the_whole_row(qt) -> None:
+    """A click on any cell selects its whole row (#939): no cell
+    edits, so the unit the operator selects is the workspace —
+    a real mouse click on one cell, the row highlight it
+    leaves."""
+    from PySide6 import QtTest
+
+    screen, window, _bridge = make_screen(qt)
+    spot = screen.table.visualItemRect(screen.table.item(1, 3)).center()
+    QtTest.QTest.mouseClick(
+        screen.table.viewport(),
+        qt.QtCore.Qt.MouseButton.LeftButton,
+        pos=spot,
+    )
+    selected_rows = {index.row() for index in screen.table.selectedIndexes()}
+    assert selected_rows == {1}  # the whole row, from one cell
+    assert screen.table.currentIndex().column() == 3  # the click
     window.close()
 
 
