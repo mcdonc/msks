@@ -107,16 +107,25 @@ def action_reply_text(label: str, reply: object) -> str:
     return f"{label} {status}" if status else label
 
 
+def cost_of(ws: dict) -> int | None:
+    """One report entry's root-plus-home cost (#849), or None
+    for an entry that predates the per-row fields."""
+    if "root_bytes" not in ws or "home_bytes" not in ws:
+        return None
+    return ws["root_bytes"] + ws["home_bytes"]
+
+
 def workspace_costs(report: dict) -> dict[str, int]:
     """The capacity report's per-workspace costs (#849): the
     root-plus-home bytes, keyed by id. An entry that predates
     the per-row fields reads as nothing, so the standing figures
     keep until a fuller report lands."""
-    return {
-        ws["id"]: ws["root_bytes"] + ws["home_bytes"]
-        for ws in report.get("workspaces") or []
-        if "root_bytes" in ws and "home_bytes" in ws
-    }
+    costs: dict[str, int] = {}
+    for ws in report.get("workspaces") or []:
+        cost = cost_of(ws)
+        if cost is not None and "id" in ws:
+            costs[ws["id"]] = cost
+    return costs
 
 
 def state_text(model: WorkspaceRow) -> str:
@@ -255,8 +264,9 @@ class WorkspaceList(QtWidgets.QWidget):
         self.stop_button.clicked.connect(self.stop_selected)
         self.table.selectionModel().selectionChanged.connect(self.sync_actions)
         self.status = QtWidgets.QLabel("", self)
+        self.flash_outage = False  # the standing flash's kind
         # The detail strip (#849's shape, #940's GUI read): the
-        # held row's quick facts on two lines at the listing's
+        # held row's quick facts on one line at the listing's
         # bottom. Every fact but storage reads the row models
         # the fill keeps; storage reads the cached capacity
         # report, fetched beside the rows.
@@ -319,6 +329,13 @@ class WorkspaceList(QtWidgets.QWidget):
         rows a listing ever shows hold the first row. Sorting
         pauses for the fill and resumes after, so the rebuild
         cannot re-order rows mid-swap."""
+        # The model map and the strip refresh on every answer
+        # (#940): the unchanged-listing skip spares the table's
+        # rebuild, not the strip's facts — a change the five
+        # displayed cells cannot show (a sizes edit's pending
+        # count, a cpu change) still reads on the next line.
+        self.rows_by_id = {model.id: model for model in models}
+        self.update_detail()
         if self.rows_unchanged(models):
             return
         was_empty = self.table.rowCount() == 0
@@ -329,8 +346,6 @@ class WorkspaceList(QtWidgets.QWidget):
             self.fill_row(index, model)
         self.table.setSortingEnabled(True)
         self.size_columns()
-        self.rows_by_id = {model.id: model for model in models}
-        self.update_detail()
         self.settle_hold(was_empty, held)
 
     def settle_hold(
@@ -567,9 +582,19 @@ class WorkspaceList(QtWidgets.QWidget):
             return
         if key != LIST_KEY:
             return
+        self.listing_landed(result)
+
+    def listing_landed(self, result: object) -> None:
+        """One answered listing (#939, #940): the table rebuilds
+        from the answer, and a standing outage resolves — the
+        daemon answered. A refusal or an action's outcome flash
+        runs its own span (#776's mask): a listing answer landing
+        inside it cannot wipe the outcome the operator just
+        read."""
         self.pending = False
         self.set_rows(workspace_rows(result))
-        self.clear_flash()
+        if self.flash_outage:
+            self.clear_flash()
         self.load_storage()
 
     @QtCore.Slot(str, object)
@@ -706,6 +731,7 @@ class WorkspaceList(QtWidgets.QWidget):
         return answer == QtWidgets.QMessageBox.StandardButton.Yes
 
     def flash(self, message: str, *, outage: bool = False) -> None:
+        self.flash_outage = outage
         """The status line's flash (#939, #904): the message
         shows; a refusal clears itself after the flash span, an
         outage stands for the next answer to resolve. Each flash
@@ -730,6 +756,7 @@ class WorkspaceList(QtWidgets.QWidget):
         named. The serial bump retires any timeout still
         pending."""
         self.flash_seq += 1
+        self.flash_outage = False
         self.status.clear()
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:

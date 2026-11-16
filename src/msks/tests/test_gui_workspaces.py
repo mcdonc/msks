@@ -297,8 +297,11 @@ def test_a_failed_refresh_flashes_and_keeps_the_rows(qt) -> None:
     )
     assert "409" in screen.status.text()
     assert screen.table.rowCount() == 3  # the rows stand
+    # A refusal runs its own span (#940): a listing answer
+    # landing inside it does not wipe it — only a standing
+    # outage resolves on an answer.
     screen.on_succeeded("workspaces-list", daemon_rows()[:1])
-    assert screen.status.text() == ""  # the answer cleared it
+    assert "409" in screen.status.text()
     window.close()
 
 
@@ -984,6 +987,49 @@ def test_the_storage_cache_keeps_standing_figures(qt) -> None:
     bridge.calls.clear()
     screen.on_succeeded("workspaces-list", daemon_rows())
     assert ("workspaces-storage", "storage", ()) in bridge.calls
+    window.close()
+
+
+def test_a_posture_change_alone_refreshes_the_strip(qt) -> None:
+    """The unchanged-listing skip spares the table, not the
+    strip (#940): an answer whose five displayed cells read the
+    same but whose posture facts changed — a pending change
+    landed — still refreshes the model map and the strip. The
+    strip cannot lie about facts the columns never show."""
+    screen, window, _bridge = make_screen(qt)
+    assert "next ↻1" in screen.detail.text()  # beta's wait
+    settled = [dict(row) for row in daemon_rows()]
+    settled[1]["mounts_pending"] = False  # the wait landed
+    screen.on_succeeded("workspaces-list", settled)
+    assert "next" not in screen.detail.text()
+    assert screen.table.rowCount() == 3  # the table stood whole
+    window.close()
+
+
+def test_a_stale_listing_answer_keeps_the_outcome_flash(qt) -> None:
+    """The very interleaving the outcome flash masks (#940,
+    #776): a tick's listing flight is out when the action's
+    answer flashes; the stale listing answer that follows — its
+    rows matching, so nothing repaints — must not wipe the
+    outcome. Only a standing outage clears on an answer."""
+    screen, window, bridge = make_screen(qt)
+    screen.refresh()  # the listing flight opens
+    bridge.calls.clear()
+    screen.start_button.click()
+    screen.on_succeeded(
+        "workspaces-start", {"id": "ws-2", "status": "running"}
+    )
+    assert screen.status.text() == "beta running"
+    # The stale listing answer lands: same rows, no rebuild.
+    screen.on_succeeded("workspaces-list", daemon_rows())
+    assert screen.status.text() == "beta running"  # it stood
+    # A standing outage, though, an answer resolves.
+    screen.on_failed(
+        "workspaces-list",
+        clientdata.RestFailure("daemon away", reach=True),
+    )
+    screen.on_succeeded("workspaces-list", daemon_rows())
+    assert screen.status.text() == ""
     window.close()
 
 

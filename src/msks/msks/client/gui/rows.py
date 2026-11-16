@@ -139,10 +139,10 @@ def detail_text(model: WorkspaceRow, used_bytes: int | None) -> str:
 def detail_pairs(
     model: WorkspaceRow, used_bytes: int | None
 ) -> list[tuple[str, str]]:
-    """The second line's facts as (label, value) pairs (#849's
-    shape): the posture — cpu, memory, the egress mode — then
-    the mounts and pending markers while either counts, then
-    the storage the capacity report charges."""
+    """The line's posture and cost pairs (#849's facts): cpu,
+    memory, the egress mode — then the mounts and pending
+    markers while either counts, then the storage the capacity
+    report charges."""
     pairs = [
         ("cpu", cpu_value(model)),
         ("mem", mem_value(model)),
