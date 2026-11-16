@@ -85,6 +85,9 @@ The library is found through `GHOSTTY_VT_LIB` if set, then
   `Shift+PgUp`/`Shift+PgDn` page the buffer locally (one page is the
   viewport minus a line of overlap), and typed input snaps the
   viewport back to the bottom so the cursor stays visible.
+  `Ctrl+Plus`/`Ctrl+Equal` and `Ctrl+Minus` step the font size
+  (7–28 pt) and resize the window with it — the grid keeps its
+  80×24 shape at the new cell size.
 - Mouse reporting (X10/normal/button/any-event tracking, SGR and
   friends) through the mouse encoder; when an application enables
   mouse tracking, text selection stands aside.

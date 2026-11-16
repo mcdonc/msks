@@ -324,23 +324,9 @@ class TerminalWidget(QWidget):
         # class. Point size also scales cleanly with a window's device
         # pixel ratio on a fractionally scaled Wayland surface.
         self.font.setPointSize(15)
-        metrics = QFontMetrics(self.font)
-        repchar = (
-            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-            "abcdefgjijklmnopqrstuvwxyz"
-            "0123456789./+@"
-        )
-        self.cell_width = max(
-            1, round(metrics.horizontalAdvance(repchar) / len(repchar))
-        )
-        # Cap the row height at 1.2 em: JetBrains Mono's natural line
-        # box is about 1.3 em, which makes an 80x24 window a size class
-        # above the Konsole reference. Terminals ship exactly this trim
-        # as their line-height setting; 1.2 em lands rows at 24 px,
-        # matching the reference grid.
-        em = QFontInfo(self.font).pixelSize()
-        self.cell_height = max(1, min(metrics.height(), round(em * 1.2)))
-        self._ascent = metrics.ascent()
+        self.cell_width = 1
+        self.cell_height = 1
+        self._ascent = 1
         self._fonts = self._font_variants()
 
         self.cols, self.rows = 80, 24
@@ -393,6 +379,9 @@ class TerminalWidget(QWidget):
         self.selection_gesture = self.lib.new_handle(
             self.lib.selection_gesture_new
         )
+        # Measure cells and sync the grid now that the terminal and
+        # session exist (Ctrl+Plus/Minus re-run this with a new size).
+        self._set_font_point_size(self.font.pointSize())
 
         self.notifier = QSocketNotifier(
             self.session.master_fd or 0, QSocketNotifier.Type.Read, self
@@ -866,6 +855,50 @@ class TerminalWidget(QWidget):
         )
         self._selection_gesture(ghostty.SEL_DRAG, self._drag_position)
 
+    MIN_PT, MAX_PT = 7, 28
+
+    def _set_font_point_size(self, points: int) -> None:
+        """Measure cells for the font size, push the new pixel metrics
+        into the terminal and pty, and grow the window to keep the
+        same grid at the new size."""
+        self.font.setPointSize(points)
+        metrics = QFontMetrics(self.font)
+        repchar = (
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "abcdefgjijklmnopqrstuvwxyz"
+            "0123456789./+@"
+        )
+        self.cell_width = max(
+            1, round(metrics.horizontalAdvance(repchar) / len(repchar))
+        )
+        # Cap the row height at 1.2 em: JetBrains Mono's natural line
+        # box is about 1.3 em. Terminals ship exactly this trim as
+        # their line-height setting; 1.2 em keeps rows compact.
+        em = QFontInfo(self.font).pixelSize()
+        self.cell_height = max(1, min(metrics.height(), round(em * 1.2)))
+        self._ascent = metrics.ascent()
+        self._fonts = self._font_variants()
+        self.lib.terminal_resize(
+            self.terminal,
+            self.cols,
+            self.rows,
+            self.cell_width,
+            self.cell_height,
+        )
+        self.session.resize(
+            self.cols, self.rows, self.cell_width, self.cell_height
+        )
+        window = self.window()
+        if window is not None and window is not self:
+            window.resize(self.sizeHint())
+        self.refresh()
+
+    def _zoom_font(self, direction: int) -> None:
+        """Ctrl+Plus/Minus: step the font size, clamped."""
+        points = self.font.pointSize() + direction
+        if self.MIN_PT <= points <= self.MAX_PT:
+            self._set_font_point_size(points)
+
     def _selection_gesture(self, kind: int, position: QPointF) -> None:
         """Feed a selection gesture event, following the protocol of
         Ghostty's c-vt-selection-gesture example: every event carries
@@ -1115,6 +1148,22 @@ class TerminalWidget(QWidget):
                 f"auto={event.isAutoRepeat()}",
                 flush=True,
             )
+        # Ctrl+Plus/Equal grows the font (and the window with it,
+        # grid unchanged); Ctrl+Minus shrinks it.
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            if event.key() in (
+                Qt.Key.Key_Equal,
+                Qt.Key.Key_Plus,
+                Qt.Key.Key_KP_Add,
+            ):
+                self._zoom_font(1)
+                return
+            if event.key() in (
+                Qt.Key.Key_Minus,
+                Qt.Key.Key_KP_Subtract,
+            ):
+                self._zoom_font(-1)
+                return
         # Clipboard shortcuts before encoding: copy/cut (a terminal
         # cannot cut, so cut copies) and paste.
         if (

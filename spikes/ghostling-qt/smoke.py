@@ -456,6 +456,25 @@ def test_widget() -> None:
                 )
             else:
                 print("clipboard: osc52 write reached the clipboard")
+            # Font zoom: cells grow with the size, and shrink back.
+            pt0 = widget.font.pointSize()
+            cw0 = widget.cell_width
+            widget._zoom_font(1)
+            if not (
+                widget.font.pointSize() == pt0 + 1 and widget.cell_width > cw0
+            ):
+                failures.append(
+                    f"zoom in: pt {widget.font.pointSize()} "
+                    f"cell {widget.cell_width}"
+                )
+            else:
+                print(f"zoom: cells {cw0} -> {widget.cell_width}")
+            widget._zoom_font(-1)
+            if widget.font.pointSize() != pt0 or (widget.cell_width != cw0):
+                failures.append(
+                    f"zoom out: pt {widget.font.pointSize()} "
+                    f"cell {widget.cell_width}"
+                )
         except Exception as exc:  # noqa: BLE001 - report and stop
             failures.append(f"widget check raised: {exc}")
         finally:
