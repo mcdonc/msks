@@ -2,9 +2,11 @@
 
 The package presents its parts: the entry the ``msks gui``
 command runs (:mod:`.app`), the screen actions over the
-transport (:mod:`.data`, PySide6-free), and the workspace
-list's presenter (:mod:`.rows`, phase 3 of #924 — plain row
-models, PySide6-free). The screen widget
+transport (:mod:`.data`, PySide6-free), the workspace list's
+presenter (:mod:`.rows`, phase 3 of #924 — plain row models,
+PySide6-free), and the workspace detail view's presenter
+(:mod:`.detail`, phase 4 — plain section models,
+PySide6-free). The screen widget
 (:mod:`.workspaces`, #939) and the asyncio worker
 (:mod:`.bridge`) are pinned by nothing here — both import the
 Qt binding at module scope, and this package's own init runs
@@ -19,5 +21,6 @@ from . import (  # noqa: F401 — reachability pins for the gate;
     # app.py's lazy window-path import.
     app,
     data,
+    detail,
     rows,
 )
