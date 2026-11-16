@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import websockets
+from msks.client import ages as ages_mod
 from msks.client import cli
 from msks.client import data as clientdata
 from msks.client.data import RestFailure
@@ -3608,9 +3609,11 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
 
 def pinned_clock(monkeypatch, when: str = "2026-01-04T12:00:00") -> None:
     """Pin the relative labels' clock (#350): the fixture row's
-    stamp (Jan 2) reads ``2d ago`` under the pinned date."""
+    stamp (Jan 2) reads ``2d ago`` under the pinned date. The
+    seam moved to the shared leaf with the ladder (#939): both
+    clients' labels read this one clock."""
     monkeypatch.setattr(
-        rows_mod, "clock_now", lambda: datetime.fromisoformat(when)
+        ages_mod, "clock_now", lambda: datetime.fromisoformat(when)
     )
 
 
@@ -4444,7 +4447,7 @@ async def test_a_scrolling_list_keeps_the_created_label(
     # 2), so the created cell reads "yesterday" — the widest
     # label the pinned rule renders.
     monkeypatch.setattr(
-        rows_mod,
+        ages_mod,
         "clock_now",
         lambda: datetime.fromisoformat("2026-01-03T12:00:00"),
     )

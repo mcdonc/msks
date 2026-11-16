@@ -1,13 +1,17 @@
 """The GUI workspace-list presenter (#938): daemon-row fakes in,
 row models out — the label, the state word with its lifecycle
-rank, and the ``✗N`` unresolved-mounts marker. The presenter
-holds no Qt import, so these tests drive it as plain
-Python, the same way the coverage gate does."""
+rank, the ``✗N`` unresolved-mounts marker, and the id, image,
+and created cells (#939). The presenter holds no Qt import, so
+these tests drive it as plain Python, the same way the coverage
+gate does."""
 
 import ast
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
+import pytest
+from msks.client import ages as ages_mod
 from msks.client.gui import rows as gui_rows
 from msks.client.tui import rows as tui_rows
 
@@ -19,23 +23,45 @@ def daemon_row(
     name: str | None = "alpha",
     status: str = "stopped",
     issues: Sequence[dict] | None = (),
+    image_ref: str | None = "debian:13.6",
+    image_hash: str | None = "b" * 64,
+    created_at: str | None = "2026-01-02T03:04:05",
 ) -> dict:
     """One daemon row as the listing serves it (#938's fakes):
-    the three fields the presenter reads. The issue list
-    defaults to the daemon's healthy shape — the listing
-    attaches ``mount_issues`` to every row — and a caller
-    passing ``None`` exercises the defensive read for a daemon
-    that predates the field."""
-    row = {"id": id, "name": name, "status": status}
+    the fields the presenter reads. The issue list defaults to
+    the daemon's healthy shape — the listing attaches
+    ``mount_issues`` to every row — and a caller passing
+    ``None`` exercises the defensive read for a daemon that
+    predates the field."""
+    row = {
+        "id": id,
+        "name": name,
+        "status": status,
+        "image_ref": image_ref,
+        "image_hash": image_hash,
+        "created_at": created_at,
+    }
     if issues is not None:
         row["mount_issues"] = list(issues)
     return row
 
 
+@pytest.fixture(autouse=True)
+def pinned_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The created labels read one fixed clock (#350's seam, on
+    the shared leaf since #939): the fixture's Jan 2 stamp reads
+    ``2d ago`` under the pinned Jan 4."""
+    monkeypatch.setattr(
+        ages_mod,
+        "clock_now",
+        lambda: datetime.fromisoformat("2026-01-04T12:00:00"),
+    )
+
+
 def test_the_presenter_builds_one_model_per_row() -> None:
     """The listing's row models (#938): one per daemon row, in
-    the order the daemon served them, each carrying the label,
-    the state word, and the marker field."""
+    the order the daemon served them, each carrying the five
+    fields the screen renders."""
     models = gui_rows.workspace_rows(
         [daemon_row(), daemon_row(id="ws-b", name=None, status="running")]
     )
@@ -45,9 +71,10 @@ def test_the_presenter_builds_one_model_per_row() -> None:
 
 
 def test_the_model_carries_what_the_widget_renders() -> None:
-    """One row model's fields (#938): the label, the state word,
-    the rank the widget sorts by, and the marker it shows beside
-    the state."""
+    """One row model's fields (#938, #939): the label, the state
+    word, the rank the widget sorts by, the marker it shows
+    beside the state, and the id, image, and created cells —
+    the TUI listing's five over the same row."""
     model = gui_rows.workspace_row(
         daemon_row(status="running", issues=[{"kind": "skipped"}])
     )
@@ -56,6 +83,9 @@ def test_the_model_carries_what_the_widget_renders() -> None:
         state="running",
         state_rank=2,
         issue_marker="✗1",
+        id=WS,
+        image="debian:13.6",
+        created="2d ago",
     )
 
 
@@ -78,6 +108,31 @@ def test_the_marker_counts_unresolved_mounts() -> None:
     assert gui_rows.issue_marker(daemon_row(issues=issues)) == "✗2"
     assert gui_rows.issue_marker(daemon_row(issues=[])) is None
     assert gui_rows.issue_marker(daemon_row(issues=None)) is None
+
+
+def test_the_image_prefers_the_reference() -> None:
+    """The IMAGE cell's value (#470 L3): the catalog reference
+    first, the image hash when no reference came, and ``-`` when
+    the row carries neither — the TUI's own read of the cell."""
+    assert gui_rows.image_text(daemon_row()) == "debian:13.6"
+    assert gui_rows.image_text(daemon_row(image_ref=None)) == "b" * 64
+    assert (
+        gui_rows.image_text(daemon_row(image_ref=None, image_hash=None)) == "-"
+    )
+
+
+def test_the_created_reads_the_shared_ladder() -> None:
+    """The CREATED cell's value (#939): the relative label off
+    the shared leaf (#350's pinned rule), ``-`` for a row with
+    no stamp. The GUI and the TUI read the same ladder, so the
+    two listings age a row alike."""
+    assert gui_rows.workspace_row(daemon_row()).created == "2d ago"
+    fresh = gui_rows.workspace_row(
+        daemon_row(created_at="2026-01-04T09:00:00")
+    )
+    assert fresh.created == "today"
+    missing = gui_rows.workspace_row(daemon_row(created_at=None))
+    assert missing.created == "-"
 
 
 def test_the_state_ranks_in_the_lifecycle_order() -> None:

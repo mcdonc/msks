@@ -14,8 +14,9 @@ install's every command (#927). ``.app`` imports both lazily
 on the window path, which is the reachability the gate counts.
 """
 
-from . import (  # noqa: F401 — reachability pins for the gate; the
-    # bridge reaches through app.py's lazy window-path import.
+from . import (  # noqa: F401 — reachability pins for the gate;
+    # the bridge and the screen module both reach through
+    # app.py's lazy window-path import.
     app,
     data,
     rows,

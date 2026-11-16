@@ -1,9 +1,10 @@
 """The workspace list screen (phase 3 of #924, #939): the thin
 widget that renders the presenter's row models in the main
-window — name, state, and the unresolved-mounts marker, the row
-set the TUI builds. The screen holds no business logic: daemon
-rows arrive as row models (:mod:`msks.client.gui.rows`), the
-bridge (:mod:`msks.client.gui.bridge`) carries every call, and a
+window — the TUI listing's five fields (NAME, STATUS with the
+unresolved-mounts marker, ID, IMAGE, CREATED). The screen holds
+no business logic: daemon rows arrive as row models
+(:mod:`msks.client.gui.rows`), the bridge
+(:mod:`msks.client.gui.bridge`) carries every call, and a
 refresh failure flashes the status line while the rows already
 on screen stand.
 
@@ -17,6 +18,7 @@ bridge's own docstring states the same contract).
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from ..data import RestFailure
 from .bridge import Bridge
 from .rows import WorkspaceRow, workspace_rows
 
@@ -31,10 +33,12 @@ REFRESH_MS = 5000
 #: bridge.
 LIST_KEY = "workspaces-list"
 
-#: How long a flashed failure stays on the status line,
+#: How long a flashed refusal stays on the status line,
 #: milliseconds — long enough to read, gone before it reads as
-#: the screen's standing state (the next refresh clears it
-#: whatever the timer does).
+#: the screen's standing state. An outage (the daemon answered
+#: nothing, :attr:`RestFailure.reach`) never times out: the line
+#: holds its message until an answer resolves it, the #904
+#: contract the TUI's own listing keeps.
 FLASH_MS = 4000
 
 #: The state cell's sort data (#939): the lifecycle rank the
@@ -42,16 +46,19 @@ FLASH_MS = 4000
 #: own sequence rather than the alphabet.
 RANK_ROLE = QtCore.Qt.ItemDataRole.UserRole
 
-#: The table's columns (#939), in display order — the row set
-#: the TUI's listing shows of the fields the row models carry.
-COLUMNS = ("Name", "State")
+#: The table's columns (#939), in display order — the TUI
+#: listing's own five, the fields the row models carry.
+COLUMNS = ("NAME", "STATUS", "ID", "IMAGE", "CREATED")
 
 NAME_COLUMN = 0
-STATE_COLUMN = 1
+STATUS_COLUMN = 1
+ID_COLUMN = 2
+IMAGE_COLUMN = 3
+CREATED_COLUMN = 4
 
 
 def state_text(model: WorkspaceRow) -> str:
-    """The state cell's text (#939): the unresolved-mounts
+    """The status cell's text (#939): the unresolved-mounts
     marker ahead of the state word — the TUI status cell's shape
     (``✗1 stopped``) — the word alone on a healthy row."""
     if model.issue_marker is None:
@@ -60,7 +67,7 @@ def state_text(model: WorkspaceRow) -> str:
 
 
 class StateItem(QtWidgets.QTableWidgetItem):
-    """The state cell as a sort item (#939): the marker beside
+    """The status cell as a sort item (#939): the marker beside
     the word, the lifecycle rank carried as the item's sort data
     — a column click orders the rows by the vocabulary's own
     sequence, a state outside it last."""
@@ -91,6 +98,8 @@ class WorkspaceList(QtWidgets.QWidget):
     def __init__(self, bridge: Bridge) -> None:
         super().__init__()
         self.bridge = bridge
+        self.pending = False
+        self.flash_seq = 0
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
         self.table = QtWidgets.QTableWidget(0, len(COLUMNS), self)
@@ -119,18 +128,25 @@ class WorkspaceList(QtWidgets.QWidget):
         layout.addLayout(row)
         self.setLayout(layout)
 
-    @QtCore.Slot()
     def refresh(self) -> None:
         """One listing refresh through the bridge (#939) — the
         timer's tick and the button's click share it, and the
-        screen's own open does the first. The rows on screen
-        stand until the answer replaces them."""
+        screen's own open does the first. A refresh already in
+        flight is skipped, exactly the TUI listing's own guard
+        (#470): ticks that outlive a slow call would stack
+        identical requests while the first answer has yet to
+        land. The rows on screen stand until the answer replaces
+        them."""
+        if self.pending:
+            return
+        self.pending = True
         self.bridge.call(LIST_KEY, "workspaces")
 
     def set_rows(self, models: list[WorkspaceRow]) -> None:
         """The table as the row models read (#939): one row per
         model in the order the daemon served, the label its own
-        column, the marker beside the state word in the other.
+        column, the marker beside the state word in the status
+        one, and the id, image, and created cells beside them.
         Sorting pauses for the fill and resumes after, so the
         rebuild cannot re-order rows mid-swap."""
         self.table.setSortingEnabled(False)
@@ -139,7 +155,18 @@ class WorkspaceList(QtWidgets.QWidget):
             self.table.setItem(
                 index, NAME_COLUMN, QtWidgets.QTableWidgetItem(model.label)
             )
-            self.table.setItem(index, STATE_COLUMN, StateItem(model))
+            self.table.setItem(index, STATUS_COLUMN, StateItem(model))
+            self.table.setItem(
+                index, ID_COLUMN, QtWidgets.QTableWidgetItem(model.id)
+            )
+            self.table.setItem(
+                index, IMAGE_COLUMN, QtWidgets.QTableWidgetItem(model.image)
+            )
+            self.table.setItem(
+                index,
+                CREATED_COLUMN,
+                QtWidgets.QTableWidgetItem(model.created),
+            )
         self.table.setSortingEnabled(True)
 
     @QtCore.Slot(str, object)
@@ -151,35 +178,54 @@ class WorkspaceList(QtWidgets.QWidget):
         screen's to take."""
         if key != LIST_KEY:
             return
+        self.pending = False
         self.set_rows(workspace_rows(result))
         self.clear_flash()
 
     @QtCore.Slot(str, object)
-    def on_failed(self, key: str, failure: object) -> None:
+    def on_failed(self, key: str, failure: RestFailure) -> None:
         """One refused refresh (#939): the failure flashes on the
-        status line, and the rows already on screen stand — the
-        operator keeps the list the last answer built. Another
-        key's failure is not this screen's to show."""
+        status line — an outage (the daemon answered nothing)
+        stands until an answer resolves it — and the rows already
+        on screen stand: the operator keeps the list the last
+        answer built. Another key's failure is not this screen's
+        to show."""
         if key != LIST_KEY:
             return
-        self.flash(str(failure))
+        self.pending = False
+        self.flash(str(failure), outage=failure.reach)
 
-    def flash(self, message: str) -> None:
-        """The status line's flash (#939): the message shows for
-        the flash span, then the line clears itself."""
+    def flash(self, message: str, *, outage: bool = False) -> None:
+        """The status line's flash (#939, #904): the message
+        shows; a refusal clears itself after the flash span, an
+        outage stands for the next answer to resolve. Each flash
+        carries its own serial, so a later flash's message is not
+        erased by an earlier flash's timeout."""
+        self.flash_seq += 1
         self.status.setText(message)
-        QtCore.QTimer.singleShot(FLASH_MS, self.clear_flash)
+        if outage:
+            return
+        seq = self.flash_seq
+        QtCore.QTimer.singleShot(FLASH_MS, lambda: self.clear_stale(seq))
+
+    def clear_stale(self, seq: int) -> None:
+        """The flash timeout's slot: the line clears only when
+        this timeout's flash is still the one on it."""
+        if seq == self.flash_seq:
+            self.status.clear()
 
     def clear_flash(self) -> None:
-        """The flash's clear — the timeout's slot, and the path
-        a successful refresh takes when it resolves the outage
-        the flash named."""
+        """The flash's whole clear — the path a successful
+        refresh takes when it resolves the outage the flash
+        named. The serial bump retires any timeout still
+        pending."""
+        self.flash_seq += 1
         self.status.clear()
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         """The screen's first refresh at open (#939), and the
-        tick's resume on a re-show: the screen refreshes while
-        it owns the window."""
+        tick's resume on a re-show: the screen refreshes while it
+        owns the window."""
         self.refresh()
         self.timer.start()
         super().showEvent(event)

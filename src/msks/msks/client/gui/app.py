@@ -58,12 +58,11 @@ WINDOW_TITLE = "msks"
 FUSION_STYLE = "Fusion"
 
 #: The window's font scale (#939): the platform's default point
-#: size (9–10 on most hosts) reads small beside a terminal's
-#: own face, and smaller still on a high-resolution display, so
-#: the window runs its fonts at twice the default size — one
+#: size reads small beside a terminal's own face, so the window
+#: runs its fonts at one and a half times the default — one
 #: scale for the whole window, applied to the application font
 #: before the first widget reads it.
-FONT_SCALE = 2.0
+FONT_SCALE = 1.5
 
 #: The window's opening height scale (#939): a main window
 #: shrinks to its central widget's size hint when it shows, and
@@ -71,6 +70,28 @@ FONT_SCALE = 2.0
 #: window opens at the layout's own height doubled, its width
 #: the layout's own.
 HEIGHT_SCALE = 2.0
+
+#: The environment knob for the font scale (#939): an operator
+#: whose display or taste reads the default wrong sets it. The
+#: same knob shape for the height scale below — presentation
+#: defaults, each overridable per launch in the style pin's own
+#: spirit (#937: a preset choice is the user's own).
+FONT_SCALE_ENV = "MSKSC_GUI_FONT_SCALE"
+HEIGHT_SCALE_ENV = "MSKSC_GUI_HEIGHT_SCALE"
+
+
+def scale_from_env(name: str, default: float) -> float:
+    """The scale the environment names, else the default
+    (#939): a presentation knob, not a config gate — a value
+    that does not parse as a number reads as the default, and
+    the window opens rather than refusing."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
 
 
 def gui_session_present() -> bool:
@@ -174,10 +195,13 @@ def open_window(QtWidgets: ModuleType) -> int:
         app.setStyle(FUSION_STYLE)
     # The font scale sits on the application before the first
     # widget builds (#939): every screen the window opens — the
-    # table, the button, the status line — inherits the doubled
-    # size without a per-widget hand-tune.
+    # table, the button, the status line — inherits the scaled
+    # size without a per-widget hand-tune. A preset knob is the
+    # operator's own choice and wins over the default.
     font = app.font()
-    font.setPointSizeF(font.pointSizeF() * FONT_SCALE)
+    font.setPointSizeF(
+        font.pointSizeF() * scale_from_env(FONT_SCALE_ENV, FONT_SCALE)
+    )
     app.setFont(font)
     bridge = Bridge(GuiData())
     bridge.start()
@@ -194,11 +218,15 @@ def open_window(QtWidgets: ModuleType) -> int:
     window.setCentralWidget(WorkspaceList(bridge))
     # The opening size (#939): ``adjustSize`` pins the central
     # widget's size hint as the window's own geometry before
-    # the show shrinks to it, and the resize doubles the height
-    # — the listing's hint alone opens short.
+    # the show shrinks to it, and the resize scales the height —
+    # the listing's hint alone opens short. A preset knob is
+    # the operator's own choice and wins over the default.
     window.adjustSize()
     size = window.size()
-    window.resize(size.width(), round(size.height() * HEIGHT_SCALE))
+    window.resize(
+        size.width(),
+        round(size.height() * scale_from_env(HEIGHT_SCALE_ENV, HEIGHT_SCALE)),
+    )
     window.show()
     code = app.exec()
     bridge.stop()

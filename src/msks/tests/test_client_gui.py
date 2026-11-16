@@ -160,6 +160,25 @@ def test_the_gui_command_names_a_broken_install(
     assert "halted" in err  # the caught error's text named the cause
 
 
+def test_the_scale_knobs_read_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The presentation knobs (#939): the environment's value
+    wins over the default, an unset variable reads the default,
+    and a value that does not parse reads the default too — a
+    presentation knob never refuses the window."""
+    monkeypatch.setenv("MSKS_GUI_TEST_SCALE", "1.25")
+    assert app.scale_from_env("MSKS_GUI_TEST_SCALE", 1.5) == 1.25
+    monkeypatch.delenv("MSKS_GUI_TEST_SCALE")
+    assert app.scale_from_env("MSKS_GUI_TEST_SCALE", 1.5) == 1.5
+    monkeypatch.setenv("MSKS_GUI_TEST_SCALE", "huge")
+    assert app.scale_from_env("MSKS_GUI_TEST_SCALE", 1.5) == 1.5
+    # The knobs the window reads, named: a preset value is the
+    # operator's own choice (#937's spirit).
+    assert app.FONT_SCALE_ENV == "MSKSC_GUI_FONT_SCALE"
+    assert app.HEIGHT_SCALE_ENV == "MSKSC_GUI_HEIGHT_SCALE"
+
+
 def test_the_parser_help_lists_gui(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -405,9 +424,9 @@ def test_open_window_reuses_an_existing_app(
         Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]
     assert shown.count("created") == 1  # the pre-made one only
     assert styles == ["Fusion"]  # the session never picks the style
-    # The font scale (#939): the default 9pt doubles to 18 —
+    # The font scale (#939): the default 9pt scales to 13.5 —
     # one write on the application font, before any widget.
-    assert "font 18.0" in shown
+    assert "font 13.5" in shown
     # The opening size (#939): the width the layout named, the
     # height doubled.
     assert "sized 640x960" in shown
@@ -519,5 +538,5 @@ def test_open_window_keeps_a_user_style_choice(
         Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]
     assert os.environ["QT_STYLE_OVERRIDE"] == "Chosen"
     # The style write never happened — the choice stands — but
-    # the font scale still applied (#939): 10pt doubled.
-    assert styles == ["font 20"]
+    # the font scale still applied (#939): 10pt at 1.5.
+    assert styles == ["font 15"]

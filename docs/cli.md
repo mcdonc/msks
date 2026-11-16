@@ -124,6 +124,13 @@ A key msks stages itself is an unencrypted OpenSSH-format key (`ed25519`,
 refused with a line giving the fixes in order: `ssh-add` the key, decrypt a
 copy, or pass `--pubkey` at create.
 
+Two more variables carry the GUI window's presentation defaults (#939);
+neither has a config-file key, because neither changes what msks does — only
+how the window opens. `MSKSC_GUI_FONT_SCALE` multiplies the platform's
+default font point size (default `1.5`). `MSKSC_GUI_HEIGHT_SCALE` multiplies
+the opening height the workspace list's own size hint gives (default `2`).
+A value that does not parse as a number reads as the default.
+
 `MSKSC_PUBKEY_FILE` points at your key's public half, a `.pub`
 file ([the identity section](first-run.md#the-key-files)
 owns the agent requirement this form carries). A create with it

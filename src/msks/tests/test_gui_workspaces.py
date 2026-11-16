@@ -1,16 +1,18 @@
 """The workspace list screen (#939): the thin widget over the
-presenter's row models — name, state, and the unresolved-mounts
-marker — refreshed on a timer and a manual action through the
-bridge, with a failed refresh flashing the status line while
-the rows stand. The widget runs under the offscreen platform on
-every host (#939); the screen's slots are driven directly and
-through the stub bridge's signal emits, the bridge's own tests
-holding the real worker's contract.
+presenter's row models — the TUI listing's five fields, NAME,
+STATUS with the unresolved-mounts marker, ID, IMAGE, CREATED —
+refreshed on a timer and a manual action through the bridge,
+with a failed refresh flashing the status line while the rows
+stand. The widget runs under the offscreen platform on every
+host (#939); the screen's slots are driven directly and through
+the stub bridge's signal emits, the bridge's own tests holding
+the real worker's contract.
 """
 
 import importlib.util
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,12 +24,24 @@ if importlib.util.find_spec("PySide6") is None:
         allow_module_level=True,
     )
 
+from msks.client import ages as ages_mod  # noqa: E402
 from msks.client import data as clientdata  # noqa: E402
-from msks.client.gui import rows as rows_mod  # noqa: E402
 
 #: The poll cadence for the offscreen event loop, seconds — the
 #: timer test pumps Qt's queue until the tick lands.
 TICK = 0.01
+
+
+@pytest.fixture(autouse=True)
+def pinned_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The created cells read one fixed clock (#350's seam, on
+    the shared leaf since #939): the fixture's Jan 2 stamp reads
+    ``2d ago`` under the pinned Jan 4."""
+    monkeypatch.setattr(
+        ages_mod,
+        "clock_now",
+        lambda: datetime.fromisoformat("2026-01-04T12:00:00"),
+    )
 
 
 class FakeSignal:
@@ -62,16 +76,36 @@ class StubBridge:
 
 def daemon_rows() -> list[dict]:
     """Three daemon rows out of lifecycle order, one with
-    unresolved mounts — the listing an answer carries."""
+    unresolved mounts — the listing an answer carries, every
+    cell's field on every row."""
     return [
-        {"id": "ws-1", "name": "alpha", "status": "stopped"},
+        {
+            "id": "ws-1",
+            "name": "alpha",
+            "status": "stopped",
+            "image_ref": "debian:13.6",
+            "image_hash": "a" * 64,
+            "created_at": "2026-01-02T03:04:05",
+            "mount_issues": [],
+        },
         {
             "id": "ws-2",
             "name": "beta",
             "status": "running",
+            "image_ref": None,
+            "image_hash": "b" * 64,
+            "created_at": "2026-01-04T09:00:00",
             "mount_issues": [{"kind": "skipped"}],
         },
-        {"id": "ws-3", "name": None, "status": "starting"},
+        {
+            "id": "ws-3",
+            "name": None,
+            "status": "starting",
+            "image_ref": None,
+            "image_hash": None,
+            "created_at": None,
+            "mount_issues": [],
+        },
     ]
 
 
@@ -106,12 +140,14 @@ def qt(tmp_path: Path):
 
 def make_screen(qt) -> tuple:
     """The screen over the stub bridge, shown in a real window —
-    the shape every test reads: open, first refresh issued, tick
-    running."""
+    the shape every test reads: open, first refresh issued (and
+    answered, so later refreshes run), tick running."""
     bridge = StubBridge()
     screen = qt.screen_mod.WorkspaceList(bridge)
     window = qt.QtWidgets.QMainWindow()
     window.setCentralWidget(screen)
+    window.show()
+    screen.on_succeeded("workspaces-list", daemon_rows())
     return screen, window, bridge
 
 
@@ -120,7 +156,10 @@ def test_the_open_screen_issues_its_first_refresh(qt) -> None:
     issues the first refresh through the bridge and starts the
     standing tick at the listing's cadence — the TUI's own five
     seconds (#470 L2)."""
-    screen, window, bridge = make_screen(qt)
+    bridge = StubBridge()
+    screen = qt.screen_mod.WorkspaceList(bridge)
+    window = qt.QtWidgets.QMainWindow()
+    window.setCentralWidget(screen)
     assert bridge.calls == []  # construction alone asks nothing
     window.show()
     assert bridge.calls == [("workspaces-list", "workspaces", ())]
@@ -130,20 +169,32 @@ def test_the_open_screen_issues_its_first_refresh(qt) -> None:
 
 
 def test_the_list_renders_the_row_models(qt) -> None:
-    """The row set the TUI builds (#939): one row per model, the
-    label in its column, the state word in the other with the
-    unresolved-mounts marker ahead of it, and the lifecycle rank
-    carried as the state cell's sort data."""
+    """The TUI listing's five fields (#939): one row per model,
+    the label, the status word with the unresolved-mounts marker
+    ahead of it, and the id, image, and created cells — the
+    image falling back to the hash, the created reading the
+    shared ladder, ``-`` where the row carries nothing."""
     screen, window, _bridge = make_screen(qt)
-    window.show()
-    screen.on_succeeded("workspaces-list", daemon_rows())
     assert screen.table.rowCount() == 3
     labels = [screen.table.item(row, 0).text() for row in range(3)]
     assert labels == ["alpha", "beta", "ws-3"]
-    assert screen.table.item(1, 1).text() == "✗1 running"
     assert screen.table.item(0, 1).text() == "stopped"
+    assert screen.table.item(1, 1).text() == "✗1 running"
+    # The ID column's cell (#849's vocabulary): the immutable id.
+    assert screen.table.item(2, 2).text() == "ws-3"
+    # The IMAGE cell: the reference first, the hash when no
+    # reference came, ``-`` when neither did.
+    assert screen.table.item(0, 3).text() == "debian:13.6"
+    assert screen.table.item(1, 3).text() == "b" * 64
+    assert screen.table.item(2, 3).text() == "-"
+    # The CREATED cell: the shared relative ladder (#350).
+    assert screen.table.item(0, 4).text() == "2d ago"
+    assert screen.table.item(1, 4).text() == "today"
+    assert screen.table.item(2, 4).text() == "-"
     rank = qt.screen_mod.RANK_ROLE
-    assert screen.table.item(1, 1).data(rank) == rows_mod.state_rank("running")
+    assert (
+        screen.table.item(1, 1).data(rank) == 2  # running's lifecycle rank
+    )
     window.close()
 
 
@@ -153,12 +204,42 @@ def test_a_later_answer_replaces_the_rows(qt) -> None:
     listing empties the screen without leaving the last rows
     behind."""
     screen, window, _bridge = make_screen(qt)
-    window.show()
-    screen.on_succeeded("workspaces-list", daemon_rows())
     screen.on_succeeded("workspaces-list", [])
     assert screen.table.rowCount() == 0
     screen.on_succeeded("workspaces-list", daemon_rows()[:1])
     assert screen.table.rowCount() == 1
+    window.close()
+
+
+def test_a_refresh_in_flight_is_skipped(qt) -> None:
+    """The in-flight guard (#939, the TUI listing's own #470
+    rule): while a refresh waits on its answer, the tick and the
+    button add nothing — a slow call does not stack identical
+    requests behind itself. Whichever answer comes (a listing or
+    a refusal) retires the flight, and the next refresh
+    runs."""
+    screen, window, bridge = make_screen(qt)
+    bridge.calls.clear()
+    screen.refresh()  # the flight opens
+    assert bridge.calls == [("workspaces-list", "workspaces", ())]
+    screen.refresh()
+    screen.refresh_button.click()
+    assert bridge.calls == [("workspaces-list", "workspaces", ())]
+    screen.on_succeeded("workspaces-list", daemon_rows()[:1])
+    bridge.calls.clear()
+    screen.refresh()
+    assert bridge.calls == [("workspaces-list", "workspaces", ())]
+    screen.refresh_button.click()
+    assert bridge.calls == [
+        ("workspaces-list", "workspaces", ())
+    ]  # one flight at a time
+    screen.on_failed(
+        "workspaces-list",
+        clientdata.RestFailure("409: workspace is running", reach=False),
+    )
+    bridge.calls.clear()
+    screen.refresh()  # a refusal retired the flight the same way
+    assert bridge.calls == [("workspaces-list", "workspaces", ())]
     window.close()
 
 
@@ -170,8 +251,6 @@ def test_a_failed_refresh_flashes_and_keeps_the_rows(qt) -> None:
     successful answer clears the flash with the rows it
     rebuilds."""
     screen, window, _bridge = make_screen(qt)
-    window.show()
-    screen.on_succeeded("workspaces-list", daemon_rows())
     screen.on_failed(
         "workspaces-list",
         clientdata.RestFailure("409: workspace is running", reach=False),
@@ -183,14 +262,59 @@ def test_a_failed_refresh_flashes_and_keeps_the_rows(qt) -> None:
     window.close()
 
 
-def test_the_single_flash_clears_on_the_timeout(qt) -> None:
-    """The flash's own span (#939): the timeout's slot clears
-    the line without waiting for the next answer."""
+def test_a_refusal_flash_clears_on_its_timeout(qt, monkeypatch) -> None:
+    """The flash's own span (#939): a refusal clears itself when
+    its timeout lands — proven by elapsed time, a tiny flash
+    span pumped through the real event queue."""
     screen, window, _bridge = make_screen(qt)
-    window.show()
-    screen.flash("msks: the daemon is unreachable")
+    monkeypatch.setattr(qt.screen_mod, "FLASH_MS", 5)
+    screen.on_failed(
+        "workspaces-list",
+        clientdata.RestFailure("nope", reach=False),
+    )
+    assert "nope" in screen.status.text()
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and screen.status.text():
+        qt.app.processEvents()
+        time.sleep(TICK)
+    assert screen.status.text() == ""
+    window.close()
+
+
+def test_an_outage_stands_until_an_answer(qt, monkeypatch) -> None:
+    """An outage is not a flash (#939, #904's contract): a
+    failure the daemon never answered (``reach``) stands on the
+    status line — the same tiny flash span proves nothing clears
+    it — and the next successful answer resolves it."""
+    screen, window, _bridge = make_screen(qt)
+    monkeypatch.setattr(qt.screen_mod, "FLASH_MS", 5)
+    screen.on_failed(
+        "workspaces-list",
+        clientdata.RestFailure("msks: the daemon is unreachable", reach=True),
+    )
     assert "unreachable" in screen.status.text()
-    screen.clear_flash()
+    deadline = time.monotonic() + 0.2
+    while time.monotonic() < deadline:
+        qt.app.processEvents()
+        time.sleep(TICK)
+    assert "unreachable" in screen.status.text()  # it stood
+    screen.on_succeeded("workspaces-list", [])
+    assert screen.status.text() == ""  # the answer resolved it
+    window.close()
+
+
+def test_a_later_flash_outlives_an_earlier_timeout(qt) -> None:
+    """The flash serial (#939): a second refusal inside the
+    first's flash span keeps its own message — the first's
+    timeout clears only the flash it was armed for."""
+    screen, window, _bridge = make_screen(qt)
+    screen.flash("first refusal")
+    first = screen.flash_seq
+    screen.flash("second refusal")
+    assert screen.status.text() == "second refusal"
+    screen.clear_stale(first)  # the first's timeout, late
+    assert screen.status.text() == "second refusal"
+    screen.clear_stale(screen.flash_seq)
     assert screen.status.text() == ""
     window.close()
 
@@ -198,17 +322,28 @@ def test_the_single_flash_clears_on_the_timeout(qt) -> None:
 def test_another_keys_answer_is_not_the_screens(qt) -> None:
     """The key filter (#939): the bridge carries every screen's
     calls on the one worker — this screen answers its own key
-    alone, so another key's result does not rebuild the table
-    and another key's failure does not flash the line."""
-    screen, window, _bridge = make_screen(qt)
-    window.show()
-    screen.on_succeeded("workspaces-list", daemon_rows())
+    alone, so another key's result does not rebuild the table,
+    retire a flight, or flash the line."""
+    screen, window, bridge = make_screen(qt)
+    screen.on_failed(
+        "workspaces-list",
+        clientdata.RestFailure("nope", reach=False),
+    )
     screen.on_succeeded("some-other-key", [])
     assert screen.table.rowCount() == 3
+    assert "nope" in screen.status.text()
     screen.on_failed(
-        "some-other-key", clientdata.RestFailure("nope", reach=False)
+        "some-other-key", clientdata.RestFailure("x", reach=False)
     )
-    assert screen.status.text() == ""
+    assert screen.status.text() != ""
+    # The foreign answer retired nothing: the screen's own
+    # flight still holds a refresh opened before it.
+    bridge.calls.clear()
+    screen.refresh()
+    assert bridge.calls == [("workspaces-list", "workspaces", ())]
+    screen.on_succeeded("some-other-key", [])
+    screen.refresh()
+    assert bridge.calls == [("workspaces-list", "workspaces", ())]
     window.close()
 
 
@@ -217,10 +352,10 @@ def test_the_manual_action_refreshes_through_the_bridge(qt) -> None:
     timer's tick share the one refresh verb, both through the
     bridge."""
     screen, window, bridge = make_screen(qt)
-    window.show()
-    bridge.calls.clear()  # the open refresh is already issued
+    bridge.calls.clear()  # the open refresh is already answered
     screen.refresh_button.click()
     assert bridge.calls == [("workspaces-list", "workspaces", ())]
+    screen.on_succeeded("workspaces-list", [])  # retire the flight
     bridge.calls.clear()
     # A one-millisecond tick: the pump spins Qt's queue until
     # the standing timer's refresh lands — the wiring the click
@@ -239,7 +374,6 @@ def test_the_tick_stops_with_the_closed_window(qt) -> None:
     closing the window hides the screen and its hide hook stops
     the tick; re-showing resumes it with a fresh refresh."""
     screen, window, bridge = make_screen(qt)
-    window.show()
     assert screen.timer.isActive()
     window.close()
     assert not screen.timer.isActive()
@@ -250,13 +384,12 @@ def test_the_tick_stops_with_the_closed_window(qt) -> None:
     window.close()
 
 
-def test_the_state_column_sorts_by_lifecycle_rank(qt) -> None:
+def test_the_status_column_sorts_by_lifecycle_rank(qt) -> None:
     """The rank the presenter carries (#938) is the sort the
-    widget serves (#939): a state-column click orders the rows
+    widget serves (#939): a status-column click orders the rows
     by the vocabulary's own sequence — a state outside it last —
-    not by the state word's spelling."""
+    not by the status word's spelling."""
     screen, window, _bridge = make_screen(qt)
-    window.show()
     screen.on_succeeded(
         "workspaces-list",
         [
