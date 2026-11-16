@@ -432,18 +432,12 @@ def test_the_answers_land_in_either_order(qt) -> None:
     # A refusal runs its own span (#940's mask): a landing answer
     # inside it does not wipe what the operator just read — the
     # doc lands, the flash holds its text until its timeout.
+    # The silence that follows keeps the standing doc (#717):
+    # the flash holds its span, the section holds its facts.
     page.on_succeeded(qt.page_mod.HEALTH_KEY, None)
     assert page.status.text() == "the health read refused"
-    assert page.empty_health.isVisibleTo(page)
-    # An outage is different (#904): it stands until an answer
-    # resolves it — the health answer clears it.
-    page.on_failed(
-        qt.page_mod.HEALTH_KEY,
-        clientdata.RestFailure("the daemon is gone", reach=True),
-    )
-    assert page.status.text() == "the daemon is gone"
-    page.on_succeeded(qt.page_mod.HEALTH_KEY, None)
-    assert page.status.text() == ""
+    assert page.health.isVisibleTo(page)
+    assert page.health.text().startswith("status  ok")
 
 
 def test_the_open_signal_guards_a_rowless_index(qt) -> None:
@@ -455,6 +449,65 @@ def test_the_open_signal_guards_a_rowless_index(qt) -> None:
     shell.listing.opened.connect(opened.append)
     shell.listing.open_current(qt.QtCore.QModelIndex())
     assert opened == []
+
+
+def test_the_none_health_silence_keeps_the_outage(qt) -> None:
+    """The outage tick's real shape (#945, #717, #904): the row
+    read fails — the daemon answered nothing — while the health
+    read, best-effort by its own contract, answers the silence
+    with ``None``. The outage flash stands and the standing doc
+    keeps; only a real doc resolves the one and replaces the
+    other."""
+    page, window, bridge = make_page(qt)
+    land(qt, page, bridge)
+    page.on_failed(
+        qt.page_mod.ROW_KEY,
+        clientdata.RestFailure("the daemon is gone", reach=True),
+    )
+    page.on_succeeded(qt.page_mod.HEALTH_KEY, None)
+    assert page.status.text() == "the daemon is gone"
+    assert page.health.isVisibleTo(page)
+    assert page.health.text().startswith("status  ok")
+    page.on_succeeded(
+        qt.page_mod.HEALTH_KEY,
+        {"status": "ok", "version": "0.9.3", "machine": "arm64"},
+    )
+    assert page.status.text() == ""
+    assert page.health.text() == (
+        "status  ok\nversion  0.9.3\nmachine  arm64\nimage  -"
+    )
+
+
+def test_the_meta_line_moves_with_the_clock(qt, monkeypatch) -> None:
+    """The title renders on every answer (#945): the created age
+    is a fact of the row, not the section models — an unchanged
+    section answer still re-reads it against the moved clock."""
+    from datetime import datetime as dt
+
+    page, window, bridge = make_page(qt)
+    land(qt, page, bridge)
+    assert "created 2d ago" in page.meta.text()
+    monkeypatch.setattr(
+        ages_mod, "clock_now", lambda: dt.fromisoformat("2026-01-18T12:00:00")
+    )
+    land(qt, page, bridge)  # the same row, the clock 14 days on
+    assert "created 2w ago" in page.meta.text()
+    # ... and a hold on the mounts table still survives the
+    # unchanged sections.
+    assert page.mounts.rowCount() == 2
+
+
+def test_a_late_removed_answer_needs_the_page_current(qt) -> None:
+    """The removed notice only fires on the live page (#945,
+    the TUI's close_removed guard): a row read landing after
+    Back hands the operator the list already — no notice for a
+    close that already happened."""
+    shell, window, bridge = make_shell(qt)
+    shell.listing.opened.emit("ws-a")
+    shell.detail.back.emit()
+    assert shell.currentWidget() is shell.listing
+    shell.detail.on_succeeded("detail-row", [other_row()])
+    assert shell.listing.status.text() == ""
 
 
 def test_a_refresh_in_flight_is_not_stacked(qt) -> None:

@@ -283,17 +283,27 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.resolve_outage()
         fresh = find_row(rows, self.workspace_id)
         if fresh is None:
-            self.removed.emit(self.workspace_id)
+            # The TUI's own-current guard (#309's close_removed):
+            # an answer landing after Back hands the operator the
+            # list already — the notice would name a close that
+            # already happened.
+            if not self.isHidden():
+                self.removed.emit(self.workspace_id)
             return
         self.row = fresh
         self.rebuild()
 
     def health_landed(self, doc: object) -> None:
-        """The health read's answer (#945): the doc the sections
-        read, a standing outage resolving with it. A read the
-        daemon cannot answer yet (``None``) keeps the sections'
-        standing content."""
+        """The health read's answer (#945): a doc lands as the
+        section's standing content and resolves an outage.
+        ``None`` is the read's best-effort silence (#717 —
+        :func:`fetch_health` answers every failure with it), so
+        under an outage the same tick that fails the row read
+        answers the health read with it: both the standing doc
+        and any outage flash keep."""
         self.health_pending = False
+        if doc is None:
+            return
         self.resolve_outage()
         self.health_doc = doc
         self.rebuild()
@@ -330,15 +340,20 @@ class WorkspaceDetail(QtWidgets.QWidget):
         if self.row is None:
             return
         model = detail_sections(self.row, self.health_doc, self.frames)
+        # The title reads every answer (#945): the row's own
+        # facts — the created age above all — move on a clock the
+        # section models carry no part of, so the sections' skip
+        # must not freeze the meta line with them.
+        self.render_title(model)
         if model == self.rendered:
             return
         self.rendered = model
-        self.render(model)
+        self.render_sections(model)
 
-    def render(self, model: DetailSections) -> None:
-        """The page as the model reads (#945): the title lines,
-        then each section its own widgets."""
-        self.render_title(model)
+    def render_sections(self, model: DetailSections) -> None:
+        """The sections as the model reads (#945): each section
+        its own widgets — the title renders on every answer, in
+        :meth:`rebuild`, outside this skip-guarded path."""
         self.render_mounts(model)
         self.render_health(model)
         self.render_events(model)
@@ -347,7 +362,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         """The page's title lines (#945): the workspace's label,
         the row's own facts muted beneath — id, image, created,
         the fields the listing's columns carry."""
-        facts = workspace_row(self.row or {})
+        facts = workspace_row(self.row)
         self.title.setText(model.label)
         self.meta.setText(
             f"id {facts.id}  ·  image {facts.image}"
@@ -365,6 +380,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.mounts.setRowCount(len(model.mounts))
         for row, entry in enumerate(model.mounts):
             self.fill_mount_row(row, entry)
+        self.mounts.resizeColumnsToContents()
         self.mounts.setVisible(bool(model.mounts))
         self.empty_mounts.setVisible(not model.mounts)
 
