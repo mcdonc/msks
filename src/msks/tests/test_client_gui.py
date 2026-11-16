@@ -85,12 +85,14 @@ def test_the_gui_command_names_a_headless_session(
 def test_the_display_gate_skips_macos(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A stock macOS session sets none of the three variables,
-    and cocoa needs none of them — the gate sits darwin out and
-    the window path runs. The open_window stand-in replaces the
-    real window."""
+    """A stock macOS desktop session sets none of the three
+    variables, and cocoa needs none of them — with a GUI session
+    behind it (the launchd probe answers true) the gate stands
+    aside and the window path runs. The open_window stand-in
+    replaces the real window."""
     client_env(monkeypatch)
     monkeypatch.setattr(app, "find_spec", lambda name: object())
+    monkeypatch.setattr(app, "gui_session_present", lambda: True)
     monkeypatch.setattr(sys, "platform", "darwin")
     for var in ("DISPLAY", "WAYLAND_DISPLAY", "QT_QPA_PLATFORM"):
         monkeypatch.delenv(var, raising=False)
@@ -100,6 +102,38 @@ def test_the_display_gate_skips_macos(
     )
     assert cli.main(["gui"]) == 4
     assert seen == ["window"]
+
+
+def test_the_launchd_probe_reads_headless_absence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The macOS arm's own probe: launchd's zero exit means the
+    GUI session exists; a nonzero exit (no GUI login) and a
+    launchd that will not answer both read as headless — the
+    notice, not the hang."""
+    import subprocess as sp
+
+    class FakeCompleted:
+        def __init__(self, code: int) -> None:
+            self.returncode = code
+
+    answers = [0, 1]
+    asked: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        asked.append(cmd)
+        return FakeCompleted(answers.pop(0))
+
+    monkeypatch.setattr(app.subprocess, "run", fake_run)
+    assert app.gui_session_present() is True  # launchd said yes
+    assert app.gui_session_present() is False  # no GUI session
+    assert asked[0][:2] == ["launchctl", "print"]
+
+    def silent(cmd, **kwargs):
+        raise sp.TimeoutExpired("launchctl", 5)
+
+    monkeypatch.setattr(app.subprocess, "run", silent)
+    assert app.gui_session_present() is False  # no answer: headless
 
 
 def test_the_gui_command_names_a_broken_install(
