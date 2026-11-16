@@ -178,6 +178,17 @@ class WorkspaceList(QtWidgets.QWidget):
         self.table.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
         )
+        # No vertical dividers between cells (#939): the columns
+        # read by their headers and alignment alone, and the row
+        # — the record — reads by its own bottom rule.
+        # ``showGrid`` draws both directions, so it goes off and
+        # the rule below draws just the horizontal one, in the
+        # palette's own mid tone.
+        self.table.setShowGrid(False)
+        rule = self.palette().color(QtGui.QPalette.ColorRole.Mid).name()
+        self.table.setStyleSheet(
+            f"QTableView::item {{ border-bottom: 1px solid {rule}; }}"
+        )
         self.refresh_button = QtWidgets.QPushButton("Refresh", self)
         self.refresh_button.clicked.connect(self.refresh)
         self.status = QtWidgets.QLabel("", self)

@@ -616,6 +616,17 @@ def test_a_click_takes_the_whole_row(qt) -> None:
     window.close()
 
 
+def test_the_grid_shows_no_vertical_dividers(qt) -> None:
+    """No vertical dividers between cells (#939): the grid goes
+    off whole, and the row's own bottom rule — the palette's
+    mid tone — stays as the one separator, so the columns read
+    by their headers and alignment alone."""
+    screen, window, _bridge = make_screen(qt)
+    assert not screen.table.showGrid()
+    assert "border-bottom" in screen.table.styleSheet()
+    window.close()
+
+
 def test_every_cell_renders_but_never_edits(qt) -> None:
     """The listing is a view over the daemon's state (#939): no
     cell opens an editor — an edit would paint a value only the
