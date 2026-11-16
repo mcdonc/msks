@@ -1,9 +1,9 @@
 """The workspace commands: the root callback and the lifecycle
 and reach verbs.
 
-`ls`, `agent-card`, `tui`, `storage`, `create`, `start`, `stop`,
-`clone`, `resize`, `mount`, `umount`, `rm`, `console`, `forward`,
-`key`, `ssh`, `rsync` — thin typer wrappers over the
+`ls`, `agent-card`, `tui`, `gui`, `storage`, `create`, `start`,
+`stop`, `clone`, `resize`, `mount`, `umount`, `rm`, `console`,
+`forward`, `key`, `ssh`, `rsync` — thin typer wrappers over the
 workspaces/ssh/rsync modules' own commands.
 """
 
@@ -14,6 +14,7 @@ from ..config import bootstrap
 from ..console import run_workspace_shell
 from ..create import read_pubkey  # noqa: F401 — the tests' seam
 from ..forward import run_workspace_forward
+from ..gui.app import run as run_gui
 from ..images import (  # noqa: F401
     cmd_image_check,
     cmd_image_default,
@@ -165,6 +166,15 @@ def tui(
     """The full-screen workspace tree (#309): the workspaces list,
     each workspace's page, and the consent decider."""
     return run_main_tui(workspace, conf=cliapp.invoked_conf)
+
+
+@app.command("gui")
+@one_line_interrupts
+def gui() -> int:
+    """The desktop GUI client (#924): the PySide6 front end over
+    the daemon's REST API. Phase 1 wires the seam; the window
+    shell lands with #928."""
+    return run_gui()
 
 
 @app.command("storage")

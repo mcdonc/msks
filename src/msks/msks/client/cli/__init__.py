@@ -13,7 +13,8 @@ same client conventions (#21): ``MSKSC_URL`` for the daemon,
 ``MSKSC_TOKEN`` for a bearer token, ``MSKSC_CAFILE`` to pin the
 certificate. The interactive console command lives in
 :mod:`msks.client.console`; the workspace tree TUI in
-:mod:`msks.client.tui.main_app`.
+:mod:`msks.client.tui.main_app`; and the desktop GUI client in
+:mod:`msks.client.gui.app` (#924).
 """
 
 from ...client import (
