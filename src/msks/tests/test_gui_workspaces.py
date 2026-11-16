@@ -169,6 +169,23 @@ def test_the_open_screen_issues_its_first_refresh(qt) -> None:
     window.close()
 
 
+def test_the_window_opens_on_the_standing_sort(qt) -> None:
+    """The default sort arrow shows at first render (#939): the
+    CREATED header carries the descending arrow, and the rows
+    open in that order — newest first, the TUI's own standing
+    sort (#470 L1)."""
+    screen, window, _bridge = make_screen(qt)
+    header = screen.table.horizontalHeader()
+    assert header.isSortIndicatorShown()
+    assert header.sortIndicatorSection() == qt.screen_mod.CREATED_COLUMN
+    assert (
+        header.sortIndicatorOrder() == qt.QtCore.Qt.SortOrder.DescendingOrder
+    )
+    labels = [screen.table.item(row, 0).text() for row in range(3)]
+    assert labels == ["beta", "alpha", "ws-3"]
+    window.close()
+
+
 def test_the_list_renders_the_row_models(qt) -> None:
     """The TUI listing's five fields (#939): one row per model,
     the label, the status word with the unresolved-mounts marker
@@ -181,24 +198,26 @@ def test_the_list_renders_the_row_models(qt) -> None:
     window.resize(2000, 700)
     qt.app.processEvents()
     assert screen.table.rowCount() == 3
+    # The standing sort orders the rows (#939): CREATED
+    # newest-first, the TUI's own default.
     labels = [screen.table.item(row, 0).text() for row in range(3)]
-    assert labels == ["alpha", "beta", "ws-3"]
-    assert screen.table.item(0, 1).text() == "stopped"
-    assert screen.table.item(1, 1).text() == "✗1 running"
+    assert labels == ["beta", "alpha", "ws-3"]
+    assert screen.table.item(0, 1).text() == "✗1 running"
+    assert screen.table.item(1, 1).text() == "stopped"
     # The ID column's cell (#849's vocabulary): the immutable id.
     assert screen.table.item(2, 2).text() == "ws-3"
     # The IMAGE cell: the reference first, the hash when no
     # reference came, ``-`` when neither did.
-    assert screen.table.item(0, 3).text() == "debian:13.6"
-    assert screen.table.item(1, 3).text() == "b" * 64
+    assert screen.table.item(1, 3).text() == "debian:13.6"
+    assert screen.table.item(0, 3).text() == "b" * 64
     assert screen.table.item(2, 3).text() == "-"
     # The CREATED cell: the shared relative ladder (#350).
-    assert screen.table.item(0, 4).text() == "2d ago"
-    assert screen.table.item(1, 4).text() == "today"
+    assert screen.table.item(0, 4).text() == "today"
+    assert screen.table.item(1, 4).text() == "2d ago"
     assert screen.table.item(2, 4).text() == "-"
     rank = qt.screen_mod.RANK_ROLE
     assert (
-        screen.table.item(1, 1).data(rank) == 2  # running's lifecycle rank
+        screen.table.item(0, 1).data(rank) == 2  # running's lifecycle rank
     )
     window.close()
 
@@ -465,16 +484,16 @@ def test_a_narrow_pane_ellipsizes_the_image_alone(qt) -> None:
     screen, window, _bridge = make_screen(qt)
     window.resize(600, 700)  # the hash row alone overflows this
     qt.app.processEvents()
-    image = screen.table.item(1, 3).text()  # the 64-char hash row
+    image = screen.table.item(0, 3).text()  # the 64-char hash row
     assert image != "b" * 64
     assert "…" in image
     assert image.startswith("b") and image.endswith("b")
     # Every other cell reads whole.
-    assert screen.table.item(1, 0).text() == "beta"
-    assert screen.table.item(0, 3).text() == "debian:13.6"
+    assert screen.table.item(0, 0).text() == "beta"
+    assert screen.table.item(1, 3).text() == "debian:13.6"
     window.resize(1400, 700)
     qt.app.processEvents()
-    assert screen.table.item(1, 3).text() == "b" * 64
+    assert screen.table.item(0, 3).text() == "b" * 64
     window.close()
 
 
@@ -540,7 +559,7 @@ def test_an_unchanged_listing_rebuilds_nothing(qt) -> None:
     screen, window, _bridge = make_screen(qt)
     # The default offscreen window is narrow: the hash row's
     # image shows ellipsized.
-    assert "…" in screen.table.item(1, 3).text()
+    assert "…" in screen.table.item(0, 3).text()
     name = screen.table.item(0, 0)
     select_cell(qt, screen, 0, 1)
     screen.on_succeeded("workspaces-list", daemon_rows())
@@ -558,18 +577,26 @@ def test_the_selection_follows_the_workspace(qt) -> None:
     workspace's row wherever the new order puts it, and a
     workspace the new listing drops simply loses the hold."""
     screen, window, _bridge = make_screen(qt)
-    select_cell(qt, screen, 1, 1)  # beta's status cell
+    select_cell(qt, screen, 1, 1)  # alpha's status cell
+    # A reordered answer with the same rows rebuilds nothing:
+    # the standing sort orders one set of rows the one way, and
+    # the hold stands untouched.
     rows = daemon_rows()
-    screen.on_succeeded(
-        "workspaces-list", [rows[1], rows[0], rows[2]]
-    )  # beta first now
+    screen.on_succeeded("workspaces-list", [rows[1], rows[0], rows[2]])
+    assert screen.table.item(1, 0).text() == "alpha"
+    assert len(screen.table.selectedIndexes()) == len(qt.screen_mod.COLUMNS)
+    # A changed stamp moves the row under the hold: alpha's
+    # creation moves to now, and the hold follows it to the top.
+    moved = [dict(row) for row in daemon_rows()]
+    moved[0]["created_at"] = "2026-01-04T11:00:00"  # alpha, newest now
+    screen.on_succeeded("workspaces-list", moved)
     current = screen.table.currentIndex()
-    assert (current.row(), current.column()) == (0, 1)  # beta moved up
-    assert screen.table.item(0, 0).text() == "beta"
+    assert (current.row(), current.column()) == (0, 1)
+    assert screen.table.item(0, 0).text() == "alpha"
     selected_rows = {index.row() for index in screen.table.selectedIndexes()}
-    assert selected_rows == {0}  # beta's whole row, wherever it landed
-    # beta leaves the listing: the hold goes with it, quietly.
-    screen.on_succeeded("workspaces-list", daemon_rows()[:1])
+    assert selected_rows == {0}  # alpha's whole row, wherever it landed
+    # alpha leaves the listing: the hold goes with it, quietly.
+    screen.on_succeeded("workspaces-list", daemon_rows()[1:])
     assert screen.table.selectedIndexes() == []
     window.close()
 

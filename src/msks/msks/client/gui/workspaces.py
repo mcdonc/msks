@@ -163,13 +163,14 @@ class WorkspaceList(QtWidgets.QWidget):
         self.table = QtWidgets.QTableWidget(0, len(COLUMNS), self)
         self.table.setHorizontalHeaderLabels(COLUMNS)
         self.table.verticalHeader().setVisible(False)
-        # No standing sort (#939): the screen opens in the
-        # daemon's order — the presenter preserves it — so the
-        # indicator starts clear; a header click sets one, and
-        # the fill's re-enable then re-applies the chosen sort
-        # across refreshes.
+        # The standing sort (#939): CREATED newest-first, the
+        # TUI's own default (#854, #470 L1) — the order the
+        # window opens in, the first arrow on the header, and
+        # the state a new session starts in. A header click
+        # moves it; the fill's re-enable re-applies whatever the
+        # indicator holds across refreshes.
         self.table.horizontalHeader().setSortIndicator(
-            -1, QtCore.Qt.SortOrder.AscendingOrder
+            CREATED_COLUMN, QtCore.Qt.SortOrder.DescendingOrder
         )
         self.table.setSortingEnabled(True)
         # A click takes the whole row (#939): no cell edits, so
@@ -263,30 +264,51 @@ class WorkspaceList(QtWidgets.QWidget):
 
     def rows_unchanged(self, models: list[WorkspaceRow]) -> bool:
         """Whether the table already reads exactly as the models
-        do (#939): same rows, same order, same cells — the image
-        by its whole value, an elided display and all. An
-        unchanged answer this way rebuilds nothing."""
+        do (#939): same rows, whatever order each side sits in —
+        the standing sort orders one set of rows the one
+        deterministic way, so equal sets need no rebuild — with
+        the image read by its whole value, an elided display and
+        all. An unchanged answer this way rebuilds nothing."""
         if self.table.rowCount() != len(models):
             return False
-        return all(
-            self.row_unchanged(row, model) for row, model in enumerate(models)
-        )
+        shown = self.displayed_texts()
+        return shown is not None and shown == self.model_texts(models)
 
-    def row_unchanged(self, row: int, model: WorkspaceRow) -> bool:
-        """One row's cells against its model (#939): every text
-        cell equal, the image equal by its whole value."""
-        checks = (
-            (NAME_COLUMN, model.label),
-            (STATUS_COLUMN, state_text(model)),
-            (ID_COLUMN, model.id),
-            (CREATED_COLUMN, model.created),
+    def displayed_texts(self) -> list[tuple[str, ...]] | None:
+        """The table's rows as comparable tuples (#939) — the
+        image by its whole value — sorted, or ``None`` when any
+        cell stands missing."""
+        texts = []
+        for row in range(self.table.rowCount()):
+            items = [
+                self.table.item(row, column) for column in range(len(COLUMNS))
+            ]
+            if any(item is None for item in items):
+                return None
+            texts.append(
+                (
+                    items[NAME_COLUMN].text(),
+                    items[STATUS_COLUMN].text(),
+                    items[ID_COLUMN].text(),
+                    items[IMAGE_COLUMN].data(IMAGE_ROLE),
+                    items[CREATED_COLUMN].text(),
+                )
+            )
+        return sorted(texts)
+
+    def model_texts(self, models: list[WorkspaceRow]) -> list:
+        """The models as the same comparable tuples (#939),
+        sorted the same way."""
+        return sorted(
+            (
+                model.label,
+                state_text(model),
+                model.id,
+                model.image,
+                model.created,
+            )
+            for model in models
         )
-        for column, text in checks:
-            item = self.table.item(row, column)
-            if item is None or item.text() != text:
-                return False
-        image = self.table.item(row, IMAGE_COLUMN)
-        return image is not None and image.data(IMAGE_ROLE) == model.image
 
     def held_rows(self) -> tuple[set[str], tuple[str, int] | None]:
         """What the operator holds on the table (#939): the rows
