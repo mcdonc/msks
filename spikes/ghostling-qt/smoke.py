@@ -475,6 +475,12 @@ def test_widget() -> None:
                     f"zoom out: pt {widget.font.pointSize()} "
                     f"cell {widget.cell_width}"
                 )
+            widget._zoom_font(1)
+            widget._set_font_point_size(widget.DEFAULT_PT)
+            if widget.font.pointSize() != widget.DEFAULT_PT:
+                failures.append("zoom reset did not restore default")
+            else:
+                print("zoom: reset to default")
         except Exception as exc:  # noqa: BLE001 - report and stop
             failures.append(f"widget check raised: {exc}")
         finally:

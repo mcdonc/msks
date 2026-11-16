@@ -856,6 +856,7 @@ class TerminalWidget(QWidget):
         self._selection_gesture(ghostty.SEL_DRAG, self._drag_position)
 
     MIN_PT, MAX_PT = 7, 28
+    DEFAULT_PT = 15
 
     def _set_font_point_size(self, points: int) -> None:
         """Measure cells for the font size, push the new pixel metrics
@@ -1149,20 +1150,19 @@ class TerminalWidget(QWidget):
                 flush=True,
             )
         # Ctrl+Plus/Equal grows the font (and the window with it,
-        # grid unchanged); Ctrl+Minus shrinks it.
+        # grid unchanged); Ctrl+Minus shrinks it; Ctrl+0 resets.
+        # Numpad +/- arrive as Key_Plus/Key_Minus with a keypad
+        # modifier, so the same names cover them.
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            if event.key() in (
-                Qt.Key.Key_Equal,
-                Qt.Key.Key_Plus,
-                Qt.Key.Key_KP_Add,
-            ):
+            if event.key() in (Qt.Key.Key_Equal, Qt.Key.Key_Plus):
                 self._zoom_font(1)
                 return
-            if event.key() in (
-                Qt.Key.Key_Minus,
-                Qt.Key.Key_KP_Subtract,
-            ):
+            if event.key() == Qt.Key.Key_Minus:
                 self._zoom_font(-1)
+                return
+            if event.key() == Qt.Key.Key_0:
+                if self.font.pointSize() != self.DEFAULT_PT:
+                    self._set_font_point_size(self.DEFAULT_PT)
                 return
         # Clipboard shortcuts before encoding: copy/cut (a terminal
         # cannot cut, so cut copies) and paste.
