@@ -14,7 +14,11 @@ tagged `vX.Y.Z`.
   confirmation, with No as the default, and a refusal sends
   nothing to the daemon. The list refreshes when an action
   finishes; a failed action flashes the status line and the
-  rows stand. See `docs/cli.md` → Client environment.
+  rows stand. A detail strip at the listing's bottom follows
+  the selection: the held workspace's identity on one line and
+  its posture and costs on the other (cpu, memory, egress mode,
+  the mounts and pending markers, and the storage cost the
+  capacity report charges).
 - **`msks gui` (#928).** The desktop GUI client opens its
   phase-1 window shell on Linux and macOS: a PySide6 front end
   over the daemon's REST API, with the workspace screens to

@@ -88,6 +88,11 @@ def daemon_rows() -> list[dict]:
             "image_hash": "a" * 64,
             "created_at": "2026-01-02T03:04:05",
             "mount_issues": [],
+            "cpus": 2,
+            "mem_mib": 8192,
+            "egress_mode": "allow",
+            "mounts_pending": False,
+            "sizes_pending": False,
         },
         {
             "id": "ws-2",
@@ -97,6 +102,11 @@ def daemon_rows() -> list[dict]:
             "image_hash": "b" * 64,
             "created_at": "2026-01-04T09:00:00",
             "mount_issues": [{"kind": "skipped"}],
+            "cpus": 4,
+            "mem_mib": 16384,
+            "egress_mode": "allow",
+            "mounts_pending": True,
+            "sizes_pending": False,
         },
         {
             "id": "ws-3",
@@ -106,6 +116,11 @@ def daemon_rows() -> list[dict]:
             "image_hash": None,
             "created_at": None,
             "mount_issues": [],
+            "cpus": None,
+            "mem_mib": None,
+            "egress_mode": None,
+            "mounts_pending": False,
+            "sizes_pending": False,
         },
     ]
 
@@ -835,6 +850,85 @@ def test_the_action_slots_stand_guard(qt) -> None:
     screen.on_succeeded("workspaces-start", {})  # land the flight
     screen.table.setItem(0, qt.screen_mod.NAME_COLUMN, None)
     assert screen.held_workspace() is None
+    window.close()
+
+
+def test_the_detail_strip_follows_the_hold(qt) -> None:
+    """The detail strip (#849's shape, #940's GUI read): the held
+    row's identity on the first line, its posture and costs on
+    the second — the markers beside the facts, an honest dash
+    for a row that predates a field, storage a dash until the
+    capacity report lands. A moved hold moves the strip; no
+    hold blanks it."""
+    screen, window, bridge = make_screen(qt)
+    # make_screen's first-row hold: beta, the mounts marker, the
+    # pending count, no storage yet.
+    first = screen.detail_first.text()
+    second = screen.detail_second.text()
+    assert first.startswith("beta  ·  id ws-2  ·  image ")
+    assert "cpu 4" in second
+    assert "mem 16G" in second
+    assert "egress allow" in second
+    assert "mounts ✗1" in second
+    assert "next ↻1" in second
+    assert "storage -" in second
+    # The listing's answer fetched the capacity report beside
+    # the rows; its answer fills the figure.
+    assert ("workspaces-storage", "storage", ()) in bridge.calls
+    screen.on_succeeded(
+        "workspaces-storage",
+        {
+            "workspaces": [
+                {"id": "ws-2", "root_bytes": 10737418240, "home_bytes": 1}
+            ]
+        },
+    )
+    assert "storage 10G" in screen.detail_second.text()
+    # A moved hold moves the strip; a row that predates fields
+    # reads its dashes.
+    select_cell(qt, screen, 2, 0)  # ws-3, the oldest
+    assert screen.detail_first.text().startswith(
+        "ws-3  ·  id ws-3  ·  image -"
+    )
+    second = screen.detail_second.text()
+    assert "cpu -" in second and "mem -" in second
+    assert "egress -" in second and "storage -" in second
+    # No hold blanks the strip.
+    screen.table.clearSelection()
+    screen.table.selectionModel().clearCurrentIndex()
+    assert screen.detail_first.text() == ""
+    assert screen.detail_second.text() == ""
+    window.close()
+
+
+def test_the_storage_cache_keeps_standing_figures(qt) -> None:
+    """The strip's storage cache (#849): a refused report keeps
+    the standing figures in silence — the strip is a detail
+    beside a listing that reports its own failures — and a
+    report that predates the per-row fields keeps them too; a
+    later listing refetches beside the rows."""
+    screen, window, bridge = make_screen(qt)
+    screen.on_succeeded(
+        "workspaces-storage",
+        {
+            "workspaces": [
+                {"id": "ws-2", "root_bytes": 2147483648, "home_bytes": 0}
+            ]
+        },
+    )
+    assert "storage 2G" in screen.detail_second.text()
+    screen.on_failed(
+        "workspaces-storage",
+        clientdata.RestFailure("daemon away", reach=True),
+    )
+    assert "storage 2G" in screen.detail_second.text()
+    assert screen.status.text() == ""  # the silence
+    screen.on_succeeded("workspaces-storage", {"workspaces": []})
+    assert "storage -" in screen.detail_second.text()
+    # The next listing answer takes another storage flight out.
+    bridge.calls.clear()
+    screen.on_succeeded("workspaces-list", daemon_rows())
+    assert ("workspaces-storage", "storage", ()) in bridge.calls
     window.close()
 
 

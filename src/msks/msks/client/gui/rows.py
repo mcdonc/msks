@@ -12,6 +12,7 @@ coverage gate lands on it whole: no widgets, no daemon imports.
 from dataclasses import dataclass
 
 from ..ages import created_label, parse_stamp
+from ..volumes import MIB, human_bytes
 
 #: The state word's sort order (#938), mirroring the TUI's
 #: ``STATUS_SORT_ORDER`` (#854): the lifecycle order an operator
@@ -49,6 +50,10 @@ class WorkspaceRow:
     image: str
     created: str
     created_rank: float
+    cpus: int | None
+    mem_mib: int | None
+    egress_mode: str
+    pending_count: int
 
 
 def workspace_label(row: dict) -> str:
@@ -106,7 +111,77 @@ def workspace_row(row: dict) -> WorkspaceRow:
         image=image_text(row),
         created=created_label(row.get("created_at")),
         created_rank=created_sort_key(row.get("created_at")),
+        cpus=row.get("cpus"),
+        mem_mib=row.get("mem_mib"),
+        egress_mode=row.get("egress_mode") or "-",
+        pending_count=int(bool(row.get("mounts_pending")))
+        + int(bool(row.get("sizes_pending"))),
     )
+
+
+def detail_lines(
+    model: WorkspaceRow, used_bytes: int | None
+) -> tuple[str, str]:
+    """The detail strip's two lines (#849's shape, the GUI's
+    read): the identity — the name bare, the id, the image — on
+    the first, the posture and costs — cpu, memory, the egress
+    mode, the mounts and pending markers while either counts,
+    the storage the capacity report charges — on the second.
+    Every fact but storage reads the row model; storage reads
+    the screen's cached report, an honest dash until one
+    lands."""
+    first = f"{model.label}  ·  id {model.id}  ·  image {model.image}"
+    second = "  ·  ".join(
+        f"{label} {value}" for label, value in detail_pairs(model, used_bytes)
+    )
+    return first, second
+
+
+def detail_pairs(
+    model: WorkspaceRow, used_bytes: int | None
+) -> list[tuple[str, str]]:
+    """The second line's facts as (label, value) pairs (#849's
+    shape): the posture — cpu, memory, the egress mode — then
+    the mounts and pending markers while either counts, then
+    the storage the capacity report charges."""
+    pairs = [
+        ("cpu", cpu_value(model)),
+        ("mem", mem_value(model)),
+        ("egress", model.egress_mode or "-"),
+    ]
+    pairs += marker_pairs(model)
+    pairs.append(
+        ("storage", "-" if used_bytes is None else human_bytes(used_bytes))
+    )
+    return pairs
+
+
+def cpu_value(model: WorkspaceRow) -> str:
+    """The cpu fact (#849's shape): the count, the honest dash
+    for a row that predates the field."""
+    return "-" if model.cpus is None else str(model.cpus)
+
+
+def mem_value(model: WorkspaceRow) -> str:
+    """The memory fact in binary units (#849's shape): the same
+    renderer the storage figure uses, the honest dash for a row
+    that predates the field."""
+    if model.mem_mib is None:
+        return "-"
+    return human_bytes(model.mem_mib * MIB)
+
+
+def marker_pairs(model: WorkspaceRow) -> list[tuple[str, str]]:
+    """The strip's marker pairs (#849's shape): the mounts count
+    while any mount skips, the pending count while a change
+    waits for the next start — the same ✗N/↻N cues the status
+    cell carries, read beside the costs."""
+    pairs = []
+    if model.issue_marker is not None:
+        pairs.append(("mounts", model.issue_marker))
+    if model.pending_count:
+        pairs.append(("next", f"↻{model.pending_count}"))
+    return pairs
 
 
 def workspace_rows(rows: list[dict]) -> list[WorkspaceRow]:
