@@ -528,6 +528,44 @@ def test_widget() -> None:
                     failures.append("copy-link did not reach clipboard")
                 else:
                     print("links: copy link address")
+            # Find bar: search runs, stepping selects matches, the
+            # counter reads "k of N", and viewport matches highlight.
+            widget._find_open()
+            widget._find_run("filler")
+            total = ctypes.c_size_t()
+            ok, _ = widget.lib.get(
+                widget.lib.search_get,
+                widget._search,
+                ghostty.SEARCH_DATA_TOTAL_MATCHES,
+                total,
+            )
+            if not ok or total.value != 30:
+                failures.append(f"find total was {total.value}")
+            else:
+                print("find: 30 matches")
+            widget._find_step(1)
+            if widget._find_count.text() != "1 of 30":
+                failures.append(
+                    f"find counter was {widget._find_count.text()!r}"
+                )
+            else:
+                print("find: counter 1 of 30")
+            widget._find_step(1)
+            if widget._find_count.text() != "2 of 30":
+                failures.append(
+                    f"find counter was {widget._find_count.text()!r}"
+                )
+            widget._find_step(-1)
+            if widget._find_count.text() != "1 of 30":
+                failures.append(
+                    f"find counter was {widget._find_count.text()!r}"
+                )
+            rects = widget._viewport_match_rects()
+            if not rects:
+                failures.append("find produced no viewport rects")
+            else:
+                print(f"find: {len(rects)} highlight rects")
+            widget._find_close()
         except Exception as exc:  # noqa: BLE001 - report and stop
             failures.append(f"widget check raised: {exc}")
         finally:

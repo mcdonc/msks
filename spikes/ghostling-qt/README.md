@@ -122,9 +122,14 @@ The library is found through `GHOSTTY_VT_LIB` if set, then
   implemented). Hyperlinks: OSC 8 URIs resolve through the grid API,
   plain-text URLs are found by a per-row scan during paint, hovering
   one shows the pointing hand, Shift+Click opens it in the desktop
-  browser, and right-clicking one offers Copy Link Address. No Kitty
-  graphics, no scrollbar dragging, no numpad-specific keys, no
-  ligatures.
+  browser, and right-clicking one offers Copy Link Address.
+- Find (`Ctrl+Shift+F`) through the library's search API: an overlay
+  bar restarts the search as the needle changes (ASCII letters match
+  case-insensitively), Enter/Shift+Enter step through matches with a
+  "k of N" counter, the viewport scrolls to each selected match,
+  viewport matches highlight under the text (the selected one in a
+  stronger tint), and Escape closes. No Kitty graphics, no scrollbar
+  dragging, no numpad-specific keys, no ligatures.
 - The XTVERSION effect is not registered: ctypes cannot return a
   16-byte struct from a callback, so `CSI > q` goes unanswered.
 - `vendor/` holds a library snapshot (currently a pre-1.0

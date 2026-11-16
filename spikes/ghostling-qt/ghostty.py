@@ -109,6 +109,15 @@ SEL_EVENT_OPT_POSITION = 1
 SEL_EVENT_OPT_GEOMETRY = 8
 SEL_DATA_DRAGGED = 1
 
+# Search data selectors, options, and statuses.
+SEARCH_DATA_TOTAL_MATCHES = 2
+SEARCH_DATA_SELECTED_INDEX = 3
+SEARCH_DATA_SELECTED_MATCH = 4
+SEARCH_DATA_VIEWPORT_MATCHES = 6
+SEARCH_OPT_NEEDLE = 0
+SEARCH_OPT_SELECT_NEXT = 1
+SEARCH_OPT_SELECT_PREV = 2
+
 # GhosttyPoint tags.
 POINT_ACTIVE = 0
 POINT_VIEWPORT = 1
@@ -339,6 +348,16 @@ class ClipboardContent(ctypes.Structure):
     """One clipboard payload (mime + data) of an OSC 52 write."""
 
     _fields_ = [("mime", GhosttyString), ("data", GhosttyString)]
+
+
+class SelectionBuffer(ctypes.Structure):
+    """A caller-provided array of selections for viewport matches."""
+
+    _fields_ = [
+        ("ptr", ctypes.POINTER(Selection)),
+        ("cap", ctypes.c_size_t),
+        ("len", ctypes.c_size_t),
+    ]
 
 
 class ClipboardWriteReply(ctypes.Structure):
@@ -684,6 +703,22 @@ class Lib:
             v,
             ctypes.POINTER(SelectLineOptions),
             ctypes.POINTER(Selection),
+        )
+        self.search_new = self._fn(
+            "ghostty_search_new", r, v, ctypes.POINTER(v), v
+        )
+        self.search_free = self._fn("ghostty_search_free", None, v)
+        self.search_run = self._fn("ghostty_search_run", r, v)
+        self.search_feed = self._fn("ghostty_search_feed", r, v)
+        self.search_set = self._fn("ghostty_search_set", r, v, i, v)
+        self.search_get = self._fn("ghostty_search_get", r, v, i, v)
+        self.terminal_point_from_grid_ref = self._fn(
+            "ghostty_terminal_point_from_grid_ref",
+            r,
+            v,
+            ctypes.POINTER(GridRef),
+            i,
+            ctypes.POINTER(PointCoordinate),
         )
         self.build_info = self._fn("ghostty_build_info", r, i, v)
 

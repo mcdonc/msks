@@ -39,7 +39,7 @@ from PySide6.QtGui import (
     QFontMetrics,
     QPainter,
 )
-from PySide6.QtWidgets import QApplication, QMenu, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QLineEdit, QMenu, QWidget
 from session import PtySession
 
 # Widgets registered for effects callbacks, keyed by the userdata id.
@@ -395,6 +395,11 @@ class TerminalWidget(QWidget):
         # session exist (Ctrl+Plus/Minus re-run this with a new size).
         self._set_font_point_size(self.font.pointSize())
 
+        # Find bar: a lazy search handle plus its overlay widgets.
+        self._search = 0
+        self._find_edit: QLineEdit | None = None
+        self._find_count: QLabel | None = None
+
         self.notifier = QSocketNotifier(
             self.session.master_fd or 0, QSocketNotifier.Type.Read, self
         )
@@ -435,6 +440,9 @@ class TerminalWidget(QWidget):
         _REGISTRY.pop(id(self), None)
         self._reaper.stop()
         self._autoscroll.stop()
+        if self._search:
+            self.lib.search_free(self._search)
+            self._search = 0
         self.notifier.setEnabled(False)
         self.session.close()
         for free, handle in [
@@ -544,7 +552,13 @@ class TerminalWidget(QWidget):
         codepoints = (ctypes.c_uint32 * 16)()
         y = 0
         link_spans: list[list[tuple[int, int, str]]] = []
+        match_rects = self._viewport_match_rects()
+        rects_by_row: dict[int, list] = {}
+        for row, x, width, is_selected in match_rects:
+            rects_by_row.setdefault(row, []).append((x, width, is_selected))
+        viewport_row = -1
         while self.lib.row_iterator_next(iterator.value):
+            viewport_row += 1
             ok, cells = self.lib.get(
                 self.lib.row_get,
                 iterator.value,
@@ -556,6 +570,16 @@ class TerminalWidget(QWidget):
                 continue
             x = 0
             row_chars: list[str] = []
+            for rx, rw, is_selected in rects_by_row.get(viewport_row, []):
+                painter.fillRect(
+                    rx,
+                    y,
+                    rw,
+                    self.cell_height,
+                    QColor(255, 170, 0, 130)
+                    if is_selected
+                    else QColor(120, 170, 255, 70),
+                )
             while self.lib.row_cells_next(cells):
                 self._paint_cell(
                     painter,
@@ -988,6 +1012,190 @@ class TerminalWidget(QWidget):
             return True
         return False
 
+    # --- find bar -----------------------------------------------------
+
+    def _find_open(self) -> None:
+        """Ctrl+Shift+F: create the search and the overlay widgets."""
+        if self._search:
+            self._find_edit.setFocus()
+            self._find_edit.selectAll()
+            return
+        self._search = self.lib.new_handle(self.lib.search_new, self.terminal)
+        self._find_edit = QLineEdit(self)
+        self._find_edit.setPlaceholderText("Find")
+        self._find_edit.setFixedWidth(220)
+        self._find_edit.textChanged.connect(self._find_run)
+        self._find_edit.installEventFilter(self)
+        self._find_count = QLabel(self)
+        self._layout_find_bar()
+        self._find_edit.show()
+        self._find_count.show()
+        self._find_edit.raise_()
+        self._find_count.raise_()
+        self._find_edit.setFocus()
+
+    def _find_close(self) -> None:
+        if not self._search:
+            return
+        self.lib.search_free(self._search)
+        self._search = 0
+        if self._find_edit is not None:
+            self._find_edit.deleteLater()
+            self._find_edit = None
+        if self._find_count is not None:
+            self._find_count.deleteLater()
+            self._find_count = None
+        self.setFocus()
+        self.refresh()
+
+    def _layout_find_bar(self) -> None:
+        if self._find_edit is None or self._find_count is None:
+            return
+        height = 28
+        self._find_count.adjustSize()
+        count_w = self._find_count.width() + 10
+        self._find_edit.move(self.width() - 220 - count_w - 16, 8)
+        self._find_edit.setFixedHeight(height)
+        self._find_count.move(
+            self.width() - count_w - 8, 8 + (height - 18) // 2
+        )
+
+    def _find_run(self, text: str) -> None:
+        """A changed needle restarts the search; unchanged keeps results."""
+        if not self._search:
+            return
+        if text:
+            data = text.encode("utf-8")
+            needle = ghostty.GhosttyString()
+            needle.ptr = ctypes.cast(
+                ctypes.c_char_p(data), ctypes.POINTER(ctypes.c_uint8)
+            )
+            needle.len = len(data)
+            self.lib.search_set(
+                self._search,
+                ghostty.SEARCH_OPT_NEEDLE,
+                ctypes.byref(needle),
+            )
+            self.lib.search_run(self._search)
+        self._find_update_count()
+        self.refresh()
+
+    def _find_step(self, direction: int) -> None:
+        if not self._search:
+            return
+        option = (
+            ghostty.SEARCH_OPT_SELECT_NEXT
+            if direction > 0
+            else ghostty.SEARCH_OPT_SELECT_PREV
+        )
+        self.lib.search_set(self._search, option, None)
+        self._find_update_count()
+        self.refresh()
+
+    def _find_update_count(self) -> None:
+        if self._find_count is None:
+            return
+        total = ctypes.c_size_t()
+        ok, _ = self.lib.get(
+            self.lib.search_get,
+            self._search,
+            ghostty.SEARCH_DATA_TOTAL_MATCHES,
+            total,
+        )
+        index = ctypes.c_size_t()
+        ok2, _ = self.lib.get(
+            self.lib.search_get,
+            self._search,
+            ghostty.SEARCH_DATA_SELECTED_INDEX,
+            index,
+        )
+        if not ok or total.value == 0:
+            self._find_count.setText("")
+        elif ok2:
+            self._find_count.setText(f"{index.value + 1} of {total.value}")
+        else:
+            self._find_count.setText(f"{total.value} matches")
+        self._layout_find_bar()
+
+    def eventFilter(self, obj, event) -> None:  # noqa: N802 (Qt name)
+        if obj is self._find_edit and event.type() == event.Type.KeyPress:
+            key = event.key()
+            if key == Qt.Key.Key_Return or key == Qt.Key.Key_Enter:
+                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                    self._find_step(-1)
+                else:
+                    self._find_step(1)
+                return True
+            if key == Qt.Key.Key_Escape:
+                self._find_close()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _viewport_match_rects(self):
+        """Search-match rectangles for painting: (row, x_px, w_px,
+        selected). Fed each paint while the find bar is open."""
+        if not self._search:
+            return []
+        lib = self.lib
+        lib.search_feed(self._search)
+        storage = (ghostty.Selection * 128)()
+        buffer = ghostty.SelectionBuffer(ptr=storage, cap=128, len=0)
+        ok, _ = lib.get(
+            lib.search_get,
+            self._search,
+            ghostty.SEARCH_DATA_VIEWPORT_MATCHES,
+            buffer,
+        )
+        if not ok:
+            return []
+        selected = ghostty.Selection()
+        selected.size = ctypes.sizeof(selected)
+        sel_ok, _ = lib.get(
+            lib.search_get,
+            self._search,
+            ghostty.SEARCH_DATA_SELECTED_MATCH,
+            selected,
+        )
+
+        def viewport_point(ref):
+            point = ghostty.PointCoordinate()
+            result = lib.terminal_point_from_grid_ref(
+                self.terminal,
+                ctypes.byref(ref),
+                ghostty.POINT_VIEWPORT,
+                ctypes.byref(point),
+            )
+            return point if result == ghostty.SUCCESS else None
+
+        rects = []
+
+        def add_match(start_ref, end_ref, is_selected):
+            start = viewport_point(start_ref)
+            end = viewport_point(end_ref)
+            if start is None or end is None:
+                return
+            if start.y >= self.rows or end.y < 0:
+                return
+            first = max(start.y, 0)
+            last = min(end.y, self.rows - 1)
+            for row in range(first, last + 1):
+                col0 = start.x if row == start.y else 0
+                col1 = end.x if row == end.y else self.cols - 1
+                rects.append(
+                    (
+                        row,
+                        col0 * self.cell_width,
+                        (col1 - col0 + 1) * self.cell_width,
+                        is_selected,
+                    )
+                )
+
+        for i in range(buffer.len):
+            add_match(storage[i].start, storage[i].end, False)
+        if sel_ok and selected.size:
+            add_match(selected.start, selected.end, True)
+        return rects
+
     def _selection_gesture(self, kind: int, position: QPointF) -> None:
         """Feed a selection gesture event, following the protocol of
         Ghostty's c-vt-selection-gesture example: every event carries
@@ -1260,6 +1468,17 @@ class TerminalWidget(QWidget):
                 if self.font.pointSize() != self.DEFAULT_PT:
                     self._set_font_point_size(self.DEFAULT_PT)
                 return
+        # Ctrl+Shift+F toggles the find bar.
+        if (
+            event.modifiers() & Qt.KeyboardModifier.ControlModifier
+            and event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+            and event.key() == Qt.Key.Key_F
+        ):
+            if self._search:
+                self._find_close()
+            else:
+                self._find_open()
+            return
         # Clipboard shortcuts before encoding: copy/cut (a terminal
         # cannot cut, so cut copies) and paste.
         if (
@@ -1516,4 +1735,5 @@ class TerminalWidget(QWidget):
             )
             self.session.resize(cols, rows, self.cell_width, self.cell_height)
             self.refresh()
+        self._layout_find_bar()
         super().resizeEvent(event)
