@@ -744,16 +744,73 @@ def test_the_hold_keeps_its_color_unfocused(qt) -> None:
 
 def test_start_runs_on_the_selection_and_refreshes(qt) -> None:
     """The Start action (#940): the held workspace starts through
-    the bridge, the buttons lock while the flight is out, and
-    the list refreshes when the daemon answers."""
+    the bridge, the buttons lock while the flight is out, the
+    outcome the daemon's answer carries flashes at once (the
+    TUI's own #776 mask), and the list refreshes when the daemon
+    answers."""
     screen, window, bridge = make_screen(qt)
     bridge.calls.clear()
     assert screen.start_button.isEnabled()  # the first-row hold
     screen.start_button.click()
     assert bridge.calls == [("workspaces-start", "start", ("ws-2",))]
     assert not screen.start_button.isEnabled()  # one flight at a time
-    screen.on_succeeded("workspaces-start", {})
+    screen.on_succeeded(
+        "workspaces-start", {"id": "ws-2", "status": "running"}
+    )
+    assert screen.status.text() == "beta running"  # the outcome
     assert bridge.calls[-1] == ("workspaces-list", "workspaces", ())
+    assert screen.start_button.isEnabled()
+    window.close()
+
+
+def test_an_action_landing_over_a_listing_flight(qt) -> None:
+    """The interleaving (#940): a tick's listing flight is out
+    when the action's answer lands. The action flashes its own
+    outcome at once; the swallowed refresh is served by the
+    in-flight listing's answer; the listing's own pending flag
+    survives untouched, so the next tick runs.
+    An answer without a readable status still names its
+    workspace."""
+    screen, window, bridge = make_screen(qt)
+    screen.refresh()  # the listing flight opens
+    bridge.calls.clear()
+    screen.start_button.click()
+    assert bridge.calls == [("workspaces-start", "start", ("ws-2",))]
+    screen.on_succeeded(
+        "workspaces-start", {"id": "ws-2", "status": "running"}
+    )
+    assert screen.status.text() == "beta running"  # shown at once
+    assert bridge.calls == [("workspaces-start", "start", ("ws-2",))]
+    # no new listing went out — the in-flight one serves it
+    assert screen.pending  # and its flag stands
+    assert screen.start_button.isEnabled()
+    # The unreadable-answer arcs still name the workspace —
+    # each on a flight of its own, the target on it.
+    screen.start_button.click()
+    screen.on_succeeded("workspaces-start", {"no": "status"})
+    assert screen.status.text() == "beta"
+    screen.start_button.click()
+    screen.on_succeeded("workspaces-start", None)
+    assert screen.status.text() == "beta"
+    window.close()
+
+
+def test_a_failed_action_over_a_listing_flight(qt) -> None:
+    """The failed interleaving (#940): a listing flight is out
+    when the action refuses. The failure flashes, the rows
+    stand, the buttons take clicks again, and the listing's own
+    pending flag survives untouched."""
+    screen, window, bridge = make_screen(qt)
+    screen.refresh()  # the listing flight opens
+    bridge.calls.clear()
+    screen.start_button.click()
+    screen.on_failed(
+        "workspaces-start",
+        clientdata.RestFailure("409: workspace is running", reach=False),
+    )
+    assert "409" in screen.status.text()
+    assert screen.table.rowCount() == 3  # the rows stand
+    assert screen.pending  # the listing flight still holds
     assert screen.start_button.isEnabled()
     window.close()
 

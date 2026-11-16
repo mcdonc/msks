@@ -13,8 +13,9 @@ tagged `vX.Y.Z`.
   over the same bridge the refresh uses; Stop asks for
   confirmation, with No as the default, and a refusal sends
   nothing to the daemon. The list refreshes when an action
-  finishes; a failed action flashes the status line and the
-  rows stand. A detail strip at the listing's bottom follows
+  finishes, flashing the outcome the daemon's answer carries; a
+  failed action flashes the status line and the rows stand. A
+  detail strip at the listing's bottom follows
   the selection: the held workspace's identity on one line and
   its posture and costs on the other (cpu, memory, egress mode,
   the mounts and pending markers, and the storage cost the

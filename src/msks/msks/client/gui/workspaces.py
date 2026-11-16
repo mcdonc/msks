@@ -97,6 +97,16 @@ def read_only_item(
     return item
 
 
+def action_reply_text(label: str, reply: object) -> str:
+    """The action's own flash (#940, the TUI's #776 mask): the
+    workspace's label beside the status the daemon's answer
+    carries — the outcome shows the moment the action lands,
+    whatever the next listing flight does. An answer without a
+    readable status still names its workspace."""
+    status = reply.get("status") if isinstance(reply, dict) else None
+    return f"{label} {status}" if status else label
+
+
 def workspace_costs(report: dict) -> dict[str, int]:
     """The capacity report's per-workspace costs (#849): the
     root-plus-home bytes, keyed by id. An entry that predates
@@ -235,8 +245,10 @@ class WorkspaceList(QtWidgets.QWidget):
         self.refresh_button.clicked.connect(self.refresh)
         # The actions on the selection (#940): start and stop,
         # enabled while a workspace is held and no action flight
-        # is out.
+        # is out. The flight remembers its target — the flash
+        # names it whatever the listing does meanwhile.
         self.action_pending = False
+        self.action_flight: tuple[str, str] | None = None
         self.start_button = QtWidgets.QPushButton("Start", self)
         self.start_button.clicked.connect(self.start_selected)
         self.stop_button = QtWidgets.QPushButton("Stop", self)
@@ -537,7 +549,9 @@ class WorkspaceList(QtWidgets.QWidget):
         refreshes the listing, which shows what the action moved.
         Another key's answer is not this screen's to take."""
         if key in (START_KEY, STOP_KEY):
+            label = self.action_flight[1] if self.action_flight else ""
             self.action_landed()
+            self.flash(action_reply_text(label, result))
             self.refresh()
             return
         if key == STORAGE_KEY:
@@ -589,6 +603,7 @@ class WorkspaceList(QtWidgets.QWidget):
             return None
         return name.data(ROW_ID_ROLE), name.text()
 
+    @QtCore.Slot()
     def sync_actions(self) -> None:
         """The action buttons' state (#940): enabled while a
         workspace is held and no action flight is out. The strip
@@ -634,8 +649,9 @@ class WorkspaceList(QtWidgets.QWidget):
 
     def action_landed(self) -> None:
         """An action flight's end (#940): the buttons take clicks
-        again."""
+        again and the flight's target clears."""
         self.action_pending = False
+        self.action_flight = None
         self.sync_actions()
 
     @QtCore.Slot()
@@ -647,6 +663,7 @@ class WorkspaceList(QtWidgets.QWidget):
         if workspace is None or self.action_pending:
             return
         self.action_pending = True
+        self.action_flight = workspace
         self.sync_actions()
         self.bridge.call(START_KEY, "start", workspace[0])
 
@@ -661,6 +678,7 @@ class WorkspaceList(QtWidgets.QWidget):
         if not self.confirm_stop(workspace[1]):
             return
         self.action_pending = True
+        self.action_flight = workspace
         self.sync_actions()
         self.bridge.call(STOP_KEY, "stop", workspace[0])
 
