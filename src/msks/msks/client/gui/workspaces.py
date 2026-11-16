@@ -190,6 +190,25 @@ class WorkspaceList(QtWidgets.QWidget):
         self.table.setStyleSheet(
             f"QTableView::item {{ border-bottom: 1px solid {rule}; }}"
         )
+        # The hold keeps its color when the grid loses the focus
+        # (#939): Qt paints a selected row in the palette's
+        # inactive highlight while another widget holds the
+        # focus — a washed-out row reads as dehighlighted — so
+        # the table's inactive colors copy its active ones.
+        palette = self.table.palette()
+        active = QtGui.QPalette.ColorGroup.Active
+        inactive = QtGui.QPalette.ColorGroup.Inactive
+        for role in (
+            QtGui.QPalette.ColorRole.Highlight,
+            QtGui.QPalette.ColorRole.HighlightedText,
+        ):
+            palette.setColor(inactive, role, palette.color(active, role))
+        self.table.setPalette(palette)
+        # A press on the grid's blank space keeps the hold too
+        # (#939): Qt's own view clears a selection when a press
+        # lands on no row, and the blank space below the rows is
+        # chrome, not a select-nothing gesture.
+        self.table.viewport().installEventFilter(self)
         self.refresh_button = QtWidgets.QPushButton("Refresh", self)
         self.refresh_button.clicked.connect(self.refresh)
         self.status = QtWidgets.QLabel("", self)
@@ -230,11 +249,13 @@ class WorkspaceList(QtWidgets.QWidget):
         slot, and the highlight would wander off the workspace
         the operator clicked. A rebuild the listing does need
         carries the selection by workspace id, so the highlight
-        follows its row wherever the order lands it. Sorting
+        follows its row wherever the order lands it; the first
+        rows a listing ever shows hold the first row. Sorting
         pauses for the fill and resumes after, so the rebuild
         cannot re-order rows mid-swap."""
         if self.rows_unchanged(models):
             return
+        was_empty = self.table.rowCount() == 0
         held = self.held_rows()
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(models))
@@ -260,7 +281,16 @@ class WorkspaceList(QtWidgets.QWidget):
             )
         self.table.setSortingEnabled(True)
         self.size_columns()
-        self.restore_rows(held)
+        if was_empty and self.table.rowCount() > 0:
+            # The first rows hold the first row (#939): the
+            # standing sort puts the newest workspace there —
+            # the one a create just made — so the keyboard and
+            # the eye start somewhere. Later answers move
+            # nothing the operator already holds.
+            first = self.table.item(0, NAME_COLUMN).data(ROW_ID_ROLE)
+            self.restore_rows(({first}, (first, NAME_COLUMN)))
+        else:
+            self.restore_rows(held)
 
     def rows_unchanged(self, models: list[WorkspaceRow]) -> bool:
         """Whether the table already reads exactly as the models
@@ -503,6 +533,21 @@ class WorkspaceList(QtWidgets.QWidget):
         must not touch widgets."""
         self.timer.stop()
         super().hideEvent(event)
+
+    def eventFilter(
+        self, watched: QtCore.QObject, event: QtCore.QEvent
+    ) -> bool:
+        """A press on the grid's blank space never reaches the
+        view (#939): the hold stands until a row click, a
+        refresh's rebuild, or the workspace leaving the listing
+        moves it."""
+        if (
+            watched is self.table.viewport()
+            and event.type() == QtCore.QEvent.Type.MouseButtonPress
+        ):
+            if not self.table.indexAt(event.position().toPoint()).isValid():
+                return True
+        return super().eventFilter(watched, event)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         """A resized pane re-flows the columns (#939): the

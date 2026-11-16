@@ -126,7 +126,7 @@ def qt(tmp_path: Path):
     os.environ["FONTCONFIG_FILE"] = str(fonts)
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from msks.client.gui import workspaces as workspaces_mod
-    from PySide6 import QtCore, QtWidgets
+    from PySide6 import QtCore, QtGui, QtWidgets
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
         ["msks-test"]
@@ -134,6 +134,7 @@ def qt(tmp_path: Path):
     return SimpleNamespace(
         app=app,
         QtCore=QtCore,
+        QtGui=QtGui,
         QtWidgets=QtWidgets,
         screen_mod=workspaces_mod,
     )
@@ -640,6 +641,68 @@ def test_a_click_takes_the_whole_row(qt) -> None:
     selected_rows = {index.row() for index in screen.table.selectedIndexes()}
     assert selected_rows == {1}  # the whole row, from one cell
     assert screen.table.currentIndex().column() == 3  # the click
+    window.close()
+
+
+def test_the_first_rows_hold_the_first_row(qt) -> None:
+    """The first load's hold (#939): the listing's first row —
+    the standing sort's newest workspace, the one a create just
+    made — takes the selection and the current cell, so the
+    keyboard and the eye start somewhere."""
+    bridge = StubBridge()
+    screen = qt.screen_mod.WorkspaceList(bridge)
+    window = qt.QtWidgets.QMainWindow()
+    window.setCentralWidget(screen)
+    window.show()
+    assert screen.table.rowCount() == 0  # nothing held on nothing
+    screen.on_succeeded("workspaces-list", daemon_rows())
+    selected_rows = {index.row() for index in screen.table.selectedIndexes()}
+    assert selected_rows == {0}  # beta: the newest, whole row
+    assert screen.table.item(0, 0).text() == "beta"
+    current = screen.table.currentIndex()
+    assert (current.row(), current.column()) == (0, 0)
+    window.close()
+
+
+def test_a_press_on_the_blank_space_keeps_the_hold(qt) -> None:
+    """A press below the rows keeps the hold (#939): the blank
+    viewport space is chrome, not a select-nothing gesture — a
+    real mouse press there changes nothing."""
+    from PySide6 import QtTest
+
+    screen, window, _bridge = make_screen(qt)
+    select_cell(qt, screen, 1, 1)
+    assert screen.table.selectedIndexes()
+    blank = screen.table.visualItemRect(
+        screen.table.item(screen.table.rowCount() - 1, 0)
+    ).bottomLeft() + qt.QtCore.QPoint(5, 5)
+    assert not screen.table.indexAt(blank).isValid()
+    QtTest.QTest.mouseClick(
+        screen.table.viewport(),
+        qt.QtCore.Qt.MouseButton.LeftButton,
+        pos=blank,
+    )
+    assert len(screen.table.selectedIndexes()) == len(
+        qt.screen_mod.COLUMNS
+    )  # alpha's row still holds
+    window.close()
+
+
+def test_the_hold_keeps_its_color_unfocused(qt) -> None:
+    """The hold paints the same without the focus (#939): Qt
+    washes a selected row out in the palette's inactive
+    highlight while another widget holds the focus, and a
+    washed-out row reads as dehighlighted — the table's inactive
+    colors copy its active ones."""
+    screen, window, _bridge = make_screen(qt)
+    palette = screen.table.palette()
+    active = qt.QtGui.QPalette.ColorGroup.Active
+    inactive = qt.QtGui.QPalette.ColorGroup.Inactive
+    for role in (
+        qt.QtGui.QPalette.ColorRole.Highlight,
+        qt.QtGui.QPalette.ColorRole.HighlightedText,
+    ):
+        assert palette.color(inactive, role) == palette.color(active, role)
     window.close()
 
 
