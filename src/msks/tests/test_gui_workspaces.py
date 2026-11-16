@@ -175,6 +175,8 @@ def test_the_list_renders_the_row_models(qt) -> None:
     image falling back to the hash, the created reading the
     shared ladder, ``-`` where the row carries nothing."""
     screen, window, _bridge = make_screen(qt)
+    window.resize(1400, 700)  # every whole value fits: no ellipsis
+    qt.app.processEvents()
     assert screen.table.rowCount() == 3
     labels = [screen.table.item(row, 0).text() for row in range(3)]
     assert labels == ["alpha", "beta", "ws-3"]
@@ -384,6 +386,82 @@ def test_the_tick_stops_with_the_closed_window(qt) -> None:
     window.close()
 
 
+def test_the_columns_fit_their_longest_values(qt) -> None:
+    """The columns' minimums (#939): every column stands at
+    least as wide as its longest value — the header's own label
+    included — so no cell elides, whatever the pane's width."""
+    screen, window, _bridge = make_screen(qt)
+    fm = screen.table.fontMetrics()
+    for column, label in enumerate(qt.screen_mod.COLUMNS):
+        texts = [
+            screen.table.item(row, column).text()
+            for row in range(screen.table.rowCount())
+        ]
+        longest = max(texts + [label], key=fm.horizontalAdvance)
+        assert screen.table.columnWidth(column) >= fm.horizontalAdvance(
+            longest
+        ), (label, longest)
+    window.close()
+
+
+def test_a_narrow_pane_ellipsizes_the_image_alone(qt) -> None:
+    """The narrow pane (#939): when the columns' whole values
+    cannot all fit, the image column alone gives ground — its
+    text ellipsized around the middle, head and tail kept —
+    while every other column keeps its whole values; a pane
+    with the room reads the image whole again."""
+    screen, window, _bridge = make_screen(qt)
+    window.resize(600, 700)  # the hash row alone overflows this
+    qt.app.processEvents()
+    image = screen.table.item(1, 3).text()  # the 64-char hash row
+    assert image != "b" * 64
+    assert "…" in image
+    assert image.startswith("b") and image.endswith("b")
+    # Every other cell reads whole.
+    assert screen.table.item(1, 0).text() == "beta"
+    assert screen.table.item(0, 3).text() == "debian:13.6"
+    window.resize(1400, 700)
+    qt.app.processEvents()
+    assert screen.table.item(1, 3).text() == "b" * 64
+    window.close()
+
+
+def test_the_columns_fill_the_pane(qt) -> None:
+    """The columns' fill (#939): the spare width beyond the
+    minimums splits across the columns, so the table occupies
+    the pane's whole width — and a resized pane re-flows, the
+    minimums holding whatever the width."""
+    screen, window, _bridge = make_screen(qt)
+    screen.on_succeeded(
+        "workspaces-list",
+        [
+            {
+                "id": "ws-1",
+                "name": "alpha",
+                "status": "stopped",
+                "image_ref": "debian:13.6",
+                "created_at": "2026-01-02T03:04:05",
+                "mount_issues": [],
+            }
+        ],
+    )
+    window.resize(1200, 700)
+    qt.app.processEvents()
+    total = sum(
+        screen.table.columnWidth(column)
+        for column in range(len(qt.screen_mod.COLUMNS))
+    )
+    assert total == screen.table.viewport().width()
+    window.resize(1500, 700)
+    qt.app.processEvents()
+    total = sum(
+        screen.table.columnWidth(column)
+        for column in range(len(qt.screen_mod.COLUMNS))
+    )
+    assert total == screen.table.viewport().width()
+    window.close()
+
+
 def test_the_status_column_sorts_by_lifecycle_rank(qt) -> None:
     """The rank the presenter carries (#938) is the sort the
     widget serves (#939): a status-column click orders the rows
@@ -402,4 +480,30 @@ def test_the_status_column_sorts_by_lifecycle_rank(qt) -> None:
     screen.table.sortItems(1, qt.QtCore.Qt.SortOrder.AscendingOrder)
     labels = [screen.table.item(row, 0).text() for row in range(4)]
     assert labels == ["delta", "beta", "alpha", "gamma"]
+    # The image column sorts by the whole value under its sort
+    # role — an ellipsized display would misorder the refs.
+    screen.on_succeeded(
+        "workspaces-list",
+        [
+            {
+                "id": "ws-1",
+                "name": "alpha",
+                "status": "running",
+                "image_ref": "debian:14",
+                "created_at": None,
+                "mount_issues": [],
+            },
+            {
+                "id": "ws-2",
+                "name": "beta",
+                "status": "running",
+                "image_ref": "debian:13",
+                "created_at": None,
+                "mount_issues": [],
+            },
+        ],
+    )
+    screen.table.sortItems(3, qt.QtCore.Qt.SortOrder.AscendingOrder)
+    labels = [screen.table.item(row, 0).text() for row in range(2)]
+    assert labels == ["beta", "alpha"]
     window.close()

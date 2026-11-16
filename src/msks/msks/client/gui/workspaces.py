@@ -46,6 +46,15 @@ FLASH_MS = 4000
 #: own sequence rather than the alphabet.
 RANK_ROLE = QtCore.Qt.ItemDataRole.UserRole
 
+#: The image cell's whole value (#939), under its sort role:
+#: the display text ellipsizes when the pane cannot fit every
+#: column, and the whole value is what the column sorts by.
+IMAGE_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
+
+#: The cell margin the contents sizing pays (#939): the budget
+#: an ellipsized cell's text renders within.
+CELL_MARGIN = 8
+
 #: The table's columns (#939), in display order — the TUI
 #: listing's own five, the fields the row models carry.
 COLUMNS = ("NAME", "STATUS", "ID", "IMAGE", "CREATED")
@@ -78,6 +87,19 @@ class StateItem(QtWidgets.QTableWidgetItem):
 
     def __lt__(self, other: QtWidgets.QTableWidgetItem) -> bool:
         return self.data(RANK_ROLE) < other.data(RANK_ROLE)
+
+
+class ImageItem(QtWidgets.QTableWidgetItem):
+    """The image cell (#939): the whole value under the sort
+    role — an ellipsized display still sorts by the value it
+    stands for."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(value)
+        self.setData(IMAGE_ROLE, value)
+
+    def __lt__(self, other: QtWidgets.QTableWidgetItem) -> bool:
+        return self.data(IMAGE_ROLE) < other.data(IMAGE_ROLE)
 
 
 class WorkspaceList(QtWidgets.QWidget):
@@ -159,15 +181,69 @@ class WorkspaceList(QtWidgets.QWidget):
             self.table.setItem(
                 index, ID_COLUMN, QtWidgets.QTableWidgetItem(model.id)
             )
-            self.table.setItem(
-                index, IMAGE_COLUMN, QtWidgets.QTableWidgetItem(model.image)
-            )
+            self.table.setItem(index, IMAGE_COLUMN, ImageItem(model.image))
             self.table.setItem(
                 index,
                 CREATED_COLUMN,
                 QtWidgets.QTableWidgetItem(model.created),
             )
         self.table.setSortingEnabled(True)
+        self.size_columns()
+
+    def size_columns(self) -> None:
+        """The columns' widths (#939): every column at least as
+        wide as its longest value — the header's own label
+        included — and the spare beyond that split evenly across
+        the columns, an odd cell to the earlier ones, so the
+        table fills the pane's whole width. The TUI listing's
+        own arithmetic (#347), over the widget's columns. A pane
+        narrower than the columns' total gives ground on the
+        image column alone — the one whose values run long — its
+        text ellipsized around the middle; every other column
+        keeps its whole values, and the image reads whole again
+        the moment the pane has the room."""
+        self.fit_images(None)  # whole values first: minimums measure them
+        self.table.resizeColumnsToContents()
+        spare = self.table.viewport().width() - sum(
+            self.table.columnWidth(column) for column in range(len(COLUMNS))
+        )
+        if spare <= 0:
+            metrics = self.table.fontMetrics()
+            floor = (
+                metrics.horizontalAdvance(COLUMNS[IMAGE_COLUMN]) + CELL_MARGIN
+            )
+            capped = max(self.table.columnWidth(IMAGE_COLUMN) + spare, floor)
+            self.table.setColumnWidth(IMAGE_COLUMN, capped)
+            self.fit_images(capped - CELL_MARGIN)
+            return
+        share, extra = divmod(spare, len(COLUMNS))
+        for column in range(len(COLUMNS)):
+            self.table.setColumnWidth(
+                column,
+                self.table.columnWidth(column)
+                + share
+                + (1 if column < extra else 0),
+            )
+
+    def fit_images(self, budget: int | None) -> None:
+        """The image cells' display (#939): the whole value when
+        the budget is open, else the value ellipsized around the
+        middle — the version half of a reference kept, the TUI
+        clip's own shape."""
+        metrics = self.table.fontMetrics()
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, IMAGE_COLUMN)
+            whole = item.data(IMAGE_ROLE)
+            if budget is None:
+                item.setText(whole)
+                continue
+            item.setText(
+                metrics.elidedText(
+                    whole,
+                    QtCore.Qt.TextElideMode.ElideMiddle,
+                    budget,
+                )
+            )
 
     @QtCore.Slot(str, object)
     def on_succeeded(self, key: str, result: object) -> None:
@@ -236,3 +312,10 @@ class WorkspaceList(QtWidgets.QWidget):
         must not touch widgets."""
         self.timer.stop()
         super().hideEvent(event)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        """A resized pane re-flows the columns (#939): the
+        minimums follow the contents whatever the pane's width,
+        and the spare fills the pane's new width."""
+        self.size_columns()
+        super().resizeEvent(event)
