@@ -22,6 +22,7 @@ import logging
 import websockets
 
 from ..egress import env_dial_events
+from ..egress import refused as refused_close
 
 logger = logging.getLogger(__name__)
 
@@ -30,16 +31,16 @@ logger = logging.getLogger(__name__)
 #: and a daemon that comes back heals inside five seconds.
 RECONNECT_DELAYS = (1.0, 2.0, 5.0)
 
-#: The daemon's token-refusal close code (#216) — the TUI wire's
-#: own 4401: a token the daemon does not hold cannot become
-#: valid by reconnecting, so the retry after one slows to the
-#: fixed interval below.
-AUTH_CLOSE_CODE = 4401
-
-#: After an auth-refused close, seconds between retries — the
-#: TUI wire's own interval: bounded noise on a refused token,
-#: and a corrected token still heals the feed mid-session.
+#: After an auth-refused close (#216 — :func:`refused_close`
+#: reads the code), seconds between retries — the TUI wire's
+#: own interval: bounded noise on a refused token, and a
+#: corrected token still heals the feed mid-session.
 REFUSED_RETRY_S = 60.0
+
+#: The socket close's bound, seconds: a live peer answers a
+#: close handshake in milliseconds; a dead one is cut here, on
+#: the reconnect path and the shutdown's unwind both.
+CLOSE_TIMEOUT_S = 3.0
 
 
 def backoff(delays: tuple[float, ...], attempt: int) -> float:
@@ -50,12 +51,6 @@ def backoff(delays: tuple[float, ...], attempt: int) -> float:
         return 0.0
     step = min(max(attempt - 1, 0), len(delays) - 1)
     return delays[step]
-
-
-def refused_close(exc: websockets.ConnectionClosed) -> bool:
-    """Whether a close was the daemon's token refusal (#216) —
-    the TUI wire's own read of the same code."""
-    return exc.rcvd is not None and exc.rcvd.code == AUTH_CLOSE_CODE
 
 
 def decode_frame(raw: str) -> dict | None:
@@ -194,9 +189,11 @@ class EventsFeed:
             self.on_drop(reason)
 
     async def close_quietly(self, ws) -> None:
-        """The socket closed, swallowing a peer that already
-        went."""
+        """The socket closed, bounded and swallowing: a peer
+        that already went raises, and one that cannot answer is
+        cut at the bound — the reconnect moves on, and the
+        shutdown's unwind cannot outlast the bridge's join."""
         try:
-            await ws.close()
+            await asyncio.wait_for(ws.close(), timeout=CLOSE_TIMEOUT_S)
         except Exception:
             pass

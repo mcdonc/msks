@@ -98,14 +98,19 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.health_pending = False
         self.flash_seq = 0
         self.flash_outage = False
-        # The timer first: a hide event Qt delivers during the
-        # build (a stack raising a half-built child among them)
-        # must not meet a page whose timer does not exist yet.
+        # The timer first, the chrome right behind it: see the
+        # note at build_chrome below for the mid-build events.
         self.timer = QtCore.QTimer(self)
         self.timer.setInterval(REFRESH_MS)
         self.timer.timeout.connect(self.refresh)
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
+        # The chrome before the sections (#945): a show or hide
+        # event Qt delivers during the build — a stack raising a
+        # half-built child among them — meets whole chrome (the
+        # timer above, the Back button's focus anchor here), not
+        # a page still missing a piece its event handlers touch.
+        self.build_chrome()
         self.title = QtWidgets.QLabel("", self)
         self.meta = QtWidgets.QLabel("", self)
         self.meta.setTextInteractionFlags(
@@ -115,7 +120,6 @@ class WorkspaceDetail(QtWidgets.QWidget):
         scroll = QtWidgets.QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setWidget(sections)
-        self.build_chrome()
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(self.chrome)  # the top row, the list's own
         layout.addWidget(self.title)

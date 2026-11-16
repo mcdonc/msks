@@ -196,11 +196,10 @@ def test_results_and_failures_cross_to_the_gui_thread(
 
 
 def test_a_feed_done_before_stop_stops_clean(qapp_setup) -> None:
-    """A feed task that finished on its own (#946): the stop's
+    """A feed task that crashed on its own (#946): the stop's
     cancel is a no-op on a done task, and the completion
-    callback retrieves whatever the task holds — an exception
-    included, never left un-retrieved — and stops the loop all
-    the same."""
+    callback retrieves the task's exception — never left
+    un-retrieved — and stops the loop all the same."""
 
     class QuickFeed:
         """A feed whose run ends at once: the done-before-stop
@@ -212,7 +211,7 @@ def test_a_feed_done_before_stop_stops_clean(qapp_setup) -> None:
             self.on_reconnect = None
 
         async def run(self) -> None:
-            return
+            raise RuntimeError("the feed crashed on its own")
 
     qt = qapp_setup
     feed = QuickFeed()
