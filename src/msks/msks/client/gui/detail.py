@@ -10,7 +10,7 @@ modules use.
 
 from dataclasses import dataclass
 
-from ...spec.mounts import MOUNT_MODES
+from ...spec.mounts import MODE_RW
 
 #: A mount the gates passed, and one they refused (#620): the
 #: state words the mounts section carries.
@@ -53,11 +53,13 @@ class EventEntry:
 
 @dataclass(frozen=True)
 class DetailSections:
-    """The detail view's whole model (#944): the workspace's
-    label, the mounts section with its next-start note while a
-    change waits, the health facts, and the recent events —
-    plain data for the widget, nothing Qt-bound in it."""
+    """The detail view's sections (#944): the workspace's id
+    and label, the mounts section with its next-start note
+    while a change waits, the health facts, and the recent
+    events — plain data for the widget to compose beside the
+    row's own facts, nothing Qt-bound in it."""
 
+    id: str
     label: str
     mounts: tuple[MountEntry, ...]
     pending_note: str | None
@@ -107,13 +109,13 @@ def mount_state(issue: dict | None) -> tuple[str, str | None]:
 
 def mount_entry(mount: dict, issue: dict | None) -> MountEntry:
     """One mount as its section entry (#620): the spec the
-    operator wrote — the mode defaulting to the vocabulary's rw
-    — beside the state the daemon derived."""
+    operator wrote — the mode defaulting to the vocabulary's
+    own MODE_RW — beside the state the daemon derived."""
     state, reason = mount_state(issue)
     return MountEntry(
         host=mount.get("host") or "-",
         guest=mount.get("guest") or "-",
-        mode=mount.get("mode") or MOUNT_MODES[-1],
+        mode=mount.get("mode") or MODE_RW,
         state=state,
         reason=reason,
     )
@@ -167,24 +169,36 @@ def event_entries(
     frames: list[dict], workspace_id: str, limit: int = EVENTS_LIMIT
 ) -> tuple[EventEntry, ...]:
     """The events section (#8, #944): the workspace's recent
-    frames, newest last, the tail the detail view reads — every
-    frame whose data names the workspace."""
+    frames, newest last, the tail the detail view reads. The
+    stream's two id conventions both name a workspace — ``id``
+    on the lifecycle frames, ``workspace_id`` on the consent and
+    secret frames — and the section keeps a frame under
+    either."""
     mine = [
         EventEntry(kind=frame.get("event") or "?", line=event_line(frame))
         for frame in frames
-        if (frame.get("data") or {}).get("id") == workspace_id
+        if frame_names(frame.get("data") or {}, workspace_id)
     ]
     return tuple(mine[-limit:])
+
+
+def frame_names(data: dict, workspace_id: str) -> bool:
+    """Whether one frame's data names the workspace (#944):
+    under either of the stream's id conventions."""
+    if data.get("id") == workspace_id:
+        return True
+    return data.get("workspace_id") == workspace_id
 
 
 def detail_sections(
     row: dict, health: dict | None, frames: list[dict]
 ) -> DetailSections:
-    """The detail view's whole model (#944) for one workspace:
-    its daemon row, the daemon's health doc, and the recent
-    event frames — the plain data the widget renders, the same
-    reads the TUI's workspace page makes."""
+    """The detail view's sections (#944) for one workspace:
+    its daemon row's mounts and label, the daemon's health doc,
+    and the recent event frames — plain data the widget composes
+    beside the row's own facts."""
     return DetailSections(
+        id=row["id"],
         label=row.get("name") or row["id"],
         mounts=mount_entries(row),
         pending_note=pending_note(row),
