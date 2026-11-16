@@ -5,6 +5,7 @@ holds no Qt import, so these tests drive it as plain
 Python, the same way the coverage gate does."""
 
 import ast
+from collections.abc import Sequence
 from pathlib import Path
 
 from msks.client.gui import rows as gui_rows
@@ -17,15 +18,17 @@ def daemon_row(
     id: str = WS,
     name: str | None = "alpha",
     status: str = "stopped",
-    issues: list[dict] | None = None,
+    issues: Sequence[dict] | None = (),
 ) -> dict:
     """One daemon row as the listing serves it (#938's fakes):
-    the three fields the presenter reads, the mounts' issue
-    list carried as the daemon derives it (absent when the
-    caller passes no ``issues``)."""
+    the three fields the presenter reads. The issue list
+    defaults to the daemon's healthy shape — the listing
+    attaches ``mount_issues`` to every row — and a caller
+    passing ``None`` exercises the defensive read for a daemon
+    that predates the field."""
     row = {"id": id, "name": name, "status": status}
     if issues is not None:
-        row["mount_issues"] = issues
+        row["mount_issues"] = list(issues)
     return row
 
 
@@ -51,7 +54,7 @@ def test_the_model_carries_what_the_widget_renders() -> None:
     assert model == gui_rows.WorkspaceRow(
         label="alpha",
         state="running",
-        state_rank=gui_rows.state_rank("running"),
+        state_rank=2,
         issue_marker="✗1",
     )
 
@@ -68,12 +71,13 @@ def test_the_label_falls_back_to_the_id() -> None:
 def test_the_marker_counts_unresolved_mounts() -> None:
     """The unresolved-mounts marker (#620, part #624): ``✗N``
     with the count of the workspace's unresolved mounts, and no
-    marker for a healthy row — an empty issue list and a row the
-    daemon serves without the field both read as none."""
+    marker for a healthy row. The absent-field arm is the
+    defensive read for a daemon predating the field — the
+    listing itself attaches the list to every row."""
     issues = [{"kind": "skipped"}, {"kind": "missing"}]
     assert gui_rows.issue_marker(daemon_row(issues=issues)) == "✗2"
     assert gui_rows.issue_marker(daemon_row(issues=[])) is None
-    assert gui_rows.issue_marker(daemon_row()) is None
+    assert gui_rows.issue_marker(daemon_row(issues=None)) is None
 
 
 def test_the_state_ranks_in_the_lifecycle_order() -> None:
@@ -99,6 +103,25 @@ def test_the_order_mirrors_the_tui_sort_order() -> None:
     way, and a state either vocabulary grows lands on both at
     once."""
     assert gui_rows.STATE_SORT_ORDER == tui_rows.STATUS_SORT_ORDER
+
+
+def test_the_helpers_match_the_tui_over_the_same_rows() -> None:
+    """The mirrored helpers keep behavior parity with the TUI
+    (#938): over the same daemon-row fakes, both clients read
+    the same label and build the same ``✗N`` marker — the sort
+    order's pin alone does not hold the pair together, and a
+    formatting change on one side must fail here rather than
+    drift the two listings apart."""
+    rows = [
+        daemon_row(),
+        daemon_row(name=None),
+        daemon_row(status="running", issues=[{"kind": "skipped"}]),
+        daemon_row(id="ws-b", name="beta", issues=[]),
+        daemon_row(issues=None),
+    ]
+    for row in rows:
+        assert gui_rows.workspace_label(row) == tui_rows.workspace_label(row)
+        assert gui_rows.issue_marker(row) == tui_rows.issue_marker(row)
 
 
 def test_the_module_imports_nothing_from_pyside6() -> None:
