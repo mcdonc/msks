@@ -100,13 +100,15 @@ The library is found through `GHOSTTY_VT_LIB` if set, then
 ## Known gaps (deliberate, spike scope)
 
 - Selecting past the window's top or bottom edge autoscrolls the
-  buffer and keeps extending the selection (the widget grabs the
-  mouse for the drag and a timer scrolls on overshoot). A finished
-  drag publishes its text to the PRIMARY selection, and middle-click
-  pastes it back — the X11 select-then-middle-click convention.
-  Double-click selects the word under the cursor through the
-  library's word selector. Remaining selection gap: clipboard
-  OSC 52. No Kitty graphics, no scrollbar dragging, no
+  buffer and keeps extending the selection: a timer scrolls while
+  the drag position sits in the edge margin (Wayland windows cannot
+  grab the mouse — only popups can — so the last in-window position
+  drives it). A finished drag publishes its text to the PRIMARY
+  selection, and middle-click pastes it back — the X11
+  select-then-middle-click convention. Double-click selects the
+  word and triple-click the line under the cursor, through the
+  library's word and line selectors. Remaining selection gap:
+  clipboard OSC 52. No Kitty graphics, no scrollbar dragging, no
   numpad-specific keys, no ligatures.
 - The XTVERSION effect is not registered: ctypes cannot return a
   16-byte struct from a callback, so `CSI > q` goes unanswered.

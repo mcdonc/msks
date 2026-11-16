@@ -343,6 +343,7 @@ class TerminalWidget(QWidget):
         self._drag_position = QPointF(0, 0)
         self._last_press_ms = 0
         self._last_press_cell: tuple[int, int] | None = None
+        self._press_count = 0
         # Autoscroll while a selection drag overshoots the top or
         # bottom edge: a timer scrolls the viewport and re-sends the
         # drag gesture at the clamped position, and the grid-anchored
@@ -745,17 +746,74 @@ class TerminalWidget(QWidget):
             self._sel_dragged = True
             self.refresh()
 
+    def _ref_under(self, position: QPointF):
+        col, row = self._cell_at(position)
+        point = ghostty.Point(
+            tag=ghostty.POINT_VIEWPORT,
+            value=ghostty.PointValue(
+                coordinate=ghostty.PointCoordinate(x=col, y=row)
+            ),
+        )
+        ref = ghostty.GridRef()
+        ref.size = ctypes.sizeof(ref)
+        if (
+            self.lib.terminal_grid_ref(
+                self.terminal,
+                point,
+                ctypes.byref(ref),
+            )
+            != ghostty.SUCCESS
+        ):
+            return None
+        return ref
+
+    def _apply_selection(self, selection) -> None:
+        self.lib.terminal_set(
+            self.terminal,
+            ghostty.OPT_SELECTION,
+            ctypes.byref(selection),
+        )
+        self._sel_dragged = True
+        self.refresh()
+
+    def _select_line_at(self, position: QPointF) -> None:
+        """Triple-click: select the line under the cursor through the
+        library's line selector."""
+        ref = self._ref_under(position)
+        if ref is None:
+            return
+        options = ghostty.SelectLineOptions(
+            size=ctypes.sizeof(ghostty.SelectLineOptions), ref=ref
+        )
+        selection = ghostty.Selection()
+        selection.size = ctypes.sizeof(selection)
+        if (
+            self.lib.terminal_select_line(
+                self.terminal,
+                ctypes.byref(options),
+                ctypes.byref(selection),
+            )
+            == ghostty.SUCCESS
+        ):
+            self._apply_selection(selection)
+
     def _autoscroll_tick(self) -> None:
-        """Scroll while the drag position overshoots an edge, then
-        extend the selection into the revealed rows."""
+        """Scroll while the drag position sits in the edge margin, then
+        extend the selection into the revealed rows. Wayland windows
+        cannot grab the mouse (only popups can), so the last in-window
+        drag position drives this: holding it at the top or bottom
+        row keeps scrolling until the pointer moves inward."""
         if not self._sel_dragged or self._mouse_tracking():
             return
         y = self._drag_position.y()
-        if y < 0:
-            rows = max(1, int(-y // self.cell_height))
+        margin = self.cell_height
+        if y < margin:
+            rows = max(1, round((margin - y) / self.cell_height))
             delta = -rows
-        elif y > self.height():
-            rows = max(1, int((y - self.height()) // self.cell_height))
+        elif y > self.height() - margin:
+            rows = max(
+                1, round((y - (self.height() - margin)) / self.cell_height)
+            )
             delta = rows
         else:
             return
@@ -766,11 +824,7 @@ class TerminalWidget(QWidget):
                 ghostty.ScrollViewportValue(delta=delta),
             ),
         )
-        clamped = QPointF(
-            self._drag_position.x(),
-            min(max(y, 0.0), float(self.height() - 1)),
-        )
-        self._selection_gesture(ghostty.SEL_DRAG, clamped)
+        self._selection_gesture(ghostty.SEL_DRAG, self._drag_position)
 
     def _selection_gesture(self, kind: int, position: QPointF) -> None:
         """Feed a selection gesture event, following the protocol of
@@ -1059,20 +1113,21 @@ class TerminalWidget(QWidget):
         ):
             now = event.timestamp()
             cell = self._cell_at(event.position())
-            is_double = (
+            repeat = (
                 now - self._last_press_ms <= 400
                 and cell == self._last_press_cell
             )
+            self._press_count = self._press_count + 1 if repeat else 1
             self._last_press_ms = now
             self._last_press_cell = cell
             self._sel_dragged = False
             self._drag_position = event.position()
-            # Keep receiving moves outside the widget so a drag that
-            # overshoots an edge keeps autoscrolling.
-            self.grabMouse()
             self._autoscroll.start()
-            if is_double:
+            if self._press_count == 2:
                 self._select_word_at(event.position())
+                return
+            if self._press_count >= 3:
+                self._select_line_at(event.position())
                 return
             self._selection_gesture(ghostty.SEL_PRESS, event.position())
         self._send_mouse(
@@ -1089,7 +1144,6 @@ class TerminalWidget(QWidget):
             and not self._mouse_tracking()
         ):
             self._autoscroll.stop()
-            self.releaseMouse()
             self._selection_gesture(ghostty.SEL_RELEASE, event.position())
         self._send_mouse(
             ghostty.MOUSE_RELEASE,

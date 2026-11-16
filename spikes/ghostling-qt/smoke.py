@@ -311,7 +311,7 @@ def test_widget() -> None:
             widget._autoscroll_tick()
             widget._autoscroll_tick()
             widget._selection_gesture(
-                ghostty.SEL_RELEASE, QPointF(cw * 5.5, 0.5)
+                ghostty.SEL_RELEASE, widget._drag_position
             )
             extended = widget._selection_text()
             if "\n" not in extended or "filler" not in extended:
@@ -339,14 +339,20 @@ def test_widget() -> None:
                 failures.append(f"middle-click paste sent {sent!r}")
             else:
                 print("paste: middle-click pastes PRIMARY")
-            # Double-click word selection through the library's word
-            # selector.
+            # Word and line selection through the library's
+            # selectors (double-click and triple-click).
             widget._select_word_at(QPointF(cw * 3.5, ch * (widget.rows - 1.5)))
             word = widget._selection_text()
             if "filler" not in word.split():
                 failures.append(f"word selection was {word!r}")
             else:
                 print(f"selection: double-click word ({word.strip()!r})")
+            widget._select_line_at(QPointF(cw * 3.5, ch * (widget.rows - 1.5)))
+            line = widget._selection_text()
+            if "filler" not in line or not any(ch.isdigit() for ch in line):
+                failures.append(f"line selection was {line!r}")
+            else:
+                print(f"selection: triple-click line ({line.strip()!r})")
         except Exception as exc:  # noqa: BLE001 - report and stop
             failures.append(f"widget check raised: {exc}")
         finally:

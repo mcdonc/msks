@@ -318,6 +318,18 @@ class SelectWordOptions(ctypes.Structure):
     ]
 
 
+class SelectLineOptions(ctypes.Structure):
+    """Line-selection request for triple-click."""
+
+    _fields_ = [
+        ("size", ctypes.c_size_t),
+        ("ref", GridRef),
+        ("whitespace", ctypes.POINTER(ctypes.c_uint32)),
+        ("whitespace_len", ctypes.c_size_t),
+        ("semantic_prompt_boundary", ctypes.c_bool),
+    ]
+
+
 class PointCoordinate(ctypes.Structure):
     _fields_ = [("x", ctypes.c_uint16), ("y", ctypes.c_uint32)]
 
@@ -612,6 +624,13 @@ class Lib:
             r,
             v,
             ctypes.POINTER(SelectWordOptions),
+            ctypes.POINTER(Selection),
+        )
+        self.terminal_select_line = self._fn(
+            "ghostty_terminal_select_line",
+            r,
+            v,
+            ctypes.POINTER(SelectLineOptions),
             ctypes.POINTER(Selection),
         )
         self.build_info = self._fn("ghostty_build_info", r, i, v)
