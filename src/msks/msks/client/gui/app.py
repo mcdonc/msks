@@ -13,6 +13,8 @@ import sys
 from importlib.util import find_spec
 from types import ModuleType
 
+from .data import GuiData
+
 # What a base install hears when it asks for the window (#928):
 # one stderr line, the client's error convention, naming the
 # install that brings the Qt binding.
@@ -90,12 +92,25 @@ def open_window(QtWidgets: ModuleType) -> int:
     The instance check reuses an existing ``QApplication`` — the
     offscreen window test enters through :func:`run` and makes
     the first one; the reuse arc is pinned by the stub test. Qt
-    wants one application per process.
+    wants one application per process. The window owns the
+    bridge (phase 2 of #924): started with the window, stopped
+    on close — ``aboutToQuit`` first, then the return path, both
+    through the idempotent stop.
     """
+    # allow-deferred-import — the bridge brings PySide6 with it
+    # (module scope there); this module stays Qt-free at parse
+    # time, so the import lands only on the window path.
+    from .bridge import Bridge
+
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
         sys.argv[:1]
     )
+    bridge = Bridge(GuiData())
+    bridge.start()
+    app.aboutToQuit.connect(bridge.stop)
     window = QtWidgets.QMainWindow()
     window.setWindowTitle(WINDOW_TITLE)
     window.show()
-    return app.exec()
+    code = app.exec()
+    bridge.stop()
+    return code

@@ -1,4 +1,4 @@
-"""GUI tests (#924): the ``msks gui`` command seam (#928), the
+"""GUI tests (#924): the ``msks gui`` command surface (#928), the
 window shell, and the gui extra's contract with the base install
 (#927)."""
 
@@ -32,12 +32,37 @@ def test_the_gui_command_hints_without_the_extra(
 ) -> None:
     """``msks gui`` on a base install (#928): the absence guard
     answers with the extra's install hint — one stderr line, the
-    client's error convention. The find_spec seam stands in for
+    client's error convention. The find_spec stand-in replaces
     the absent binding in a process that has it."""
     client_env(monkeypatch)
     monkeypatch.setattr(app, "find_spec", lambda name: None)
     assert cli.main(["gui"]) == 1
     assert app.HINT in capsys.readouterr().err
+
+
+def test_a_base_install_parses_every_command(
+    tmp_path: Path,
+) -> None:
+    """The base-install contract whole (#927), pinned for real:
+    with the binding unimportable — the state of a ``pip
+    install msks`` without the extra — the CLI module itself
+    imports and parses. The package init once pinned the
+    bridge, whose module scope loads Qt, and every command died
+    at parse time; a process with the binding installed cannot
+    see that bug, so the child blocks the binding the way a
+    base install lives."""
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "import sys\n"
+        "sys.modules['PySide6'] = None\n"  # every PySide6 import now raises
+        "import msks.client.cli\n"  # the parse-time import chain, whole
+        "print('parsed')\n"
+    )
+    child = subprocess.run(
+        [sys.executable, str(probe)], capture_output=True, timeout=30
+    )
+    assert child.returncode == 0, child.stderr.decode()
+    assert child.stdout.decode().strip() == "parsed"
 
 
 def test_the_gui_command_names_a_headless_session(
@@ -47,7 +72,7 @@ def test_the_gui_command_names_a_headless_session(
     pre-flight answers with one line instead of Qt's abort — the
     qFatal the QApplication constructor would raise is past
     anything Python can catch (exit 134 and a multi-line dump).
-    The find_spec seam keeps the test base-install safe (a host
+    The find_spec stand-in keeps the test base-install safe (a host
     without the extra hears HINT here, not a failure)."""
     client_env(monkeypatch)
     monkeypatch.setattr(app, "find_spec", lambda name: object())
@@ -62,7 +87,7 @@ def test_the_display_gate_skips_macos(
 ) -> None:
     """A stock macOS session sets none of the three variables,
     and cocoa needs none of them — the gate sits darwin out and
-    the window path runs. The open_window seam stands in for the
+    the window path runs. The open_window stand-in replaces the
     real window."""
     client_env(monkeypatch)
     monkeypatch.setattr(app, "find_spec", lambda name: object())
@@ -121,7 +146,7 @@ def test_the_gui_extra_stays_off_the_base_install() -> None:
 def test_the_gui_window_opens_offscreen(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """With the extra installed (#928), the command's seam opens
+    """With the extra installed (#928), the command's entry opens
     the main-window shell: a real offscreen ``QApplication``, a
     shown window, and the event loop entered (the exec stand-in
     returns at once). ``exec`` is patched on the class because
@@ -179,10 +204,22 @@ def test_the_gui_window_opens_offscreen(
 def test_open_window_reuses_an_existing_app() -> None:
     """The window path survives a QApplication made earlier in
     the process — the instance check, not a second application
-    (Qt wants one per process). A stub QtWidgets pins the shape
-    without a display: the shell reuses the instance it finds
-    and shows the window before the loop runs."""
+    (Qt wants one per process) — and owns its bridge: started
+    with the window, stopped on the way out. A stub QtWidgets
+    pins the shape without a display; the bridge itself is the
+    real one (its own tests cover the loop), and the stub's
+    aboutToQuit records the stop hook like the real signal
+    would."""
+    if importlib.util.find_spec("PySide6") is None:
+        pytest.skip("the gui extra is not installed on this host")
+    from msks.client.gui.bridge import Bridge
+
     shown: list[str] = []
+    stops: list[object] = []
+
+    class FakeSignal:
+        def connect(self, slot: object) -> None:
+            stops.append(slot)
 
     class FakeWindow:
         def setWindowTitle(self, title: str) -> None:
@@ -192,6 +229,8 @@ def test_open_window_reuses_an_existing_app() -> None:
             shown.append("shown")
 
     class FakeApp:
+        aboutToQuit = FakeSignal()
+
         def __init__(self, argv: list[str]) -> None:
             shown.append("created")
 
@@ -204,7 +243,16 @@ def test_open_window_reuses_an_existing_app() -> None:
     stub.QApplication = FakeApp  # type: ignore[attr-defined]
     stub.QMainWindow = FakeWindow  # type: ignore[attr-defined]
     FakeApp.instance = staticmethod(lambda: existing)  # type: ignore[attr-defined]
-    assert app.open_window(stub) == 3
+    started: list[Bridge] = []
+    real_start, real_stop = Bridge.start, Bridge.stop
+    Bridge.start = lambda self: started.append(self)  # type: ignore[method-assign]
+    Bridge.stop = lambda self: shown.append("stopped")  # type: ignore[method-assign]
+    try:
+        assert app.open_window(stub) == 3
+    finally:
+        Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]
     assert shown.count("created") == 1  # the pre-made one only
     assert app.WINDOW_TITLE in shown
-    assert shown[-1] == "exec"
+    assert shown[-1] == "stopped"  # the return path stopped the bridge
+    assert len(started) == 1  # started with the window
+    assert len(stops) == 1  # aboutToQuit holds the same stop

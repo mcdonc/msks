@@ -47,6 +47,7 @@ from textual.message import Message
 from textual.widgets import Footer, ListItem, ListView, Static
 
 from .. import context, term_popup
+from ..context import shared_ssl
 from .consent import (
     ADDED,
     DURATION_DEFAULT,
@@ -61,7 +62,6 @@ from .consent_ui import (
     ModeScreen,
     dest_line,
     flash_safe,
-    shared_ssl,
     switch_mode_path,
 )
 from .link import DeciderLink

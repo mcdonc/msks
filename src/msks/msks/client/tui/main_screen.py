@@ -25,6 +25,7 @@ from textual.events import Click, Resize
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Footer, Input, ListItem, ListView, Static
 
+from ..data import RestFailure
 from ..sshsessions import count_sessions
 from .consent_ui import (
     ConfirmScreen,
@@ -33,7 +34,6 @@ from .consent_ui import (
     focus_attr,
     focused_attr,
 )
-from .data import RestFailure
 from .detail import (
     DAEMON_DOWN_MARKER,
     detail_strip,

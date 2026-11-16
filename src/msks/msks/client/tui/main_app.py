@@ -35,9 +35,10 @@ from textual.app import App
 from textual.screen import Screen
 
 from ..config import ClientConfig
-from ..env import display_url, env_token, env_url
-from .consent_ui import FlashLine, flash_safe, shared_ssl
-from .data import RestFailure, TuiData
+from ..data import RestFailure
+from ..env import display_url, env_token, env_url, shared_ssl
+from .consent_ui import FlashLine, flash_safe
+from .data import TuiData
 from .follow import TuiFollow, run_follow_up
 from .main_screen import MainScreen
 from .unlock import PassphraseScreen, unlock_flash, unlock_flow
