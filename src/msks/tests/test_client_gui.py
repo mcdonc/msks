@@ -263,11 +263,14 @@ def test_open_window_reuses_an_existing_app(
     would."""
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("the gui extra is not installed on this host")
+    from msks.client.gui import workspaces as workspaces_mod
     from msks.client.gui.bridge import Bridge
 
     shown: list[str] = []
     stops: list[object] = []
     styles: list[str] = []
+    central: list[object] = []
+    screens: list[object] = []
 
     class FakeSignal:
         def connect(self, slot: object) -> None:
@@ -277,8 +280,21 @@ def test_open_window_reuses_an_existing_app(
         def setWindowTitle(self, title: str) -> None:
             shown.append(title)
 
+        def setCentralWidget(self, widget: object) -> None:
+            central.append(widget)
+
         def show(self) -> None:
             shown.append("shown")
+
+    class FakeScreen:
+        """The screen the window opens on (#939): the stub the
+        window path takes for the real widget, recording the
+        bridge it was built over."""
+
+        def __init__(self, bridge: object) -> None:
+            screens.append(bridge)
+
+    monkeypatch.setattr(workspaces_mod, "WorkspaceList", FakeScreen)
 
     class FakeApp:
         aboutToQuit = FakeSignal()
@@ -318,6 +334,11 @@ def test_open_window_reuses_an_existing_app(
     # the session theme.
     assert os.environ["QT_STYLE_OVERRIDE"] == "Fusion"
     assert app.WINDOW_TITLE in shown
+    # The window opens on the workspace list (#939): the screen
+    # is the central widget, built over the same bridge the
+    # window started.
+    assert len(central) == 1
+    assert screens == started
     assert shown[-1] == "stopped"  # the return path stopped the bridge
     assert len(started) == 1  # started with the window
     assert len(stops) == 1  # aboutToQuit holds the same stop
@@ -333,9 +354,11 @@ def test_open_window_keeps_a_user_style_choice(
     with the choice preset in the swapped-out environment."""
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("the gui extra is not installed on this host")
+    from msks.client.gui import workspaces as workspaces_mod
     from msks.client.gui.bridge import Bridge
 
     styles: list[str] = []
+    central: list[object] = []
 
     class FakeSignal:
         def connect(self, slot: object) -> None:
@@ -345,8 +368,17 @@ def test_open_window_keeps_a_user_style_choice(
         def setWindowTitle(self, title: str) -> None:
             pass
 
+        def setCentralWidget(self, widget: object) -> None:
+            central.append(widget)
+
         def show(self) -> None:
             pass
+
+    class FakeScreen:
+        def __init__(self, bridge: object) -> None:
+            pass
+
+    monkeypatch.setattr(workspaces_mod, "WorkspaceList", FakeScreen)
 
     class FakeApp:
         aboutToQuit = FakeSignal()

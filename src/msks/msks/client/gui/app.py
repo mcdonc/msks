@@ -3,9 +3,11 @@
 The Qt import lives inside :func:`run` — the CLI imports this
 module at load time (``wscommands.py``), so a module-scope
 PySide6 import would break every command on a base install. The
-window shell is the phase-1 surface (#928): a main window over
-the daemon's REST API, whose screens arrive with phases 3 and 4
-of the plan (#924).
+window shell is the phase-1 surface (#928) carrying the
+workspace list screen (#939, phase 3 of the plan): a main
+window over the daemon's REST API whose central widget renders
+the presenter's row models and refreshes them through the
+bridge.
 """
 
 import os
@@ -131,7 +133,9 @@ def open_window(QtWidgets: ModuleType) -> int:
     wants one application per process. The window owns the
     bridge (phase 2 of #924): started with the window, stopped
     on close — ``aboutToQuit`` first, then the return path, both
-    through the idempotent stop.
+    through the idempotent stop — and opens on the workspace
+    list (#939): the screen is the central widget the bridge's
+    answers land on.
     """
     # allow-deferred-import — the bridge brings PySide6 with it
     # (module scope there); this module stays Qt-free at parse
@@ -158,6 +162,14 @@ def open_window(QtWidgets: ModuleType) -> int:
     app.aboutToQuit.connect(bridge.stop)
     window = QtWidgets.QMainWindow()
     window.setWindowTitle(WINDOW_TITLE)
+    # allow-deferred-import — the screen module brings PySide6
+    # with it (module scope there, like the bridge); the window
+    # path loads it after the guards — the same reachability
+    # the gate counts, and the stub tests patch the name off
+    # the module.
+    from .workspaces import WorkspaceList
+
+    window.setCentralWidget(WorkspaceList(bridge))
     window.show()
     code = app.exec()
     bridge.stop()
