@@ -11,6 +11,7 @@ that instead, e.g. ``python main.py vim``.
 
 from __future__ import annotations
 
+import os
 import sys
 
 from PySide6.QtCore import QPointF
@@ -97,7 +98,8 @@ def main() -> int:
 
     from PySide6.QtCore import QTimer
 
-    QTimer.singleShot(4000, self_dump)
+    if os.environ.get("GHOSTLING_DEBUG_PAINT"):
+        QTimer.singleShot(4000, self_dump)
     return app.exec()
 
 

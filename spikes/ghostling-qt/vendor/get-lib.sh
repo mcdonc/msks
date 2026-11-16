@@ -15,7 +15,7 @@ mkdir -p vendor/fonts
 for style in Regular Bold Italic BoldItalic; do
   if [ ! -f "vendor/fonts/JetBrainsMono-$style.ttf" ]; then
     curl -sfL -o "vendor/fonts/JetBrainsMono-$style.ttf" \
-      "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/master/fonts/ttf/JetBrainsMono-$style.ttf"
+      "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/v2.304/fonts/ttf/JetBrainsMono-$style.ttf"
   fi
 done
 echo "fonts: $(find vendor/fonts -name '*.ttf' | wc -l) JetBrains Mono faces"
@@ -24,7 +24,7 @@ if [ -f vendor/libghostty-vt.so ]; then
   exit 0
 fi
 
-url=$(curl -s https://pypi.org/pypi/pyghostty/json | python3 -c "
+url=$(curl -s https://pypi.org/pypi/pyghostty/0.1.4/json | python3 -c "
 import json, sys, platform
 machine = platform.machine()
 arch = 'x86_64' if machine in ('x86_64', 'AMD64') else 'aarch64'

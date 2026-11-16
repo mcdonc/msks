@@ -2,12 +2,13 @@
 libghostty-vt's render state, mirroring Ghostling's renderer with Qt
 in place of Raylib.
 
-Supported: text with 8/16/256/truecolor, styles (bold, italic,
-inverse, faint), the cursor, scrollback with a scrollbar, resize with
-reflow, the Kitty keyboard protocol (through the key encoder), mouse
-reporting (through the mouse encoder), focus reporting, and OSC title
-changes. Out of scope for this spike: Kitty graphics, text selection,
-bracketed paste, and scrollbar dragging.
+Supported: text with 8/16/256/truecolor, styles, the cursor, scrollback
+with a scrollbar, resize with reflow, the Kitty keyboard protocol,
+mouse reporting, focus reporting, OSC title changes, grid-anchored
+selection (drag, word, line, autoscroll), clipboard copy/paste with
+bracketed paste, OSC 52 writes, hyperlinks (OSC 8 and plain-text
+URLs), find with highlights, font zoom, and a visual bell. Still out
+of scope: Kitty graphics and scrollbar dragging.
 """
 
 from __future__ import annotations
@@ -52,7 +53,9 @@ def _qt_key_to_ghostty() -> dict[int, int]:
     for letter in string.ascii_uppercase:
         mapping[int(getattr(Qt.Key, "Key_" + letter))] = ghostty.KEY[letter]
     for digit in string.digits:
-        mapping[Qt.Key(int("0" + digit))] = ghostty.KEY["DIGIT_" + digit]
+        mapping[int(getattr(Qt.Key, f"Key_{digit}"))] = ghostty.KEY[
+            "DIGIT_" + digit
+        ]
     for n in range(1, 26):
         mapping[int(getattr(Qt.Key, f"Key_F{n}"))] = ghostty.KEY[f"F{n}"]
     named = {
@@ -1034,11 +1037,18 @@ class TerminalWidget(QWidget):
                 QApplication.restoreOverrideCursor()
 
     def _open_link_at(self, position: QPointF) -> bool:
+        """Open a link the user Ctrl+Clicked. Only browser schemes go
+        to the desktop handler — OSC 8 URIs come from the program
+        inside, so file:// and friends stay unopened."""
         url = self._hyperlink_at(position)
-        if url:
-            QDesktopServices.openUrl(QUrl(url))
-            return True
-        return False
+        if not url:
+            return False
+        if url.startswith("www."):
+            url = "https://" + url
+        if not url.startswith(("http://", "https://", "ftp://")):
+            return False
+        QDesktopServices.openUrl(QUrl(url))
+        return True
 
     # --- find bar -----------------------------------------------------
 

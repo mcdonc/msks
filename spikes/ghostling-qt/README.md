@@ -9,8 +9,8 @@ It is a standalone plain terminal. It imports nothing from msks, it
 lives outside `src/msks/` so the repo gates (import graph, lines,
 coverage) do not apply, and it answers one question: how much work is
 the Qt side when libghostty-vt provides the emulation? Ghostling needs
-about 1,500 lines of C over Raylib; this spike is roughly 1,100 lines
-of Python over Qt.
+about 1,500 lines of C over Raylib; this spike is roughly 3,400
+lines of Python over Qt.
 
 ## Layout
 
@@ -132,8 +132,9 @@ The library is found through `GHOSTTY_VT_LIB` if set, then
 - BEL is a visual bell: a 180 ms orange border flash (repeat BELs
   restart the timer). No Kitty graphics, no scrollbar dragging, no
   numpad-specific keys, no ligatures.
-- The XTVERSION effect is not registered: ctypes cannot return a
-  16-byte struct from a callback, so `CSI > q` goes unanswered.
+- The XTVERSION effect is not registered (ctypes cannot return a
+  16-byte struct from a callback); the library answers `CSI > q`
+  itself.
 - `vendor/` holds a library snapshot (currently a pre-1.0
   `0.1.0-dev` build bundled by pyghostty 0.1.4); re-fetch it when a
   1.x wheel is out and pin against the stable ABI.

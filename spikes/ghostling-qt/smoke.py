@@ -134,6 +134,18 @@ def test_emulator() -> None:
         free(handle)
 
 
+def test_digit_keys() -> None:
+    """Digits live at Qt codes 48-57; they once landed at 0-9 and only
+    worked through the text fallback, which loses Alt/Ctrl modifiers."""
+    from terminal import _QT_KEYS
+
+    for digit in "0123456789":
+        code = 48 + int(digit)
+        assert _QT_KEYS.get(code) is not None, f"key {digit} unmapped"
+    assert all(_QT_KEYS.get(code) is None for code in range(0, 10))
+    print("keys: digit codes mapped at 48-57")
+
+
 def test_key_encoder() -> None:
     lib = ghostty.Lib()
     terminal = lib.new_handle(lib.terminal_new, 80, 24)
@@ -178,6 +190,7 @@ def test_pty_session() -> None:
         data = session.drain()
         if data is None:
             break
+        time.sleep(0.01)
         if data:
             lib.vt_write(terminal, data)
     lines = screen_text(lib, terminal, render_state, row_iterator, row_cells)
@@ -593,6 +606,7 @@ def test_widget() -> None:
 
 def main() -> int:
     test_emulator()
+    test_digit_keys()
     test_key_encoder()
     test_pty_session()
     test_widget()

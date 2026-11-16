@@ -16,6 +16,7 @@ from pathlib import Path
 
 SUCCESS = 0
 NO_VALUE = -4
+OUT_OF_SPACE = -3
 
 # GhosttyKey codes, in declaration order (values are positional from
 # zero; GHOSTTY_KEY_MAX_VALUE is excluded). The count is asserted below
@@ -483,7 +484,6 @@ class Lib:
 
     def __init__(self, path: str | None = None) -> None:
         self.lib = ctypes.CDLL(path or library_path())
-        self._keepalive: list[ctypes._CData] = []
         self._prototypes()
 
     def _fn(self, name, restype, *argtypes):
@@ -526,7 +526,6 @@ class Lib:
         self.render_state_update = self._fn(
             "ghostty_render_state_update", r, v, v
         )
-        self.render_state_colors = None  # via render_state_get
         self.render_state_get = self._fn(
             "ghostty_render_state_get", r, v, i, v
         )
@@ -734,11 +733,6 @@ class Lib:
         """
         ok = fn(handle, selector, ctypes.byref(buf)) == SUCCESS
         return ok, buf
-
-    def keepalive(self, ref: ctypes._CData) -> ctypes._CData:
-        """Hold a reference so ctypes callbacks are not collected."""
-        self._keepalive.append(ref)
-        return ref
 
     def new_handle(self, fn, *args) -> int:
         """Call a *_new constructor; ``args`` follows the out handle

@@ -38,3 +38,4 @@ spikes/ghostling-qt/.libdirs
 spikes/ghostling-qt/vendor/*.so
 spikes/ghostling-qt/vendor/*.zip
 spikes/ghostling-qt/vendor/fonts/
+spikes/devenv.lock

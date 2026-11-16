@@ -14,6 +14,7 @@ import pty
 import signal
 import struct
 import termios
+import time
 
 TERM = "xterm-256color"
 
@@ -130,20 +131,28 @@ class PtySession:
         elif os.WIFSIGNALED(status):
             self.exit_status = 128 + os.WTERMSIG(status)
 
-    def close(self) -> None:
-        """Hang up the child and release the master fd."""
+    def close(self, grace: float = 0.3) -> None:
+        """Hang up the child and release the master fd without
+        blocking the GUI: closing the master makes the kernel SIGHUP
+        the child's foreground process group, then the child gets a
+        short grace period before SIGKILL. A child that traps HUP
+        cannot stall the window close."""
+        if self.master_fd is not None:
+            os.close(self.master_fd)
+            self.master_fd = None
         if self.child_pid is not None:
-            try:
-                os.kill(self.child_pid, signal.SIGHUP)
-            except ProcessLookupError:
-                pass
             self.reap()
+            deadline = time.monotonic() + grace
+            while self.child_pid is not None and time.monotonic() < deadline:
+                time.sleep(0.02)
+                self.reap()
             if self.child_pid is not None:
+                try:
+                    os.kill(self.child_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
                 try:
                     os.waitpid(self.child_pid, 0)
                 except ChildProcessError:
                     pass
                 self.child_pid = None
-        if self.master_fd is not None:
-            os.close(self.master_fd)
-            self.master_fd = None
