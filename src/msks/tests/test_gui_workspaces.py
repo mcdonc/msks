@@ -664,6 +664,27 @@ def test_the_first_rows_hold_the_first_row(qt) -> None:
     window.close()
 
 
+def test_an_empty_first_answer_holds_nothing(qt) -> None:
+    """A first answer with no workspaces holds nothing (#939):
+    the hold starts on the first row a listing ever shows, and
+    an empty listing shows none — no current cell, no selection.
+    The first row that later arrives — the workspace a create
+    just made — takes the hold."""
+    bridge = StubBridge()
+    screen = qt.screen_mod.WorkspaceList(bridge)
+    window = qt.QtWidgets.QMainWindow()
+    window.setCentralWidget(screen)
+    window.show()
+    screen.on_succeeded("workspaces-list", [])
+    assert screen.table.rowCount() == 0
+    assert screen.table.selectedIndexes() == []
+    assert not screen.table.currentIndex().isValid()
+    screen.on_succeeded("workspaces-list", daemon_rows())
+    selected_rows = {index.row() for index in screen.table.selectedIndexes()}
+    assert selected_rows == {0}  # the first row ever shown holds
+    window.close()
+
+
 def test_a_press_on_the_blank_space_keeps_the_hold(qt) -> None:
     """A press below the rows keeps the hold (#939): the blank
     viewport space is chrome, not a select-nothing gesture — a
