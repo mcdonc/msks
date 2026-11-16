@@ -412,8 +412,9 @@ def test_opening_resets_the_page(qt) -> None:
 def test_the_answers_land_in_either_order(qt) -> None:
     """The two flights land independently (#945): a health doc
     before the row renders nothing (there is nothing to render
-    against yet), a refused health read flashes while the row
-    still renders, and the next doc lands the section."""
+    against yet), and a refused health read flashes while the
+    row still renders — the best-effort silence after it keeps
+    the standing section."""
     page, window, bridge = make_page(qt)
     page.on_succeeded(
         qt.page_mod.HEALTH_KEY,
@@ -492,8 +493,9 @@ def test_the_meta_line_moves_with_the_clock(qt, monkeypatch) -> None:
     )
     land(qt, page, bridge)  # the same row, the clock 14 days on
     assert "created 2w ago" in page.meta.text()
-    # ... and a hold on the mounts table still survives the
-    # unchanged sections.
+    # The sections stood unchanged through the same answer; the
+    # hold that survives them is pinned by the unchanged-answer
+    # test.
     assert page.mounts.rowCount() == 2
 
 
