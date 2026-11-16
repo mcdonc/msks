@@ -33,6 +33,11 @@ REFRESH_MS = 5000
 #: bridge.
 LIST_KEY = "workspaces-list"
 
+#: The action calls' keys (#940): start and stop on the
+#: selection, each its own flight.
+START_KEY = "workspaces-start"
+STOP_KEY = "workspaces-stop"
+
 #: How long a flashed refusal stays on the status line,
 #: milliseconds — long enough to read, gone before it reads as
 #: the screen's standing state. An outage (the daemon answered
@@ -211,11 +216,23 @@ class WorkspaceList(QtWidgets.QWidget):
         self.table.viewport().installEventFilter(self)
         self.refresh_button = QtWidgets.QPushButton("Refresh", self)
         self.refresh_button.clicked.connect(self.refresh)
+        # The actions on the selection (#940): start and stop,
+        # enabled while a workspace is held and no action flight
+        # is out.
+        self.action_pending = False
+        self.start_button = QtWidgets.QPushButton("Start", self)
+        self.start_button.clicked.connect(self.start_selected)
+        self.stop_button = QtWidgets.QPushButton("Stop", self)
+        self.stop_button.clicked.connect(self.stop_selected)
+        self.table.selectionModel().selectionChanged.connect(self.sync_actions)
+        self.sync_actions()
         self.status = QtWidgets.QLabel("", self)
         self.timer = QtCore.QTimer(self)
         self.timer.setInterval(REFRESH_MS)
         self.timer.timeout.connect(self.refresh)
         row = QtWidgets.QHBoxLayout()
+        row.addWidget(self.start_button)
+        row.addWidget(self.stop_button)
         row.addWidget(self.refresh_button)
         row.addWidget(self.status, stretch=1)
         layout = QtWidgets.QVBoxLayout(self)
@@ -472,11 +489,16 @@ class WorkspaceList(QtWidgets.QWidget):
 
     @QtCore.Slot(str, object)
     def on_succeeded(self, key: str, result: object) -> None:
-        """One answered refresh (#939): the table rebuilds from
-        the daemon rows — the presenter's plain data in — and the
-        status line clears: the flash names a failure the next
-        answer resolved. Another key's answer is not this
-        screen's to take."""
+        """One answered call (#939, #940): a listing rebuilds the
+        table — the presenter's plain data in — with the status
+        line clearing (the flash names a failure the next answer
+        resolved); an action's answer lands the flight and
+        refreshes the listing, which shows what the action moved.
+        Another key's answer is not this screen's to take."""
+        if key in (START_KEY, STOP_KEY):
+            self.action_landed()
+            self.refresh()
+            return
         if key != LIST_KEY:
             return
         self.pending = False
@@ -485,16 +507,90 @@ class WorkspaceList(QtWidgets.QWidget):
 
     @QtCore.Slot(str, object)
     def on_failed(self, key: str, failure: RestFailure) -> None:
-        """One refused refresh (#939): the failure flashes on the
-        status line — an outage (the daemon answered nothing)
+        """One refused call (#939, #940): the failure flashes on
+        the status line — an outage (the daemon answered nothing)
         stands until an answer resolves it — and the rows already
         on screen stand: the operator keeps the list the last
-        answer built. Another key's failure is not this screen's
-        to show."""
+        answer built, and a failed action takes nothing away
+        either. Another key's failure is not this screen's to
+        show."""
+        if key in (START_KEY, STOP_KEY):
+            self.action_landed()
+            self.flash(str(failure), outage=failure.reach)
+            return
         if key != LIST_KEY:
             return
         self.pending = False
         self.flash(str(failure), outage=failure.reach)
+
+    def held_workspace(self) -> tuple[str, str] | None:
+        """The workspace the actions sit on (#940): the current
+        row's — else the first selected row's — id and label."""
+        rows = sorted({index.row() for index in self.table.selectedIndexes()})
+        if not rows:
+            return None
+        row = self.table.currentIndex().row()
+        if row not in rows:
+            row = rows[0]
+        name = self.table.item(row, NAME_COLUMN)
+        if name is None:
+            return None
+        return name.data(ROW_ID_ROLE), name.text()
+
+    def sync_actions(self) -> None:
+        """The action buttons' state (#940): enabled while a
+        workspace is held and no action flight is out."""
+        usable = self.held_workspace() is not None
+        self.start_button.setEnabled(usable and not self.action_pending)
+        self.stop_button.setEnabled(usable and not self.action_pending)
+
+    def action_landed(self) -> None:
+        """An action flight's end (#940): the buttons take clicks
+        again."""
+        self.action_pending = False
+        self.sync_actions()
+
+    @QtCore.Slot()
+    def start_selected(self) -> None:
+        """The Start action (#940): the held workspace starts
+        through the bridge, and the list refreshes when the
+        daemon answers."""
+        workspace = self.held_workspace()
+        if workspace is None or self.action_pending:
+            return
+        self.action_pending = True
+        self.sync_actions()
+        self.bridge.call(START_KEY, "start", workspace[0])
+
+    @QtCore.Slot()
+    def stop_selected(self) -> None:
+        """The Stop action (#940): the held workspace stops after
+        the operator confirms — a refusal sends nothing to the
+        daemon."""
+        workspace = self.held_workspace()
+        if workspace is None or self.action_pending:
+            return
+        if not self.confirm_stop(workspace[1]):
+            return
+        self.action_pending = True
+        self.sync_actions()
+        self.bridge.call(STOP_KEY, "stop", workspace[0])
+
+    def confirm_stop(self, label: str) -> bool:
+        """Stop's confirmation (#940): the question names the
+        workspace, and No is the default — a stop is the
+        operator's call, not the pointer's."""
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Stop workspace",
+            f"Stop {label}?",
+            (
+                QtWidgets.QMessageBox.StandardButton.Yes
+                | QtWidgets.QMessageBox.StandardButton.No
+            ),
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        return answer == QtWidgets.QMessageBox.StandardButton.Yes
 
     def flash(self, message: str, *, outage: bool = False) -> None:
         """The status line's flash (#939, #904): the message

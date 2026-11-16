@@ -727,6 +727,90 @@ def test_the_hold_keeps_its_color_unfocused(qt) -> None:
     window.close()
 
 
+def test_start_runs_on_the_selection_and_refreshes(qt) -> None:
+    """The Start action (#940): the held workspace starts through
+    the bridge, the buttons lock while the flight is out, and
+    the list refreshes when the daemon answers."""
+    screen, window, bridge = make_screen(qt)
+    bridge.calls.clear()
+    assert screen.start_button.isEnabled()  # the first-row hold
+    screen.start_button.click()
+    assert bridge.calls == [("workspaces-start", "start", ("ws-2",))]
+    assert not screen.start_button.isEnabled()  # one flight at a time
+    screen.on_succeeded("workspaces-start", {})
+    assert bridge.calls[-1] == ("workspaces-list", "workspaces", ())
+    assert screen.start_button.isEnabled()
+    window.close()
+
+
+def test_stop_asks_before_it_runs(qt, monkeypatch) -> None:
+    """The Stop action's gate (#940): the question names the
+    workspace with No as the default, and a refusal sends
+    nothing to the daemon — a confirmation runs the stop, and
+    the list refreshes when it lands."""
+    asked: list[tuple] = []
+
+    def refuse_or_allow(parent, title, text, buttons=None, default=None):
+        asked.append((title, text, buttons, default))
+        no = qt.QtWidgets.QMessageBox.StandardButton.No
+        yes = qt.QtWidgets.QMessageBox.StandardButton.Yes
+        return no if len(asked) == 1 else yes
+
+    monkeypatch.setattr(qt.QtWidgets.QMessageBox, "question", refuse_or_allow)
+    screen, window, bridge = make_screen(qt)
+    bridge.calls.clear()
+    screen.stop_button.click()
+    assert bridge.calls == []  # the refusal sent nothing
+    assert screen.stop_button.isEnabled()
+    screen.stop_button.click()
+    assert bridge.calls == [("workspaces-stop", "stop", ("ws-2",))]
+    assert "beta" in asked[1][1]  # the question named the workspace
+    assert (
+        asked[0][3] == qt.QtWidgets.QMessageBox.StandardButton.No
+    )  # No is the default
+    screen.on_succeeded("workspaces-stop", {})
+    assert bridge.calls[-1] == ("workspaces-list", "workspaces", ())
+    window.close()
+
+
+def test_a_failing_action_flashes_and_the_list_survives(qt) -> None:
+    """A refused action (#940): the failure flashes the status
+    line a refused refresh uses, the rows already on screen
+    stand, and the buttons take clicks again."""
+    screen, window, _bridge = make_screen(qt)
+    screen.on_failed(
+        "workspaces-start",
+        clientdata.RestFailure("409: workspace is running", reach=False),
+    )
+    assert "409" in screen.status.text()
+    assert screen.table.rowCount() == 3  # the rows stand
+    assert screen.start_button.isEnabled()
+    assert screen.stop_button.isEnabled()
+    window.close()
+
+
+def test_the_actions_follow_the_hold(qt) -> None:
+    """The actions sit on the selection (#940): no rows, no
+    buttons; the first-row hold arms them; a listing that drops
+    the held workspace disarms them."""
+    bridge = StubBridge()
+    screen = qt.screen_mod.WorkspaceList(bridge)
+    window = qt.QtWidgets.QMainWindow()
+    window.setCentralWidget(screen)
+    window.show()
+    assert not screen.start_button.isEnabled()
+    assert not screen.stop_button.isEnabled()
+    screen.on_succeeded("workspaces-list", daemon_rows())
+    assert screen.start_button.isEnabled()  # the first-row hold
+    # The listing drops the held workspace (beta): the hold
+    # goes with it.
+    dropped = [daemon_rows()[0], daemon_rows()[2]]
+    screen.on_succeeded("workspaces-list", dropped)
+    assert not screen.start_button.isEnabled()  # the hold went
+    assert not screen.stop_button.isEnabled()
+    window.close()
+
+
 def test_the_grid_shows_no_vertical_dividers(qt) -> None:
     """No vertical dividers between cells (#939): the grid goes
     off whole, and the row's own bottom rule — the palette's
