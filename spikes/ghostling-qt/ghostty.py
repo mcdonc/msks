@@ -79,6 +79,11 @@ OPT_COLOR_SCHEME = 7
 OPT_DEVICE_ATTRIBUTES = 8
 OPT_SCROLLBACK_MAX_LINES = 28
 OPT_SELECTION = 21
+OPT_CLIPBOARD_WRITE = 26
+
+# OSC 52 clipboard-write results.
+CLIPBOARD_WRITE_SUCCESS = 0
+CLIPBOARD_WRITE_UNSUPPORTED = 2
 
 # Render state selectors.
 RS_DIRTY = 3
@@ -330,6 +335,42 @@ class SelectLineOptions(ctypes.Structure):
     ]
 
 
+class ClipboardContent(ctypes.Structure):
+    """One clipboard payload (mime + data) of an OSC 52 write."""
+
+    _fields_ = [("mime", GhosttyString), ("data", GhosttyString)]
+
+
+class ClipboardWriteReply(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_size_t),
+        ("result", ctypes.c_int),
+        ("remember", ctypes.c_bool),
+    ]
+
+
+CLIPBOARD_WRITE_REPLY_FN = ctypes.CFUNCTYPE(
+    None, ctypes.c_void_p, ctypes.c_void_p
+)
+
+
+class ClipboardWrite(ctypes.Structure):
+    """An OSC 52 write request; the embedder replies asynchronously
+    through the embedded function pointer."""
+
+    _fields_ = [
+        ("size", ctypes.c_size_t),
+        ("location", ctypes.c_int),
+        ("contents", ctypes.POINTER(ClipboardContent)),
+        ("contents_len", ctypes.c_size_t),
+        ("name", GhosttyString),
+        ("granted", ctypes.c_bool),
+        ("can_remember", ctypes.c_bool),
+        ("ctx", ctypes.c_void_p),
+        ("reply", CLIPBOARD_WRITE_REPLY_FN),
+    ]
+
+
 class PointCoordinate(ctypes.Structure):
     _fields_ = [("x", ctypes.c_uint16), ("y", ctypes.c_uint32)]
 
@@ -394,6 +435,9 @@ XTVERSION_FN = ctypes.CFUNCTYPE(
 TITLE_CHANGED_FN = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p)
 COLOR_SCHEME_FN = ctypes.CFUNCTYPE(
     ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int
+)
+CLIPBOARD_WRITE_FN = ctypes.CFUNCTYPE(
+    None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p
 )
 
 

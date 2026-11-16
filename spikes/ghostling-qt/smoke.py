@@ -440,6 +440,22 @@ def test_widget() -> None:
                 )
             else:
                 print("keys: shift-pgdn/pgup page the buffer")
+            # OSC 52: a program inside sets the clipboard.
+            import base64
+
+            payload = base64.b64encode(b"osc52 clipboard text").decode()
+            QApplication.clipboard().setText("")
+            widget.lib.vt_write(
+                widget.terminal,
+                f"\x1b]52;c;{payload}\x07".encode(),
+            )
+            if QApplication.clipboard().text() != "osc52 clipboard text":
+                failures.append(
+                    "osc52 write did not reach the clipboard: "
+                    + repr(QApplication.clipboard().text())
+                )
+            else:
+                print("clipboard: osc52 write reached the clipboard")
         except Exception as exc:  # noqa: BLE001 - report and stop
             failures.append(f"widget check raised: {exc}")
         finally:

@@ -223,6 +223,42 @@ def _color_scheme(_terminal, _userdata, _out):
     return False
 
 
+@ghostty.CLIPBOARD_WRITE_FN
+def _clipboard_write(_terminal, userdata, write_ptr):
+    """OSC 52: a program inside wants to set the clipboard."""
+    widget = _widget(userdata)
+    if widget is None or not write_ptr:
+        return
+    write = ctypes.cast(
+        write_ptr, ctypes.POINTER(ghostty.ClipboardWrite)
+    ).contents
+    text = None
+    for index in range(write.contents_len):
+        content = write.contents[index]
+        if content.mime.text() in (
+            "",
+            "text/plain",
+            "text/plain;charset=utf-8",
+        ):
+            text = content.data.text()
+            break
+    reply = ghostty.ClipboardWriteReply()
+    reply.size = ctypes.sizeof(reply)
+    reply.remember = False
+    if text is not None:
+        mode = (
+            QClipboard.Mode.Selection
+            if write.location in (1, 2)
+            else QClipboard.Mode.Clipboard
+        )
+        QApplication.clipboard().setText(text, mode)
+        reply.result = ghostty.CLIPBOARD_WRITE_SUCCESS
+    else:
+        reply.result = ghostty.CLIPBOARD_WRITE_UNSUPPORTED
+    if write.reply:
+        write.reply(write_ptr, ctypes.byref(reply))
+
+
 class TerminalWidget(QWidget):
     """A terminal screen: libghostty-vt state plus a PTY session."""
 
@@ -385,6 +421,10 @@ class TerminalWidget(QWidget):
             (
                 ghostty.OPT_DEVICE_ATTRIBUTES,
                 ctypes.cast(_device_attributes, ctypes.c_void_p),
+            ),
+            (
+                ghostty.OPT_CLIPBOARD_WRITE,
+                ctypes.cast(_clipboard_write, ctypes.c_void_p),
             ),
         ]
         for option, value in registrations:
