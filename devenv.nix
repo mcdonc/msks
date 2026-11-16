@@ -93,6 +93,27 @@ let
   # Python/uv toolchain, the gates), and the daemon, its
   # processes, and the smoke paths stay Linux-only by nature (they
   # drive /dev/kvm).
+  gui-libs = with pkgs; [
+    libGL # QtGui's OpenGL link; offscreen still loads it
+    libxkbcommon # the keymap translation every platform plugin shares
+    glib # QtCore's event-loop integration
+    dbus.lib # libdbus-1.so.3, QtDBus's link (the daemon lib output)
+    fontconfig # font resolution for the offscreen renderer (#928)
+    freetype # fontconfig's rasterizer backend
+    libdrm # libGL's own dependency, its own store path
+    libxcb # the X protocol transport libX11 rides
+    expat # fontconfig's parser, its own store path
+    libSM
+    libICE # the session libs the xcb platform plugin links
+    xorg.libX11
+    xorg.libXext
+    xorg.libXfixes
+    xorg.libXi
+    xorg.libXrandr
+    xorg.libXrender
+    xorg.libXcursor # the X family QtGui and the xcb plugin link
+  ];
+
   linuxOnly = with pkgs; [
     cloud-hypervisor # VMM driven by the local backend (#1); ships ch-remote
     virtiofsd # the vhost-user-fs daemon behind host mounts (#620)
@@ -163,13 +184,28 @@ in
     ++ lib.optionals pkgs.stdenv.isLinux linuxOnly;
 
   env.UV_PYTHON = config.languages.python.package;
-  # The binding's runtime load (LD_LIBRARY_PATH) resolves against
-  # the nix store — each library carries its .so in one output.
-  # Nothing compiles against them anymore (#542), so no
-  # CFLAGS/LDFLAGS. Linux only (#665): the libraries live in the
-  # Linux-only package set, so a macOS shell exports an empty path
-  # rather than forcing their (unevaluatable) store paths.
-  env.LD_LIBRARY_PATH = lib.optionalString pkgs.stdenv.isLinux "${pkgs.libnetfilter_queue}/lib:${pkgs.libnfnetlink}/lib";
+  # Runtime .so loads (LD_LIBRARY_PATH) resolve against the nix
+  # store — each library carries its .so in one output. Nothing
+  # compiles against them anymore (#542), so no CFLAGS/LDFLAGS.
+  # Linux only (#665): the libraries live in the Linux-only
+  # package set, so a macOS shell exports an empty path rather
+  # than forcing their (unevaluatable) store paths. The gui-libs
+  # set (#927) carries the same story for the PySide6 wheels: the
+  # manylinux wheels link the usual FHS shared objects, which a
+  # Nix store path never provides — a macOS runner needs none of
+  # them (its wheels link the system frameworks).
+  env.LD_LIBRARY_PATH = lib.optionalString pkgs.stdenv.isLinux (
+    lib.concatStringsSep ":" (
+      [
+        "${pkgs.libnetfilter_queue}/lib"
+        "${pkgs.libnfnetlink}/lib"
+      ]
+      # getLib picks each package's library output — bare string
+      # coercion takes the first output, which for glib and
+      # fontconfig is bin (no .so files at all).
+      ++ map (p: "${lib.getLib p}/lib") gui-libs
+    )
+  );
 
   # The nixpkgs source the devenv lock pins — the revision every
   # guest build compiles against. Exported to every devenv context
@@ -204,11 +240,13 @@ in
     # the venv silently goes stale. This task runs `uv sync` unconditionally:
     # on a current venv it is a ~0.1s no-op, cheaper than getting the gate
     # right. `after` pins ordering: the venv must exist before sync, or
-    # devenv:python:virtualenv would `rm -rf` the freshly-synced deps.
+    # devenv:python:virtualenv would `rm -rf` the freshly-synced deps. The
+    # --extra gui (#927) rides the sync so the dev shell and CI can import
+    # PySide6 for the GUI suite's offscreen tests (#924).
     "msks:uv-sync" = {
       exec = ''
         cd "$DEVENV_ROOT"
-        uv sync -p "$UV_PYTHON" --group dev
+        uv sync -p "$UV_PYTHON" --group dev --extra gui
       '';
       after = [ "devenv:python:virtualenv" ];
       before = [ "devenv:enterShell" ];

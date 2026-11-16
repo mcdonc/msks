@@ -70,6 +70,15 @@ dev = [
   "pytest-xdist",
 ]
 
+[project.optional-dependencies]
+# The desktop GUI client's Qt binding (#924): the gui extra keeps
+# the base install — the daemon, the CLI, the TUI — Qt-free, and
+# the `msks gui` seam imports it lazily (#928). PySide6 ships
+# cp310-abi3 wheels, so the 3.14 venv resolves without a source
+# build; the nix package stays on the base deps (the GUI is a
+# client-side extra, never part of the daemon's closure).
+gui = ["PySide6>=6.8"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
