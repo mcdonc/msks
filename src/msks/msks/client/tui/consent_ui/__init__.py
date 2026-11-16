@@ -94,7 +94,6 @@ from .screens import (
     PickerScreen,
 )
 from .wire import (
-    _SHARED_SSL,
     AUTH_CLOSE_CODE,
     CONNECTED,
     RECONNECT_DELAYS,
@@ -110,7 +109,6 @@ from .wire import (
     logger,
     refused_close,
     registration_frame,
-    shared_ssl,
     ws_connect_kwargs,
 )
 
@@ -136,14 +134,12 @@ __all__ = [
     "REFUSED_RETRY_INTERVAL",
     "REJECTED",
     "UNUSABLE_TOKEN",
-    "_SHARED_SSL",
     "backoff",
     "close_ws",
     "default_ws_factory",
     "logger",
     "refused_close",
     "registration_frame",
-    "shared_ssl",
     "ws_connect_kwargs",
     "HOLD_WARNING_S",
     "RULE_HOST_W",

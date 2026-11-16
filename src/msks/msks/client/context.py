@@ -22,7 +22,8 @@ binds are the groups' to import through it.
 from .env import (
     env_token,
     env_url,
-    ssl_context,  # noqa: F401 — the groups' TLS seam
+    shared_ssl,  # noqa: F401 — the clients' TLS context
+    ssl_context,  # noqa: F401 — the groups' TLS builder
 )
 from .rest import api_call
 

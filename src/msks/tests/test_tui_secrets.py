@@ -12,7 +12,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from msks.client.tui import data as data_mod
+from msks.client.data import RestFailure
 from msks.client.tui import rows as rows_mod
 from msks.client.tui import secrets as secrets_mod
 from msks.client.tui.link import AuditLink
@@ -2118,7 +2118,7 @@ async def test_a_refusal_arms_no_re_run(tmp_path, monkeypatch) -> None:
 
     async def refused() -> list[dict]:
         data.pending_fetches += 1
-        raise data_mod.RestFailure("msks: 403: no window", reach=False)
+        raise RestFailure("msks: 403: no window", reach=False)
 
     data.pending_secrets = refused
     app, _follow = make_app(data)
@@ -2144,7 +2144,7 @@ async def test_a_spent_prompt_never_re_arms(tmp_path, monkeypatch) -> None:
 
     async def lost_daemon(values: list[dict]) -> dict:
         tried.append([dict(v) for v in values])
-        raise data_mod.RestFailure("daemon away", reach=True)
+        raise RestFailure("daemon away", reach=True)
 
     data.unlock_secrets = lost_daemon
     app, _follow = make_app(data)
@@ -2236,7 +2236,7 @@ async def test_the_re_run_takes_its_turn_after_a_page_unlock(
         # The upload meets an outage: the rows stay locked, and
         # the re-run's turn finds the prompt spent.
         async def lost(values):
-            raise data_mod.RestFailure("daemon away", reach=True)
+            raise RestFailure("daemon away", reach=True)
 
         data.unlock_secrets = lost
         gate.set()

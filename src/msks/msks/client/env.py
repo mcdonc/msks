@@ -148,6 +148,25 @@ def env_token() -> str | None:
     return token
 
 
+#: One process's one TLS context, built on first use by
+#: :func:`shared_ssl` (the cache it reads).
+_SHARED_SSL: list = [None]
+
+
+def shared_ssl():
+    """The one TLS context for a process's lifetime — building it
+    per call would print the TOFU warning across every screen.
+    The local listener (#555) answers None: no TLS walks a unix
+    socket, so no warning exists to print. Both interactive
+    clients (the TUI, the GUI) warm this at startup and read it
+    on every exchange."""
+    if is_unix(env_url()):
+        return None
+    if _SHARED_SSL[0] is None:
+        _SHARED_SSL[0] = ssl_context()
+    return _SHARED_SSL[0]
+
+
 def ssl_context() -> ssl.SSLContext:
     """Verify against MSKSC_CAFILE when set; otherwise TOFU-blind v1.
 

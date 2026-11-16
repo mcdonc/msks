@@ -20,6 +20,8 @@ import httpx
 import pytest
 import websockets
 from msks.client import cli
+from msks.client import data as clientdata
+from msks.client.data import RestFailure
 from msks.client.tui import data as data_mod
 from msks.client.tui import detail as detail_mod
 from msks.client.tui import follow as follow_mod
@@ -245,7 +247,7 @@ class FakeData:
         if "workspaces" in self.fail:
             # The daemon-away shape (#904): the seam's reach
             # failure, the kind that drives the down marker.
-            raise data_mod.RestFailure("daemon away", reach=True)
+            raise RestFailure("daemon away", reach=True)
         return [dict(r) for r in self.rows]
 
     async def storage(self) -> dict:
@@ -254,7 +256,7 @@ class FakeData:
         when a test arms it."""
         self.storage_fetches += 1
         if "storage" in self.fail:
-            raise data_mod.RestFailure(self.refusal, reach=True)
+            raise RestFailure(self.refusal, reach=True)
         return {
             "state": {
                 "total": 0,
@@ -276,7 +278,7 @@ class FakeData:
         listing and the workspace page's compact line."""
         self.proxies_fetches += 1
         if "workspace-proxies" in self.fail:
-            raise data_mod.RestFailure(self.refusal, reach=True)
+            raise RestFailure(self.refusal, reach=True)
         return [
             dict(r)
             for r in self.proxy_rows
@@ -290,9 +292,7 @@ class FakeData:
         its live status the way the daemon's does."""
         self.proxy_calls.append((workspace_id, dict(body)))
         if self.proxy_refusal is not None:
-            raise data_mod.RestFailure(
-                f"msks: 409: {self.proxy_refusal}", reach=False
-            )
+            raise RestFailure(f"msks: 409: {self.proxy_refusal}", reach=False)
         row = {
             "id": self.proxy_id(),
             "workspace_id": workspace_id,
@@ -311,9 +311,7 @@ class FakeData:
         that lands rewrites the row in every later listing."""
         self.proxy_updates.append((workspace_id, proxy_id, dict(body)))
         if self.proxy_refusal is not None:
-            raise data_mod.RestFailure(
-                f"msks: 409: {self.proxy_refusal}", reach=False
-            )
+            raise RestFailure(f"msks: 409: {self.proxy_refusal}", reach=False)
         if "proxy-update" in self.fail:
             raise RuntimeError(self.refusal)
         fresh = {
@@ -361,7 +359,7 @@ class FakeData:
         raises the way the daemon's would."""
         self.removed.append(digest)
         if self.remove_refusal is not None:
-            raise data_mod.RestFailure(self.remove_refusal, reach=False)
+            raise RestFailure(self.remove_refusal, reach=False)
         self.images_rows = [
             row for row in self.images_rows if row["hash"] != digest
         ]
@@ -373,7 +371,7 @@ class FakeData:
         daemon's pointer file moves it."""
         self.default_calls.append(ref)
         if self.default_refusal is not None:
-            raise data_mod.RestFailure(self.default_refusal, reach=False)
+            raise RestFailure(self.default_refusal, reach=False)
         for image in self.images_rows:
             image["default"] = image["hash"] == ref
         return {"hash": ref}
@@ -383,7 +381,7 @@ class FakeData:
         armed raises the way the daemon's would."""
         self.import_calls.append(source)
         if self.import_refusal is not None:
-            raise data_mod.RestFailure(self.import_refusal, reach=False)
+            raise RestFailure(self.import_refusal, reach=False)
         return {
             "ref": "debian:13.6",
             "hash": "a" * 64,
@@ -484,7 +482,7 @@ class FakeData:
         save keeps the flag where it stood."""
         self.calls.append(("set-mounts", workspace_id, mounts))
         if self.mounts_refusal is not None:
-            raise data_mod.RestFailure(self.mounts_refusal, reach=False)
+            raise RestFailure(self.mounts_refusal, reach=False)
         for row in self.rows:
             if row["id"] == workspace_id:
                 row["mounts"] = [dict(m) for m in mounts]
@@ -629,7 +627,7 @@ class FakeData:
         if self.pending_gate is not None:
             await self.pending_gate.wait()
         if "pending" in self.fail:
-            raise data_mod.RestFailure(self.refusal, reach=True)
+            raise RestFailure(self.refusal, reach=True)
         return [dict(r) for r in self.pending_rows]
 
     async def unlock_secrets(self, values: list[dict]) -> dict:
@@ -1333,7 +1331,7 @@ async def test_a_refusal_owns_no_marker(monkeypatch) -> None:
 
         # The daemon answers, but with a refusal.
         async def refused() -> list[dict]:
-            raise data_mod.RestFailure("msks: 401: token refused", reach=False)
+            raise RestFailure("msks: 401: token refused", reach=False)
 
         data.workspaces = refused
         app.screen.action_refresh()
@@ -1374,7 +1372,7 @@ async def test_the_rest_seam_carries_the_exit_contract_failures(
         raise httpx.ConnectError("all attempts refused")
 
     data = data_mod.TuiData(transport=httpx.MockTransport(dead))
-    with pytest.raises(data_mod.RestFailure) as reached:
+    with pytest.raises(RestFailure) as reached:
         await data.workspaces()
     assert "cannot reach https://127.0.0.1:9660" in str(reached.value)
     assert reached.value.reach
@@ -1383,7 +1381,7 @@ async def test_the_rest_seam_carries_the_exit_contract_failures(
         return httpx.Response(409, json={"detail": "workspace is running"})
 
     data = data_mod.TuiData(transport=httpx.MockTransport(refused))
-    with pytest.raises(data_mod.RestFailure) as conflict:
+    with pytest.raises(RestFailure) as conflict:
         await data.stop("ws-1")
     assert "409" in str(conflict.value)
     assert "workspace is running" in str(conflict.value)
@@ -3292,7 +3290,7 @@ async def test_tui_data_speaks_the_rest_surface(monkeypatch, tmp_path) -> None:
     identity = tmp_path / "my-key"
     identity.write_text(pem)
     monkeypatch.setenv("MSKSC_IDENTITY_FILE", str(identity))
-    monkeypatch.setattr(data_mod, "invoking_user", lambda: "ops")
+    monkeypatch.setattr(clientdata, "invoking_user", lambda: "ops")
     seen: list[tuple] = []
     seen_pub: list[str] = []
     bodies: list[dict] = []

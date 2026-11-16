@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 import websockets
+from msks.client import env as env_mod
 from msks.client.tui import consent_ui
 from msks.client.tui.consent_ui import (
     ConsentPage,
@@ -2588,7 +2589,7 @@ def test_ws_connect_kwargs_and_shared_ssl(monkeypatch) -> None:
     import ssl
 
     ctx = ssl.create_default_context()
-    monkeypatch.setattr(consent_ui.wire, "_SHARED_SSL", [ctx])
+    monkeypatch.setattr(env_mod, "_SHARED_SSL", [ctx])
     kwargs = consent_ui.ws_connect_kwargs("http://d", "t", ctx)
     assert kwargs["ssl"] is None
     kwargs = consent_ui.ws_connect_kwargs("https://d", "t", ctx)
@@ -2596,7 +2597,7 @@ def test_ws_connect_kwargs_and_shared_ssl(monkeypatch) -> None:
     assert kwargs["uri"].endswith("/api/v1/events")
     assert "token" not in kwargs["uri"]
     assert kwargs["additional_headers"] == [("Authorization", "Bearer t")]
-    assert consent_ui.shared_ssl() is ctx
+    assert env_mod.shared_ssl() is ctx
 
 
 # -- the design pass (#470): the verdict keys' affordances ---------------
@@ -2766,8 +2767,8 @@ def test_shared_ssl_answers_none_over_the_local_socket(
     builder returns None — no TOFU warning prints on the TUI."""
     monkeypatch.setenv("MSKSC_URL", "")
     monkeypatch.setenv("MSKSC_SOCKET", "/run/msks/msksd.sock")
-    monkeypatch.setattr(consent_ui.wire, "_SHARED_SSL", [None])
-    assert consent_ui.shared_ssl() is None
+    monkeypatch.setattr(env_mod, "_SHARED_SSL", [None])
+    assert env_mod.shared_ssl() is None
 
 
 # -- the wait helpers' budget and diagnostics (#776) ------------------

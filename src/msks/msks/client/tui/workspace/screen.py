@@ -19,6 +19,7 @@ from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widgets import Footer, ListItem, ListView, Static
 
+from ...data import RestFailure
 from ...resize import resize_message
 from ...sshsessions import count_sessions
 from .. import follow
@@ -36,7 +37,6 @@ from ..consent_ui import (
     sighting_flash,
     switch_mode_path,
 )
-from ..data import RestFailure
 from ..detail import header_meta
 from ..follow import FLOW_SHELL
 from ..forms import EDIT_FREE_STATUSES, EditScreen, edit_stop_question

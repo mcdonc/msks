@@ -14,7 +14,7 @@ import logging
 import websockets
 
 from ...egress import events_url
-from ...env import env_token, env_url, is_unix, ssl_context
+from ...env import env_token, env_url, is_unix, shared_ssl
 from ...wsauth import auth_headers
 from ...wsdial import dial as ws_dial
 
@@ -145,21 +145,9 @@ async def close_ws(ws) -> None:
 
 
 # --- default seams (the real socket and REST calls) ---------------------
-
-_SHARED_SSL: list = [None]
-
-
-def shared_ssl():
-    """The one TLS context for the app's lifetime: building it
-    prints the TOFU warning when MSKSC_CAFILE is unset, and building
-    it per verdict or per reconnect would spray that warning across
-    the live screen. The local listener (#555) answers None — no
-    TLS rides a unix socket, so no warning exists to print."""
-    if is_unix(env_url()):
-        return None
-    if _SHARED_SSL[0] is None:
-        _SHARED_SSL[0] = ssl_context()
-    return _SHARED_SSL[0]
+# The shared TLS context itself lives beside its builder in
+# :func:`msks.client.env.shared_ssl` (one cache per process for
+# both interactive clients); the events kwargs below carry it.
 
 
 def ws_connect_kwargs(url: str, token: str, ssl_ctx) -> dict:
