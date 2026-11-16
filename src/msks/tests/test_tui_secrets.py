@@ -12,8 +12,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+from msks.client import ages as ages_mod
 from msks.client.data import RestFailure
-from msks.client.tui import rows as rows_mod
 from msks.client.tui import secrets as secrets_mod
 from msks.client.tui.link import AuditLink
 from msks.client.tui.secrets import (
@@ -244,7 +244,7 @@ async def test_the_page_lists_rows_with_the_live_countdown(
     """Every row shows coverage, name, destinations, the TTL, and
     the created label; the TTL repaints as the clock moves (#390)."""
     now = {"at": datetime(2030, 6, 1, 12, 0, 0, tzinfo=UTC)}
-    monkeypatch.setattr(rows_mod, "clock_now", lambda: now["at"])
+    monkeypatch.setattr(ages_mod, "clock_now", lambda: now["at"])
     monkeypatch.setattr(secrets_mod.cells, "clock_now", lambda: now["at"])
     monkeypatch.setattr(secrets_mod.screen, "clock_now", lambda: now["at"])
     data = FakeData([])

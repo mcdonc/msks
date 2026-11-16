@@ -3,17 +3,23 @@
 The Qt import lives inside :func:`run` — the CLI imports this
 module at load time (``wscommands.py``), so a module-scope
 PySide6 import would break every command on a base install. The
-window shell is the phase-1 surface (#928): a main window over
-the daemon's REST API, whose screens arrive with phases 3 and 4
-of the plan (#924).
+window shell is the phase-1 surface (#928) carrying the
+workspace list screen (#939, phase 3 of the plan): a main
+window over the daemon's REST API whose central widget renders
+the presenter's row models and refreshes them through the
+bridge.
 """
 
+import json
+import math
 import os
 import subprocess
 import sys
 from importlib.util import find_spec
+from pathlib import Path
 from types import ModuleType
 
+from ..sshsessions import state_dir
 from .data import GuiData
 
 # What a base install hears when it asks for the window (#928):
@@ -54,6 +60,128 @@ WINDOW_TITLE = "msks"
 # no session lookup — and ships identical on every platform,
 # so the window looks the same wherever it opens.
 FUSION_STYLE = "Fusion"
+
+#: The window's font scale (#939): the platform's default point
+#: size reads small beside a terminal's own face, so the window
+#: runs its fonts at one and a half times the default — one
+#: scale for the whole window, applied to the application font
+#: before the first widget reads it.
+FONT_SCALE = 1.5
+
+#: The window's opening size (#939), the shape no saved
+#: geometry answers: 1280 by 720 — a listing five columns wide
+#: reads comfortably, and a 16:9 desktop shows it whole.
+DEFAULT_WIDTH = 1280
+DEFAULT_HEIGHT = 720
+
+#: The environment knob for the font scale (#939): an operator
+#: whose display or taste reads the default wrong sets it. The
+#: window's size needs no knob — it answers to the saved
+#: geometry or the fixed default above.
+FONT_SCALE_ENV = "MSKSC_GUI_FONT_SCALE"
+
+#: The saved window geometry's file name, under the client
+#: state root (#939): the window opens where it last closed,
+#: and the fixed default applies only until the first close
+#: remembers a geometry.
+GEOMETRY_FILE = "gui-window.json"
+
+
+def geometry_path() -> Path:
+    """The saved-geometry file under the client state root
+    (#939) — ``MSKSC_STATE_DIR`` when set, else the XDG state
+    home's msks subtree, the sessions' own root."""
+    return state_dir() / GEOMETRY_FILE
+
+
+def scale_from_env(name: str, default: float) -> float:
+    """The scale the environment names, else the default
+    (#939): a presentation knob, not a config gate — a value
+    that does not parse as a number reads as the default, and
+    so does one that parses but is not usable (``nan``, an
+    infinity, anything at or under zero), so the window opens
+    rather than refusing."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    if math.isfinite(value) and value > 0:
+        return value
+    return default
+
+
+def read_geometry() -> tuple[int, int, int, int] | None:
+    """The saved window geometry (#939) as a plain rect — x, y,
+    width, height — or ``None`` when nothing usable is saved: no
+    file, text that does not parse, fields that are missing or
+    not whole numbers, or a rect with no area."""
+    try:
+        doc = json.loads(geometry_path().read_text())
+        rect = (
+            int(doc["x"]),
+            int(doc["y"]),
+            int(doc["width"]),
+            int(doc["height"]),
+        )
+    except OSError, ValueError, TypeError, KeyError:
+        return None
+    x, y, width, height = rect
+    if width <= 0 or height <= 0:
+        return None
+    return rect
+
+
+def save_geometry(window) -> None:
+    """The window's last geometry written (#939): the rect the
+    operator left — place and size together — for the next open
+    to take back. The write is best-effort: a state root it
+    cannot write (read-only, unwritable) says so on stderr, the
+    client's one-line convention, and the window still closes."""
+    box = window.geometry()
+    try:
+        root = geometry_path().parent
+        root.mkdir(parents=True, exist_ok=True)
+        geometry_path().write_text(
+            json.dumps(
+                {
+                    "x": box.x(),
+                    "y": box.y(),
+                    "width": box.width(),
+                    "height": box.height(),
+                }
+            )
+        )
+    except OSError as exc:
+        print(f"msks: cannot save the window geometry: {exc}", file=sys.stderr)
+
+
+def restore_geometry(window) -> bool:
+    """The saved geometry applied to the window (#939): the rect
+    the last close wrote, when a connected screen still shows
+    some of it — a monitor change or an unplugged display leaves
+    the old rect off the desktop, and a window opened where
+    nothing can see it never comes back. Nothing usable saved
+    answers False, and the caller opens on the scaled
+    defaults."""
+    # allow-deferred-import — the binding loads only on the
+    # window path (run's guards answered absence already).
+    from PySide6 import QtCore, QtGui
+
+    rect = read_geometry()
+    if rect is None:
+        return False
+    x, y, width, height = rect
+    box = QtCore.QRect(x, y, width, height)
+    if not any(
+        screen.availableGeometry().intersects(box)
+        for screen in QtGui.QGuiApplication.screens()
+    ):
+        return False
+    window.setGeometry(box)
+    return True
 
 
 def gui_session_present() -> bool:
@@ -131,7 +259,9 @@ def open_window(QtWidgets: ModuleType) -> int:
     wants one application per process. The window owns the
     bridge (phase 2 of #924): started with the window, stopped
     on close — ``aboutToQuit`` first, then the return path, both
-    through the idempotent stop.
+    through the idempotent stop — and opens on the workspace
+    list (#939): the screen is the central widget the bridge's
+    answers land on.
     """
     # allow-deferred-import — the bridge brings PySide6 with it
     # (module scope there); this module stays Qt-free at parse
@@ -153,12 +283,37 @@ def open_window(QtWidgets: ModuleType) -> int:
     )
     if mine:
         app.setStyle(FUSION_STYLE)
+    # The font scale sits on the application before the first
+    # widget builds (#939): every screen the window opens — the
+    # table, the button, the status line — inherits the scaled
+    # size without a per-widget hand-tune. A preset knob is the
+    # operator's own choice and wins over the default.
+    font = app.font()
+    font.setPointSizeF(
+        font.pointSizeF() * scale_from_env(FONT_SCALE_ENV, FONT_SCALE)
+    )
+    app.setFont(font)
     bridge = Bridge(GuiData())
     bridge.start()
     app.aboutToQuit.connect(bridge.stop)
     window = QtWidgets.QMainWindow()
     window.setWindowTitle(WINDOW_TITLE)
+    # allow-deferred-import — the screen module brings PySide6
+    # with it (module scope there, like the bridge); the window
+    # path loads it after the guards — the same reachability
+    # the gate counts, and the stub tests patch the name off
+    # the module.
+    from .workspaces import WorkspaceList
+
+    window.setCentralWidget(WorkspaceList(bridge))
+    # The opening geometry (#939): the last-closed rect wins —
+    # a saved geometry the screens still show — and the fixed
+    # 1280 by 720 is the first-open shape until a close
+    # remembers one.
+    if not restore_geometry(window):
+        window.resize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
     window.show()
     code = app.exec()
     bridge.stop()
+    save_geometry(window)
     return code

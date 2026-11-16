@@ -124,6 +124,19 @@ A key msks stages itself is an unencrypted OpenSSH-format key (`ed25519`,
 refused with a line giving the fixes in order: `ssh-add` the key, decrypt a
 copy, or pass `--pubkey` at create.
 
+One more variable carries the GUI window's font scale (#939):
+`MSKSC_GUI_FONT_SCALE` multiplies the platform's default font point size
+(default `1.5`). It has no config-file key, because it changes only how the
+window opens. A value that does not name a usable number (unparseable,
+`nan`, an infinity, zero, or negative) reads as the default.
+
+The window itself opens at 1280 by 720, and thereafter at the geometry it
+last closed at — place and size together, kept as `gui-window.json` under
+the client state root (`MSKSC_STATE_DIR`, else the XDG state home's msks
+subtree, the sessions' own root). A saved geometry no connected screen
+shows is ignored, so an unplugged monitor cannot strand the window off the
+desktop.
+
 `MSKSC_PUBKEY_FILE` points at your key's public half, a `.pub`
 file ([the identity section](first-run.md#the-key-files)
 owns the agent requirement this form carries). A create with it

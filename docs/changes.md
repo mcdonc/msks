@@ -15,6 +15,17 @@ tagged `vX.Y.Z`.
   (`pip install 'msks[gui]'`). A base install stays Qt-free and
   hears the extra's install hint; a session without a display
   hears a one-line notice instead of a crash.
+- **The GUI workspace list (#939).** The GUI window opens on
+  the workspace list: the TUI listing's five columns (name,
+  status with the unresolved-mounts marker, id, image,
+  created), refreshed on a five-second tick and a Refresh
+  button. A refused refresh flashes a status line while the
+  rows stand; an outage holds its message until the daemon
+  answers again. The window opens at 1280×720, runs its fonts
+  at 1.5× the platform default (`MSKSC_GUI_FONT_SCALE` to
+  change), and reopens at the geometry it last closed at —
+  kept under the client state root (see `docs/cli.md` →
+  Client environment).
 
 ### Fixed
 
