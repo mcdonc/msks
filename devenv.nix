@@ -93,6 +93,46 @@ let
   # Python/uv toolchain, the gates), and the daemon, its
   # processes, and the smoke paths stay Linux-only by nature (they
   # drive /dev/kvm).
+  # The PySide6 wheels' sonames (#927): the manylinux wheels link
+  # the FHS shared objects a Nix store path never provides, so
+  # every soname the GUI's import closure names — QtCore,
+  # QtGui, QtWidgets, and the offscreen/xcb platform plugins —
+  # gets its store path here. The wheels name 48 more (the
+  # wayland family, QtNetwork's krb5, the gtk/cups drivers) that
+  # the GUI never loads; #928 decides about wayland and
+  # QtNetwork when the window lands. The offscreen test in
+  # test_client_gui.py pins the set: it fails when a soname the
+  # closure needs is missing (a plain NixOS host has no nix-ld
+  # to paper over it; the CI runner's FHS dirs would hide the
+  # gap the other way). libstdc++ and libgcc_s no test pins:
+  # the nix python interpreter's own closure carries both into
+  # every python child.
+  gui-libs = with pkgs; [
+    stdenv.cc.cc.lib # libstdc++.so.6, every Qt .so links it
+    libgcc # libgcc_s.so.1, beside libstdc++
+    zlib # libz.so.1, QtCore's compressor
+    zstd # libzstd.so.1, beside it
+    libGL # QtGui's OpenGL link; offscreen still loads it
+    libdrm # libGL's own dependency, its own store path
+    libxkbcommon # the keymap translation every platform plugin shares
+    glib # QtCore's event-loop integration
+    dbus.lib # libdbus-1.so.3, QtDBus's link (the daemon lib output)
+    fontconfig # font resolution for the offscreen renderer (#928)
+    freetype # fontconfig's rasterizer backend
+    expat # fontconfig's parser, its own store path
+    libxcb # the X protocol transport, the core connection only
+    xorg.xcbutilcursor # libxcb-cursor.so.0 — Qt 6.5+ requires it for xcb
+    xorg.xcbutilwm # libxcb-icccm.so.4, the xcb plugin's window manager talk
+    xorg.xcbutil # libxcb-util.so.1, the atoms/geometry helpers
+    xorg.xcbutilimage # libxcb-image.so.0, the xcb plugin's pixmaps
+    xorg.xcbutilkeysyms # libxcb-keysyms.so.1, key mapping over xcb
+    xorg.xcbutilrenderutil # libxcb-render-util.so.0, xcb rendering helpers
+    xorg.libX11 # the X family QtGui and the xcb plugin link
+    xorg.libXext
+    xorg.libXfixes
+    xorg.libXrandr
+  ];
+
   linuxOnly = with pkgs; [
     cloud-hypervisor # VMM driven by the local backend (#1); ships ch-remote
     virtiofsd # the vhost-user-fs daemon behind host mounts (#620)
@@ -163,13 +203,30 @@ in
     ++ lib.optionals pkgs.stdenv.isLinux linuxOnly;
 
   env.UV_PYTHON = config.languages.python.package;
-  # The binding's runtime load (LD_LIBRARY_PATH) resolves against
-  # the nix store — each library carries its .so in one output.
-  # Nothing compiles against them anymore (#542), so no
-  # CFLAGS/LDFLAGS. Linux only (#665): the libraries live in the
-  # Linux-only package set, so a macOS shell exports an empty path
-  # rather than forcing their (unevaluatable) store paths.
-  env.LD_LIBRARY_PATH = lib.optionalString pkgs.stdenv.isLinux "${pkgs.libnetfilter_queue}/lib:${pkgs.libnfnetlink}/lib";
+  # Runtime .so loads (LD_LIBRARY_PATH) resolve against the nix
+  # store — each library carries its .so in one output. Nothing
+  # compiles against them anymore (#542), so no CFLAGS/LDFLAGS.
+  # Linux only (#665): the libraries live in the Linux-only
+  # package set, so a macOS shell exports an empty path rather
+  # than forcing their (unevaluatable) store paths. The gui-libs
+  # set (#927) carries the same story for the PySide6 wheels:
+  # every soname their .so files name gets a store path, so a
+  # plain NixOS host (no nix-ld, no FHS compat) imports QtCore
+  # and loads the xcb platform plugin unaided. A macOS shell
+  # needs none of them (its wheels bundle their Qt dylibs and
+  # link the system frameworks), so the export stays Linux-only.
+  env.LD_LIBRARY_PATH = lib.optionalString pkgs.stdenv.isLinux (
+    lib.concatStringsSep ":" (
+      [
+        "${pkgs.libnetfilter_queue}/lib"
+        "${pkgs.libnfnetlink}/lib"
+      ]
+      # getLib picks each package's library output — bare string
+      # coercion takes the first output, which for glib and
+      # fontconfig is bin (no .so files at all).
+      ++ map (p: "${lib.getLib p}/lib") gui-libs
+    )
+  );
 
   # The nixpkgs source the devenv lock pins — the revision every
   # guest build compiles against. Exported to every devenv context
@@ -204,11 +261,13 @@ in
     # the venv silently goes stale. This task runs `uv sync` unconditionally:
     # on a current venv it is a ~0.1s no-op, cheaper than getting the gate
     # right. `after` pins ordering: the venv must exist before sync, or
-    # devenv:python:virtualenv would `rm -rf` the freshly-synced deps.
+    # devenv:python:virtualenv would `rm -rf` the freshly-synced deps. The
+    # --extra gui (#927) joins the sync so the dev shell and CI can import
+    # PySide6 for the GUI suite's offscreen tests (#924).
     "msks:uv-sync" = {
       exec = ''
         cd "$DEVENV_ROOT"
-        uv sync -p "$UV_PYTHON" --group dev
+        uv sync -p "$UV_PYTHON" --group dev --extra gui
       '';
       after = [ "devenv:python:virtualenv" ];
       before = [ "devenv:enterShell" ];
