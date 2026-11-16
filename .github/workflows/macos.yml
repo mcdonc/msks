@@ -134,7 +134,12 @@ jobs:
         # past the default 60s of wall — the timeout would kill
         # the test before the wait's own diagnostics line fires,
         # the one artifact that names the mechanism.
-        run: python -m pytest src/msks/tests --no-cov -n auto -q --timeout=120
+        # -v while the #934 mac stall is hunted: two runs hung at
+        # 98% with no test name, and the signal timeout never
+        # fired, so the hang sits past Python's reach (native
+        # code or worker shutdown); the verbose ids name the last
+        # test standing. Drop back to -q once the stall is fixed.
+        run: python -m pytest src/msks/tests --no-cov -n auto -v --timeout=120
 
       - name: Acceptance harness
         env:
