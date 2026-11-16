@@ -107,10 +107,25 @@ let
   # when a soname the closure needs is missing (a plain NixOS
   # host has no nix-ld to paper over it; the CI runner's FHS
   # dirs would hide the gap the other way). libstdc++ and
-  # libgcc_s no test pins: the nix python interpreter's own
-  # closure carries both into every python child.
+  # libgcc_s no test pins: LD_LIBRARY_PATH below always carries
+  # both, ahead of any rpath.
   gui-libs = with pkgs; [
-    stdenv.cc.cc.lib # libstdc++.so.6, every Qt .so links it
+    # libstdc++.so.6, every Qt .so links it. The choice of
+    # stdenv's runtime (gcc 15 at the time of #937) is
+    # deliberate, and an LD_LIBRARY_PATH entry cannot upgrade
+    # it: the nix python interpreter itself links libstdc++ and
+    # carries stdenv's copy in its own RUNPATH, so that library
+    # is in the process link map before any Qt or plugin load —
+    # the map decides, not the search path (probed live: a
+    # cssparser needing GLIBCXX_3.4.35 still resolved gcc 15's
+    # libstdc++ with gcc 16's first on LD_LIBRARY_PATH, and a
+    # preloaded gcc 16 libstdc++ drags its newer glibc along
+    # and dies). The #937 answer is the GUI-side style pin: the
+    # session style engine that needed the newer symbols never
+    # loads. A future library that truly needs a newer
+    # libstdc++ moves this whole pin to that toolchain, not
+    # this entry.
+    stdenv.cc.cc.lib
     libgcc # libgcc_s.so.1, beside libstdc++
     zlib # libz.so.1, QtCore's compressor
     zstd # libzstd.so.1, beside it

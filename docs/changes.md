@@ -16,6 +16,16 @@ tagged `vX.Y.Z`.
   hears the extra's install hint; a session without a display
   hears a one-line notice instead of a crash.
 
+### Fixed
+
+- **The GUI window names its own widget style (#937).** A
+  desktop session no longer picks the style for the window: a
+  Plasma session with the union style selected previously
+  handed the bundled Qt a session-built style plugin that
+  failed to load its parts. The window runs the Fusion style,
+  which ships inside the Qt binding itself, and a user's own
+  `QT_STYLE_OVERRIDE` still wins.
+
 ## \[v0.9.2] - 2026-11-15
 
 ### Fixed
