@@ -292,6 +292,9 @@ def test_a_bare_feed_runs_without_its_callbacks() -> None:
                     RuntimeError("wire cut"),
                 ]
             ),
+            # Delivers a frame after the drop: the reconnect tells
+            # to nobody, but tells.
+            FakeWS(['{"event": "secret.unlock", "data": {"id": "a"}}']),
         ]
 
         def dial():

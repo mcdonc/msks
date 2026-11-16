@@ -195,6 +195,39 @@ def test_results_and_failures_cross_to_the_gui_thread(
     assert not receiver.bad[-1][1].reach
 
 
+def test_a_feed_done_before_stop_stops_clean(qapp_setup) -> None:
+    """A feed task that finished on its own (#946): the stop's
+    cancel is a no-op on a done task, and the completion
+    callback retrieves whatever the task holds — an exception
+    included, never left un-retrieved — and stops the loop all
+    the same."""
+
+    class QuickFeed:
+        """A feed whose run ends at once: the done-before-stop
+        shape."""
+
+        def __init__(self) -> None:
+            self.on_frame = None
+            self.on_drop = None
+            self.on_reconnect = None
+
+        async def run(self) -> None:
+            return
+
+    qt = qapp_setup
+    feed = QuickFeed()
+    bridge = qt.Bridge(StubData(), feed_factory=lambda: feed)
+    bridge.start()
+    # Let the task land done before the stop takes the bridge.
+    deadline = time.monotonic() + 10.0
+    task = bridge._feed_task
+    while time.monotonic() < deadline and not task.done():
+        time.sleep(TICK)
+    assert task.done()
+    bridge.stop()
+    assert not bridge.running
+
+
 def test_the_feed_rides_the_loop_and_its_frames_cross(
     qapp_setup,
 ) -> None:
