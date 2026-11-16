@@ -211,6 +211,14 @@ def test_the_gui_window_opens_offscreen(
     qapp = QtWidgets.QApplication.instance()
     assert qapp is not None
     assert qapp.platformName() == "offscreen"
+    # The style pin (#937): whatever the session would name, the
+    # window runs Fusion — the wheel ships it inside QtWidgets,
+    # so no session style engine loads alongside it.
+    assert qapp.style().objectName().lower() == "fusion"
+    # The pin wrote the real environment (the constructor reads
+    # it); drop it again so later tests in this worker start
+    # from a clean one.
+    os.environ.pop("QT_STYLE_OVERRIDE", None)
     # The child-process import pins libz and libzstd: pytest's
     # own process preloads both (its dev dependencies carry
     # them), so the in-process import above cannot fail on
@@ -242,7 +250,9 @@ def test_the_gui_window_opens_offscreen(
         ctypes.CDLL(str(egl), mode=os.RTLD_NOW)
 
 
-def test_open_window_reuses_an_existing_app() -> None:
+def test_open_window_reuses_an_existing_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The window path survives a QApplication made earlier in
     the process — the instance check, not a second application
     (Qt wants one per process) — and owns its bridge: started
@@ -257,6 +267,7 @@ def test_open_window_reuses_an_existing_app() -> None:
 
     shown: list[str] = []
     stops: list[object] = []
+    styles: list[str] = []
 
     class FakeSignal:
         def connect(self, slot: object) -> None:
@@ -275,11 +286,20 @@ def test_open_window_reuses_an_existing_app() -> None:
         def __init__(self, argv: list[str]) -> None:
             shown.append("created")
 
+        def setStyle(self, name: str) -> None:
+            styles.append(name)
+
         def exec(self) -> int:
             shown.append("exec")
             return 3
 
     existing = FakeApp([])
+    # os.environ, swapped for a plain dict copy: open_window
+    # writes the style override, and the write must not leak
+    # into the worker's real environment for later tests —
+    # teardown drops the copy with monkeypatch's restore.
+    monkeypatch.setattr(os, "environ", dict(os.environ))
+    os.environ.pop("QT_STYLE_OVERRIDE", None)
     stub = ModuleType("QtWidgets")
     stub.QApplication = FakeApp  # type: ignore[attr-defined]
     stub.QMainWindow = FakeWindow  # type: ignore[attr-defined]
@@ -293,7 +313,68 @@ def test_open_window_reuses_an_existing_app() -> None:
     finally:
         Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]
     assert shown.count("created") == 1  # the pre-made one only
+    assert styles == ["Fusion"]  # the session never picks the style
+    # The override landed before the constructor could consult
+    # the session theme.
+    assert os.environ["QT_STYLE_OVERRIDE"] == "Fusion"
     assert app.WINDOW_TITLE in shown
     assert shown[-1] == "stopped"  # the return path stopped the bridge
     assert len(started) == 1  # started with the window
     assert len(stops) == 1  # aboutToQuit holds the same stop
+
+
+def test_open_window_keeps_a_user_style_choice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A preset ``QT_STYLE_OVERRIDE`` is the user's own choice
+    (#937): the window neither rewrites the variable nor resets
+    the style on the app — the session style is the only thing
+    the pin replaces. The same stub shape as the reuse test,
+    with the choice preset in the swapped-out environment."""
+    if importlib.util.find_spec("PySide6") is None:
+        pytest.skip("the gui extra is not installed on this host")
+    from msks.client.gui.bridge import Bridge
+
+    styles: list[str] = []
+
+    class FakeSignal:
+        def connect(self, slot: object) -> None:
+            pass
+
+    class FakeWindow:
+        def setWindowTitle(self, title: str) -> None:
+            pass
+
+        def show(self) -> None:
+            pass
+
+    class FakeApp:
+        aboutToQuit = FakeSignal()
+
+        @staticmethod
+        def instance() -> object:
+            return None
+
+        def __init__(self, argv: list[str]) -> None:
+            pass
+
+        def setStyle(self, name: str) -> None:
+            styles.append(name)
+
+        def exec(self) -> int:
+            return 0
+
+    monkeypatch.setattr(os, "environ", dict(os.environ))
+    os.environ["QT_STYLE_OVERRIDE"] = "Chosen"
+    stub = ModuleType("QtWidgets")
+    stub.QApplication = FakeApp  # type: ignore[attr-defined]
+    stub.QMainWindow = FakeWindow  # type: ignore[attr-defined]
+    real_start, real_stop = Bridge.start, Bridge.stop
+    Bridge.start = lambda self: None  # type: ignore[method-assign]
+    Bridge.stop = lambda self: None  # type: ignore[method-assign]
+    try:
+        assert app.open_window(stub) == 0
+    finally:
+        Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]
+    assert os.environ["QT_STYLE_OVERRIDE"] == "Chosen"
+    assert styles == []  # no Fusion forced over the choice

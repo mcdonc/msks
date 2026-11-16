@@ -45,6 +45,16 @@ NO_DISPLAY = (
 # workspace to name (#924 phases 3 and 4).
 WINDOW_TITLE = "msks"
 
+# The style the window asks Qt for by name (#937). A desktop
+# session can hand the wheel's Qt a style engine plugin built
+# for the host's Qt (the union style: its css subplugin then
+# loads a rust parser that resolves against the host's
+# libstdc++ and fails, and its breeze fallback is nowhere in
+# the wheel). Fusion is compiled into QtWidgets — no plugin,
+# no session lookup — and ships identical on every platform,
+# so the window looks the same wherever it opens.
+FUSION_STYLE = "Fusion"
+
 
 def gui_session_present() -> bool:
     """Whether this macOS user owns a GUI login session: the
@@ -128,9 +138,21 @@ def open_window(QtWidgets: ModuleType) -> int:
     # time, so the import lands only on the window path.
     from .bridge import Bridge
 
+    # The style pin sits in the environment, before the
+    # constructor: QApplication's own theme setup resolves the
+    # session's style name (a Plasma portal answers "union"
+    # there) and loads the named engine right there — a
+    # setStyle after construction comes one plugin load too
+    # late. A preset override is the user's own choice: both
+    # this write and the setStyle below leave it standing.
+    mine = os.environ.get("QT_STYLE_OVERRIDE") is None
+    if mine:
+        os.environ["QT_STYLE_OVERRIDE"] = FUSION_STYLE
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
         sys.argv[:1]
     )
+    if mine:
+        app.setStyle(FUSION_STYLE)
     bridge = Bridge(GuiData())
     bridge.start()
     app.aboutToQuit.connect(bridge.stop)
