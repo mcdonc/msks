@@ -197,6 +197,7 @@ def test_pty_session() -> None:
 
 def test_widget() -> None:
     from PySide6.QtCore import QPointF, QTimer
+    from PySide6.QtGui import QClipboard
     from PySide6.QtWidgets import QApplication
     from terminal import TerminalWidget
 
@@ -322,6 +323,22 @@ def test_widget() -> None:
                 print(
                     f"selection: autoscroll extended across {len(lines)} rows"
                 )
+            # Middle-click: the finished drag published its text to
+            # the PRIMARY selection, and pasting from PRIMARY delivers
+            # it back to the pty.
+            primary = QApplication.clipboard().text(QClipboard.Mode.Selection)
+            if "filler" not in primary:
+                failures.append(
+                    f"primary selection not published: {primary!r}"
+                )
+            else:
+                print("selection: published to PRIMARY")
+            sent.clear()
+            widget._paste_primary()
+            if not any(b"filler" in chunk for chunk in sent):
+                failures.append(f"middle-click paste sent {sent!r}")
+            else:
+                print("paste: middle-click pastes PRIMARY")
         except Exception as exc:  # noqa: BLE001 - report and stop
             failures.append(f"widget check raised: {exc}")
         finally:

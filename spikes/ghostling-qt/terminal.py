@@ -28,6 +28,7 @@ from PySide6.QtCore import (
     Signal,
 )
 from PySide6.QtGui import (
+    QClipboard,
     QColor,
     QFont,
     QFontDatabase,
@@ -804,6 +805,8 @@ class TerminalWidget(QWidget):
                     lib.terminal_set(
                         self.terminal, ghostty.OPT_SELECTION, None
                     )
+                else:
+                    self._publish_primary()
             if kind in (ghostty.SEL_DRAG, ghostty.SEL_RELEASE):
                 self.refresh()
         finally:
@@ -846,8 +849,7 @@ class TerminalWidget(QWidget):
         if text:
             QApplication.clipboard().setText(text)
 
-    def _paste_clipboard(self) -> None:
-        text = QApplication.clipboard().text()
+    def _paste_text(self, text: str) -> None:
         if not text:
             return
         if self._mode_enabled(ghostty.MODE_BRACKETED_PASTE):
@@ -856,6 +858,23 @@ class TerminalWidget(QWidget):
             # Plain paste: shells execute lines, so newlines become
             # carriage returns like every terminal's raw paste.
             self.write(text.replace("\n", "\r").encode("utf-8"))
+
+    def _paste_clipboard(self) -> None:
+        self._paste_text(QApplication.clipboard().text())
+
+    def _paste_primary(self) -> None:
+        """Middle-click paste: the PRIMARY selection — the last text
+        selected with the mouse anywhere, this terminal included."""
+        self._paste_text(
+            QApplication.clipboard().text(QClipboard.Mode.Selection)
+        )
+
+    def _publish_primary(self) -> None:
+        """A finished drag publishes its text to the PRIMARY selection,
+        the X11 select-then-middle-click convention."""
+        text = self._selection_text()
+        if text:
+            QApplication.clipboard().setText(text, QClipboard.Mode.Selection)
 
     def _encode_key(self, event, action: int) -> None:
         key = _QT_KEYS.get(int(event.key()))
@@ -983,6 +1002,12 @@ class TerminalWidget(QWidget):
         return None
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt name)
+        if (
+            event.button() == Qt.MouseButton.MiddleButton
+            and not self._mouse_tracking()
+        ):
+            self._paste_primary()
+            return
         if (
             event.button() == Qt.MouseButton.LeftButton
             and not self._mouse_tracking()
