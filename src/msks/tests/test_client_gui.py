@@ -6,6 +6,8 @@ import ctypes
 import importlib.util
 import os
 import re
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
@@ -70,9 +72,19 @@ def test_the_gui_extra_imports_offscreen(
     fonts.write_text("<fontconfig/>\n")
     os.environ["FONTCONFIG_FILE"] = str(fonts)
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    QtWidgets = pytest.importorskip("PySide6.QtWidgets")
+    import PySide6.QtWidgets as QtWidgets
+
     qapp = QtWidgets.QApplication([])
     assert qapp.platformName() == "offscreen"
+    # The child-process import pins libz and libzstd: pytest's
+    # own process preloads both (its dev dependencies carry
+    # them), so the in-process import above cannot fail on
+    # them — a child with no pytest can.
+    child = subprocess.run(
+        [sys.executable, "-c", "from PySide6 import QtWidgets"],
+        capture_output=True,
+    )
+    assert child.returncode == 0, child.stderr.decode()
     # The xcb plugin's sonames pin the same way: a plain dlopen
     # resolves every DT_NEEDED entry or fails — no display
     # needed, so a headless CI host exercises it too. macOS

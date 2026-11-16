@@ -95,12 +95,18 @@ let
   # drive /dev/kvm).
   # The PySide6 wheels' sonames (#927): the manylinux wheels link
   # the FHS shared objects a Nix store path never provides, so
-  # every soname readelf names over the installed wheel's .so
-  # files gets its store path here — verified with the offscreen
-  # import test in test_client_gui.py, which fails when a soname
-  # is missing (a plain NixOS host has no nix-ld to paper over
-  # it; the CI runner's FHS dirs would hide the gap the other
-  # way, so the test is the pin).
+  # every soname the GUI's import closure names — QtCore,
+  # QtGui, QtWidgets, and the offscreen/xcb platform plugins —
+  # gets its store path here. The wheels name 48 more (the
+  # wayland family, QtNetwork's krb5, the gtk/cups drivers) that
+  # the GUI never loads; #928 decides about wayland and
+  # QtNetwork when the window lands. The offscreen test in
+  # test_client_gui.py pins the set: it fails when a soname the
+  # closure needs is missing (a plain NixOS host has no nix-ld
+  # to paper over it; the CI runner's FHS dirs would hide the
+  # gap the other way). libstdc++ and libgcc_s no test pins:
+  # the nix python interpreter's own closure carries both into
+  # every python child.
   gui-libs = with pkgs; [
     stdenv.cc.cc.lib # libstdc++.so.6, every Qt .so links it
     libgcc # libgcc_s.so.1, beside libstdc++
