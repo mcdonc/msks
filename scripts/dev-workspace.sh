@@ -83,9 +83,9 @@ if ! git -C "$CHECKOUT" rev-parse --verify HEAD >/dev/null 2>&1; then
 fi
 
 state uv-sync
-log "uv sync (the dev venv, Python included)"
+log "uv sync (the dev venv, Python included; the gui extra so the offscreen GUI suite runs)"
 cd "$CHECKOUT"
-uv sync
+uv sync --extra gui
 
 state "done"
 log "bootstrap complete: $CHECKOUT — run the suite with:"

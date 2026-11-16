@@ -1,6 +1,6 @@
-"""GUI scaffold tests (#924 phase 1): the ``msks gui`` command
-seam against the package's three-part shell, and the gui extra's
-contract with the base install (#927)."""
+"""GUI tests (#924): the ``msks gui`` command seam (#928), the
+window shell, and the gui extra's contract with the base install
+(#927)."""
 
 import ctypes
 import importlib.util
@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 from msks.client import cli
@@ -26,15 +27,29 @@ def dep_name(spec: str) -> str:
     return re.split(r"[><=~!;\[]", spec)[0].strip().lower()
 
 
-def test_the_gui_command_answers_until_the_window_ships(
+def test_the_gui_command_hints_without_the_extra(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """``msks gui`` parses onto the seam, which answers that the
-    desktop GUI is not in this build yet — one stderr line, the
-    client's error convention."""
+    """``msks gui`` on a base install (#928): the lazy probe
+    fails, and the command answers with the extra's install hint
+    — one stderr line, the client's error convention. The None
+    stub makes ``from PySide6 import ...`` raise ImportError in
+    a process where the binding is installed."""
     client_env(monkeypatch)
+    monkeypatch.setitem(sys.modules, "PySide6", None)
     assert cli.main(["gui"]) == 1
-    assert app.PENDING_MSG in capsys.readouterr().err
+    assert app.HINT in capsys.readouterr().err
+
+
+def test_the_parser_help_lists_gui(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The help names the command, and parsing stays Qt-free:
+    the help render never imports the binding."""
+    with pytest.raises(SystemExit) as raised:
+        cli.main(["--help"])
+    assert raised.value.code == 0
+    assert "gui" in capsys.readouterr().out
 
 
 def test_the_gui_extra_stays_off_the_base_install() -> None:
@@ -50,16 +65,14 @@ def test_the_gui_extra_stays_off_the_base_install() -> None:
     ]
 
 
-def test_the_gui_extra_imports_offscreen(
-    tmp_path: Path,
+def test_the_gui_window_opens_offscreen(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The extra's own verification (#927): with PySide6 installed,
-    an offscreen ``QApplication`` comes up. On a NixOS host every
-    soname the wheels name must be on the loader path (the devenv
-    ``gui-libs`` set) or this fails with ``ImportError`` — the pin
-    the dev shell's comment points at. Hosts without the extra
-    (macOS CI installs the base package) skip.
-    """
+    """With the extra installed (#928), the command's seam opens
+    the main-window shell: a real offscreen ``QApplication``, a
+    shown window, and the event loop entered (the exec stand-in
+    returns at once). ``exec`` is patched on the class because
+    the real loop never returns under a test."""
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("the gui extra is not installed on this host")
     # os.environ, not monkeypatch: Qt's shutdown-time fontconfig
@@ -74,7 +87,10 @@ def test_the_gui_extra_imports_offscreen(
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     import PySide6.QtWidgets as QtWidgets
 
-    qapp = QtWidgets.QApplication([])
+    monkeypatch.setattr(QtWidgets.QApplication, "exec", lambda self: 0)
+    assert app.run() == 0
+    qapp = QtWidgets.QApplication.instance()
+    assert qapp is not None
     assert qapp.platformName() == "offscreen"
     # The child-process import pins libz and libzstd: pytest's
     # own process preloads both (its dev dependencies carry
@@ -85,11 +101,47 @@ def test_the_gui_extra_imports_offscreen(
         capture_output=True,
     )
     assert child.returncode == 0, child.stderr.decode()
-    # The xcb plugin's sonames pin the same way: a plain dlopen
-    # resolves every DT_NEEDED entry or fails — no display
-    # needed, so a headless CI host exercises it too. macOS
-    # wheels ship no libqxcb (qcocoa there); the check runs only
-    # where the plugin exists.
-    xcb = Path(QtWidgets.__file__).parent / "Qt/plugins/platforms/libqxcb.so"
-    if xcb.exists():
-        ctypes.CDLL(str(xcb), mode=os.RTLD_NOW)
+    # The platform plugins' sonames pin the same way: a plain
+    # dlopen resolves every DT_NEEDED entry or fails — no
+    # display needed, so a headless CI host exercises it too.
+    # macOS wheels ship no libqxcb (qcocoa there); the check
+    # runs only where the plugins exist.
+    qt_dir = Path(QtWidgets.__file__).parent / "Qt/plugins/platforms"
+    for plugin in ("libqxcb.so", "libqwayland.so"):
+        plug = qt_dir / plugin
+        if plug.exists():
+            ctypes.CDLL(str(plug), mode=os.RTLD_NOW)
+
+
+def test_open_window_reuses_an_existing_app() -> None:
+    """The window path survives a QApplication made earlier in
+    the process — the instance check, not a second application
+    (Qt wants one per process). A stub QtWidgets pins the shape
+    without a display: the shell reuses the instance it finds
+    and shows the window before the loop runs."""
+    shown: list[str] = []
+
+    class FakeWindow:
+        def setWindowTitle(self, title: str) -> None:
+            shown.append(title)
+
+        def show(self) -> None:
+            shown.append("shown")
+
+    class FakeApp:
+        def __init__(self, argv: list[str]) -> None:
+            shown.append("created")
+
+        def exec(self) -> int:
+            shown.append("exec")
+            return 3
+
+    existing = FakeApp([])
+    stub = ModuleType("QtWidgets")
+    stub.QApplication = FakeApp  # type: ignore[attr-defined]
+    stub.QMainWindow = FakeWindow  # type: ignore[attr-defined]
+    FakeApp.instance = staticmethod(lambda: existing)  # type: ignore[attr-defined]
+    assert app.open_window(stub) == 3
+    assert shown.count("created") == 1  # the pre-made one only
+    assert app.WINDOW_TITLE in shown
+    assert shown[-1] == "exec"

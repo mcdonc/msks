@@ -96,17 +96,18 @@ let
   # The PySide6 wheels' sonames (#927): the manylinux wheels link
   # the FHS shared objects a Nix store path never provides, so
   # every soname the GUI's import closure names — QtCore,
-  # QtGui, QtWidgets, and the offscreen/xcb platform plugins —
-  # gets its store path here. The wheels name 48 more (the
-  # wayland family, QtNetwork's krb5, the gtk/cups drivers) that
-  # the GUI never loads; #928 decides about wayland and
-  # QtNetwork when the window lands. The offscreen test in
-  # test_client_gui.py pins the set: it fails when a soname the
-  # closure needs is missing (a plain NixOS host has no nix-ld
-  # to paper over it; the CI runner's FHS dirs would hide the
-  # gap the other way). libstdc++ and libgcc_s no test pins:
-  # the nix python interpreter's own closure carries both into
-  # every python child.
+  # QtGui, QtWidgets, and the offscreen/xcb/wayland platform
+  # plugins — gets its store path here. The wheels name a few
+  # dozen more (QtNetwork's krb5, the gtk/cups drivers) that
+  # the GUI never loads; QtNetwork stays out by decision
+  # (#928): the REST calls go through msks.client.rest (httpx)
+  # on the asyncio bridge, never Qt's own network stack. The
+  # offscreen test in test_client_gui.py pins the set: it fails
+  # when a soname the closure needs is missing (a plain NixOS
+  # host has no nix-ld to paper over it; the CI runner's FHS
+  # dirs would hide the gap the other way). libstdc++ and
+  # libgcc_s no test pins: the nix python interpreter's own
+  # closure carries both into every python child.
   gui-libs = with pkgs; [
     stdenv.cc.cc.lib # libstdc++.so.6, every Qt .so links it
     libgcc # libgcc_s.so.1, beside libstdc++
@@ -115,6 +116,7 @@ let
     libGL # QtGui's OpenGL link; offscreen still loads it
     libdrm # libGL's own dependency, its own store path
     libxkbcommon # the keymap translation every platform plugin shares
+    wayland # libwayland-client/egl/cursor, the wayland plugin's link
     glib # QtCore's event-loop integration
     dbus.lib # libdbus-1.so.3, QtDBus's link (the daemon lib output)
     fontconfig # font resolution for the offscreen renderer (#928)
