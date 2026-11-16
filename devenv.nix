@@ -97,7 +97,8 @@ let
   # the FHS shared objects a Nix store path never provides, so
   # every soname the GUI's import closure names — QtCore,
   # QtGui, QtWidgets, and the offscreen/xcb/wayland platform
-  # plugins — gets its store path here. The wheels name a few
+  # plugins (the wayland egl subplugin with it; Qt's shm
+  # emulation covers the rest of its graphics integration) — gets its store path here. The wheels name a few
   # dozen more (QtNetwork's krb5, the gtk/cups drivers) that
   # the GUI never loads; QtNetwork stays out by decision
   # (#928): the REST calls go through msks.client.rest (httpx)

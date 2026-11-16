@@ -8,13 +8,13 @@ tagged `vX.Y.Z`.
 
 ### Added
 
-- **`msks gui` (#924).** The desktop GUI client — a PySide6
-  front end over the daemon's REST API — starts with its
-  phase-1 window shell on Linux and macOS. Install it with the
-  new `gui` extra (`pip install 'msks[gui]'`); a base install
-  hears the extra's install hint instead, and the CLI stays
-  Qt-free without it. The workspace screens arrive with the
-  later phases of the plan.
+- **`msks gui` (#928).** The desktop GUI client opens its
+  phase-1 window shell on Linux and macOS: a PySide6 front end
+  over the daemon's REST API, with the workspace screens to
+  follow. Install it with the new `gui` extra
+  (`pip install 'msks[gui]'`). A base install stays Qt-free and
+  hears the extra's install hint; a session without a display
+  hears a one-line notice instead of a crash.
 
 ## \[v0.9.2] - 2026-11-15
 

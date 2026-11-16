@@ -30,15 +30,43 @@ def dep_name(spec: str) -> str:
 def test_the_gui_command_hints_without_the_extra(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """``msks gui`` on a base install (#928): the lazy probe
-    fails, and the command answers with the extra's install hint
-    — one stderr line, the client's error convention. The None
-    stub makes ``from PySide6 import ...`` raise ImportError in
-    a process where the binding is installed."""
+    """``msks gui`` on a base install (#928): the absence guard
+    answers with the extra's install hint — one stderr line, the
+    client's error convention. The find_spec seam stands in for
+    the absent binding in a process that has it."""
     client_env(monkeypatch)
-    monkeypatch.setitem(sys.modules, "PySide6", None)
+    monkeypatch.setattr(app, "find_spec", lambda name: None)
     assert cli.main(["gui"]) == 1
     assert app.HINT in capsys.readouterr().err
+
+
+def test_the_gui_command_names_a_headless_session(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No display and no platform override: the pre-flight
+    answers with one line instead of Qt's abort — the qFatal the
+    QApplication constructor would raise is past anything Python
+    can catch (exit 134 and a multi-line dump)."""
+    client_env(monkeypatch)
+    for var in ("DISPLAY", "WAYLAND_DISPLAY", "QT_QPA_PLATFORM"):
+        monkeypatch.delenv(var, raising=False)
+    assert cli.main(["gui"]) == 1
+    assert app.NO_DISPLAY in capsys.readouterr().err
+
+
+def test_the_gui_command_names_a_broken_install(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The binding is installed but will not load: the install
+    hint would send an operator who already has the extra in
+    circles, so this arm names the reinstall. The None stub
+    makes ``from PySide6 import ...`` raise ImportError in a
+    process where the binding loads clean."""
+    client_env(monkeypatch)
+    monkeypatch.setattr(app, "find_spec", lambda name: object())
+    monkeypatch.setitem(sys.modules, "PySide6", None)
+    assert cli.main(["gui"]) == 1
+    assert app.BROKEN in capsys.readouterr().err
 
 
 def test_the_parser_help_lists_gui(
@@ -49,7 +77,7 @@ def test_the_parser_help_lists_gui(
     with pytest.raises(SystemExit) as raised:
         cli.main(["--help"])
     assert raised.value.code == 0
-    assert "gui" in capsys.readouterr().out
+    assert " gui " in capsys.readouterr().out
 
 
 def test_the_gui_extra_stays_off_the_base_install() -> None:
@@ -111,6 +139,16 @@ def test_the_gui_window_opens_offscreen(
         plug = qt_dir / plugin
         if plug.exists():
             ctypes.CDLL(str(plug), mode=os.RTLD_NOW)
+    # The wayland plugin loads its graphics integration as
+    # subplugins at runtime; the egl one names libwayland-egl,
+    # the shm fallback covers the rest (the devenv comment
+    # above its set names the split).
+    egl = (
+        qt_dir.parent
+        / "wayland-graphics-integration-client/libqt-plugin-wayland-egl.so"
+    )
+    if egl.exists():
+        ctypes.CDLL(str(egl), mode=os.RTLD_NOW)
 
 
 def test_open_window_reuses_an_existing_app() -> None:

@@ -82,6 +82,24 @@ if ! git -C "$CHECKOUT" rev-parse --verify HEAD >/dev/null 2>&1; then
   git clone --branch "$REPO_REF" "$REPO_URL" "$CHECKOUT"
 fi
 
+# The gui extra's Qt runtime (#928): the synced PySide6 wheels
+# link the FHS sonames the base image does not carry, and the
+# suite's offscreen window test runs (not skips) once the extra
+# is in the venv — without these the in-guest pytest the script
+# itself prints below reddens on the import. libGL.so.1 is the
+# marker: one soname of the set, present means the set is.
+if ! ldconfig -p 2>/dev/null | grep -q 'libGL\.so\.1'; then
+  state qt-libs
+  log "installing the Qt runtime libraries (the gui extra's wheels link them)"
+  apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+    libgl1 libegl1 libfontconfig1 libxkbcommon0 libxkbcommon-x11-0 \
+    libx11-6 libxext6 libxfixes3 libxrandr2 libxcb1 libxcb-cursor0 \
+    libxcb-icccm4 libxcb-util1 libxcb-image0 libxcb-keysyms1 \
+    libxcb-render-util0 libwayland-client0 libwayland-cursor0 \
+    libwayland-egl1
+fi
+
 state uv-sync
 log "uv sync (the dev venv, Python included; the gui extra so the offscreen GUI suite runs)"
 cd "$CHECKOUT"
