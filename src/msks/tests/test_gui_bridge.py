@@ -5,6 +5,13 @@ own tests); the delivery assertions run the real offscreen
 ``QApplication`` — a receiver ``QObject`` in this (GUI) thread
 takes the worker's emits queued and pumps them through
 ``processEvents``.
+
+The Qt imports stay inside the fixtures: this module is imported
+at collection time by the test runner's controller process too,
+and a controller (xdist's, or any plain run) has no business
+loading the binding — #933's window tests set the pattern, and a
+module-scope import here stalled the macOS controller's run
+three runs running.
 """
 
 import asyncio
@@ -12,17 +19,17 @@ import importlib.util
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 if importlib.util.find_spec("PySide6") is None:
     pytest.skip(
-        "the gui extra is not installed on this host", allow_module_level=True
+        "the gui extra is not installed on this host",
+        allow_module_level=True,
     )
 
 from msks.client import data as clientdata  # noqa: E402
-from msks.client.gui.bridge import Bridge  # noqa: E402
-from PySide6 import QtCore  # noqa: E402
 
 #: The poll cadence for queued signal delivery, seconds: the
 #: worker emits within a network call's time; the test pumps
@@ -63,26 +70,6 @@ class StubData:
         return {}
 
 
-class Receiver(QtCore.QObject):
-    """A screen-shaped receiver: slots in the GUI thread, the
-    answers appended for the assertions."""
-
-    def __init__(self, bridge: Bridge) -> None:
-        super().__init__()
-        self.okay: list[tuple[str, object]] = []
-        self.bad: list[tuple[str, object]] = []
-        bridge.succeeded.connect(self.on_okay)
-        bridge.failed.connect(self.on_bad)
-
-    @QtCore.Slot(str, object)
-    def on_okay(self, key: str, result: object) -> None:
-        self.okay.append((key, result))
-
-    @QtCore.Slot(str, object)
-    def on_bad(self, key: str, failure: object) -> None:
-        self.bad.append((key, failure))
-
-
 @pytest.fixture()
 def qapp_setup(tmp_path: Path):
     """The offscreen ``QApplication`` the queued delivery needs,
@@ -90,28 +77,52 @@ def qapp_setup(tmp_path: Path):
     shutdown-time re-scan runs after fixture teardown, so the
     variables are set on the environment directly (the os module,
     not monkeypatch — undo would hand the re-scan the host
-    /etc/fonts)."""
+    /etc/fonts). The Qt names (the module, the bridge, the
+    receiver class) import here too — inside the fixture, never
+    at collection time."""
     fonts = tmp_path / "fonts.conf"
     fonts.write_text("<fontconfig/>\n")
     os.environ["FONTCONFIG_FILE"] = str(fonts)
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    from PySide6 import QtWidgets
+    from PySide6 import QtCore, QtWidgets
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
         ["msks-test"]
     )
-    return app
+
+    class Receiver(QtCore.QObject):
+        """A screen-shaped receiver: slots in the GUI thread, the
+        answers appended for the assertions."""
+
+        def __init__(self, bridge) -> None:
+            super().__init__()
+            self.okay: list[tuple[str, object]] = []
+            self.bad: list[tuple[str, object]] = []
+            bridge.succeeded.connect(self.on_okay)
+            bridge.failed.connect(self.on_bad)
+
+        @QtCore.Slot(str, object)
+        def on_okay(self, key: str, result: object) -> None:
+            self.okay.append((key, result))
+
+        @QtCore.Slot(str, object)
+        def on_bad(self, key: str, failure: object) -> None:
+            self.bad.append((key, failure))
+
+    from msks.client.gui.bridge import Bridge
+
+    return SimpleNamespace(
+        app=app, QtCore=QtCore, Bridge=Bridge, Receiver=Receiver
+    )
 
 
-def pump(receiver: Receiver, *, okay: int = 0, bad: int = 0) -> None:
+def pump(qt, receiver, *, okay: int = 0, bad: int = 0) -> None:
     """Spin Qt's queue until the expected answers landed (or the
     deadline fails the test): the worker's emits sit queued for
     this thread, and ``processEvents`` is the loop's turn."""
-    app = QtCore.QCoreApplication.instance()
-    assert app is not None
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
-        app.processEvents()
+        qt.app.processEvents()
         if len(receiver.okay) >= okay and len(receiver.bad) >= bad:
             return
         time.sleep(TICK)
@@ -124,23 +135,25 @@ def test_results_and_failures_cross_to_the_gui_thread(
     """The one contract (#924): a call runs on the worker loop,
     and its answer — result or ``RestFailure``, the reach flag
     intact — returns to the GUI thread over the signal. A bug in
-    the data layer itself takes the same visible shape, and the stopped
-    bridge refuses a late call rather than touching a dead
-    loop."""
+    the data layer itself takes the same visible shape, the exit
+    contract a coroutine raised past its guard arrives carried
+    with its reach flag, and the stopped bridge refuses a late
+    call rather than touching a dead loop."""
+    qt = qapp_setup
     data = StubData()
-    bridge = Bridge(data)
+    bridge = qt.Bridge(data)
     assert not bridge.running
     bridge.start()
     assert bridge.running
     loop = bridge._loop
     bridge.start()  # idempotent: the same loop, no second thread
     assert bridge._loop is loop
-    receiver = Receiver(bridge)
+    receiver = qt.Receiver(bridge)
     bridge.call("list", "workspaces")
     bridge.call("halt", "stop", "ws-1")
     bridge.call("oops", "bug")
     bridge.call("env", "refused_environment")
-    pump(receiver, okay=1, bad=3)
+    pump(qt, receiver, okay=1, bad=3)
     assert data.calls == [
         ("workspaces",),
         ("stop", "ws-1"),
@@ -167,9 +180,7 @@ def test_results_and_failures_cross_to_the_gui_thread(
     flight = bridge.call("slow", "slow")
     assert flight is not None and flight.cancel()
     time.sleep(0.2)
-    gui_thread = QtCore.QCoreApplication.instance()
-    assert gui_thread is not None
-    gui_thread.processEvents()
+    qt.app.processEvents()
     assert (len(receiver.okay), len(receiver.bad)) == quiet
     # Stop is idempotent (the window quits and closes), and a
     # call after it answers failed at once — on the caller's
