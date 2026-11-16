@@ -104,10 +104,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
         scroll.setWidget(sections)
         self.build_chrome()
         layout = QtWidgets.QVBoxLayout(self)
+        layout.addLayout(self.chrome)  # the top row, the list's own
         layout.addWidget(self.title)
         layout.addWidget(self.meta)
         layout.addWidget(scroll, stretch=1)
-        layout.addLayout(self.chrome)
         self.setLayout(layout)
         escape = QtGui.QShortcut(
             QtGui.QKeySequence(QtCore.Qt.Key.Key_Escape), self
@@ -186,9 +186,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
         return box
 
     def build_chrome(self) -> None:
-        """The page's controls (#945): back to the list, the
-        manual refresh, and the status line a failed refresh
-        flashes."""
+        """The page's controls at the window's top (#945): back
+        to the list, the manual refresh, and the status line a
+        failed refresh flashes — the same top row the listing's
+        own actions sit in."""
         back_button = QtWidgets.QPushButton("Back", self)
         back_button.clicked.connect(self.go_back)
         self.back_button = back_button

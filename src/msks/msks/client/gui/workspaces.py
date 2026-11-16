@@ -294,15 +294,19 @@ class WorkspaceList(QtWidgets.QWidget):
         self.timer = QtCore.QTimer(self)
         self.timer.setInterval(REFRESH_MS)
         self.timer.timeout.connect(self.refresh)
-        row = QtWidgets.QHBoxLayout()
-        row.addWidget(self.start_button)
-        row.addWidget(self.stop_button)
-        row.addWidget(self.refresh_button)
-        row.addWidget(self.status, stretch=1)
+        # The action row rides the top of the window (#939,
+        # #945's ask): Start, Stop, Refresh, and the status line
+        # the flashes read on, above the listing — the controls
+        # sit where the pointer and the eye start.
+        actions = QtWidgets.QHBoxLayout()
+        actions.addWidget(self.start_button)
+        actions.addWidget(self.stop_button)
+        actions.addWidget(self.refresh_button)
+        actions.addWidget(self.status, stretch=1)
         layout = QtWidgets.QVBoxLayout(self)
+        layout.addLayout(actions)
         layout.addWidget(self.table)
         layout.addWidget(self.detail)
-        layout.addLayout(row)
         self.setLayout(layout)
 
     @QtCore.Slot()
