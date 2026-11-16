@@ -36,7 +36,7 @@ from PySide6.QtGui import (
     QFontMetrics,
     QPainter,
 )
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QMenu, QWidget
 from session import PtySession
 
 # Widgets registered for effects callbacks, keyed by the userdata id.
@@ -952,6 +952,26 @@ class TerminalWidget(QWidget):
         text = self._selection_text()
         if text:
             QApplication.clipboard().setText(text)
+
+    def _build_context_menu(self):
+        """Copy is enabled while a selection exists, Paste while the
+        clipboard holds text; both dim otherwise."""
+        menu = QMenu(self)
+        copy_action = menu.addAction("Copy\tCtrl+Shift+C")
+        copy_action.setEnabled(bool(self._selection_text()))
+        copy_action.triggered.connect(self._copy_selection)
+        paste_action = menu.addAction("Paste\tCtrl+Shift+V")
+        paste_action.setEnabled(bool(QApplication.clipboard().text()))
+        paste_action.triggered.connect(self._paste_clipboard)
+        return menu
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802 (Qt name)
+        if self._mouse_tracking():
+            # The program inside owns the mouse; the press was already
+            # forwarded to it.
+            event.ignore()
+            return
+        self._build_context_menu().exec(event.globalPos())
 
     def _paste_text(self, text: str) -> None:
         if not text:

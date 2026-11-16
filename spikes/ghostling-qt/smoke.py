@@ -341,18 +341,61 @@ def test_widget() -> None:
                 print("paste: middle-click pastes PRIMARY")
             # Word and line selection through the library's
             # selectors (double-click and triple-click).
+            widget._press_count = 2
             widget._select_word_at(QPointF(cw * 3.5, ch * (widget.rows - 1.5)))
+            # The release that follows a real double-click must keep
+            # the word selected (it bypassed the drag gesture).
+            widget._selection_gesture(
+                ghostty.SEL_RELEASE,
+                QPointF(cw * 3.5, ch * (widget.rows - 1.5)),
+            )
             word = widget._selection_text()
             if "filler" not in word.split():
                 failures.append(f"word selection was {word!r}")
             else:
                 print(f"selection: double-click word ({word.strip()!r})")
+            widget._press_count = 3
             widget._select_line_at(QPointF(cw * 3.5, ch * (widget.rows - 1.5)))
+            widget._selection_gesture(
+                ghostty.SEL_RELEASE,
+                QPointF(cw * 3.5, ch * (widget.rows - 1.5)),
+            )
             line = widget._selection_text()
             if "filler" not in line or not any(ch.isdigit() for ch in line):
                 failures.append(f"line selection was {line!r}")
             else:
                 print(f"selection: triple-click line ({line.strip()!r})")
+            # Context menu enablement: Copy follows the selection,
+            # Paste follows the clipboard.
+            QApplication.clipboard().setText("menu paste text")
+            actions = widget._build_context_menu().actions()
+            copy_on = [
+                a.isEnabled() for a in actions if a.text().startswith("Copy")
+            ]
+            paste_on = [
+                a.isEnabled() for a in actions if a.text().startswith("Paste")
+            ]
+            if copy_on != [True] or paste_on != [True]:
+                failures.append(f"menu with selection: {copy_on} {paste_on}")
+            else:
+                print("menu: copy and paste enabled")
+            widget.lib.terminal_set(
+                widget.terminal, ghostty.OPT_SELECTION, None
+            )
+            QApplication.clipboard().setText("")
+            actions = widget._build_context_menu().actions()
+            copy_off = [
+                a.isEnabled() for a in actions if a.text().startswith("Copy")
+            ]
+            paste_off = [
+                a.isEnabled() for a in actions if a.text().startswith("Paste")
+            ]
+            if copy_off != [False] or paste_off != [False]:
+                failures.append(
+                    f"menu without selection: {copy_off} {paste_off}"
+                )
+            else:
+                print("menu: copy and paste dimmed")
         except Exception as exc:  # noqa: BLE001 - report and stop
             failures.append(f"widget check raised: {exc}")
         finally:

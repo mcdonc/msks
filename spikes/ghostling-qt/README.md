@@ -107,9 +107,10 @@ The library is found through `GHOSTTY_VT_LIB` if set, then
   selection, and middle-click pastes it back — the X11
   select-then-middle-click convention. Double-click selects the
   word and triple-click the line under the cursor, through the
-  library's word and line selectors. Remaining selection gap:
-  clipboard OSC 52. No Kitty graphics, no scrollbar dragging, no
-  numpad-specific keys, no ligatures.
+  library's word and line selectors. A right-click menu offers
+  Copy and Paste, each dimmed when it has nothing to act on.
+  Remaining selection gap: clipboard OSC 52. No Kitty graphics, no
+  scrollbar dragging, no numpad-specific keys, no ligatures.
 - The XTVERSION effect is not registered: ctypes cannot return a
   16-byte struct from a callback, so `CSI > q` goes unanswered.
 - `vendor/` holds a library snapshot (currently a pre-1.0
