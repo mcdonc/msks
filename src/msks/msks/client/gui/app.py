@@ -19,16 +19,20 @@ from types import ModuleType
 HINT = "msks: the desktop GUI needs the gui extra: pip install 'msks[gui]'"
 
 # The binding is installed but will not load (a broken wheel set
-# or missing system libraries): the reinstall that fixes it.
+# or missing system libraries): the reinstall that fixes one
+# shape; the caught error's own text names the other (the exact
+# missing soname).
 BROKEN = (
     "msks: the PySide6 install does not load; reinstall it with "
     "pip install --force-reinstall 'msks[gui]'"
 )
 
-# A session with no display and no platform override: Qt's own
-# failure here is an abort (qFatal, a multi-line dump and exit
+# A Linux session with no display and no platform override: Qt's
+# own failure here is an abort (qFatal, a multi-line dump and exit
 # 134), past anything Python can catch — the pre-flight keeps the
-# client's one-line convention instead.
+# client's one-line convention instead. macOS is exempt: a stock
+# session sets none of the three, and cocoa, its default platform,
+# needs none of them.
 NO_DISPLAY = (
     "msks: the GUI needs a display (set DISPLAY or "
     "WAYLAND_DISPLAY, or QT_QPA_PLATFORM=offscreen)"
@@ -37,6 +41,24 @@ NO_DISPLAY = (
 # The shell window's title, until the screens give it a
 # workspace to name (#924 phases 3 and 4).
 WINDOW_TITLE = "msks"
+
+
+def display_present() -> bool:
+    """Whether Qt has a display or a platform override to build on.
+
+    The Linux pre-flight for the window: Qt's own failure at the
+    QApplication constructor is an abort (qFatal, a multi-line
+    dump and exit 134) past anything Python can catch. macOS
+    always answers true: a stock session sets none of the three
+    variables, and cocoa, its default platform, needs none of
+    them.
+    """
+    if sys.platform == "darwin":
+        return True
+    return any(
+        os.environ.get(var)
+        for var in ("DISPLAY", "WAYLAND_DISPLAY", "QT_QPA_PLATFORM")
+    )
 
 
 def run() -> int:
@@ -51,17 +73,12 @@ def run() -> int:
         # so the binding imports only when the window is asked
         # for (the guard above already answered absence).
         from PySide6 import QtWidgets
-    except ImportError:
-        print(BROKEN, file=sys.stderr)
+    except ImportError as exc:
+        print(f"{BROKEN} ({exc})", file=sys.stderr)
         return 1
-    # The display gate sits between the import and the window:
-    # the import needs no display, and Qt's own failure at the
-    # QApplication constructor is an abort (qFatal, a multi-line
-    # dump and exit 134) past anything Python can catch.
-    if not any(
-        os.environ.get(var)
-        for var in ("DISPLAY", "WAYLAND_DISPLAY", "QT_QPA_PLATFORM")
-    ):
+    # The gate sits between the import and the window: the
+    # import needs no display; the constructor does.
+    if not display_present():
         print(NO_DISPLAY, file=sys.stderr)
         return 1
     return open_window(QtWidgets)

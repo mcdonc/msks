@@ -43,15 +43,38 @@ def test_the_gui_command_hints_without_the_extra(
 def test_the_gui_command_names_a_headless_session(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """No display and no platform override: the pre-flight
-    answers with one line instead of Qt's abort — the qFatal the
-    QApplication constructor would raise is past anything Python
-    can catch (exit 134 and a multi-line dump)."""
+    """No display and no platform override on Linux: the
+    pre-flight answers with one line instead of Qt's abort — the
+    qFatal the QApplication constructor would raise is past
+    anything Python can catch (exit 134 and a multi-line dump).
+    The find_spec seam keeps the test base-install safe (a host
+    without the extra hears HINT here, not a failure)."""
     client_env(monkeypatch)
+    monkeypatch.setattr(app, "find_spec", lambda name: object())
     for var in ("DISPLAY", "WAYLAND_DISPLAY", "QT_QPA_PLATFORM"):
         monkeypatch.delenv(var, raising=False)
     assert cli.main(["gui"]) == 1
     assert app.NO_DISPLAY in capsys.readouterr().err
+
+
+def test_the_display_gate_skips_macos(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A stock macOS session sets none of the three variables,
+    and cocoa needs none of them — the gate sits darwin out and
+    the window path runs. The open_window seam stands in for the
+    real window."""
+    client_env(monkeypatch)
+    monkeypatch.setattr(app, "find_spec", lambda name: object())
+    monkeypatch.setattr(sys, "platform", "darwin")
+    for var in ("DISPLAY", "WAYLAND_DISPLAY", "QT_QPA_PLATFORM"):
+        monkeypatch.delenv(var, raising=False)
+    seen: list[str] = []
+    monkeypatch.setattr(
+        app, "open_window", lambda QtWidgets: seen.append("window") or 4
+    )
+    assert cli.main(["gui"]) == 4
+    assert seen == ["window"]
 
 
 def test_the_gui_command_names_a_broken_install(
@@ -66,7 +89,9 @@ def test_the_gui_command_names_a_broken_install(
     monkeypatch.setattr(app, "find_spec", lambda name: object())
     monkeypatch.setitem(sys.modules, "PySide6", None)
     assert cli.main(["gui"]) == 1
-    assert app.BROKEN in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert app.BROKEN in err
+    assert "halted" in err  # the caught error's text named the cause
 
 
 def test_the_parser_help_lists_gui(

@@ -86,9 +86,13 @@ fi
 # link the FHS sonames the base image does not carry, and the
 # suite's offscreen window test runs (not skips) once the extra
 # is in the venv — without these the in-guest pytest the script
-# itself prints below reddens on the import. libGL.so.1 is the
-# marker: one soname of the set, present means the set is.
-if ! ldconfig -p 2>/dev/null | grep -q 'libGL\.so\.1'; then
+# itself prints below reddens on the import. libxcb-shape.so.0 is
+# the marker: the leaf nothing else pulls, so its presence means
+# this set ran (libGL alone can be there without the xcb
+# leaves). The xcb leaves are named even where mesa's chains
+# would pull some today — the set says what the closure needs,
+# not what another package happens to drag in.
+if ! ldconfig -p 2>/dev/null | grep -q 'libxcb-shape\.so\.0'; then
   state qt-libs
   log "installing the Qt runtime libraries (the gui extra's wheels link them)"
   apt-get update -qq
@@ -96,8 +100,9 @@ if ! ldconfig -p 2>/dev/null | grep -q 'libGL\.so\.1'; then
     libgl1 libegl1 libfontconfig1 libxkbcommon0 libxkbcommon-x11-0 \
     libx11-6 libxext6 libxfixes3 libxrandr2 libxcb1 libxcb-cursor0 \
     libxcb-icccm4 libxcb-util1 libxcb-image0 libxcb-keysyms1 \
-    libxcb-render-util0 libwayland-client0 libwayland-cursor0 \
-    libwayland-egl1
+    libxcb-render-util0 libxcb-randr0 libxcb-render0 libxcb-shm0 \
+    libxcb-shape0 libxcb-sync1 libxcb-xfixes0 libxcb-xkb1 \
+    libwayland-client0 libwayland-cursor0 libwayland-egl1
 fi
 
 state uv-sync
