@@ -338,6 +338,15 @@ class TerminalWidget(QWidget):
         # scrolling and reflow. Apps that enable mouse tracking own
         # the mouse, and selection pauses while they do.
         self._sel_dragged = False
+        self._wheel_accum = 0
+        self._drag_position = QPointF(0, 0)
+        # Autoscroll while a selection drag overshoots the top or
+        # bottom edge: a timer scrolls the viewport and re-sends the
+        # drag gesture at the clamped position, and the grid-anchored
+        # selection follows into the revealed lines.
+        self._autoscroll = QTimer(self)
+        self._autoscroll.setInterval(50)
+        self._autoscroll.timeout.connect(self._autoscroll_tick)
         self.render_state = self.lib.new_handle(self.lib.render_state_new)
         self.row_iterator = self.lib.new_handle(self.lib.row_iterator_new)
         self.row_cells = self.lib.new_handle(self.lib.row_cells_new)
@@ -380,6 +389,7 @@ class TerminalWidget(QWidget):
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt name)
         _REGISTRY.pop(id(self), None)
         self._reaper.stop()
+        self._autoscroll.stop()
         self.notifier.setEnabled(False)
         self.session.close()
         for free, handle in [
@@ -689,6 +699,33 @@ class TerminalWidget(QWidget):
         row = max(0, min(self.rows - 1, int(position.y()) // self.cell_height))
         return col, row
 
+    def _autoscroll_tick(self) -> None:
+        """Scroll while the drag position overshoots an edge, then
+        extend the selection into the revealed rows."""
+        if not self._sel_dragged or self._mouse_tracking():
+            return
+        y = self._drag_position.y()
+        if y < 0:
+            rows = max(1, int(-y // self.cell_height))
+            delta = -rows
+        elif y > self.height():
+            rows = max(1, int((y - self.height()) // self.cell_height))
+            delta = rows
+        else:
+            return
+        self.lib.terminal_scroll_viewport(
+            self.terminal,
+            ghostty.ScrollViewport(
+                ghostty.SCROLL_DELTA,
+                ghostty.ScrollViewportValue(delta=delta),
+            ),
+        )
+        clamped = QPointF(
+            self._drag_position.x(),
+            min(max(y, 0.0), float(self.height() - 1)),
+        )
+        self._selection_gesture(ghostty.SEL_DRAG, clamped)
+
     def _selection_gesture(self, kind: int, position: QPointF) -> None:
         """Feed a selection gesture event, following the protocol of
         Ghostty's c-vt-selection-gesture example: every event carries
@@ -951,6 +988,11 @@ class TerminalWidget(QWidget):
             and not self._mouse_tracking()
         ):
             self._sel_dragged = False
+            self._drag_position = event.position()
+            # Keep receiving moves outside the widget so a drag that
+            # overshoots an edge keeps autoscrolling.
+            self.grabMouse()
+            self._autoscroll.start()
             self._selection_gesture(ghostty.SEL_PRESS, event.position())
         self._send_mouse(
             ghostty.MOUSE_PRESS,
@@ -965,6 +1007,8 @@ class TerminalWidget(QWidget):
             event.button() == Qt.MouseButton.LeftButton
             and not self._mouse_tracking()
         ):
+            self._autoscroll.stop()
+            self.releaseMouse()
             self._selection_gesture(ghostty.SEL_RELEASE, event.position())
         self._send_mouse(
             ghostty.MOUSE_RELEASE,
@@ -980,6 +1024,7 @@ class TerminalWidget(QWidget):
             and not self._mouse_tracking()
         ):
             self._sel_dragged = True
+            self._drag_position = event.position()
             self._selection_gesture(ghostty.SEL_DRAG, event.position())
         self._send_mouse(
             ghostty.MOUSE_MOTION,
@@ -990,7 +1035,30 @@ class TerminalWidget(QWidget):
         )
 
     def wheelEvent(self, event) -> None:  # noqa: N802 (Qt name)
-        steps = event.angleDelta().y() // 120
+        # High-resolution wheels and Wayland touchpads deliver many
+        # small deltas instead of one 120-per-notch tick, so both angle
+        # and pixel deltas accumulate across events; steps > 0 means
+        # wheel up (scroll into history).
+        pixels = event.pixelDelta()
+        if pixels is not None and not pixels.isNull():
+            self._wheel_accum += pixels.y() * 120 // max(1, self.cell_height)
+        else:
+            self._wheel_accum += event.angleDelta().y()
+        steps = 0
+        while self._wheel_accum >= 120:
+            steps += 1
+            self._wheel_accum -= 120
+        while self._wheel_accum <= -120:
+            steps -= 1
+            self._wheel_accum += 120
+        if _DEBUG_KEYS:
+            print(
+                f"wheel: angle={event.angleDelta().y()} "
+                f"pixels={pixels.y() if pixels else None} "
+                f"steps={steps} "
+                f"tracking={self._mouse_tracking()}",
+                flush=True,
+            )
         if steps == 0:
             return
         ok, tracking = self.lib.get(

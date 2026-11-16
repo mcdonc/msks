@@ -99,10 +99,11 @@ The library is found through `GHOSTTY_VT_LIB` if set, then
 
 ## Known gaps (deliberate, spike scope)
 
-- Selection needs autoscroll-during-drag (dragging past the top or
-  bottom edge scrolls and extends — the wheel works mid-drag
-  instead), double-click word selection, middle-click paste, and
-  clipboard OSC 52. No Kitty graphics, no scrollbar dragging, no
+- Selecting past the window's top or bottom edge autoscrolls the
+  buffer and keeps extending the selection (the widget grabs the
+  mouse for the drag and a timer scrolls on overshoot). Remaining
+  selection gaps: double-click word selection, middle-click paste,
+  and clipboard OSC 52. No Kitty graphics, no scrollbar dragging, no
   numpad-specific keys, no ligatures.
 - The XTVERSION effect is not registered: ctypes cannot return a
   16-byte struct from a callback, so `CSI > q` goes unanswered.

@@ -339,6 +339,7 @@ class SelectionGestureGeometry(ctypes.Structure):
 
 
 SCROLL_TOP = 0
+SCROLL_BOTTOM = 1
 SCROLL_DELTA = 2
 
 # Effects callbacks. The terminal invokes these to answer VT queries

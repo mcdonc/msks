@@ -201,12 +201,16 @@ def test_widget() -> None:
     from terminal import TerminalWidget
 
     app = QApplication.instance() or QApplication(sys.argv)
-    # Enough trailing newlines to push the marker into scrollback.
+    # Enough numbered lines to fill the viewport and push the marker
+    # into scrollback, with real text on every line for multi-row
+    # selection checks.
     widget = TerminalWidget(
         [
             "/bin/sh",
             "-c",
-            "printf 'widget-ok'; printf '\\r\\n%.0s' $(seq 1 20)",
+            "printf 'widget-ok'; printf '\\r\\n%.0s' $(seq 1 20); "
+            "i=1; while [ $i -le 30 ]; do printf 'filler %02d\\r\\n' "
+            "$i; i=$((i+1)); done",
         ]
     )
     widget.resize(400, 300)
@@ -286,6 +290,38 @@ def test_widget() -> None:
                 failures.append(f"paste sent {sent!r}")
             else:
                 print("paste: newline became carriage return")
+            # Autoscroll: from the bottom, a drag held past the top
+            # edge scrolls and extends the selection across the
+            # revealed rows.
+            widget.lib.terminal_scroll_viewport(
+                widget.terminal,
+                ghostty.ScrollViewport(
+                    ghostty.SCROLL_BOTTOM,
+                    ghostty.ScrollViewportValue(),
+                ),
+            )
+            widget.refresh()
+            last_row = widget.rows - 2
+            widget._sel_dragged = True
+            widget._drag_position = QPointF(cw * 2.5, ch * (last_row + 0.5))
+            widget._selection_gesture(ghostty.SEL_PRESS, widget._drag_position)
+            widget._drag_position = QPointF(cw * 5.5, -ch * 0.9)
+            widget._selection_gesture(ghostty.SEL_DRAG, QPointF(cw * 5.5, 0.5))
+            widget._autoscroll_tick()
+            widget._autoscroll_tick()
+            widget._selection_gesture(
+                ghostty.SEL_RELEASE, QPointF(cw * 5.5, 0.5)
+            )
+            extended = widget._selection_text()
+            if "\n" not in extended or "filler" not in extended:
+                failures.append(
+                    f"autoscroll did not extend selection: {extended!r}"
+                )
+            else:
+                lines = extended.strip().splitlines()
+                print(
+                    f"selection: autoscroll extended across {len(lines)} rows"
+                )
         except Exception as exc:  # noqa: BLE001 - report and stop
             failures.append(f"widget check raised: {exc}")
         finally:
