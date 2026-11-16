@@ -231,6 +231,14 @@ def _color_scheme(_terminal, _userdata, _out):
     return False
 
 
+@ghostty.BELL_FN
+def _bell(_terminal, userdata):
+    """BEL: flash the terminal visually instead of ringing."""
+    widget = _widget(userdata)
+    if widget is not None:
+        widget._flash()
+
+
 @ghostty.CLIPBOARD_WRITE_FN
 def _clipboard_write(_terminal, userdata, write_ptr):
     """OSC 52: a program inside wants to set the clipboard."""
@@ -395,6 +403,11 @@ class TerminalWidget(QWidget):
         # session exist (Ctrl+Plus/Minus re-run this with a new size).
         self._set_font_point_size(self.font.pointSize())
 
+        # Visual bell: BEL flashes a border for a moment.
+        self._bell_flash = False
+        self._bell_timer = QTimer(self)
+        self._bell_timer.setSingleShot(True)
+        self._bell_timer.timeout.connect(self._bell_off)
         # Find bar: a lazy search handle plus its overlay widgets.
         self._search = 0
         self._find_edit: QLineEdit | None = None
@@ -423,6 +436,10 @@ class TerminalWidget(QWidget):
             (
                 ghostty.OPT_COLOR_SCHEME,
                 ctypes.cast(_color_scheme, ctypes.c_void_p),
+            ),
+            (
+                ghostty.OPT_BELL,
+                ctypes.cast(_bell, ctypes.c_void_p),
             ),
             (
                 ghostty.OPT_DEVICE_ATTRIBUTES,
@@ -606,6 +623,17 @@ class TerminalWidget(QWidget):
         self._paint_cursor(painter, colors)
         self._paint_scrollbar(painter)
         self._paint_exit_banner(painter)
+        if self._bell_flash:
+            pen = painter.pen()
+            painter.setPen(QColor(255, 170, 0, 200))
+            for inset in range(0, 3):
+                painter.drawRect(
+                    inset,
+                    inset,
+                    self.width() - 2 * inset - 1,
+                    self.height() - 2 * inset - 1,
+                )
+            painter.setPen(pen)
         painter.end()
 
     def _paint_cell(
@@ -1195,6 +1223,17 @@ class TerminalWidget(QWidget):
         if sel_ok and selected.size:
             add_match(selected.start, selected.end, True)
         return rects
+
+    def _bell_off(self) -> None:
+        self._bell_flash = False
+        self.update()
+
+    def _flash(self) -> None:
+        """Visual bell: a brief orange border flash; repeat BELs
+        restart the timer."""
+        self._bell_flash = True
+        self._bell_timer.start(180)
+        self.update()
 
     def _selection_gesture(self, kind: int, position: QPointF) -> None:
         """Feed a selection gesture event, following the protocol of

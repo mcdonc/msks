@@ -566,6 +566,19 @@ def test_widget() -> None:
             else:
                 print(f"find: {len(rects)} highlight rects")
             widget._find_close()
+            # Visual bell: BEL flashes the border and clears itself.
+            widget.lib.vt_write(widget.terminal, b"\x07")
+            if not widget._bell_flash:
+                failures.append("BEL did not start the flash")
+            else:
+                deadline = time.monotonic() + 1.0
+                while widget._bell_flash and time.monotonic() < deadline:
+                    QApplication.processEvents()
+                    time.sleep(0.02)
+                if widget._bell_flash:
+                    failures.append("flash never cleared")
+                else:
+                    print("bell: visual flash fired and cleared")
         except Exception as exc:  # noqa: BLE001 - report and stop
             failures.append(f"widget check raised: {exc}")
         finally:

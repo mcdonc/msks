@@ -79,6 +79,7 @@ OPT_COLOR_SCHEME = 7
 OPT_DEVICE_ATTRIBUTES = 8
 OPT_SCROLLBACK_MAX_LINES = 28
 OPT_SELECTION = 21
+OPT_BELL = 2
 OPT_CLIPBOARD_WRITE = 26
 
 # OSC 52 clipboard-write results.
@@ -455,6 +456,7 @@ TITLE_CHANGED_FN = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p)
 COLOR_SCHEME_FN = ctypes.CFUNCTYPE(
     ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int
 )
+BELL_FN = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p)
 CLIPBOARD_WRITE_FN = ctypes.CFUNCTYPE(
     None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p
 )
