@@ -1276,7 +1276,10 @@ class TerminalWidget(QWidget):
                     event.buttons(),
                 )
             return
-        delta = -3 * abs(steps) if steps > 0 else 3 * abs(steps)
+        # Six rows per notch: the classic three felt sluggish next to
+        # Konsole's default on this hardware.
+        rows = 6 * abs(steps)
+        delta = -rows if steps > 0 else rows
         scroll = ghostty.ScrollViewport(
             ghostty.SCROLL_DELTA, ghostty.ScrollViewportValue(delta=delta)
         )
