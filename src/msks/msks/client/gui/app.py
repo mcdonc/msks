@@ -45,20 +45,24 @@ def run() -> int:
     if find_spec("PySide6") is None:
         print(HINT, file=sys.stderr)
         return 1
+    try:
+        # allow-deferred-import — the optional gui extra; the
+        # CLI loads this module at parse time on every command,
+        # so the binding imports only when the window is asked
+        # for (the guard above already answered absence).
+        from PySide6 import QtWidgets
+    except ImportError:
+        print(BROKEN, file=sys.stderr)
+        return 1
+    # The display gate sits between the import and the window:
+    # the import needs no display, and Qt's own failure at the
+    # QApplication constructor is an abort (qFatal, a multi-line
+    # dump and exit 134) past anything Python can catch.
     if not any(
         os.environ.get(var)
         for var in ("DISPLAY", "WAYLAND_DISPLAY", "QT_QPA_PLATFORM")
     ):
         print(NO_DISPLAY, file=sys.stderr)
-        return 1
-    try:
-        # allow-deferred-import — the optional gui extra; the
-        # CLI loads this module at parse time on every command,
-        # so the binding imports only when the window is asked
-        # for (the guards above already answered absence).
-        from PySide6 import QtWidgets
-    except ImportError:
-        print(BROKEN, file=sys.stderr)
         return 1
     return open_window(QtWidgets)
 
