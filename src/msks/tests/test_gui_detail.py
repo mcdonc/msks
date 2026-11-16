@@ -227,6 +227,17 @@ def test_the_events_section_reads_the_workspace_tail() -> None:
         },
     ]
     assert detail_mod.event_entries(other, WS) == ()
+    # A nested mapping in a generic family's payload renders
+    # nothing — its family's own line owns it — while the
+    # payload's scalars still read.
+    nested = [
+        {
+            "event": "holder.attach",
+            "data": {"id": WS, "nested": {"a": 1}, "n": 2},
+        }
+    ]
+    (entry,) = detail_mod.event_entries(nested, WS)
+    assert entry.line == "holder.attach n=2"
 
 
 def test_the_sections_compose() -> None:
