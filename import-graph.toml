@@ -192,7 +192,10 @@ identity = 2
 # #852: the TUI's status line carries the version-skew marker —
 # rows.py joins the client's own version word for the marker's
 # client side (the same module-edge-plus-name +2).
-spec = 11
+# #944: the GUI workspace-detail presenter reads the mount-mode
+# vocabulary (MOUNT_MODES) through the allowlist door — the same
+# module-edge-plus-name +2 the TUI's reads take.
+spec = 13
 
 [snapshot.config]
 configio = 3
