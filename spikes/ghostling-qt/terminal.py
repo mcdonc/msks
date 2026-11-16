@@ -333,14 +333,17 @@ class TerminalWidget(QWidget):
         self.key_event = self.lib.new_handle(self.lib.key_event_new)
         self.mouse_encoder = self.lib.new_handle(self.lib.mouse_encoder_new)
         self.mouse_event = self.lib.new_handle(self.lib.mouse_event_new)
-        # Selection state, in viewport cell coordinates: anchor from a
-        # left press, extent while dragging. Apps that enable mouse
-        # tracking own the mouse, and selection pauses while they do.
-        self._sel_anchor: tuple[int, int] | None = None
-        self._sel_extent: tuple[int, int] | None = None
+        # Selection state: gestures drive libghostty's selection,
+        # which is anchored to the grid, so the selection survives
+        # scrolling and reflow. Apps that enable mouse tracking own
+        # the mouse, and selection pauses while they do.
+        self._sel_dragged = False
         self.render_state = self.lib.new_handle(self.lib.render_state_new)
         self.row_iterator = self.lib.new_handle(self.lib.row_iterator_new)
         self.row_cells = self.lib.new_handle(self.lib.row_cells_new)
+        self.selection_gesture = self.lib.new_handle(
+            self.lib.selection_gesture_new
+        )
 
         self.notifier = QSocketNotifier(
             self.session.master_fd or 0, QSocketNotifier.Type.Read, self
@@ -387,9 +390,11 @@ class TerminalWidget(QWidget):
             (self.lib.mouse_encoder_free, self.mouse_encoder),
             (self.lib.key_event_free, self.key_event),
             (self.lib.key_encoder_free, self.key_encoder),
-            (self.lib.terminal_free, self.terminal),
         ]:
             free(handle)
+        # The gesture free takes the terminal it was created against.
+        self.lib.selection_gesture_free(self.selection_gesture, self.terminal)
+        self.lib.terminal_free(self.terminal)
         super().closeEvent(event)
 
     # --- data flow ----------------------------------------------------
@@ -557,17 +562,15 @@ class TerminalWidget(QWidget):
         if style.inverse:
             foreground, background = background, foreground
             has_bg = True
-        bounds = self._selection_cells()
-        if bounds is not None:
-            (c0, r0), (c1, r1) = bounds
-            col, row = x // self.cell_width, y // self.cell_height
-            if (
-                r0 <= row <= r1
-                and (row > r0 or c0 <= col)
-                and (row < r1 or col <= c1)
-            ):
-                foreground, background = background, foreground
-                has_bg = True
+        ok, selected = lib.get(
+            lib.row_cells_get,
+            cells,
+            ghostty.CELLS_SELECTED,
+            ctypes.c_bool(),
+        )
+        if ok and selected.value:
+            foreground, background = background, foreground
+            has_bg = True
         if has_bg:
             painter.fillRect(
                 x, y, self.cell_width, self.cell_height, background
@@ -686,71 +689,120 @@ class TerminalWidget(QWidget):
         row = max(0, min(self.rows - 1, int(position.y()) // self.cell_height))
         return col, row
 
-    def _selection_cells(
-        self,
-    ) -> tuple[tuple[int, int], tuple[int, int]] | None:
-        """Normalized (start, end) cells, or None with no selection."""
-        if self._sel_anchor is None or self._sel_extent is None:
-            return None
-        start, end = self._sel_anchor, self._sel_extent
-        if (end[1], end[0]) < (start[1], start[0]):
-            start, end = end, start
-        return start, end
+    def _selection_gesture(self, kind: int, position: QPointF) -> None:
+        """Feed a selection gesture event, following the protocol of
+        Ghostty's c-vt-selection-gesture example: every event carries
+        the grid ref under the cursor and the pixel position; a drag
+        also carries surface geometry and is the only event that
+        produces a selection, which we apply to the terminal so the
+        render state flags the selected cells."""
+        lib = self.lib
+        col, row = self._cell_at(position)
+        point = ghostty.Point(
+            tag=ghostty.POINT_VIEWPORT,
+            value=ghostty.PointValue(
+                coordinate=ghostty.PointCoordinate(x=col, y=row)
+            ),
+        )
+        ref = ghostty.GridRef()
+        ref.size = ctypes.sizeof(ref)
+        if (
+            lib.terminal_grid_ref(
+                self.terminal,
+                point,
+                ctypes.byref(ref),
+            )
+            != ghostty.SUCCESS
+        ):
+            return
+        event = lib.new_handle(lib.selection_gesture_event_new, kind)
+        try:
+            lib.selection_gesture_event_set(
+                event, ghostty.SEL_EVENT_OPT_REF, ctypes.byref(ref)
+            )
+            surface = ghostty.SurfacePosition(
+                x=float(position.x()), y=float(position.y())
+            )
+            lib.selection_gesture_event_set(
+                event,
+                ghostty.SEL_EVENT_OPT_POSITION,
+                ctypes.byref(surface),
+            )
+            if kind == ghostty.SEL_DRAG:
+                geometry = ghostty.SelectionGestureGeometry(
+                    columns=self.cols,
+                    cell_width=self.cell_width,
+                    padding_left=0,
+                    screen_height=self.height(),
+                )
+                lib.selection_gesture_event_set(
+                    event,
+                    ghostty.SEL_EVENT_OPT_GEOMETRY,
+                    ctypes.byref(geometry),
+                )
+            selection = ghostty.Selection()
+            selection.size = ctypes.sizeof(selection)
+            result = lib.selection_gesture_event(
+                self.selection_gesture,
+                self.terminal,
+                event,
+                ctypes.byref(selection),
+            )
+            if kind == ghostty.SEL_DRAG and result == ghostty.SUCCESS:
+                lib.terminal_set(
+                    self.terminal,
+                    ghostty.OPT_SELECTION,
+                    ctypes.byref(selection),
+                )
+            elif kind == ghostty.SEL_RELEASE:
+                dragged = ctypes.c_bool()
+                ok = lib.selection_gesture_get(
+                    self.selection_gesture,
+                    self.terminal,
+                    ghostty.SEL_DATA_DRAGGED,
+                    ctypes.byref(dragged),
+                )
+                if ok == ghostty.SUCCESS and not dragged.value:
+                    # A click without a drag clears the selection.
+                    lib.terminal_set(
+                        self.terminal, ghostty.OPT_SELECTION, None
+                    )
+            if kind in (ghostty.SEL_DRAG, ghostty.SEL_RELEASE):
+                self.refresh()
+        finally:
+            lib.selection_gesture_event_free(event)
 
     def _selection_text(self) -> str:
-        bounds = self._selection_cells()
-        if bounds is None:
-            return ""
-        (c0, r0), (c1, r1) = bounds
+        """The active selection as plain text, straight from the
+        library's formatter (trim on, like a terminal copy)."""
         lib = self.lib
-        ok, iterator = lib.get(
-            lib.render_state_get,
-            self.render_state,
-            ghostty.RS_ROW_ITERATOR,
-            ctypes.c_void_p(self.row_iterator),
+        selection = ghostty.Selection()
+        selection.size = ctypes.sizeof(selection)
+        ok, _ = lib.get(
+            lib.terminal_get, self.terminal, ghostty.DATA_SELECTION, selection
         )
-        if not ok or not iterator.value:
+        if not ok:
             return ""
-        codepoints = (ctypes.c_uint32 * 16)()
-        lines: list[str] = []
-        row = 0
-        while lib.row_iterator_next(iterator.value):
-            if row < r0 or row > r1:
-                row += 1
-                continue
-            ok, cells = lib.get(
-                lib.row_get,
-                iterator.value,
-                ghostty.ROW_CELLS,
-                ctypes.c_void_p(self.row_cells),
+        options = ghostty.SelectionFormatOptions(
+            size=ctypes.sizeof(ghostty.SelectionFormatOptions),
+            emit=ghostty.FORMATTER_PLAIN,
+            unwrap=False,
+            trim=True,
+            selection=ctypes.pointer(selection),
+        )
+        size = 4096
+        while size <= 1 << 20:
+            buf = ctypes.create_string_buffer(size)
+            written = ctypes.c_size_t()
+            result = lib.selection_format_buf(
+                self.terminal, options, buf, size, ctypes.byref(written)
             )
-            chars: list[str] = []
-            col = 0
-            if ok and cells.value:
-                while lib.row_cells_next(cells.value):
-                    if r0 <= row <= r1 and c0 <= col <= c1:
-                        ok2, length = lib.get(
-                            lib.row_cells_get,
-                            cells,
-                            ghostty.CELLS_GRAPHEMES_LEN,
-                            ctypes.c_uint32(),
-                        )
-                        if ok2 and 0 < length.value <= 16:
-                            lib.row_cells_get(
-                                cells.value,
-                                ghostty.CELLS_GRAPHEMES_BUF,
-                                ctypes.cast(codepoints, ctypes.c_void_p),
-                            )
-                            chars.append(
-                                "".join(
-                                    chr(codepoints[i])
-                                    for i in range(length.value)
-                                )
-                            )
-                    col += 1
-            lines.append("".join(chars).rstrip())
-            row += 1
-        return "\n".join(lines)
+            if result == ghostty.SUCCESS:
+                return buf.raw[: written.value].decode(
+                    "utf-8", errors="replace"
+                )
+            size *= 4
+        return ""
 
     def _copy_selection(self) -> None:
         text = self._selection_text()
@@ -898,9 +950,8 @@ class TerminalWidget(QWidget):
             event.button() == Qt.MouseButton.LeftButton
             and not self._mouse_tracking()
         ):
-            self._sel_anchor = self._cell_at(event.position())
-            self._sel_extent = None
-            self.update()
+            self._sel_dragged = False
+            self._selection_gesture(ghostty.SEL_PRESS, event.position())
         self._send_mouse(
             ghostty.MOUSE_PRESS,
             self._button(event),
@@ -914,10 +965,7 @@ class TerminalWidget(QWidget):
             event.button() == Qt.MouseButton.LeftButton
             and not self._mouse_tracking()
         ):
-            if self._sel_anchor is not None and self._sel_extent is None:
-                # A click without a drag clears the selection.
-                self._sel_anchor = None
-            self.update()
+            self._selection_gesture(ghostty.SEL_RELEASE, event.position())
         self._send_mouse(
             ghostty.MOUSE_RELEASE,
             self._button(event),
@@ -929,11 +977,10 @@ class TerminalWidget(QWidget):
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 (Qt name)
         if (
             event.buttons() & Qt.MouseButton.LeftButton
-            and self._sel_anchor is not None
             and not self._mouse_tracking()
         ):
-            self._sel_extent = self._cell_at(event.position())
-            self.update()
+            self._sel_dragged = True
+            self._selection_gesture(ghostty.SEL_DRAG, event.position())
         self._send_mouse(
             ghostty.MOUSE_MOTION,
             self._button(event),

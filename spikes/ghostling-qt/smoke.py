@@ -196,12 +196,19 @@ def test_pty_session() -> None:
 
 
 def test_widget() -> None:
-    from PySide6.QtCore import QTimer
+    from PySide6.QtCore import QPointF, QTimer
     from PySide6.QtWidgets import QApplication
     from terminal import TerminalWidget
 
     app = QApplication.instance() or QApplication(sys.argv)
-    widget = TerminalWidget(["/bin/sh", "-c", "printf 'widget-ok'"])
+    # Enough trailing newlines to push the marker into scrollback.
+    widget = TerminalWidget(
+        [
+            "/bin/sh",
+            "-c",
+            "printf 'widget-ok'; printf '\\r\\n%.0s' $(seq 1 20)",
+        ]
+    )
     widget.resize(400, 300)
     widget.show()
 
@@ -215,6 +222,16 @@ def test_widget() -> None:
     def finish() -> None:
         try:
             widget.grab()
+            # The marker sits in scrollback after its trailing
+            # newlines; scroll to the top so it is on screen.
+            widget.lib.terminal_scroll_viewport(
+                widget.terminal,
+                ghostty.ScrollViewport(
+                    ghostty.SCROLL_TOP,
+                    ghostty.ScrollViewportValue(),
+                ),
+            )
+            widget.refresh()
             text = "\n".join(
                 screen_text(
                     widget.lib,
@@ -228,13 +245,38 @@ def test_widget() -> None:
                 failures.append("screen text missing widget-ok: " + text[:120])
             else:
                 print("widget: offscreen render and screen text ok")
-            widget._sel_anchor = (0, 0)
-            widget._sel_extent = (8, 0)
+            # Selection through the gesture API, grid-anchored: select
+            # row 0, scroll the viewport, and the selection must still
+            # read the same text (viewport coords would have slid).
+            cw, ch = widget.cell_width, widget.cell_height
+            widget._sel_dragged = True
+            widget._selection_gesture(
+                ghostty.SEL_PRESS, QPointF(cw * 0.5, ch * 0.5)
+            )
+            widget._selection_gesture(
+                ghostty.SEL_DRAG, QPointF(cw * 8.9, ch * 0.5)
+            )
+            widget._selection_gesture(
+                ghostty.SEL_RELEASE, QPointF(cw * 8.9, ch * 0.5)
+            )
             selected = widget._selection_text()
             if selected != "widget-ok":
                 failures.append(f"selection text was {selected!r}")
             else:
-                print("selection: row-0 text captured")
+                print("selection: grid-anchored text captured")
+            down = ghostty.ScrollViewport(
+                ghostty.SCROLL_DELTA,
+                ghostty.ScrollViewportValue(delta=2),
+            )
+            widget.lib.terminal_scroll_viewport(widget.terminal, down)
+            widget.refresh()
+            after = widget._selection_text()
+            if after != "widget-ok":
+                failures.append(
+                    f"selection lost its anchor after scroll: {after!r}"
+                )
+            else:
+                print("selection: survives viewport scroll")
             widget._copy_selection()
             if QApplication.clipboard().text() != "widget-ok":
                 failures.append("copy did not reach the clipboard")

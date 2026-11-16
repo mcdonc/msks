@@ -85,23 +85,25 @@ The library is found through `GHOSTTY_VT_LIB` if set, then
 - Mouse reporting (X10/normal/button/any-event tracking, SGR and
   friends) through the mouse encoder; when an application enables
   mouse tracking, text selection stands aside.
-- Text selection with the mouse (drag from a left press; a click
-  without a drag clears it), highlighted by inverting the selected
-  cells. `Ctrl+Shift+C` (and `Ctrl+Shift+X` — a terminal cannot cut,
-  so cut copies) puts the selection on the clipboard;
-  `Ctrl+Shift+V` pastes, wrapping in bracketed-paste when the
-  program enabled mode 2004 and converting newlines to carriage
-  returns otherwise.
+- Text selection with the mouse through libghostty's selection
+  gesture API: grid-anchored, so the selection survives viewport
+  scrolling and reflow; drag from a left press (a click without a
+  drag clears it), highlighted by inverting the selected cells.
+  `Ctrl+Shift+C` (and `Ctrl+Shift+X` — a terminal cannot cut, so cut
+  copies) puts the selection on the clipboard; `Ctrl+Shift+V`
+  pastes, wrapping in bracketed paste when the program enabled mode
+  2004 and converting newlines to carriage returns otherwise.
 - Focus reporting (DECSET 1004) and OSC 0/2 title changes.
 - Effects that answer VT queries programs send at startup (DA1/DA2/
   DA3, size reports), so vim and tmux do not hang.
 
 ## Known gaps (deliberate, spike scope)
 
-- Selection is tracked in viewport coordinates: dragging across a
-  scroll, double-click word selection, middle-click paste, and
-  clipboard OSC 52 are not implemented. No Kitty graphics, no
-  scrollbar dragging, no numpad-specific keys, no ligatures.
+- Selection needs autoscroll-during-drag (dragging past the top or
+  bottom edge scrolls and extends — the wheel works mid-drag
+  instead), double-click word selection, middle-click paste, and
+  clipboard OSC 52. No Kitty graphics, no scrollbar dragging, no
+  numpad-specific keys, no ligatures.
 - The XTVERSION effect is not registered: ctypes cannot return a
   16-byte struct from a callback, so `CSI > q` goes unanswered.
 - `vendor/` holds a library snapshot (currently a pre-1.0
@@ -123,7 +125,14 @@ The library is found through `GHOSTTY_VT_LIB` if set, then
   effects were enough for the smoke tests.
 - Two ctypes traps to remember for the production binding: iterator
   handles are in/out parameters (pre-fill the handle slot), and
-  struct-returning callbacks are not expressible.
+  struct-returning callbacks are not expressible. A third, nastier
+  one: mirror every struct field exactly, including padding
+  members. The scroll-viewport union without its `_padding`
+  array was 8 bytes instead of 16, so the enclosing struct shrank
+  below the memory-class threshold: ctypes passed it in registers,
+  the library read garbage off the stack, and Zig's panic trap
+  surfaced as SIGILL with no diagnostic. `objdump` on the exported
+  symbol (reading the argument off `%rbp+0x10`) is what pinned it.
 
 ### Font rendering lessons (a full debugging session, condensed)
 

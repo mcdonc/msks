@@ -67,6 +67,7 @@ DATA_MODE = 37
 DATA_MOUSE_TRACKING = 11
 DATA_SCROLLBAR = 9
 DATA_TITLE = 12
+DATA_SELECTION = 31
 
 # ghostty_terminal_set options.
 OPT_USERDATA = 0
@@ -77,6 +78,7 @@ OPT_SIZE = 6
 OPT_COLOR_SCHEME = 7
 OPT_DEVICE_ATTRIBUTES = 8
 OPT_SCROLLBACK_MAX_LINES = 28
+OPT_SELECTION = 21
 
 # Render state selectors.
 RS_DIRTY = 3
@@ -93,6 +95,21 @@ CELLS_GRAPHEMES_LEN = 3
 CELLS_GRAPHEMES_BUF = 4
 CELLS_BG_COLOR = 5
 CELLS_FG_COLOR = 6
+CELLS_SELECTED = 7
+
+# Selection gesture event types, options, and data.
+SEL_PRESS, SEL_RELEASE, SEL_DRAG = 0, 1, 2
+SEL_EVENT_OPT_REF = 0
+SEL_EVENT_OPT_POSITION = 1
+SEL_EVENT_OPT_GEOMETRY = 8
+SEL_DATA_DRAGGED = 1
+
+# GhosttyPoint tags.
+POINT_ACTIVE = 0
+POINT_VIEWPORT = 1
+
+# GhosttyFormatterFormat values.
+FORMATTER_PLAIN = 0
 
 # Mouse encoder options.
 MOPT_SIZE = 2
@@ -240,13 +257,88 @@ class MouseEncoderSize(ctypes.Structure):
 
 
 class ScrollViewportValue(ctypes.Union):
-    _fields_ = [("row", ctypes.c_uint64), ("delta", ctypes.c_int64)]
+    # The _padding member makes this 16 bytes; without it the struct
+    # shrinks to 16 bytes, ctypes passes it in registers, and the
+    # library (which expects a 24-byte memory-class argument) reads
+    # garbage off the stack and traps.
+    _fields_ = [
+        ("row", ctypes.c_uint64),
+        ("delta", ctypes.c_int64),
+        ("_padding", ctypes.c_uint64 * 2),
+    ]
 
 
 class ScrollViewport(ctypes.Structure):
     _fields_ = [("tag", ctypes.c_int), ("value", ScrollViewportValue)]
 
 
+class GridRef(ctypes.Structure):
+    """A pinned grid location; `node` is opaque state the library
+    uses to keep the ref stable across scrolls and reflows."""
+
+    _fields_ = [
+        ("size", ctypes.c_size_t),
+        ("node", ctypes.c_void_p),
+        ("x", ctypes.c_uint16),
+        ("y", ctypes.c_uint16),
+    ]
+
+
+class Selection(ctypes.Structure):
+    """A grid-anchored selection: the refs move with the content, so
+    the selection survives viewport scrolling."""
+
+    _fields_ = [
+        ("size", ctypes.c_size_t),
+        ("start", GridRef),
+        ("end", GridRef),
+        ("rectangle", ctypes.c_bool),
+    ]
+
+
+class SelectionFormatOptions(ctypes.Structure):
+    _fields_ = [
+        ("size", ctypes.c_size_t),
+        ("emit", ctypes.c_int),
+        ("unwrap", ctypes.c_bool),
+        ("trim", ctypes.c_bool),
+        ("selection", ctypes.POINTER(Selection)),
+    ]
+
+
+class PointCoordinate(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_uint16), ("y", ctypes.c_uint32)]
+
+
+class PointValue(ctypes.Union):
+    _fields_ = [
+        ("coordinate", PointCoordinate),
+        ("_padding", ctypes.c_uint64 * 2),
+    ]
+
+
+class Point(ctypes.Structure):
+    _fields_ = [("tag", ctypes.c_int), ("value", PointValue)]
+
+
+class SurfacePosition(ctypes.Structure):
+    """Pixel coordinates, what OPT_POSITION expects."""
+
+    _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double)]
+
+
+class SelectionGestureGeometry(ctypes.Structure):
+    """Surface geometry a drag needs to map pixels to cells."""
+
+    _fields_ = [
+        ("columns", ctypes.c_uint32),
+        ("cell_width", ctypes.c_uint32),
+        ("padding_left", ctypes.c_uint32),
+        ("screen_height", ctypes.c_uint32),
+    ]
+
+
+SCROLL_TOP = 0
 SCROLL_DELTA = 2
 
 # Effects callbacks. The terminal invokes these to answer VT queries
@@ -453,6 +545,51 @@ class Lib:
             "ghostty_focus_encode",
             r,
             i,
+            ctypes.c_char_p,
+            sz,
+            ctypes.POINTER(sz),
+        )
+        self.terminal_grid_ref = self._fn(
+            "ghostty_terminal_grid_ref",
+            r,
+            v,
+            Point,
+            ctypes.POINTER(GridRef),
+        )
+        self.selection_gesture_new = self._fn(
+            "ghostty_selection_gesture_new", r, v, ctypes.POINTER(v)
+        )
+        self.selection_gesture_free = self._fn(
+            "ghostty_selection_gesture_free", None, v, v
+        )
+        self.selection_gesture_reset = self._fn(
+            "ghostty_selection_gesture_reset", None, v, v
+        )
+        self.selection_gesture_get = self._fn(
+            "ghostty_selection_gesture_get", r, v, v, i, v
+        )
+        self.selection_gesture_event_new = self._fn(
+            "ghostty_selection_gesture_event_new", r, v, ctypes.POINTER(v), i
+        )
+        self.selection_gesture_event_free = self._fn(
+            "ghostty_selection_gesture_event_free", None, v
+        )
+        self.selection_gesture_event_set = self._fn(
+            "ghostty_selection_gesture_event_set", r, v, i, v
+        )
+        self.selection_gesture_event = self._fn(
+            "ghostty_selection_gesture_event",
+            r,
+            v,
+            v,
+            v,
+            ctypes.POINTER(Selection),
+        )
+        self.selection_format_buf = self._fn(
+            "ghostty_terminal_selection_format_buf",
+            r,
+            v,
+            SelectionFormatOptions,
             ctypes.c_char_p,
             sz,
             ctypes.POINTER(sz),
