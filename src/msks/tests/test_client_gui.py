@@ -4,6 +4,7 @@ window shell, and the gui extra's contract with the base install
 
 import ctypes
 import importlib.util
+import json
 import os
 import re
 import subprocess
@@ -174,10 +175,63 @@ def test_the_scale_knobs_read_the_environment(
     for unusable in ("huge", "nan", "inf", "-inf", "1e999", "0", "-1.5"):
         monkeypatch.setenv("MSKS_GUI_TEST_SCALE", unusable)
         assert app.scale_from_env("MSKS_GUI_TEST_SCALE", 1.5) == 1.5, unusable
-    # The knobs the window reads, named: a preset value is the
+    # The font knob's name, pinned: a preset value is the
     # operator's own choice (#937's spirit).
     assert app.FONT_SCALE_ENV == "MSKSC_GUI_FONT_SCALE"
-    assert app.HEIGHT_SCALE_ENV == "MSKSC_GUI_HEIGHT_SCALE"
+
+
+def test_the_saved_geometry_reads_only_usable_rects(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The saved geometry's read (#939): a rect comes back only
+    from a file that parses, names four whole numbers, and has
+    area — everything else reads as nothing saved, and the
+    window opens on the fixed default."""
+    saved = tmp_path / "gui-window.json"
+    monkeypatch.setattr(app, "geometry_path", lambda: saved)
+    assert app.read_geometry() is None  # nothing written yet
+    saved.write_text("not json at all")
+    assert app.read_geometry() is None
+    saved.write_text(json.dumps({"x": "ten"}))
+    assert app.read_geometry() is None
+    saved.write_text(json.dumps({"x": 1, "y": 2}))
+    assert app.read_geometry() is None
+    saved.write_text(json.dumps({"x": 0, "y": 0, "width": 0, "height": 600}))
+    assert app.read_geometry() is None
+    saved.write_text(
+        json.dumps({"x": 30, "y": 40, "width": 900, "height": 620})
+    )
+    assert app.read_geometry() == (30, 40, 900, 620)
+
+
+def test_the_geometry_save_is_best_effort(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    """The geometry save (#939): a state root the window cannot
+    write says so on stderr, the client's one-line convention,
+    and the close still completes."""
+
+    class ClosedWindow:
+        def geometry(self) -> object:
+            return self
+
+        def x(self) -> int:
+            return 0
+
+        def y(self) -> int:
+            return 0
+
+        def width(self) -> int:
+            return 640
+
+        def height(self) -> int:
+            return 480
+
+    unwritable = tmp_path / "it-is-a-directory"
+    unwritable.mkdir()
+    monkeypatch.setattr(app, "geometry_path", lambda: unwritable)
+    app.save_geometry(ClosedWindow())
+    assert "cannot save the window geometry" in capsys.readouterr().err
 
 
 def test_the_parser_help_lists_gui(
@@ -224,6 +278,10 @@ def test_the_gui_window_opens_offscreen(
     fonts.write_text("<fontconfig/>\n")
     os.environ["FONTCONFIG_FILE"] = str(fonts)
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    # The client state root, isolated (#939): the run's geometry
+    # memory reads and writes only this temporary tree.
+    state = tmp_path / "state"
+    monkeypatch.setenv("MSKSC_STATE_DIR", str(state))
     import PySide6.QtWidgets as QtWidgets
 
     # The app exists before the entry runs: run() reuses it, so
@@ -232,19 +290,33 @@ def test_the_gui_window_opens_offscreen(
     qapp = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
         ["msks-gui-test"]
     )
-    default_size = qapp.font().pointSizeF()
+    default_size = qapp.font().pointSizeF()  # restored at the
+    # end: the run scales the shared application's font, and
+    # later tests in this worker measure with the platform's
+    # own metrics. The style pin stays (Fusion): Qt owns the
+    # style object, and it is what the window runs anyway.
 
     # The shown window outlives run() only inside Qt: the local
     # goes with the frame, and a parentless widget is
-    # Python-owned — the exec stand-in records it while it
-    # lives, for the opening-size pin below.
+    # Python-owned — the exec stand-in records it (and its
+    # geometry) while it lives, for the opening pins below.
+    # Earlier runs' and tests' windows may still stand in Qt's
+    # top-level list; only a window this run first shows is
+    # this run's.
     opened: dict[str, object] = {}
+    seen: set[int] = set()
 
     def record_and_exit(self: QtWidgets.QApplication) -> int:
-        opened["windows"] = [
+        windows = [
             widget
             for widget in self.topLevelWidgets()
             if isinstance(widget, QtWidgets.QMainWindow)
+            and id(widget) not in seen
+        ]
+        seen.update(id(widget) for widget in windows)
+        opened["windows"] = windows
+        opened["geometry"] = [
+            (w.x(), w.y(), w.width(), w.height()) for w in windows
         ]
         return 0
 
@@ -253,20 +325,52 @@ def test_the_gui_window_opens_offscreen(
     qapp = QtWidgets.QApplication.instance()
     assert qapp is not None
     assert qapp.platformName() == "offscreen"
-    # The font scale (#939): the platform default doubled — one
+    # The font scale (#939): the platform default scaled — one
     # write on the application font before any widget built.
     assert qapp.font().pointSizeF() == pytest.approx(
         default_size * app.FONT_SCALE
     )
-    # The opening height (#939): the screen's own size hint
-    # doubled, the width the hint's own — the window opens on a
-    # listing that out-talls the shell around it.
-    windows = opened["windows"]
-    assert len(windows) == 1
-    screen = windows[0].centralWidget()
-    assert windows[0].height() == round(
-        screen.sizeHint().height() * app.HEIGHT_SCALE
+    # The opening geometry, first open (#939): nothing saved
+    # answers, so the fixed 1280x720 default does (the platform
+    # places the frame, so the size is what is pinned).
+    first = opened["geometry"][0]
+    assert first[2:] == (app.DEFAULT_WIDTH, app.DEFAULT_HEIGHT)
+    # The close wrote it down (#939): the file holds the window
+    # the operator closed — size and place — for the next open
+    # to take back.
+    saved = json.loads((state / "gui-window.json").read_text())
+    assert saved["width"] == app.DEFAULT_WIDTH
+    assert saved["height"] == app.DEFAULT_HEIGHT
+    assert saved["x"] >= 0 and saved["y"] >= 0
+    # A saved geometry the screens still show wins over the
+    # default (#939): the second open takes the closed rect
+    # back — place and size together.
+    (state / "gui-window.json").write_text(
+        json.dumps({"x": 30, "y": 40, "width": 900, "height": 620})
     )
+    assert app.run() == 0
+    second = opened["geometry"][0]
+    assert second[2:] == (900, 620)
+    assert abs(second[0] - 30) <= 4 and abs(second[1] - 40) <= 4
+    # A rect no connected screen shows is refused (#939): a
+    # monitor change or an unplugged display leaves the old
+    # place off the desktop, and the default answers instead —
+    # a window opened where nothing can see it never comes
+    # back.
+    (state / "gui-window.json").write_text(
+        json.dumps({"x": 99999, "y": 99999, "width": 900, "height": 620})
+    )
+    assert app.run() == 0
+    assert opened["geometry"][0][2:] == (
+        app.DEFAULT_WIDTH,
+        app.DEFAULT_HEIGHT,
+    )
+    # Every run scaled the shared application's font; restore it
+    # so later tests in this worker measure with the platform's
+    # own metrics.
+    restored = qapp.font()
+    restored.setPointSizeF(default_size)
+    qapp.setFont(restored)
     # The style pin (#937): whatever the session would name, the
     # window runs Fusion — the wheel ships it inside QtWidgets,
     # so no session style engine loads alongside it.
@@ -307,7 +411,7 @@ def test_the_gui_window_opens_offscreen(
 
 
 def test_open_window_reuses_an_existing_app(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The window path survives a QApplication made earlier in
     the process — the instance check, not a second application
@@ -326,15 +430,21 @@ def test_open_window_reuses_an_existing_app(
     stops: list[object] = []
     styles: list[str] = []
     central: list[object] = []
-    screens: list[object] = []
+    built: list[object] = []
 
     class FakeSignal:
         def connect(self, slot: object) -> None:
             stops.append(slot)
 
-    class FakeSize:
-        """The window size's shape for the opening-size pin
-        (#939): the Qt calls the window path makes."""
+    class FakeRect:
+        """The window geometry's shape for the save pin (#939):
+        the four reads the close path makes."""
+
+        def x(self) -> int:
+            return 10
+
+        def y(self) -> int:
+            return 20
 
         def width(self) -> int:
             return 640
@@ -349,14 +459,11 @@ def test_open_window_reuses_an_existing_app(
         def setCentralWidget(self, widget: object) -> None:
             central.append(widget)
 
-        def adjustSize(self) -> None:
-            pass  # the fake already carries its opening size
-
-        def size(self) -> FakeSize:
-            return FakeSize()
-
         def resize(self, width: int, height: int) -> None:
             shown.append(f"sized {width}x{height}")
+
+        def geometry(self) -> FakeRect:
+            return FakeRect()
 
         def show(self) -> None:
             shown.append("shown")
@@ -367,7 +474,7 @@ def test_open_window_reuses_an_existing_app(
         bridge it was built over."""
 
         def __init__(self, bridge: object) -> None:
-            screens.append(bridge)
+            built.append(bridge)
 
     monkeypatch.setattr(workspaces_mod, "WorkspaceList", FakeScreen)
 
@@ -411,6 +518,12 @@ def test_open_window_reuses_an_existing_app(
     # teardown drops the copy with monkeypatch's restore.
     monkeypatch.setattr(os, "environ", dict(os.environ))
     os.environ.pop("QT_STYLE_OVERRIDE", None)
+    # The saved geometry's path, isolated (#939): the stub run
+    # must read nothing the operator saved and write nothing it
+    # would see — an empty temporary root answers both.
+    monkeypatch.setattr(
+        app, "geometry_path", lambda: tmp_path / "gui-window.json"
+    )
     stub = ModuleType("QtWidgets")
     stub.QApplication = FakeApp  # type: ignore[attr-defined]
     stub.QMainWindow = FakeWindow  # type: ignore[attr-defined]
@@ -428,9 +541,9 @@ def test_open_window_reuses_an_existing_app(
     # The font scale (#939): the default 9pt scales to 13.5 —
     # one write on the application font, before any widget.
     assert "font 13.5" in shown
-    # The opening size (#939): the width the layout named, the
-    # height doubled.
-    assert "sized 640x960" in shown
+    # The opening size (#939): nothing saved answers, so the
+    # fixed 1280x720 default does.
+    assert "sized 1280x720" in shown
     # The override landed before the constructor could consult
     # the session theme.
     assert os.environ["QT_STYLE_OVERRIDE"] == "Fusion"
@@ -439,14 +552,18 @@ def test_open_window_reuses_an_existing_app(
     # is the central widget, built over the same bridge the
     # window started.
     assert len(central) == 1
-    assert screens == started
+    assert built == started
     assert shown[-1] == "stopped"  # the return path stopped the bridge
     assert len(started) == 1  # started with the window
     assert len(stops) == 1  # aboutToQuit holds the same stop
+    # The saved geometry written on close (#939): the fake's
+    # rect, as the next open reads it.
+    saved = json.loads((tmp_path / "gui-window.json").read_text())
+    assert saved == {"x": 10, "y": 20, "width": 640, "height": 480}
 
 
 def test_open_window_keeps_a_user_style_choice(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A preset ``QT_STYLE_OVERRIDE`` is the user's own choice
     (#937): the window neither rewrites the variable nor resets
@@ -472,24 +589,26 @@ def test_open_window_keeps_a_user_style_choice(
         def setCentralWidget(self, widget: object) -> None:
             central.append(widget)
 
-        def adjustSize(self) -> None:
-            pass
-
-        def size(self) -> FakeSize:
-            return FakeSize()
-
         def resize(self, width: int, height: int) -> None:
             pass
 
-        def show(self) -> None:
-            pass
+        def geometry(self) -> object:
+            return self
 
-    class FakeSize:
+        def x(self) -> int:
+            return 0
+
+        def y(self) -> int:
+            return 0
+
         def width(self) -> int:
-            return 640
+            return 800
 
         def height(self) -> int:
-            return 480
+            return 600
+
+        def show(self) -> None:
+            pass
 
     class FakeScreen:
         def __init__(self, bridge: object) -> None:
@@ -527,6 +646,11 @@ def test_open_window_keeps_a_user_style_choice(
 
     monkeypatch.setattr(os, "environ", dict(os.environ))
     os.environ["QT_STYLE_OVERRIDE"] = "Chosen"
+    # The saved geometry's path, isolated (#939): nothing the
+    # operator saved is read, nothing this run writes is seen.
+    monkeypatch.setattr(
+        app, "geometry_path", lambda: tmp_path / "gui-window.json"
+    )
     stub = ModuleType("QtWidgets")
     stub.QApplication = FakeApp  # type: ignore[attr-defined]
     stub.QMainWindow = FakeWindow  # type: ignore[attr-defined]

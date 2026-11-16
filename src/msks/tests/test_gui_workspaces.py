@@ -175,7 +175,9 @@ def test_the_list_renders_the_row_models(qt) -> None:
     image falling back to the hash, the created reading the
     shared ladder, ``-`` where the row carries nothing."""
     screen, window, _bridge = make_screen(qt)
-    window.resize(1400, 700)  # every whole value fits: no ellipsis
+    # A pane wide enough under any style's margins: every whole
+    # value fits, no ellipsis.
+    window.resize(2000, 700)
     qt.app.processEvents()
     assert screen.table.rowCount() == 3
     labels = [screen.table.item(row, 0).text() for row in range(3)]

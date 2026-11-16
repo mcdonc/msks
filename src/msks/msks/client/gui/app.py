@@ -10,13 +10,16 @@ the presenter's row models and refreshes them through the
 bridge.
 """
 
+import json
 import math
 import os
 import subprocess
 import sys
 from importlib.util import find_spec
+from pathlib import Path
 from types import ModuleType
 
+from ..sshsessions import state_dir
 from .data import GuiData
 
 # What a base install hears when it asks for the window (#928):
@@ -65,20 +68,30 @@ FUSION_STYLE = "Fusion"
 #: before the first widget reads it.
 FONT_SCALE = 1.5
 
-#: The window's opening height scale (#939): a main window
-#: shrinks to its central widget's size hint when it shows, and
-#: the empty listing's hint alone leaves the window short. The
-#: window opens at the layout's own height doubled, its width
-#: the layout's own.
-HEIGHT_SCALE = 2.0
+#: The window's opening size (#939), the shape no saved
+#: geometry answers: 1280 by 720 — a listing five columns wide
+#: reads comfortably, and a 16:9 desktop shows it whole.
+DEFAULT_WIDTH = 1280
+DEFAULT_HEIGHT = 720
 
 #: The environment knob for the font scale (#939): an operator
 #: whose display or taste reads the default wrong sets it. The
-#: same knob shape for the height scale below — presentation
-#: defaults, each overridable per launch in the style pin's own
-#: spirit (#937: a preset choice is the user's own).
+#: window's size needs no knob — it answers to the saved
+#: geometry or the fixed default above.
 FONT_SCALE_ENV = "MSKSC_GUI_FONT_SCALE"
-HEIGHT_SCALE_ENV = "MSKSC_GUI_HEIGHT_SCALE"
+
+#: The saved window geometry's file name, under the client
+#: state root (#939): the window opens where it last closed,
+#: and the fixed default applies only until the first close
+#: remembers a geometry.
+GEOMETRY_FILE = "gui-window.json"
+
+
+def geometry_path() -> Path:
+    """The saved-geometry file under the client state root
+    (#939) — ``MSKSC_STATE_DIR`` when set, else the XDG state
+    home's msks subtree, the sessions' own root."""
+    return state_dir() / GEOMETRY_FILE
 
 
 def scale_from_env(name: str, default: float) -> float:
@@ -98,6 +111,77 @@ def scale_from_env(name: str, default: float) -> float:
     if math.isfinite(value) and value > 0:
         return value
     return default
+
+
+def read_geometry() -> tuple[int, int, int, int] | None:
+    """The saved window geometry (#939) as a plain rect — x, y,
+    width, height — or ``None`` when nothing usable is saved: no
+    file, text that does not parse, fields that are missing or
+    not whole numbers, or a rect with no area."""
+    try:
+        doc = json.loads(geometry_path().read_text())
+        rect = (
+            int(doc["x"]),
+            int(doc["y"]),
+            int(doc["width"]),
+            int(doc["height"]),
+        )
+    except OSError, ValueError, TypeError, KeyError:
+        return None
+    x, y, width, height = rect
+    if width <= 0 or height <= 0:
+        return None
+    return rect
+
+
+def save_geometry(window) -> None:
+    """The window's last geometry written (#939): the rect the
+    operator left — place and size together — for the next open
+    to take back. The write is best-effort: a state root it
+    cannot write (read-only, unwritable) says so on stderr, the
+    client's one-line convention, and the window still closes."""
+    box = window.geometry()
+    try:
+        root = geometry_path().parent
+        root.mkdir(parents=True, exist_ok=True)
+        geometry_path().write_text(
+            json.dumps(
+                {
+                    "x": box.x(),
+                    "y": box.y(),
+                    "width": box.width(),
+                    "height": box.height(),
+                }
+            )
+        )
+    except OSError as exc:
+        print(f"msks: cannot save the window geometry: {exc}", file=sys.stderr)
+
+
+def restore_geometry(window) -> bool:
+    """The saved geometry applied to the window (#939): the rect
+    the last close wrote, when a connected screen still shows
+    some of it — a monitor change or an unplugged display leaves
+    the old rect off the desktop, and a window opened where
+    nothing can see it never comes back. Nothing usable saved
+    answers False, and the caller opens on the scaled
+    defaults."""
+    # allow-deferred-import — the binding loads only on the
+    # window path (run's guards answered absence already).
+    from PySide6 import QtCore, QtGui
+
+    rect = read_geometry()
+    if rect is None:
+        return False
+    x, y, width, height = rect
+    box = QtCore.QRect(x, y, width, height)
+    if not any(
+        screen.availableGeometry().intersects(box)
+        for screen in QtGui.QGuiApplication.screens()
+    ):
+        return False
+    window.setGeometry(box)
+    return True
 
 
 def gui_session_present() -> bool:
@@ -222,18 +306,14 @@ def open_window(QtWidgets: ModuleType) -> int:
     from .workspaces import WorkspaceList
 
     window.setCentralWidget(WorkspaceList(bridge))
-    # The opening size (#939): ``adjustSize`` pins the central
-    # widget's size hint as the window's own geometry before
-    # the show shrinks to it, and the resize scales the height —
-    # the listing's hint alone opens short. A preset knob is
-    # the operator's own choice and wins over the default.
-    window.adjustSize()
-    size = window.size()
-    window.resize(
-        size.width(),
-        round(size.height() * scale_from_env(HEIGHT_SCALE_ENV, HEIGHT_SCALE)),
-    )
+    # The opening geometry (#939): the last-closed rect wins —
+    # a saved geometry the screens still show — and the fixed
+    # 1280 by 720 is the first-open shape until a close
+    # remembers one.
+    if not restore_geometry(window):
+        window.resize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
     window.show()
     code = app.exec()
     bridge.stop()
+    save_geometry(window)
     return code

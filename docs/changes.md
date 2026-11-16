@@ -21,11 +21,11 @@ tagged `vX.Y.Z`.
   created), refreshed on a five-second tick and a Refresh
   button. A refused refresh flashes a status line while the
   rows stand; an outage holds its message until the daemon
-  answers again. The window opens with its fonts at 1.5× the
-  platform default and its height at 2× the listing's size
-  hint; set `MSKSC_GUI_FONT_SCALE` or
-  `MSKSC_GUI_HEIGHT_SCALE` to change either (see
-  `docs/cli.md` → Client environment).
+  answers again. The window opens at 1280×720, runs its fonts
+  at 1.5× the platform default (`MSKSC_GUI_FONT_SCALE` to
+  change), and reopens at the geometry it last closed at —
+  kept under the client state root (see `docs/cli.md` →
+  Client environment).
 
 ### Fixed
 
