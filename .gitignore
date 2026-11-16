@@ -31,3 +31,10 @@ src/console-helper/.rustc_info.json
 
 # The locally served docs build (msks-docs)
 /site/
+
+# ghostling-qt spike (phase 4.5): venv and vendored library
+spikes/ghostling-qt/.venv/
+spikes/ghostling-qt/.libdirs
+spikes/ghostling-qt/vendor/*.so
+spikes/ghostling-qt/vendor/*.zip
+spikes/ghostling-qt/vendor/fonts/
