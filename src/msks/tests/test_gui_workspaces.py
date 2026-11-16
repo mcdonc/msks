@@ -981,6 +981,19 @@ def test_the_storage_cache_keeps_standing_figures(qt) -> None:
     )
     assert "storage 2G" in screen.detail.text()
     assert screen.status.text() == ""  # the silence
+    # Entries that predate the per-row fields — no bytes, or
+    # no id — read as nothing; the good entry lands.
+    screen.on_succeeded(
+        "workspaces-storage",
+        {
+            "workspaces": [
+                {"id": "ws-9"},
+                {"root_bytes": 1, "home_bytes": 1},
+                {"id": "ws-2", "root_bytes": 1073741824, "home_bytes": 1},
+            ]
+        },
+    )
+    assert "storage 1G" in screen.detail.text()
     screen.on_succeeded("workspaces-storage", {"workspaces": []})
     assert "storage -" in screen.detail.text()
     # The next listing answer takes another storage flight out.
