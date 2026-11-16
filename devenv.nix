@@ -93,25 +93,38 @@ let
   # Python/uv toolchain, the gates), and the daemon, its
   # processes, and the smoke paths stay Linux-only by nature (they
   # drive /dev/kvm).
+  # The PySide6 wheels' sonames (#927): the manylinux wheels link
+  # the FHS shared objects a Nix store path never provides, so
+  # every soname readelf names over the installed wheel's .so
+  # files gets its store path here — verified with the offscreen
+  # import test in test_client_gui.py, which fails when a soname
+  # is missing (a plain NixOS host has no nix-ld to paper over
+  # it; the CI runner's FHS dirs would hide the gap the other
+  # way, so the test is the pin).
   gui-libs = with pkgs; [
+    stdenv.cc.cc.lib # libstdc++.so.6, every Qt .so links it
+    libgcc # libgcc_s.so.1, beside libstdc++
+    zlib # libz.so.1, QtCore's compressor
+    zstd # libzstd.so.1, beside it
     libGL # QtGui's OpenGL link; offscreen still loads it
+    libdrm # libGL's own dependency, its own store path
     libxkbcommon # the keymap translation every platform plugin shares
     glib # QtCore's event-loop integration
     dbus.lib # libdbus-1.so.3, QtDBus's link (the daemon lib output)
     fontconfig # font resolution for the offscreen renderer (#928)
     freetype # fontconfig's rasterizer backend
-    libdrm # libGL's own dependency, its own store path
-    libxcb # the X protocol transport libX11 rides
     expat # fontconfig's parser, its own store path
-    libSM
-    libICE # the session libs the xcb platform plugin links
-    xorg.libX11
+    libxcb # the X protocol transport, the core connection only
+    xorg.xcbutilcursor # libxcb-cursor.so.0 — Qt 6.5+ requires it for xcb
+    xorg.xcbutilwm # libxcb-icccm.so.4, the xcb plugin's window manager talk
+    xorg.xcbutil # libxcb-util.so.1, the atoms/geometry helpers
+    xorg.xcbutilimage # libxcb-image.so.0, the xcb plugin's pixmaps
+    xorg.xcbutilkeysyms # libxcb-keysyms.so.1, key mapping over xcb
+    xorg.xcbutilrenderutil # libxcb-render-util.so.0, xcb rendering helpers
+    xorg.libX11 # the X family QtGui and the xcb plugin link
     xorg.libXext
     xorg.libXfixes
-    xorg.libXi
     xorg.libXrandr
-    xorg.libXrender
-    xorg.libXcursor # the X family QtGui and the xcb plugin link
   ];
 
   linuxOnly = with pkgs; [
@@ -190,10 +203,12 @@ in
   # Linux only (#665): the libraries live in the Linux-only
   # package set, so a macOS shell exports an empty path rather
   # than forcing their (unevaluatable) store paths. The gui-libs
-  # set (#927) carries the same story for the PySide6 wheels: the
-  # manylinux wheels link the usual FHS shared objects, which a
-  # Nix store path never provides — a macOS runner needs none of
-  # them (its wheels link the system frameworks).
+  # set (#927) carries the same story for the PySide6 wheels:
+  # every soname their .so files name gets a store path, so a
+  # plain NixOS host (no nix-ld, no FHS compat) imports QtCore
+  # and loads the xcb platform plugin unaided. A macOS shell
+  # needs none of them (its wheels bundle their Qt dylibs and
+  # link the system frameworks), so the export stays Linux-only.
   env.LD_LIBRARY_PATH = lib.optionalString pkgs.stdenv.isLinux (
     lib.concatStringsSep ":" (
       [
@@ -241,7 +256,7 @@ in
     # on a current venv it is a ~0.1s no-op, cheaper than getting the gate
     # right. `after` pins ordering: the venv must exist before sync, or
     # devenv:python:virtualenv would `rm -rf` the freshly-synced deps. The
-    # --extra gui (#927) rides the sync so the dev shell and CI can import
+    # --extra gui (#927) joins the sync so the dev shell and CI can import
     # PySide6 for the GUI suite's offscreen tests (#924).
     "msks:uv-sync" = {
       exec = ''
