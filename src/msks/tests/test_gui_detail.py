@@ -58,16 +58,34 @@ def frames() -> list[dict]:
             },
         },
         {"event": "workspace.status", "data": {"id": WS, "status": "running"}},
-        # The stream's second id convention: the consent frames.
+        # The consent frames' daemon shape: the legacy scalar and
+        # the nested request row the line reads its destination
+        # from — never a dict repr.
         {
             "event": "egress.request",
-            "data": {"workspace_id": WS, "host": "example.com", "port": 443},
+            "data": {
+                "workspace_id": WS,
+                "request": {
+                    "id": "req-1",
+                    "workspace_id": WS,
+                    "dest_host": "api.anthropic.com",
+                    "dest_port": 443,
+                },
+            },
+        },
+        # The secret frames' truth: the workspaces list.
+        {
+            "event": "secret.unlock",
+            "data": {"workspaces": ["ws-b", WS], "ts": 1767225600.5},
         },
         # A payload family the section keeps: the line reads the
-        # payload, not the name alone.
+        # payload's scalars and joined list, never a repr.
         {
-            "event": "proxy.failed",
-            "data": {"id": WS, "listen_port": 8080, "reason": "refused"},
+            "event": "workspace.resized",
+            "data": {
+                "id": WS,
+                "changes": ["root grew to 4096 MiB", "cpus set to 4"],
+            },
         },
     ]
 
@@ -148,6 +166,14 @@ def test_the_health_section_reads_the_doc() -> None:
         ("machine", "x86_64"),
         ("image", "-"),
     )
+    # Every fact reads the honest dash when the doc carries
+    # nothing for it.
+    assert detail_mod.health_pairs({"machine": "arm64"}) == (
+        ("status", "-"),
+        ("version", "-"),
+        ("machine", "arm64"),
+        ("image", "-"),
+    )
     assert detail_mod.health_pairs(None) == ()
     with_image = dict(doc, image="debian:13.6")
     assert detail_mod.health_pairs(with_image)[-1] == (
@@ -166,15 +192,17 @@ def test_the_events_section_reads_the_workspace_tail() -> None:
         "workspace.status",
         "mount.skipped",
         "workspace.status",
-        "egress.request",  # named under the second convention
-        "proxy.failed",
+        "egress.request",  # named under the legacy scalar
+        "secret.unlock",  # named under the workspaces list
+        "workspace.resized",
     ]
     assert [entry.line for entry in events] == [
         "status starting",
         "/mnt/gone skipped",
         "status running",
-        "egress.request host=example.com port=443",
-        "proxy.failed listen_port=8080 reason=refused",
+        "egress api.anthropic.com:443 request",
+        "secret.unlock ts=1767225600.5",
+        ("workspace.resized changes=root grew to 4096 MiB,cpus set to 4"),
     ]
     # The tail keeps its limit; an empty payload reads the name
     # alone, and another workspace stays out under either id
@@ -189,7 +217,13 @@ def test_the_events_section_reads_the_workspace_tail() -> None:
         {"event": "workspace.status", "data": {"id": "ws-b", "status": "up"}},
         {
             "event": "egress.request",
-            "data": {"workspace_id": "ws-b", "host": "x", "port": 1},
+            "data": {"workspace_id": "ws-b", "request": {}},
+        },
+        {"event": "secret.unlock", "data": {"workspaces": ["ws-c"]}},
+        # A daemon-wide row belongs to no workspace's page.
+        {
+            "event": "secret.unlock",
+            "data": {"workspace_id": "*", "workspaces": []},
         },
     ]
     assert detail_mod.event_entries(other, WS) == ()
@@ -213,7 +247,7 @@ def test_the_sections_compose() -> None:
     assert model.mounts[0].state == detail_mod.SKIPPED
     assert model.pending_note == detail_mod.PENDING_NOTE
     assert model.health[0] == ("status", "ok")
-    assert len(model.events) == 5
+    assert len(model.events) == 6
     nameless = detail_mod.detail_sections(
         daemon_row(name=None, mounts=[]), None, []
     )

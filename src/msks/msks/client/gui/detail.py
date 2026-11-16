@@ -138,20 +138,39 @@ def health_pairs(doc: dict | None) -> tuple[tuple[str, str], ...]:
     if not doc:
         return ()
     keys = ("status", "version", "machine", "image")
-    return tuple((key, str(doc.get(key) or "-")) for key in keys)
+    return tuple(
+        (key, "-" if doc.get(key) is None else str(doc[key])) for key in keys
+    )
 
 
 def event_line(frame: dict) -> str:
     """One frame's compact line (#8, #944): the lifecycle
-    transition's status word for a status frame, the mount and
-    its reason for a skip frame, the stream name alone for
-    anything else."""
+    transition's status word for a status frame, the skipped
+    mount's guest and kind for a mount frame, the consent
+    request's destination for an egress frame, and the stream
+    name with its payload's scalar fields for anything
+    else."""
     kind = frame.get("event") or "?"
     data = frame.get("data") or {}
     if kind == "workspace.status":
-        return f"status {data.get('status', '?')}"
+        return status_event_line(data)
+    return named_event_line(kind, data)
+
+
+def status_event_line(data: dict) -> str:
+    """The status frame's compact line (#8): the transition's
+    own word."""
+    return f"status {data.get('status', '?')}"
+
+
+def named_event_line(kind: str, data: dict) -> str:
+    """The named families' lines (#8, #944): the mount and
+    egress families carry their own; everything else reads the
+    generic payload line."""
     if kind.startswith("mount."):
         return mount_event_line(kind, data)
+    if kind.startswith("egress."):
+        return egress_event_line(kind, data)
     return payload_line(kind, data)
 
 
@@ -164,15 +183,42 @@ def mount_event_line(kind: str, data: dict) -> str:
 
 def payload_line(kind: str, data: dict) -> str:
     """A kept frame's generic line (#944): the stream name with
-    its payload's fields as ``key=value`` pairs, the id fields
-    the filter matched on left out — a family the section keeps
-    reads what its payload names, not its name alone."""
-    fields = " ".join(
-        f"{key}={value}"
-        for key, value in sorted(data.items())
-        if key not in ("id", "workspace_id")
-    )
-    return f"{kind} {fields}".rstrip()
+    its payload's scalar fields as ``key=value`` pairs — a list
+    joined, a nested mapping left to its family's own dedicated
+    line — the id fields the filter matched on left out. A
+    family the section keeps reads what its payload names, not
+    its name alone."""
+    fields = []
+    for key in sorted(data):
+        if key in ("id", "workspace_id", "workspaces"):
+            continue
+        text = value_text(data[key])
+        if text:
+            fields.append(f"{key}={text}")
+    line = " ".join(fields)
+    return f"{kind} {line}".rstrip()
+
+
+def value_text(value: object) -> str:
+    """One payload value as line text (#944): a scalar as its
+    own str, a list joined by commas; a nested mapping renders
+    nothing here — the family that carries one has its own
+    dedicated line."""
+    if isinstance(value, dict):
+        return ""
+    if isinstance(value, (list, tuple)):
+        return ",".join(str(item) for item in value)
+    return str(value)
+
+
+def egress_event_line(kind: str, data: dict) -> str:
+    """A consent frame's compact line (#944): the nested request
+    row's destination beside the frame's own verb."""
+    request = data.get("request") or {}
+    host = request.get("dest_host") or "?"
+    port = request.get("dest_port")
+    port_text = "?" if port is None else str(port)
+    return f"egress {host}:{port_text} {kind.partition('.')[2]}"
 
 
 def event_entries(
@@ -180,10 +226,9 @@ def event_entries(
 ) -> tuple[EventEntry, ...]:
     """The events section (#8, #944): the workspace's recent
     frames, newest last, the tail the detail view reads. The
-    stream's two id conventions both name a workspace — ``id``
-    on the lifecycle frames, ``workspace_id`` on the consent and
-    secret frames — and the section keeps a frame under
-    either."""
+    stream's naming conventions all reach here — ``id`` on the
+    lifecycle frames, the consent and secret frames' scalar and
+    list forms — and the section keeps a frame under any."""
     mine = [
         EventEntry(kind=frame.get("event") or "?", line=event_line(frame))
         for frame in frames
@@ -194,10 +239,16 @@ def event_entries(
 
 def frame_names(data: dict, workspace_id: str) -> bool:
     """Whether one frame's data names the workspace (#944):
-    under either of the stream's id conventions."""
+    under any of the stream's naming conventions — ``id`` on the
+    lifecycle frames, the legacy ``workspace_id`` scalar on the
+    consent and secret frames, and the ``workspaces`` list those
+    frames' own contract calls the truth. A daemon-wide row
+    (``*``) belongs to no workspace's page."""
     if data.get("id") == workspace_id:
         return True
-    return data.get("workspace_id") == workspace_id
+    if data.get("workspace_id") == workspace_id:
+        return True
+    return workspace_id in (data.get("workspaces") or [])
 
 
 def detail_sections(
