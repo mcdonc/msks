@@ -220,10 +220,13 @@ def test_a_feed_done_before_stop_stops_clean(qapp_setup) -> None:
     bridge.start()
     # Let the task land done before the stop takes the bridge.
     deadline = time.monotonic() + 10.0
-    task = bridge._feed_task
-    while time.monotonic() < deadline and not task.done():
+    task = None
+    while time.monotonic() < deadline:
+        task = bridge._feed_task
+        if task is not None and task.done():
+            break
         time.sleep(TICK)
-    assert task.done()
+    assert task is not None and task.done()
     bridge.stop()
     assert not bridge.running
 
