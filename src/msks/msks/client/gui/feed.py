@@ -19,6 +19,8 @@ import asyncio
 import json
 import logging
 
+import websockets
+
 from ..egress import env_dial_events
 
 logger = logging.getLogger(__name__)
@@ -27,6 +29,17 @@ logger = logging.getLogger(__name__)
 #: (#69): a repeatedly-dropping daemon must not spin the client,
 #: and a daemon that comes back heals inside five seconds.
 RECONNECT_DELAYS = (1.0, 2.0, 5.0)
+
+#: The daemon's token-refusal close code (#216) — the TUI wire's
+#: own 4401: a token the daemon does not hold cannot become
+#: valid by reconnecting, so the retry after one slows to the
+#: fixed interval below.
+AUTH_CLOSE_CODE = 4401
+
+#: After an auth-refused close, seconds between retries — the
+#: TUI wire's own interval: bounded noise on a refused token,
+#: and a corrected token still heals the feed mid-session.
+REFUSED_RETRY_S = 60.0
 
 
 def backoff(delays: tuple[float, ...], attempt: int) -> float:
@@ -37,6 +50,12 @@ def backoff(delays: tuple[float, ...], attempt: int) -> float:
         return 0.0
     step = min(max(attempt - 1, 0), len(delays) - 1)
     return delays[step]
+
+
+def refused_close(exc: websockets.ConnectionClosed) -> bool:
+    """Whether a close was the daemon's token refusal (#216) —
+    the TUI wire's own read of the same code."""
+    return exc.rcvd is not None and exc.rcvd.code == AUTH_CLOSE_CODE
 
 
 def decode_frame(raw: str) -> dict | None:
@@ -77,19 +96,26 @@ class EventsFeed:
     async def run(self) -> None:
         """Connect and serve until cancelled, the ladder between
         every attempt: reset by a connection that served, climbed
-        by one that never reached its serve loop."""
+        by one that never reached its serve loop. An auth-refused
+        close takes the fixed slow interval instead — a token the
+        daemon does not hold cannot become valid by
+        reconnecting."""
         attempt = 0
         while True:
-            served = await self.pump_one()
+            served, refused = await self.pump_one()
+            if refused:
+                await asyncio.sleep(REFUSED_RETRY_S)
+                continue
             attempt = 0 if served else attempt + 1
             await asyncio.sleep(backoff(self.reconnect_delays, attempt))
 
-    async def pump_one(self) -> bool:
-        """One connection's lifetime; True when it reached its
-        serve loop (the ladder resets on the next attempt), False
-        when the dial itself failed (the ladder climbs). Every
-        end — dial failure, wire error, the daemon's clean close
-        — tells the drop with its reason."""
+    async def pump_one(self) -> tuple[bool, bool]:
+        """One connection's lifetime; ``(served, refused)`` —
+        whether it reached its serve loop (the ladder resets on
+        the next attempt), and whether the daemon's close was
+        its token refusal (the fixed slow interval instead).
+        Every end — dial failure, wire error, the daemon's clean
+        close — tells the drop with its reason."""
         try:
             ws = await self.ws_factory().__aenter__()
         except (SystemExit, Exception) as exc:
@@ -102,24 +128,39 @@ class EventsFeed:
             # also keeps the exit contract from killing the task
             # silently (AGENTS.md's exception rule).
             self.note_drop(f"the dial failed: {exc}")
-            return False
+            return False, False
         try:
             await self.serve(ws)
+        except websockets.ConnectionClosed as exc:
+            refused = refused_close(exc)
+            self.note_drop(
+                "the daemon refused the token"
+                if refused
+                else f"the socket broke: {exc}"
+            )
+            return True, refused
         except Exception as exc:
+            # An on_frame callback's own raise lands here too
+            # and reads as the socket's break — a lie about the
+            # source, but the reconnect heals it; Qt's emit does
+            # not raise, so nothing real takes this arm for the
+            # callback.
             self.note_drop(f"the socket broke: {exc}")
-            return True
+            return True, False
         finally:
             await self.close_quietly(ws)
         self.note_drop("the daemon closed the events socket")
-        return True
+        return True, False
 
     async def serve(self, ws) -> None:
-        """Receive until the stream ends: a connection that got
-        this far resets the ladder and, after a drop, tells the
-        reconnect. Every decoded frame crosses to ``on_frame``;
+        """Receive until the stream ends: the first frame tells
+        the reconnect — a frame proves the stream, where a
+        connection that only reached the handshake proves
+        nothing (the daemon accepts and then refuses a bad
+        token). Every decoded frame crosses to ``on_frame``;
         junk is skipped, logged, not fatal."""
-        self.note_connection()
         async for raw in ws:
+            self.note_connection()
             self.land(raw)
 
     def land(self, raw: str) -> None:

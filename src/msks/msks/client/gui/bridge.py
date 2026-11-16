@@ -142,17 +142,24 @@ class Bridge(QtCore.QObject):
         self._feed_task = loop.create_task(feed.run())
 
     def stop_feed(self, loop: asyncio.AbstractEventLoop) -> None:
-        """One loop-turn shutdown (#946): the feed task cancelled
-        first, then the stop behind a zero-delay timer — the
-        cancel queues the task's step, and the timer fires only
-        after the step lands, so the cancellation reaches the
-        task's own ``except CancelledError`` (a socket's close
-        among them) before the loop exits. A stop scheduled
-        straight after the cancel would win the race and leave
-        the task destroyed-but-pending."""
-        if self._feed_task is not None:
-            self._feed_task.cancel()
-        loop.call_later(0, loop.stop)
+        """The loop's shutdown (#946): the feed task cancelled,
+        and the stop told by the task's own completion — the
+        task's unwind suspends inside its socket's close, so a
+        stop on a timer can outrun the unwind and leave the task
+        destroyed-but-pending; the completion callback cannot.
+        No feed task means a plain stop."""
+        if self._feed_task is None:
+            loop.stop()
+            return
+        task = self._feed_task
+        task.cancel()
+
+        def finished(_task: asyncio.Task) -> None:
+            if not _task.cancelled():
+                _task.exception()  # retrieved, whatever it was
+            loop.stop()
+
+        task.add_done_callback(finished)
 
     def call(self, key: str, method: str, *args: object):
         """Run one :class:`GuiData` coroutine by name — the

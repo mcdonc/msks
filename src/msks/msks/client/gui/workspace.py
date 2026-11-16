@@ -17,7 +17,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..data import RestFailure
 from .bridge import Bridge
-from .detail import DetailSections, detail_sections
+from .detail import DetailSections, detail_sections, frame_names
 from .rows import workspace_row
 from .workspaces import (
     FLASH_MS,
@@ -98,6 +98,12 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.health_pending = False
         self.flash_seq = 0
         self.flash_outage = False
+        # The timer first: a hide event Qt delivers during the
+        # build (a stack raising a half-built child among them)
+        # must not meet a page whose timer does not exist yet.
+        self.timer = QtCore.QTimer(self)
+        self.timer.setInterval(REFRESH_MS)
+        self.timer.timeout.connect(self.refresh)
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
         self.title = QtWidgets.QLabel("", self)
@@ -120,9 +126,6 @@ class WorkspaceDetail(QtWidgets.QWidget):
             QtGui.QKeySequence(QtCore.Qt.Key.Key_Escape), self
         )
         escape.activated.connect(self.go_back)
-        self.timer = QtCore.QTimer(self)
-        self.timer.setInterval(REFRESH_MS)
-        self.timer.timeout.connect(self.refresh)
 
     def build_sections(self) -> QtWidgets.QWidget:
         """The three sections' column (#945): grouped boxes on
@@ -429,9 +432,14 @@ class WorkspaceDetail(QtWidgets.QWidget):
     @QtCore.Slot(object)
     def push_frame(self, frame: dict) -> None:
         """One pushed frame into the buffer (#945's seam, #946's
-        feed): the section re-renders from the buffer the moment
-        a frame lands — the presenter's filter keeps the frames
-        that name this workspace."""
+        feed): the buffer keeps only the frames that name this
+        workspace — the feed is a daemon-wide subscriber, and
+        busy siblings would otherwise evict this page's history
+        out of the cap — and the section re-renders the moment
+        one lands."""
+        data = frame.get("data") or {}
+        if not frame_names(data, self.workspace_id):
+            return
         self.frames.append(frame)
         if len(self.frames) > FRAMES_BUFFER:
             del self.frames[: len(self.frames) - FRAMES_BUFFER]
@@ -539,10 +547,14 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
     @QtCore.Slot(str)
     def feed_dropped(self, reason: str) -> None:
         """The events feed's drop (#946): the screen the operator
-        sees flashes it while the feed retries — each retry
-        re-tells, the outage's own heartbeat."""
+        sees flashes it, each retry re-telling — the outage's own
+        heartbeat while it lasts. The flash runs its own span,
+        not the screens' outage flag: that flag belongs to their
+        refresh answers (#904), and a REST answer arriving over
+        a still-down feed would otherwise read as the feed's
+        recovery."""
         screen = self.currentWidget()
-        screen.flash(f"the events feed dropped — {reason}", outage=True)
+        screen.flash(f"the events feed dropped — {reason}")
 
     @QtCore.Slot()
     def feed_back(self) -> None:

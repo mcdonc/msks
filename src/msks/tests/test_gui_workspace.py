@@ -527,15 +527,25 @@ def test_a_pushed_frame_refreshes_the_current_screen(qt) -> None:
     # The list owns the window: its refresh flew.
     assert ("workspaces-list", "workspaces", ()) in bridge.calls
     assert ("detail-health", "health", ()) not in bridge.calls
-    # The page buffered the frame anyway: its events section is
-    # the frame's own record.
-    assert len(shell.detail.frames) == 1
+    # No workspace is open on the page: the frame names none it
+    # holds, so nothing buffers.
+    assert shell.detail.frames == []
     shell.listing.opened.emit("ws-a")
     land(qt, shell.detail, bridge)  # the open's own flights answered
     bridge.calls.clear()
     shell.frame_landed({"event": "workspace.status", "data": {"id": "ws-a"}})
     assert ("detail-row", "workspaces", ()) in bridge.calls
     assert ("detail-health", "health", ()) in bridge.calls
+    # The open page buffers its own workspace's frame: its
+    # events section is the frame's own record.
+    assert len(shell.detail.frames) == 1
+    # A busy sibling cannot evict it (#946): the buffer keeps
+    # only this workspace's frames.
+    for _ in range(150):
+        shell.frame_landed(
+            {"event": "workspace.status", "data": {"id": "ws-b"}}
+        )
+    assert len(shell.detail.frames) == 1
 
 
 def test_the_feed_outage_flashes_the_current_screen(qt) -> None:
@@ -548,7 +558,13 @@ def test_the_feed_outage_flashes_the_current_screen(qt) -> None:
     assert shell.listing.status.text() == (
         "the events feed dropped — the socket broke"
     )
-    assert shell.listing.flash_outage
+    # The feed's flash runs its own span, not the screens' outage
+    # flag: a REST answer must not read as the feed's recovery.
+    assert not shell.listing.flash_outage
+    shell.listing.on_succeeded("workspaces-list", [])
+    assert shell.listing.status.text() == (
+        "the events feed dropped — the socket broke"
+    )
     shell.feed_back()
     assert shell.listing.status.text() == "the events feed reconnected"
     assert not shell.listing.flash_outage

@@ -10,6 +10,7 @@ import asyncio
 import importlib.util
 
 import pytest
+import websockets
 
 if importlib.util.find_spec("PySide6") is None:
     pytest.skip(
@@ -139,25 +140,30 @@ def test_frames_deliver_and_junk_skips() -> None:
     asyncio.run(scenario())
 
 
-def test_a_drop_tells_and_a_later_connection_reconnects() -> None:
+def refused_closed(code: int) -> websockets.ConnectionClosed:
+    """The wire's close exception with a received close code —
+    the shape a peer's close handshake lands."""
+    return websockets.ConnectionClosed(websockets.frames.Close(code, ""), None)
+
+
+def test_a_drop_tells_and_a_frame_proves_the_recovery() -> None:
     """The outage's own heartbeat (#946): a socket that breaks
     mid-stream tells the drop with the wire's reason, the clean
     close the daemon's own, the failed dial its refusal — each
     attempt re-telling while the feed retries — and the
-    connection that serves after a drop tells the reconnect
-    once, the standing drop cleared for the next."""
+    reconnect is proven by a frame, not a handshake: the
+    connection that serves after a drop tells it once, on its
+    first delivered frame, the standing drop cleared for the
+    next."""
 
     async def scenario() -> None:
+        frame = '{"event": "workspace.status", "data": {"id": "a"}}'
         sockets = [
             # Serves a frame, then the wire cuts.
-            FakeWS(
-                [
-                    '{"event": "workspace.status", "data": {"id": "a"}}',
-                    RuntimeError("wire cut"),
-                ]
-            ),
-            # The recovery: serves again, then the daemon closes.
-            FakeWS([]),
+            FakeWS([frame, RuntimeError("wire cut")]),
+            # The recovery: a frame proves it, then the daemon
+            # closes.
+            FakeWS([frame]),
             # The dial after the close: the daemon is down.
             BrokenDial(),
         ]
@@ -172,19 +178,20 @@ def test_a_drop_tells_and_a_later_connection_reconnects() -> None:
         seen.wire(feed)
         task = drive(feed)
         await settle(task)
-        assert [frame["event"] for frame in seen.frames] == [
-            "workspace.status"
+        # Both delivered frames — the recovery's as decoded as
+        # the first's.
+        assert seen.frames == [
+            {"event": "workspace.status", "data": {"id": "a"}},
+            {"event": "workspace.status", "data": {"id": "a"}},
         ]
         assert seen.drops == [
             "the socket broke: wire cut",
             "the daemon closed the events socket",
             "the dial failed: connection refused",
         ]
-        # Two recoveries: the second connection after the wire
-        # cut, and the parked tail after the daemon's close and
-        # the failed dial — every serving connection after a
-        # drop tells.
-        assert seen.reconnects == 2
+        # One recovery, proven by the second connection's frame;
+        # the parked tail delivered none.
+        assert seen.reconnects == 1
         task.cancel()
 
     asyncio.run(scenario())
@@ -197,7 +204,12 @@ def test_a_failed_dial_climbs_the_ladder_and_retries() -> None:
     finally serves resets it and recovers."""
 
     async def scenario() -> None:
-        sockets: list = [BrokenDial(), BrokenDial(), FakeWS([])]
+        frame = '{"event": "secret.unlock", "data": {"id": "a"}}'
+        sockets: list = [
+            BrokenDial(),
+            BrokenDial(),
+            FakeWS([frame]),  # serves a frame, then closes clean
+        ]
 
         def dial():
             return sockets.pop(0) if sockets else hang_socket()
@@ -212,10 +224,51 @@ def test_a_failed_dial_climbs_the_ladder_and_retries() -> None:
             "the dial failed: connection refused",
             "the daemon closed the events socket",
         ]
-        # Both serving connections came after drops: each tells
-        # its recovery — the empty script's, then the parked
-        # tail's.
-        assert seen.reconnects == 2
+        # The one serving connection delivered a frame after the
+        # drops: it tells the recovery; the parked tail — no
+        # frame — tells nothing.
+        assert seen.reconnects == 1
+        task.cancel()
+
+    asyncio.run(scenario())
+
+
+def test_a_refused_token_retries_slowly_and_tells_no_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The daemon's token refusal (#216, #946 — the TUI wire's
+    own read): a 4401 close tells the drop as the refusal, and
+    the retry after it takes the fixed slow interval, not the
+    ladder — a token the daemon does not hold cannot become
+    valid by reconnecting. The refused connection delivered no
+    frame, so it proves no recovery to tell."""
+
+    async def scenario() -> None:
+        monkeypatch.setattr(feed_mod, "REFUSED_RETRY_S", 0.001)
+        frame = '{"event": "workspace.status", "data": {"id": "a"}}'
+        sockets: list = [
+            FakeWS([frame, refused_closed(4401)]),
+            FakeWS([frame]),
+        ]
+
+        def dial():
+            return sockets.pop(0) if sockets else hang_socket()
+
+        feed = feed_mod.EventsFeed(ws_factory=dial)
+        seen = Recorder()
+        seen.wire(feed)
+        task = drive(feed)
+        await settle(task)
+        assert seen.drops == [
+            "the daemon refused the token",
+            "the daemon closed the events socket",
+        ]
+        # The first frame of the first connection proves nothing
+        # (the standing drop came later); the slow retry's frame
+        # does.
+        assert seen.reconnects == 1
+        assert feed_mod.refused_close(refused_closed(4401))
+        assert not feed_mod.refused_close(refused_closed(1000))
         task.cancel()
 
     asyncio.run(scenario())
