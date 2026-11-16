@@ -134,37 +134,7 @@ jobs:
         # past the default 60s of wall — the timeout would kill
         # the test before the wait's own diagnostics line fires,
         # the one artifact that names the mechanism.
-        # -v while the #934 mac stall is hunted: two runs hung at
-        # 98% with no test name, and the signal timeout never
-        # fired, so the hang sits past Python's reach (native
-        # code or worker shutdown); the verbose ids name the last
-        # test standing. Drop back to -q once the stall is fixed.
-        #
-        # The stack-dump sidecar is the same hunt's instrument:
-        # every minute it samples the controller and every worker
-        # (py-spy when it can attach, macOS sample as the always-
-        # present fallback), so a stall leaves the blocked frames
-        # in the log instead of 25 minutes of silence. It leaves
-        # with the stall fix too.
-        run: |
-          python -m pip install --quiet py-spy
-          python -m pytest src/msks/tests --no-cov -n auto -v --timeout=120 & PYT=$!
-          ( for i in $(seq 1 60); do
-              sleep 60
-              kill -0 "$PYT" 2>/dev/null || break
-              echo "===== pytest stackdump $i ====="
-              PIDS="$PYT $(pgrep -P "$PYT" 2>/dev/null)"
-              for p in $PIDS; do
-                echo "----- pid $p $(ps -p "$p" -o stat=,comm= 2>/dev/null)"
-                sudo py-spy dump --pid "$p" --nonblocking 2>&1 | head -50
-                sudo sample "$p" 2 -mayDie 2>&1 | grep -A14 -E "Call graph|Thread_" | head -60
-              done
-            done ) & DUMPER=$!
-          set +e
-          wait "$PYT"
-          rc=$?
-          kill "$DUMPER" 2>/dev/null
-          exit $rc
+        run: python -m pytest src/msks/tests --no-cov -n auto -q --timeout=120
 
       - name: Acceptance harness
         env:
