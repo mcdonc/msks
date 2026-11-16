@@ -503,6 +503,9 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         self.detail = WorkspaceDetail(bridge)
         self.detail.back.connect(self.show_listing)
         self.detail.removed.connect(self.listing_removed)
+        bridge.landed.connect(self.frame_landed)
+        bridge.feed_dropped.connect(self.feed_dropped)
+        bridge.feed_reconnected.connect(self.feed_back)
         self.addWidget(self.listing)
         self.addWidget(self.detail)
 
@@ -521,6 +524,33 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         """The page returned (#945): the list owns the window
         again."""
         self.setCurrentWidget(self.listing)
+
+    @QtCore.Slot(object)
+    def frame_landed(self, frame: dict) -> None:
+        """One pushed frame (#946): the page buffers it whatever
+        screen owns the window — its events section is the
+        frame's own record — and the screen the operator sees
+        refreshes at once, through the same path its timer
+        drives; the hidden screen refreshes at its next show.
+        The tick stays the backstop the feed makes immediate."""
+        self.detail.push_frame(frame)
+        self.currentWidget().refresh()
+
+    @QtCore.Slot(str)
+    def feed_dropped(self, reason: str) -> None:
+        """The events feed's drop (#946): the screen the operator
+        sees flashes it while the feed retries — each retry
+        re-tells, the outage's own heartbeat."""
+        screen = self.currentWidget()
+        screen.flash(f"the events feed dropped — {reason}", outage=True)
+
+    @QtCore.Slot()
+    def feed_back(self) -> None:
+        """The feed's recovery (#946): one flash says the frames
+        flow again; the refresh that follows is the feed's
+        own."""
+        screen = self.currentWidget()
+        screen.flash("the events feed reconnected")
 
     @QtCore.Slot(str)
     def listing_removed(self, workspace_id: str) -> None:

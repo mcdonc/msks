@@ -8,6 +8,13 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI live events feed (#946).** The window subscribes to
+  the daemon's events socket over the bridge's loop: a pushed
+  lifecycle frame refreshes the screen the operator sees at
+  once, the polling timer staying the backstop, and lands in
+  the workspace page's events section. A dropped socket
+  reconnects with backoff, and the outage flashes on the
+  current screen while it lasts.
 - **The GUI workspace detail page (#945).** Opening a row in the
   workspace list — a double-click or Enter on it — swaps to that
   workspace's page: the mounts with their derived state and

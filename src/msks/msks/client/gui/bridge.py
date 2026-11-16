@@ -47,18 +47,32 @@ class Bridge(QtCore.QObject):
     ``succeeded(key, result)`` and ``failed(key, RestFailure)``
     answer each :meth:`call` on the GUI thread (queued through a
     receiver in that thread); ``key`` is the caller's own handle
-    for matching the answer to the call.
+    for matching the answer to the call. The live events feed
+    (#946) rides the same loop when a feed factory is given:
+    ``landed(frame)`` delivers each pushed frame to the GUI
+    thread, ``feed_dropped(reason)`` and ``feed_reconnected()``
+    carry the subscription's outage and recovery — the screens
+    flash the one and refresh on the other.
     """
 
     succeeded = QtCore.Signal(str, object)
     failed = QtCore.Signal(str, object)
+    landed = QtCore.Signal(object)
+    feed_dropped = QtCore.Signal(str)
+    feed_reconnected = QtCore.Signal()
 
     def __init__(
-        self, data: GuiData, *, thread_name: str = "msks-gui"
+        self,
+        data: GuiData,
+        *,
+        thread_name: str = "msks-gui",
+        feed_factory=None,
     ) -> None:
         super().__init__()
         self._data = data
         self._thread_name = thread_name
+        self._feed_factory = feed_factory
+        self._feed_task: asyncio.Task | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
 
@@ -84,6 +98,8 @@ class Bridge(QtCore.QObject):
         )
         self._thread.start()
         started.wait()
+        if self._feed_factory is not None:
+            loop.call_soon_threadsafe(self.start_feed, loop)
 
     def serve(
         self, loop: asyncio.AbstractEventLoop, started: threading.Event
@@ -110,6 +126,33 @@ class Bridge(QtCore.QObject):
                 break
         finally:
             loop.close()
+
+    def start_feed(self, loop: asyncio.AbstractEventLoop) -> None:
+        """The events feed task on the loop (#946), its
+        callbacks the bridge's signals — the feed runs for the
+        bridge's whole life, cancelled with it. Runs on the loop
+        thread (a ``call_soon_threadsafe`` hand-off from
+        :meth:`start`), so the loop reference comes in as an
+        argument: a racing stop may already have cleared the
+        one on self."""
+        feed = self._feed_factory()
+        feed.on_frame = self.landed.emit
+        feed.on_drop = self.feed_dropped.emit
+        feed.on_reconnect = self.feed_reconnected.emit
+        self._feed_task = loop.create_task(feed.run())
+
+    def stop_feed(self, loop: asyncio.AbstractEventLoop) -> None:
+        """One loop-turn shutdown (#946): the feed task cancelled
+        first, then the stop behind a zero-delay timer — the
+        cancel queues the task's step, and the timer fires only
+        after the step lands, so the cancellation reaches the
+        task's own ``except CancelledError`` (a socket's close
+        among them) before the loop exits. A stop scheduled
+        straight after the cancel would win the race and leave
+        the task destroyed-but-pending."""
+        if self._feed_task is not None:
+            self._feed_task.cancel()
+        loop.call_later(0, loop.stop)
 
     def call(self, key: str, method: str, *args: object):
         """Run one :class:`GuiData` coroutine by name — the
@@ -172,5 +215,5 @@ class Bridge(QtCore.QObject):
             return
         self._loop = None
         self._thread = None
-        loop.call_soon_threadsafe(loop.stop)
+        loop.call_soon_threadsafe(self.stop_feed, loop)
         thread.join(JOIN_TIMEOUT_S)
