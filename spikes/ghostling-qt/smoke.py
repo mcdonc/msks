@@ -481,6 +481,53 @@ def test_widget() -> None:
                 failures.append("zoom reset did not restore default")
             else:
                 print("zoom: reset to default")
+            # Hyperlinks: OSC 8 from the grid, plain-text URL spans
+            # from the paint pass, and the menu's Copy Link Address.
+            last = ch * (widget.rows - 0.5)
+            widget.lib.terminal_scroll_viewport(
+                widget.terminal,
+                ghostty.ScrollViewport(
+                    ghostty.SCROLL_BOTTOM, ghostty.ScrollViewportValue()
+                ),
+            )
+            widget.refresh()
+            widget.lib.vt_write(
+                widget.terminal,
+                b"\x1b]8;;https://example.com/osc8\x1b\\linked"
+                b"\x1b]8;;\x1b\\ https://example.com/plain ",
+            )
+            widget.refresh()
+            widget.grab()  # run a paint so the URL spans exist
+            uri8 = widget._hyperlink_at(QPointF(cw * 1.5, last))
+            if uri8 != "https://example.com/osc8":
+                failures.append(f"osc8 lookup was {uri8!r}")
+            else:
+                print("links: osc8 uri from the grid")
+            plain = widget._hyperlink_at(QPointF(cw * 15.5, last))
+            if plain != "https://example.com/plain":
+                failures.append(
+                    f"plain url lookup was {plain!r}; "
+                    f"spans={widget._link_spans}"
+                )
+            else:
+                print("links: plain-text url from paint spans")
+            actions = widget._build_context_menu(
+                QPointF(cw * 1.5, last)
+            ).actions()
+            link_actions = [
+                a for a in actions if a.text() == "Copy Link Address"
+            ]
+            if len(link_actions) != 1 or not link_actions[0].isEnabled():
+                failures.append("copy-link menu item missing or dimmed")
+            else:
+                QApplication.clipboard().setText("")
+                link_actions[0].trigger()
+                if QApplication.clipboard().text() != (
+                    "https://example.com/osc8"
+                ):
+                    failures.append("copy-link did not reach clipboard")
+                else:
+                    print("links: copy link address")
         except Exception as exc:  # noqa: BLE001 - report and stop
             failures.append(f"widget check raised: {exc}")
         finally:

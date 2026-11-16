@@ -119,8 +119,12 @@ The library is found through `GHOSTTY_VT_LIB` if set, then
   OSC 52 clipboard writes from programs inside the terminal reach
   the desktop clipboard (the reply handshake answers SUCCESS; the
   read-back direction, a program querying the clipboard, is not
-  implemented). No Kitty graphics, no scrollbar dragging, no
-  numpad-specific keys, no ligatures.
+  implemented). Hyperlinks: OSC 8 URIs resolve through the grid API,
+  plain-text URLs are found by a per-row scan during paint, hovering
+  one shows the pointing hand, Shift+Click opens it in the desktop
+  browser, and right-clicking one offers Copy Link Address. No Kitty
+  graphics, no scrollbar dragging, no numpad-specific keys, no
+  ligatures.
 - The XTVERSION effect is not registered: ctypes cannot return a
   16-byte struct from a callback, so `CSI > q` goes unanswered.
 - `vendor/` holds a library snapshot (currently a pre-1.0

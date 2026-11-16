@@ -625,6 +625,14 @@ class Lib:
             Point,
             ctypes.POINTER(GridRef),
         )
+        self.grid_ref_hyperlink_uri = self._fn(
+            "ghostty_grid_ref_hyperlink_uri",
+            r,
+            ctypes.POINTER(GridRef),
+            ctypes.c_char_p,
+            sz,
+            ctypes.POINTER(sz),
+        )
         self.selection_gesture_new = self._fn(
             "ghostty_selection_gesture_new", r, v, ctypes.POINTER(v)
         )

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import re
 import string
 from pathlib import Path
 
@@ -25,11 +26,13 @@ from PySide6.QtCore import (
     QSocketNotifier,
     Qt,
     QTimer,
+    QUrl,
     Signal,
 )
 from PySide6.QtGui import (
     QClipboard,
     QColor,
+    QDesktopServices,
     QFont,
     QFontDatabase,
     QFontInfo,
@@ -133,6 +136,11 @@ _QT_KEYS = _qt_key_to_ghostty()
 
 _DEBUG_KEYS = bool(os.environ.get("GHOSTLING_DEBUG_KEYS"))
 _DEBUG_PAINT = bool(os.environ.get("GHOSTLING_DEBUG_PAINT"))
+
+# Plain-text URL spans found per row during paint — the fallback when
+# a cell carries no OSC 8 link. One column per character is close
+# enough for the ASCII URLs this catches.
+_URL_RE = re.compile(r"(?:https?://|ftp://|www\.)[^\s<>\"']+[a-zA-Z0-9/]")
 
 _QT_TO_GHOSTTY_BUTTON = {
     Qt.MouseButton.LeftButton: ghostty.MOUSE_LEFT,
@@ -366,6 +374,10 @@ class TerminalWidget(QWidget):
         self._last_press_ms = 0
         self._last_press_cell: tuple[int, int] | None = None
         self._press_count = 0
+        # Per-row plain-text URL spans from the last paint:
+        # row -> [(start_col, end_col, url), ...].
+        self._link_spans: list[list[tuple[int, int, str]]] = []
+        self._hand_cursor = False
         # Autoscroll while a selection drag overshoots the top or
         # bottom edge: a timer scrolls the viewport and re-sends the
         # drag gesture at the clamped position, and the grid-anchored
@@ -531,6 +543,7 @@ class TerminalWidget(QWidget):
         style = ghostty.Style()
         codepoints = (ctypes.c_uint32 * 16)()
         y = 0
+        link_spans: list[list[tuple[int, int, str]]] = []
         while self.lib.row_iterator_next(iterator.value):
             ok, cells = self.lib.get(
                 self.lib.row_get,
@@ -539,16 +552,32 @@ class TerminalWidget(QWidget):
                 ctypes.c_void_p(self.row_cells),
             )
             if not ok or not cells.value:
+                link_spans.append([])
                 continue
             x = 0
+            row_chars: list[str] = []
             while self.lib.row_cells_next(cells):
                 self._paint_cell(
-                    painter, cells, colors, style, codepoints, x, y
+                    painter,
+                    cells,
+                    colors,
+                    style,
+                    codepoints,
+                    x,
+                    y,
+                    row_chars,
                 )
                 x += self.cell_width
+            link_spans.append(
+                [
+                    (m.start(), m.end(), m.group(0))
+                    for m in _URL_RE.finditer("".join(row_chars))
+                ]
+            )
             clean = ctypes.c_bool(False)
             self.lib.row_set(iterator, ghostty.ROW_DIRTY, ctypes.byref(clean))
             y += self.cell_height
+        self._link_spans = link_spans
 
         self._paint_cursor(painter, colors)
         self._paint_scrollbar(painter)
@@ -556,7 +585,15 @@ class TerminalWidget(QWidget):
         painter.end()
 
     def _paint_cell(
-        self, painter, cells, colors, style, codepoints, x: int, y: int
+        self,
+        painter,
+        cells,
+        colors,
+        style,
+        codepoints,
+        x: int,
+        y: int,
+        row_chars: list[str] | None = None,
     ) -> None:
         lib = self.lib
         ok, length = lib.get(
@@ -576,6 +613,8 @@ class TerminalWidget(QWidget):
                 painter.fillRect(
                     x, y, self.cell_width, self.cell_height, _rgb(bg)
                 )
+            if row_chars is not None:
+                row_chars.append(" ")
             return
         text = ""
         if length.value <= 16:
@@ -585,6 +624,8 @@ class TerminalWidget(QWidget):
                 ctypes.cast(codepoints, ctypes.c_void_p),
             )
             text = "".join(chr(codepoints[i]) for i in range(length.value))
+        if row_chars is not None:
+            row_chars.append(text if text else " ")
         ok, fg = lib.get(
             lib.row_cells_get,
             cells,
@@ -900,6 +941,53 @@ class TerminalWidget(QWidget):
         if self.MIN_PT <= points <= self.MAX_PT:
             self._set_font_point_size(points)
 
+    def _hyperlink_at(self, position: QPointF) -> str | None:
+        """The link under the cursor: OSC 8 from the grid when the
+        cell carries one, else a plain-text URL span from the last
+        paint."""
+        ref = self._ref_under(position)
+        if ref is not None:
+            for size in (4096, 1 << 16):
+                buf = ctypes.create_string_buffer(size)
+                written = ctypes.c_size_t()
+                result = self.lib.grid_ref_hyperlink_uri(
+                    ctypes.byref(ref), buf, size, ctypes.byref(written)
+                )
+                if result == ghostty.SUCCESS:
+                    uri = buf.raw[: written.value].decode(
+                        "utf-8", errors="replace"
+                    )
+                    if uri:
+                        return uri
+                    # An empty answer means no OSC 8 link here; fall
+                    # through to the plain-text spans.
+                    break
+                if result != ghostty.OUT_OF_SPACE:
+                    break
+        col, row = self._cell_at(position)
+        if row < len(self._link_spans):
+            for start, end, url in self._link_spans[row]:
+                if start <= col < end:
+                    return url
+        return None
+
+    def _set_hand_cursor(self, on: bool) -> None:
+        if on != self._hand_cursor:
+            self._hand_cursor = on
+            if on:
+                QApplication.setOverrideCursor(
+                    Qt.CursorShape.PointingHandCursor
+                )
+            else:
+                QApplication.restoreOverrideCursor()
+
+    def _open_link_at(self, position: QPointF) -> bool:
+        url = self._hyperlink_at(position)
+        if url:
+            QDesktopServices.openUrl(QUrl(url))
+            return True
+        return False
+
     def _selection_gesture(self, kind: int, position: QPointF) -> None:
         """Feed a selection gesture event, following the protocol of
         Ghostty's c-vt-selection-gesture example: every event carries
@@ -1027,10 +1115,18 @@ class TerminalWidget(QWidget):
         if text:
             QApplication.clipboard().setText(text)
 
-    def _build_context_menu(self):
+    def _build_context_menu(self, position=None):
         """Copy is enabled while a selection exists, Paste while the
-        clipboard holds text; both dim otherwise."""
+        clipboard holds text; both dim otherwise. Right-clicking a
+        link adds Copy Link Address for it."""
         menu = QMenu(self)
+        link = self._hyperlink_at(position) if position is not None else None
+        if link:
+            copy_link = menu.addAction("Copy Link Address")
+            copy_link.triggered.connect(
+                lambda: QApplication.clipboard().setText(link)
+            )
+            menu.addSeparator()
         copy_action = menu.addAction("Copy\tCtrl+Shift+C")
         copy_action.setEnabled(bool(self._selection_text()))
         copy_action.triggered.connect(self._copy_selection)
@@ -1045,7 +1141,7 @@ class TerminalWidget(QWidget):
             # forwarded to it.
             event.ignore()
             return
-        self._build_context_menu().exec(event.globalPos())
+        self._build_context_menu(event.pos()).exec(event.globalPos())
 
     def _paste_text(self, text: str) -> None:
         if not text:
@@ -1254,6 +1350,13 @@ class TerminalWidget(QWidget):
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt name)
         if (
+            event.button() == Qt.MouseButton.LeftButton
+            and event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+            and not self._mouse_tracking()
+        ):
+            if self._open_link_at(event.position()):
+                return
+        if (
             event.button() == Qt.MouseButton.MiddleButton
             and not self._mouse_tracking()
         ):
@@ -1306,6 +1409,12 @@ class TerminalWidget(QWidget):
         )
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 (Qt name)
+        if not event.buttons() and not self._mouse_tracking():
+            self._set_hand_cursor(
+                self._hyperlink_at(event.position()) is not None
+            )
+        elif self._hand_cursor:
+            self._set_hand_cursor(False)
         if (
             event.buttons() & Qt.MouseButton.LeftButton
             and not self._mouse_tracking()
