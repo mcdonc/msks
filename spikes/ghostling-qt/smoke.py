@@ -396,6 +396,50 @@ def test_widget() -> None:
                 )
             else:
                 print("menu: copy and paste dimmed")
+            # Shift+PgUp/PgDn page the buffer locally; the scrollbar
+            # offset proves the paging without a real key event source.
+            from PySide6.QtCore import QEvent
+            from PySide6.QtCore import Qt as _Qt
+            from PySide6.QtGui import QKeyEvent
+
+            def send_key(key):
+                ev = QKeyEvent(
+                    QEvent.Type.KeyPress,
+                    key,
+                    _Qt.KeyboardModifier.ShiftModifier,
+                    "",
+                )
+                QApplication.sendEvent(widget, ev)
+
+            def scrollbar_offset():
+                bar = ghostty.Scrollbar()
+                ok, _ = widget.lib.get(
+                    widget.lib.terminal_get,
+                    widget.terminal,
+                    ghostty.DATA_SCROLLBAR,
+                    bar,
+                )
+                return bar.offset if ok else -1
+
+            widget.lib.terminal_scroll_viewport(
+                widget.terminal,
+                ghostty.ScrollViewport(
+                    ghostty.SCROLL_TOP, ghostty.ScrollViewportValue()
+                ),
+            )
+            widget.refresh()
+            top_offset = scrollbar_offset()
+            send_key(int(_Qt.Key.Key_PageDown))
+            paged_offset = scrollbar_offset()
+            send_key(int(_Qt.Key.Key_PageUp))
+            back_offset = scrollbar_offset()
+            if not (top_offset < paged_offset and back_offset <= paged_offset):
+                failures.append(
+                    f"paging did not move the viewport: "
+                    f"{top_offset} -> {paged_offset} -> {back_offset}"
+                )
+            else:
+                print("keys: shift-pgdn/pgup page the buffer")
         except Exception as exc:  # noqa: BLE001 - report and stop
             failures.append(f"widget check raised: {exc}")
         finally:

@@ -82,6 +82,9 @@ The library is found through `GHOSTTY_VT_LIB` if set, then
 - Keyboard input through libghostty's key encoder: legacy sequences,
   application cursor keys, and the Kitty keyboard protocol when a
   program enables it. Release and repeat events are forwarded.
+  `Shift+PgUp`/`Shift+PgDn` page the buffer locally (one page is the
+  viewport minus a line of overlap), and typed input snaps the
+  viewport back to the bottom so the cursor stays visible.
 - Mouse reporting (X10/normal/button/any-event tracking, SGR and
   friends) through the mouse encoder; when an application enables
   mouse tracking, text selection stands aside.

@@ -1000,6 +1000,31 @@ class TerminalWidget(QWidget):
         if text:
             QApplication.clipboard().setText(text, QClipboard.Mode.Selection)
 
+    def _scroll_page(self, direction: int) -> None:
+        """Shift+PgUp/PgDn: page the viewport through the buffer —
+        one page is the viewport minus a line of overlap."""
+        rows = max(1, self.rows - 1)
+        delta = -rows if direction < 0 else rows
+        self.lib.terminal_scroll_viewport(
+            self.terminal,
+            ghostty.ScrollViewport(
+                ghostty.SCROLL_DELTA,
+                ghostty.ScrollViewportValue(delta=delta),
+            ),
+        )
+        self.refresh()
+
+    def _snap_to_bottom(self) -> None:
+        """Typed input returns the viewport to the bottom so the
+        cursor is visible after paging up."""
+        self.lib.terminal_scroll_viewport(
+            self.terminal,
+            ghostty.ScrollViewport(
+                ghostty.SCROLL_BOTTOM,
+                ghostty.ScrollViewportValue(),
+            ),
+        )
+
     def _encode_key(self, event, action: int) -> None:
         key = _QT_KEYS.get(int(event.key()))
         if key is None:
@@ -1010,6 +1035,7 @@ class TerminalWidget(QWidget):
             if action != ghostty.ACTION_RELEASE:
                 text = event.text()
                 if text and all(ch >= " " for ch in text):
+                    self._snap_to_bottom()
                     self.write(text.encode("utf-8"))
             return
         lib = self.lib
@@ -1038,6 +1064,7 @@ class TerminalWidget(QWidget):
             lib.key_event_set_utf8(self.key_event, None, 0)
         data = lib.encode_key(self.key_encoder, self.key_event)
         if data:
+            self._snap_to_bottom()
             self.write(data)
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 (Qt name)
@@ -1059,6 +1086,17 @@ class TerminalWidget(QWidget):
                 return
             if event.key() == Qt.Key.Key_V:
                 self._paste_clipboard()
+                return
+        # Shift+PgUp/PgDn page the buffer locally instead of going to
+        # the program inside.
+        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier and not (
+            event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            if event.key() == Qt.Key.Key_PageUp:
+                self._scroll_page(-1)
+                return
+            if event.key() == Qt.Key.Key_PageDown:
+                self._scroll_page(1)
                 return
         action = (
             ghostty.ACTION_REPEAT
