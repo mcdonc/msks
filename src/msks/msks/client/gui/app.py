@@ -11,10 +11,9 @@ import sys
 
 # What the seam answers until #928 ships the window: the command
 # exists, the Qt surface does not. One stderr line, the client's
-# own error convention.
-PENDING_MSG = (
-    "the msks GUI window lands with #928; phase 1 of #924 wires the seam"
-)
+# own error convention — the `msks:` prefix every failure line
+# carries (docs/cli.md, "Errors, exit codes, and timeouts").
+PENDING_MSG = "msks: the desktop GUI is not in this build yet"
 
 
 def run() -> int:

@@ -8,7 +8,9 @@ client (#924) ships the shell: the window and the screens land
 with the later phases of the plan.
 """
 
-from . import (  # noqa: F401 — the package presents its three parts
+from . import (  # noqa: F401 — reachability seam; phase 2's real
+    # importers may make it redundant — drop it then, or keep it as
+    # the package's presentation (a decision, not an accident).
     app,
     bridge,
     data,
