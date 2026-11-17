@@ -272,9 +272,10 @@ def text(screen) -> str:
         if result == gt.SUCCESS:
             return buf.raw[: written.value].decode("utf-8", errors="replace")
         size *= 4
-    # A selection over a MiB of text: the scrollback caps at
-    # 10k rows and a row at the grid's width, so no real
-    # selection reaches here.
+    # An accepted limit, not an unreachable arm: a selection
+    # spanning the scrollback in multi-byte graphemes (emoji
+    # art fills 10k rows past a MiB) formats to empty rather
+    # than grow the buffer without bound.
     return ""  # pragma: no cover
 
 
@@ -318,7 +319,10 @@ def paste_text(screen, text: str) -> None:
     if mode_enabled(screen, gt.MODE_BRACKETED_PASTE):
         screen.write(b"\x1b[200~" + text.encode("utf-8") + b"\x1b[201~")
     else:
-        screen.write(text.replace("\n", "\r").encode("utf-8"))
+        # CRLF pairs collapse first: a Windows-format paste
+        # would otherwise carry an empty line per paragraph.
+        raw = text.replace("\r\n", "\n").replace("\n", "\r")
+        screen.write(raw.encode("utf-8"))
 
 
 def paste_clipboard(screen) -> None:

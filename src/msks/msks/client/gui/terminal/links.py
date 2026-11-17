@@ -39,9 +39,8 @@ def osc8_uri(screen, ref) -> str | None:
     result = screen.lib.grid_ref_hyperlink_uri(
         ctypes.byref(ref), buf, 4096, ctypes.byref(written)
     )
-    if result != gt.SUCCESS:  # pragma: no cover — probed -2 on
-        # a zeroed ref happens only through the test seam; a
-        # resolved ref always answers SUCCESS.
+    if result != gt.SUCCESS:  # an unresolved ref (the test
+        # seam drives a zeroed one; it answers -2, not space)
         return None
     uri = buf.raw[: written.value].decode("utf-8", errors="replace")
     return uri or None

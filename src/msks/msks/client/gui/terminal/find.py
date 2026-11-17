@@ -185,9 +185,13 @@ def viewport_rects(screen) -> list[tuple[int, int, int, bool]]:
     """The viewport's search-match rectangles for painting:
     (row, x_px, w_px, is_selected), clipped to the viewport's
     rows and spanning full rows for a match that crosses
-    them. The feed answers once per search run — the first
-    paint after the run carries the underlays, and the next
-    feed before another run answers none."""
+    them. The feed answers pending matches: content already
+    painted when the needle runs answers on every call, while
+    content the needle ran against before its first paint is
+    consumed by the first read — the paint's own feed then
+    answers none until new output dirties rows again. The
+    first paint after the run carries the underlays either
+    way."""
 
     if not screen.search:
         return []

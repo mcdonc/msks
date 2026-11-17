@@ -162,6 +162,8 @@ class TerminalWidget(QWidget):
             return
         self._closed = True
         callbacks.unregister(self)
+        if self.hand_cursor:  # an override cursor outlives the widget
+            links.set_hand(self, False)
         self.reaper.stop()
         self.bell_timer.stop()
         self.autoscroll.stop()
@@ -558,6 +560,15 @@ class TerminalWidget(QWidget):
             event.modifiers(),
             event.buttons(),
         )
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        """The pointer left the terminal: the pointing hand is
+        an application-global override cursor, and no further
+        move events arrive to clear it — drop it here or the
+        whole app keeps the hand."""
+        if self.hand_cursor:
+            links.set_hand(self, False)
+        super().leaveEvent(event)
 
     def contextMenuEvent(self, event) -> None:  # noqa: N802
         """Right-click: Copy and Paste (dimmed when they would

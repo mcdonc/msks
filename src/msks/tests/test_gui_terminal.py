@@ -2163,6 +2163,7 @@ def test_the_context_menu_paths(screen, qt, monkeypatch):
     event = qt.QtGui.QContextMenuEvent(
         qt.QtGui.QContextMenuEvent.Reason.Mouse,
         qt.QtCore.QPoint(10, 10),
+        qt.QtCore.QPoint(10, 10),
     )
     vt(screen, b"\x1b[?1000h")
     screen.contextMenuEvent(event)
@@ -2327,3 +2328,98 @@ def test_a_clipboard_write_without_a_writer_is_ignored(qt):
     from msks.client.gui.terminal import callbacks
 
     callbacks.clipboard_write(0, 0, None)
+
+
+# --- the review's pins (#953 follow-ups) ----------------------------------
+
+
+class FakePress:
+    """A press carrying a real timestamp: synthetic QMouseEvents
+    answer 0, and the multi-click window needs two distinct
+    clocks."""
+
+    def __init__(self, pos, ts):
+        from PySide6.QtCore import QPointF
+
+        self._pos = QPointF(*pos)
+        self._ts = ts
+
+    def position(self):
+        return self._pos
+
+    def timestamp(self):
+        return self._ts
+
+
+def test_the_multi_click_window_expires(qt, screen):
+    """A second press on the same cell inside the window counts
+    as a multi-click; the same press past the window starts a
+    fresh one."""
+    cw = screen.metrics.cell_width
+    pos = (cw, 2)
+    screen.press_gesture(FakePress(pos, 1000))
+    assert screen.press_count == 1
+    screen.press_gesture(FakePress(pos, 1500))  # 500 ms later
+    assert screen.press_count == 1  # the window expired
+    screen.press_gesture(FakePress(pos, 1600))  # 100 ms after
+    assert screen.press_count == 2
+
+
+def test_the_multi_click_window_resets_on_a_new_cell(qt, screen):
+    """A press on a different cell starts a fresh count inside
+    the window."""
+    cw = screen.metrics.cell_width
+    screen.press_gesture(FakePress((cw, 2), 1000))
+    screen.press_gesture(FakePress((cw * 5, 2), 1100))
+    assert screen.press_count == 1
+
+
+def test_the_span_upper_bound_excludes_the_next_cell(screen, qt):
+    """A URL span covers its own cells and not the one after:
+    the col one past the end answers no link."""
+    from msks.client.gui.terminal import links
+
+    vt(screen, b"\x1b[2J\x1b[Hhttps://example.com/x tail")
+    screen.grab().toImage()  # the paint pass fills the URL scan
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    end = screen.link_spans[0][0][1]
+    assert links.under(screen, qt.QtCore.QPointF(cw * (end - 1), ch // 2))
+    assert links.under(screen, qt.QtCore.QPointF(cw * end, ch // 2)) is None
+
+
+def test_the_hand_drops_when_the_pointer_leaves(screen, qt):
+    """The pointing hand is an application-global override; a
+    leave event drops it so the rest of the app keeps its
+    cursor."""
+    screen.hand_cursor = True
+    leave = qt.QtCore.QEvent(qt.QtCore.QEvent.Type.Leave)
+    screen.leaveEvent(leave)
+    assert not screen.hand_cursor
+    screen.leaveEvent(leave)  # a second leave stays quiet
+
+
+def test_a_close_while_hovering_drops_the_hand(qt):
+    """A tab closed while its hand cursor is on drops the
+    override before the widget goes."""
+    from msks.client.gui.terminal import TerminalWidget
+
+    widget = TerminalWidget(
+        [sys.executable, "-c", "import time; time.sleep(30)"]
+    )
+    try:
+        widget.hand_cursor = True
+        shutdown(widget)
+        assert not widget.hand_cursor
+    finally:
+        shutdown(widget)
+
+
+def test_a_crlf_paste_carries_one_line_break(screen, qt):
+    """A Windows-format paste sends one carriage return per
+    paragraph, not two."""
+    from msks.client.gui.terminal import select
+
+    vt(screen, b"\x1b[?2004l")
+    select.paste_text(screen, "a\r\nb")
+    seen = drain_until(screen, b"\r")
+    assert seen.replace(b"\r\n", b"\n") == b"a\rb"
