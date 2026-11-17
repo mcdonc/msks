@@ -139,10 +139,6 @@ def fill_cell(
     painter.fillRect(
         x, y, screen.metrics.cell_width, screen.metrics.cell_height, color
     )
-    """One cell rect of background."""
-    painter.fillRect(
-        x, y, screen.metrics.cell_width, screen.metrics.cell_height, color
-    )
 
 
 def read_style(lib, cells, style):
@@ -163,11 +159,11 @@ def draw_cluster(
         lib.row_cells_get, cells, gt.CELLS_GRAPHEMES_LEN, ctypes.c_uint32()
     )
     text = ""
-    # The cap guard's false arm never runs: the emulator splits
-    # wide clusters one codepoint per cell (probed: a ZWJ-joined
-    # family run answers max length 1); the cap reads the C
-    # header's 16-codepoint buffer honestly.
-    if length.value <= CLUSTER_CAP:  # pragma: no branch
+    # A cluster longer than the 16-codepoint buffer is rare
+    # but reachable: a combining-mark run (e + twenty combining
+    # diaereses) exceeds the cap in one cell and draws blank —
+    # the buffer cannot carry it.
+    if length.value <= CLUSTER_CAP:
         lib.row_cells_get(
             cells,
             gt.CELLS_GRAPHEMES_BUF,

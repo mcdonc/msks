@@ -390,6 +390,40 @@ def test_the_inverse_and_faint_styles_paint(screen, qt):
     assert styled != plain
 
 
+def test_an_over_cap_cluster_draws_blank(screen, qt):
+    """A combining-mark run longer than the 16-codepoint
+    buffer fills one cell: the cluster cannot ride the buffer,
+    the cell draws blank, and the paint does not crash."""
+    cluster = "e" + "\u0308" * 20
+    vt(screen, ("\x1b[2J\x1b[H" + cluster).encode())
+    ok, iterator = screen.lib.get(
+        screen.lib.render_state_get,
+        screen.render_state,
+        gt.RS_ROW_ITERATOR,
+        ctypes.c_void_p(screen.row_iterator),
+    )
+    assert ok
+    lengths = []
+    while screen.lib.row_iterator_next(iterator.value):
+        ok, cells = screen.lib.get(
+            screen.lib.row_get,
+            iterator.value,
+            gt.ROW_CELLS,
+            ctypes.c_void_p(screen.row_cells),
+        )
+        while ok and screen.lib.row_cells_next(cells.value):
+            ok_len, length = screen.lib.get(
+                screen.lib.row_cells_get,
+                cells,
+                gt.CELLS_GRAPHEMES_LEN,
+                ctypes.c_uint32(),
+            )
+            if length.value:
+                lengths.append(length.value)
+    assert max(lengths) > qt.paint.CLUSTER_CAP
+    assert screen.grab().toImage().size() == screen.size()
+
+
 def test_the_cursor_paints_over_the_grid(screen, qt):
     """The cursor cell paints translucent: the grid with it
     shown differs from the grid with it hidden."""
@@ -514,6 +548,23 @@ def test_control_keys_encode_through_the_modifier_mask(qt):
         assert widget.session.exit_status == 130
     finally:
         shutdown(widget)
+
+
+def test_an_auto_repeat_release_sends_nothing(screen, qt):
+    """A held key's platform repeats arrive as presses; the
+    repeat's release is dropped before the encoder."""
+    repeat_release = qt.QtGui.QKeyEvent(
+        qt.QtCore.QEvent.Type.KeyRelease,
+        int(qt.QtCore.Qt.Key.Key_A),
+        qt.QtCore.Qt.KeyboardModifier.NoModifier,
+        "a",
+        True,
+        1,
+    )
+    assert repeat_release.isAutoRepeat()
+    screen.keyReleaseEvent(repeat_release)
+    time.sleep(0.1)
+    assert screen.session.read_available() in (None, b"")
 
 
 def test_a_release_without_the_kitty_protocol_sends_nothing(screen, qt):
@@ -949,6 +1000,38 @@ def test_the_emulators_answers_ride_write_pty(screen, qt):
     vt(screen, b"\x1b[c")  # DA1
     seen = drain_until(screen, b"c")
     assert b"\x1b[?" in seen and seen.endswith(b"c")
+
+
+def test_final_output_and_exit_share_one_readiness_window(qt):
+    """The common exit: the child's last bytes and its death
+    land in one readiness burst. The drain delivers the bytes
+    with the session already marked exited — the exit path
+    must still run: the notifier disarms (the session closed
+    the master under it), the reaper starts, and the exit
+    signal fires."""
+    from msks.client.gui.terminal import TerminalWidget
+
+    exits = []
+    widget = TerminalWidget(
+        [sys.executable, "-c", 'print("bye"); raise SystemExit(7)']
+    )
+    try:
+        widget.process_exited.connect(exits.append)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline and not widget.session.exited:
+            widget.read_master()
+            qt.app.processEvents()
+            time.sleep(0.02)
+        # One more read on the now-dead master: the exit path
+        # has run, and running it again changes nothing — the
+        # signal fires once.
+        widget.read_master()
+        qt.app.processEvents()
+        assert widget.session.exited
+        assert not widget.notifier.isEnabled()
+        assert exits == [7]
+    finally:
+        shutdown(widget)
 
 
 def test_the_reaper_stands_down_when_the_child_is_gone(qt):

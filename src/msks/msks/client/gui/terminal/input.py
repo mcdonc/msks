@@ -292,12 +292,7 @@ def send_mouse(
 def send_focus(screen, gained: bool) -> None:
     """A focus report (mode 1004's sequences), sent only when
     the program inside asked for them."""
-    mode = gt.ModeConfig()
-    mode.mode = gt.MODE_FOCUS_EVENT
-    ok, mode = screen.lib.get(
-        screen.lib.terminal_get, screen.terminal, gt.DATA_MODE, mode
-    )
-    if not ok or not mode.value:
+    if not mode_enabled(screen, gt.MODE_FOCUS_EVENT):
         return
     # The encoder always answers mode 1004's bytes; an empty
     # answer would mean the call failed, and the write's

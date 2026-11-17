@@ -20,10 +20,9 @@ REGISTRY: dict[int, object] = {}
 
 
 def register(screen: object) -> None:
-    """Seat a screen in the registry and return its userdata
-    id — the value the library hands back on every callback."""
+    """Seat a screen in the registry under its id — the value
+    the library hands back on every callback."""
     REGISTRY[id(screen)] = screen
-    return None
 
 
 def unregister(screen: object) -> None:

@@ -53,7 +53,13 @@ class TerminalWidget(QWidget):
     """A terminal screen: the emulator, the painter, and the
     child, wired together. ``argv`` is what the tab runs — no
     default shell; a terminal tab always knows what it runs
-    (#951's session contract)."""
+    (#951's session contract).
+
+    The teardown contract: closing (the close event, or
+    ``closeEvent`` driven directly) is what hangs up on the
+    child, frees the library handles, and unseats the registry
+    entry — a tab that destroys the widget without closing it
+    leaks all three (#954 must close before ``deleteLater``)."""
 
     title_changed = Signal(str)
     process_exited = Signal(int)
@@ -118,6 +124,7 @@ class TerminalWidget(QWidget):
         self.bell_timer.timeout.connect(self.bell_off)
         self._wheel_accum = 0
         self._closed = False
+        self._exit_reported = False
 
     # --- lifecycle ----------------------------------------------------
 
@@ -148,19 +155,33 @@ class TerminalWidget(QWidget):
 
     def read_master(self) -> None:
         """The master has bytes (or the child is gone): parse
-        them into the emulator and repaint, or move to the
-        exit path — the reaper collects the child and the
-        banner paints."""
+        them into the emulator and repaint. A child's final
+        output and its exit often land in one readiness window
+        — the drain delivers the bytes with the session already
+        marked exited — so the exit path runs from either arm,
+        never leaving the notifier armed on the closed master."""
         data = self.session.drain()
         if data is None:
-            self.notifier.setEnabled(False)
-            self.reaper.start(100)
-            self.refresh()
-            self.process_exited.emit(self.session.exit_status or 0)
+            self.child_gone()
             return
         if data:
             self.lib.vt_write(self.terminal, data)
             self.refresh()
+            if self.session.exited:
+                self.child_gone()
+
+    def child_gone(self) -> None:
+        """The exit path, once: disarm the notifier (the
+        session closed the master under it), start the reaper,
+        and report the status the tab teardown listens for.
+        Later reads on the dead master change nothing."""
+        if self._exit_reported:
+            return
+        self._exit_reported = True
+        self.notifier.setEnabled(False)
+        self.reaper.start(100)
+        self.refresh()
+        self.process_exited.emit(self.session.exit_status or 0)
 
     def reap_child(self) -> None:
         """Collect the dead child; once it is collected the
@@ -215,11 +236,17 @@ class TerminalWidget(QWidget):
 
     def apply_font_size(self, points: int) -> None:
         """Measure the face at a size, push the new pixel
-        metrics into the emulator and the pty, and keep the
-        grid at the same cell count."""
+        metrics into the pty, and keep the grid at the same
+        cell count (the emulator's resize already ran in
+        apply_metrics)."""
         self.font.setPointSize(points)
         self.apply_metrics()
-        self.resize_grid(self.cols, self.rows)
+        self.session.resize(
+            self.cols,
+            self.rows,
+            self.metrics.cell_width,
+            self.metrics.cell_height,
+        )
         window = self.window()
         if window is not None and window is not self:
             window.resize(self.sizeHint())
@@ -311,10 +338,8 @@ class TerminalWidget(QWidget):
 
     def keyReleaseEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         # A held key's platform repeats arrive as press events
-        # only; Qt never answers a repeat with a release. The
-        # guard exists for native events alone.
-        if event.isAutoRepeat():  # pragma: no cover — synthetic
-            # QKeyEvents cannot carry the auto-repeat flag.
+        # only; the repeat's release is noise.
+        if event.isAutoRepeat():
             return
         input.encode_key(self, event, gt.ACTION_RELEASE)
 
