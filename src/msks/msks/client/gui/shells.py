@@ -146,10 +146,13 @@ class ShellTabs(QtWidgets.QTabWidget):
         self.hosted = ""
         self.addTab(info, INFO_LABEL)
         self.tabBar().installEventFilter(self)
-        # The shell tabs' own map, number to widget (#954): a
-        # close takes the hub's record down before the strip
-        # hears it, so the strip tracks its own hosting.
+        # The shell tabs' own maps, number to widget and number
+        # to the tab's close button (#954): a close takes the
+        # hub's record down before the strip hears it, and a
+        # removed tab's button is NOT deleted by Qt (it hides as
+        # the bar's child) — the strip owns both lifetimes.
         self.tab_widgets: dict[int, QtWidgets.QWidget] = {}
+        self.tab_buttons: dict[int, QtWidgets.QToolButton] = {}
         hub.shell_opened.connect(self.on_opened)
         hub.shell_closed.connect(self.on_closed)
         hub.shell_renamed.connect(self.on_renamed)
@@ -181,13 +184,14 @@ class ShellTabs(QtWidgets.QTabWidget):
             widget.setParent(None)
         self.hosted = ""
         self.tab_widgets.clear()
+        self.drop_buttons()
 
     def add_session(self, session: ShellSession) -> None:
         """One session's tab (#954): titled as its record reads,
         with its own close button — the Info tab carries none."""
         index = self.addTab(session.widget, session.label)
         self.tab_widgets[session.no] = session.widget
-        button = QtWidgets.QToolButton(self)
+        button = QtWidgets.QToolButton(self.tabBar())
         button.setIcon(
             self.style().standardIcon(
                 QtWidgets.QStyle.StandardPixmap.SP_TabCloseButton
@@ -197,9 +201,18 @@ class ShellTabs(QtWidgets.QTabWidget):
         button.clicked.connect(
             lambda: self.hub.close_shell(self.hosted, session.no)
         )
+        self.tab_buttons[session.no] = button
         self.tabBar().setTabButton(
             index, QtWidgets.QTabBar.ButtonPosition.RightSide, button
         )
+
+    def drop_buttons(self) -> None:
+        """Delete the tracked close buttons (#954): a removed
+        tab's button hides as the bar's child rather than dying,
+        and its click holds its session's record alive."""
+        for button in self.tab_buttons.values():
+            button.deleteLater()
+        self.tab_buttons.clear()
 
     # --- the hub's signals ---------------------------------------------
 
@@ -223,12 +236,21 @@ class ShellTabs(QtWidgets.QTabWidget):
         strip's own map — the hub's record is already gone."""
         if workspace_id != self.hosted:
             return
+        self.close_editor_for(no)
+        self.drop_button(no)
         widget = self.tab_widgets.pop(no, None)
         if widget is None:
             return
         index = self.indexOf(widget)
         if index >= 0:
             self.removeTab(index)
+
+    def drop_button(self, no: int) -> None:
+        """One close's button down (#954) — the same leak the
+        unhost path clears wholesale."""
+        button = self.tab_buttons.pop(no, None)
+        if button is not None:
+            button.deleteLater()
 
     @QtCore.Slot(str, int)
     def on_renamed(self, workspace_id: str, no: int) -> None:
@@ -256,9 +278,11 @@ class ShellTabs(QtWidgets.QTabWidget):
         double-click on a shell tab opens the title editor in
         place — the Info tab renames nothing — and the open
         editor's Escape closes it as a cancel."""
-        if self.editor_escape(obj, event):
-            self.cancel_rename()
-            return True
+        if obj is self.editor:
+            if self.editor_escape(obj, event):
+                self.cancel_rename()
+                return True
+            return super().eventFilter(obj, event)
         if self.tab_double_click(event):
             return True
         return super().eventFilter(obj, event)
@@ -298,8 +322,8 @@ class ShellTabs(QtWidgets.QTabWidget):
         editor = QtWidgets.QLineEdit(self)
         corner = bar.mapTo(self, rect.topLeft())
         editor.setGeometry(corner.x(), corner.y(), rect.width(), rect.height())
-        editor.setProperty("tab_index", index)
         session = self.session_at(index)
+        editor.setProperty("session_no", session.no if session else 0)
         editor.setText(session.label if session else "")
         editor.selectAll()
         editor.returnPressed.connect(self.commit_rename)
@@ -308,15 +332,28 @@ class ShellTabs(QtWidgets.QTabWidget):
         editor.setFocus()
         self.editor = editor
 
+    def close_editor_for(self, no: int) -> None:
+        """Take the editor down when its session closes (#954):
+        a standing edit names a session that is gone."""
+        if (
+            self.editor is not None
+            and self.editor.property("session_no") == no
+        ):
+            self.cancel_rename()
+
     def commit_rename(self) -> None:
         """Stand the edited name (#954): the hub owns the
         record; an empty edit cancels, changing nothing."""
         if self.editor is None:
             return
-        index = self.editor.property("tab_index")
+        no = self.editor.property("session_no")
         text = self.editor.text()
         self.cancel_rename()
-        session = self.session_at(index)
+        # The edit keys on the session's number, not the tab's
+        # position: tabs close and shift under an open editor,
+        # and a positional key would land the name on another
+        # session.
+        session = self.hub.find(self.hosted, no)
         if session is not None:
             self.hub.rename(self.hosted, session.no, text)
 

@@ -68,18 +68,46 @@ def tabs(qt, hub):
     yield made
 
 
-def make_shell(qt, terminal_cmd=None):
+@pytest.fixture()
+def window_shell(qt):
     """The window shell over the stub bridge, in a real window
     with the listing answered — the workspace-page suite's own
-    shape — over a sleeper hub. The window comes back too: the
-    shell's widgets live only while a Python hand holds their
-    top-level window."""
+    shape — over a sleeper hub. The window comes with the
+    shell: the widgets live only while a Python hand holds
+    their top-level window, and the hub shuts down at teardown
+    (a window close never reaches the terminals, and
+    aboutToQuit never fires without a loop)."""
+    hub = qt.shells.ShellHub(lambda ws: [sys.executable, "-c", SLEEPER])
+    shell = qt.shell_class(StubBridge(), None, hub)
+    window = qt.QtWidgets.QMainWindow()
+    window.setCentralWidget(shell)
+    window.show()
+    shell.listing.on_succeeded("workspaces-list", [daemon_row()])
+    yield shell, hub, window
+    hub.shutdown()
+
+
+@pytest.fixture()
+def launcher_shell(qt):
+    """The window shell with a launcher configured — the
+    external action's stand, with the fixture's own teardown
+    duty."""
+    shell, hub, window = make_shell(qt, terminal_cmd=["theterm", "-e"])
+    yield shell, hub, window
+    hub.shutdown()
+
+
+def make_shell(qt, terminal_cmd=None):
+    """The window shell over a launcher-configured stub, for the
+    external action's tests — the fixture's shape with the
+    launcher passed in, and the same teardown duty."""
     hub = qt.shells.ShellHub(lambda ws: [sys.executable, "-c", SLEEPER])
     shell = qt.shell_class(StubBridge(), terminal_cmd, hub)
     window = qt.QtWidgets.QMainWindow()
     window.setCentralWidget(shell)
     window.show()
     shell.listing.on_succeeded("workspaces-list", [daemon_row()])
+    qt.app.processEvents()
     return shell, hub, window
 
 
@@ -263,15 +291,24 @@ def test_a_double_click_opens_the_editor_and_return_stands(hub, tabs, qt):
 
 def test_the_editors_escape_cancels(hub, tabs, qt):
     """The open editor's Escape takes it down as a cancel: the
-    standing title keeps."""
+    standing title keeps. The editor's other events pass
+    through to it — a typed letter must reach the field."""
     hub.open_shell("ws-a")
     tabs.host("ws-a")
     tabs.begin_rename(1)
     tabs.editor.setText("nope")
+    Qt = qt.QtCore.Qt
+    typed = qt.QtGui.QKeyEvent(
+        qt.QtCore.QEvent.Type.KeyPress,
+        Qt.Key.Key_B,
+        Qt.KeyboardModifier.NoModifier,
+        "b",
+    )
+    assert tabs.eventFilter(tabs.editor, typed) is False
     escape = qt.QtGui.QKeyEvent(
         qt.QtCore.QEvent.Type.KeyPress,
-        qt.QtCore.Qt.Key.Key_Escape,
-        qt.QtCore.Qt.KeyboardModifier.NoModifier,
+        Qt.Key.Key_Escape,
+        Qt.KeyboardModifier.NoModifier,
     )
     assert tabs.eventFilter(tabs.editor, escape) is True
     assert tabs.editor is None
@@ -345,16 +382,58 @@ def test_a_commit_for_a_gone_record_changes_nothing(hub, tabs):
     assert tabs.tabText(1) == "1"
 
 
-def test_a_wide_tab_keeps_its_width_for_the_editor(hub, tabs):
+def test_a_wide_tab_keeps_its_width_for_the_editor(hub, tabs, qt):
     """A tab wide enough to type in hands the editor its own
-    width; a narrow one takes the editor's floor."""
+    rect — width and mapped place both — a narrow one the
+    editor's floor width."""
     session = hub.open_shell("ws-a")
     hub.rename("ws-a", session.no, "a-title-wide-enough")
     tabs.host("ws-a")
     bar = tabs.tabBar()
     bar.resize(600, bar.height())
+    rect = bar.tabRect(1)
+    corner = bar.mapTo(tabs, rect.topLeft())
     tabs.begin_rename(1)
+    assert tabs.editor.width() == rect.width()
+    assert tabs.editor.pos() == corner
+    hub.rename("ws-a", session.no, "x")
+    tabs.begin_rename(1)  # a narrow tab now
     assert tabs.editor.width() >= 80
+
+
+def test_a_rename_lands_on_its_own_session_not_the_shuffled_tab(hub, tabs):
+    """The editor keys on the session's number, not the tab's
+    position: a shell closing under an open editor must not
+    hand the edit to the session that slid into its place, and
+    the editor for the closed session goes down."""
+    first = hub.open_shell("ws-a")
+    second = hub.open_shell("ws-a")
+    tabs.host("ws-a")
+    tabs.begin_rename(1)  # first session's tab
+    tabs.editor.setText("mine")
+    hub.close_shell("ws-a", first.no)  # the tab under the editor closes
+    assert tabs.editor is None  # the edit names a gone session
+    assert tabs.tabText(1) == "2"
+    assert second.label == "2"  # no wrong-session rename landed
+    # the editor's commit after a tab shift still finds its own
+    tabs.begin_rename(1)
+    tabs.editor.setText("mine")
+    hub.open_shell("ws-a")  # a tab lands beside, shifting nothing
+    tabs.commit_rename()
+    assert hub.find("ws-a", second.no).label == "mine"
+
+
+def test_an_editor_for_a_closed_session_goes_down(hub, tabs):
+    """The editor for a session that closed mid-edit goes down
+    without standing a name."""
+    first = hub.open_shell("ws-a")
+    hub.open_shell("ws-a")
+    tabs.host("ws-a")
+    tabs.begin_rename(1)
+    tabs.editor.setText("late")
+    hub.close_shell("ws-a", first.no)
+    assert tabs.editor is None
+    assert tabs.tabText(1) == "2"
 
 
 def test_the_rename_paths_without_an_editor_change_nothing(tabs):
@@ -377,11 +456,11 @@ def test_a_rename_for_a_record_behind_the_strip_changes_nothing(hub, tabs):
 # --- the window shell's actions ---------------------------------------
 
 
-def test_the_shell_action_opens_the_detail_on_a_new_tab(qt):
+def test_the_shell_action_opens_the_detail_on_a_new_tab(qt, window_shell):
     """The list's shell action opens the detail page and one
     terminal tab beside its Info tab, current and focused
     (#954)."""
-    shell, hub, _window = make_shell(qt)
+    shell, hub, _window = window_shell
     shell.listing.table.selectRow(0)
     shell.listing.shell_button.click()
     assert shell.currentWidget() is shell.detail
@@ -390,10 +469,10 @@ def test_the_shell_action_opens_the_detail_on_a_new_tab(qt):
     assert shell.detail.tabs.tabText(1) == "1"
 
 
-def test_a_second_shell_takes_the_tab_beside(qt):
+def test_a_second_shell_takes_the_tab_beside(qt, window_shell):
     """A new ssh connection opens a tab beside the standing
     ones, numbered in open order."""
-    shell, hub, _window = make_shell(qt)
+    shell, hub, _window = window_shell
     shell.open_shell("ws-a")
     shell.detail.want_shell()
     titles = [
@@ -402,10 +481,10 @@ def test_a_second_shell_takes_the_tab_beside(qt):
     assert titles == ["Info", "1", "2"]
 
 
-def test_the_back_action_closes_no_shell(qt):
+def test_the_back_action_closes_no_shell(qt, window_shell):
     """Back to the list closes no tab and ends no session: the
     terminals keep running while the page is closed."""
-    shell, hub, _window = make_shell(qt)
+    shell, hub, _window = window_shell
     shell.open_shell("ws-a")
     session = hub.shells("ws-a")[0]
     shell.detail.go_back()
@@ -414,10 +493,10 @@ def test_the_back_action_closes_no_shell(qt):
     assert hub.shells("ws-a")
 
 
-def test_reopening_shows_every_shell_with_its_title(qt):
+def test_reopening_shows_every_shell_with_its_title(qt, window_shell):
     """Revisiting the workspace's page shows a tab for every
     active connection, each with its title."""
-    shell, hub, _window = make_shell(qt)
+    shell, hub, _window = window_shell
     shell.open_shell("ws-a")
     shell.open_shell("ws-a")
     hub.rename("ws-a", 2, "build")
@@ -429,10 +508,10 @@ def test_reopening_shows_every_shell_with_its_title(qt):
     assert titles == ["Info", "1", "build"]
 
 
-def test_a_shell_for_another_workspace_swaps_the_page(qt):
+def test_a_shell_for_another_workspace_swaps_the_page(qt, window_shell):
     """A shell action naming a workspace the page does not show
     takes the page to that workspace first."""
-    shell, hub, _window = make_shell(qt)
+    shell, hub, _window = window_shell
     shell.open_shell("ws-a")
     shell.open_shell("ws-b")
     assert shell.detail.workspace_id == "ws-b"
@@ -443,11 +522,13 @@ def test_a_shell_for_another_workspace_swaps_the_page(qt):
     assert len(hub.shells("ws-a")) == 1
 
 
-def test_the_external_action_spawns_the_launcher_argv(qt, monkeypatch):
+def test_the_external_action_spawns_the_launcher_argv(
+    qt, launcher_shell, monkeypatch
+):
     """The external-terminal action runs the configured
     launcher with the ssh argv appended — the same argv the
     TUI's windowed shell action builds — detached."""
-    shell, hub, _window = make_shell(qt, terminal_cmd=["theterm", "-e"])
+    shell, hub, _window = launcher_shell
     seen = []
     monkeypatch.setattr(
         qt.QtCore.QProcess,
@@ -463,10 +544,12 @@ def test_the_external_action_spawns_the_launcher_argv(qt, monkeypatch):
     assert seen == [("theterm", ["-e", *shell_argv("ws-a")])]
 
 
-def test_the_external_action_names_the_setting_when_unconfigured(qt):
+def test_the_external_action_names_the_setting_when_unconfigured(
+    qt, window_shell
+):
     """Without a launcher the notice names the setting: the GUI
     has no terminal of its own to hand the session."""
-    shell, hub, _window = make_shell(qt)
+    shell, hub, _window = window_shell
     shell.open_external("ws-a")
     assert (
         shell.listing.status.text()
@@ -474,10 +557,10 @@ def test_the_external_action_names_the_setting_when_unconfigured(qt):
     )
 
 
-def test_the_failed_launcher_flashes(qt, monkeypatch):
+def test_the_failed_launcher_flashes(qt, launcher_shell, monkeypatch):
     """A launcher that cannot start says so on the listing's
     status line."""
-    shell, hub, _window = make_shell(qt, terminal_cmd=["theterm", "-e"])
+    shell, hub, _window = launcher_shell
     monkeypatch.setattr(
         qt.QtCore.QProcess,
         "startDetached",
@@ -487,11 +570,11 @@ def test_the_failed_launcher_flashes(qt, monkeypatch):
     assert "failed" in shell.listing.status.text()
 
 
-def test_the_shell_actions_without_a_hold_do_nothing(qt):
+def test_the_shell_actions_without_a_hold_do_nothing(qt, window_shell):
     """The shell and external actions sit disabled with no row
     held, and their slots send nothing: the window shell's
     paths stay untaken."""
-    shell, hub, _window = make_shell(qt)
+    shell, hub, _window = window_shell
     shell.listing.table.clearSelection()  # no row held
     assert not shell.listing.shell_button.isEnabled()
     assert not shell.listing.external_button.isEnabled()
@@ -503,10 +586,12 @@ def test_the_shell_actions_without_a_hold_do_nothing(qt):
     assert seen == []
 
 
-def test_the_page_shell_action_without_a_workspace_sends_nothing(qt):
+def test_the_page_shell_action_without_a_workspace_sends_nothing(
+    qt, window_shell
+):
     """The page's shell action with no workspace taken sends
     nothing."""
-    shell, hub, _window = make_shell(qt)
+    shell, hub, _window = window_shell
     seen: list[str] = []
     shell.detail.shell_wanted.connect(lambda ws: seen.append(ws))
     shell.detail.workspace_id = ""

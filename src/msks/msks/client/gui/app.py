@@ -306,7 +306,11 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # widget builds (#939): every screen the window opens — the
     # table, the button, the status line — inherits the scaled
     # size without a per-widget hand-tune. A preset knob is the
-    # operator's own choice and wins over the default.
+    # operator's own choice and wins over the default. The
+    # scale multiplies what the application already carries:
+    # one window per process is the entry's own contract, and a
+    # second open in one process would compound it (the
+    # offscreen suite unscales between its opens).
     font = app.font()
     font.setPointSizeF(
         font.pointSizeF() * scale_from_env(FONT_SCALE_ENV, FONT_SCALE)
