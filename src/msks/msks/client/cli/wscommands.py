@@ -175,7 +175,7 @@ def gui() -> int:
     the daemon's REST API. Ships with the gui extra
     (pip install 'msks[gui]'); the workspace screens arrive
     with the plan's later phases."""
-    return run_gui()
+    return run_gui(conf=cliapp.invoked_conf)
 
 
 @app.command("storage")

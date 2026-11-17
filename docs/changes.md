@@ -8,6 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **GUI workspace shells in terminal tabs (#954).** The GUI's
+  workspace detail page is now tabbed: an Info tab holds the
+  mounts, health, and events sections, and every open shell on
+  the workspace gets its own terminal tab beside it, titled with
+  its session number (double-click renames). Shells keep running
+  when you leave the page; closing a tab ends its session. A
+  Shell action on the workspace list opens the page on a new
+  shell tab, and an External action opens the same shell in the
+  terminal named by `terminal_open_cmd`, as the TUI does.
+
 - **The GUI terminal's user surfaces (#953).** The terminal
   widget grows grid-anchored selection (drag, double-click
   word, triple-click line, edge autoscroll into scrollback),

@@ -195,6 +195,8 @@ class WorkspaceList(QtWidgets.QWidget):
     """
 
     opened = QtCore.Signal(str)
+    shell_requested = QtCore.Signal(str)
+    external_requested = QtCore.Signal(str)
 
     def __init__(self, bridge: Bridge) -> None:
         super().__init__()
@@ -264,6 +266,16 @@ class WorkspaceList(QtWidgets.QWidget):
         self.start_button.clicked.connect(self.start_selected)
         self.stop_button = QtWidgets.QPushButton("Stop", self)
         self.stop_button.clicked.connect(self.stop_selected)
+        # The shell actions (#954): a terminal tab inside the
+        # window, and the same shell in an external terminal
+        # through the configured launcher.
+        self.shell_button = QtWidgets.QPushButton("Shell", self)
+        self.shell_button.clicked.connect(self.shell_selected)
+        self.external_button = QtWidgets.QPushButton("External", self)
+        self.external_button.setToolTip(
+            "Open a shell in an external terminal (terminal_open_cmd)"
+        )
+        self.external_button.clicked.connect(self.external_selected)
         self.table.selectionModel().selectionChanged.connect(self.sync_actions)
         # A row's activation opens the workspace (#945): the
         # keypress or double-click the platform serves lands on
@@ -301,6 +313,8 @@ class WorkspaceList(QtWidgets.QWidget):
         actions = QtWidgets.QHBoxLayout()
         actions.addWidget(self.start_button)
         actions.addWidget(self.stop_button)
+        actions.addWidget(self.shell_button)
+        actions.addWidget(self.external_button)
         actions.addWidget(self.refresh_button)
         actions.addWidget(self.status, stretch=1)
         layout = QtWidgets.QVBoxLayout(self)
@@ -664,6 +678,8 @@ class WorkspaceList(QtWidgets.QWidget):
         usable = self.held_workspace() is not None
         self.start_button.setEnabled(usable and not self.action_pending)
         self.stop_button.setEnabled(usable and not self.action_pending)
+        self.shell_button.setEnabled(usable)
+        self.external_button.setEnabled(usable)
         self.update_detail()
 
     def update_detail(self) -> None:
@@ -717,6 +733,26 @@ class WorkspaceList(QtWidgets.QWidget):
         self.action_flight = workspace
         self.sync_actions()
         self.bridge.call(START_KEY, "start", workspace[0])
+
+    @QtCore.Slot()
+    def shell_selected(self) -> None:
+        """The Shell action (#954): the held workspace opens a
+        terminal tab inside the window — the window shell's own
+        path, through the signal the screens compose by."""
+        workspace = self.held_workspace()
+        if workspace is None:
+            return
+        self.shell_requested.emit(workspace[0])
+
+    @QtCore.Slot()
+    def external_selected(self) -> None:
+        """The external-terminal action (#954): the held
+        workspace's shell in an external window, the same argv
+        the TUI's windowed shell action builds."""
+        workspace = self.held_workspace()
+        if workspace is None:
+            return
+        self.external_requested.emit(workspace[0])
 
     @QtCore.Slot()
     def stop_selected(self) -> None:

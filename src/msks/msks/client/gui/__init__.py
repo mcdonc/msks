@@ -10,8 +10,10 @@ PySide6-free), the live events feed (:mod:`.feed`, phase 4 of
 #924 — plain asyncio over the shared dial seams, no Qt in it),
 and the libghostty-vt ctypes binding (:mod:`.ghostty`,
 phase 4.5 — #950: pure ctypes over the C ABI, no Qt in it),
-and the PTY session behind a terminal tab (:mod:`.termsession`,
+the PTY session behind a terminal tab (:mod:`.termsession`,
 phase 4.5 — #951: a child on a pty, pure stdlib, no Qt in it),
+and the shell tabs that host the terminals inside the detail
+page (:mod:`.shells`, #954: the session hub and the tab strip),
 and the terminal widget package (:mod:`.terminal`, phase 4.5
 — #952 and #953: the cell-grid screen over the render state,
 with grid-anchored selection, the clipboard paths, OSC 8 and

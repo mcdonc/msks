@@ -227,9 +227,13 @@ def display_present() -> bool:
     )
 
 
-def run() -> int:
+def run(conf=None) -> int:
     """Open the GUI window; the guards keep the parse path
-    Qt-free and answer every failure with one stderr line."""
+    Qt-free and answer every failure with one stderr line.
+    ``conf`` is the invocation's resolved client config
+    (#954) — the external-terminal action reads the configured
+    launcher (``terminal_open_cmd``) off it, the TUI's own
+    read."""
     if find_spec("PySide6") is None:
         print(HINT, file=sys.stderr)
         return 1
@@ -247,10 +251,20 @@ def run() -> int:
     if not display_present():
         print(NO_DISPLAY, file=sys.stderr)
         return 1
-    return open_window(QtWidgets)
+    return open_window(QtWidgets, conf)
 
 
-def open_window(QtWidgets: ModuleType) -> int:
+def terminal_command(conf) -> list[str] | None:
+    """The configured terminal launcher (#954, the TUI's own
+    read in its app shell): the list the config resolved — a
+    string form arrives shell-split already — or None when no
+    bootstrap resolved one."""
+    if conf is None or not conf.terminal_open_cmd:
+        return None
+    return list(conf.terminal_open_cmd)
+
+
+def open_window(QtWidgets: ModuleType, conf=None) -> int:
     """Show the main-window shell and run the event loop.
 
     The instance check reuses an existing ``QApplication`` — the
@@ -292,7 +306,11 @@ def open_window(QtWidgets: ModuleType) -> int:
     # widget builds (#939): every screen the window opens — the
     # table, the button, the status line — inherits the scaled
     # size without a per-widget hand-tune. A preset knob is the
-    # operator's own choice and wins over the default.
+    # operator's own choice and wins over the default. The
+    # scale multiplies what the application already carries:
+    # one window per process is the entry's own contract, and a
+    # second open in one process would compound it (the
+    # offscreen suite unscales between its opens).
     font = app.font()
     font.setPointSizeF(
         font.pointSizeF() * scale_from_env(FONT_SCALE_ENV, FONT_SCALE)
@@ -310,7 +328,9 @@ def open_window(QtWidgets: ModuleType) -> int:
     # the module.
     from .workspace import WorkspaceShell
 
-    window.setCentralWidget(WorkspaceShell(bridge))
+    window.setCentralWidget(
+        WorkspaceShell(bridge, terminal_cmd=terminal_command(conf))
+    )
     # The opening geometry (#939): the last-closed rect wins —
     # a saved geometry the screens still show — and the fixed
     # 1280 by 720 is the first-open shape until a close
