@@ -114,6 +114,35 @@ def bell(_terminal, userdata) -> None:
         screen.flash()
 
 
+@gt.CLIPBOARD_WRITE_FN
+def clipboard_write(_terminal, userdata, write_ptr) -> None:
+    """OSC 52: a program inside wants to set the clipboard.
+    The screen applies the parsed payload to Qt's clipboard
+    and answers the reply — Qt lives on the screen, not here.
+    """
+    screen = screen_for(userdata)
+    if screen is None or not write_ptr:
+        return
+    write = ctypes.cast(write_ptr, ctypes.POINTER(gt.ClipboardWrite)).contents
+    screen.osc52_clipboard(write)
+
+
+def clipboard_payload(write) -> tuple[str | None, int]:
+    """An OSC 52 write's plain-text payload and location:
+    the first text/plain content (the empty mime counts, the
+    library's own default), else None when nothing in the
+    request is text."""
+    for index in range(write.contents_len):
+        content = write.contents[index]
+        if content.mime.text() in (
+            "",
+            "text/plain",
+            "text/plain;charset=utf-8",
+        ):
+            return content.data.text(), write.location
+    return None, write.location
+
+
 def registrations(screen: object) -> list[tuple[int, ctypes._CData]]:
     """The option/value pairs that seat a screen's callbacks on
     its terminal: the userdata id beside every effect."""
@@ -135,4 +164,8 @@ def registrations(screen: object) -> list[tuple[int, ctypes._CData]]:
             ctypes.cast(color_scheme, ctypes.c_void_p),
         ),
         (gt.OPT_BELL, ctypes.cast(bell, ctypes.c_void_p)),
+        (
+            gt.OPT_CLIPBOARD_WRITE,
+            ctypes.cast(clipboard_write, ctypes.c_void_p),
+        ),
     ]

@@ -15,7 +15,9 @@ from PySide6.QtCore import QPointF, QRect, Qt
 from PySide6.QtGui import QColor, QPainter
 
 from .. import ghostty as gt
+from . import find
 from .fonts import font_key
+from .links import URL_RE
 
 # The per-cell scratch the painter reads graphemes into — a
 # cell's cluster never exceeds the library's 16-codepoint
@@ -59,7 +61,9 @@ def paint_event(screen, painter: QPainter) -> None:
 
 def paint_cells(screen, painter: QPainter, colors) -> None:
     """Walk the rows the render state holds and paint each
-    cell."""
+    cell. The walk also records each row's plain text into
+    the URL scan, and paints the find bar's match underlays
+    beneath the cells."""
     ok, iterator = screen.lib.get(
         screen.lib.render_state_get,
         screen.render_state,
@@ -74,7 +78,10 @@ def paint_cells(screen, painter: QPainter, colors) -> None:
         style = gt.Style()
         style.size = ctypes.sizeof(style)
         codepoints = (ctypes.c_uint32 * CLUSTER_CAP)()
+        rects_by_row = underlay_map(screen)
+        spans: list[list[tuple[int, int, str]]] = []
         y = 0
+        viewport_row = -1
         while screen.lib.row_iterator_next(iterator.value):
             _, cells = screen.lib.get(
                 screen.lib.row_get,
@@ -82,19 +89,62 @@ def paint_cells(screen, painter: QPainter, colors) -> None:
                 gt.ROW_CELLS,
                 ctypes.c_void_p(screen.row_cells),
             )
-            x = 0
-            while screen.lib.row_cells_next(cells.value):
-                paint_cell(screen, painter, colors, style, codepoints, x, y)
-                x += screen.metrics.cell_width
+            viewport_row += 1
+            paint_underlays(
+                screen, painter, rects_by_row.get(viewport_row, []), y
+            )
+            spans.append(
+                paint_row(screen, painter, colors, style, codepoints, cells, y)
+            )
             clean = ctypes.c_bool(False)
             screen.lib.row_set(iterator, gt.ROW_DIRTY, ctypes.byref(clean))
             y += screen.metrics.cell_height
+        screen.link_spans = spans
+
+
+def underlay_map(screen) -> dict[int, list[tuple[int, int, bool]]]:
+    """The find bar's viewport rectangles grouped by row, for
+    painting beneath the cells."""
+    rects_by_row: dict[int, list[tuple[int, int, bool]]] = {}
+    for row, x, width, is_selected in find.viewport_rects(screen):
+        rects_by_row.setdefault(row, []).append((x, width, is_selected))
+    return rects_by_row
+
+
+def paint_underlays(screen, painter: QPainter, rects, y: int) -> None:
+    """The find bar's match underlays beneath one row: the
+    selected match in orange above the rest in blue."""
+    for rx, rw, is_selected in rects:
+        painter.fillRect(
+            rx,
+            y,
+            rw,
+            screen.metrics.cell_height,
+            QColor(255, 170, 0, 130)
+            if is_selected
+            else QColor(120, 170, 255, 70),
+        )
+
+
+def paint_row(screen, painter: QPainter, colors, style, codepoints, cells, y):
+    """One row's cells left to right; answers the row's URL
+    spans from the text the cells carried."""
+    x = 0
+    row_chars: list[str] = []
+    while screen.lib.row_cells_next(cells.value):
+        paint_cell(screen, painter, colors, style, codepoints, x, y, row_chars)
+        x += screen.metrics.cell_width
+    return [
+        (m.start(), m.end(), m.group(0))
+        for m in URL_RE.finditer("".join(row_chars))
+    ]
 
 
 def cell_colors(screen, colors, cells):
     """A cell's foreground and background as Qt colors, with
-    whether the cell carries a background of its own: the
-    defaults stand in for what the cell does not set."""
+    whether the cell carries a paint of its own — a set
+    background, the inverse style, or a library-flagged
+    selection each make one."""
     lib = screen.lib
     ok_fg, fg = lib.get(
         lib.row_cells_get, cells, gt.CELLS_FG_COLOR, gt.ColorRgb()
@@ -104,16 +154,36 @@ def cell_colors(screen, colors, cells):
     )
     foreground = rgb(fg if ok_fg else colors.foreground)
     background = rgb(bg if ok_bg else colors.background)
-    return foreground, background, ok_bg
+    selected = cell_selected(lib, cells)
+    if selected:
+        foreground, background = background, foreground
+    return foreground, background, ok_bg or selected
+
+
+def cell_selected(lib, cells) -> bool:
+    """Whether the library flags the cell as inside the
+    active selection."""
+    ok, selected = lib.get(
+        lib.row_cells_get, cells, gt.CELLS_SELECTED, ctypes.c_bool()
+    )
+    return bool(ok and selected.value)
 
 
 def paint_cell(
-    screen, painter: QPainter, colors, style, codepoints, x: int, y: int
+    screen,
+    painter: QPainter,
+    colors,
+    style,
+    codepoints,
+    x: int,
+    y: int,
+    row_chars: list[str],
 ) -> None:
     """One cell: its background fill, then the cluster's
     glyphs baseline-anchored at the cell's left edge in the
-    style's variant of the one face. The inverse style swaps
-    the cell's foreground and background."""
+    style's variant of the one face. The inverse style and
+    the selection each swap the cell's foreground and
+    background."""
     lib = screen.lib
     cells = screen.row_cells
     ok, length = lib.get(
@@ -122,11 +192,14 @@ def paint_cell(
     foreground, background, has_bg = cell_colors(screen, colors, cells)
     if not ok or length.value == 0:
         fill_cell(screen, painter, x, y, background, has_bg)
+        row_chars.append(" ")
         return
     cell_style = read_style(lib, cells, style)
     if cell_style.inverse:
         foreground, background = background, foreground
-    fill_cell(screen, painter, x, y, background, has_bg or cell_style.inverse)
+        has_bg = True
+    fill_cell(screen, painter, x, y, background, has_bg)
+    row_chars.append(cluster_text(lib, cells, codepoints) or " ")
     draw_cluster(screen, painter, foreground, cell_style, codepoints, x, y)
 
 
@@ -155,26 +228,30 @@ def draw_cluster(
     face and its faintness."""
     lib = screen.lib
     cells = screen.row_cells
-    ok, length = lib.get(
-        lib.row_cells_get, cells, gt.CELLS_GRAPHEMES_LEN, ctypes.c_uint32()
-    )
-    text = ""
-    # A cluster longer than the 16-codepoint buffer is rare
-    # but reachable: a combining-mark run (e + twenty combining
-    # diaereses) exceeds the cap in one cell and draws blank —
-    # the buffer cannot carry it.
-    if length.value <= CLUSTER_CAP:
-        lib.row_cells_get(
-            cells,
-            gt.CELLS_GRAPHEMES_BUF,
-            ctypes.cast(codepoints, ctypes.c_void_p),
-        )
-        text = "".join(chr(codepoints[index]) for index in range(length.value))
+    text = cluster_text(lib, cells, codepoints)
     if style.faint:
         foreground.setAlpha(120)
     painter.setFont(screen.fonts[font_key(style.bold, style.italic)])
     painter.setPen(foreground)
     painter.drawText(QPointF(x, y + screen.metrics.ascent), text)
+
+
+def cluster_text(lib, cells, codepoints) -> str:
+    """The cell's cluster as text: the graphemes the buffer
+    carries, or the empty string for a cluster longer than
+    the 16-codepoint buffer (a combining-mark run — it draws
+    blank, the buffer cannot carry it)."""
+    ok, length = lib.get(
+        lib.row_cells_get, cells, gt.CELLS_GRAPHEMES_LEN, ctypes.c_uint32()
+    )
+    if not ok or length.value == 0 or length.value > CLUSTER_CAP:
+        return ""
+    lib.row_cells_get(
+        cells,
+        gt.CELLS_GRAPHEMES_BUF,
+        ctypes.cast(codepoints, ctypes.c_void_p),
+    )
+    return "".join(chr(codepoints[index]) for index in range(length.value))
 
 
 def cursor_rect(screen, colors, cell: tuple[int, int]):

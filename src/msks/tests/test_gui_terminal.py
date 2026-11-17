@@ -116,12 +116,15 @@ def screen(qt):
 def hush_echo(widget) -> None:
     """Make the pty raw enough that the echo child answers with
     the exact bytes: the kernel echo off (it renders escapes in
-    caret notation) and canonical mode off (it would hold every
-    write until a newline)."""
+    caret notation), canonical mode off (it would hold every
+    write until a newline), and input CR→NL off (a pasted
+    carriage return must survive to the child, or the paste
+    pins could not read the bytes the terminal wrote)."""
     import termios
 
     attrs = termios.tcgetattr(widget.session.master_fd)
     attrs[3] &= ~(termios.ECHO | termios.ECHOCTL | termios.ICANON)
+    attrs[0] &= ~termios.ICRNL
     termios.tcsetattr(widget.session.master_fd, termios.TCSANOW, attrs)
 
 
@@ -714,14 +717,14 @@ def test_button_for_maps_the_three_buttons(qt):
     assert qt.input.button_for(Fake(Qt.MouseButton.NoButton)) is None
 
 
-def mouse_event(qt, kind, pos, button, buttons):
+def mouse_event(qt, kind, pos, button, buttons, modifiers=None):
     return qt.QtGui.QMouseEvent(
         kind,
         qt.QtCore.QPointF(*pos),
         qt.QtCore.QPointF(*pos),
         button,
         buttons,
-        qt.QtCore.Qt.KeyboardModifier.NoModifier,
+        modifiers or qt.QtCore.Qt.KeyboardModifier.NoModifier,
     )
 
 
@@ -1244,3 +1247,1080 @@ def test_cell_at_clamps_to_the_grid(screen, qt):
     assert qt.input.cell_at(screen, QPointF(0, 0)) == (0, 0)
     far = QPointF(screen.width() * 3, screen.height() * 3)
     assert qt.input.cell_at(screen, far) == (screen.cols - 1, screen.rows - 1)
+
+
+# --- selection and clipboard (#953) --------------------------------------
+
+
+def test_a_drag_selects_text(screen, qt):
+    """A press-drag-release sweep selects the cells between
+    the anchors and the finished drag publishes the text to
+    the PRIMARY selection."""
+    from msks.client.gui.terminal import select
+
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[2J\x1b[Hhello world")
+    cw = screen.metrics.cell_width
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+            (2, 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.mouseMoveEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseMove,
+            (5 * cw, 2),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.mouseReleaseEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonRelease,
+            (5 * cw, 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+        )
+    )
+    assert select.text(screen) == "hello"
+    clipboard = qt.QtWidgets.QApplication.clipboard()
+    assert clipboard.text(select.primary_mode(clipboard)) == "hello"
+
+
+def test_a_click_without_a_drag_clears_the_selection(screen, qt):
+    """A plain click drops the selection instead of leaving
+    the last drag's anchors live."""
+    from msks.client.gui.terminal import select
+
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[2J\x1b[Hhello world")
+    cw = screen.metrics.cell_width
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+            (2, 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.mouseMoveEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseMove,
+            (5 * cw, 2),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.mouseReleaseEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonRelease,
+            (5 * cw, 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+        )
+    )
+    assert select.text(screen) == "hello"
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+            (cw * 8, 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.mouseReleaseEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonRelease,
+            (cw * 8, 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+        )
+    )
+    assert select.text(screen) == ""
+
+
+def test_a_double_click_selects_a_word(screen, qt):
+    """Two presses on one cell inside the multi-click window
+    select the word under them."""
+    from msks.client.gui.terminal import select
+
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[2J\x1b[Hone two three")
+    pos = (screen.metrics.cell_width * 5, 2)
+    for kind_press, kind_release in (
+        (
+            qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+            qt.QtGui.QMouseEvent.Type.MouseButtonRelease,
+        ),
+    ):
+        screen.mousePressEvent(
+            mouse_event(
+                qt,
+                kind_press,
+                pos,
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.LeftButton,
+            )
+        )
+        screen.mouseReleaseEvent(
+            mouse_event(
+                qt,
+                kind_release,
+                pos,
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.NoButton,
+            )
+        )
+    # A synthetic press carries timestamp 0, so both presses
+    # sit inside the window by construction.
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+            pos,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.mouseReleaseEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonRelease,
+            pos,
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+        )
+    )
+    assert select.text(screen) == "two"
+
+
+def test_a_triple_click_selects_the_line(screen, qt):
+    """Three presses on one cell select the whole line."""
+    from msks.client.gui.terminal import select
+
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[2J\x1b[Halpha beta\r\ngamma delta")
+    pos = (screen.metrics.cell_width * 3, 2)
+    for _ in range(3):
+        screen.mousePressEvent(
+            mouse_event(
+                qt,
+                qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+                pos,
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.LeftButton,
+            )
+        )
+        screen.mouseReleaseEvent(
+            mouse_event(
+                qt,
+                qt.QtGui.QMouseEvent.Type.MouseButtonRelease,
+                pos,
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.NoButton,
+            )
+        )
+    assert select.text(screen) == "alpha beta"
+
+
+def test_selection_survives_viewport_scrolling(screen, qt):
+    """Grid-anchored selection: paging the viewport leaves the
+    text unchanged, whatever rows it now shows."""
+    from msks.client.gui.terminal import select
+
+    vt(screen, b"\x1b[2J\x1b[Htarget line\r\n" + b"filler\r\n" * 60)
+    select.word_at(screen, qt.QtCore.QPointF(4, 2))
+    before = select.text(screen)
+    screen.scroll_rows(-20)
+    assert select.text(screen) == before
+
+
+def test_selection_survives_reflow(screen, qt):
+    """A selection's anchors re-resolve after a resize: the
+    same logical text stays selected."""
+    from msks.client.gui.terminal import select
+
+    vt(screen, b"\x1b[2J\x1b[Hstable words here")
+    select.word_at(screen, qt.QtCore.QPointF(screen.metrics.cell_width * 3, 2))
+    before = select.text(screen)
+    screen.resize(
+        screen.width() + screen.metrics.cell_width * 10, screen.height()
+    )
+    qt.app.processEvents()
+    assert select.text(screen) == before
+
+
+def test_copy_puts_the_selection_on_the_clipboard(screen, qt):
+    """Ctrl+Shift+C (and X, a terminal cannot cut) copies the
+    selection."""
+    from msks.client.gui.terminal import select
+
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[2J\x1b[Hclipboard words")
+    select.word_at(screen, qt.QtCore.QPointF(4, 2))
+    for key in (Qt.Key.Key_C, Qt.Key.Key_X):
+        screen.keyPressEvent(
+            key_event(
+                qt,
+                key,
+                modifiers=Qt.KeyboardModifier.ControlModifier
+                | Qt.KeyboardModifier.ShiftModifier,
+            )
+        )
+        assert qt.QtWidgets.QApplication.clipboard().text() == "clipboard"
+
+
+def test_ctrl_shift_v_pastes_the_clipboard(screen, qt):
+    """Ctrl+Shift+V sends the clipboard to the child."""
+    Qt = qt.QtCore.Qt
+    qt.QtWidgets.QApplication.clipboard().setText("pasted")
+    screen.keyPressEvent(
+        key_event(
+            qt,
+            Qt.Key.Key_V,
+            modifiers=Qt.KeyboardModifier.ControlModifier
+            | Qt.KeyboardModifier.ShiftModifier,
+        )
+    )
+    assert drain_until(screen, b"pasted").endswith(b"pasted")
+
+
+def test_paste_wraps_in_bracketed_mode(screen, qt):
+    """A program that enabled mode 2004 receives its paste
+    wrapped in the bracket markers, newlines intact."""
+    from msks.client.gui.terminal import select
+
+    vt(screen, b"\x1b[?2004h")
+    select.paste_text(screen, "a\nb")
+    seen = drain_until(screen, b"201~")
+    # The pty's output post-processing (ONLCR) renders the
+    # child's newlines as CRLF on the master side.
+    assert seen.replace(b"\r\n", b"\n").endswith(b"\x1b[200~a\nb\x1b[201~")
+
+
+def test_plain_paste_converts_newlines(screen, qt):
+    """Without bracketed paste, newlines become carriage
+    returns — a shell executes the line a carriage return
+    ends."""
+    from msks.client.gui.terminal import select
+
+    vt(screen, b"\x1b[?2004l")
+    select.paste_text(screen, "a\nb")
+    seen = drain_until(screen, b"\r")
+    # The pty's output post-processing (ONLCR) renders the
+    # child's newlines as CRLF on the master side; input
+    # CR→NL stays hushed, so the carriage return arrives
+    # exactly as written.
+    assert seen.replace(b"\r\n", b"\n") == b"a\rb"
+
+
+def test_middle_click_pastes_primary(screen, qt):
+    """The PRIMARY selection pastes back on middle-click —
+    the X11 convention."""
+    from msks.client.gui.terminal import select
+
+    Qt = qt.QtCore.Qt
+    clipboard = qt.QtWidgets.QApplication.clipboard()
+    clipboard.setText("primary payload", select.primary_mode(clipboard))
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+            (10, 10),
+            Qt.MouseButton.MiddleButton,
+            Qt.MouseButton.MiddleButton,
+        )
+    )
+    assert drain_until(screen, b"payload").endswith(b"primary payload")
+
+
+def test_osc52_sets_the_clipboard(screen, qt):
+    """An OSC 52 write from the program inside reaches the
+    desktop clipboard; a selection-location write reaches
+    PRIMARY instead."""
+    import base64
+
+    from msks.client.gui.terminal import select
+
+    vt(screen, b"\x1b]52;c;" + base64.b64encode(b"from inside") + b"\x1b\\")
+    clipboard = qt.QtWidgets.QApplication.clipboard()
+    assert clipboard.text() == "from inside"
+    vt(screen, b"\x1b]52;s;" + base64.b64encode(b"to primary") + b"\x1b\\")
+    assert clipboard.text(select.primary_mode(clipboard)) == "to primary"
+
+
+def test_a_non_text_osc52_payload_answers_unsupported(qt):
+    """A clipboard write carrying no text payload answers
+    UNSUPPORTED — the payload parser names the reason."""
+    from msks.client.gui.terminal import callbacks
+
+    write = SimpleNamespace(
+        contents_len=1,
+        contents=[
+            SimpleNamespace(
+                mime=gt.GhosttyString(
+                    ptr=pointer_to(b"image/png"),
+                    len=len(b"image/png"),
+                ),
+                data=gt.GhosttyString(),
+            )
+        ],
+        location=0,
+    )
+    payload, location = callbacks.clipboard_payload(write)
+    assert payload is None
+    assert location == 0
+
+
+def pointer_to(data: bytes):
+    """A GhosttyString's char* pointing at owned bytes."""
+    ctypes_p = ctypes.create_string_buffer(data + b"\x00")
+    return ctypes.cast(ctypes_p, ctypes.POINTER(ctypes.c_uint8))
+
+
+def test_selection_stands_aside_under_mouse_tracking(screen, qt):
+    """A program that enabled mouse reporting owns the mouse:
+    presses encode to it, and no selection forms."""
+    from msks.client.gui.terminal import select
+
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[2J\x1b[Hwords\r\n" + b"\x1b[?1000h\x1b[?1006h")
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+            (2, 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.mouseMoveEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseMove,
+            (60, 2),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.mouseReleaseEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonRelease,
+            (60, 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+        )
+    )
+    assert select.text(screen) == ""
+    assert drain_until(screen, b"M")  # the press reached the child
+
+
+def test_selected_cells_paint_inverted(screen, qt):
+    """The library's selection flags repaint the covered
+    cells with their colors swapped."""
+
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[2J\x1b[Hxxxx")
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    before = screen.grab().toImage().pixelColor(cw // 2, ch // 2)
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+            (2, 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.mouseMoveEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseMove,
+            (4 * cw, 2),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.mouseReleaseEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonRelease,
+            (4 * cw, 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+        )
+    )
+    after = screen.grab().toImage().pixelColor(cw // 2, ch // 2)
+    assert after != before
+
+
+def test_the_context_menu_offers_copy_paste_and_links(screen, qt):
+    """The menu dims Copy without a selection and Paste
+    without clipboard text, and adds Copy Link Address over
+    a link."""
+    vt(screen, b"\x1b[2J\x1b[Hsee https://example.com/x now")
+    screen.grab().toImage()  # the paint pass fills the URL scan
+    qt.QtWidgets.QApplication.clipboard().clear()
+    menu = screen.build_context_menu(None)
+    labels = [action.text() for action in menu.actions()]
+    assert "Copy\tCtrl+Shift+C" in labels
+    assert not menu.actions()[0].isEnabled()  # nothing selected
+    link_pos = qt.QtCore.QPointF(screen.metrics.cell_width * 6, 2)
+    menu = screen.build_context_menu(link_pos)
+    assert menu.actions()[0].text() == "Copy Link Address"
+
+
+# --- hyperlinks (#953) ----------------------------------------------------
+
+
+def test_plain_text_urls_record_spans(screen, qt):
+    """The painter's per-row scan records plain-text URL
+    spans; the link under a position answers its text."""
+    from msks.client.gui.terminal import links
+
+    vt(screen, b"\x1b[2J\x1b[Hgo to https://example.com/now please")
+    screen.grab().toImage()  # the paint pass runs the scan
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    assert (
+        links.under(screen, qt.QtCore.QPointF(cw * 7, ch // 2))
+        == "https://example.com/now"
+    )
+    assert links.under(screen, qt.QtCore.QPointF(cw, ch // 2)) is None
+
+
+def test_osc8_links_answer_their_uri(screen, qt):
+    """OSC 8-marked cells answer the URI the program set,
+    ahead of any plain-text scan."""
+    from msks.client.gui.terminal import links
+
+    vt(
+        screen,
+        b"\x1b[2J\x1b[H\x1b]8;;https://example.com/osc8\x1b\\link"
+        b"\x1b]8;;\x1b\\",
+    )
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    assert (
+        links.under(screen, qt.QtCore.QPointF(cw, ch // 2))
+        == "https://example.com/osc8"
+    )
+
+
+def test_the_hand_cursor_follows_links(screen, qt):
+    """Motion with no buttons pressed turns the pointing hand
+    on over a link and off away from it."""
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[2J\x1b[Hhttps://example.com/x")
+    screen.grab().toImage()
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    screen.mouseMoveEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseMove,
+            (cw * 3, ch // 2),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+        )
+    )
+    assert screen.hand_cursor
+    screen.mouseMoveEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseMove,
+            (cw, ch * 5),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+        )
+    )
+    assert not screen.hand_cursor
+
+
+def test_ctrl_click_opens_browser_links_only(screen, qt, monkeypatch):
+    """Ctrl+Click opens a link through the desktop handler;
+    non-browser schemes stay unopened."""
+    from msks.client.gui.terminal import links
+
+    vt(screen, b"\x1b[2J\x1b[Hhttps://example.com/ok")
+    screen.grab().toImage()
+    opened = []
+    monkeypatch.setattr(
+        links.QDesktopServices,
+        "openUrl",
+        lambda url: opened.append(url.toString()) or True,
+    )
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    assert links.open_at(screen, qt.QtCore.QPointF(cw * 2, ch // 2))
+    assert opened == ["https://example.com/ok"]
+    vt(screen, b"\x1b[2J\x1b[H\x1b]8;;file:///etc/passwd\x1b\\x\x1b]8;;\x1b\\")
+    screen.grab().toImage()  # the scan re-runs over the cleared row
+    assert not links.open_at(
+        screen, qt.QtCore.QPointF(cw // 2, ch // 2)
+    )  # the linked cell itself: a non-browser scheme
+    assert opened == ["https://example.com/ok"]
+
+
+def test_www_urls_promote_to_https():
+    """A bare www. host opens as https."""
+    from msks.client.gui.terminal.links import openable
+
+    assert openable("www.example.com/x") == "https://www.example.com/x"
+    assert openable("ftp://example.com/f") == "ftp://example.com/f"
+    assert openable("gopher://example.com") is None
+
+
+# --- find (#953) ----------------------------------------------------------
+
+
+def test_the_find_bar_opens_and_closes(screen, qt):
+    """Ctrl+Shift+F opens the bar with a search handle;
+    Escape closes it and frees the handle."""
+
+    Qt = qt.QtCore.Qt
+    screen.keyPressEvent(
+        key_event(
+            qt,
+            Qt.Key.Key_F,
+            modifiers=Qt.KeyboardModifier.ControlModifier
+            | Qt.KeyboardModifier.ShiftModifier,
+        )
+    )
+    assert screen.search
+    assert screen.find_edit is not None
+    screen.eventFilter(screen.find_edit, key_event(qt, Qt.Key.Key_Escape))
+    assert not screen.search
+    assert screen.find_edit is None
+
+
+def test_a_changed_needle_reruns_the_search(screen, qt):
+    """Typing in the bar runs the search live: the counter
+    reads the total and the viewport holds match rects."""
+    from msks.client.gui.terminal import find
+
+    vt(screen, b"\x1b[2J\x1b[Hneedle here\r\nneedle there")
+    find.open(screen)
+    screen.find_edit.setText("needle")
+    assert screen.find_count.text() == "2 matches"
+    # The paint pass lays the match underlays beneath the
+    # cells. The viewport matches ride dirty rows (probed: a
+    # paint's row walk cleans them and the feed goes quiet
+    # until new output dirties rows again), so settle the
+    # first grab, re-run, write fresh content, and grab: a
+    # needle cell tints against a plain cell on the same row.
+    screen.grab().toImage()
+    vt(screen, b"\x1b[2J\x1b[Hneedle here\r\nneedle there")
+    image = screen.grab().toImage()
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    assert image.pixelColor(cw * 2, ch // 2) != image.pixelColor(
+        cw * 10, ch // 2
+    )
+
+
+def test_return_steps_the_matches(screen, qt):
+    """Return steps to the next match and the counter follows;
+    the selected match highlights above the rest."""
+    from msks.client.gui.terminal import find
+
+    vt(screen, b"\x1b[2J\x1b[Hone one one")
+    find.open(screen)
+    screen.find_edit.setText("one")
+    qt.app.processEvents()
+    screen.eventFilter(
+        screen.find_edit, key_event(qt, qt.QtCore.Qt.Key.Key_Return)
+    )
+    assert screen.find_count.text() == "1 of 3"
+    screen.eventFilter(
+        screen.find_edit, key_event(qt, qt.QtCore.Qt.Key.Key_Return)
+    )
+    assert screen.find_count.text() == "2 of 3"
+    rects = find.viewport_rects(screen)
+    assert [selected for _, _, _, selected in rects].count(True) == 1
+
+
+def test_shift_return_steps_back(screen, qt):
+    """Shift+Return steps to the previous match."""
+    from msks.client.gui.terminal import find
+
+    vt(screen, b"\x1b[2J\x1b[Hone one one")
+    find.open(screen)
+    screen.find_edit.setText("one")
+    qt.app.processEvents()
+    for _ in range(2):
+        screen.eventFilter(
+            screen.find_edit, key_event(qt, qt.QtCore.Qt.Key.Key_Return)
+        )
+    screen.eventFilter(
+        screen.find_edit,
+        key_event(
+            qt,
+            qt.QtCore.Qt.Key.Key_Return,
+            modifiers=qt.QtCore.Qt.KeyboardModifier.ShiftModifier,
+        ),
+    )
+    assert screen.find_count.text() == "1 of 3"
+
+
+def test_an_empty_needle_clears_the_matches(screen, qt):
+    """Clearing the bar clears the counter and the viewport
+    rects."""
+    from msks.client.gui.terminal import find
+
+    vt(screen, b"\x1b[2J\x1b[Hneedle")
+    find.open(screen)
+    screen.find_edit.setText("needle")
+    qt.app.processEvents()
+    screen.find_edit.setText("")
+    qt.app.processEvents()
+    assert screen.find_count.text() == ""
+    assert find.viewport_rects(screen) == []
+
+
+def test_the_find_shortcut_toggles(screen, qt):
+    """Ctrl+Shift+F closes an open bar as well as opening
+    one."""
+
+    Qt = qt.QtCore.Qt
+    shortcut = key_event(
+        qt,
+        Qt.Key.Key_F,
+        modifiers=Qt.KeyboardModifier.ControlModifier
+        | Qt.KeyboardModifier.ShiftModifier,
+    )
+    screen.keyPressEvent(shortcut)
+    assert screen.search
+    screen.keyPressEvent(shortcut)
+    assert not screen.search
+
+
+def test_autoscroll_extends_the_selection(screen, qt):
+    """A drag held at the viewport's top edge scrolls the
+    buffer and extends the selection into the revealed
+    rows."""
+    from msks.client.gui.terminal import select
+
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[2J\x1b[Htop line\r\n" + b"filler\r\n" * 40)
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+            (4, 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.sel_dragged = True
+    screen.drag_position = qt.QtCore.QPointF(4, 2)
+    before = scrollbar(screen)
+    select.autoscroll_tick(screen)
+    total, length, offset = scrollbar(screen)
+    assert offset < before[2] or before[2] == 0
+    assert select.text(screen)  # the selection followed
+
+
+# --- the surfaces' edge pins (#953, gap closing) --------------------------
+
+
+def test_the_find_bar_refocuses_when_already_open(screen, qt):
+    """Opening the bar while it is open refocuses the edit and
+    selects its text instead of rebuilding the search."""
+    from msks.client.gui.terminal import find
+
+    find.open(screen)
+    first = screen.search
+    screen.find_edit.setText("needle")
+    find.open(screen)
+    assert screen.search == first
+    assert screen.find_edit.selectedText() == "needle"
+
+
+def test_closing_a_never_opened_bar_is_quiet(screen, qt):
+    """Close with no search handle changes nothing."""
+    from msks.client.gui.terminal import find
+
+    find.close(screen)
+    assert not screen.search
+    assert screen.find_edit is None
+
+
+def test_the_bar_ignores_non_key_events(screen, qt):
+    """The filter answers False for events that are not key
+    presses — the edit keeps them."""
+    from msks.client.gui.terminal import find
+
+    find.open(screen)
+    focus_out = qt.QtGui.QFocusEvent(qt.QtCore.QEvent.Type.FocusOut)
+    assert not screen.eventFilter(screen.find_edit, focus_out)
+    assert screen.find_edit is not None
+
+
+def test_run_and_step_without_a_search_do_nothing(screen, qt):
+    """A dead bar's run and step are no-ops."""
+    from msks.client.gui.terminal import find
+
+    find.run(screen, "needle")
+    find.step(screen, 1)
+
+
+def test_a_plain_key_in_the_bar_reaches_the_edit(screen, qt):
+    """A key that is neither Return nor Escape falls through to
+    the edit."""
+    from msks.client.gui.terminal import find
+
+    find.open(screen)
+    plain = key_event(qt, qt.QtCore.Qt.Key.Key_A)
+    assert not find.filter_key(screen, plain)
+
+
+def test_matches_in_history_do_not_paint(screen, qt):
+    """A match pushed into history by later output stays out of
+    the viewport's rects while the counter still counts it."""
+    from msks.client.gui.terminal import find
+
+    vt(screen, b"\x1b[2J\x1b[Hneedle\r\n" + b"filler\r\n" * 60)
+    find.open(screen)
+    screen.find_edit.setText("needle")
+    qt.app.processEvents()
+    assert screen.find_count.text() == "1 matches"
+    assert find.viewport_rects(screen) == []
+
+
+def test_viewport_rects_without_a_search_are_empty(screen, qt):
+    """Viewport rects without a search answer empty."""
+    from msks.client.gui.terminal import find
+
+    assert find.viewport_rects(screen) == []
+
+
+def test_an_oversized_osc8_uri_is_dropped(screen, qt):
+    """A URI past the library's ~2 KiB cap never lands on the
+    cell (probed: 2014 bytes answers, 2061 answers written 0)
+    — the query answers no link rather than a truncated
+    one."""
+    from msks.client.gui.terminal import links
+
+    uri = "https://example.com/" + "x" * 4200
+    vt(
+        screen,
+        b"\x1b[2J\x1b[H\x1b]8;;" + uri.encode() + b"\x1b\\z\x1b]8;;\x1b\\",
+    )
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    assert links.under(screen, qt.QtCore.QPointF(cw // 2, ch // 2)) is None
+    short = "https://example.com/" + "x" * 2000
+    vt(
+        screen,
+        b"\x1b[2J\x1b[H\x1b]8;;" + short.encode() + b"\x1b\\z\x1b]8;;\x1b\\",
+    )
+    assert links.under(screen, qt.QtCore.QPointF(cw // 2, ch // 2)) == short
+
+
+def test_an_unresolved_ref_answers_no_uri(screen, qt):
+    """A grid ref the library did not resolve answers no URI —
+    the error answer (probed: a zeroed ref answers -2) is not
+    an out-of-space retry."""
+    from msks.client.gui.terminal import links
+
+    ref = gt.GridRef()
+    ref.size = ctypes.sizeof(ref)
+    assert links.osc8_uri(screen, ref) is None
+
+
+def test_open_at_without_a_link_answers_false(screen, qt):
+    """Ctrl+Click over no link opens nothing — and the press
+    falls through to the selection gesture."""
+    from msks.client.gui.terminal import links
+
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[2J\x1b[Hplain text")
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    assert not links.open_at(screen, qt.QtCore.QPointF(cw, ch // 2))
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+            (cw, ch // 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            qt.QtCore.Qt.KeyboardModifier.ControlModifier,
+        )
+    )
+    assert screen.press_count == 1  # the gesture began
+    screen.mouseReleaseEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonRelease,
+            (cw, ch // 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            qt.QtCore.Qt.KeyboardModifier.ControlModifier,
+        )
+    )
+
+
+def test_the_hand_cursor_settles(screen, qt):
+    """The hand settles: a repeat request changes nothing."""
+    from msks.client.gui.terminal import links
+
+    links.set_hand(screen, False)
+    assert not screen.hand_cursor
+
+
+def test_ctrl_click_on_a_link_opens_and_consumes(screen, qt, monkeypatch):
+    """A Ctrl+Click over a plain-text link opens it through the
+    desktop handler and the press never starts a selection."""
+    from msks.client.gui.terminal import links
+
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[2J\x1b[Hhttps://example.com/click")
+    screen.grab().toImage()  # the paint pass fills the URL scan
+    opened = []
+    monkeypatch.setattr(
+        links.QDesktopServices,
+        "openUrl",
+        lambda url: opened.append(url.toString()) or True,
+    )
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+            (cw * 2, ch // 2),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            qt.QtCore.Qt.KeyboardModifier.ControlModifier,
+        )
+    )
+    assert opened == ["https://example.com/click"]
+    assert screen.press_count == 0  # no selection began
+
+
+def test_a_drag_turns_the_hand_off(screen, qt):
+    """Motion with a button pressed drops the hand — the drag
+    owns the cursor."""
+    Qt = qt.QtCore.Qt
+    screen.hand_cursor = True
+    screen.mouseMoveEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseMove,
+            (40, 8),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    assert not screen.hand_cursor
+
+
+def test_a_right_press_reaches_the_encoder(screen, qt):
+    """A right-button press under no tracking skips selection
+    and forwards to the mouse encoder."""
+    Qt = qt.QtCore.Qt
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+            (10, 10),
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.RightButton,
+        )
+    )
+    screen.mouseReleaseEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonRelease,
+            (10, 10),
+            Qt.MouseButton.RightButton,
+            Qt.MouseButton.NoButton,
+        )
+    )
+    assert screen.press_count == 0  # no selection began
+
+
+def test_the_context_menu_paths(screen, qt, monkeypatch):
+    """Under mouse reporting the menu stands aside; without it
+    the menu runs at the press point."""
+    executed = []
+
+    class FakeMenu:
+        def exec(self, pos):
+            executed.append(pos)
+            return None
+
+    monkeypatch.setattr(screen, "build_context_menu", lambda pos: FakeMenu())
+    event = qt.QtGui.QContextMenuEvent(
+        qt.QtGui.QContextMenuEvent.Reason.Mouse,
+        qt.QtCore.QPoint(10, 10),
+    )
+    vt(screen, b"\x1b[?1000h")
+    screen.contextMenuEvent(event)
+    assert not executed
+    assert not event.isAccepted()
+    vt(screen, b"\x1b[?1000l")
+    screen.contextMenuEvent(event)
+    assert executed
+
+
+def test_the_menu_copy_action_carries_the_selection(screen, qt):
+    """The menu's Copy action copies the selection through the
+    clipboard path."""
+    from msks.client.gui.terminal import select
+
+    vt(screen, b"\x1b[2J\x1b[Hmenu words")
+    select.word_at(screen, qt.QtCore.QPointF(4, 2))
+    menu = screen.build_context_menu(qt.QtCore.QPointF(4, 2))
+    copy_action = [a for a in menu.actions() if a.text().startswith("Copy")][0]
+    copy_action.trigger()
+    qt.app.processEvents()
+    assert qt.QtWidgets.QApplication.clipboard().text() == "menu"
+
+
+def test_a_blank_word_select_answers_empty(screen, qt):
+    """Word and line selects over blank cells answer empty
+    selections, not failures (probed)."""
+    from msks.client.gui.terminal import select
+
+    vt(screen, b"\x1b[2J\x1b[Halpha beta\r\n\r\n        \r\nmore")
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    select.word_at(screen, qt.QtCore.QPointF(cw * 3, ch + 1))
+    assert select.text(screen) == ""
+    select.line_at(screen, qt.QtCore.QPointF(cw * 3, ch + 1))
+    assert select.text(screen) == ""
+
+
+def test_a_huge_word_selection_grows_the_format_buffer(screen, qt):
+    """A selection over 4 KiB formats through the grown
+    buffer."""
+    from msks.client.gui.terminal import select
+
+    vt(screen, b"\x1b[2J\x1b[H" + b"z" * 6000)
+    select.word_at(screen, qt.QtCore.QPointF(4, 2))
+    assert len(select.text(screen)) > 4096
+
+
+def test_copy_and_publish_with_no_selection_are_quiet(screen, qt):
+    """Copy and PRIMARY publish over nothing leave the
+    clipboard alone."""
+    from msks.client.gui.terminal import select
+
+    qt.QtWidgets.QApplication.clipboard().clear()
+    select.copy(screen)
+    select.publish_primary(screen)
+    assert qt.QtWidgets.QApplication.clipboard().text() == ""
+
+
+def test_pasting_empty_text_writes_nothing(screen, qt):
+    """An empty paste writes no bytes."""
+    from msks.client.gui.terminal import select
+
+    select.paste_text(screen, "")
+    time.sleep(0.1)
+    assert screen.session.read_available() in (None, b"")
+
+
+def test_autoscroll_at_the_bottom_edge(screen, qt):
+    """A drag held at the bottom edge scrolls forward into the
+    buffer's newer rows."""
+    from msks.client.gui.terminal import select
+
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[2J\x1b[Htop\r\n" + b"filler\r\n" * 40)
+    screen.scroll_rows(-30)  # history in view
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+            (4, 4),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.sel_dragged = True
+    screen.drag_position = qt.QtCore.QPointF(4, screen.height() - 2)
+    select.autoscroll_tick(screen)
+    assert scrollbar(screen)[2] > 0  # scrolled toward the bottom
+
+
+def test_autoscroll_in_the_middle_does_nothing(screen, qt):
+    """A drag held in the middle of the viewport scrolls
+    nothing."""
+    from msks.client.gui.terminal import select
+
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[2J\x1b[Htop\r\n" + b"filler\r\n" * 40)
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+            (4, 4),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.sel_dragged = True
+    screen.drag_position = qt.QtCore.QPointF(4, screen.height() // 2)
+    before = scrollbar(screen)
+    select.autoscroll_tick(screen)
+    assert scrollbar(screen) == before
+    screen.sel_dragged = False  # the timer's tick with no drag
+    select.autoscroll_tick(screen)
+    assert scrollbar(screen) == before
+
+
+def test_the_autoscroll_timer_drives_the_widget(screen, qt):
+    """The widget's timer delegates to the selection module."""
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[2J\x1b[Htop\r\n" + b"filler\r\n" * 40)
+    screen.mousePressEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+            (4, 4),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+        )
+    )
+    screen.sel_dragged = True
+    screen.drag_position = qt.QtCore.QPointF(4, 2)
+    before = scrollbar(screen)
+    screen.autoscroll_tick()
+    assert scrollbar(screen)[2] < before[2] or before[2] == 0
+
+
+def test_a_non_text_osc52_write_answers_unsupported(screen, qt):
+    """A clipboard write with no text payload answers
+    UNSUPPORTED and leaves the clipboard alone."""
+    payload = ctypes.create_string_buffer(b"image/png\x00")
+    mime = gt.GhosttyString(
+        ptr=ctypes.cast(payload, ctypes.POINTER(ctypes.c_uint8)),
+        len=len(b"image/png"),
+    )
+    contents = (gt.ClipboardContent * 1)(
+        gt.ClipboardContent(mime=mime, data=gt.GhosttyString())
+    )
+    write = gt.ClipboardWrite()
+    write.size = ctypes.sizeof(write)
+    write.location = 0
+    write.contents = contents
+    write.contents_len = 1
+    write.reply = ctypes.cast(None, gt.CLIPBOARD_WRITE_REPLY_FN)
+    qt.QtWidgets.QApplication.clipboard().clear()
+    screen.osc52_clipboard(write)
+    assert qt.QtWidgets.QApplication.clipboard().text() == ""
+
+
+def test_a_clipboard_write_without_a_writer_is_ignored(qt):
+    """A late callback for a freed screen (or a null write
+    pointer) changes nothing."""
+    from msks.client.gui.terminal import callbacks
+
+    callbacks.clipboard_write(0, 0, None)

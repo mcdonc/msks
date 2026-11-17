@@ -1,14 +1,21 @@
 """The terminal widget package: the cell-grid screen over
-libghostty-vt (phase 4.5 of #924, #952).
+libghostty-vt (phase 4.5 of #924, #952 and #953).
 
 The package presents its parts: the widget itself
 (:mod:`.screen` — a ``QWidget`` owning the terminal handle, the
 render state, and the PTY session), the cell painter
-(:mod:`.paint` — per-cell RGB colors, styles, and the cursor),
-the input encoders (:mod:`.input` — keys, mouse, wheel, and
-focus through the library's encoders), the font rules
-(:mod:`.fonts` — Konsole-style cell metrics from one measured
-face), and the library's effects callbacks (:mod:`.callbacks`).
+(:mod:`.paint` — per-cell RGB colors, styles, the cursor, and
+the find underlays), the input encoders (:mod:`.input` — keys,
+mouse, wheel, and focus through the library's encoders), the
+font rules (:mod:`.fonts` — Konsole-style cell metrics from
+one measured face), the library's effects callbacks
+(:mod:`.callbacks` — including the OSC 52 clipboard write),
+the selection and clipboard (:mod:`.select`, #953 — the
+gesture protocol, word and line selects, PRIMARY publish,
+and bracketed paste), the hyperlinks (:mod:`.links`, #953 —
+OSC 8 and plain-text URL spans, the pointing hand, and
+scheme-gated opening), and find (:mod:`.find`, #953 — the
+overlay bar over the library's search API).
 
 The submodules import PySide6 at module scope, so this init
 imports none of them at parse time: ``gui``'s own init runs at

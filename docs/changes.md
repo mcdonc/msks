@@ -8,6 +8,18 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI terminal's user surfaces (#953).** The terminal
+  widget grows grid-anchored selection (drag, double-click
+  word, triple-click line, edge autoscroll into scrollback),
+  the clipboard paths (Ctrl+Shift+C/V, PRIMARY select-then-
+  middle-click, bracketed paste under mode 2004, OSC 52
+  writes from the workspace), hyperlinks (OSC 8 and
+  plain-text URLs, pointing hand, Ctrl+Click opening gated to
+  browser schemes), and a find bar over the library's search
+  API (live needle restart, match stepping with a counter,
+  viewport highlighting). A program that enables mouse
+  reporting owns the mouse: selection stands aside.
+
 - **The GUI terminal widget (#952).** `msks/client/gui/terminal/` is the
   cell-grid screen over the libghostty-vt render state: per-cell colors,
   styles, and the cursor paint offscreen through the binding, keys and

@@ -13,9 +13,11 @@ phase 4.5 — #950: pure ctypes over the C ABI, no Qt in it),
 and the PTY session behind a terminal tab (:mod:`.termsession`,
 phase 4.5 — #951: a child on a pty, pure stdlib, no Qt in it),
 and the terminal widget package (:mod:`.terminal`, phase 4.5
-— #952: the cell-grid screen over the render state; its own
-init imports no Qt, so it parses safe here while its widgets
-wait for #954's tab wiring to reach them).
+— #952 and #953: the cell-grid screen over the render state,
+with grid-anchored selection, the clipboard paths, OSC 8 and
+plain-text hyperlinks, and find; its own init imports no Qt,
+so it parses safe here while its widgets wait for #954's tab
+wiring to reach them).
 The screen widgets
 (:mod:`.workspaces`, #939 — the list; :mod:`.workspace`, #945
 — the detail page and the shell that swaps the two) and the
