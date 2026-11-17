@@ -1815,11 +1815,11 @@ def test_a_changed_needle_reruns_the_search(screen, qt):
     screen.find_edit.setText("needle")
     assert screen.find_count.text() == "2 matches"
     # The paint pass lays the match underlays beneath the
-    # cells. The viewport matches ride dirty rows (probed: a
-    # paint's row walk cleans them and the feed goes quiet
-    # until new output dirties rows again), so settle the
-    # first grab, re-run, write fresh content, and grab: a
-    # needle cell tints against a plain cell on the same row.
+    # cells. A resize clears the search's pending matches
+    # (probed), and a never-shown widget's first grab carries
+    # one — so settle the first grab, re-run, write fresh
+    # content, and grab: a needle cell tints against a plain
+    # cell on the same row.
     screen.grab().toImage()
     vt(screen, b"\x1b[2J\x1b[Hneedle here\r\nneedle there")
     image = screen.grab().toImage()
@@ -2363,6 +2363,8 @@ def test_the_multi_click_window_expires(qt, screen):
     assert screen.press_count == 1  # the window expired
     screen.press_gesture(FakePress(pos, 1600))  # 100 ms after
     assert screen.press_count == 2
+    screen.press_gesture(FakePress(pos, 2000))  # exactly the window
+    assert screen.press_count == 3  # the boundary counts inside
 
 
 def test_the_multi_click_window_resets_on_a_new_cell(qt, screen):
@@ -2391,25 +2393,41 @@ def test_the_hand_drops_when_the_pointer_leaves(screen, qt):
     """The pointing hand is an application-global override; a
     leave event drops it so the rest of the app keeps its
     cursor."""
-    screen.hand_cursor = True
+    Qt = qt.QtCore.Qt
+    vt(screen, b"\x1b[2J\x1b[Hhttps://example.com/x")
+    screen.grab().toImage()  # the paint pass fills the URL scan
+    cw, ch = screen.metrics.cell_width, screen.metrics.cell_height
+    screen.mouseMoveEvent(
+        mouse_event(
+            qt,
+            qt.QtGui.QMouseEvent.Type.MouseMove,
+            (cw * 2, ch // 2),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+        )
+    )
+    hand = qt.QtWidgets.QApplication.overrideCursor()
+    assert hand is not None
+    assert hand.shape() is Qt.CursorShape.PointingHandCursor
     leave = qt.QtCore.QEvent(qt.QtCore.QEvent.Type.Leave)
     screen.leaveEvent(leave)
-    assert not screen.hand_cursor
+    assert qt.QtWidgets.QApplication.overrideCursor() is None
     screen.leaveEvent(leave)  # a second leave stays quiet
 
 
 def test_a_close_while_hovering_drops_the_hand(qt):
     """A tab closed while its hand cursor is on drops the
     override before the widget goes."""
-    from msks.client.gui.terminal import TerminalWidget
+    from msks.client.gui.terminal import TerminalWidget, links
 
     widget = TerminalWidget(
         [sys.executable, "-c", "import time; time.sleep(30)"]
     )
     try:
-        widget.hand_cursor = True
+        links.set_hand(widget, True)  # the override is really pushed
+        assert widget.hand_cursor
         shutdown(widget)
-        assert not widget.hand_cursor
+        assert qt.QtWidgets.QApplication.overrideCursor() is None
     finally:
         shutdown(widget)
 
