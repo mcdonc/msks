@@ -247,7 +247,13 @@ class SizeReportSize(ctypes.Structure):
 
 
 class ModeConfig(ctypes.Structure):
-    _fields_ = [("mode", ctypes.c_uint32), ("value", ctypes.c_bool)]
+    # GhosttyMode is uint16 and value bool: a uint16 mirror
+    # puts the answered value where the C struct keeps it — a
+    # uint32 field would land it in padding (#952).
+    _fields_ = [
+        ("mode", ctypes.c_uint16),
+        ("value", ctypes.c_bool),
+    ]
 
 
 class GhosttyString(ctypes.Structure):
