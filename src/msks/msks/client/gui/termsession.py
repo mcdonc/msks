@@ -29,6 +29,11 @@ import time
 #: through (#950) answers the 256-color xterm vocabulary.
 TERM = "xterm-256color"
 
+#: How long the close waits for the SIGKILLed child to become
+#: collectable before abandoning it (#951): SIGKILL lands at
+#: once, but uninterruptible sleep can hold the corpse.
+KILL_WAIT_S = 0.5
+
 
 def shell_argv(workspace_id: str) -> list[str]:
     """The argv a terminal tab spawns on its PTY (#951): this
@@ -80,6 +85,10 @@ class PtySession:
         if pid == 0:  # pragma: no cover
             try:
                 os.close(master)
+                # CPython runs SIGPIPE ignored and the disposition
+                # survives exec — real terminals restore it, or a
+                # pipeline's reader gets EPIPE-less writes.
+                signal.signal(signal.SIGPIPE, signal.SIG_DFL)
                 os.setsid()
                 fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
                 os.dup2(slave, 0)
@@ -89,7 +98,10 @@ class PtySession:
                     os.close(slave)
                 os.environ["TERM"] = TERM
                 os.execvp(self.argv[0], self.argv)
-            except OSError:
+            except OSError, ValueError, IndexError:
+                # exec failures and argv shapes Python rejects
+                # (an empty argv, an embedded NUL) all answer the
+                # conventional 127.
                 os._exit(127)
         os.close(slave)
         self.child_pid = pid
@@ -126,8 +138,15 @@ class PtySession:
 
     def read_available(self) -> bytes | None:
         """Everything readable right now: the accumulated bytes,
-        ``None`` when the child side finished with nothing left
-        to deliver."""
+        ``None`` when the session is finished — or has no master
+        to read — so the method is safe on a closed session too."""
+        if self.master_fd is None or self.exited:
+            return None
+        return self.collect_reads()
+
+    def collect_reads(self) -> bytes | None:
+        """The drain loop over :meth:`read_once`, on a master
+        known to be live."""
         chunks: list[bytes] = []
         while True:
             data, finished = self.read_once()
@@ -141,8 +160,9 @@ class PtySession:
     def read_once(self) -> tuple[bytes | None, bool]:
         """One read off the master: the bytes (``None`` when
         nothing was available), and whether the child side is
-        finished — EIO with the slave closed, EBADF with the
-        master closed ourselves, or a clean EOF."""
+        finished — EIO with the slave side closed (the kernel
+        still holds the child's last output; this path delivers
+        it), or the empty read macOS answers with."""
         try:
             data = os.read(self.master_fd, 65536)
         except BlockingIOError:
@@ -183,8 +203,14 @@ class PtySession:
     # --- lifecycle ----------------------------------------------------
 
     def mark_exited(self) -> None:
-        """Record the EOF and reap the child."""
+        """Record the end, release the master, and reap the
+        child: nothing is deliverable after the child side
+        finishes, so the fd closes here rather than leaking until
+        an explicit close(). Called only with a live master — the
+        reads that reach it have one."""
         self.exited = True
+        os.close(self.master_fd)
+        self.master_fd = None
         self.reap()
 
     def reap(self) -> None:
@@ -231,19 +257,22 @@ class PtySession:
     def escalate(self) -> None:
         """Force-kill the child's whole process group: the child
         leads its own session, and grandchildren that trapped HUP
-        survive a direct-child kill. The error arms cover the
+        survive a direct-child kill. The wait after the kill stays
+        bounded — a child wedged in uninterruptible sleep (a hung
+        mount) never becomes waitable, and the close must not
+        block on it; such a child is abandoned to init rather
+        than stalling the window. The kill's error arms cover the
         child dying between the grace loop and here, or belonging
         to another user — races the suite cannot arrange."""
         try:
             os.killpg(os.getpgid(self.child_pid), signal.SIGKILL)
-            _, status = os.waitpid(self.child_pid, 0)
-            self.exit_status = exit_code(status)
         except (  # pragma: no cover — the races named above
             ProcessLookupError,
             PermissionError,
-            ChildProcessError,
         ):
-            pass
+            self.child_pid = None
+            return
+        self.await_exit(KILL_WAIT_S)
         self.child_pid = None
 
 

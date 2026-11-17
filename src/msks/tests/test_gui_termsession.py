@@ -31,6 +31,17 @@ SLEEPER = textwrap.dedent(
 #: A child that answers its terminal size whenever it gets a
 #: line: the resize pin reads the child's own view of the
 #: window, before and after a resize.
+#: A child that answers whether SIGPIPE survived the exec: the
+#: parent process ignores it, and a terminal's children must not.
+#: A CPython child would re-ignore it at its own startup, so the
+#: probe is sh — a shell keeps a signal ignored on entry and can
+#: never reset it itself, which makes the inherited state plain.
+#: Both dash and bash print ``trap -- '' PIPE`` for an inherited
+#: ignore; the restored default answers dash's ``-`` or nothing.
+PIPED = "trap -p PIPE; echo probe-done"
+
+#: A child that reads its terminal size and prints it: the
+#: resize pin reads the child's own view of the window.
 SIZER = textwrap.dedent(
     """
     import fcntl, struct, sys, termios
@@ -80,9 +91,7 @@ def test_the_shell_argv_is_the_tuis_own() -> None:
     assert ts.shell_argv("ws9") == ssh_child_argv("ws9")
 
 
-def test_a_session_spawns_and_exposes_the_master(
-    tmp_path,
-) -> None:
+def test_a_session_spawns_and_exposes_the_master() -> None:
     """The spawn (#951): the child runs on a fresh pseudo-terminal
     whose master fd comes back non-blocking — the fd the tab's
     QSocketNotifier will watch — and the child sees the terminal
@@ -105,18 +114,20 @@ def test_a_session_spawns_and_exposes_the_master(
 
 
 def test_the_exec_failure_answers_127() -> None:
-    """A child that cannot exec (#951): the failed exec answers
-    the conventional 127 through the observable drain."""
-    session = ts.PtySession(["/no/such/binary"])
-    try:
-        deadline = time.monotonic() + 5.0
-        while not session.exited and time.monotonic() < deadline:
-            session.drain()
-            time.sleep(0.02)
-        session.reap()
-        assert session.exit_status == 127
-    finally:
-        session.close()
+    """A child that cannot exec (#951): a missing binary, an
+    empty argv, and a NUL inside the argv all answer the
+    conventional 127 through the observable drain."""
+    for argv in (["/no/such/binary"], [], ["bad\x00argv"]):
+        session = ts.PtySession(argv)
+        try:
+            deadline = time.monotonic() + 5.0
+            while not session.exited and time.monotonic() < deadline:
+                session.drain()
+                time.sleep(0.02)
+            session.reap()
+            assert session.exit_status == 127
+        finally:
+            session.close()
 
 
 def test_a_resize_reaches_the_child() -> None:
@@ -134,6 +145,19 @@ def test_a_resize_reaches_the_child() -> None:
         session.close()
 
 
+def test_the_child_regains_default_sigpipe() -> None:
+    """The child's dispositions (#951): CPython runs SIGPIPE
+    ignored and the setting survives exec — the session restores
+    the default the way real terminals do, or a pipeline's
+    reader loses its EPIPE."""
+    session = ts.PtySession(["sh", "-c", PIPED])
+    try:
+        out = drain_until(session, b"probe-done")
+        assert b"'' PIPE" not in out  # no ignored disposition left
+    finally:
+        session.close()
+
+
 def test_a_resize_after_close_answers_nothing() -> None:
     """The closed-session arms (#951): resize and write after
     close answer nothing, and drain reports the child gone."""
@@ -144,13 +168,12 @@ def test_a_resize_after_close_answers_nothing() -> None:
     session.resize(80, 24, 10, 20)
     session.write(b"x")
     assert session.drain() is None
+    assert session.read_available() is None  # standalone-safe too
     assert session.exited is False  # close() reaped it instead
     session.close()  # idempotent: both fds and child already gone
 
 
-def test_the_child_exit_is_visible(
-    tmp_path,
-) -> None:
+def test_the_child_exit_is_visible() -> None:
     """The exit's visibility (#951): a child that quits on its
     own delivers its last output, EOF marks the session exited,
     and the exit status reads back — plain exit, signaled death,
@@ -167,6 +190,10 @@ def test_the_child_exit_is_visible(
     assert session.exited
     session.reap()
     assert session.exit_status == 7
+    # The end released the master: an explicit close is now a
+    # no-op, not an fd leak.
+    assert session.master_fd is None
+    session.close()
 
     killed = ts.PtySession(
         [
@@ -236,19 +263,14 @@ def test_reap_answers_when_the_child_was_collected_elsewhere() -> None:
         os._exit(0)
     os.waitpid(pid, 0)  # collected: the pid is gone for good
     session = spawn(SLEEPER)
-    try:
-        drain_until(session, b"ready")
-        held = session.child_pid
-        session.close(grace=0.3)
-        assert session.child_pid is None
-        session.child_pid = pid  # a pid that is no longer ours
-        session.reap()
-        assert session.child_pid is None
-        assert held is not None
-    finally:
-        if session.master_fd is not None:
-            os.close(session.master_fd)
-            session.master_fd = None
+    drain_until(session, b"ready")
+    held = session.child_pid
+    session.close(grace=0.3)
+    assert session.child_pid is None
+    session.child_pid = pid  # a pid that is no longer ours
+    session.reap()
+    assert session.child_pid is None
+    assert held is not None
 
 
 def test_write_drops_under_backpressure() -> None:
@@ -262,6 +284,7 @@ def test_write_drops_under_backpressure() -> None:
         # accepting at EAGAIN, which the write drops.
         big = b"x" * (1 << 20)
         deadline = time.monotonic() + 5.0
+        filled = False
         while time.monotonic() < deadline:
             try:
                 view = memoryview(big)
@@ -269,7 +292,9 @@ def test_write_drops_under_backpressure() -> None:
                     written = os.write(session.master_fd, view)
                     view = view[written:]
             except BlockingIOError:
+                filled = True
                 break
+        assert filled  # the buffer really is full now
         session.write(b"tail the buffer cannot take")
         # The child is alive and the session intact: the dropped
         # tail changed nothing the caller can observe.
@@ -333,6 +358,11 @@ def test_a_module_free_of_qt_and_msks_imports() -> None:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             imported.update(alias.name.split(".")[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            imported.add(node.module.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            # A relative import (level > 0) is an msks import by
+            # definition, whatever name it carries.
+            if node.level > 0:
+                imported.add("msks")
+            elif node.module:
+                imported.add(node.module.split(".")[0])
     assert not imported & {"PySide6", "msks"}
