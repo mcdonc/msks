@@ -246,15 +246,19 @@ def test_the_parser_help_lists_gui(
 
 
 def test_the_gui_extra_stays_off_the_base_install() -> None:
-    """The ``gui`` extra is the only door PySide6 walks through
-    (#927): the base dependencies stay Qt-free (the umbrella and
-    the Essentials split both checked), and the extra names the
-    binding with its floor and ceiling."""
+    """The ``gui`` extra is the only door PySide6 and the
+    terminal library walk through (#927, #950): the base
+    dependencies stay Qt-free (the umbrella and the Essentials
+    split both checked), and the extra names the binding with
+    its floor and ceiling beside the pyghostty wheel that
+    bundles libghostty-vt."""
     base = {dep_name(d) for d in PYPROJECT["project"]["dependencies"]}
     assert "pyside6" not in base
     assert "pyside6-essentials" not in base
+    assert "pyghostty" not in base
     assert PYPROJECT["project"]["optional-dependencies"]["gui"] == [
-        "PySide6-Essentials>=6.8,<6.13"
+        "PySide6-Essentials>=6.8,<6.13",
+        "pyghostty==0.1.4",
     ]
 
 

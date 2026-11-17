@@ -7,7 +7,9 @@ presenter (:mod:`.rows`, phase 3 of #924 — plain row models,
 PySide6-free), and the workspace detail view's presenter
 (:mod:`.detail`, phase 4 — plain section models,
 PySide6-free), the live events feed (:mod:`.feed`, phase 4 of
-#924 — plain asyncio over the shared dial seams, no Qt in it).
+#924 — plain asyncio over the shared dial seams, no Qt in it),
+and the libghostty-vt ctypes binding (:mod:`.ghostty`,
+phase 4.5 — #950: pure ctypes over the C ABI, no Qt in it).
 The screen widgets
 (:mod:`.workspaces`, #939 — the list; :mod:`.workspace`, #945
 — the detail page and the shell that swaps the two) and the
@@ -26,5 +28,6 @@ from . import (  # noqa: F401 — reachability pins for the gate;
     data,
     detail,
     feed,
+    ghostty,
     rows,
 )

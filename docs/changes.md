@@ -8,6 +8,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI's libghostty-vt binding (#950).** The terminal
+  emulation core lands in the client as a pure-ctypes binding:
+  the render state, the key and mouse encoders, and the
+  selection gesture the phase 4.5 terminal widget will drive,
+  with every C struct mirrored exactly (padding members
+  included) and pinned by size against the ABI. The gui extra
+  now installs `pyghostty`, whose wheel bundles the official
+  `libghostty-vt` build the binding loads.
 - **The GUI live events feed (#946).** The window subscribes to
   the daemon's events socket over the bridge's loop: a pushed
   lifecycle frame refreshes the screen the operator sees at

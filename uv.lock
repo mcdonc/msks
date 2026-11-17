@@ -1378,6 +1378,7 @@ dependencies = [
 
 [package.optional-dependencies]
 gui = [
+    { name = "pyghostty" },
     { name = "pyside6-essentials" },
 ]
 
@@ -1403,6 +1404,7 @@ requires-dist = [
     { name = "litellm", specifier = ">=1.106.2,<2" },
     { name = "mitmproxy", specifier = ">=12.2,<13" },
     { name = "pydantic", specifier = ">=2.5" },
+    { name = "pyghostty", marker = "extra == 'gui'", specifier = "==0.1.4" },
     { name = "pyside6-essentials", marker = "extra == 'gui'", specifier = ">=6.8,<6.13" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13" },
@@ -1747,6 +1749,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/cf/71/2da9bcf742df3ab23f75f10fedca074951dd13a84bda8dea3077f68ae9a6/pydivert-2.1.0.tar.gz", hash = "sha256:f0e150f4ff591b78e35f514e319561dadff7f24a82186a171dd4d465483de5b4", size = 91057, upload-time = "2017-10-20T21:36:58.165Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/8f/86d7931c62013a5a7ebf4e1642a87d4a6050c0f570e714f61b0df1984c62/pydivert-2.1.0-py2.py3-none-any.whl", hash = "sha256:382db488e3c37c03ec9ec94e061a0b24334d78dbaeebb7d4e4d32ce4355d9da1", size = 104718, upload-time = "2017-10-20T21:36:56.726Z" },
+]
+
+[[package]]
+name = "pyghostty"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cffi" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b9/93/9001ec0fc6b2708064c6c6ab8c840ff82619c6b16d45665e26c1c2eea9c0/pyghostty-0.1.4-py3-none-macosx_13_0_arm64.whl", hash = "sha256:36ab741c3906ca4d09e5f5bde0cf31aaf27fd1a3126a42b34786421cdd606ef8", size = 745867, upload-time = "2026-10-28T08:03:35.198Z" },
+    { url = "https://files.pythonhosted.org/packages/53/ee/5e3b514e3d7f2d12905ed7fac30142f7848ca2498872b30f79ca4e91278f/pyghostty-0.1.4-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:7b00aa8ead35fba7b4335c9cc33bd81066cccbeef6e5c694768cb5bcbef11161", size = 771436, upload-time = "2026-10-28T08:03:37.037Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/7f/d724d1c5dadc5ce8e029c22a42028bf1161b418e2dcb9e66460b23f32d37/pyghostty-0.1.4-py3-none-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:ea4d6366bbfb00dc445ac40c684b7a5154897dc9219ef949a490a9565eae2eba", size = 2805321, upload-time = "2026-10-28T08:03:38.681Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/5b/4f23dd7d7c53950067c57514b083f0e70ed413a098b7964ad121439e88be/pyghostty-0.1.4-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ea203580d8424a79bbad75e159494591ef3d7d3dfa43675a80f72271b72329d0", size = 2962925, upload-time = "2026-10-28T08:03:40.368Z" },
 ]
 
 [[package]]

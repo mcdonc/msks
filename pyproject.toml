@@ -84,7 +84,15 @@ dev = [
 # a re-run of that verification. The nix package stays on the
 # base deps (the GUI is a client-side extra, never part of the
 # daemon's closure).
-gui = ["PySide6-Essentials>=6.8,<6.13"]
+gui = [
+    "PySide6-Essentials>=6.8,<6.13",
+    # The official libghostty-vt build the pyghostty wheel
+    # bundles (#950): the library alone, its Python API unused —
+    # the GUI binding loads it through ctypes. A 0.1.0-dev
+    # snapshot; when a 1.x wheel ships, re-pin here and move the
+    # binding to the stable ABI.
+    "pyghostty==0.1.4",
+]
 
 [build-system]
 requires = ["hatchling"]
