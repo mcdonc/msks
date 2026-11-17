@@ -13,8 +13,16 @@ from __future__ import annotations
 
 import ctypes
 
-from PySide6.QtCore import QSize, QSocketNotifier, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QPointF,
+    QSize,
+    QSocketNotifier,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
+    QClipboard,
     QCloseEvent,
     QFocusEvent,
     QKeyEvent,
@@ -23,11 +31,11 @@ from PySide6.QtGui import (
     QResizeEvent,
     QWheelEvent,
 )
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QApplication, QLineEdit, QMenu, QWidget
 
 from .. import ghostty as gt
 from .. import termsession as ts
-from . import callbacks, fonts, input, paint
+from . import callbacks, find, fonts, input, links, paint, select
 
 # The scrollback the terminal keeps (rows).
 SCROLLBACK_LINES = 10_000
@@ -96,6 +104,9 @@ class TerminalWidget(QWidget):
         self.key_event = self.lib.new_handle(self.lib.key_event_new)
         self.mouse_encoder = self.lib.new_handle(self.lib.mouse_encoder_new)
         self.mouse_event = self.lib.new_handle(self.lib.mouse_event_new)
+        self.selection_gesture = self.lib.new_handle(
+            self.lib.selection_gesture_new
+        )
         self.apply_metrics()
         # The pty pair opened and sized before the fork, the
         # child exec'ed onto it — the session contract (#951).
@@ -125,6 +136,23 @@ class TerminalWidget(QWidget):
         self._wheel_accum = 0
         self._closed = False
         self._exit_reported = False
+        # Selection, links, and find: the press state for the
+        # multi-click window, the drag state for autoscroll,
+        # the painter's URL scan, the hand cursor, and the
+        # search handle with its overlay widgets.
+        self.press_count = 0
+        self.last_press_ms = 0
+        self.last_press_cell: tuple[int, int] | None = None
+        self.sel_dragged = False
+        self.drag_position = QPointF(0, 0)
+        self.autoscroll = QTimer(self)
+        self.autoscroll.setInterval(50)
+        self.autoscroll.timeout.connect(self.autoscroll_tick)
+        self.link_spans: list[list[tuple[int, int, str]]] = []
+        self.hand_cursor = False
+        self.search = 0
+        self.find_edit: QLineEdit | None = None
+        self.find_count = None
 
     # --- lifecycle ----------------------------------------------------
 
@@ -134,8 +162,13 @@ class TerminalWidget(QWidget):
             return
         self._closed = True
         callbacks.unregister(self)
+        if self.hand_cursor:  # an override cursor outlives the widget
+            links.set_hand(self, False)
         self.reaper.stop()
         self.bell_timer.stop()
+        self.autoscroll.stop()
+        if self.search:
+            find.close(self)
         self.notifier.setEnabled(False)
         self.session.close()
         for free, handle in [
@@ -148,6 +181,7 @@ class TerminalWidget(QWidget):
             (self.lib.render_state_free, self.render_state),
         ]:
             free(handle)
+        self.lib.selection_gesture_free(self.selection_gesture, self.terminal)
         self.lib.terminal_free(self.terminal)
         super().closeEvent(event)
 
@@ -212,6 +246,37 @@ class TerminalWidget(QWidget):
         self.bell_flash = True
         self.bell_timer.start(180)
         self.update()
+
+    def autoscroll_tick(self) -> None:
+        """The autoscroll watch: scroll while a drag holds the
+        edge, extending the selection into the revealed
+        rows."""
+        select.autoscroll_tick(self)
+
+    def osc52_clipboard(self, write) -> None:
+        """An OSC 52 write from the program inside: apply the
+        plain-text payload to the clipboard the request
+        named (the selection locations to PRIMARY) and answer
+        the library's reply — success, or unsupported when
+        the request carried no text."""
+        payload, location = callbacks.clipboard_payload(write)
+        reply = gt.ClipboardWriteReply()
+        reply.size = ctypes.sizeof(reply)
+        reply.remember = False
+        if payload is not None:
+            clipboard = QApplication.clipboard()
+            if location in (1, 2):
+                mode = select.primary_mode(clipboard)
+            else:
+                mode = QClipboard.Mode.Clipboard
+            clipboard.setText(payload, mode)
+            reply.result = gt.CLIPBOARD_WRITE_SUCCESS
+        else:
+            reply.result = gt.CLIPBOARD_WRITE_UNSUPPORTED
+        if write.reply:
+            write.reply(
+                ctypes.c_void_p(ctypes.addressof(write)), ctypes.byref(reply)
+            )
 
     def bell_off(self) -> None:
         """The flash's timer end: the border goes dark."""
@@ -282,6 +347,7 @@ class TerminalWidget(QWidget):
         rows = max(1, self.height() // self.metrics.cell_height)
         if (cols, rows) != (self.cols, self.rows):
             self.resize_grid(cols, rows)
+        find.layout(self)
         super().resizeEvent(event)
 
     # --- painting -----------------------------------------------------
@@ -301,9 +367,14 @@ class TerminalWidget(QWidget):
 
     def handle_shortcut(self, event: QKeyEvent) -> bool:
         """The widget's own keys before the encoder: font
-        stepping and buffer paging. ``True`` when the shortcut
-        consumed the event."""
-        return self.font_shortcut(event) or self.page_shortcut(event)
+        stepping, buffer paging, the clipboard, and the find
+        bar. ``True`` when the shortcut consumed the event."""
+        return (
+            self.font_shortcut(event)
+            or self.page_shortcut(event)
+            or self.clipboard_shortcut(event)
+            or self.find_shortcut(event)
+        )
 
     def font_shortcut(self, event: QKeyEvent) -> bool:
         """The font keys under Ctrl: stepping and reset."""
@@ -340,6 +411,43 @@ class TerminalWidget(QWidget):
         input.scroll_page(self, direction)
         return True
 
+    def clipboard_shortcut(self, event: QKeyEvent) -> bool:
+        """Ctrl+Shift+C copies the selection (a terminal cannot
+        cut, so X copies too); Ctrl+Shift+V pastes the
+        clipboard."""
+        if not (
+            event.modifiers() & Qt.KeyboardModifier.ControlModifier
+            and event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+        ):
+            return False
+        if event.key() in (Qt.Key.Key_C, Qt.Key.Key_X):
+            select.copy(self)
+            return True
+        if event.key() == Qt.Key.Key_V:
+            select.paste_clipboard(self)
+            return True
+        return False
+
+    def find_shortcut(self, event: QKeyEvent) -> bool:
+        """Ctrl+Shift+F toggles the find bar."""
+        if not (
+            event.modifiers() & Qt.KeyboardModifier.ControlModifier
+            and event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+            and event.key() == Qt.Key.Key_F
+        ):
+            return False
+        if self.search:
+            find.close(self)
+        else:
+            find.open(self)
+        return True
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        """The find bar's own keys: stepping and Escape."""
+        if obj is self.find_edit and find.filter_key(self, event):
+            return True
+        return super().eventFilter(obj, event)
+
     def keyReleaseEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         # A held key's platform repeats arrive as press events
         # only; the repeat's release is noise.
@@ -350,6 +458,10 @@ class TerminalWidget(QWidget):
     # --- mouse --------------------------------------------------------
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if not input.mouse_tracking(self) and self.press_without_tracking(
+            event
+        ):
+            return
         input.send_mouse(
             self,
             gt.MOUSE_PRESS,
@@ -359,7 +471,66 @@ class TerminalWidget(QWidget):
             event.buttons(),
         )
 
+    def press_without_tracking(self, event: QMouseEvent) -> bool:
+        """The presses a terminal owns when the program inside
+        does not report the mouse: Ctrl+Click opens a link,
+        middle-click pastes PRIMARY, and a left press starts
+        the selection gesture. Answers whether the press was
+        consumed."""
+        if self.link_press(event):
+            return True
+        if event.button() == Qt.MouseButton.MiddleButton:
+            select.paste_primary(self)
+            return True
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.press_gesture(event)
+            return True
+        return False
+
+    def link_press(self, event: QMouseEvent) -> bool:
+        """A Ctrl+Click over a link opens it through the
+        desktop handler; answers whether a link opened."""
+        return (
+            event.button() == Qt.MouseButton.LeftButton
+            and bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+            and links.open_at(self, event.position())
+        )
+
+    def press_gesture(self, event: QMouseEvent) -> bool:
+        """A left press when the program inside does not own
+        the mouse: count presses on one cell inside the
+        multi-click window (two selects the word, three the
+        line), start the autoscroll watch, and feed the press
+        to the selection gesture. Answers whether the press
+        was consumed for selection."""
+        cell = input.cell_at(self, event.position())
+        now = event.timestamp()
+        repeat = (
+            now - self.last_press_ms <= select.MULTI_CLICK_MS
+            and cell == self.last_press_cell
+        )
+        self.press_count = self.press_count + 1 if repeat else 1
+        self.last_press_ms = now
+        self.last_press_cell = cell
+        self.sel_dragged = False
+        self.drag_position = event.position()
+        self.autoscroll.start()
+        if self.press_count == 2:
+            select.word_at(self, event.position())
+            return True
+        if self.press_count >= 3:
+            select.line_at(self, event.position())
+            return True
+        select.gesture(self, gt.SEL_PRESS, event.position())
+        return True
+
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and not input.mouse_tracking(self)
+        ):
+            self.autoscroll.stop()
+            select.gesture(self, gt.SEL_RELEASE, event.position())
         input.send_mouse(
             self,
             gt.MOUSE_RELEASE,
@@ -370,6 +541,17 @@ class TerminalWidget(QWidget):
         )
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if not input.mouse_tracking(self):
+            if not event.buttons():
+                links.set_hand(
+                    self, links.under(self, event.position()) is not None
+                )
+            elif self.hand_cursor:
+                links.set_hand(self, False)
+            if event.buttons() & Qt.MouseButton.LeftButton:
+                self.sel_dragged = True
+                self.drag_position = event.position()
+                select.gesture(self, gt.SEL_DRAG, event.position())
         input.send_mouse(
             self,
             gt.MOUSE_MOTION,
@@ -378,6 +560,42 @@ class TerminalWidget(QWidget):
             event.modifiers(),
             event.buttons(),
         )
+
+    def leaveEvent(self, event) -> None:  # noqa: N802
+        """The pointer left the terminal: the pointing hand is
+        an application-global override cursor, and no further
+        move events arrive to clear it — drop it here or the
+        whole app keeps the hand."""
+        if self.hand_cursor:
+            links.set_hand(self, False)
+        super().leaveEvent(event)
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802
+        """Right-click: Copy and Paste (dimmed when they would
+        do nothing), plus Copy Link Address over a link. A
+        program that owns the mouse sees the press forwarded
+        instead."""
+        if input.mouse_tracking(self):
+            event.ignore()
+            return
+        self.build_context_menu(event.pos()).exec(event.globalPos())
+
+    def build_context_menu(self, position):
+        menu = QMenu(self)
+        link = links.under(self, position) if position is not None else None
+        if link:
+            copy_link = menu.addAction("Copy Link Address")
+            copy_link.triggered.connect(
+                lambda: QApplication.clipboard().setText(link)
+            )
+            menu.addSeparator()
+        copy_action = menu.addAction("Copy\tCtrl+Shift+C")
+        copy_action.setEnabled(bool(select.text(self)))
+        copy_action.triggered.connect(lambda: select.copy(self))
+        paste_action = menu.addAction("Paste\tCtrl+Shift+V")
+        paste_action.setEnabled(bool(QApplication.clipboard().text()))
+        paste_action.triggered.connect(lambda: select.paste_clipboard(self))
+        return menu
 
     def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802
         pixels = event.pixelDelta()
