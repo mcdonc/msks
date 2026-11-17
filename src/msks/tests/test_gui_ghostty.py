@@ -326,9 +326,12 @@ class TestTheDrive:
             lib.build_info = refused
 
     def test_the_encoders_refusals_answer_empty(self, lib: gt.Lib) -> None:
-        """The encoders' refusal arms (#950): a call the library
-        refuses answers empty bytes — never an exception, never
-        a stale buffer."""
+        """The encoders' refusal arms (#950): the focus report
+        encodes mode 1004's own sequences, and a call the
+        library refuses answers empty bytes — never an
+        exception, never a stale buffer."""
+        assert lib.encode_focus(True) == b"\x1b[I"
+        assert lib.encode_focus(False) == b"\x1b[O"
         for name in (
             "key_encoder_encode",
             "mouse_encoder_encode",
