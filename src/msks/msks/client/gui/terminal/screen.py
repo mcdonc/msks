@@ -64,6 +64,7 @@ class TerminalWidget(QWidget):
         self.setMouseTracking(True)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
         self.cols, self.rows = 80, 24
+        fonts.register_faces()
         self.font = fonts.make_font()
         self.metrics = fonts.measure(self.font)
         self.fonts = fonts.variants(self.font)

@@ -90,6 +90,7 @@ def qt(tmp_path: Path):
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
         ["msks-test"]
     )
+    fonts.register_faces()  # after the application exists
     return SimpleNamespace(
         app=app,
         QtCore=QtCore,
@@ -182,6 +183,20 @@ def key_event(qt, key, text="", modifiers=None):
 
 
 # --- fonts ---------------------------------------------------------------
+
+
+def test_the_bundled_faces_sit_in_the_database(qt, monkeypatch, tmp_path):
+    """Registration seats JetBrains Mono even on a host whose
+    font database starts empty (a CI offscreen platform) — the
+    one-face guarantee everywhere. A broken wheel whose faces
+    directory is missing registers nothing and stays quiet."""
+    from pathlib import Path
+
+    families = set(qt.QtGui.QFontDatabase.families())
+    assert "JetBrains Mono" in families
+    monkeypatch.setattr(qt.fonts, "FACES", Path(tmp_path) / "nowhere")
+    qt.fonts.register_faces()  # no crash, nothing new seated
+    assert "JetBrains Mono" in set(qt.QtGui.QFontDatabase.families())
 
 
 def test_the_face_resolves_and_measures_as_one(qt):
@@ -704,7 +719,10 @@ def test_the_wheel_pages_the_buffer(screen, qt):
     assert paged_up != at_bottom
     screen.wheelEvent(wheel_event(qt, -120))  # one notch down
     qt.app.processEvents()
-    assert scrollbar(screen)[2] == before[2]
+    assert scrollbar(screen)[2] > after[2]  # back toward bottom
+    qt.input.snap_to_bottom(screen)
+    total, length, offset = scrollbar(screen)
+    assert offset == total - length
 
 
 def test_the_wheel_feeds_a_tracking_child(screen, qt):

@@ -16,8 +16,15 @@ and pads the lines (the klangk flterm lesson, mcdonc/klangk#2
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics
+
+# The four bundled faces (JetBrains Mono, OFL 1.1 — the face
+# Ghostty itself ships) beside this module: registering them
+# first gives every host the same measured and rendered face,
+# no system fonts required.
+FACES = Path(__file__).resolve().parent / "faces"
 
 # The resolved face, first match wins: the terminal faces in
 # descending preference (Menlo is the macOS terminal face),
@@ -60,6 +67,17 @@ class CellMetrics:
         return self.cell_width * cols, self.cell_height * rows
 
 
+def register_faces() -> None:
+    """Seat the bundled faces in the database — a host with no
+    fonts at all (a CI runner's offscreen platform answers an
+    empty database) still measures and renders one real
+    face."""
+    for name in ("Regular", "Bold", "Italic", "BoldItalic"):
+        path = FACES / f"JetBrainsMono-{name}.ttf"
+        if path.exists():
+            QFontDatabase.addApplicationFont(str(path))
+
+
 def resolve_family() -> str:
     """The family the database actually holds: the preference
     list in order, else the database's first fixed-pitch
@@ -67,7 +85,7 @@ def resolve_family() -> str:
     measured (asking for a name the database lacks hands Qt a
     substitution — the spacing bug of mcdonc/klangk#2). The
     generic hint floor covers a host with no fixed-pitch face
-    at all."""
+    at all — never reached while the bundled faces register."""
     families = QFontDatabase.families()
     held = set(families)
     for name in PREFERRED:
