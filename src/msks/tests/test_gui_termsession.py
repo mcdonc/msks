@@ -28,16 +28,14 @@ SLEEPER = textwrap.dedent(
     """
 )
 
-#: A child that answers its terminal size whenever it gets a
-#: line: the resize pin reads the child's own view of the
-#: window, before and after a resize.
 #: A child that answers whether SIGPIPE survived the exec: the
 #: parent process ignores it, and a terminal's children must not.
 #: A CPython child would re-ignore it at its own startup, so the
 #: probe is sh — a shell keeps a signal ignored on entry and can
 #: never reset it itself, which makes the inherited state plain.
-#: Both dash and bash print ``trap -- '' PIPE`` for an inherited
-#: ignore; the restored default answers dash's ``-`` or nothing.
+#: POSIX-mode sh (bash on both CI platforms) prints
+#: ``trap -- '' PIPE`` for an inherited ignore; the restored
+#: default prints the bare default or nothing at all.
 PIPED = "trap -p PIPE; echo probe-done"
 
 #: A child that reads its terminal size and prints it: the
@@ -273,31 +271,32 @@ def test_reap_answers_when_the_child_was_collected_elsewhere() -> None:
     assert held is not None
 
 
-def test_write_drops_under_backpressure() -> None:
-    """The write's best-effort contract (#951): a closed master
-    swallows the write, and a full kernel buffer drops the tail
-    rather than blocking the GUI thread."""
+def test_write_swallows_a_dead_master() -> None:
+    """The write's refusal arm (#951): a master closed behind the
+    session's back answers EBADF, and the write swallows it and
+    returns — the same arm a full kernel buffer's EAGAIN takes,
+    pinned here where it does not depend on buffer timing."""
+    session = spawn(SLEEPER)
+    drain_until(session, b"ready")
+    os.close(session.master_fd)  # behind the session's back
+    session.write(b"gone")  # swallowed, never raised
+    session.master_fd = None  # close() must not close it twice
+    session.close()
+    assert session.exited is False
+
+
+def test_write_never_blocks_the_gui() -> None:
+    """The write's best-effort contract (#951): a megabyte into a
+    child that reads nothing returns promptly — whatever the
+    kernel took, the write drops the rest instead of blocking
+    the GUI thread. How much the buffer takes is the platform's
+    business; the return is the contract."""
     session = spawn(SLEEPER)
     drain_until(session, b"ready")
     try:
-        # Fill the kernel buffer: a non-blocking write stops
-        # accepting at EAGAIN, which the write drops.
-        big = b"x" * (1 << 20)
-        deadline = time.monotonic() + 5.0
-        filled = False
-        while time.monotonic() < deadline:
-            try:
-                view = memoryview(big)
-                while view:
-                    written = os.write(session.master_fd, view)
-                    view = view[written:]
-            except BlockingIOError:
-                filled = True
-                break
-        assert filled  # the buffer really is full now
-        session.write(b"tail the buffer cannot take")
-        # The child is alive and the session intact: the dropped
-        # tail changed nothing the caller can observe.
+        started = time.monotonic()
+        session.write(b"x" * (1 << 20))
+        assert time.monotonic() - started < 5.0
         assert session.exited is False
     finally:
         session.close()

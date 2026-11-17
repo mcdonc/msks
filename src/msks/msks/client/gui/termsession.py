@@ -158,11 +158,12 @@ class PtySession:
         return b"".join(chunks)
 
     def read_once(self) -> tuple[bytes | None, bool]:
-        """One read off the master: the bytes (``None`` when
-        nothing was available), and whether the child side is
-        finished — EIO with the slave side closed (the kernel
-        still holds the child's last output; this path delivers
-        it), or the empty read macOS answers with."""
+        """One read off the master, on a master known to be
+        live: the bytes (``None`` when nothing was available),
+        and whether the child side is finished — EIO with the
+        slave side closed (the kernel still holds the child's
+        last output; this path delivers it), or the empty read
+        macOS answers with."""
         try:
             data = os.read(self.master_fd, 65536)
         except BlockingIOError:
@@ -260,10 +261,11 @@ class PtySession:
         survive a direct-child kill. The wait after the kill stays
         bounded — a child wedged in uninterruptible sleep (a hung
         mount) never becomes waitable, and the close must not
-        block on it; such a child is abandoned to init rather
-        than stalling the window. The kill's error arms cover the
-        child dying between the grace loop and here, or belonging
-        to another user — races the suite cannot arrange."""
+        block on it; such a child is abandoned, and its zombie
+        stays until this process itself exits. The kill's error
+        arms cover the child dying between the grace loop and
+        here, or belonging to another user — races the suite
+        cannot arrange."""
         try:
             os.killpg(os.getpgid(self.child_pid), signal.SIGKILL)
         except (  # pragma: no cover — the races named above
