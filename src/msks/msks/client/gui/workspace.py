@@ -17,7 +17,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..data import RestFailure
 from .bridge import Bridge
-from .detail import DetailSections, detail_sections
+from .detail import DetailSections, detail_sections, frame_names
 from .rows import workspace_row
 from .workspaces import (
     FLASH_MS,
@@ -98,8 +98,19 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.health_pending = False
         self.flash_seq = 0
         self.flash_outage = False
+        # The timer first, the chrome right behind it: see the
+        # note at build_chrome below for the mid-build events.
+        self.timer = QtCore.QTimer(self)
+        self.timer.setInterval(REFRESH_MS)
+        self.timer.timeout.connect(self.refresh)
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
+        # The chrome before the sections (#945): a show or hide
+        # event Qt delivers during the build — a stack raising a
+        # half-built child among them — meets whole chrome (the
+        # timer above, the Back button's focus anchor here), not
+        # a page still missing a piece its event handlers touch.
+        self.build_chrome()
         self.title = QtWidgets.QLabel("", self)
         self.meta = QtWidgets.QLabel("", self)
         self.meta.setTextInteractionFlags(
@@ -109,7 +120,6 @@ class WorkspaceDetail(QtWidgets.QWidget):
         scroll = QtWidgets.QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setWidget(sections)
-        self.build_chrome()
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(self.chrome)  # the top row, the list's own
         layout.addWidget(self.title)
@@ -120,9 +130,6 @@ class WorkspaceDetail(QtWidgets.QWidget):
             QtGui.QKeySequence(QtCore.Qt.Key.Key_Escape), self
         )
         escape.activated.connect(self.go_back)
-        self.timer = QtCore.QTimer(self)
-        self.timer.setInterval(REFRESH_MS)
-        self.timer.timeout.connect(self.refresh)
 
     def build_sections(self) -> QtWidgets.QWidget:
         """The three sections' column (#945): grouped boxes on
@@ -429,9 +436,14 @@ class WorkspaceDetail(QtWidgets.QWidget):
     @QtCore.Slot(object)
     def push_frame(self, frame: dict) -> None:
         """One pushed frame into the buffer (#945's seam, #946's
-        feed): the section re-renders from the buffer the moment
-        a frame lands — the presenter's filter keeps the frames
-        that name this workspace."""
+        feed): the buffer keeps only the frames that name this
+        workspace — the feed is a daemon-wide subscriber, and
+        busy siblings would otherwise evict this page's history
+        out of the cap — and the section re-renders the moment
+        one lands."""
+        data = frame.get("data") or {}
+        if not frame_names(data, self.workspace_id):
+            return
         self.frames.append(frame)
         if len(self.frames) > FRAMES_BUFFER:
             del self.frames[: len(self.frames) - FRAMES_BUFFER]
@@ -503,6 +515,9 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         self.detail = WorkspaceDetail(bridge)
         self.detail.back.connect(self.show_listing)
         self.detail.removed.connect(self.listing_removed)
+        bridge.landed.connect(self.frame_landed)
+        bridge.feed_dropped.connect(self.feed_dropped)
+        bridge.feed_reconnected.connect(self.feed_back)
         self.addWidget(self.listing)
         self.addWidget(self.detail)
 
@@ -521,6 +536,37 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         """The page returned (#945): the list owns the window
         again."""
         self.setCurrentWidget(self.listing)
+
+    @QtCore.Slot(object)
+    def frame_landed(self, frame: dict) -> None:
+        """One pushed frame (#946): the page buffers it whatever
+        screen owns the window — its events section is the
+        frame's own record — and the screen the operator sees
+        refreshes at once, through the same path its timer
+        drives; the hidden screen refreshes at its next show.
+        The tick stays the backstop the feed makes immediate."""
+        self.detail.push_frame(frame)
+        self.currentWidget().refresh()
+
+    @QtCore.Slot(str)
+    def feed_dropped(self, reason: str) -> None:
+        """The events feed's drop (#946): the screen the operator
+        sees flashes it, each retry re-telling — the outage's own
+        heartbeat while it lasts. The flash runs its own span,
+        not the screens' outage flag: that flag belongs to their
+        refresh answers (#904), and a REST answer arriving over
+        a still-down feed would otherwise read as the feed's
+        recovery."""
+        screen = self.currentWidget()
+        screen.flash(f"the events feed dropped — {reason}")
+
+    @QtCore.Slot()
+    def feed_back(self) -> None:
+        """The feed's recovery (#946): one flash says the frames
+        flow again; the refresh that follows is the feed's
+        own."""
+        screen = self.currentWidget()
+        screen.flash("the events feed reconnected")
 
     @QtCore.Slot(str)
     def listing_removed(self, workspace_id: str) -> None:

@@ -55,14 +55,18 @@ class FakeSignal:
 
 
 class StubBridge:
-    """The bridge's surface for the screen's tests: the two
-    signals the screens read and the one verb they call, every
-    call recorded — no worker, no network."""
+    """The bridge's surface for the screens' tests: the signals
+    the screens and the shell read — the calls' answers, the
+    feed's frames and state (#946) — and the one verb they call,
+    every call recorded — no worker, no network."""
 
     def __init__(self) -> None:
         self.calls: list[tuple] = []
         self.succeeded = FakeSignal()
         self.failed = FakeSignal()
+        self.landed = FakeSignal()
+        self.feed_dropped = FakeSignal()
+        self.feed_reconnected = FakeSignal()
 
     def call(self, key: str, method: str, *args: object) -> None:
         self.calls.append((key, method, args))
@@ -510,6 +514,66 @@ def test_a_late_removed_answer_needs_the_page_current(qt) -> None:
     assert shell.currentWidget() is shell.listing
     shell.detail.on_succeeded("detail-row", [other_row()])
     assert shell.listing.status.text() == ""
+
+
+def test_a_pushed_frame_refreshes_the_current_screen(qt) -> None:
+    """One pushed frame (#946): the page buffers it whatever
+    screen owns the window, and the screen the operator sees
+    refreshes at once through the same path its timer drives —
+    the feed is the immediacy, the tick the backstop."""
+    shell, window, bridge = make_shell(qt)
+    bridge.calls.clear()
+    shell.frame_landed({"event": "workspace.status", "data": {"id": "ws-a"}})
+    # The list owns the window: its refresh flew.
+    assert ("workspaces-list", "workspaces", ()) in bridge.calls
+    assert ("detail-health", "health", ()) not in bridge.calls
+    # No workspace is open on the page: the frame names none it
+    # holds, so nothing buffers.
+    assert shell.detail.frames == []
+    shell.listing.opened.emit("ws-a")
+    land(qt, shell.detail, bridge)  # the open's own flights answered
+    bridge.calls.clear()
+    shell.frame_landed({"event": "workspace.status", "data": {"id": "ws-a"}})
+    assert ("detail-row", "workspaces", ()) in bridge.calls
+    assert ("detail-health", "health", ()) in bridge.calls
+    # The open page buffers its own workspace's frame: its
+    # events section is the frame's own record.
+    assert len(shell.detail.frames) == 1
+    # A busy sibling cannot evict it (#946): the buffer keeps
+    # only this workspace's frames.
+    for _ in range(150):
+        shell.frame_landed(
+            {"event": "workspace.status", "data": {"id": "ws-b"}}
+        )
+    assert len(shell.detail.frames) == 1
+
+
+def test_the_feed_outage_flashes_the_current_screen(qt) -> None:
+    """The feed's drop and recovery (#946): the screen the
+    operator sees flashes the outage while the feed retries — an
+    outage, standing for an answer — and the recovery's own one
+    line when the frames flow again."""
+    shell, window, bridge = make_shell(qt)
+    shell.feed_dropped("the socket broke")
+    assert shell.listing.status.text() == (
+        "the events feed dropped — the socket broke"
+    )
+    # The feed's flash runs its own span, not the screens' outage
+    # flag: a REST answer must not read as the feed's recovery.
+    assert not shell.listing.flash_outage
+    shell.listing.on_succeeded("workspaces-list", [])
+    assert shell.listing.status.text() == (
+        "the events feed dropped — the socket broke"
+    )
+    shell.feed_back()
+    assert shell.listing.status.text() == "the events feed reconnected"
+    assert not shell.listing.flash_outage
+    # The page flashes its own copy when it owns the window.
+    shell.listing.opened.emit("ws-a")
+    shell.feed_dropped("the dial failed")
+    assert shell.detail.status.text() == (
+        "the events feed dropped — the dial failed"
+    )
 
 
 def test_a_refresh_in_flight_is_not_stacked(qt) -> None:

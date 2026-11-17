@@ -193,3 +193,122 @@ def test_results_and_failures_cross_to_the_gui_thread(
     assert len(receiver.bad) == before + 1
     assert receiver.bad[-1][0] == "late"
     assert not receiver.bad[-1][1].reach
+
+
+def test_a_feed_done_before_stop_stops_clean(qapp_setup) -> None:
+    """A feed task that crashed on its own (#946): the stop's
+    cancel is a no-op on a done task, and the completion
+    callback retrieves the task's exception — never left
+    un-retrieved — and stops the loop all the same."""
+
+    class QuickFeed:
+        """A feed whose run ends at once: the done-before-stop
+        shape."""
+
+        def __init__(self) -> None:
+            self.on_frame = None
+            self.on_drop = None
+            self.on_reconnect = None
+
+        async def run(self) -> None:
+            raise RuntimeError("the feed crashed on its own")
+
+    qt = qapp_setup
+    feed = QuickFeed()
+    bridge = qt.Bridge(StubData(), feed_factory=lambda: feed)
+    bridge.start()
+    # Let the task land done before the stop takes the bridge.
+    deadline = time.monotonic() + 10.0
+    task = None
+    while time.monotonic() < deadline:
+        task = bridge._feed_task
+        if task is not None and task.done():
+            break
+        time.sleep(TICK)
+    assert task is not None and task.done()
+    bridge.stop()
+    assert not bridge.running
+
+
+def test_the_feed_rides_the_loop_and_its_frames_cross(
+    qapp_setup,
+) -> None:
+    """The live events feed (#946): a feed factory's task rides
+    the bridge's loop for the bridge's whole life, its three
+    callbacks cross to the GUI thread as the bridge's signals,
+    and stop cancels the task with the loop — no task outlives
+    the window."""
+    qt = qapp_setup
+
+    class StubFeed:
+        """The feed's shape: one frame, one drop, one recovery
+        told at once, then a serve the stop must cancel."""
+
+        def __init__(self) -> None:
+            self.on_frame = None
+            self.on_drop = None
+            self.on_reconnect = None
+            self.cancelled = False
+
+        async def run(self) -> None:
+            if self.on_frame is not None:
+                self.on_frame(
+                    {"event": "workspace.status", "data": {"id": "ws-1"}}
+                )
+            if self.on_drop is not None:
+                self.on_drop("the socket broke")
+            if self.on_reconnect is not None:
+                self.on_reconnect()
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+
+    from PySide6 import QtCore
+
+    class FeedReceiver(QtCore.QObject):
+        """The shell-shaped receiver: the feed's three signals,
+        the deliveries appended for the asserts."""
+
+        def __init__(self, bridge) -> None:
+            super().__init__()
+            self.frames: list[dict] = []
+            self.drops: list[str] = []
+            self.backs = 0
+            bridge.landed.connect(self.on_frame)
+            bridge.feed_dropped.connect(self.on_drop)
+            bridge.feed_reconnected.connect(self.on_back)
+
+        @QtCore.Slot(object)
+        def on_frame(self, frame: dict) -> None:
+            self.frames.append(frame)
+
+        @QtCore.Slot(str)
+        def on_drop(self, reason: str) -> None:
+            self.drops.append(reason)
+
+        @QtCore.Slot()
+        def on_back(self) -> None:
+            self.backs += 1
+
+    feed = StubFeed()
+    bridge = qt.Bridge(StubData(), feed_factory=lambda: feed)
+    bridge.start()
+    receiver = FeedReceiver(bridge)
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        qt.app.processEvents()
+        if receiver.frames and receiver.drops and receiver.backs:
+            break
+        time.sleep(TICK)
+    assert receiver.frames == [
+        {"event": "workspace.status", "data": {"id": "ws-1"}}
+    ]
+    assert receiver.drops == ["the socket broke"]
+    assert receiver.backs == 1
+    assert not feed.cancelled
+    bridge.stop()
+    assert not bridge.running
+    assert feed.cancelled
+    bridge.stop()  # idempotent with the feed in place

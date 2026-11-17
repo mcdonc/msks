@@ -269,6 +269,10 @@ def open_window(QtWidgets: ModuleType) -> int:
     # time, so the import lands only on the window path.
     from .bridge import Bridge
 
+    # allow-deferred-import — the feed is Qt-free but rides the
+    # same window path: nothing parses it before the guards.
+    from .feed import EventsFeed
+
     # The style pin sits in the environment, before the
     # constructor: QApplication's own theme setup resolves the
     # session's style name (a Plasma portal answers "union"
@@ -294,7 +298,7 @@ def open_window(QtWidgets: ModuleType) -> int:
         font.pointSizeF() * scale_from_env(FONT_SCALE_ENV, FONT_SCALE)
     )
     app.setFont(font)
-    bridge = Bridge(GuiData())
+    bridge = Bridge(GuiData(), feed_factory=EventsFeed)
     bridge.start()
     app.aboutToQuit.connect(bridge.stop)
     window = QtWidgets.QMainWindow()
