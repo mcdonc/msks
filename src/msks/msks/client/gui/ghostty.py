@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import sys
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -80,6 +81,17 @@ ACTION_RELEASE, ACTION_PRESS, ACTION_REPEAT = 0, 1, 2
 MOUSE_PRESS, MOUSE_RELEASE, MOUSE_MOTION = 0, 1, 2
 MOUSE_LEFT, MOUSE_RIGHT, MOUSE_MIDDLE = 1, 2, 3
 MOUSE_FOUR, MOUSE_FIVE = 4, 5
+
+#: The system loader's bare name (#950): the last resort when
+#: neither the override nor the wheel answers — a dylib under
+#: macOS's loader, a .so elsewhere.
+SYSTEM_LIBRARY = (
+    "libghostty-vt.dylib" if sys.platform == "darwin" else "libghostty-vt.so"
+)
+
+#: The build-info selector for the version string (#950) — the
+#: one selector below that carried no name of its own.
+BUILD_INFO_VERSION_STRING = 5
 
 # ghostty_terminal_get data selectors.
 DATA_MODE = 37
@@ -522,7 +534,7 @@ def library_path(spec=None) -> str:
     override = os.environ.get("GHOSTTY_VT_LIB")
     if override:
         return override
-    return wheel_library(spec) or "libghostty-vt.so"
+    return wheel_library(spec) or SYSTEM_LIBRARY
 
 
 class Lib:
@@ -567,8 +579,11 @@ class Lib:
             ctypes.POINTER(ctypes.c_uint8),
             sz,
         )
+        # void in the C ABI — the header's word, not a result
+        # code: a restype of int would read a register the
+        # function never set.
         self.terminal_scroll_viewport = self.prototype(
-            "ghostty_terminal_scroll_viewport", r, v, ScrollViewport
+            "ghostty_terminal_scroll_viewport", None, v, ScrollViewport
         )
         self.render_state_new = self.prototype(
             "ghostty_render_state_new", r, v, ctypes.POINTER(v)
@@ -667,8 +682,10 @@ class Lib:
             sz,
             ctypes.POINTER(sz),
         )
+        # void in the C ABI, like terminal_scroll_viewport
+        # above.
         self.mouse_encoder_setopt = self.prototype(
-            "ghostty_mouse_encoder_setopt", r, v, i, v
+            "ghostty_mouse_encoder_setopt", None, v, i, v
         )
         self.mouse_encoder_setopt_from_terminal = self.prototype(
             "ghostty_mouse_encoder_setopt_from_terminal", None, v, v
@@ -862,7 +879,10 @@ class Lib:
         say."""
         out = ctypes.c_char_p()
         if (
-            self.build_info(5, ctypes.cast(ctypes.byref(out), ctypes.c_void_p))
+            self.build_info(
+                BUILD_INFO_VERSION_STRING,
+                ctypes.cast(ctypes.byref(out), ctypes.c_void_p),
+            )
             == SUCCESS
             and out.value
         ):

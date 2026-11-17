@@ -9,7 +9,6 @@ selection gesture: the APIs the terminal widget needs.
 
 import ast
 import ctypes
-from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
@@ -64,11 +63,21 @@ KEY_CODES = {
     "F1": 121,
 }
 
-#: Whether the library the binding loads is installed on this
-#: host — the pyghostty wheel (the gui extra), an override, or
-#: a system build. The drive tests skip without it; the struct
-#: and constant pins above run everywhere.
-LIBRARY_PRESENT = find_spec("pyghostty") is not None
+
+def library_present() -> bool:
+    """Whether the library the binding's own discovery resolves
+    loads on this host (#950): the wheel, an override, or a
+    system build — the drive tests skip without it, and the
+    skip matches what ``Lib()`` would actually find, not the
+    wheel's mere presence."""
+    try:
+        gt.Lib()
+    except OSError:
+        return False
+    return True
+
+
+LIBRARY_PRESENT = library_present()
 
 
 def test_the_struct_mirrors_match_the_abi() -> None:
@@ -149,7 +158,7 @@ def test_a_library_that_cannot_load_says_so() -> None:
 
 @pytest.mark.skipif(
     not LIBRARY_PRESENT,
-    reason="libghostty-vt is not installed on this host",
+    reason="libghostty-vt does not load on this host",
 )
 class TestTheDrive:
     """The binding against the real library (#950): the
@@ -200,10 +209,14 @@ class TestTheDrive:
                 )
                 assert ok
                 if length.value:
-                    lib.row_cells_get(
-                        cells.value,
-                        gt.CELLS_GRAPHEMES_BUF,
-                        ctypes.cast(codepoints, ctypes.c_void_p),
+                    assert length.value <= len(codepoints)
+                    assert (
+                        lib.row_cells_get(
+                            cells.value,
+                            gt.CELLS_GRAPHEMES_BUF,
+                            ctypes.cast(codepoints, ctypes.c_void_p),
+                        )
+                        == gt.SUCCESS
                     )
                     chars.append(
                         "".join(
@@ -312,6 +325,51 @@ class TestTheDrive:
         )
         assert selection.size == ctypes.sizeof(gt.Selection)
 
+    def test_the_scroll_viewport_scrolls_and_reports(
+        self, lib: gt.Lib, terminal: int
+    ) -> None:
+        """The scroll viewport (#950): the struct whose padding
+        mirror is the port's headline trap, driven — scroll a
+        written buffer and the scrollbar answers the moved
+        offset."""
+        for n in range(8):
+            lib.vt_write(terminal, f"line {n}\r\n".encode())
+        lib.vt_write(terminal, b"last line")
+        ok, bar = lib.get(
+            lib.terminal_get,
+            terminal,
+            gt.DATA_SCROLLBAR,
+            gt.Scrollbar(),
+        )
+        assert ok
+        # Nine lines in a four-row viewport, pinned at the
+        # bottom.
+        assert (bar.total, bar.offset, bar.len) == (9, 5, 4)
+        top = gt.ScrollViewport(
+            tag=gt.SCROLL_TOP, value=gt.ScrollViewportValue(row=1)
+        )
+        assert lib.terminal_scroll_viewport(terminal, top) is None
+        ok, bar = lib.get(
+            lib.terminal_get,
+            terminal,
+            gt.DATA_SCROLLBAR,
+            gt.Scrollbar(),
+        )
+        assert ok
+        assert bar.offset == 0  # the viewport now sits at the top
+        bottom = gt.ScrollViewport(
+            tag=gt.SCROLL_BOTTOM, value=gt.ScrollViewportValue(row=1)
+        )
+        lib.terminal_scroll_viewport(terminal, bottom)
+        ok, bar = lib.get(
+            lib.terminal_get,
+            terminal,
+            gt.DATA_SCROLLBAR,
+            gt.Scrollbar(),
+        )
+        assert ok
+        assert bar.offset == 5  # and back to the bottom
+
     def test_the_build_names_itself(self, lib: gt.Lib) -> None:
         """The library's build version (#950): the snapshot the
         wheel carries names itself — the string the About line
@@ -338,9 +396,21 @@ class TestTheDrive:
             "focus_encode",
         ):
             setattr(lib, name, lambda *_args: gt.NO_VALUE)
-        assert lib.encode_key(0, 0) == b""
-        assert lib.encode_mouse(0, 0) == b""
-        assert lib.encode_focus(True) == b""
+        refused = {
+            name: getattr(lib, name)
+            for name in (
+                "key_encoder_encode",
+                "mouse_encoder_encode",
+                "focus_encode",
+            )
+        }
+        try:
+            assert lib.encode_key(0, 0) == b""
+            assert lib.encode_mouse(0, 0) == b""
+            assert lib.encode_focus(True) == b""
+        finally:
+            for name, fn in refused.items():
+                setattr(lib, name, fn)
 
     def test_a_failed_allocation_raises(self, lib: gt.Lib) -> None:
         """The constructor helper's failure (#950): an allocator
