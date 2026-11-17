@@ -418,9 +418,18 @@ def test_a_rename_lands_on_its_own_session_not_the_shuffled_tab(hub, tabs):
     # the editor's commit after a tab shift still finds its own
     tabs.begin_rename(1)
     tabs.editor.setText("mine")
-    hub.open_shell("ws-a")  # a tab lands beside, shifting nothing
     tabs.commit_rename()
     assert hub.find("ws-a", second.no).label == "mine"
+    # The distinguishing shape (#954): a DIFFERENT session's tab
+    # closes under a standing editor — the editor's tab slides
+    # to a new position — and the commit must still find its
+    # own session, not whatever took the stored index.
+    third = hub.open_shell("ws-a")
+    tabs.begin_rename(2)  # the third session's tab
+    hub.close_shell("ws-a", second.no)  # the tab before it closes
+    tabs.editor.setText("third-session")
+    tabs.commit_rename()
+    assert third.label == "third-session"
 
 
 def test_an_editor_for_a_closed_session_goes_down(hub, tabs):
