@@ -202,35 +202,54 @@ def test_the_face_resolves_and_measures_as_one(qt):
 
 def test_the_row_height_caps_at_twelve_tenths_em(qt):
     """The cell height is ascent plus descent, trimmed to 1.2
-    em — the line-height terminals ship."""
+    em — the line-height terminals ship. The em is the M
+    advance: QFontInfo.pixelSize() answers -1 for a face Qt
+    has not realized, and the cap would collapse the row."""
     fonts, QtGui = qt.fonts, qt.QtGui
     font = fonts.make_font()
     metrics = fonts.measure(font)
-    em = QtGui.QFontInfo(font).pixelSize()
+    em = fonts.em_pixels(font)
     assert metrics.cell_height == min(
         QtGui.QFontMetrics(font).height(), round(em * fonts.ROW_HEIGHT_EM)
     )
+    assert metrics.cell_height > 1
 
 
-def test_the_family_falls_back_to_the_hint(qt, monkeypatch):
-    """Nothing preferred installed resolves the generic hint —
-    the floor, never an error."""
+def test_the_family_falls_back_to_fixed_pitch_then_the_hint(qt, monkeypatch):
+    """Nothing preferred installed resolves the database's own
+    first fixed-pitch family; a database without even that
+    resolves the generic hint — the floor, never an error, and
+    never a name the database does not hold."""
     fonts = qt.fonts
 
     class Database:
-        @staticmethod
-        def families():
-            return ["Comic Sans"]
+        def __init__(self, names, fixed):
+            self._names = names
+            self._fixed = fixed
 
-    monkeypatch.setattr(fonts, "QFontDatabase", Database)
-    assert fonts.resolve_family() == fonts.PREFERRED[-1]
+        def families(self):
+            return self._names
 
-    class HasFira:
-        @staticmethod
-        def families():
-            return ["Fira Code", "Comic Sans"]
+        def isFixedPitch(self, name):
+            return name in self._fixed
 
-    monkeypatch.setattr(fonts, "QFontDatabase", HasFira)
+    monkeypatch.setattr(
+        fonts,
+        "QFontDatabase",
+        Database(["Comic Sans", "Prose Mono"], {"Prose Mono"}),
+    )
+    assert fonts.resolve_family() == "Prose Mono"
+
+    monkeypatch.setattr(
+        fonts, "QFontDatabase", Database(["Comic Sans"], set())
+    )
+    assert fonts.resolve_family() == "Monospace"
+
+    monkeypatch.setattr(
+        fonts,
+        "QFontDatabase",
+        Database(["Fira Code", "Comic Sans"], set()),
+    )
     assert fonts.resolve_family() == "Fira Code"
 
 
@@ -671,17 +690,21 @@ def wheel_event(qt, dy: int):
 
 def test_the_wheel_pages_the_buffer(screen, qt):
     """Wheel up walks into the scrollback; the scrollbar's
-    offset answers where the viewport sits."""
+    offset answers where the viewport sits, and the thumb
+    paints where the offset puts it."""
     for index in range(40):
         vt(screen, f"line {index}\r\n".encode())
     before = scrollbar(screen)
+    at_bottom = screen.grab().toImage()
     screen.wheelEvent(wheel_event(qt, 120))  # one notch up
+    qt.app.processEvents()
     after = scrollbar(screen)
     assert after[2] < before[2]
-    with_thumb = screen.grab().toImage()  # the thumb paints
+    paged_up = screen.grab().toImage()  # the thumb moved
+    assert paged_up != at_bottom
     screen.wheelEvent(wheel_event(qt, -120))  # one notch down
+    qt.app.processEvents()
     assert scrollbar(screen)[2] == before[2]
-    assert screen.grab().toImage() != with_thumb
 
 
 def test_the_wheel_feeds_a_tracking_child(screen, qt):

@@ -17,18 +17,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtGui import QFont, QFontDatabase, QFontInfo, QFontMetrics
+from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics
 
 # The resolved face, first match wins: the terminal faces in
-# descending preference, with the generic hint as the floor.
+# descending preference (Menlo is the macOS terminal face),
+# with the database's own first fixed-pitch family and the
+# generic hint as the floors.
 PREFERRED = (
     "JetBrains Mono",
     "UbuntuMono Nerd Font Mono",
     "Fira Code",
     "Cascadia Mono",
+    "Menlo",
     "DejaVu Sans Mono",
     "Liberation Mono",
-    "Monospace",
 )
 
 # The run whose average advance is the cell width — Konsole's
@@ -59,14 +61,22 @@ class CellMetrics:
 
 
 def resolve_family() -> str:
-    """The family the database actually holds, from the
-    preference list in order — the generic hint only when
-    nothing else matched."""
-    families = set(QFontDatabase.families())
+    """The family the database actually holds: the preference
+    list in order, else the database's first fixed-pitch
+    family, so the rasterizer draws the face the metrics
+    measured (asking for a name the database lacks hands Qt a
+    substitution — the spacing bug of mcdonc/klangk#2). The
+    generic hint floor covers a host with no fixed-pitch face
+    at all."""
+    families = QFontDatabase.families()
+    held = set(families)
     for name in PREFERRED:
-        if name in families:
+        if name in held:
             return name
-    return PREFERRED[-1]
+    for name in families:
+        if QFontDatabase.isFixedPitch(name):
+            return name
+    return "Monospace"
 
 
 def make_font(points: int = DEFAULT_PT) -> QFont:
@@ -78,14 +88,24 @@ def make_font(points: int = DEFAULT_PT) -> QFont:
     return font
 
 
+def em_pixels(font: QFont) -> int:
+    """The em in pixels at Qt's logical resolution — what
+    QFontInfo answers once the face is realized, without the
+    -1 a not-yet-realized font carries (the M advance is
+    narrower than the em square, and the cap would cut the row
+    under the baseline)."""
+    return max(1, round(font.pointSizeF() * 96 / 72))
+
+
 def measure(font: QFont) -> CellMetrics:
     """The grid a face lays out: average advance, ascent plus
     descent capped at 1.2 em, and the baseline offset glyphs
     anchor to."""
     metrics = QFontMetrics(font)
     width = max(1, round(metrics.horizontalAdvance(REPCHAR) / len(REPCHAR)))
-    em = QFontInfo(font).pixelSize()
-    height = max(1, min(metrics.height(), round(em * ROW_HEIGHT_EM)))
+    height = max(
+        1, min(metrics.height(), round(em_pixels(font) * ROW_HEIGHT_EM))
+    )
     return CellMetrics(width, height, metrics.ascent())
 
 
