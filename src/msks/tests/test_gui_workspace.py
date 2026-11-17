@@ -388,14 +388,12 @@ def test_events_on_a_wrapper_past_construction_touch_nothing(
     qt,
 ) -> None:
     """The page's handlers tolerate the two half-built shapes
-    Qt can deliver events to (#959): a page whose
-    ``__init__`` raised — the parented C++ object survives the
-    exception and keeps receiving events — and the empty
-    wrapper PySide6 raises at teardown for a C++ object that
-    outlived its Python one. A wrapper without its Back button
-    and ``timer`` answers nothing: no focus, no refresh, no
-    tick, instead of an AttributeError tracing to whatever
-    test is running."""
+    Qt can deliver events to (#959): a page whose construction
+    never finished, and the empty wrapper PySide6 raises at
+    teardown for a C++ object that outlived its Python one.
+    A wrapper without its Back button and ``timer`` answers
+    nothing: no focus, no refresh, no tick, instead of an
+    AttributeError tracing to whatever test is running."""
     page, window, _bridge = make_page(qt)
     window.close()
     # The two teardown shapes leave a wrapper with no instance

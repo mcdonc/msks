@@ -383,11 +383,10 @@ def test_events_on_a_wrapper_past_construction_touch_nothing(
     qt,
 ) -> None:
     """The handlers tolerate the two half-built shapes Qt can
-    deliver events to (#959): a screen whose ``__init__``
-    raised — the parented C++ object survives the exception and
-    keeps receiving events — and the empty wrapper PySide6
-    raises at teardown for a C++ object that outlived its
-    Python one. A wrapper without its ``table`` and ``timer``
+    deliver events to (#959): a screen whose construction
+    never finished, and the empty wrapper PySide6 raises at
+    teardown for a C++ object that outlived its Python one.
+    A wrapper without its ``table`` and ``timer``
     answers nothing: no refresh, no tick, no filtering, and
     Qt's own handling runs, instead of an AttributeError
     tracing to whatever test is running."""

@@ -493,8 +493,8 @@ class WorkspaceDetail(QtWidgets.QWidget):
         keyboard's anchor: the Back button takes the focus — a
         key event needs a focused child to reach the page's
         Escape shortcut. A wrapper without its Back button
-        does none of the three (#959): Qt delivers events to a
-        page whose construction never finished, and to the
+        does none of the three (#959): Qt can deliver events to
+        a page whose construction never finished, and to the
         empty wrapper PySide6 raises at teardown for a C++
         object that outlived its Python one."""
         if getattr(self, "back_button", None) is not None:

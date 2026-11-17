@@ -750,12 +750,12 @@ class WorkspaceList(QtWidgets.QWidget):
         return answer == QtWidgets.QMessageBox.StandardButton.Yes
 
     def flash(self, message: str, *, outage: bool = False) -> None:
-        self.flash_outage = outage
         """The status line's flash (#939, #904): the message
         shows; a refusal clears itself after the flash span, an
         outage stands for the next answer to resolve. Each flash
         carries its own serial, so a later flash's message is not
         erased by an earlier flash's timeout."""
+        self.flash_outage = outage
         self.flash_seq += 1
         self.status.setText(message)
         if outage:
@@ -786,12 +786,11 @@ class WorkspaceList(QtWidgets.QWidget):
         """The screen's first refresh at open (#939), and the
         tick's resume on a re-show: the screen refreshes while it
         owns the window. A wrapper without its ``timer`` does
-        neither (#959): Qt delivers events to a screen whose
-        construction never finished (the parented C++ object
-        survives the exception and keeps receiving them), and
-        to the empty wrapper PySide6 raises at teardown for a
-        C++ object that outlived its Python one — neither owns
-        the tick the open starts."""
+        neither (#959): Qt can deliver events to a screen whose
+        construction never finished, and to the empty wrapper
+        PySide6 raises at teardown for a C++ object that
+        outlived its Python one — neither owns the tick the
+        open starts."""
         timer = getattr(self, "timer", None)
         if timer is not None:
             self.refresh()
