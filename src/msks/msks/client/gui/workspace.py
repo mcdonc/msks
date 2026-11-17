@@ -468,7 +468,11 @@ class WorkspaceDetail(QtWidgets.QWidget):
         if outage:
             return
         seq = self.flash_seq
-        QtCore.QTimer.singleShot(FLASH_MS, lambda: self.clear_stale(seq))
+        # The page is the timeout's receiver (#959): the
+        # pending callback is severed when the widget's C++
+        # object goes, instead of firing later on a wrapper
+        # whose widgets are already destroyed.
+        QtCore.QTimer.singleShot(FLASH_MS, self, lambda: self.clear_stale(seq))
 
     def clear_stale(self, seq: int) -> None:
         """The timeout's slot: the line clears only when its own
@@ -488,16 +492,24 @@ class WorkspaceDetail(QtWidgets.QWidget):
         resume while the page owns the window, and the
         keyboard's anchor: the Back button takes the focus — a
         key event needs a focused child to reach the page's
-        Escape shortcut."""
-        self.back_button.setFocus()
-        self.refresh()
-        self.timer.start()
+        Escape shortcut. A wrapper without its Back button
+        does none of the three (#959): Qt can deliver events to
+        a page whose construction never finished, and to the
+        empty wrapper PySide6 raises at teardown for a C++
+        object that outlived its Python one."""
+        if getattr(self, "back_button", None) is not None:
+            self.back_button.setFocus()
+            self.refresh()
+            self.timer.start()
         super().showEvent(event)
 
     def hideEvent(self, event: QtGui.QHideEvent) -> None:
         """The tick stops with the page (#945): a hidden page's
-        tick must not touch widgets."""
-        self.timer.stop()
+        tick must not touch widgets. A wrapper without its
+        ``timer`` (#959) has no tick to stop."""
+        timer = getattr(self, "timer", None)
+        if timer is not None:
+            timer.stop()
         super().hideEvent(event)
 
 

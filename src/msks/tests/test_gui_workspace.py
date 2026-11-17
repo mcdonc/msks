@@ -124,13 +124,25 @@ def qt(tmp_path: Path):
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
         ["msks-test"]
     )
-    return SimpleNamespace(
+    yield SimpleNamespace(
         app=app,
         QtCore=QtCore,
         QtGui=QtGui,
         QtWidgets=QtWidgets,
         page_mod=workspace_mod,
     )
+    # The same teardown the list's own fixture owes its worker
+    # (#959): close and delete every top-level widget, then
+    # flush the deferred deletions — nothing C++-side outlives
+    # the test to hand the cycle collector an empty wrapper
+    # later, under an unrelated test's stderr.
+    for widget in app.topLevelWidgets():
+        widget.close()
+        widget.deleteLater()
+    QtCore.QCoreApplication.sendPostedEvents(
+        None, QtCore.QEvent.Type.DeferredDelete
+    )
+    app.processEvents()
 
 
 def make_shell(qt, rows=None) -> tuple:
@@ -370,6 +382,26 @@ def test_a_refusal_flash_clears_on_its_timeout(qt) -> None:
     assert page.status.text() == "second"
     page.clear_stale(page.flash_seq)
     assert page.status.text() == ""
+
+
+def test_events_on_a_wrapper_past_construction_touch_nothing(
+    qt,
+) -> None:
+    """The page's handlers tolerate the two half-built shapes
+    Qt can deliver events to (#959): a page whose construction
+    never finished, and the empty wrapper PySide6 raises at
+    teardown for a C++ object that outlived its Python one.
+    A wrapper without its Back button and ``timer`` answers
+    nothing: no focus, no refresh, no tick, instead of an
+    AttributeError tracing to whatever test is running."""
+    page, window, _bridge = make_page(qt)
+    window.close()
+    # The two teardown shapes leave a wrapper with no instance
+    # attributes — the same state the guards answer.
+    del page.back_button
+    del page.timer
+    page.showEvent(qt.QtGui.QShowEvent())
+    page.hideEvent(qt.QtGui.QHideEvent())
 
 
 def test_an_unchanged_answer_renders_nothing(qt) -> None:

@@ -146,13 +146,30 @@ def qt(tmp_path: Path):
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
         ["msks-test"]
     )
-    return SimpleNamespace(
+    yield SimpleNamespace(
         app=app,
         QtCore=QtCore,
         QtGui=QtGui,
         QtWidgets=QtWidgets,
         screen_mod=workspaces_mod,
     )
+    # The teardown every GUI test owes its worker (#959): close
+    # and delete every top-level widget the test left, then
+    # flush Qt's deferred deletions and posted events. A C++
+    # window that outlives its test keeps receiving events, and
+    # the screen↔bridge reference cycle hands their delivery to
+    # the cycle collector at an arbitrary later moment — an
+    # empty wrapper PySide6 raises then, whose handlers would
+    # trace to the stderr of whatever unrelated test runs. The
+    # guards in the screens answer those deliveries, and this
+    # teardown leaves nothing behind to deliver to.
+    for widget in app.topLevelWidgets():
+        widget.close()
+        widget.deleteLater()
+    QtCore.QCoreApplication.sendPostedEvents(
+        None, QtCore.QEvent.Type.DeferredDelete
+    )
+    app.processEvents()
 
 
 def make_screen(qt) -> tuple:
@@ -360,6 +377,33 @@ def test_a_later_flash_outlives_an_earlier_timeout(qt) -> None:
     screen.clear_stale(screen.flash_seq)
     assert screen.status.text() == ""
     window.close()
+
+
+def test_events_on_a_wrapper_past_construction_touch_nothing(
+    qt,
+) -> None:
+    """The handlers tolerate the two half-built shapes Qt can
+    deliver events to (#959): a screen whose construction
+    never finished, and the empty wrapper PySide6 raises at
+    teardown for a C++ object that outlived its Python one.
+    A wrapper without its ``table`` and ``timer``
+    answers nothing: no refresh, no tick, no filtering, and
+    Qt's own handling runs, instead of an AttributeError
+    tracing to whatever test is running."""
+    screen, window, _bridge = make_screen(qt)
+    window.close()
+    # The two teardown shapes leave a wrapper with no instance
+    # attributes — the same state the guards answer.
+    del screen.table
+    del screen.timer
+    screen.showEvent(qt.QtGui.QShowEvent())
+    screen.hideEvent(qt.QtGui.QHideEvent())
+    screen.resizeEvent(
+        qt.QtGui.QResizeEvent(qt.QtCore.QSize(10, 10), qt.QtCore.QSize(5, 5))
+    )
+    watched = qt.QtCore.QObject()
+    press = qt.QtCore.QEvent(qt.QtCore.QEvent.Type.MouseButtonPress)
+    assert screen.eventFilter(watched, press) is False
 
 
 def test_another_keys_answer_is_not_the_screens(qt) -> None:
