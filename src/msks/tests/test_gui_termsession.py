@@ -145,6 +145,7 @@ def test_a_resize_after_close_answers_nothing() -> None:
     session.write(b"x")
     assert session.drain() is None
     assert session.exited is False  # close() reaped it instead
+    session.close()  # idempotent: both fds and child already gone
 
 
 def test_the_child_exit_is_visible(

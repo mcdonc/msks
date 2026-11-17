@@ -73,10 +73,11 @@ class PtySession:
         master, slave = pty.openpty()
         self.resize_fd(master, cols, rows, cell_width, cell_height)
         pid = os.fork()
-        if pid == 0:
-            # Runs in the forked child; the parent's coverage
-            # never sees it. The 127 exit is asserted through
-            # drain() in the suite.
+        # The child block runs only in the fork — the parent's
+        # coverage never sees it; the suite asserts its observable
+        # outcomes instead (the TERM env, the controlling tty, and
+        # the 127 exit of a failed exec through drain()).
+        if pid == 0:  # pragma: no cover
             try:
                 os.close(master)
                 os.setsid()
@@ -149,7 +150,9 @@ class PtySession:
         except OSError:
             self.mark_exited()
             return None, True
-        if not data:
+        # Linux answers EIO, not a clean EOF, once the slave side
+        # closes; macOS delivers the empty read here.
+        if not data:  # pragma: no cover
             self.mark_exited()
             return None, True
         return data, False
@@ -234,14 +237,12 @@ class PtySession:
         try:
             os.killpg(os.getpgid(self.child_pid), signal.SIGKILL)
             _, status = os.waitpid(self.child_pid, 0)
-            if os.WIFSIGNALED(status):
-                self.exit_status = exit_code(status)
-        except (
+            self.exit_status = exit_code(status)
+        except (  # pragma: no cover — the races named above
             ProcessLookupError,
             PermissionError,
             ChildProcessError,
         ):
-            # pragma: no cover — the races named above
             pass
         self.child_pid = None
 
