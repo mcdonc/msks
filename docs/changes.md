@@ -8,6 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI terminal widget (#952).** `msks/client/gui/terminal/` is the
+  cell-grid screen over the libghostty-vt render state: per-cell colors,
+  styles, and the cursor paint offscreen through the binding, keys and
+  mouse encode through the library's encoders (legacy, application
+  cursor keys, the Kitty keyboard protocol), wheel and Shift+PgUp/PgDn
+  page the scrollback, resize with reflow reaches the child as
+  `TIOCSWINSZ`, and font stepping follows Konsole's cell metrics from one
+  measured face. Tabs arrive in #954; the widget ships ready for them.
+
 - **The GUI terminal session (#951).** `msks/client/gui/termsession.py` runs a workspace shell's child on a pseudo-terminal — the `msks ssh` argv the TUI's own new-terminal action spawns — behind what becomes a terminal tab in the GUI window (#924 phase 4.5). The module is pure stdlib: the master fd is exposed for the tab's event-loop integration, resizes reach the child through `TIOCSWINSZ`, and a child that traps hangup is force-killed after a short grace so closing a tab never stalls the window.
 
 - **The GUI's libghostty-vt binding (#950).** The terminal
