@@ -26,7 +26,12 @@ ABI_SIZES = {
     "RenderStateColors": 792,
     "Scrollbar": 24,
     "SizeReportSize": 12,
-    "ModeConfig": 8,
+    # 4, not 8: GhosttyMode is uint16 (compile-verified:
+    # sizeof 4, value at offset 2). #952 found the mirror
+    # carrying a uint32 mode field — same 8-byte size the old
+    # pin recorded, with the answered bool landing in padding,
+    # so every mode query read False.
+    "ModeConfig": 4,
     "GhosttyString": 16,
     "DeviceAttributes": 160,
     "MousePosition": 8,
@@ -87,6 +92,11 @@ def test_the_struct_mirrors_match_the_abi() -> None:
     for name, size in ABI_SIZES.items():
         struct = getattr(gt, name)
         assert ctypes.sizeof(struct) == size, name
+    # Field offsets too, for the struct whose #952 bug was
+    # layout, not size: the answered value must land where the
+    # mirror reads it (compile-verified against the header).
+    assert gt.ModeConfig.mode.offset == 0
+    assert gt.ModeConfig.value.offset == 2
 
 
 def test_the_key_codes_hold_their_positions() -> None:
