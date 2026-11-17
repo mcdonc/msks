@@ -195,6 +195,7 @@ def test_the_bundled_faces_sit_in_the_database(qt, monkeypatch, tmp_path):
     families = set(qt.QtGui.QFontDatabase.families())
     assert "JetBrains Mono" in families
     monkeypatch.setattr(qt.fonts, "FACES", Path(tmp_path) / "nowhere")
+    monkeypatch.setattr(qt.fonts, "_FACES_SEATED", False)
     qt.fonts.register_faces()  # no crash, nothing new seated
     assert "JetBrains Mono" in set(qt.QtGui.QFontDatabase.families())
 
@@ -213,6 +214,26 @@ def test_the_face_resolves_and_measures_as_one(qt):
     assert metrics.cell_width >= 1
     assert metrics.cell_height >= 1
     assert metrics.ascent == QtGui.QFontMetrics(font).ascent()
+
+
+def test_the_em_falls_back_to_the_logical_estimate(qt, monkeypatch):
+    """A font Qt has not realized answers pixelSize -1: the em
+    falls back to the 96-dpi logical estimate."""
+    fonts, QtGui = qt.fonts, qt.QtGui
+    font = fonts.make_font()
+    realized = QtGui.QFontInfo(font).pixelSize()
+
+    class Unrealized:
+        def __init__(self, _font):
+            pass
+
+        @staticmethod
+        def pixelSize():
+            return -1
+
+    monkeypatch.setattr(fonts, "QFontInfo", Unrealized)
+    assert fonts.em_pixels(font) == round(font.pointSizeF() * 96 / 72)
+    assert realized >= 0  # the real path answers the realized em
 
 
 def test_the_row_height_caps_at_twelve_tenths_em(qt):
@@ -421,7 +442,13 @@ def test_an_over_cap_cluster_draws_blank(screen, qt):
             if length.value:
                 lengths.append(length.value)
     assert max(lengths) > qt.paint.CLUSTER_CAP
-    assert screen.grab().toImage().size() == screen.size()
+    image = screen.grab().toImage()
+    assert image.size() == screen.size()
+    # The over-cap cell carries no glyph ink: its pixels match
+    # an untouched cell's background.
+    width, height = screen.metrics.cell_width, screen.metrics.cell_height
+    blank = image.pixelColor(width * 5, height * 2)
+    assert image.pixelColor(width // 2, height // 2) == blank
 
 
 def test_the_cursor_paints_over_the_grid(screen, qt):
@@ -552,7 +579,10 @@ def test_control_keys_encode_through_the_modifier_mask(qt):
 
 def test_an_auto_repeat_release_sends_nothing(screen, qt):
     """A held key's platform repeats arrive as presses; the
-    repeat's release is dropped before the encoder."""
+    repeat's release is dropped before the encoder — under
+    Kitty event types, where an unguarded release would encode
+    \x1b[97:1:3u and spam the program inside."""
+    vt(screen, b"\x1b[>3u")
     repeat_release = qt.QtGui.QKeyEvent(
         qt.QtCore.QEvent.Type.KeyRelease,
         int(qt.QtCore.Qt.Key.Key_A),
@@ -1017,21 +1047,56 @@ def test_final_output_and_exit_share_one_readiness_window(qt):
     )
     try:
         widget.process_exited.connect(exits.append)
+        # The event loop alone drives every read: the
+        # notifier's activated signal calls read_master, and
+        # nothing else touches the master. On the pre-fix code
+        # the burst case leaves the notifier armed on a closed
+        # fd and emits nothing — this loop times out red.
         deadline = time.monotonic() + 5.0
-        while time.monotonic() < deadline and not widget.session.exited:
-            widget.read_master()
+        while time.monotonic() < deadline and not exits:
             qt.app.processEvents()
-            time.sleep(0.02)
-        # One more read on the now-dead master: the exit path
-        # has run, and running it again changes nothing — the
-        # signal fires once.
-        widget.read_master()
-        qt.app.processEvents()
+            time.sleep(0.01)
         assert widget.session.exited
         assert not widget.notifier.isEnabled()
         assert exits == [7]
+        # Later reads on the dead master change nothing: the
+        # signal fired once.
+        widget.read_master()
+        qt.app.processEvents()
+        assert exits == [7]
     finally:
         shutdown(widget)
+
+
+def test_a_burst_of_final_bytes_takes_the_exit_path(screen, qt):
+    """The burst arm itself: a drain that delivers the child's
+    last bytes with the session already marked exited runs the
+    exit path — the arm the event-loop test reaches only when
+    output and exit share one readiness window, pinned here
+    whatever the timing."""
+
+    class Burst:
+        exited = True
+        exit_status = 7
+
+        def drain(self):
+            return b"bye\n"
+
+        def reap(self):
+            return None
+
+        def close(self, grace: float = 0.3):
+            return None
+
+    screen.session = Burst()
+    exits = []
+    screen.process_exited.connect(exits.append)
+    screen.read_master()
+    qt.app.processEvents()
+    assert exits == [7]
+    assert not screen.notifier.isEnabled()
+    screen.read_master()  # once-only: nothing changes
+    assert exits == [7]
 
 
 def test_the_reaper_stands_down_when_the_child_is_gone(qt):

@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics
+from PySide6.QtGui import QFont, QFontDatabase, QFontInfo, QFontMetrics
 
 # The four bundled faces (JetBrains Mono, OFL 1.1 — the face
 # Ghostty itself ships) beside this module: registering them
@@ -67,11 +67,18 @@ class CellMetrics:
         return self.cell_width * cols, self.cell_height * rows
 
 
+_FACES_SEATED = False
+
+
 def register_faces() -> None:
-    """Seat the bundled faces in the database — a host with no
-    fonts at all (a CI runner's offscreen platform answers an
-    empty database) still measures and renders one real
-    face."""
+    """Seat the bundled faces in the database, once per
+    process — a host with no fonts at all (a CI runner's
+    offscreen platform answers an empty database) still
+    measures and renders one real face."""
+    global _FACES_SEATED
+    if _FACES_SEATED:
+        return
+    _FACES_SEATED = True
     for name in ("Regular", "Bold", "Italic", "BoldItalic"):
         path = FACES / f"JetBrainsMono-{name}.ttf"
         if path.exists():
@@ -107,11 +114,16 @@ def make_font(points: int = DEFAULT_PT) -> QFont:
 
 
 def em_pixels(font: QFont) -> int:
-    """The em in pixels at Qt's logical resolution — what
-    QFontInfo answers once the face is realized, without the
-    -1 a not-yet-realized font carries (the M advance is
-    narrower than the em square, and the cap would cut the row
-    under the baseline)."""
+    """The em in pixels: what QFontInfo answers once the face
+    is realized — exact at the platform's font dpi (72 on
+    macOS, 96 most elsewhere) — with the 96-dpi logical
+    estimate standing in while Qt still answers -1 (a font it
+    has not realized; the M advance is narrower than the em
+    square and the cap would cut the row under the
+    baseline)."""
+    realized = QFontInfo(font).pixelSize()
+    if realized >= 0:
+        return max(1, realized)
     return max(1, round(font.pointSizeF() * 96 / 72))
 
 

@@ -179,6 +179,10 @@ class TerminalWidget(QWidget):
             return
         self._exit_reported = True
         self.notifier.setEnabled(False)
+        # Reap first when the child is already collectable: the
+        # report carries the real status, not the 0 a missed
+        # WNOHANG would leave.
+        self.session.reap()
         self.reaper.start(100)
         self.refresh()
         self.process_exited.emit(self.session.exit_status or 0)
