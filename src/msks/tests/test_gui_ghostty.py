@@ -72,7 +72,7 @@ def library_present() -> bool:
     wheel's mere presence."""
     try:
         gt.Lib()
-    except OSError:
+    except OSError, AttributeError:
         return False
     return True
 
@@ -137,7 +137,7 @@ def test_library_discovery_order(
     monkeypatch.setenv("GHOSTTY_VT_LIB", "/override/libghostty-vt.so")
     assert gt.library_path() == "/override/libghostty-vt.so"
     monkeypatch.delenv("GHOSTTY_VT_LIB")
-    assert gt.library_path(wheel_spec) == "libghostty-vt.so"
+    assert gt.library_path(wheel_spec) == gt.SYSTEM_LIBRARY
     assert gt.wheel_library(wheel_spec) is None
     assert gt.wheel_library(lambda _name: None) is None
     raised = ValueError("a broken distribution")
@@ -345,8 +345,10 @@ class TestTheDrive:
         # Nine lines in a four-row viewport, pinned at the
         # bottom.
         assert (bar.total, bar.offset, bar.len) == (9, 5, 4)
+        # The value slot is unused by both tags — the union
+        # wants some field; the row count moves nothing here.
         top = gt.ScrollViewport(
-            tag=gt.SCROLL_TOP, value=gt.ScrollViewportValue(row=1)
+            tag=gt.SCROLL_TOP, value=gt.ScrollViewportValue(row=0)
         )
         assert lib.terminal_scroll_viewport(terminal, top) is None
         ok, bar = lib.get(
@@ -390,20 +392,14 @@ class TestTheDrive:
         exception, never a stale buffer."""
         assert lib.encode_focus(True) == b"\x1b[I"
         assert lib.encode_focus(False) == b"\x1b[O"
-        for name in (
+        names = (
             "key_encoder_encode",
             "mouse_encoder_encode",
             "focus_encode",
-        ):
+        )
+        refused = {name: getattr(lib, name) for name in names}
+        for name in names:
             setattr(lib, name, lambda *_args: gt.NO_VALUE)
-        refused = {
-            name: getattr(lib, name)
-            for name in (
-                "key_encoder_encode",
-                "mouse_encoder_encode",
-                "focus_encode",
-            )
-        }
         try:
             assert lib.encode_key(0, 0) == b""
             assert lib.encode_mouse(0, 0) == b""
