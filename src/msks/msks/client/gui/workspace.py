@@ -19,6 +19,8 @@ from ..data import RestFailure
 from .bridge import Bridge
 from .detail import DetailSections, detail_sections, frame_names
 from .rows import workspace_row
+from .shells import ShellHub, ShellTabs
+from .termsession import shell_argv
 from .workspaces import (
     FLASH_MS,
     REFRESH_MS,
@@ -72,21 +74,23 @@ def muted_note(text: str) -> QtWidgets.QLabel:
 
 
 class WorkspaceDetail(QtWidgets.QWidget):
-    """One workspace's page (#945): the title lines over the
-    presenter's three sections — the mounts table with its
-    next-start note, the health facts, the events list —
-    refreshed on the listing's own cadence plus the manual
-    button, every exchange through the bridge. A failed refresh
-    flashes the status line while the sections keep their
-    content; a listing that can no longer see the workspace
-    emits ``removed`` — the TUI page's own close (#309's
-    close_removed shape) — and the back action returns to the
-    list."""
+    """One workspace's page (#945, #954): the title lines over
+    the tabbed body — the Info tab (the presenter's three
+    sections: the mounts table with its next-start note, the
+    health facts, the events list) with one tab per active
+    shell beside it (#954) — refreshed on the listing's own
+    cadence plus the manual button, every exchange through the
+    bridge. A failed refresh flashes the status line while the
+    sections keep their content; a listing that can no longer
+    see the workspace emits ``removed`` — the TUI page's own
+    close (#309's close_removed shape) — and the back action
+    returns to the list, closing no shell (#954)."""
 
     back = QtCore.Signal()
     removed = QtCore.Signal(str)
+    shell_wanted = QtCore.Signal(str)
 
-    def __init__(self, bridge: Bridge) -> None:
+    def __init__(self, bridge: Bridge, hub: ShellHub) -> None:
         super().__init__()
         self.bridge = bridge
         self.workspace_id = ""
@@ -120,11 +124,16 @@ class WorkspaceDetail(QtWidgets.QWidget):
         scroll = QtWidgets.QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setWidget(sections)
+        # The tabbed body (#954): the sections scroll is the
+        # Info tab, and the workspace's shells host beside it —
+        # the strip re-hosts on every open, and the hub keeps
+        # the sessions themselves alive across visits.
+        self.tabs = ShellTabs(hub, scroll)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(self.chrome)  # the top row, the list's own
         layout.addWidget(self.title)
         layout.addWidget(self.meta)
-        layout.addWidget(scroll, stretch=1)
+        layout.addWidget(self.tabs, stretch=1)
         self.setLayout(layout)
         escape = QtGui.QShortcut(
             QtGui.QKeySequence(QtCore.Qt.Key.Key_Escape), self
@@ -219,18 +228,31 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.back_button = back_button
         refresh_button = QtWidgets.QPushButton("Refresh", self)
         refresh_button.clicked.connect(self.refresh)
+        shell_button = QtWidgets.QPushButton("Shell", self)
+        shell_button.setToolTip("Open a shell tab on this workspace")
+        shell_button.clicked.connect(self.want_shell)
         self.status = QtWidgets.QLabel("", self)
         self.chrome = QtWidgets.QHBoxLayout()
         self.chrome.addWidget(back_button)
         self.chrome.addWidget(refresh_button)
+        self.chrome.addWidget(shell_button)
         self.chrome.addWidget(self.status, stretch=1)
 
+    @QtCore.Slot()
+    def want_shell(self) -> None:
+        """The page's shell action (#954): one more ssh
+        connection on the workspace the page shows, through the
+        window shell's own open path — the strip beside this
+        button takes the new tab."""
+        if self.workspace_id:
+            self.shell_wanted.emit(self.workspace_id)
+
     def open(self, workspace_id: str, label: str) -> None:
-        """The page takes a workspace (#945): the state resets —
-        fresh row, doc, frame buffer, rendered sections — and
-        the first refresh goes out. The label the list holds
-        stands in for the title until the row's own answer
-        lands."""
+        """The page takes a workspace (#945, #954): the state
+        resets — fresh row, doc, frame buffer, rendered sections
+        — the shell tabs re-host for this workspace, and the
+        first refresh goes out. The label the list holds stands
+        in for the title until the row's own answer lands."""
         self.workspace_id = workspace_id
         self.row = None
         self.health_doc = None
@@ -238,6 +260,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.rendered = None
         self.title.setText(label)
         self.clear_sections()
+        self.tabs.host(workspace_id)
         self.refresh()
 
     def clear_sections(self) -> None:
@@ -514,24 +537,82 @@ class WorkspaceDetail(QtWidgets.QWidget):
 
 
 class WorkspaceShell(QtWidgets.QStackedWidget):
-    """The window's two screens (#939, #945): the list and the
-    detail page over one bridge — the list's opened row swaps to
-    the page, the page's back returns — the stack's own hide and
-    show starting and stopping each screen's tick."""
+    """The window's two screens (#939, #945, #954): the list
+    and the detail page over one bridge — the list's opened row
+    swaps to the page, the page's back returns — the stack's own
+    hide and show starting and stopping each screen's tick. The
+    shell hub (#954) lives here: the terminals outlive the
+    detail page, and the quit path closes every session."""
 
-    def __init__(self, bridge: Bridge) -> None:
+    def __init__(
+        self,
+        bridge: Bridge,
+        terminal_cmd: list[str] | None = None,
+        hub: ShellHub | None = None,
+    ) -> None:
         super().__init__()
         self.bridge = bridge
+        self.terminal_cmd = terminal_cmd
+        self.hub = hub if hub is not None else ShellHub()
         self.listing = WorkspaceList(bridge)
         self.listing.opened.connect(self.open_detail)
-        self.detail = WorkspaceDetail(bridge)
+        self.listing.shell_requested.connect(self.open_shell)
+        self.listing.external_requested.connect(self.open_external)
+        self.detail = WorkspaceDetail(bridge, self.hub)
         self.detail.back.connect(self.show_listing)
         self.detail.removed.connect(self.listing_removed)
+        self.detail.shell_wanted.connect(self.open_shell)
         bridge.landed.connect(self.frame_landed)
         bridge.feed_dropped.connect(self.feed_dropped)
         bridge.feed_reconnected.connect(self.feed_back)
+        # The quit path closes every shell (#954): the window's
+        # children never see a close event of their own, and a
+        # session left open would outlive the loop that reads
+        # its master.
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self.hub.shutdown)
         self.addWidget(self.listing)
         self.addWidget(self.detail)
+
+    @QtCore.Slot(str)
+    def open_shell(self, workspace_id: str) -> None:
+        """A shell action named a workspace (#954): the page
+        takes the workspace if it has not already, then one more
+        ssh connection opens — the strip beside the page's Info
+        tab takes the new tab and the focus."""
+        if self.detail.workspace_id != workspace_id or (
+            self.currentWidget() is not self.detail
+        ):
+            self.open_detail(workspace_id)
+        self.hub.open_shell(workspace_id)
+
+    @QtCore.Slot(str)
+    def open_external(self, workspace_id: str) -> None:
+        """The external-terminal action (#954): the same shell
+        the TUI's windowed shell action opens — the configured
+        launcher with the ssh argv appended — detached, beside
+        the running window. Without a launcher the notice names
+        the setting (``terminal_open_cmd``); the GUI has no
+        terminal of its own to hand the session."""
+        if not self.terminal_cmd:
+            self.listing.flash(
+                "set terminal_open_cmd to open external terminals"
+            )
+            return
+        argv = [*self.terminal_cmd, *shell_argv(workspace_id)]
+        ok = QtCore.QProcess.startDetached(argv[0], argv[1:])
+        label = self.detail_label(workspace_id)
+        if ok:
+            self.listing.flash(f"opened an external terminal — {label}")
+        else:
+            self.listing.flash(f"the terminal launcher failed — {label}")
+
+    def detail_label(self, workspace_id: str) -> str:
+        """The workspace's label for a flash, the page's own
+        stand-in when the list holds none."""
+        model = self.listing.rows_by_id.get(workspace_id)
+        return model.label if model else workspace_id
 
     @QtCore.Slot(str)
     def open_detail(self, workspace_id: str) -> None:

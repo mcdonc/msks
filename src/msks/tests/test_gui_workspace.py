@@ -166,7 +166,7 @@ def make_page(qt) -> tuple:
     test reads: first refresh issued, the row and the doc one
     answer away."""
     bridge = StubBridge()
-    page = qt.page_mod.WorkspaceDetail(bridge)
+    page = qt.page_mod.WorkspaceDetail(bridge, qt.page_mod.ShellHub())
     window = qt.QtWidgets.QMainWindow()
     window.setCentralWidget(page)
     window.show()

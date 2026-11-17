@@ -106,7 +106,9 @@ def test_the_display_gate_skips_macos(
         monkeypatch.delenv(var, raising=False)
     seen: list[str] = []
     monkeypatch.setattr(
-        app, "open_window", lambda QtWidgets: seen.append("window") or 4
+        app,
+        "open_window",
+        lambda QtWidgets, conf=None: seen.append("window") or 4,
     )
     assert cli.main(["gui"]) == 4
     assert seen == ["window"]
@@ -339,6 +341,20 @@ def test_the_gui_window_opens_offscreen(
     # places the frame, so the size is what is pinned).
     first = opened["geometry"][0]
     assert first[2:] == (app.DEFAULT_WIDTH, app.DEFAULT_HEIGHT)
+
+    # Each run rescales the shared application's font (#939:
+    # one scale per open), so a second run in one process would
+    # compound it onto the first — the action row's buttons then
+    # grow past the default width and the window's own minimum
+    # wins over the pinned sizes below. Restore the platform's
+    # size after every run but the last (which the tail below
+    # restores once, with this same write).
+    def unscale() -> None:
+        font = qapp.font()
+        font.setPointSizeF(default_size)
+        qapp.setFont(font)
+
+    unscale()
     # The close wrote it down (#939): the file holds the window
     # the operator closed — size and place — for the next open
     # to take back.
@@ -356,6 +372,7 @@ def test_the_gui_window_opens_offscreen(
     second = opened["geometry"][0]
     assert second[2:] == (900, 620)
     assert abs(second[0] - 30) <= 4 and abs(second[1] - 40) <= 4
+    unscale()
     # A rect no connected screen shows is refused (#939): a
     # monitor change or an unplugged display leaves the old
     # place off the desktop, and the default answers instead —
@@ -478,8 +495,11 @@ def test_open_window_reuses_an_existing_app(
         the detail page's stack — recording the bridge it was
         built over."""
 
-        def __init__(self, bridge: object) -> None:
+        def __init__(
+            self, bridge: object, terminal_cmd: object = None
+        ) -> None:
             built.append(bridge)
+            self.terminal_cmd = terminal_cmd
 
     monkeypatch.setattr(workspace_mod, "WorkspaceShell", FakeScreen)
 
@@ -616,7 +636,9 @@ def test_open_window_keeps_a_user_style_choice(
             pass
 
     class FakeScreen:
-        def __init__(self, bridge: object) -> None:
+        def __init__(
+            self, bridge: object, terminal_cmd: object = None
+        ) -> None:
             pass
 
     monkeypatch.setattr(workspace_mod, "WorkspaceShell", FakeScreen)
