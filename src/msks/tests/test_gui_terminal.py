@@ -814,7 +814,10 @@ def test_the_wheel_feeds_a_tracking_child(screen, qt):
     button four arrives as a press/release pair."""
     vt(screen, b"\x1b[?1000h\x1b[?1006h")
     screen.wheelEvent(wheel_event(qt, 120))
-    seen = drain_until(screen, b"\x1b[<64;")
+    # Drain to the RELEASE byte (the lowercase m): the press
+    # marker alone can precede the release through the echo
+    # child, and a drain on the press would race the pair.
+    seen = drain_until(screen, b"m")
     assert seen.count(b"\x1b[<64;") == 2
 
 
