@@ -761,7 +761,11 @@ class WorkspaceList(QtWidgets.QWidget):
         if outage:
             return
         seq = self.flash_seq
-        QtCore.QTimer.singleShot(FLASH_MS, lambda: self.clear_stale(seq))
+        # The screen is the timeout's receiver (#959): the
+        # pending callback is severed when the widget's C++
+        # object goes, instead of firing later on a wrapper
+        # whose widgets are already destroyed.
+        QtCore.QTimer.singleShot(FLASH_MS, self, lambda: self.clear_stale(seq))
 
     def clear_stale(self, seq: int) -> None:
         """The flash timeout's slot: the line clears only when
@@ -781,16 +785,28 @@ class WorkspaceList(QtWidgets.QWidget):
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         """The screen's first refresh at open (#939), and the
         tick's resume on a re-show: the screen refreshes while it
-        owns the window."""
-        self.refresh()
-        self.timer.start()
+        owns the window. A wrapper without its ``timer`` does
+        neither (#959): Qt delivers events to a screen whose
+        construction never finished (the parented C++ object
+        survives the exception and keeps receiving them), and
+        to the empty wrapper PySide6 raises at teardown for a
+        C++ object that outlived its Python one — neither owns
+        the tick the open starts."""
+        timer = getattr(self, "timer", None)
+        if timer is not None:
+            self.refresh()
+            timer.start()
         super().showEvent(event)
 
     def hideEvent(self, event: QtGui.QHideEvent) -> None:
         """The tick stops with the screen (#939): a closed
         window hides its children, and a timer tick after close
-        must not touch widgets."""
-        self.timer.stop()
+        must not touch widgets. A wrapper without its ``timer``
+        (#959) has no tick to stop — showEvent names the two
+        shapes that arrive here half-built."""
+        timer = getattr(self, "timer", None)
+        if timer is not None:
+            timer.stop()
         super().hideEvent(event)
 
     def eventFilter(
@@ -799,18 +815,23 @@ class WorkspaceList(QtWidgets.QWidget):
         """A press on the grid's blank space never reaches the
         view (#939): the hold stands until a row click, a
         refresh's rebuild, or the workspace leaving the listing
-        moves it."""
+        moves it. A wrapper without its ``table`` (#959)
+        filters nothing: the event goes to Qt's own handling."""
+        table = getattr(self, "table", None)
         if (
-            watched is self.table.viewport()
+            table is not None
+            and watched is table.viewport()
             and event.type() == QtCore.QEvent.Type.MouseButtonPress
         ):
-            if not self.table.indexAt(event.position().toPoint()).isValid():
+            if not table.indexAt(event.position().toPoint()).isValid():
                 return True
         return super().eventFilter(watched, event)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         """A resized pane re-flows the columns (#939): the
         minimums follow the contents whatever the pane's width,
-        and the spare fills the pane's new width."""
-        self.size_columns()
+        and the spare fills the pane's new width. A wrapper
+        without its ``table`` (#959) sizes nothing."""
+        if getattr(self, "table", None) is not None:
+            self.size_columns()
         super().resizeEvent(event)
