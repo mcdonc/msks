@@ -610,8 +610,8 @@ def test_the_shell_action_opens_the_detail_on_a_new_tab(qt, window_shell):
     Shells tab, the open's own first shell current and focused
     (#954, #974)."""
     shell, hub, _window = window_shell
-    shell.listing.table.selectRow(0)
-    shell.listing.shell_button.click()
+    # The row's own shell button (#972) drives the same flow.
+    shell.listing.shell_requested.emit("ws-a")
     assert shell.currentWidget() is shell.detail
     assert shell.detail.bar.currentIndex() == 0  # Shells, the default
     assert strip_titles(shell.detail) == ["1", "+"]
@@ -665,9 +665,10 @@ def test_a_shell_for_another_workspace_swaps_the_page(qt, window_shell):
 def test_the_external_action_spawns_the_launcher_argv(
     qt, launcher_shell, monkeypatch
 ):
-    """The external-terminal action runs the configured
-    launcher with the ssh argv appended — the same argv the
-    TUI's windowed shell action builds — detached."""
+    """The external-terminal action (#954, #972) lives on the
+    detail page: it runs the configured launcher with the ssh
+    argv appended — the same argv the TUI's windowed shell
+    action builds — detached."""
     shell, hub, _window = launcher_shell
     seen = []
     monkeypatch.setattr(
@@ -677,8 +678,8 @@ def test_the_external_action_spawns_the_launcher_argv(
             lambda program, args: seen.append((program, args)) or True
         ),
     )
-    shell.listing.table.selectRow(0)
-    shell.listing.external_button.click()
+    shell.open_detail("ws-a")
+    shell.detail.external_button.click()
     from msks.client.gui.termsession import shell_argv
 
     assert seen == [("theterm", ["-e", *shell_argv("ws-a")])]
@@ -723,32 +724,18 @@ def test_a_shell_action_from_the_list_over_standing_shells(qt, window_shell):
     assert shell.detail.shells.currentWidget() is hub.find("ws-a", 2).widget
 
 
-def test_the_shell_actions_without_a_hold_do_nothing(qt, window_shell):
-    """The shell and external actions sit disabled with no row
-    held, and their slots send nothing: the window shell's
-    paths stay untaken."""
-    shell, hub, _window = window_shell
-    shell.listing.table.clearSelection()  # no row held
-    assert not shell.listing.shell_button.isEnabled()
-    assert not shell.listing.external_button.isEnabled()
-    seen: list[str] = []
-    shell.listing.shell_requested.connect(lambda ws: seen.append(ws))
-    shell.listing.external_requested.connect(lambda ws: seen.append(ws))
-    shell.listing.shell_selected()
-    shell.listing.external_selected()
-    assert seen == []
-
-
 def test_the_page_shell_action_without_a_workspace_sends_nothing(
     qt, window_shell
 ):
-    """The page's shell action with no workspace taken sends
-    nothing."""
+    """The page's shell and external actions with no workspace
+    taken send nothing."""
     shell, hub, _window = window_shell
     seen: list[str] = []
     shell.detail.shell_wanted.connect(lambda ws: seen.append(ws))
+    shell.detail.external_wanted.connect(lambda ws: seen.append(ws))
     shell.detail.workspace_id = ""
     shell.detail.want_shell()
+    shell.detail.want_external()
     assert seen == []
 
 

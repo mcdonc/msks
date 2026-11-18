@@ -1,12 +1,12 @@
-"""The workspace list screen (#939): the thin widget over the
-presenter's row models — the TUI listing's five fields, NAME,
-STATUS with the unresolved-mounts marker, ID, IMAGE, CREATED —
-refreshed on a timer and a manual action through the bridge,
-with a failed refresh flashing the status line while the rows
-stand. The widget runs under the offscreen platform on every
-host (#939); the screen's slots are driven directly and through
-the stub bridge's signal emits, the bridge's own tests holding
-the real worker's contract.
+"""The workspace list screen (#939, #972): the thin widget over
+the presenter's row models — the TUI listing's five fields,
+NAME, STATUS with the unresolved-mounts marker, ID, IMAGE,
+CREATED, and the row-actions column beside them — refreshed on
+a timer through the bridge, with a failed refresh flashing the
+status line while the rows stand. The widget runs under the
+offscreen platform on every host (#939); the screen's slots are
+driven directly and through the stub bridge's signal emits, the
+bridge's own tests holding the real worker's contract.
 """
 
 import importlib.util
@@ -280,13 +280,13 @@ def test_a_refresh_in_flight_is_skipped(qt) -> None:
     screen.refresh()  # the flight opens
     assert bridge.calls == [("workspaces-list", "workspaces", ())]
     screen.refresh()
-    screen.refresh_button.click()
+    screen.refresh()
     assert bridge.calls == [("workspaces-list", "workspaces", ())]
     screen.on_succeeded("workspaces-list", daemon_rows()[:1])
     bridge.calls.clear()
     screen.refresh()
     assert bridge.calls == [("workspaces-list", "workspaces", ())]
-    screen.refresh_button.click()
+    screen.refresh()
     assert bridge.calls == [
         ("workspaces-list", "workspaces", ())
     ]  # one flight at a time
@@ -434,13 +434,13 @@ def test_another_keys_answer_is_not_the_screens(qt) -> None:
     window.close()
 
 
-def test_the_manual_action_refreshes_through_the_bridge(qt) -> None:
-    """The manual action (#939): the button's click and the
-    timer's tick share the one refresh verb, both through the
-    bridge."""
+def test_the_refresh_slot_refreshes_through_the_bridge(qt) -> None:
+    """The refresh verb (#939, #972): the open's call and the
+    timer's tick share it, both through the bridge — the
+    toolbar's button is gone, the rows hold the actions now."""
     screen, window, bridge = make_screen(qt)
     bridge.calls.clear()  # the open refresh is already answered
-    screen.refresh_button.click()
+    screen.refresh()
     assert bridge.calls == [("workspaces-list", "workspaces", ())]
     screen.on_succeeded("workspaces-list", [])  # retire the flight
     bridge.calls.clear()
@@ -583,14 +583,14 @@ def test_the_columns_fill_the_pane(qt) -> None:
     qt.app.processEvents()
     total = sum(
         screen.table.columnWidth(column)
-        for column in range(len(qt.screen_mod.COLUMNS))
+        for column in range(len(qt.screen_mod.COLUMNS) + 1)
     )
     assert total == screen.table.viewport().width()
     window.resize(1500, 700)
     qt.app.processEvents()
     total = sum(
         screen.table.columnWidth(column)
-        for column in range(len(qt.screen_mod.COLUMNS))
+        for column in range(len(qt.screen_mod.COLUMNS) + 1)
     )
     assert total == screen.table.viewport().width()
     window.close()
@@ -627,9 +627,9 @@ def test_an_unchanged_listing_rebuilds_nothing(qt) -> None:
     select_cell(qt, screen, 0, 1)
     screen.on_succeeded("workspaces-list", daemon_rows())
     assert screen.table.item(0, 0) is name  # nothing was rebuilt
-    assert len(screen.table.selectedIndexes()) == len(
-        qt.screen_mod.COLUMNS
-    )  # the whole row still holds
+    assert (
+        len(screen.table.selectedIndexes()) == len(qt.screen_mod.COLUMNS) + 1
+    )  # the whole row, the action column with it, still holds
     assert screen.table.currentIndex().column() == 1
     window.close()
 
@@ -647,7 +647,9 @@ def test_the_selection_follows_the_workspace(qt) -> None:
     rows = daemon_rows()
     screen.on_succeeded("workspaces-list", [rows[1], rows[0], rows[2]])
     assert screen.table.item(1, 0).text() == "alpha"
-    assert len(screen.table.selectedIndexes()) == len(qt.screen_mod.COLUMNS)
+    assert (
+        len(screen.table.selectedIndexes()) == len(qt.screen_mod.COLUMNS) + 1
+    )
     # A changed stamp moves the row under the hold: alpha's
     # creation moves to now, and the hold follows it to the top.
     moved = [dict(row) for row in daemon_rows()]
@@ -765,8 +767,8 @@ def test_a_press_on_the_blank_space_keeps_the_hold(qt) -> None:
         qt.QtCore.Qt.MouseButton.LeftButton,
         pos=blank,
     )
-    assert len(screen.table.selectedIndexes()) == len(
-        qt.screen_mod.COLUMNS
+    assert (
+        len(screen.table.selectedIndexes()) == len(qt.screen_mod.COLUMNS) + 1
     )  # alpha's row still holds
     window.close()
 
@@ -789,24 +791,69 @@ def test_the_hold_keeps_its_color_unfocused(qt) -> None:
     window.close()
 
 
-def test_start_runs_on_the_selection_and_refreshes(qt) -> None:
-    """The Start action (#940): the held workspace starts through
-    the bridge, the buttons lock while the flight is out, the
-    outcome the daemon's answer carries flashes at once (the
-    TUI's own #776 mask), and the list refreshes when the daemon
-    answers."""
+def test_the_toolbar_is_gone_and_the_rows_hold_the_actions(qt) -> None:
+    """The toolbar leaves the page (#972): no push buttons
+    anywhere on the screen — the actions live in each row's own
+    cell, the shell button beside the toggle."""
+    screen, window, _bridge = make_screen(qt)
+    assert screen.findChildren(qt.QtWidgets.QPushButton) == []
+    for workspace in ("ws-1", "ws-2", "ws-3"):
+        cell = screen.table.cellWidget(
+            screen.row_ids()[workspace], qt.screen_mod.ACTION_COLUMN
+        )
+        buttons = cell.findChildren(qt.QtWidgets.QToolButton)
+        assert len(buttons) == 2  # the toggle and the shell
+    window.close()
+
+
+def test_start_runs_on_the_row_and_refreshes(qt) -> None:
+    """The Start action (#940, #972): the stopped row's own
+    toggle starts that workspace through the bridge, the
+    toggles lock while the flight is out, the outcome the
+    daemon's answer carries flashes at once (the TUI's own #776
+    mask), and the list refreshes when the daemon answers."""
     screen, window, bridge = make_screen(qt)
     bridge.calls.clear()
-    assert screen.start_button.isEnabled()  # the first-row hold
-    screen.start_button.click()
-    assert bridge.calls == [("workspaces-start", "start", ("ws-2",))]
-    assert not screen.start_button.isEnabled()  # one flight at a time
+    assert screen.row_actions["ws-1"].isEnabled()
+    screen.row_actions["ws-1"].click()
+    assert bridge.calls == [("workspaces-start", "start", ("ws-1",))]
+    assert not screen.row_actions["ws-2"].isEnabled()  # one flight
     screen.on_succeeded(
-        "workspaces-start", {"id": "ws-2", "status": "running"}
+        "workspaces-start", {"id": "ws-1", "status": "running"}
     )
-    assert screen.status.text() == "beta running"  # the outcome
+    assert screen.status.text() == "alpha running"  # the outcome
     assert bridge.calls[-1] == ("workspaces-list", "workspaces", ())
-    assert screen.start_button.isEnabled()
+    assert screen.row_actions["ws-1"].isEnabled()
+    window.close()
+
+
+def test_the_toggle_reads_the_rows_own_action(qt) -> None:
+    """The toggle's icon and tooltip read the row's state (#972):
+    the play gesture while the workspace stands stopped or only
+    created, the stop sign otherwise — the presenter's own
+    choice, rendered."""
+    screen, window, _bridge = make_screen(qt)
+    stop = screen.style().standardIcon(
+        qt.QtWidgets.QStyle.StandardPixmap.SP_MediaStop
+    )
+    # ws-1 stopped: the play gesture, not the stop sign.
+    assert screen.row_actions["ws-1"].icon().cacheKey() != stop.cacheKey()
+    assert screen.row_actions["ws-1"].toolTip() == "Start"
+    assert screen.row_actions["ws-3"].toolTip() == "Stop"
+    # A created row reads as start, the presenter's other arm.
+    screen.on_succeeded(
+        "workspaces-list",
+        [
+            {
+                "id": "ws-4",
+                "name": "new",
+                "status": "created",
+                "created_at": "2026-01-04T11:00:00",
+                "mount_issues": [],
+            }
+        ],
+    )
+    assert screen.row_actions["ws-4"].toolTip() == "Start"
     window.close()
 
 
@@ -821,24 +868,24 @@ def test_an_action_landing_over_a_listing_flight(qt) -> None:
     screen, window, bridge = make_screen(qt)
     screen.refresh()  # the listing flight opens
     bridge.calls.clear()
-    screen.start_button.click()
-    assert bridge.calls == [("workspaces-start", "start", ("ws-2",))]
+    screen.row_actions["ws-1"].click()
+    assert bridge.calls == [("workspaces-start", "start", ("ws-1",))]
     screen.on_succeeded(
-        "workspaces-start", {"id": "ws-2", "status": "running"}
+        "workspaces-start", {"id": "ws-1", "status": "running"}
     )
-    assert screen.status.text() == "beta running"  # shown at once
-    assert bridge.calls == [("workspaces-start", "start", ("ws-2",))]
+    assert screen.status.text() == "alpha running"  # shown at once
+    assert bridge.calls == [("workspaces-start", "start", ("ws-1",))]
     # no new listing went out — the in-flight one serves it
     assert screen.pending  # and its flag stands
-    assert screen.start_button.isEnabled()
+    assert screen.row_actions["ws-1"].isEnabled()
     # The unreadable-answer arcs still name the workspace —
     # each on a flight of its own, the target on it.
-    screen.start_button.click()
+    screen.row_actions["ws-1"].click()
     screen.on_succeeded("workspaces-start", {"no": "status"})
-    assert screen.status.text() == "beta"
-    screen.start_button.click()
+    assert screen.status.text() == "alpha"
+    screen.row_actions["ws-1"].click()
     screen.on_succeeded("workspaces-start", None)
-    assert screen.status.text() == "beta"
+    assert screen.status.text() == "alpha"
     window.close()
 
 
@@ -850,7 +897,7 @@ def test_a_failed_action_over_a_listing_flight(qt) -> None:
     screen, window, bridge = make_screen(qt)
     screen.refresh()  # the listing flight opens
     bridge.calls.clear()
-    screen.start_button.click()
+    screen.row_actions["ws-1"].click()
     screen.on_failed(
         "workspaces-start",
         clientdata.RestFailure("409: workspace is running", reach=False),
@@ -858,7 +905,7 @@ def test_a_failed_action_over_a_listing_flight(qt) -> None:
     assert "409" in screen.status.text()
     assert screen.table.rowCount() == 3  # the rows stand
     assert screen.pending  # the listing flight still holds
-    assert screen.start_button.isEnabled()
+    assert screen.row_actions["ws-1"].isEnabled()
     window.close()
 
 
@@ -878,10 +925,12 @@ def test_stop_asks_before_it_runs(qt, monkeypatch) -> None:
     monkeypatch.setattr(qt.QtWidgets.QMessageBox, "question", refuse_or_allow)
     screen, window, bridge = make_screen(qt)
     bridge.calls.clear()
-    screen.stop_button.click()
+    # The running row's toggle reads stop: the confirmation
+    # gate stands before the flight.
+    screen.row_actions["ws-2"].click()
     assert bridge.calls == []  # the refusal sent nothing
-    assert screen.stop_button.isEnabled()
-    screen.stop_button.click()
+    assert screen.row_actions["ws-2"].isEnabled()
+    screen.row_actions["ws-2"].click()
     assert bridge.calls == [("workspaces-stop", "stop", ("ws-2",))]
     assert "beta" in asked[1][1]  # the question named the workspace
     assert (
@@ -903,57 +952,205 @@ def test_a_failing_action_flashes_and_the_list_survives(qt) -> None:
     )
     assert "409" in screen.status.text()
     assert screen.table.rowCount() == 3  # the rows stand
-    assert screen.start_button.isEnabled()
-    assert screen.stop_button.isEnabled()
+    assert screen.row_actions["ws-1"].isEnabled()
+    assert screen.row_actions["ws-2"].isEnabled()
     window.close()
 
 
-def test_the_actions_follow_the_hold(qt) -> None:
-    """The actions sit on the selection (#940): no rows, no
-    buttons; the first-row hold arms them; a listing that drops
-    the held workspace disarms them."""
+def test_the_row_buttons_follow_the_listing(qt) -> None:
+    """The row buttons sit on their rows (#972): a listing that
+    drops the workspace drops its buttons with it, and the rows
+    that stand keep theirs."""
     bridge = StubBridge()
     screen = qt.screen_mod.WorkspaceList(bridge)
     window = qt.QtWidgets.QMainWindow()
     window.setCentralWidget(screen)
     window.show()
-    assert not screen.start_button.isEnabled()
-    assert not screen.stop_button.isEnabled()
     screen.on_succeeded("workspaces-list", daemon_rows())
-    assert screen.start_button.isEnabled()  # the first-row hold
-    # The listing drops the held workspace (beta): the hold
-    # goes with it.
+    assert set(screen.row_actions) == {"ws-1", "ws-2", "ws-3"}
+    # The listing drops beta: its button goes with its row.
     dropped = [daemon_rows()[0], daemon_rows()[2]]
     screen.on_succeeded("workspaces-list", dropped)
-    assert not screen.start_button.isEnabled()  # the hold went
-    assert not screen.stop_button.isEnabled()
+    assert set(screen.row_actions) == {"ws-1", "ws-3"}
     window.close()
 
 
 def test_the_action_slots_stand_guard(qt) -> None:
-    """The action slots guard their own gate (#940): a call with
-    no workspace held sends nothing, a second action while a
-    flight is out sends nothing, and a hold on a row with no
-    name item reads as no hold. The buttons carry the same gates
-    for clicks; the slots carry them for whatever calls a slot —
-    a keyboard shortcut later, a test today."""
+    """The action paths guard their own gate (#940, #972): a
+    toggle whose model left the listing sends nothing, a second
+    action while a flight is out sends nothing — the buttons
+    carry the gates for clicks, the slots for whatever calls
+    them, the context menu included."""
     screen, window, bridge = make_screen(qt)
     screen.table.clearSelection()
     screen.table.selectionModel().clearCurrentIndex()
     bridge.calls.clear()
-    screen.start_selected()  # nothing held
-    screen.stop_selected()
-    assert bridge.calls == []
-    select_cell(qt, screen, 0, 1)
-    screen.start_button.click()  # the flight opens
+    screen.row_actions["ws-1"].click()  # the flight opens
     bridge.calls.clear()
-    screen.stop_selected()  # the flight holds the gate
-    screen.start_selected()
+    screen.row_actions["ws-2"].click()  # the flight holds the gate
+    screen.row_actions["ws-1"].click()
+    screen.start_workspace(("ws-1", "alpha"))  # the slots carry it too
+    screen.stop_workspace(("ws-2", "beta"))
+    screen.toggle_workspace(("ws-9", "gone"))  # no model stands
+    screen.delete_workspace(("ws-9", "gone"))
     assert bridge.calls == []
-    # A selected row whose name item is gone holds nothing.
+    # A held row whose name item is gone holds nothing.
     screen.on_succeeded("workspaces-start", {})  # land the flight
-    screen.table.setItem(0, qt.screen_mod.NAME_COLUMN, None)
+    select_cell(qt, screen, screen.row_ids()["ws-1"], 0)  # hold it
+    screen.table.setItem(
+        screen.row_ids()["ws-1"], qt.screen_mod.NAME_COLUMN, None
+    )
     assert screen.held_workspace() is None
+    # A row the rebuild has not filled measures nothing; an
+    # empty table sets no width at all.
+    screen.table.setRowCount(4)  # rows without cells, mid-rebuild
+    screen.size_action_column()
+    screen.on_succeeded("workspaces-list", [])
+    window.resize(901, 600)
+    qt.app.processEvents()
+    window.close()
+
+
+def test_the_action_column_sorts_nothing(qt) -> None:
+    """The row-actions column (#972): last, with no header
+    label, and a click on its header moves no ordering — the
+    sortable columns stand as they are."""
+    screen, window, _bridge = make_screen(qt)
+    table = screen.table
+    assert table.columnCount() == len(qt.screen_mod.COLUMNS) + 1
+    assert table.horizontalHeaderItem(qt.screen_mod.ACTION_COLUMN).text() == ""
+    before = [
+        table.item(row, qt.screen_mod.NAME_COLUMN).text()
+        for row in range(table.rowCount())
+    ]
+    order = [table.horizontalHeader().sortIndicatorSection()]
+    # A real press on the action header, through the filter.
+    rect = table.horizontalHeader().sectionViewportPosition(
+        qt.screen_mod.ACTION_COLUMN
+    )
+    press = qt.QtGui.QMouseEvent(
+        qt.QtGui.QMouseEvent.Type.MouseButtonPress,
+        qt.QtCore.QPointF(rect + 2, 2),
+        qt.QtCore.QPointF(rect + 2, 2),
+        qt.QtCore.Qt.MouseButton.LeftButton,
+        qt.QtCore.Qt.MouseButton.LeftButton,
+        qt.QtCore.Qt.KeyboardModifier.NoModifier,
+    )
+    assert (
+        screen.eventFilter(table.horizontalHeader(), press) is True
+    )  # the press never reaches the view
+    table.horizontalHeader().sectionClicked.emit(
+        qt.screen_mod.ACTION_COLUMN
+    )  # even a click the platform serves anyway
+    assert order == [table.horizontalHeader().sortIndicatorSection()]
+    after = [
+        table.item(row, qt.screen_mod.NAME_COLUMN).text()
+        for row in range(table.rowCount())
+    ]
+    assert after == before
+    window.close()
+
+
+def test_the_row_shell_button_opens_the_workspace(qt) -> None:
+    """The shell button beside the toggle (#972): a click opens
+    its own workspace's detail page — the shell tab flow (#954),
+    through the signal the screens compose by."""
+    screen, window, _bridge = make_screen(qt)
+    seen: list[str] = []
+    screen.shell_requested.connect(seen.append)
+    row = screen.row_ids()["ws-2"]
+    cell = screen.table.cellWidget(row, qt.screen_mod.ACTION_COLUMN)
+    buttons = cell.findChildren(qt.QtWidgets.QToolButton)
+    shell = next(b for b in buttons if b.toolTip() == "Open a shell")
+    shell.click()
+    assert seen == ["ws-2"]
+    window.close()
+
+
+def test_the_context_menu_carries_the_rows_actions(qt, monkeypatch) -> None:
+    """A right-click on a row opens its menu (#972): start or
+    stop per the row's own action, a shell, and Delete — the
+    same paths the row's buttons take. A right-click on no row
+    opens nothing."""
+    screen, window, bridge = make_screen(qt)
+    monkeypatch.setattr(
+        qt.QtWidgets.QMessageBox,
+        "question",
+        lambda *args: qt.QtWidgets.QMessageBox.StandardButton.No,
+    )
+    # The show is non-modal: the request itself pops the menu,
+    # and a press below every row opens nothing.
+    assert screen.row_menu(-1) is None
+    screen.menu_requested(
+        qt.QtCore.QPoint(2, screen.table.viewport().height() - 2)
+    )  # below every row: nothing pops
+    row = screen.row_ids()["ws-1"]
+    pos = qt.QtCore.QPoint(2, screen.table.rowViewportPosition(row) + 2)
+    screen.menu_requested(pos)
+    menu = screen.findChildren(qt.QtWidgets.QMenu)[-1]
+    labels = [action.text() for action in menu.actions()]
+    assert labels == ["Start", "Open a shell", "Delete"]
+    bridge.calls.clear()
+    seen: list[str] = []
+    screen.shell_requested.connect(seen.append)
+    for action in menu.actions():
+        action.trigger()
+    assert bridge.calls == [("workspaces-start", "start", ("ws-1",))]
+    assert seen == ["ws-1"]  # the shell entry ran its path
+    # Delete's entry runs behind its confirmation (below).
+    window.close()
+
+
+def test_the_context_menus_stop_confirms(qt, monkeypatch) -> None:
+    """The running row's menu reads Stop and asks first (#972):
+    the confirmation gate the toggle keeps."""
+    screen, window, bridge = make_screen(qt)
+    asked: list[tuple] = []
+
+    def refuse(parent, title, text, buttons=None, default=None):
+        asked.append((title, text))
+        return qt.QtWidgets.QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(qt.QtWidgets.QMessageBox, "question", refuse)
+    menu = screen.row_menu(screen.row_ids()["ws-2"])
+    assert [action.text() for action in menu.actions()][0] == "Stop"
+    bridge.calls.clear()
+    menu.actions()[0].trigger()
+    assert bridge.calls == []  # the refusal sent nothing
+    assert asked[0][0] == "Stop workspace"
+    window.close()
+
+
+def test_delete_asks_and_removes(qt, monkeypatch) -> None:
+    """The Delete action (#972): the question names the workspace
+    and its cost with No as the default; a confirmation removes
+    the workspace through the bridge, the outcome flashes, and
+    the list refreshes when the daemon answers."""
+    asked: list[tuple] = []
+
+    def refuse_or_allow(parent, title, text, buttons=None, default=None):
+        asked.append((title, text, buttons, default))
+        no = qt.QtWidgets.QMessageBox.StandardButton.No
+        yes = qt.QtWidgets.QMessageBox.StandardButton.Yes
+        return no if len(asked) == 1 else yes
+
+    monkeypatch.setattr(qt.QtWidgets.QMessageBox, "question", refuse_or_allow)
+    screen, window, bridge = make_screen(qt)
+    bridge.calls.clear()
+    screen.delete_workspace(("ws-2", "beta"))
+    assert bridge.calls == []  # the refusal sent nothing
+    assert screen.row_actions["ws-2"].isEnabled()
+    screen.delete_workspace(("ws-2", "beta"))
+    assert bridge.calls == [("workspaces-delete", "remove", ("ws-2",))]
+    assert "beta" in asked[1][1] and "data" in asked[1][1]
+    assert (
+        asked[0][3] == qt.QtWidgets.QMessageBox.StandardButton.No
+    )  # No is the default
+    assert not screen.row_actions["ws-1"].isEnabled()  # one flight
+    screen.on_succeeded("workspaces-delete", {"status": "gone"})
+    assert screen.status.text() == "beta gone"
+    assert bridge.calls[-1] == ("workspaces-list", "workspaces", ())
+    assert screen.row_actions["ws-1"].isEnabled()
     window.close()
 
 
@@ -1072,14 +1269,14 @@ def test_a_stale_listing_answer_keeps_the_outcome_flash(qt) -> None:
     screen, window, bridge = make_screen(qt)
     screen.refresh()  # the listing flight opens
     bridge.calls.clear()
-    screen.start_button.click()
+    screen.row_actions["ws-1"].click()
     screen.on_succeeded(
-        "workspaces-start", {"id": "ws-2", "status": "running"}
+        "workspaces-start", {"id": "ws-1", "status": "running"}
     )
-    assert screen.status.text() == "beta running"
+    assert screen.status.text() == "alpha running"
     # The stale listing answer lands: same rows, no rebuild.
     screen.on_succeeded("workspaces-list", daemon_rows())
-    assert screen.status.text() == "beta running"  # it stood
+    assert screen.status.text() == "alpha running"  # it stood
     # A standing outage, though, an answer resolves.
     screen.on_failed(
         "workspaces-list",

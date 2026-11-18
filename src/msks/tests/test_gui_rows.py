@@ -101,6 +101,7 @@ def test_the_model_carries_what_the_widget_renders() -> None:
         mem_mib=8192,
         egress_mode="allow",
         pending_count=0,
+        action="stop",
     )
 
 
@@ -269,3 +270,22 @@ def test_the_module_imports_nothing_from_pyside6() -> None:
         if isinstance(node, ast.ImportFrom) and node.module is not None
     }
     assert not any(root.split(".")[0] == "PySide6" for root in roots)
+
+
+def test_the_rows_action_reads_the_state() -> None:
+    """The row's start/stop action as plain data (#972): start
+    while the workspace stands stopped or was only created, stop
+    in any other state — the widget renders the icon this
+    picks, and the choice itself reads as plain Python."""
+    from msks.client.gui.rows import STARTABLE_STATES, action_verb
+
+    assert STARTABLE_STATES == ("stopped", "created")
+    assert action_verb("stopped") == "start"
+    assert action_verb("created") == "start"
+    for state in ("starting", "running", "paused", "stopping", "unknown"):
+        assert action_verb(state) == "stop"
+    # The model carries the choice: a stopped row reads start, a
+    # running row reads stop.
+    stopped = gui_rows.workspace_row({"id": "ws-1", "status": "stopped"})
+    running = gui_rows.workspace_row({"id": "ws-2", "status": "running"})
+    assert (stopped.action, running.action) == ("start", "stop")

@@ -39,6 +39,10 @@ STATE_SORT_ORDER = (
 #: The lifecycle rank per state value (#938).
 STATE_SORT_RANK = {state: rank for rank, state in enumerate(STATE_SORT_ORDER)}
 
+#: The states whose row offers a start (#972): a workspace that
+#: stands stopped, and one created but never started.
+STARTABLE_STATES = ("stopped", "created")
+
 
 @dataclass(frozen=True)
 class WorkspaceRow:
@@ -61,12 +65,22 @@ class WorkspaceRow:
     mem_mib: int | None
     egress_mode: str
     pending_count: int
+    action: str
 
 
 def workspace_label(row: dict) -> str:
     """The row's human-facing label (#246): its name, else its
     id."""
     return row.get("name") or row["id"]
+
+
+def action_verb(state: str) -> str:
+    """The row's start/stop action as plain data (#972): start
+    while the workspace stands stopped or was only created, stop
+    in any other state. The row model carries the choice; the
+    widget renders the icon for it, and the choice itself reads
+    as plain Python, no Qt in it."""
+    return "start" if state in STARTABLE_STATES else "stop"
 
 
 def state_rank(state: str) -> int:
@@ -123,6 +137,7 @@ def workspace_row(row: dict) -> WorkspaceRow:
         egress_mode=row.get("egress_mode") or "-",
         pending_count=int(bool(row.get("mounts_pending")))
         + int(bool(row.get("sizes_pending"))),
+        action=action_verb(row["status"]),
     )
 
 

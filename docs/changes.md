@@ -8,6 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **GUI row actions on the workspace list (#972).** The
+  workspace list's toolbar is gone: the Start, Stop, Shell,
+  External, and Refresh buttons leave the page and the rows
+  reclaim the vertical space. Each row carries its own action
+  cell — a start/stop toggle that reads the row's state (play
+  while the workspace stands stopped or only created, stop
+  otherwise) and a shell button. A right-click on a row opens
+  the same actions plus Delete, which removes the workspace
+  behind a confirmation. The external-terminal action moved to
+  the workspace detail page.
 - **GUI top-level Shells and Info tabs (#974).** The
   workspace detail page's tab row, on the back arrow's own row,
   now carries a Shells tab and an Info tab, with Shells the
