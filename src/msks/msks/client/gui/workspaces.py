@@ -20,7 +20,12 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..data import RestFailure
 from .bridge import Bridge
-from .rows import WorkspaceRow, detail_text, workspace_rows
+from .rows import (
+    WorkspaceRow,
+    detail_text,
+    workspace_costs,
+    workspace_rows,
+)
 
 #: The standing refresh cadence (#939), milliseconds — the TUI's
 #: own listing interval (#470 L2, five seconds): the list reloads
@@ -33,10 +38,11 @@ REFRESH_MS = 5000
 #: bridge.
 LIST_KEY = "workspaces-list"
 
-#: The action calls' keys (#940): start and stop on the
-#: selection, each its own flight.
+#: The action calls' keys (#940, #972): start, stop, and
+#: remove on a row, each its own flight.
 START_KEY = "workspaces-start"
 STOP_KEY = "workspaces-stop"
+DELETE_KEY = "workspaces-delete"
 
 #: The capacity report's key (#849, the GUI's read): the detail
 #: strip's storage figure, fetched beside the rows and cached
@@ -75,7 +81,14 @@ ROW_ID_ROLE = QtCore.Qt.ItemDataRole.UserRole + 3
 #: an ellipsized cell's text renders within.
 CELL_MARGIN = 8
 
-#: The table's columns (#939), in display order — the TUI
+#: The toggle's icon per action (#972): the VCR pair — the play
+#: gesture for a start, the stop sign for a stop.
+TOGGLE_ICONS = {
+    "start": QtWidgets.QStyle.StandardPixmap.SP_MediaPlay,
+    "stop": QtWidgets.QStyle.StandardPixmap.SP_MediaStop,
+}
+
+#: The table's data columns (#939), in display order — the TUI
 #: listing's own five, the fields the row models carry.
 COLUMNS = ("NAME", "STATUS", "ID", "IMAGE", "CREATED")
 
@@ -84,6 +97,11 @@ STATUS_COLUMN = 1
 ID_COLUMN = 2
 IMAGE_COLUMN = 3
 CREATED_COLUMN = 4
+
+#: The row-actions column (#972): last, with no header label and
+#: a header that sorts nothing — one cell of buttons per row,
+#: the row's own actions beside its facts.
+ACTION_COLUMN = len(COLUMNS)
 
 
 def read_only_item(
@@ -105,27 +123,6 @@ def action_reply_text(label: str, reply: object) -> str:
     readable status still names its workspace."""
     status = reply.get("status") if isinstance(reply, dict) else None
     return f"{label} {status}" if status else label
-
-
-def cost_of(ws: dict) -> int | None:
-    """One report entry's root-plus-home cost (#849), or None
-    for an entry that predates the per-row fields."""
-    if "root_bytes" not in ws or "home_bytes" not in ws:
-        return None
-    return ws["root_bytes"] + ws["home_bytes"]
-
-
-def workspace_costs(report: dict) -> dict[str, int]:
-    """The capacity report's per-workspace costs (#849): the
-    root-plus-home bytes, keyed by id. An entry that predates
-    the per-row fields reads as nothing, so the standing figures
-    keep until a fuller report lands."""
-    costs: dict[str, int] = {}
-    for ws in report.get("workspaces") or []:
-        cost = cost_of(ws)
-        if cost is not None and "id" in ws:
-            costs[ws["id"]] = cost
-    return costs
 
 
 def state_text(model: WorkspaceRow) -> str:
@@ -196,7 +193,6 @@ class WorkspaceList(QtWidgets.QWidget):
 
     opened = QtCore.Signal(str)
     shell_requested = QtCore.Signal(str)
-    external_requested = QtCore.Signal(str)
 
     def __init__(self, bridge: Bridge) -> None:
         super().__init__()
@@ -205,8 +201,8 @@ class WorkspaceList(QtWidgets.QWidget):
         self.flash_seq = 0
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
-        self.table = QtWidgets.QTableWidget(0, len(COLUMNS), self)
-        self.table.setHorizontalHeaderLabels(COLUMNS)
+        self.table = QtWidgets.QTableWidget(0, len(COLUMNS) + 1, self)
+        self.table.setHorizontalHeaderLabels((*COLUMNS, ""))
         self.table.verticalHeader().setVisible(False)
         # The standing sort (#939): CREATED newest-first, the
         # TUI's own default (#854, #470 L1) — the order the
@@ -254,28 +250,27 @@ class WorkspaceList(QtWidgets.QWidget):
         # lands on no row, and the blank space below the rows is
         # chrome, not a select-nothing gesture.
         self.table.viewport().installEventFilter(self)
-        self.refresh_button = QtWidgets.QPushButton("Refresh", self)
-        self.refresh_button.clicked.connect(self.refresh)
-        # The actions on the selection (#940): start and stop,
-        # enabled while a workspace is held and no action flight
-        # is out. The flight remembers its target — the flash
-        # names it whatever the listing does meanwhile.
+        # The action header sorts nothing (#972): a press on
+        # the row-actions column's header never reaches the
+        # view, so its click moves no ordering — the sortable
+        # columns stand as they are. The filter watches the
+        # header's viewport, the surface real clicks land on
+        # (the header's own object filter never sees them).
+        self.table.horizontalHeader().viewport().installEventFilter(self)
+        # The row actions (#972): the actions a row carries in
+        # its own cell — the toggle and the shell button, one
+        # flight at a time across them. The flight remembers its
+        # target — the flash names it whatever the listing does
+        # meanwhile.
         self.action_pending = False
         self.action_flight: tuple[str, str] | None = None
-        self.start_button = QtWidgets.QPushButton("Start", self)
-        self.start_button.clicked.connect(self.start_selected)
-        self.stop_button = QtWidgets.QPushButton("Stop", self)
-        self.stop_button.clicked.connect(self.stop_selected)
-        # The shell actions (#954): a terminal tab inside the
-        # window, and the same shell in an external terminal
-        # through the configured launcher.
-        self.shell_button = QtWidgets.QPushButton("Shell", self)
-        self.shell_button.clicked.connect(self.shell_selected)
-        self.external_button = QtWidgets.QPushButton("External", self)
-        self.external_button.setToolTip(
-            "Open a shell in an external terminal (terminal_open_cmd)"
+        self.row_actions: dict[str, QtWidgets.QToolButton] = {}
+        # A right-click on a row reaches the same actions (#972)
+        # and Delete behind its own confirmation.
+        self.table.setContextMenuPolicy(
+            QtCore.Qt.ContextMenuPolicy.CustomContextMenu
         )
-        self.external_button.clicked.connect(self.external_selected)
+        self.table.customContextMenuRequested.connect(self.menu_requested)
         self.table.selectionModel().selectionChanged.connect(self.sync_actions)
         # A row's activation opens the workspace (#945): the
         # keypress or double-click the platform serves lands on
@@ -306,19 +301,13 @@ class WorkspaceList(QtWidgets.QWidget):
         self.timer = QtCore.QTimer(self)
         self.timer.setInterval(REFRESH_MS)
         self.timer.timeout.connect(self.refresh)
-        # The action row rides the top of the window (#939,
-        # #945's ask): Start, Stop, Refresh, and the status line
-        # the flashes read on, above the listing — the controls
-        # sit where the pointer and the eye start.
-        actions = QtWidgets.QHBoxLayout()
-        actions.addWidget(self.start_button)
-        actions.addWidget(self.stop_button)
-        actions.addWidget(self.shell_button)
-        actions.addWidget(self.external_button)
-        actions.addWidget(self.refresh_button)
-        actions.addWidget(self.status, stretch=1)
+        # The status line alone rides the top (#972): the row
+        # cells carry the actions now, and the rows reclaim the
+        # vertical space the toolbar held.
+        top = QtWidgets.QHBoxLayout()
+        top.addWidget(self.status, stretch=1)
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addLayout(actions)
+        layout.addLayout(top)
         layout.addWidget(self.table)
         layout.addWidget(self.detail)
         self.setLayout(layout)
@@ -366,6 +355,7 @@ class WorkspaceList(QtWidgets.QWidget):
         held = self.held_rows()
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(models))
+        self.row_actions.clear()
         for index, model in enumerate(models):
             self.fill_row(index, model)
         self.table.setSortingEnabled(True)
@@ -408,6 +398,39 @@ class WorkspaceList(QtWidgets.QWidget):
         self.table.setItem(
             index, CREATED_COLUMN, read_only_item(CreatedItem(model))
         )
+        self.fill_actions(index, model)
+
+    def fill_actions(self, index: int, model: WorkspaceRow) -> None:
+        """One row's action cell (#972): the start/stop toggle
+        reading the model's own action — the play gesture while
+        the workspace stands stopped or only created, the stop
+        sign otherwise — with the shell button beside it. The
+        clicks act on this row's workspace, not the selection.
+        """
+        toggle = QtWidgets.QToolButton(self.table)
+        toggle.setIcon(self.style().standardIcon(TOGGLE_ICONS[model.action]))
+        toggle.setToolTip(model.action.capitalize())
+        # A rebuild under a standing flight keeps the gate (#972):
+        # the cells are new, the one-flight rule is not.
+        toggle.setEnabled(not self.action_pending)
+        toggle.clicked.connect(
+            lambda: self.toggle_workspace((model.id, model.label))
+        )
+        shell = QtWidgets.QToolButton(self.table)
+        shell.setIcon(
+            self.style().standardIcon(
+                QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon
+            )
+        )
+        shell.setToolTip("Open a shell")
+        shell.clicked.connect(lambda: self.shell_requested.emit(model.id))
+        cell = QtWidgets.QWidget(self.table)
+        row = QtWidgets.QHBoxLayout(cell)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(toggle)
+        row.addWidget(shell)
+        self.table.setCellWidget(index, ACTION_COLUMN, cell)
+        self.row_actions[model.id] = toggle
 
     def rows_unchanged(self, models: list[WorkspaceRow]) -> bool:
         """Whether the table already reads exactly as the models
@@ -506,7 +529,7 @@ class WorkspaceList(QtWidgets.QWidget):
             if row is not None:
                 selection.select(
                     self.table.model().index(row, 0),
-                    self.table.model().index(row, len(COLUMNS) - 1),
+                    self.table.model().index(row, ACTION_COLUMN),
                 )
         self.table.selectionModel().select(
             selection,
@@ -546,8 +569,14 @@ class WorkspaceList(QtWidgets.QWidget):
         the moment the pane has the room."""
         self.fit_images(None)  # whole values first: minimums measure them
         self.table.resizeColumnsToContents()
-        spare = self.table.viewport().width() - sum(
-            self.table.columnWidth(column) for column in range(len(COLUMNS))
+        self.size_action_column()
+        spare = (
+            self.table.viewport().width()
+            - sum(
+                self.table.columnWidth(column)
+                for column in range(len(COLUMNS))
+            )
+            - self.table.columnWidth(ACTION_COLUMN)
         )
         if spare <= 0:
             metrics = self.table.fontMetrics()
@@ -566,6 +595,24 @@ class WorkspaceList(QtWidgets.QWidget):
                 + share
                 + (1 if column < extra else 0),
             )
+
+    def size_action_column(self) -> None:
+        """The action column's width (#972): its buttons' own
+        hint — the column neither gives ground on a narrow pane
+        nor takes spare on a wide one, so the row's actions stay
+        whole whatever the pane's width. A row the rebuild has
+        not filled yet measures nothing; an empty table sets no
+        width at all."""
+        cells = (
+            self.table.cellWidget(row, ACTION_COLUMN)
+            for row in range(self.table.rowCount())
+        )
+        width = max(
+            (cell.sizeHint().width() for cell in cells if cell is not None),
+            default=0,
+        )
+        if width:
+            self.table.setColumnWidth(ACTION_COLUMN, width + CELL_MARGIN)
 
     def fit_images(self, budget: int | None) -> None:
         """The image cells' display (#939): the whole value when
@@ -595,7 +642,7 @@ class WorkspaceList(QtWidgets.QWidget):
         resolved); an action's answer lands the flight and
         refreshes the listing, which shows what the action moved.
         Another key's answer is not this screen's to take."""
-        if key in (START_KEY, STOP_KEY):
+        if key in (START_KEY, STOP_KEY, DELETE_KEY):
             label = self.action_flight[1] if self.action_flight else ""
             self.action_landed()
             self.flash(action_reply_text(label, result))
@@ -630,7 +677,7 @@ class WorkspaceList(QtWidgets.QWidget):
         answer built, and a failed action takes nothing away
         either. Another key's failure is not this screen's to
         show."""
-        if key in (START_KEY, STOP_KEY):
+        if key in (START_KEY, STOP_KEY, DELETE_KEY):
             self.action_landed()
             self.flash(str(failure), outage=failure.reach)
             return
@@ -656,8 +703,9 @@ class WorkspaceList(QtWidgets.QWidget):
             self.opened.emit(name.data(ROW_ID_ROLE))
 
     def held_workspace(self) -> tuple[str, str] | None:
-        """The workspace the actions sit on (#940): the current
-        row's — else the first selected row's — id and label."""
+        """The workspace the detail strip reads (#940, #972):
+        the current row's — else the first selected row's — id
+        and label."""
         rows = sorted({index.row() for index in self.table.selectedIndexes()})
         if not rows:
             return None
@@ -671,15 +719,12 @@ class WorkspaceList(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def sync_actions(self) -> None:
-        """The action buttons' state (#940): enabled while a
-        workspace is held and no action flight is out. The strip
-        rides the same signal: the hold moved, the detail
-        follows."""
-        usable = self.held_workspace() is not None
-        self.start_button.setEnabled(usable and not self.action_pending)
-        self.stop_button.setEnabled(usable and not self.action_pending)
-        self.shell_button.setEnabled(usable)
-        self.external_button.setEnabled(usable)
+        """The row toggles' state (#972): one action flight at a
+        time — every row's toggle stands disabled while one is
+        out. The strip rides the same signal: the hold moved, the
+        detail follows."""
+        for toggle in self.row_actions.values():
+            toggle.setEnabled(not self.action_pending)
         self.update_detail()
 
     def update_detail(self) -> None:
@@ -721,46 +766,35 @@ class WorkspaceList(QtWidgets.QWidget):
         self.action_flight = None
         self.sync_actions()
 
-    @QtCore.Slot()
-    def start_selected(self) -> None:
-        """The Start action (#940): the held workspace starts
+    def toggle_workspace(self, workspace: tuple[str, str]) -> None:
+        """One row's toggle click (#972): the model's own action
+        picks the verb — start reads no confirmation, stop asks
+        first — and the flight guards the whole table, exactly
+        the selection actions' rule (#940)."""
+        model = self.rows_by_id.get(workspace[0])
+        if model is None or self.action_pending:
+            return
+        if model.action == "start":
+            self.start_workspace(workspace)
+        else:
+            self.stop_workspace(workspace)
+
+    def start_workspace(self, workspace: tuple[str, str]) -> None:
+        """The start action (#940, #972): the workspace starts
         through the bridge, and the list refreshes when the
         daemon answers."""
-        workspace = self.held_workspace()
-        if workspace is None or self.action_pending:
+        if self.action_pending:
             return
         self.action_pending = True
         self.action_flight = workspace
         self.sync_actions()
         self.bridge.call(START_KEY, "start", workspace[0])
 
-    @QtCore.Slot()
-    def shell_selected(self) -> None:
-        """The Shell action (#954): the held workspace opens a
-        terminal tab inside the window — the window shell's own
-        path, through the signal the screens compose by."""
-        workspace = self.held_workspace()
-        if workspace is None:
-            return
-        self.shell_requested.emit(workspace[0])
-
-    @QtCore.Slot()
-    def external_selected(self) -> None:
-        """The external-terminal action (#954): the held
-        workspace's shell in an external window, the same argv
-        the TUI's windowed shell action builds."""
-        workspace = self.held_workspace()
-        if workspace is None:
-            return
-        self.external_requested.emit(workspace[0])
-
-    @QtCore.Slot()
-    def stop_selected(self) -> None:
-        """The Stop action (#940): the held workspace stops after
-        the operator confirms — a refusal sends nothing to the
-        daemon."""
-        workspace = self.held_workspace()
-        if workspace is None or self.action_pending:
+    def stop_workspace(self, workspace: tuple[str, str]) -> None:
+        """The stop action (#940, #972): the workspace stops
+        after the operator confirms — a refusal sends nothing to
+        the daemon."""
+        if self.action_pending:
             return
         if not self.confirm_stop(workspace[1]):
             return
@@ -768,6 +802,19 @@ class WorkspaceList(QtWidgets.QWidget):
         self.action_flight = workspace
         self.sync_actions()
         self.bridge.call(STOP_KEY, "stop", workspace[0])
+
+    def delete_workspace(self, workspace: tuple[str, str]) -> None:
+        """The Delete action (#972): the workspace removes after
+        the operator confirms, its data with it — a refusal sends
+        nothing to the daemon."""
+        if self.action_pending:
+            return
+        if not self.confirm_delete(workspace[1]):
+            return
+        self.action_pending = True
+        self.action_flight = workspace
+        self.sync_actions()
+        self.bridge.call(DELETE_KEY, "remove", workspace[0])
 
     def confirm_stop(self, label: str) -> bool:
         """Stop's confirmation (#940): the question names the
@@ -784,6 +831,53 @@ class WorkspaceList(QtWidgets.QWidget):
             QtWidgets.QMessageBox.StandardButton.No,
         )
         return answer == QtWidgets.QMessageBox.StandardButton.Yes
+
+    def confirm_delete(self, label: str) -> bool:
+        """Delete's confirmation (#972): the question names the
+        workspace and its cost — the data goes with it — and No
+        is the default, the stop question's own rule."""
+        answer = QtWidgets.QMessageBox.question(
+            self,
+            "Delete workspace",
+            f"Delete {label}? Its data goes with it.",
+            (
+                QtWidgets.QMessageBox.StandardButton.Yes
+                | QtWidgets.QMessageBox.StandardButton.No
+            ),
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+        return answer == QtWidgets.QMessageBox.StandardButton.Yes
+
+    @QtCore.Slot(QtCore.QPoint)
+    def menu_requested(self, pos: QtCore.QPoint) -> None:
+        """A right-click on a row opens its menu (#972): the same
+        actions the row's buttons carry — start or stop per the
+        model's own action, a shell — and Delete behind its own
+        confirmation. A press on no row opens nothing."""
+        menu = self.row_menu(self.table.rowAt(pos.y()))
+        if menu is not None:
+            menu.popup(self.table.viewport().mapToGlobal(pos))
+
+    def row_menu(self, row: int) -> QtWidgets.QMenu | None:
+        """The row's menu (#972) — ``None`` for a row the table
+        does not hold."""
+        name = self.table.item(row, NAME_COLUMN)
+        if name is None:
+            return None
+        workspace = (name.data(ROW_ID_ROLE), name.text())
+        model = self.rows_by_id.get(workspace[0])
+        verb = model.action if model is not None else "start"
+        menu = QtWidgets.QMenu(self.table)
+        menu.addAction(
+            verb.capitalize(),
+            lambda: self.toggle_workspace(workspace),
+        )
+        menu.addAction(
+            "Open a shell",
+            lambda: self.shell_requested.emit(workspace[0]),
+        )
+        menu.addAction("Delete", lambda: self.delete_workspace(workspace))
+        return menu
 
     def flash(self, message: str, *, outage: bool = False) -> None:
         """The status line's flash (#939, #904): the message
@@ -847,20 +941,43 @@ class WorkspaceList(QtWidgets.QWidget):
     def eventFilter(
         self, watched: QtCore.QObject, event: QtCore.QEvent
     ) -> bool:
-        """A press on the grid's blank space never reaches the
-        view (#939): the hold stands until a row click, a
-        refresh's rebuild, or the workspace leaving the listing
-        moves it. A wrapper without its ``table`` (#959)
-        filters nothing: the event goes to Qt's own handling."""
+        """The screen's two filtered gestures (#939, #972): a
+        press on the grid's blank space below the rows, and a
+        press on the action column's header. A wrapper without
+        its ``table`` (#959) filters nothing: the event goes to
+        Qt's own handling."""
         table = getattr(self, "table", None)
-        if (
-            table is not None
-            and watched is table.viewport()
-            and event.type() == QtCore.QEvent.Type.MouseButtonPress
-        ):
-            if not table.indexAt(event.position().toPoint()).isValid():
-                return True
+        if table is None:
+            return super().eventFilter(watched, event)
+        if self.header_press(watched, event):
+            return True
+        if self.blank_press(watched, event):
+            return True
         return super().eventFilter(watched, event)
+
+    def blank_press(self, watched: QtCore.QObject, event) -> bool:
+        """Whether this event is a press on the grid's blank
+        space (#939): the hold stands until a row click, a
+        refresh's rebuild, or the workspace leaving the listing
+        moves it."""
+        return (
+            watched is self.table.viewport()
+            and event.type() == QtCore.QEvent.Type.MouseButtonPress
+            and not self.table.indexAt(event.position().toPoint()).isValid()
+        )
+
+    def header_press(self, watched: QtCore.QObject, event) -> bool:
+        """Whether this event is a press on the action column's
+        header (#972): the one header a click must not sort — the
+        press never reaches the view, so the standing sort stands.
+        """
+        header = self.table.horizontalHeader()
+        return (
+            watched is header.viewport()
+            and event.type() == QtCore.QEvent.Type.MouseButtonPress
+            and header.logicalIndexAt(event.position().toPoint())
+            == ACTION_COLUMN
+        )
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         """A resized pane re-flows the columns (#939): the

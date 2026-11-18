@@ -18,7 +18,12 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ..data import RestFailure
 from .bridge import Bridge
 from .detail import DetailSections, detail_sections, frame_names
-from .rows import WINDOW_TITLE, detail_text, workspace_row
+from .rows import (
+    WINDOW_TITLE,
+    detail_text,
+    workspace_costs,
+    workspace_row,
+)
 from .shells import ShellHub, ShellTabs
 from .termsession import shell_argv
 from .workspaces import (
@@ -26,7 +31,6 @@ from .workspaces import (
     REFRESH_MS,
     WorkspaceList,
     read_only_item,
-    workspace_costs,
 )
 
 #: The row read's key (#945): the page answers only its own
@@ -105,6 +109,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
     back = QtCore.Signal()
     removed = QtCore.Signal(str)
     shell_wanted = QtCore.Signal(str)
+    external_wanted = QtCore.Signal(str)
 
     def __init__(self, bridge: Bridge, hub: ShellHub) -> None:
         super().__init__()
@@ -266,9 +271,24 @@ class WorkspaceDetail(QtWidgets.QWidget):
         back_button.clicked.connect(self.go_back)
         self.back_button = back_button
         self.status = QtWidgets.QLabel("", self)
+        # The external-terminal action's home on the page (#972,
+        # #954): the same shell the tab strip runs, opened in
+        # the configured launcher outside the window.
+        external = QtWidgets.QToolButton(self)
+        external.setIcon(
+            self.style().standardIcon(
+                QtWidgets.QStyle.StandardPixmap.SP_ComputerIcon
+            )
+        )
+        external.setToolTip(
+            "Open a shell in an external terminal (terminal_open_cmd)"
+        )
+        external.clicked.connect(self.want_external)
+        self.external_button = external
         self.chrome = QtWidgets.QHBoxLayout()
         self.chrome.addWidget(back_button)
         self.chrome.addWidget(self.status, stretch=1)
+        self.chrome.addWidget(external)
 
     @QtCore.Slot()
     def want_shell(self) -> None:
@@ -278,6 +298,14 @@ class WorkspaceDetail(QtWidgets.QWidget):
         asks for it and the strip takes the new tab."""
         if self.workspace_id:
             self.shell_wanted.emit(self.workspace_id)
+
+    @QtCore.Slot()
+    def want_external(self) -> None:
+        """The external-terminal action (#954, #972): the page's
+        workspace opens its shell in the configured launcher
+        outside the window."""
+        if self.workspace_id:
+            self.external_wanted.emit(self.workspace_id)
 
     def open(self, workspace_id: str) -> None:
         """The page takes a workspace (#945, #954, #971): the
@@ -640,11 +668,11 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         self.listing = WorkspaceList(bridge)
         self.listing.opened.connect(self.open_detail)
         self.listing.shell_requested.connect(self.open_shell)
-        self.listing.external_requested.connect(self.open_external)
         self.detail = WorkspaceDetail(bridge, self.hub)
         self.detail.back.connect(self.show_listing)
         self.detail.removed.connect(self.listing_removed)
         self.detail.shell_wanted.connect(self.open_shell)
+        self.detail.external_wanted.connect(self.open_external)
         bridge.landed.connect(self.frame_landed)
         bridge.feed_dropped.connect(self.feed_dropped)
         bridge.feed_reconnected.connect(self.feed_back)
@@ -680,24 +708,25 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
 
     @QtCore.Slot(str)
     def open_external(self, workspace_id: str) -> None:
-        """The external-terminal action (#954): the same shell
-        the TUI's windowed shell action opens — the configured
-        launcher with the ssh argv appended — detached, beside
-        the running window. Without a launcher the notice names
-        the setting (``terminal_open_cmd``); the GUI has no
-        terminal of its own to hand the session."""
+        """The external-terminal action (#954, #972): the same
+        shell the TUI's windowed shell action opens — the
+        configured launcher with the ssh argv appended —
+        detached, beside the running window. The screen the
+        operator sees carries the notice (#972): the action
+        lives on the detail page now. Without a launcher the
+        notice names the setting (``terminal_open_cmd``); the
+        GUI has no terminal of its own to hand the session."""
+        screen = self.currentWidget()
         if not self.terminal_cmd:
-            self.listing.flash(
-                "set terminal_open_cmd to open external terminals"
-            )
+            screen.flash("set terminal_open_cmd to open external terminals")
             return
         argv = [*self.terminal_cmd, *shell_argv(workspace_id)]
         ok = QtCore.QProcess.startDetached(argv[0], argv[1:])
         label = self.detail_label(workspace_id)
         if ok:
-            self.listing.flash(f"opened an external terminal — {label}")
+            screen.flash(f"opened an external terminal — {label}")
         else:
-            self.listing.flash(f"the terminal launcher failed — {label}")
+            screen.flash(f"the terminal launcher failed — {label}")
 
     def detail_label(self, workspace_id: str) -> str:
         """The workspace's label for a flash, the page's own
