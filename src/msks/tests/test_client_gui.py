@@ -484,10 +484,10 @@ def test_open_window_reuses_an_existing_app(
     would."""
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("the gui extra is not installed on this host")
-    from msks.client.gui import images as images_mod
     from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui.bridge import Bridge
+    from msks.client.gui.images import tab as images_tab_mod
 
     shown: list[str] = []
     stops: list[object] = []
@@ -571,7 +571,7 @@ def test_open_window_reuses_an_existing_app(
         def __init__(self, bridge: object, url: str) -> None:
             images.append((bridge, url))
 
-    monkeypatch.setattr(images_mod, "ImagesTab", FakeImagesTab)
+    monkeypatch.setattr(images_tab_mod, "ImagesTab", FakeImagesTab)
 
     class FakeTabs:
         """The strip the shell lands under (#962): the stub the
@@ -698,10 +698,10 @@ def test_open_window_keeps_a_user_style_choice(
     with the choice preset in the swapped-out environment."""
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("the gui extra is not installed on this host")
-    from msks.client.gui import images as images_mod
     from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui.bridge import Bridge
+    from msks.client.gui.images import tab as images_tab_mod
 
     styles: list[str] = []
     central: list[object] = []
@@ -768,7 +768,7 @@ def test_open_window_keeps_a_user_style_choice(
             pass
 
     monkeypatch.setattr(workspace_mod, "WorkspaceShell", FakeScreen)
-    monkeypatch.setattr(images_mod, "ImagesTab", FakeImagesTab)
+    monkeypatch.setattr(images_tab_mod, "ImagesTab", FakeImagesTab)
 
     monkeypatch.setattr(tabs_mod, "MainTabs", FakeTabs)
 

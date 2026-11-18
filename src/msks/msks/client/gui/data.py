@@ -34,8 +34,10 @@ class GuiData(RestData):
         owns, run on the worker so the tab's answer carries
         whole rows. The manifest's fetch is a plain public GET
         (#565), the daemon uninvolved until a pick imports one
-        of its rows; its failures and a broken channel's
-        refusals arrive carried like every other call's."""
+        of its rows; the manifest's fetch refusals arrive carried
+        like every other call's, and a broken channel's row
+        refuses on the worker — the bridge carries that refusal
+        to the tab the same visible way."""
 
         async def build() -> dict:
             catalog = await self.images()

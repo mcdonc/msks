@@ -21,8 +21,9 @@ if importlib.util.find_spec("PySide6") is None:
 
 from msks.client.config import DEFAULT_IMAGE_MANIFEST_URL  # noqa: E402
 from msks.client.data import RestFailure  # noqa: E402
-from msks.client.gui import images as images_mod  # noqa: E402
 from msks.client.gui.imagerows import IMPORTED_MARKER  # noqa: E402
+from msks.client.gui.images import cells as cells  # noqa: E402
+from msks.client.gui.images import tab as images_mod  # noqa: E402
 
 CHANNEL = "https://ch.example/manifest.json"
 
@@ -154,11 +155,13 @@ def page_answer(
 def make_tab(qt) -> tuple:
     """The tab over the stub bridge, shown in a real window —
     the shape every test reads: open, first refresh issued and
-    answered, both groups standing."""
+    answered, both groups standing. The window opens wide
+    enough that every whole value fits and nothing ellipsizes."""
     bridge = StubBridge()
     tab = images_mod.ImagesTab(bridge, CHANNEL)
     window = qt.QtWidgets.QMainWindow()
     window.setCentralWidget(tab)
+    window.resize(1600, 760)
     window.show()
     tab.on_succeeded(images_mod.PAGE_KEY, page_answer())
     return tab, window, bridge
@@ -174,6 +177,16 @@ def rows_texts(table) -> list[list[str]]:
         ]
         for row in range(table.rowCount())
     ]
+
+
+def row_of(table, ref: str) -> int:
+    """The row a published ref shows on (#964's fakes read):
+    the standing REF sort places the rows, and the tests follow
+    the ref wherever its sort lands it."""
+    for row in range(table.rowCount()):
+        if table.item(row, 0).text() == ref:
+            return row
+    raise AssertionError(f"{ref!r} shows on no row")
 
 
 def test_the_open_tab_issues_its_first_refresh(qt) -> None:
@@ -202,7 +215,7 @@ def test_the_page_answer_renders_both_groups(qt) -> None:
     boxes = {
         box.title(): box for box in tab.findChildren(qt.QtWidgets.QGroupBox)
     }
-    assert set(boxes) == {images_mod.CATALOG_GROUP, images_mod.PUBLISHED_GROUP}
+    assert set(boxes) == {cells.CATALOG_GROUP, cells.PUBLISHED_GROUP}
     assert rows_texts(tab.catalog_table) == [
         [
             "debian:13.6",
@@ -214,6 +227,14 @@ def test_the_page_answer_renders_both_groups(qt) -> None:
     ]
     assert rows_texts(tab.published_table) == [
         [
+            "alpine:3.21",
+            "-",
+            "50 MiB",
+            "c" * 12,
+            "-",
+            "",
+        ],
+        [
             "debian:13.6",
             "Debian 13 trixie",
             "100 MiB",
@@ -221,7 +242,6 @@ def test_the_page_answer_renders_both_groups(qt) -> None:
             "2026-01-01",
             IMPORTED_MARKER,
         ],
-        ["alpine:3.21", "-", "50 MiB", "c" * 12, "-", ""],
     ]
     assert tab.status.text() == "2 in the catalog · 2 published"
     window.close()
@@ -323,7 +343,7 @@ def test_a_catalog_answer_moves_the_markers(qt) -> None:
     ]
     tab.on_succeeded(images_mod.CATALOG_KEY, landed)
     assert bridge.calls == []  # the channel was not refetched
-    assert rows_texts(tab.published_table)[1][-1] == IMPORTED_MARKER
+    assert rows_texts(tab.published_table)[0][-1] == IMPORTED_MARKER
     assert tab.status.text() == "3 in the catalog · 2 published"
     window.close()
 
@@ -374,7 +394,11 @@ def test_activation_on_a_published_row_imports_behind_the_dialog(
     registered reference, and refreshes the catalog."""
     tab, window, bridge = make_tab(qt)
     bridge.calls.clear()
-    tab.published_table.activated.emit(tab.published_table.model().index(1, 0))
+    tab.published_table.activated.emit(
+        tab.published_table.model().index(
+            row_of(tab.published_table, "alpine:3.21"), 0
+        )
+    )
     assert bridge.calls == [
         (
             images_mod.IMPORT_KEY,
@@ -402,7 +426,11 @@ def test_the_exact_build_imports_nothing(qt) -> None:
     flash names the ref so the skip reads as intentional."""
     tab, window, bridge = make_tab(qt)
     bridge.calls.clear()
-    tab.published_table.activated.emit(tab.published_table.model().index(0, 0))
+    tab.published_table.activated.emit(
+        tab.published_table.model().index(
+            row_of(tab.published_table, "debian:13.6"), 0
+        )
+    )
     assert bridge.calls == []
     assert tab.progress is None
     assert tab.status.text() == "debian:13.6 is already in the catalog"
@@ -621,13 +649,13 @@ def test_the_channel_url_reads_the_config_override() -> None:
     """The channel source (#964): the configured override when
     one resolved, else the default the TUI page reads — one
     source both clients share."""
-    assert images_mod.channel_url(None) == DEFAULT_IMAGE_MANIFEST_URL
+    assert cells.channel_url(None) == DEFAULT_IMAGE_MANIFEST_URL
     assert (
-        images_mod.channel_url(SimpleNamespace(image_manifest_url=None))
+        cells.channel_url(SimpleNamespace(image_manifest_url=None))
         == DEFAULT_IMAGE_MANIFEST_URL
     )
     assert (
-        images_mod.channel_url(
+        cells.channel_url(
             SimpleNamespace(image_manifest_url="https://fork.example/ch.json")
         )
         == "https://fork.example/ch.json"
@@ -776,3 +804,414 @@ def test_a_press_on_a_row_opens_the_menu(qt) -> None:
     ]
     menus[0].close()
     window.close()
+
+
+def widths_total(table) -> int:
+    """A group table's columns' total width (#964's fakes
+    read)."""
+    return sum(
+        table.columnWidth(column) for column in range(table.columnCount())
+    )
+
+
+def test_the_catalog_columns_consume_the_pane(qt) -> None:
+    """The catalog group's columns (#964): every column at least
+    its content and the spare shared across them, so the group
+    consumes the pane's whole horizontal space — no horizontal
+    scrollbar, whatever the pane's width."""
+    tab, window, _bridge = make_tab(qt)
+    table = tab.catalog_table
+    for width in (1600, 900, 700):
+        window.resize(width, 700)
+        qt.app.processEvents()
+        total = widths_total(table)
+        assert total >= table.viewport().width() - 4  # the pane filled
+        assert total <= table.viewport().width()
+        assert table.horizontalScrollBar().maximum() == 0
+    window.close()
+
+
+def test_the_published_pane_never_scrolls_horizontally(qt) -> None:
+    """The published group's columns (#964): the identity
+    columns keep their whole values and the description absorbs
+    the spare — a wide pane shows it whole — while a narrow pane
+    ellipsizes the description first, the hash whole beside it,
+    and the horizontal scrollbar never appears: every row's
+    cells read within the pane whatever its width."""
+    tab, window, _bridge = make_tab(qt)
+    table = tab.published_table
+    row = row_of(table, "debian:13.6")
+    desc = table.item(row, cells.DESC_COLUMN)
+    whole = next(
+        model.description
+        for model in tab.published_models
+        if model.ref == "debian:13.6"
+    )
+    window.resize(2000, 700)
+    qt.app.processEvents()
+    assert desc.text() == whole  # a wide pane: the whole line
+    window.resize(900, 700)
+    qt.app.processEvents()
+    assert table.horizontalScrollBar().maximum() == 0
+    assert widths_total(table) <= table.viewport().width()
+    assert (
+        table.item(row_of(table, "debian:13.6"), cells.HASH_COLUMN).text()
+        == "a" * 12
+    )  # the hash held its whole prefix
+    window.resize(520, 700)
+    qt.app.processEvents()
+    assert table.horizontalScrollBar().maximum() == 0
+    # The description gave ground first: its ellipsis sits in
+    # the middle of the line, both halves kept.
+    assert desc.text() != whole and "…" in desc.text()
+    window.close()
+
+
+def test_the_hash_ellipsizes_only_after_the_description_floor(
+    qt,
+) -> None:
+    """The published pane's last resort (#964): with the
+    description already at its floor, the hash gives ground —
+    its ellipsis in the middle of what the pane left it — and
+    still no horizontal scrollbar. The fakes keep the identity
+    cells small, so the floors alone decide the pane."""
+    narrow = [
+        {
+            "ref": "a:1",
+            "url": "https://ch.example/a.tar",
+            "hash": "a" * 64,
+            "description": "x" * 400,
+        }
+    ]
+    bridge = StubBridge()
+    tab = images_mod.ImagesTab(bridge, CHANNEL)
+    window = qt.QtWidgets.QMainWindow()
+    window.setCentralWidget(tab)
+    window.show()
+    tab.on_succeeded(images_mod.PAGE_KEY, page_answer([], narrow))
+    table = tab.published_table
+    window.resize(360, 700)
+    qt.app.processEvents()
+    assert table.horizontalScrollBar().maximum() == 0
+    desc_cell = table.item(0, cells.DESC_COLUMN).text()
+    assert "…" in desc_cell and not desc_cell.startswith("x" * 10)
+    hash_cell = table.item(0, cells.HASH_COLUMN).text()
+    assert hash_cell != "a" * 12 and "…" in hash_cell
+    # The description stands at its floor or below: the
+    # header's own label and the cell margin.
+    assert table.columnWidth(cells.DESC_COLUMN) <= (
+        tab.column_floor(table, cells.DESC_COLUMN)
+    )
+    window.close()
+
+
+def test_the_headers_read_as_one_tables_chrome(qt) -> None:
+    """Both panes' header text (#964): the same bold weight on
+    the catalog and the published headers — one definition,
+    whatever the platform style would draw on its own."""
+    tab, window, _bridge = make_tab(qt)
+    for table in (tab.catalog_table, tab.published_table):
+        assert table.horizontalHeader().font().bold()
+    window.close()
+
+
+def test_a_half_built_wrapper_sizes_nothing(qt) -> None:
+    """The re-flow's guard (#959's hardening): a wrapper without
+    its tables — Qt can deliver the resize to a widget whose
+    construction never finished — sizes nothing and crashes no
+    one."""
+    tab, _window, _bridge = make_tab(qt)
+    del tab.published_table
+    sizes = qt.QtCore.QSize(1, 1)
+    tab.resizeEvent(qt.QtGui.QResizeEvent(sizes, sizes))
+    assert not tab.pending
+
+
+def test_one_import_flight_at_a_time(qt) -> None:
+    """The import's own gate (#964, the review's orphaned
+    dialog): while the progress dialog stands over a flight, a
+    second import starts nothing — no second dialog, no second
+    POST — and the first landing closes the one that stands.
+    The dialog itself is modal: the window behind it answers no
+    activation while the wait holds."""
+    tab, window, bridge = make_tab(qt)
+    bridge.calls.clear()
+    tab.start_import(tab.published_models[1])
+    first = tab.progress
+    assert first is not None
+    assert first.windowModality() == qt.QtCore.Qt.WindowModality.WindowModal
+    tab.start_import(tab.published_models[0])
+    assert tab.progress is first
+    assert bridge.calls == [
+        (
+            images_mod.IMPORT_KEY,
+            "import_image",
+            ("https://ch.example/alpine.tar.zst",),
+        )
+    ]
+    tab.on_succeeded(
+        images_mod.IMPORT_KEY, {"ref": "alpine:3.21", "hash": "c" * 64}
+    )
+    assert tab.progress is None and not first.isVisible()
+    window.close()
+
+
+def test_a_stale_page_answer_keeps_the_fresher_catalog(qt) -> None:
+    """The catalog's epoch (#964, the review's stale revert): a
+    page flight that predates a catalog refresh an action landed
+    cannot land its older catalog half over the fresher rows —
+    the channel's half still takes, the catalog keeps what the
+    action showed."""
+    tab, window, bridge = make_tab(qt)
+    bridge.calls.clear()
+    tab.refresh()  # the page flight goes out, its epoch read
+    assert tab.pending
+    # The import lands under it: its catalog refresh bumps the
+    # epoch and goes out.
+    tab.start_import(tab.published_models[1])
+    tab.on_succeeded(
+        images_mod.IMPORT_KEY, {"ref": "alpine:3.21", "hash": "c" * 64}
+    )
+    assert bridge.calls[-1] == (images_mod.CATALOG_KEY, "images", ())
+    landed = [dict(catalog_raw()[1], default=True)]
+    tab.on_succeeded(images_mod.CATALOG_KEY, landed)  # the fresh catalog
+    tab.on_succeeded(images_mod.PAGE_KEY, page_answer())  # the stale page
+    assert not tab.pending
+    # The fresher catalog stands: Ubuntu, now the default.
+    assert rows_texts(tab.catalog_table) == [
+        ["ubuntu:24.04", "default", "b" * 12, "2026-01-03 03:04"]
+    ]
+    # The channel's half took: the published rows still show.
+    assert tab.published_table.rowCount() == 2
+    assert tab.status.text() == "1 in the catalog · 2 published"
+    window.close()
+
+
+def test_the_hold_follows_the_build_not_the_ref(qt) -> None:
+    """The catalog's carry key (#964, the review's twin builds):
+    a rebuilt archive shares the ref under another hash, and the
+    hold follows the build the operator held — its hash cell
+    after the rebuild, whatever slot the reading order moved it
+    to."""
+    twins = [
+        dict(catalog_raw()[0], hash="a" * 64, imported="2026-01-02T03:04:05"),
+        dict(catalog_raw()[0], hash="b" * 64, imported="2026-01-01T03:04:05"),
+    ]
+    bridge = StubBridge()
+    tab = images_mod.ImagesTab(bridge, CHANNEL)
+    window = qt.QtWidgets.QMainWindow()
+    window.setCentralWidget(tab)
+    window.resize(1600, 760)
+    window.show()
+    tab.on_succeeded(images_mod.PAGE_KEY, page_answer(twins))
+    tab.catalog_table.selectRow(1)  # the older build of the ref
+    held = tab.catalog_table.item(1, 2).text()
+    assert held == "b" * 12
+    # The rebuild flips the import stamps: the held build now
+    # leads the block — the hold follows it to the top slot.
+    flipped = [dict(twins[1], imported="2026-01-03T03:04:05"), twins[0]]
+    tab.on_succeeded(images_mod.CATALOG_KEY, flipped)
+    assert tab.catalog_table.currentRow() == 0
+    assert tab.catalog_table.item(0, 2).text() == held
+    window.close()
+
+
+def test_the_first_rows_hold_the_first_row(qt) -> None:
+    """The first fill's own hold (#964, the listing's rule): a
+    group that first shows rows holds its first row — the
+    keyboard and the eye start somewhere."""
+    tab, window, _bridge = make_tab(qt)
+    assert tab.catalog_table.currentRow() == 0
+    assert tab.published_table.currentRow() == 0
+    assert tab.catalog_table.item(0, 0).text() == "debian:13.6"
+    window.close()
+
+
+def test_the_columns_sort_with_the_arrow(qt) -> None:
+    """Both panes' columns sort (#964): the REF column holds the
+    standing ascending sort with its arrow, a header click sorts
+    by the column — the rank cells by their carried ranks, the
+    dates by their moments and the sizes by their whole MiB, a
+    text order the labels disagree with — and the arrow moves
+    with the click, across a refresh too."""
+    tab, window, _bridge = make_tab(qt)
+    order = qt.QtCore.Qt.SortOrder
+    for table in (tab.catalog_table, tab.published_table):
+        header = table.horizontalHeader()
+        assert header.isSortIndicatorShown()
+        assert header.sortIndicatorSection() == 0
+        assert header.sortIndicatorOrder() == order.AscendingOrder
+
+    def click(table, column: int) -> None:
+        header = table.horizontalHeader()
+        center = qt.QtCore.QPoint(
+            header.sectionViewportPosition(column)
+            + header.sectionSize(column) // 2,
+            header.height() // 2,
+        )
+        qt.QtTest.QTest.mouseClick(
+            header.viewport(),
+            qt.QtCore.Qt.MouseButton.LeftButton,
+            pos=center,
+        )
+
+    published = tab.published_table
+    click(published, cells.SIZE_COLUMN)
+    sizes = [
+        published.item(row, cells.SIZE_COLUMN).text()
+        for row in range(published.rowCount())
+    ]
+    assert sizes == ["50 MiB", "100 MiB"]  # whole MiB, not text
+    assert (
+        published.horizontalHeader().sortIndicatorSection()
+        == cells.SIZE_COLUMN
+    )
+    # A refresh keeps the operator's sort: the fill re-applies
+    # the indicator the click left.
+    tab.on_succeeded(images_mod.PAGE_KEY, page_answer())
+    assert (
+        published.horizontalHeader().sortIndicatorSection()
+        == cells.SIZE_COLUMN
+    )
+    assert [
+        published.item(row, cells.SIZE_COLUMN).text()
+        for row in range(published.rowCount())
+    ] == ["50 MiB", "100 MiB"]
+
+    catalog = tab.catalog_table
+    click(catalog, cells.IMPORTED_COLUMN)
+    imported = [
+        catalog.item(row, cells.IMPORTED_COLUMN).text()
+        for row in range(catalog.rowCount())
+    ]
+    assert imported == ["2026-01-02 03:04", "2026-01-03 03:04"]
+    click(catalog, cells.IMPORTED_COLUMN)  # the toggle
+    assert [
+        catalog.item(row, cells.IMPORTED_COLUMN).text()
+        for row in range(catalog.rowCount())
+    ] == ["2026-01-03 03:04", "2026-01-02 03:04"]
+    window.close()
+
+
+def test_a_missing_cell_sizes_past(qt) -> None:
+    """The sizing pass over a half-filled row (#964): a cell the
+    table does not hold restores nothing and fits nothing — the
+    pass sizes past it and crashes no one."""
+    tab, window, _bridge = make_tab(qt)
+    tab.published_table.takeItem(0, cells.SIZE_COLUMN)
+    tab.size_columns()
+    assert tab.published_table.item(0, cells.SIZE_COLUMN) is None
+    window.close()
+
+
+def test_a_dash_import_date_sorts_as_the_oldest(qt) -> None:
+    """The import-date rank's floor (#964): a row without a
+    usable stamp — the honest dash — carries the oldest rank
+    and sinks on the column's newest-first read."""
+    stamped = dict(catalog_raw()[0], imported=None)
+    bridge = StubBridge()
+    tab = images_mod.ImagesTab(bridge, CHANNEL)
+    window = qt.QtWidgets.QMainWindow()
+    window.setCentralWidget(tab)
+    window.resize(1600, 760)
+    window.show()
+    tab.on_succeeded(
+        images_mod.PAGE_KEY, page_answer([stamped, catalog_raw()[1]], [])
+    )
+    catalog = tab.catalog_table
+    catalog.sortItems(
+        cells.IMPORTED_COLUMN,
+        qt.QtCore.Qt.SortOrder.DescendingOrder,
+    )
+    assert catalog.item(0, cells.IMPORTED_COLUMN).text() == "2026-01-03 03:04"
+    assert catalog.item(1, cells.IMPORTED_COLUMN).text() == "-"
+    window.close()
+
+
+def test_a_press_on_the_blank_header_stretch_sorts_nothing(qt) -> None:
+    """A header press on no section (#964): the blank stretch
+    past the last column reaches Qt's own handling — the tab
+    sorts nothing and the standing indicator stands."""
+    tab, window, _bridge = make_tab(qt)
+    header = tab.catalog_table.horizontalHeader()
+    press = qt.QtCore.QEvent.Type.MouseButtonPress
+    mods = qt.QtCore.Qt.KeyboardModifier.NoModifier
+    blank = qt.QtGui.QMouseEvent(
+        press,
+        qt.QtCore.QPointF(9000, 4),
+        qt.QtCore.QPointF(9000, 4),
+        qt.QtCore.Qt.MouseButton.LeftButton,
+        qt.QtCore.Qt.MouseButton.LeftButton,
+        mods,
+    )
+    assert tab.eventFilter(header.viewport(), blank) is False
+    assert header.sortIndicatorSection() == 0
+    window.close()
+
+
+def test_the_third_click_returns_to_ascending(qt) -> None:
+    """The sort's full cycle (#964): a new column ascending, the
+    same column toggled — and the third click back to
+    ascending, the arrow reading the order the rows hold
+    throughout."""
+    tab, window, _bridge = make_tab(qt)
+    catalog = tab.catalog_table
+    header = catalog.horizontalHeader()
+    order = qt.QtCore.Qt.SortOrder
+
+    def click(column: int) -> None:
+        center = qt.QtCore.QPoint(
+            header.sectionViewportPosition(column)
+            + header.sectionSize(column) // 2,
+            header.height() // 2,
+        )
+        qt.QtTest.QTest.mouseClick(
+            header.viewport(),
+            qt.QtCore.Qt.MouseButton.LeftButton,
+            pos=center,
+        )
+
+    click(cells.IMPORTED_COLUMN)
+    assert header.sortIndicatorOrder() == order.AscendingOrder
+    click(cells.IMPORTED_COLUMN)
+    assert header.sortIndicatorOrder() == order.DescendingOrder
+    click(cells.IMPORTED_COLUMN)
+    assert header.sortIndicatorOrder() == order.AscendingOrder
+    assert [
+        catalog.item(row, cells.IMPORTED_COLUMN).text()
+        for row in range(catalog.rowCount())
+    ] == ["2026-01-02 03:04", "2026-01-03 03:04"]
+    window.close()
+
+
+def test_a_row_without_its_first_cell_sizes_past(qt) -> None:
+    """The sizing over a row whose first cell left (#964): the
+    row's model reads None and both text passes skip it — no
+    crash, the rest of the pane sizes whole."""
+    tab, window, _bridge = make_tab(qt)
+    tab.published_table.takeItem(0, 0)
+    tab.size_columns()
+    assert tab.published_table.item(0, 1) is not None
+    window.close()
+
+
+def test_the_package_presents_its_parts_lazily() -> None:
+    """The package's lazy presentation (#964, the terminal
+    package's own pattern): importing ``gui.images`` alone
+    loads no Qt, and a name the package does not carry answers
+    its own AttributeError."""
+    import sys
+
+    for name in list(sys.modules):
+        if name.startswith("msks.client.gui.images"):
+            del sys.modules[name]
+    import msks.client.gui.images as package
+
+    assert not any(
+        name.startswith("msks.client.gui.images.") for name in sys.modules
+    )
+    assert package.ImagesTab is not None  # the lazy load happens
+    import pytest
+
+    with pytest.raises(AttributeError):
+        package.no_such_part

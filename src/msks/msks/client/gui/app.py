@@ -321,10 +321,17 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     app.aboutToQuit.connect(bridge.stop)
     window = QtWidgets.QMainWindow()
     window.setWindowTitle(WINDOW_TITLE)
-    # allow-deferred-import — the Images tab (#964) carries the
-    # same contract: PySide6 at module scope, loaded only on the
-    # window path.
-    from .images import ImagesTab, channel_url
+    # allow-deferred-import — the Images tab's cells (#964):
+    # the channel URL, plain data beside the Qt-bearing tab.
+    from .images.cells import channel_url
+
+    # allow-deferred-import — the Images tab itself (#964)
+    # carries the screens' contract: PySide6 at module scope,
+    # loaded only on the window path — the package's init
+    # presents it lazily, and the import takes the defining
+    # submodule, not the package's presentation (the
+    # names-from-definers rule).
+    from .images.tab import ImagesTab
 
     # allow-deferred-import — the strip carries the screens'
     # own shape (#962): the screens land under the Workspaces

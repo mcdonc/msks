@@ -18,26 +18,46 @@ designation. Refusals and failures flash the status line, the
 listing's own contract (#904).
 
 This module imports PySide6 at module scope — the same contract
-as the screens' modules: nothing imports it at CLI parse time,
-and ``.app``'s window path imports it lazily, after its guards.
+as the screens' modules: the package's init imports none of it
+at parse time, and ``.app``'s window path loads it after its
+guards.
 """
 
 import time
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from ..config import DEFAULT_IMAGE_MANIFEST_URL
-from ..data import RestFailure
-from ..images import info_lines
-from .bridge import Bridge
-from .imagerows import (
+from ...data import RestFailure
+from ...images import info_lines
+from ..bridge import Bridge
+from ..imagerows import (
     IMPORTED_MARKER,
     CatalogRow,
     PublishedRow,
     catalog_rows,
     published_rows,
 )
-from .listtable import ListTable
+from ..listtable import ListTable
+from .cells import (
+    CATALOG_COLUMNS,
+    CATALOG_GROUP,
+    CELL_MARGIN,
+    DESC_COLUMN,
+    HASH_COLUMN,
+    PUBLISHED_COLUMNS,
+    PUBLISHED_GROUP,
+    bold_header,
+    built_rank,
+    counts_text,
+    default_cell,
+    imported_rank,
+    imported_text,
+    importing_label,
+    published_cells,
+    ranked_item,
+    read_only_item,
+    size_rank,
+)
 
 #: The tab's gathered refresh key (#964): the open's first read
 #: and the manual refresh's — one flight, both groups.
@@ -70,82 +90,11 @@ IMPORT_TICK_MS = 1000
 #: whatever a rebuild did to the row slots.
 ROW_INDEX_ROLE = QtCore.Qt.ItemDataRole.UserRole
 
-#: The catalog table's columns (#964) — the TUI group's own
-#: cells: the ref, the default marker, the hash prefix, and the
-#: import date.
-CATALOG_COLUMNS = ("REF", "DEFAULT", "HASH", "IMPORTED")
-
-#: The published table's columns (#964) — the TUI group's own
-#: cells: the ref, the baked description, the download size,
-#: the hash prefix, the build date, and the membership marker.
-PUBLISHED_COLUMNS = (
-    "REF",
-    "DESCRIPTION",
-    "SIZE",
-    "HASH",
-    "BUILT",
-    "MARKER",
-)
-
-#: The first group's label (#565, the GUI's read).
-CATALOG_GROUP = "In the catalog"
-
-#: The second group's label (#565).
-PUBLISHED_GROUP = "Published"
-
-
-def channel_url(conf) -> str:
-    """The channel manifest's URL (#964): the configured
-    override when one resolved, else the default the TUI page
-    reads — one source both clients share."""
-    return (
-        getattr(conf, "image_manifest_url", None) or DEFAULT_IMAGE_MANIFEST_URL
-    )
-
-
-def read_only_item(
-    item: QtWidgets.QTableWidgetItem,
-) -> QtWidgets.QTableWidgetItem:
-    """One cell that renders but never edits (#939's rule, the
-    images tab's own read): the groups are views over the
-    daemon's and the channel's state, and an edit would paint a
-    value only the display holds."""
-    item.setFlags(item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable)
-    return item
-
-
-def default_cell(model: CatalogRow) -> str:
-    """The default column's text (#964): the designation the
-    marker column carries, a dash on every other row."""
-    return "default" if model.default else "-"
-
-
-def importing_label(ref: str, elapsed_s: int) -> str:
-    """The import dialog's line (#964): the TUI importing
-    modal's own — the chosen ref, what the daemon does with the
-    archive, and the elapsed wait."""
-    return (
-        f"importing {ref} — the daemon downloads and verifies "
-        f"the archive… {elapsed_s}s"
-    )
-
-
-def imported_text(record: dict) -> str:
-    """The import's landing flash (#964): the registered
-    reference and its short hash, the CLI import's own line."""
-    return f"imported {record['ref']} ({record['hash'][:12]})"
-
-
-def counts_text(catalog: list, published: list) -> str:
-    """The standing status after a refresh (#964): the two
-    groups' counts — or, with both empty, the TUI page's own
-    advice to import once from a channel URL."""
-    if not catalog and not published:
-        return (
-            "the catalog and the channel both carry nothing — "
-            "import from a channel URL once one is published"
-        )
-    return f"{len(catalog)} in the catalog · {len(published)} published"
+#: The row's own identity on its first cell (#964): the hash
+#: for a catalog row, the url for a published one — the carry
+#: keys on the row the operator held, not its slot and not its
+#: ref (a rebuilt archive shares the ref under another hash).
+ROW_KEY_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
 
 
 def action_reply_text(key: str, label: str) -> str:
@@ -211,6 +160,12 @@ class ImagesTab(QtWidgets.QWidget):
         self.published_raw: list[dict] = []
         self.catalog_models: list[CatalogRow] = []
         self.published_models: list[PublishedRow] = []
+        # The catalog's epoch (#964): bumped by every catalog
+        # refresh an action lands, read by the page flight at
+        # its issue — a page answer that predates a fresher
+        # catalog read keeps the fresher rows.
+        self.catalog_writes = 0
+        self.page_epoch = 0
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
         self.catalog_table = ListTable(0, len(CATALOG_COLUMNS), self)
@@ -275,7 +230,24 @@ class ImagesTab(QtWidgets.QWidget):
             f"QTableView::item {{ border-bottom: 1px solid {rule}; }}"
         )
         table.verticalHeader().setVisible(False)
-        table.horizontalHeader().setStretchLastSection(True)
+        bold_header(table)
+        # The header's presses belong to the tab (#964): the
+        # sort a click means — a new column ascending, the same
+        # column toggled — is the tab's own rule, applied with
+        # its arrow; Qt's own first-click order reads against
+        # its arrow and is set aside.
+        table.horizontalHeader().viewport().installEventFilter(self)
+        # The columns sort (#964): a header click orders the
+        # rows — the rank cells by their carried ranks — and the
+        # sorted-by column carries the arrow. The REF column
+        # holds the standing ascending sort, the presenter's own
+        # reading order; a fill pauses the sorting for its swap
+        # and re-applies whatever the indicator holds.
+
+        table.setSortingEnabled(True)
+        table.horizontalHeader().setSortIndicator(
+            0, QtCore.Qt.SortOrder.AscendingOrder
+        )
 
     @QtCore.Slot()
     def refresh(self) -> None:
@@ -288,15 +260,19 @@ class ImagesTab(QtWidgets.QWidget):
             return
         self.pending = True
         self.standing("fetching the catalog and the published manifest…")
+        self.page_epoch = self.catalog_writes
         self.bridge.call(PAGE_KEY, "images_page", self.url)
 
     def refresh_catalog(self) -> None:
         """The catalog-only refresh (#964): the read an action's
         landing takes — the channel's rows did not change, and
         the published group's markers move against the new
-        catalog alone."""
+        catalog alone. The epoch bumps here, so a page flight
+        already out — its catalog read possibly older than this
+        one's — cannot land its half over the fresher rows."""
         if self.catalog_pending:
             return
+        self.catalog_writes += 1
         self.catalog_pending = True
         self.bridge.call(CATALOG_KEY, "images")
 
@@ -330,13 +306,15 @@ class ImagesTab(QtWidgets.QWidget):
 
     def page_landed(self, result: object) -> None:
         """The gathered answer (#964): both groups rebuild from
-        the presenter's models, the raw rows cached for the
-        detail view and the after-action markers, and a standing
-        outage resolves — an answer came."""
+        the presenter's models — the published half always, the
+        catalog half only when no fresher catalog read landed
+        under the flight — the raw rows cached for the detail
+        view and the after-action markers."""
         self.pending = False
         page = result or {}
-        self.catalog_raw = list(page.get("catalog") or [])
         self.published_raw = list(page.get("published") or [])
+        if self.page_epoch == self.catalog_writes:
+            self.catalog_raw = list(page.get("catalog") or [])
         self.rebuild()
         self.standing(counts_text(self.catalog_raw, self.published_raw))
 
@@ -362,74 +340,282 @@ class ImagesTab(QtWidgets.QWidget):
 
     def fill_catalog(self, models: list[CatalogRow]) -> None:
         """The catalog group's rows (#964): one per model, the
-        selection carried by ref across the rebuild — an
-        operator's held row follows its image wherever the
-        reading order lands it."""
+        selection carried by the row's own hash across the
+        rebuild — a hold follows its build wherever the reading
+        order lands it, and a rebuilt archive's twin under the
+        same ref never takes another build's hold."""
         held = self.held_first(self.catalog_table)
+        was_empty = self.catalog_table.rowCount() == 0
         table = self.catalog_table
+        table.setSortingEnabled(False)
         table.setRowCount(len(models))
         for index, model in enumerate(models):
             ref = read_only_item(QtWidgets.QTableWidgetItem(model.ref))
             ref.setData(ROW_INDEX_ROLE, index)
+            ref.setData(ROW_KEY_ROLE, model.hash)
             table.setItem(index, 0, ref)
-            cells = (default_cell(model), model.hash_prefix, model.imported)
-            for column, cell in enumerate(cells, start=1):
-                table.setItem(
-                    index,
-                    column,
-                    read_only_item(QtWidgets.QTableWidgetItem(cell)),
-                )
+            cells = (
+                (default_cell(model), 1 if model.default else 0),
+                (model.hash_prefix, None),
+                (model.imported, imported_rank(model.imported)),
+            )
+            for column, (cell, rank) in enumerate(cells, start=1):
+                table.setItem(index, column, ranked_item(cell, rank))
         self.catalog_models = models
-        self.restore_first(table, held)
-        table.resizeColumnsToContents()
+        table.setSortingEnabled(True)
+        self.settle_hold(table, held, was_empty)
+        self.size_columns()
 
     def fill_published(self, models: list[PublishedRow]) -> None:
         """The published group's rows (#964): one per model in
-        the manifest's own order, the same selection carry."""
+        the manifest's own order, the selection carried by the
+        row's url — the same settle."""
         held = self.held_first(self.published_table)
+        was_empty = self.published_table.rowCount() == 0
         table = self.published_table
+        table.setSortingEnabled(False)
         table.setRowCount(len(models))
         for index, model in enumerate(models):
-            ref = read_only_item(QtWidgets.QTableWidgetItem(model.ref))
-            ref.setData(ROW_INDEX_ROLE, index)
-            table.setItem(index, 0, ref)
-            cells = (
-                model.description,
-                model.size,
-                model.hash_prefix,
-                model.built,
-                model.marker,
+            ranks = (
+                None,
+                None,
+                size_rank(model.size),
+                None,
+                built_rank(model.built),
+                None,
             )
-            for column, cell in enumerate(cells, start=1):
-                table.setItem(
-                    index,
-                    column,
-                    read_only_item(QtWidgets.QTableWidgetItem(cell)),
-                )
+            for column, cell in enumerate(published_cells(model)):
+                item = ranked_item(cell, ranks[column])
+                if column == 0:
+                    item.setData(ROW_INDEX_ROLE, index)
+                    item.setData(ROW_KEY_ROLE, model.url)
+                table.setItem(index, column, item)
         self.published_models = models
-        self.restore_first(table, held)
-        table.resizeColumnsToContents()
+        table.setSortingEnabled(True)
+        self.settle_hold(table, held, was_empty)
+        self.size_columns()
 
-    def held_first(self, table: ListTable) -> str | None:
-        """The current row's first cell (#964): the content the
-        selection carries across a rebuild, or None with no
+    def size_columns(self) -> None:
+        """Both groups' columns against the panes' widths
+        (#964): the catalog group's columns share the spare —
+        every column at least its content, the group filling the
+        pane's whole width — and the published group's identity
+        columns keep their whole values while the description
+        and the hash share what remains, a narrow pane
+        ellipsizing the description first and the hash only
+        after its floor: no horizontal scrollbar, every row's
+        cells whole to read whatever the pane's width. The
+        published pass pauses the sorting for its text
+        rewrites — a cell the eliding rewrites would re-sort
+        mid-swap and scramble the rows — and resumes after, the
+        indicator re-applied."""
+        self.size_catalog_columns()
+        table = self.published_table
+        table.setSortingEnabled(False)
+        self.size_published_columns()
+        table.setSortingEnabled(True)
+
+    def size_catalog_columns(self) -> None:
+        """The catalog group's columns (#964): every column at
+        least as wide as its longest value — the header's own
+        label included — and the spare beyond that split evenly
+        across the columns, an odd cell to the earlier ones, the
+        listing's own arithmetic (#347) so the group consumes
+        the pane's whole horizontal space."""
+        table = self.catalog_table
+        table.resizeColumnsToContents()
+        spare = self.table_spare(table)
+        if spare <= 0:
+            return
+        count = table.columnCount()
+        share, extra = divmod(spare, count)
+        for column in range(count):
+            table.setColumnWidth(
+                column,
+                table.columnWidth(column)
+                + share
+                + (1 if column < extra else 0),
+            )
+
+    def size_published_columns(self) -> None:
+        """The published group's columns (#964): the identity
+        columns — ref, size, build date, marker — keep their
+        whole values, and the description and the hash share
+        what remains: the spare goes to the description (the
+        TUI page's own absorber), and a pane without room takes
+        ground from the description first, the hash after it —
+        and, below their floors, from every column alike, so the
+        pane reads whole rows at any width: no horizontal
+        scrollbar, the narrow cells ellipsized in the middle
+        within what the arithmetic left them."""
+        table = self.published_table
+        self.restore_whole_texts()
+        table.resizeColumnsToContents()
+        widths = [
+            table.columnWidth(column) for column in range(table.columnCount())
+        ]
+        spare = self.table_spare(table)
+        if spare > 0:
+            table.setColumnWidth(DESC_COLUMN, widths[DESC_COLUMN] + spare)
+        else:
+            spare = self.shrink_to_floor(table, widths, DESC_COLUMN, spare)
+            spare = self.shrink_to_floor(table, widths, HASH_COLUMN, spare)
+            if spare < 0:
+                self.share_deficit(table, spare)
+        self.fit_elided(widths)
+
+    def shrink_to_floor(
+        self, table: ListTable, widths: list[int], column: int, spare: int
+    ) -> int:
+        """One elidable column's ground (#964): down to its
+        floor — its header's own label and the cell margin —
+        and no further, whatever remains of the deficit."""
+        give = min(widths[column] - self.column_floor(table, column), -spare)
+        table.setColumnWidth(column, widths[column] - give)
+        return spare + give
+
+    def share_deficit(self, table: ListTable, spare: int) -> None:
+        """The impossible pane's arithmetic (#964): with the
+        description and the hash at their floors the identity
+        columns' whole values still run past the viewport, so
+        every column gives an equal slice of the deficit — the
+        pane keeps every row's cells to read, each ellipsized,
+        where a scrollbar would hide them."""
+        count = table.columnCount()
+        share, extra = divmod(-spare, count)
+        for column in range(count):
+            width = table.columnWidth(column)
+            give = share + (1 if column < extra else 0)
+            table.setColumnWidth(column, max(width - give, 1))
+
+    def row_model(self, table: ListTable, row: int) -> PublishedRow | None:
+        """The model a table row shows (#964): read through the
+        row's index role — a sort moves rows and models apart,
+        and the text passes follow the row, never the list's
+        order."""
+        item = table.item(row, 0)
+        if item is None:
+            return None
+        return self.published_models[item.data(ROW_INDEX_ROLE)]
+
+    def restore_whole_texts(self) -> None:
+        """The elidable cells' whole values back (#964): the
+        sizing pass measures them afresh — an elided display
+        from a narrower pane must not shrink the natural width a
+        wider one measures."""
+        table = self.published_table
+        for row in range(table.rowCount()):
+            model = self.row_model(table, row)
+            if model is None:
+                continue
+            for column, value in enumerate(published_cells(model)):
+                item = table.item(row, column)
+                if item is not None:
+                    item.setText(value)
+
+    def table_spare(self, table: ListTable) -> int:
+        """The pane's width beyond the columns' current total
+        (#964): what the sizing has to give or take."""
+        return table.viewport().width() - sum(
+            table.columnWidth(column) for column in range(table.columnCount())
+        )
+
+    def column_floor(self, table: ListTable, column: int) -> int:
+        """A shrinking column's floor (#964): its header's own
+        label and the cell margin — a column never reads below
+        the word that names it."""
+        metrics = table.fontMetrics()
+        label = table.model().headerData(
+            column, QtCore.Qt.Orientation.Horizontal
+        )
+        return metrics.horizontalAdvance(str(label)) + CELL_MARGIN
+
+    def fit_elided(self, naturals: list[int]) -> None:
+        """The published cells' display (#964): every cell
+        ellipsized in the middle within the width its column
+        ended with — the budget pays the column's own padding
+        first, so a cell that fits its column reads whole. The
+        whole values stay on the models, so a wider pane
+        restores them."""
+        table = self.published_table
+        metrics = table.fontMetrics()
+        for column in range(table.columnCount()):
+            overhead = self.column_overhead(
+                table, metrics, column, naturals[column]
+            )
+            budget = table.columnWidth(column) - overhead
+            for row in range(table.rowCount()):
+                model = self.row_model(table, row)
+                if model is None:
+                    continue
+                item = table.item(row, column)
+                if item is None:
+                    continue
+                value = published_cells(model)[column]
+                item.setText(
+                    metrics.elidedText(
+                        value,
+                        QtCore.Qt.TextElideMode.ElideMiddle,
+                        budget,
+                    )
+                )
+
+    def column_overhead(
+        self, table: ListTable, metrics, column: int, natural: int
+    ) -> int:
+        """The column's own padding (#964): the natural width
+        resizeColumnsToContents gave it beyond its longest whole
+        value or its header — the part of the width no text may
+        spend, so an elide budget of the column's whole width
+        still shows a value that fits."""
+        longest = max(
+            (
+                metrics.horizontalAdvance(published_cells(model)[column])
+                for model in self.published_models
+            ),
+            default=0,
+        )
+        label = table.model().headerData(
+            column, QtCore.Qt.Orientation.Horizontal
+        )
+        return max(
+            natural - max(longest, metrics.horizontalAdvance(str(label))),
+            0,
+        )
+
+    def held_first(self, table: ListTable) -> object:
+        """The current row's identity (#964): the carry key its
+        first cell holds — the hash, the url — or None with no
         current row."""
         row = table.currentRow()
         if row < 0:
             return None
         item = table.item(row, 0)
-        return item.text() if item is not None else None
+        return item.data(ROW_KEY_ROLE) if item is not None else None
 
-    def restore_first(self, table: ListTable, held: str | None) -> None:
+    def settle_hold(
+        self, table: ListTable, held: object, was_empty: bool
+    ) -> None:
+        """The hold after a rebuild (#964, the listing's own
+        rule): the first rows a group ever shows hold the first
+        row — the keyboard and the eye start somewhere — and a
+        held row follows its own key wherever the rebuild lands
+        it."""
+        if held is None and was_empty and table.rowCount() > 0:
+            table.selectRow(0)
+            return
+        self.restore_first(table, held)
+
+    def restore_first(self, table: ListTable, held: object) -> None:
         """The held row back on the rebuilt table (#964): the
-        row whose first cell still reads the held content, whole
-        and current — a row the rebuild dropped simply loses its
+        row whose own key still reads the held one, whole and
+        current — a row the rebuild dropped simply loses its
         hold."""
         if held is None:
             return
         for row in range(table.rowCount()):
             item = table.item(row, 0)
-            if item is not None and item.text() == held:
+            if item is not None and item.data(ROW_KEY_ROLE) == held:
                 table.selectRow(row)
                 table.setCurrentItem(item)
                 return
@@ -498,7 +684,10 @@ class ImagesTab(QtWidgets.QWidget):
         the archive again to verify bytes it holds, and the
         flash names the ref so the skip reads as intentional.
         Any other row posts its URL behind the progress dialog,
-        which holds the wait until the daemon answers."""
+        modal over the window and one flight at a time, and the
+        dialog holds the wait until the daemon answers."""
+        if self.progress is not None:
+            return  # one import flight at a time, the actions' gate
         if model.marker == IMPORTED_MARKER:
             self.flash(f"{model.ref} is already in the catalog")
             return
@@ -508,6 +697,7 @@ class ImagesTab(QtWidgets.QWidget):
             importing_label(model.ref, 0), None, 0, 0, self
         )
         self.progress.setWindowTitle("Import image")
+        self.progress.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
         self.progress.show()
         self.import_timer.start()
         self.bridge.call(IMPORT_KEY, "import_image", model.url)
@@ -518,7 +708,7 @@ class ImagesTab(QtWidgets.QWidget):
         refresh shows the new row with its marker."""
         self.land_import()
         record = result if isinstance(result, dict) else {}
-        if "ref" in record:
+        if "ref" in record and "hash" in record:
             self.flash(imported_text(record))
         self.refresh_catalog()
 
@@ -659,24 +849,83 @@ class ImagesTab(QtWidgets.QWidget):
             self.refresh()
         super().showEvent(event)
 
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        """A resized pane re-flows both groups' columns (#964):
+        the catalog's spare shares out again, and the published
+        pane's description and hash take the new width's
+        arithmetic — never a horizontal scrollbar. A wrapper
+        without its tables (#959) sizes nothing."""
+        if getattr(self, "published_table", None) is not None:
+            self.size_columns()
+        super().resizeEvent(event)
+
     def eventFilter(
         self, watched: QtCore.QObject, event: QtCore.QEvent
     ) -> bool:
+        """The tab's filtered gestures (#962's rule, #964's
+        own): the refresh button's arrows — Up handing the
+        keyboard to whatever stands above the tab, Down entering
+        the groups below — and a group header's press, the sort
+        the click means applied by the tab's own rule."""
+        if self.button_key(watched, event):
+            return True
+        if self.header_sorted(watched, event):
+            return True
+        return super().eventFilter(watched, event)
+
+    def button_key(self, watched: QtCore.QObject, event) -> bool:
         """The refresh button's arrow bridges (#962's rule): Up
         hands the keyboard to whatever stands above the tab —
         the strip — and Down enters the groups below, so the
-        arrows cross the page in reading order without a Tab."""
-        if watched is self.refresh_button and (
-            event.type() == QtCore.QEvent.Type.KeyPress
+        arrows cross the page in reading order without a Tab.
+        The button's own chain walk, not the tab's: the move
+        starts from where the operator stands."""
+        if watched is not self.refresh_button or (
+            event.type() != QtCore.QEvent.Type.KeyPress
         ):
-            # The button's own chain walk, not the tab's: the
-            # move starts from where the operator stands.
-            if event.key() == QtCore.Qt.Key.Key_Up:
-                QtWidgets.QWidget.focusNextPrevChild(
-                    self.refresh_button, False
+            return False
+        if event.key() == QtCore.Qt.Key.Key_Up:
+            QtWidgets.QWidget.focusNextPrevChild(self.refresh_button, False)
+            return True
+        if event.key() == QtCore.Qt.Key.Key_Down:
+            QtWidgets.QWidget.focusNextPrevChild(self.refresh_button, True)
+            return True
+        return False
+
+    def header_sorted(self, watched: QtCore.QObject, event) -> bool:
+        """A press on a group's header (#964): the sort the
+        click means — a new column ascending, the same column
+        toggled — applied through the table's own sort with its
+        arrow on the column, the press swallowed so Qt's own
+        first-click order never reads against its arrow."""
+        for table in (self.catalog_table, self.published_table):
+            header = table.horizontalHeader()
+            if watched is header.viewport() and (
+                event.type()
+                in (
+                    QtCore.QEvent.Type.MouseButtonPress,
+                    QtCore.QEvent.Type.MouseButtonRelease,
                 )
-                return True
-            if event.key() == QtCore.Qt.Key.Key_Down:
-                QtWidgets.QWidget.focusNextPrevChild(self.refresh_button, True)
-                return True
-        return super().eventFilter(watched, event)
+            ):
+                if event.type() == QtCore.QEvent.Type.MouseButtonRelease:
+                    return True  # the press sorted; Qt's own
+                    # click path never lands on top of it
+                return self.sort_pressed(table, header, event)
+        return False
+
+    def sort_pressed(self, table: ListTable, header, event) -> bool:
+        """The pressed header's own sort (#964): the section the
+        press names, ordered by the tab's rule — a press on no
+        section (the blank stretch, a grip) sorts nothing and
+        reaches Qt's own handling."""
+        section = header.logicalIndexAt(event.position().toPoint())
+        if section < 0:
+            return False
+        if header.sortIndicatorSection() != section:
+            order = QtCore.Qt.SortOrder.AscendingOrder
+        elif header.sortIndicatorOrder() == QtCore.Qt.SortOrder.AscendingOrder:
+            order = QtCore.Qt.SortOrder.DescendingOrder
+        else:
+            order = QtCore.Qt.SortOrder.AscendingOrder
+        table.sortByColumn(section, order)
+        return True

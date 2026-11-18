@@ -20,7 +20,14 @@ tagged `vX.Y.Z`.
   A catalog row opens its full record, Remove asks for
   confirmation, and Set as the default posts the designation;
   the channel URL follows `image_manifest_url` with the same
-  default the TUI page reads.
+  default the TUI page reads. Both panes' bold column headers
+  read as one table's chrome and their columns sort — the
+  sorted-by column carries its arrow, the dates and sizes
+  ordering by their moments and whole MiB rather than their
+  labels' spelling. The catalog pane's columns share the
+  window's whole width, and the published pane ellipsizes the
+  description first and the hash second, so no horizontal
+  scrollbar ever hides a row's cells.
 
 - **The GUI images presenter (#963).** The images tab gains
   its data layer: the daemon's catalog and the published
