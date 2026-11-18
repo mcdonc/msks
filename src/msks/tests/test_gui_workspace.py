@@ -204,8 +204,8 @@ def make_page(qt) -> tuple:
 
 def show_info(page) -> None:
     """The Info tab current (#974): the sections render under
-    it, and a non-current tab page's widgets read as hidden."""
-    page.tabs.setCurrentIndex(1)
+    it, and a non-current page of the body reads as hidden."""
+    page.bar.setCurrentIndex(1)
 
 
 def land(qt, page, bridge, row=None, doc=None) -> None:
@@ -241,20 +241,26 @@ def test_opening_a_row_shows_the_page(qt) -> None:
 
 
 def test_the_page_carries_top_level_shells_and_info_tabs(qt) -> None:
-    """The tab row beside the back arrow (#974): Shells first
-    and the default, Info beside it holding the detail content
-    — the mounts table, the health label, the events list."""
+    """The tab row on the back arrow's own row (#974): the
+    arrow, then Shells — the default — then Info, the status
+    line filling the rest; the body below holds the shell strip
+    and the detail content, the bar driving the stack."""
     page, window, bridge = make_page(qt)
-    assert [page.tabs.tabText(i) for i in range(page.tabs.count())] == [
+    assert page.chrome.itemAt(0).widget() is page.back_button
+    assert page.chrome.itemAt(1).widget() is page.bar
+    assert [page.bar.tabText(i) for i in range(page.bar.count())] == [
         "Shells",
         "Info",
     ]
-    assert page.tabs.currentIndex() == 0  # Shells, the default
-    assert page.tabs.widget(0) is page.shells
-    info = page.tabs.widget(1)
+    assert page.bar.currentIndex() == 0  # Shells, the default
+    assert page.stack.currentIndex() == 0
+    assert page.stack.widget(0) is page.shells
+    info = page.stack.widget(1)
     assert info.findChildren(type(page.mounts)) == [page.mounts]
     assert page.health in info.findChildren(type(page.health))
     assert info.findChildren(type(page.events)) == [page.events]
+    page.bar.setCurrentIndex(1)  # the bar drives the stack
+    assert page.stack.currentWidget() is info
 
 
 def test_an_open_with_no_shell_creates_one_and_focuses_it(qt) -> None:
@@ -284,10 +290,10 @@ def test_the_shows_back_button_anchors_when_no_shell_holds(qt) -> None:
     while the Info tab shows, the current shell's terminal
     while the Shells tab shows one."""
     page, window, bridge = make_page(qt)
-    page.tabs.setCurrentIndex(1)  # Info
+    page.bar.setCurrentIndex(1)  # Info
     page.anchor_focus()
     assert window.focusWidget() is page.back_button
-    page.tabs.setCurrentIndex(0)  # Shells, a shell current
+    page.bar.setCurrentIndex(0)  # Shells, a shell current
     page.anchor_focus()
     assert window.focusWidget() is page.hub.find("ws-a", 1).widget
 

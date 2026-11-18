@@ -88,8 +88,9 @@ def muted_note(text: str) -> QtWidgets.QLabel:
 
 class WorkspaceDetail(QtWidgets.QWidget):
     """One workspace's page (#945, #954, #971, #974): the tab
-    row — Shells, the default (#974), with the workspace's
-    terminal sessions as subtabs (#954), and Info beside it,
+    row beside the back arrow — Shells, the default (#974),
+    with the workspace's terminal sessions as subtabs (#954),
+    and Info beside it,
     the presenter's three sections (the mounts table with its
     next-start note, the health facts, the events list) — over
     the footer strip, the same one-line read the listing's own
@@ -149,19 +150,26 @@ class WorkspaceDetail(QtWidgets.QWidget):
         scroll = QtWidgets.QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setWidget(sections)
-        # The tab row (#974): Shells — the default, the
-        # workspace's terminal sessions as subtabs — and Info —
-        # the sections scroll. The strip re-hosts on every
-        # open, and the hub keeps the sessions themselves alive
-        # across visits (#954).
+        # The tab row beside the back arrow (#974): Shells —
+        # the default, the workspace's terminal sessions as
+        # subtabs — and Info — the sections scroll. The bar sits
+        # on the chrome's own row after the arrow and drives the
+        # stack below it. The strip re-hosts on every open, and
+        # the hub keeps the sessions themselves alive across
+        # visits (#954).
         self.shells = ShellTabs(hub)
         self.shells.new_shell.connect(self.want_shell)
-        self.tabs = QtWidgets.QTabWidget(self)
-        self.tabs.addTab(self.shells, SHELLS_LABEL)
-        self.tabs.addTab(scroll, INFO_LABEL)
+        self.bar = QtWidgets.QTabBar(self)
+        self.bar.addTab(SHELLS_LABEL)
+        self.bar.addTab(INFO_LABEL)
+        self.stack = QtWidgets.QStackedWidget(self)
+        self.stack.addWidget(self.shells)
+        self.stack.addWidget(scroll)
+        self.bar.currentChanged.connect(self.stack.setCurrentIndex)
+        self.chrome.insertWidget(1, self.bar)
         layout = QtWidgets.QVBoxLayout(self)
-        layout.addLayout(self.chrome)  # the top row, the list's own
-        layout.addWidget(self.tabs, stretch=1)
+        layout.addLayout(self.chrome)  # the arrow's own row
+        layout.addWidget(self.stack, stretch=1)
         layout.addWidget(self.footer)
         self.setLayout(layout)
         escape = QtGui.QShortcut(
@@ -238,13 +246,14 @@ class WorkspaceDetail(QtWidgets.QWidget):
         return box
 
     def build_chrome(self) -> None:
-        """The page's controls at the window's top (#945, #971):
-        back to the list — the theme's own left-pointing arrow,
-        drawn large, its tooltip and accessible name carrying
-        the word — and the status line a failed refresh flashes,
-        the same top row the listing's own actions sit in. The
-        page refreshes on its own timer (#971: no manual button);
-        its new-shell action is the tab strip's "+" (#969)."""
+        """The page's controls at the window's top (#945, #971,
+        #974): back to the list — the theme's own left-pointing
+        arrow, drawn large, its tooltip and accessible name
+        carrying the word — then the Shells and Info tabs, and
+        the status line a failed refresh flashes filling the
+        row's rest. The page refreshes on its own timer (#971:
+        no manual button); its new-shell action is the tab
+        strip's "+" (#969)."""
         back_button = QtWidgets.QPushButton(self)
         back_button.setIcon(
             self.style().standardIcon(
@@ -540,7 +549,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         the Back button otherwise — the Escape anchor the
         page's own shortcut needs. The strip's own focus paths
         (a new shell, a rename) take their own anchors."""
-        if self.tabs.currentWidget() is self.shells:
+        if self.stack.currentWidget() is self.shells:
             widget = self.shells.currentWidget()
             if widget is not None and widget is not self.shells.plus_page:
                 widget.setFocus()

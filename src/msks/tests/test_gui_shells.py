@@ -609,7 +609,7 @@ def test_the_shell_action_opens_the_detail_on_a_new_tab(qt, window_shell):
     shell.listing.table.selectRow(0)
     shell.listing.shell_button.click()
     assert shell.currentWidget() is shell.detail
-    assert shell.detail.tabs.currentIndex() == 0  # Shells, the default
+    assert shell.detail.bar.currentIndex() == 0  # Shells, the default
     assert strip_titles(shell.detail) == ["1", "+"]
     assert shell.detail.shells.currentIndex() == 0
 
