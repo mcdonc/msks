@@ -401,10 +401,15 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # the section models carry no part of, so the sections'
         # skip must not freeze the footer with them.
         self.render_footer(model)
-        # The window's title reads every answer too (#971): the
-        # list's label stands in until the row's own name lands,
-        # and a renamed workspace re-names the window at once.
-        self.window().setWindowTitle(f"{WINDOW_TITLE} — {model.label}")
+        # The window's title reads every answer too (#971), but
+        # only while the page owns the window: the shell feeds
+        # the hidden page deliberately (frames keep landing after
+        # Back), and a hidden page's answer must not re-name the
+        # window the list holds — the same own-current guard the
+        # removed-emit takes. A revisit names from the list
+        # again, and the row's own answer refines it here.
+        if not self.isHidden():
+            self.window().setWindowTitle(f"{WINDOW_TITLE} — {model.label}")
         if model == self.rendered:
             return
         self.rendered = model

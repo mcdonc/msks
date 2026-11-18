@@ -533,6 +533,37 @@ def test_the_rows_own_name_refines_the_window_title(qt) -> None:
     assert window.windowTitle() == "msks — renamed"
 
 
+def test_a_hidden_page_names_nothing(qt) -> None:
+    """A pushed frame or a late answer landing while the page
+    is hidden re-names the window not at all (#971): the list
+    holds the plain title, and the page's show re-asserts the
+    standing name."""
+    shell, window, bridge = make_shell(qt)
+    shell.listing.opened.emit("ws-a")
+    assert window.windowTitle() == "msks — alpha"
+    # the row's own answer lands and refines the name
+    shell.detail.on_succeeded(
+        qt.page_mod.ROW_KEY,
+        [dict(daemon_row(), name="renamed")],
+    )
+    assert window.windowTitle() == "msks — renamed"
+    shell.detail.go_back()
+    assert window.windowTitle() == "msks"
+    # a frame for the hidden page's workspace lands while the
+    # list shows
+    shell.frame_landed({"event": "workspace.status", "data": {"id": "ws-a"}})
+    assert window.windowTitle() == "msks"
+    # revisiting names from the list again (its row is stale),
+    # and the row's own answer refines it once it lands
+    shell.listing.opened.emit("ws-a")
+    assert window.windowTitle() == "msks — alpha"
+    shell.detail.on_succeeded(
+        qt.page_mod.ROW_KEY,
+        [dict(daemon_row(), name="renamed")],
+    )
+    assert window.windowTitle() == "msks — renamed"
+
+
 def test_the_footer_reads_the_storage_report(qt) -> None:
     """The footer's storage fact reads the capacity report
     (#971): the same per-workspace cost the listing's strip

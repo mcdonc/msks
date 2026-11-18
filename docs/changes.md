@@ -76,7 +76,8 @@ tagged `vX.Y.Z`.
   workspace list — a double-click or Enter on it — swaps to that
   workspace's page: the mounts with their derived state and
   next-start note, the daemon's health facts, and the recent
-  events, refreshed on the listing's own cadence. A failed refresh flashes while the page keeps its
+  events, refreshed on the listing's own cadence. A failed
+  refresh flashes while the page keeps its
   content; Back (or Escape) returns to the list, and a
   workspace another surface deleted closes its page behind a
   notice.
