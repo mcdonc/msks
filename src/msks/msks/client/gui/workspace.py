@@ -115,10 +115,17 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # timer above, the Back button's focus anchor here), not
         # a page still missing a piece its event handlers touch.
         self.build_chrome()
+        # The header, one line (#969): the workspace's label and
+        # the row's own facts together — a long line clips in
+        # place rather than wrapping or widening the window,
+        # the listing's detail strip's own rule.
         self.title = QtWidgets.QLabel("", self)
-        self.meta = QtWidgets.QLabel("", self)
-        self.meta.setTextInteractionFlags(
+        self.title.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.title.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
         )
         sections = self.build_sections()
         scroll = QtWidgets.QScrollArea(self)
@@ -129,10 +136,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # the strip re-hosts on every open, and the hub keeps
         # the sessions themselves alive across visits.
         self.tabs = ShellTabs(hub, scroll)
+        self.tabs.new_shell.connect(self.want_shell)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(self.chrome)  # the top row, the list's own
         layout.addWidget(self.title)
-        layout.addWidget(self.meta)
         layout.addWidget(self.tabs, stretch=1)
         self.setLayout(layout)
         escape = QtGui.QShortcut(
@@ -209,12 +216,13 @@ class WorkspaceDetail(QtWidgets.QWidget):
         return box
 
     def build_chrome(self) -> None:
-        """The page's controls at the window's top (#945): back
-        to the list — the theme's own left-pointing arrow, drawn
-        large, its tooltip and accessible name carrying the word
-        — the manual refresh, and the status line a failed
-        refresh flashes, the same top row the listing's own
-        actions sit in."""
+        """The page's controls at the window's top (#945, #969):
+        back to the list — the theme's own left-pointing arrow,
+        drawn large, its tooltip and accessible name carrying
+        the word — the manual refresh, and the status line a
+        failed refresh flashes, the same top row the listing's
+        own actions sit in. The page's own new-shell action is
+        the tab strip's "+" (#969), not a button here."""
         back_button = QtWidgets.QPushButton(self)
         back_button.setIcon(
             self.style().standardIcon(
@@ -228,22 +236,18 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.back_button = back_button
         refresh_button = QtWidgets.QPushButton("Refresh", self)
         refresh_button.clicked.connect(self.refresh)
-        shell_button = QtWidgets.QPushButton("Shell", self)
-        shell_button.setToolTip("Open a shell tab on this workspace")
-        shell_button.clicked.connect(self.want_shell)
         self.status = QtWidgets.QLabel("", self)
         self.chrome = QtWidgets.QHBoxLayout()
         self.chrome.addWidget(back_button)
         self.chrome.addWidget(refresh_button)
-        self.chrome.addWidget(shell_button)
         self.chrome.addWidget(self.status, stretch=1)
 
     @QtCore.Slot()
     def want_shell(self) -> None:
-        """The page's shell action (#954): one more ssh
+        """The page's shell action (#954, #969): one more ssh
         connection on the workspace the page shows, through the
-        window shell's own open path — the strip beside this
-        button takes the new tab."""
+        window shell's own open path — the tab strip's "+"
+        asks for it and the strip takes the new tab."""
         if self.workspace_id:
             self.shell_wanted.emit(self.workspace_id)
 
@@ -266,7 +270,6 @@ class WorkspaceDetail(QtWidgets.QWidget):
     def clear_sections(self) -> None:
         """A workspace's opening blank (#945): the sections and
         the meta line clear until the first answers land."""
-        self.meta.setText("")
         self.mounts.setRowCount(0)
         self.pending_label.setVisible(False)
         self.health.setText("")
@@ -389,14 +392,14 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.render_events(model)
 
     def render_title(self, model: DetailSections) -> None:
-        """The page's title lines (#945): the workspace's label,
-        the row's own facts muted beneath — id, image, created,
-        the fields the listing's columns carry."""
+        """The page's header, one line (#945, #969): the
+        workspace's label and the row's own facts together —
+        id, image, created, the fields the listing's columns
+        carry."""
         facts = workspace_row(self.row)
-        self.title.setText(model.label)
-        self.meta.setText(
-            f"id {facts.id}  ·  image {facts.image}"
-            f"  ·  created {facts.created}"
+        self.title.setText(
+            f"{model.label}  ·  id {facts.id}"
+            f"  ·  image {facts.image}  ·  created {facts.created}"
         )
 
     def render_mounts(self, model: DetailSections) -> None:

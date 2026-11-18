@@ -13,10 +13,11 @@ contract (close before ``deleteLater``).
 
 The strip (:class:`ShellTabs`) is the page's tab widget: the
 Info tab first, then one tab per session, titled with the
-session's number until an in-place rename stands. Hosting is
-per workspace — opening another workspace's page unhooks this
-one's widgets (they keep running hidden) and hooks the new
-workspace's.
+session's number until an in-place rename stands, and the "+"
+at the strip's right edge opening one more shell (#969).
+Hosting is per workspace — opening another workspace's page
+unhooks this one's widgets (they keep running hidden) and hooks
+the new workspace's.
 
 The module imports PySide6 at module scope, the same contract
 as the screen modules (:mod:`msks.client.gui.workspace`):
@@ -33,9 +34,11 @@ from .termsession import shell_argv
 #: beside it.
 INFO_LABEL = "Info"
 
-#: The inline title editor's minimum width, pixels (#954): the
-#: tab's own text width, but never too narrow to type in.
-EDITOR_MIN_PX = 80
+#: A shell tab's minimum text width, characters (#969): a tab
+#: titled with a one-digit session number stays wide enough to
+#: read and grab — three digits of the tab's own font beside
+#: the tab's close button.
+MIN_TAB_CHARS = 3
 
 
 class ShellSession:
@@ -55,6 +58,33 @@ class ShellSession:
         """The tab's title text (#954): the custom name once one
         stands, the session's number until then."""
         return self.title if self.title is not None else str(self.no)
+
+
+class ShellBar(QtWidgets.QTabBar):
+    """The strip's own bar (#969): a shell tab never shrinks
+    under three characters of text beside its close button —
+    the default hint squeezes a one-digit title into a sliver
+    the pointer cannot grab."""
+
+    def tabSizeHint(self, index):  # noqa: N802
+        """The platform's own hint, floored for the shell tabs
+        (everything after the Info tab)."""
+        size = super().tabSizeHint(index)
+        if index > 0:
+            size.setWidth(max(size.width(), self.min_tab_px()))
+        return size
+
+    def min_tab_px(self) -> int:
+        """The floor: three digits of the bar's font beside the
+        tab's close button, both sides' padding included."""
+        digits = self.fontMetrics().horizontalAdvance("0" * MIN_TAB_CHARS)
+        button = self.style().pixelMetric(
+            QtWidgets.QStyle.PixelMetric.PM_SmallIconSize, None, self
+        )
+        padding = 2 * self.style().pixelMetric(
+            QtWidgets.QStyle.PixelMetric.PM_TabBarTabHSpace, None, self
+        )
+        return digits + button + padding
 
 
 class ShellHub(QtCore.QObject):
@@ -140,11 +170,25 @@ class ShellTabs(QtWidgets.QTabWidget):
     workspace's — and the hub's signals keep the strip in step
     while its workspace shows."""
 
+    new_shell = QtCore.Signal()
+
     def __init__(self, hub: ShellHub, info: QtWidgets.QWidget) -> None:
         super().__init__()
         self.hub = hub
         self.hosted = ""
+        # The bar first (#969): the strip's own floor-width hint
+        # has to stand before the first tab sizes against it.
+        self.setTabBar(ShellBar(self))
         self.addTab(info, INFO_LABEL)
+        # The "+" (#969): always present at the strip's right
+        # edge, beside the Info tab when no shell stands and
+        # right of the rightmost shell tab when they do — the
+        # page's own new-shell action.
+        self.plus = QtWidgets.QToolButton(self)
+        self.plus.setText("+")
+        self.plus.setToolTip("Open a shell tab on this workspace")
+        self.plus.clicked.connect(self.new_shell)
+        self.setCornerWidget(self.plus, QtCore.Qt.Corner.TopRightCorner)
         self.tabBar().installEventFilter(self)
         # The shell tabs' own maps, number to widget and number
         # to the tab's close button (#954): a close takes the
@@ -316,9 +360,10 @@ class ShellTabs(QtWidgets.QTabWidget):
         on a first."""
         self.cancel_rename()
         bar = self.tabBar()
+        # The tab's own rect carries a floor already (#969): the
+        # bar's hint keeps every shell tab at least three
+        # characters wide beside its close button.
         rect = bar.tabRect(index)
-        if rect.width() < EDITOR_MIN_PX:
-            rect.setWidth(EDITOR_MIN_PX)
         editor = QtWidgets.QLineEdit(self)
         corner = bar.mapTo(self, rect.topLeft())
         editor.setGeometry(corner.x(), corner.y(), rect.width(), rect.height())
