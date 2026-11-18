@@ -18,7 +18,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ..data import RestFailure
 from .bridge import Bridge
 from .detail import DetailSections, detail_sections, frame_names
-from .rows import workspace_row
+from .rows import WINDOW_TITLE, detail_text, workspace_row
 from .shells import ShellHub, ShellTabs
 from .termsession import shell_argv
 from .workspaces import (
@@ -26,6 +26,7 @@ from .workspaces import (
     REFRESH_MS,
     WorkspaceList,
     read_only_item,
+    workspace_costs,
 )
 
 #: The row read's key (#945): the page answers only its own
@@ -34,6 +35,10 @@ ROW_KEY = "detail-row"
 
 #: The health read's key (#945).
 HEALTH_KEY = "detail-health"
+
+#: The capacity report's key (#971): the footer strip's storage
+#: fact, the list's own strip's read.
+STORAGE_KEY = "detail-storage"
 
 #: How many frames the page buffers (#945): the pushed frames
 #: (#946's feed) land here — the presenter keeps the last
@@ -74,17 +79,18 @@ def muted_note(text: str) -> QtWidgets.QLabel:
 
 
 class WorkspaceDetail(QtWidgets.QWidget):
-    """One workspace's page (#945, #954): the header line over
-    the tabbed body — the Info tab (the presenter's three
-    sections: the mounts table with its next-start note, the
-    health facts, the events list) with one tab per active
-    shell beside it (#954) — refreshed on the listing's own
-    cadence plus the manual button, every exchange through the
-    bridge. A failed refresh flashes the status line while the
-    sections keep their content; a listing that can no longer
-    see the workspace emits ``removed`` — the TUI page's own
-    close (#309's close_removed shape) — and the back action
-    returns to the list, closing no shell (#954)."""
+    """One workspace's page (#945, #954, #971): the tabbed body
+    — the Info tab (the presenter's three sections: the mounts
+    table with its next-start note, the health facts, the
+    events list) with one tab per active shell beside it
+    (#954) — over the footer strip, the same one-line read the
+    listing's own bottom strip gives (#971). The workspace's
+    name lives in the window title while the page shows. A
+    failed refresh flashes the status line while the sections
+    keep their content; a listing that can no longer see the
+    workspace emits ``removed`` — the TUI page's own close
+    (#309's close_removed shape) — and the back action returns
+    to the list, closing no shell (#954)."""
 
     back = QtCore.Signal()
     removed = QtCore.Signal(str)
@@ -100,6 +106,8 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.rendered: DetailSections | None = None
         self.row_pending = False
         self.health_pending = False
+        self.storage_pending = False
+        self.storage_costs: dict[str, int] = {}
         self.flash_seq = 0
         self.flash_outage = False
         # The timer first, the chrome right behind it: see the
@@ -115,15 +123,15 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # timer above, the Back button's focus anchor here), not
         # a page still missing a piece its event handlers touch.
         self.build_chrome()
-        # The header, one line (#969): the workspace's label and
-        # the row's own facts together — a long line clips in
-        # place rather than wrapping or widening the window,
-        # the listing's detail strip's own rule.
-        self.title = QtWidgets.QLabel("", self)
-        self.title.setTextInteractionFlags(
+        # The footer strip (#971): the same one-line read the
+        # listing's own bottom strip gives — it clips in place
+        # rather than wrapping or widening the window, the
+        # listing strip's own rule.
+        self.footer = QtWidgets.QLabel("", self)
+        self.footer.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
         )
-        self.title.setSizePolicy(
+        self.footer.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Ignored,
             QtWidgets.QSizePolicy.Policy.Preferred,
         )
@@ -139,8 +147,8 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.tabs.new_shell.connect(self.want_shell)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(self.chrome)  # the top row, the list's own
-        layout.addWidget(self.title)
         layout.addWidget(self.tabs, stretch=1)
+        layout.addWidget(self.footer)
         self.setLayout(layout)
         escape = QtGui.QShortcut(
             QtGui.QKeySequence(QtCore.Qt.Key.Key_Escape), self
@@ -216,13 +224,13 @@ class WorkspaceDetail(QtWidgets.QWidget):
         return box
 
     def build_chrome(self) -> None:
-        """The page's controls at the window's top (#945, #969):
+        """The page's controls at the window's top (#945, #971):
         back to the list — the theme's own left-pointing arrow,
         drawn large, its tooltip and accessible name carrying
-        the word — the manual refresh, and the status line a
-        failed refresh flashes, the same top row the listing's
-        own actions sit in. The page's own new-shell action is
-        the tab strip's "+" (#969), not a button here."""
+        the word — and the status line a failed refresh flashes,
+        the same top row the listing's own actions sit in. The
+        page refreshes on its own timer (#971: no manual button);
+        its new-shell action is the tab strip's "+" (#969)."""
         back_button = QtWidgets.QPushButton(self)
         back_button.setIcon(
             self.style().standardIcon(
@@ -234,12 +242,9 @@ class WorkspaceDetail(QtWidgets.QWidget):
         back_button.setAccessibleName("Back")
         back_button.clicked.connect(self.go_back)
         self.back_button = back_button
-        refresh_button = QtWidgets.QPushButton("Refresh", self)
-        refresh_button.clicked.connect(self.refresh)
         self.status = QtWidgets.QLabel("", self)
         self.chrome = QtWidgets.QHBoxLayout()
         self.chrome.addWidget(back_button)
-        self.chrome.addWidget(refresh_button)
         self.chrome.addWidget(self.status, stretch=1)
 
     @QtCore.Slot()
@@ -251,18 +256,20 @@ class WorkspaceDetail(QtWidgets.QWidget):
         if self.workspace_id:
             self.shell_wanted.emit(self.workspace_id)
 
-    def open(self, workspace_id: str, label: str) -> None:
-        """The page takes a workspace (#945, #954): the state
-        resets — fresh row, doc, frame buffer, rendered sections
-        — the shell tabs re-host for this workspace, and the
-        first refresh goes out. The label the list holds stands
-        in for the title until the row's own answer lands."""
+    def open(self, workspace_id: str) -> None:
+        """The page takes a workspace (#945, #954, #971): the
+        state resets — fresh row, doc, frame buffer, rendered
+        sections — the shell tabs re-host for this workspace,
+        and the first refresh goes out. The page carries no
+        header of its own; the window's title names the
+        workspace, the shell's list label standing in until the
+        row's own answer lands."""
         self.workspace_id = workspace_id
         self.row = None
         self.health_doc = None
         self.frames = []
         self.rendered = None
-        self.title.setText(label)
+        self.footer.setText("")
         self.clear_sections()
         self.tabs.host(workspace_id)
         self.refresh()
@@ -283,17 +290,20 @@ class WorkspaceDetail(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def refresh(self) -> None:
-        """One page refresh through the bridge (#945) — the
-        tick, the manual button, and the page's own open share
-        it. A flight already out is not stacked, the listing's
-        own guard (#470); the sections stand until the answers
-        replace them."""
+        """One page refresh through the bridge (#945, #971) —
+        the tick and the page's own open share it. A flight
+        already out is not stacked, the listing's own guard
+        (#470); the sections stand until the answers replace
+        them."""
         if not self.row_pending:
             self.row_pending = True
             self.bridge.call(ROW_KEY, "workspaces")
         if not self.health_pending:
             self.health_pending = True
             self.bridge.call(HEALTH_KEY, "health")
+        if not self.storage_pending:
+            self.storage_pending = True
+            self.bridge.call(STORAGE_KEY, "storage")
 
     @QtCore.Slot(str, object)
     def on_succeeded(self, key: str, result: object) -> None:
@@ -306,6 +316,8 @@ class WorkspaceDetail(QtWidgets.QWidget):
             self.row_landed(result)
         elif key == HEALTH_KEY:
             self.health_landed(result)
+        elif key == STORAGE_KEY:
+            self.storage_landed(result)
 
     def row_landed(self, rows: object) -> None:
         """The row read's answer (#945): this workspace's row
@@ -348,13 +360,24 @@ class WorkspaceDetail(QtWidgets.QWidget):
         answer resolves it — and the sections keep the content
         they have. Another key's failure is not this page's to
         show."""
-        if key not in (ROW_KEY, HEALTH_KEY):
+        if key not in (ROW_KEY, HEALTH_KEY, STORAGE_KEY):
             return
         if key == ROW_KEY:
             self.row_pending = False
-        else:
+        elif key == HEALTH_KEY:
             self.health_pending = False
+        else:
+            self.storage_pending = False
         self.flash(str(failure), outage=failure.reach)
+
+    def storage_landed(self, report: object) -> None:
+        """The capacity report into the footer's cache (#971):
+        the per-workspace cost, the list's own strip's read. A
+        report that lands changes the footer's storage fact at
+        the next render."""
+        self.storage_pending = False
+        self.storage_costs = workspace_costs(report or {})
+        self.rebuild()
 
     def resolve_outage(self) -> None:
         """A standing outage's resolve (#945, #904's contract):
@@ -373,11 +396,20 @@ class WorkspaceDetail(QtWidgets.QWidget):
         if self.row is None:
             return
         model = detail_sections(self.row, self.health_doc, self.frames)
-        # The header reads every answer (#945): the row's own
-        # facts — the created age above all — move on a clock the
-        # section models carry no part of, so the sections' skip
-        # must not freeze the header with them.
-        self.render_title(model)
+        # The footer reads every answer (#945, #971): the row's
+        # own facts — the created age above all — move on a clock
+        # the section models carry no part of, so the sections'
+        # skip must not freeze the footer with them.
+        self.render_footer(model)
+        # The window's title reads every answer too (#971), but
+        # only while the page owns the window: the shell feeds
+        # the hidden page deliberately (frames keep landing after
+        # Back), and a hidden page's answer must not re-name the
+        # window the list holds — the same own-current guard the
+        # removed-emit takes. A revisit names from the list
+        # again, and the row's own answer refines it here.
+        if not self.isHidden():
+            self.window().setWindowTitle(f"{WINDOW_TITLE} — {model.label}")
         if model == self.rendered:
             return
         self.rendered = model
@@ -385,21 +417,22 @@ class WorkspaceDetail(QtWidgets.QWidget):
 
     def render_sections(self, model: DetailSections) -> None:
         """The sections as the model reads (#945): each section
-        its own widgets — the title renders on every answer, in
-        :meth:`rebuild`, outside this skip-guarded path."""
+        its own widgets — the footer renders on every answer,
+        in :meth:`rebuild`, outside this skip-guarded path."""
         self.render_mounts(model)
         self.render_health(model)
         self.render_events(model)
 
-    def render_title(self, model: DetailSections) -> None:
-        """The page's header, one line (#945, #969): the
-        workspace's label and the row's own facts together —
-        id, image, created, the fields the listing's columns
-        carry."""
-        facts = workspace_row(self.row)
-        self.title.setText(
-            f"{model.label}  ·  id {facts.id}"
-            f"  ·  image {facts.image}  ·  created {facts.created}"
+    def render_footer(self, model: DetailSections) -> None:
+        """The footer strip (#971): the same one-line read the
+        listing's own bottom strip gives — the identity, the
+        posture and costs, the storage the capacity report
+        charges, an honest dash until one lands."""
+        self.footer.setText(
+            detail_text(
+                workspace_row(self.row),
+                self.storage_costs.get(self.workspace_id),
+            )
         )
 
     def render_mounts(self, model: DetailSections) -> None:
@@ -619,18 +652,32 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
 
     @QtCore.Slot(str)
     def open_detail(self, workspace_id: str) -> None:
-        """The list opened a row (#945): the page takes the
-        workspace, titled with the label the list holds for it
-        until its own answer lands."""
+        """The list opened a row (#945, #971): the page takes the
+        workspace — its name in the window title, the label the
+        list holds standing in until the row's own answer — and
+        the page carries no header of its own."""
         model = self.listing.rows_by_id.get(workspace_id)
         label = model.label if model else workspace_id
-        self.detail.open(workspace_id, label)
+        self.detail.open(workspace_id)
+        self.name_window(label)  # the row's own answer refines it
         self.setCurrentWidget(self.detail)
+
+    def name_window(self, label: str) -> None:
+        """The window names the workspace on show (#971): the
+        page's header is gone, and the window's own title bar is
+        where the operator reads which workspace stands."""
+        self.window().setWindowTitle(f"{WINDOW_TITLE} — {label}")
+
+    def unname_window(self) -> None:
+        """The window back to the plain title (#971): the list
+        owns the window again."""
+        self.window().setWindowTitle(WINDOW_TITLE)
 
     @QtCore.Slot()
     def show_listing(self) -> None:
-        """The page returned (#945): the list owns the window
-        again."""
+        """The page returned (#945, #971): the list owns the
+        window again, its title with it."""
+        self.unname_window()
         self.setCurrentWidget(self.listing)
 
     @QtCore.Slot(object)
@@ -672,4 +719,5 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         model = self.listing.rows_by_id.get(workspace_id)
         label = model.label if model else workspace_id
         self.listing.flash(f"{label} removed — closing its page")
+        self.unname_window()
         self.setCurrentWidget(self.listing)
