@@ -74,7 +74,7 @@ def muted_note(text: str) -> QtWidgets.QLabel:
 
 
 class WorkspaceDetail(QtWidgets.QWidget):
-    """One workspace's page (#945, #954): the title lines over
+    """One workspace's page (#945, #954): the header line over
     the tabbed body — the Info tab (the presenter's three
     sections: the mounts table with its next-start note, the
     health facts, the events list) with one tab per active
@@ -268,8 +268,8 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.refresh()
 
     def clear_sections(self) -> None:
-        """A workspace's opening blank (#945): the sections and
-        the meta line clear until the first answers land."""
+        """A workspace's opening blank (#945): the sections blank
+        until the first answers land."""
         self.mounts.setRowCount(0)
         self.pending_label.setVisible(False)
         self.health.setText("")
@@ -373,10 +373,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
         if self.row is None:
             return
         model = detail_sections(self.row, self.health_doc, self.frames)
-        # The title reads every answer (#945): the row's own
+        # The header reads every answer (#945): the row's own
         # facts — the created age above all — move on a clock the
         # section models carry no part of, so the sections' skip
-        # must not freeze the meta line with them.
+        # must not freeze the header with them.
         self.render_title(model)
         if model == self.rendered:
             return

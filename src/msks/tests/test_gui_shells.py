@@ -484,11 +484,12 @@ def test_the_plus_sits_right_of_the_tabs_and_opens_a_shell(qt, window_shell):
         shell.detail.tabs.tabText(i) for i in range(shell.detail.tabs.count())
     ]
     assert titles == ["Info", "1"]
-    # the + stays right of the rightmost shell tab
-    assert (
-        tabs_plus(shell.detail).x()
-        >= shell.detail.tabs.tabBar().tabRect(1).right()
-    )
+    # the + stays right of the rightmost shell tab, both read in
+    # the strip's own frame
+    tabs = shell.detail.tabs
+    bar = tabs.tabBar()
+    tab_right = bar.mapTo(tabs, bar.tabRect(1).topRight()).x()
+    assert tabs_plus(shell.detail).x() >= tab_right
 
 
 def test_the_plus_opens_a_second_shell_beside(qt, window_shell):
@@ -508,15 +509,12 @@ def test_the_page_chrome_carries_no_shell_button(qt, window_shell):
     """The "+" owns the page's new-shell action: the chrome
     carries no Shell button."""
     shell, hub, _window = window_shell
-    for widget in shell.detail.findChildren(type(shell.detail.tabs)):
-        pass  # no QTabWidget scan needed; the chrome is flat
     chrome_buttons = [
         button.text()
         for button in shell.detail.findChildren(type(shell.detail.back_button))
         if button.text()
     ]
-    assert "Shell" not in chrome_buttons
-    assert set(chrome_buttons) == {"Refresh"} or chrome_buttons == ["Refresh"]
+    assert chrome_buttons == ["Refresh"]
 
 
 def tabs_plus(page) -> object:

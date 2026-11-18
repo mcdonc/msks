@@ -9,12 +9,12 @@ tagged `vX.Y.Z`.
 ### Added
 
 - **GUI terminal-tab polish (#969).** A "+" at the right edge
-  of the detail page's tab strip opens a new shell tab (it
-  stands beside the Info tab when no shell is open), shell
-  tabs keep a minimum width of about three characters beside
-  their close button, and the detail page's header — name, id,
-  image, created — reads on one line. The page's top chrome
-  loses its Shell button; the "+" owns that action.
+  of the detail page's tab strip opens a new shell tab. It
+  stands beside the Info tab when no shell is open. Shell tabs
+  keep a minimum width of about three characters beside their
+  close button. The detail page's header carries the name, id,
+  image, and created on one line. The page's top chrome loses
+  its Shell button: the "+" owns that action.
 
 - **GUI workspace shells in terminal tabs (#954).** The GUI's
   workspace detail page is now tabbed: an Info tab holds the
