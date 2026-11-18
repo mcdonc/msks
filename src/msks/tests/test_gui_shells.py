@@ -396,9 +396,6 @@ def test_a_wide_tab_keeps_its_width_for_the_editor(hub, tabs, qt):
     tabs.begin_rename(1)
     assert tabs.editor.width() == rect.width()
     assert tabs.editor.pos() == corner
-    hub.rename("ws-a", session.no, "x")
-    tabs.begin_rename(1)  # a narrow tab now
-    assert tabs.editor.width() >= 80
 
 
 def test_a_rename_lands_on_its_own_session_not_the_shuffled_tab(hub, tabs):
@@ -460,6 +457,69 @@ def test_a_rename_for_a_record_behind_the_strip_changes_nothing(hub, tabs):
     hub.sessions["ws-a"].remove(session)
     hub.shell_renamed.emit("ws-a", 1)
     assert tabs.tabText(1) == "1"
+
+
+def test_a_shell_tab_never_shrinks_under_three_characters(hub, tabs):
+    """A one-digit title keeps a tab the pointer can grab: the
+    floor is three digits of the bar's font beside the close
+    button, whatever the default hint would squeeze it to."""
+    hub.open_shell("ws-a")
+    tabs.host("ws-a")
+    tabs.resize(800, 400)
+    bar = tabs.tabBar()
+    assert bar.tabRect(1).width() >= bar.min_tab_px()
+    assert bar.min_tab_px() >= bar.fontMetrics().horizontalAdvance("000")
+
+
+def test_the_plus_sits_right_of_the_tabs_and_opens_a_shell(qt, window_shell):
+    """The "+" stands at the strip's right edge with no shell
+    open and stays there right of the rightmost shell tab; a
+    click opens a new shell tab on the page's workspace."""
+    shell, hub, _window = window_shell
+    assert tabs_plus(shell.detail) is not None
+    shell.open_detail("ws-a")
+    tabs_plus(shell.detail).click()
+    assert shell.detail.tabs.count() == 2
+    titles = [
+        shell.detail.tabs.tabText(i) for i in range(shell.detail.tabs.count())
+    ]
+    assert titles == ["Info", "1"]
+    # the + stays right of the rightmost shell tab, both read in
+    # the strip's own frame
+    tabs = shell.detail.tabs
+    bar = tabs.tabBar()
+    tab_right = bar.mapTo(tabs, bar.tabRect(1).topRight()).x()
+    assert tabs_plus(shell.detail).x() >= tab_right
+
+
+def test_the_plus_opens_a_second_shell_beside(qt, window_shell):
+    """A second click on the "+" opens another shell beside the
+    standing one, numbered in open order."""
+    shell, hub, _window = window_shell
+    shell.open_detail("ws-a")
+    tabs_plus(shell.detail).click()
+    tabs_plus(shell.detail).click()
+    titles = [
+        shell.detail.tabs.tabText(i) for i in range(shell.detail.tabs.count())
+    ]
+    assert titles == ["Info", "1", "2"]
+
+
+def test_the_page_chrome_carries_no_shell_button(qt, window_shell):
+    """The "+" owns the page's new-shell action: the chrome
+    carries no Shell button."""
+    shell, hub, _window = window_shell
+    chrome_buttons = [
+        button.text()
+        for button in shell.detail.findChildren(type(shell.detail.back_button))
+        if button.text()
+    ]
+    assert chrome_buttons == ["Refresh"]
+
+
+def tabs_plus(page) -> object:
+    """The tab strip's "+" button."""
+    return page.tabs.plus
 
 
 # --- the window shell's actions ---------------------------------------

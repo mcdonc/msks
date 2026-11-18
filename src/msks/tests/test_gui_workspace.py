@@ -221,13 +221,12 @@ def test_the_page_renders_the_sections(qt) -> None:
     """The sections land as widgets (#945): the mounts table
     reads the entries — the spec, the derived state, the gate's
     reason — the next-start note stands under it, the health
-    facts read one pair a line, and the title's meta line
-    carries the row's own facts."""
+    facts read one pair a line, and the header line carries the
+    label beside the row's own facts (#969)."""
     page, window, bridge = make_page(qt)
     land(qt, page, bridge)
-    assert page.title.text() == "alpha"
-    assert page.meta.text() == (
-        "id ws-a  ·  image msks/fedora:41  ·  created 2d ago"
+    assert page.title.text() == (
+        "alpha  ·  id ws-a  ·  image msks/fedora:41  ·  created 2d ago"
     )
     assert page.mounts.rowCount() == 2
     cells = [
@@ -515,20 +514,34 @@ def test_the_none_health_silence_keeps_the_outage(qt) -> None:
     )
 
 
-def test_the_meta_line_moves_with_the_clock(qt, monkeypatch) -> None:
-    """The title renders on every answer (#945): the created age
+def test_the_header_reads_on_one_line(qt) -> None:
+    """The page's header carries the label and the row's own
+    facts together on one line (#969) — id, image, created
+    beside the name, and no second line: the meta label the
+    two-line shape carried is gone."""
+    page, window, bridge = make_page(qt)
+    land(qt, page, bridge)
+    text = page.title.text()
+    assert text.startswith("alpha  ·  id ws-a")
+    assert "image msks/fedora:41" in text
+    assert text.endswith("created 2d ago")
+    assert not hasattr(page, "meta")
+
+
+def test_the_header_line_moves_with_the_clock(qt, monkeypatch) -> None:
+    """The header renders on every answer (#945): the created age
     is a fact of the row, not the section models — an unchanged
     section answer still re-reads it against the moved clock."""
     from datetime import datetime as dt
 
     page, window, bridge = make_page(qt)
     land(qt, page, bridge)
-    assert "created 2d ago" in page.meta.text()
+    assert "created 2d ago" in page.title.text()
     monkeypatch.setattr(
         ages_mod, "clock_now", lambda: dt.fromisoformat("2026-01-18T12:00:00")
     )
     land(qt, page, bridge)  # the same row, the clock 14 days on
-    assert "created 2w ago" in page.meta.text()
+    assert "created 2w ago" in page.title.text()
     # The sections stood unchanged through the same answer; the
     # hold that survives them is pinned by the unchanged-answer
     # test.
