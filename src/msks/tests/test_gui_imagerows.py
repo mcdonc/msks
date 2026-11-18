@@ -5,6 +5,7 @@ import, so these tests drive it as plain Python, the same way
 the coverage gate does."""
 
 import ast
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -121,6 +122,13 @@ def test_the_stamp_less_rows_sort_within_their_block() -> None:
     import stamp — none at all, or a moment the clock cannot
     parse — sorts below every dated row of its ref's block, and
     a naive stamp reads as UTC beside the aware ones."""
+    # The naive rule pinned outright: the shared leaf's own
+    # ``stamp_moment`` deliberately reads a naive stamp as local
+    # time (a different job), so a future unification must not
+    # flip this half silently.
+    assert gui_images.imported_moment(
+        {"imported": "2026-01-01T00:00:00"}
+    ) == datetime(2026, 1, 1, tzinfo=UTC)
     models = gui_images.catalog_rows(
         [
             catalog_entry(hash=B_HASH, imported=None),
@@ -331,6 +339,10 @@ def test_the_helpers_match_the_tui_page() -> None:
         manifest_entry(ref="ubuntu:24.04", hash=B_HASH),
         manifest_entry(ref="ubuntu:24.04", hash=C_HASH),
         manifest_entry(ref="alpine:3.21", hash=None),
+        # An undeclared arch and the other architecture, so the
+        # guard's falsy-arch arm compares against the TUI's own.
+        manifest_entry(ref="any:1", arch=None),
+        manifest_entry(ref="arm64:1", arch="aarch64"),
     ]
     for row in manifest:
         assert gui_images.membership(row, catalog) == tui_importer.membership(
@@ -352,9 +364,56 @@ def test_the_helpers_match_the_tui_page() -> None:
         assert gui_images.hash_cell(row.get("hash")) == tui_importer.hash_cell(
             row.get("hash")
         )
+    for stamp in (
+        None,
+        "junk",
+        "2026-01-01T00:00:00",
+        "2026-01-02T00:00:00+00:00",
+    ):
+        row = catalog_entry(imported=stamp)
+        assert gui_images.imported_moment(row) == tui_importer.imported_moment(
+            row
+        )
     assert gui_images.sorted_catalog(catalog) == tui_importer.sorted_catalog(
         catalog
     )
+
+
+def test_the_validation_matches_the_tui_page() -> None:
+    """The mirrored validation keeps parity with the TUI page
+    (#963): over the same corpus of broken and passing rows,
+    both clients refuse alike — the same messages, so a
+    rewording on one side fails here rather than drift the two
+    channels apart — and accept the same shapes."""
+    broken = [
+        {},
+        {"ref": "x:1"},
+        {"url": "u"},
+        {"ref": "", "url": "u"},
+        ["not", "a", "mapping"],
+        {"ref": "x:1", "url": 5},
+        {"ref": 3, "url": "u"},
+    ]
+    for field in ("description", "hash", "built_at", "arch"):
+        row = manifest_entry()
+        row[field] = 7
+        broken.append(row)
+    for size in (True, "big", 1.5):
+        row = manifest_entry(size=1)
+        row["size"] = size
+        broken.append(row)
+    for row in broken:
+        with pytest.raises(ValueError) as gui_exc:
+            gui_images.checked_row(row)
+        with pytest.raises(ValueError) as tui_exc:
+            tui_importer.manifest_row(row)
+        assert str(gui_exc.value) == str(tui_exc.value)
+    for row in (
+        manifest_entry(),
+        {"ref": "x:1", "url": "u"},
+        {"ref": "x:1", "url": "u", "description": None, "size": None},
+    ):
+        assert gui_images.checked_row(row) == tui_importer.manifest_row(row)
 
 
 def test_the_module_imports_nothing_from_pyside6() -> None:
