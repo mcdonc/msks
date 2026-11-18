@@ -18,7 +18,12 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from ..data import RestFailure
 from .bridge import Bridge
 from .detail import DetailSections, detail_sections, frame_names
-from .rows import WINDOW_TITLE, detail_text, workspace_row
+from .rows import (
+    WINDOW_TITLE,
+    detail_text,
+    workspace_costs,
+    workspace_row,
+)
 from .shells import ShellHub, ShellTabs
 from .termsession import shell_argv
 from .workspaces import (
@@ -26,7 +31,6 @@ from .workspaces import (
     REFRESH_MS,
     WorkspaceList,
     read_only_item,
-    workspace_costs,
 )
 
 #: The row read's key (#945): the page answers only its own

@@ -688,27 +688,31 @@ def test_the_external_action_spawns_the_launcher_argv(
 def test_the_external_action_names_the_setting_when_unconfigured(
     qt, window_shell
 ):
-    """Without a launcher the notice names the setting: the GUI
-    has no terminal of its own to hand the session."""
+    """Without a launcher the notice names the setting on the
+    screen the operator sees (#972): the action lives on the
+    detail page, and the GUI has no terminal of its own to hand
+    the session."""
     shell, hub, _window = window_shell
-    shell.open_external("ws-a")
+    shell.open_detail("ws-a")
+    shell.detail.external_button.click()
     assert (
-        shell.listing.status.text()
+        shell.detail.status.text()
         == "set terminal_open_cmd to open external terminals"
     )
 
 
 def test_the_failed_launcher_flashes(qt, launcher_shell, monkeypatch):
-    """A launcher that cannot start says so on the listing's
-    status line."""
+    """A launcher that cannot start says so on the detail
+    page's status line — the screen the operator sees (#972)."""
     shell, hub, _window = launcher_shell
+    shell.open_detail("ws-a")
     monkeypatch.setattr(
         qt.QtCore.QProcess,
         "startDetached",
         staticmethod(lambda program, args: False),
     )
-    shell.open_external("ws-a")
-    assert "failed" in shell.listing.status.text()
+    shell.detail.external_button.click()
+    assert "failed" in shell.detail.status.text()
 
 
 def test_a_shell_action_from_the_list_over_standing_shells(qt, window_shell):

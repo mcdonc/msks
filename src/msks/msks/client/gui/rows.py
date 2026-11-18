@@ -141,6 +141,27 @@ def workspace_row(row: dict) -> WorkspaceRow:
     )
 
 
+def cost_of(ws: dict) -> int | None:
+    """One report entry's root-plus-home cost (#849), or None
+    for an entry that predates the per-row fields."""
+    if "root_bytes" not in ws or "home_bytes" not in ws:
+        return None
+    return ws["root_bytes"] + ws["home_bytes"]
+
+
+def workspace_costs(report: dict) -> dict[str, int]:
+    """The capacity report's per-workspace costs (#849): the
+    root-plus-home bytes, keyed by id. An entry that predates
+    the per-row fields reads as nothing, so the standing figures
+    keep until a fuller report lands."""
+    costs: dict[str, int] = {}
+    for ws in report.get("workspaces") or []:
+        cost = cost_of(ws)
+        if cost is not None and "id" in ws:
+            costs[ws["id"]] = cost
+    return costs
+
+
 def detail_text(model: WorkspaceRow, used_bytes: int | None) -> str:
     """The detail strip's single line (#849's facts, the GUI's
     read): the identity — the name bare, the id, the image —

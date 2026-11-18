@@ -836,8 +836,13 @@ def test_the_toggle_reads_the_rows_own_action(qt) -> None:
     stop = screen.style().standardIcon(
         qt.QtWidgets.QStyle.StandardPixmap.SP_MediaStop
     )
-    # ws-1 stopped: the play gesture, not the stop sign.
+    # ws-1 stopped: the play gesture, not the stop sign;
+    # ws-3 starting: the stop sign itself — pinned by the
+    # rendered pixels, the icon's own equality runs by cache
+    # key and two standard icons never share one.
     assert screen.row_actions["ws-1"].icon().cacheKey() != stop.cacheKey()
+    stop_png = stop.pixmap(16).toImage()
+    assert screen.row_actions["ws-3"].icon().pixmap(16).toImage() == stop_png
     assert screen.row_actions["ws-1"].toolTip() == "Start"
     assert screen.row_actions["ws-3"].toolTip() == "Stop"
     # A created row reads as start, the presenter's other arm.
@@ -1013,41 +1018,53 @@ def test_the_action_slots_stand_guard(qt) -> None:
 
 def test_the_action_column_sorts_nothing(qt) -> None:
     """The row-actions column (#972): last, with no header
-    label, and a click on its header moves no ordering — the
-    sortable columns stand as they are."""
+    label, and a real click on its header — the press the
+    header's viewport delivers — moves no ordering, while a
+    real click on a sortable column still sorts."""
+    from PySide6 import QtTest
+
     screen, window, _bridge = make_screen(qt)
     table = screen.table
+    header = table.horizontalHeader()
     assert table.columnCount() == len(qt.screen_mod.COLUMNS) + 1
-    assert table.horizontalHeaderItem(qt.screen_mod.ACTION_COLUMN).text() == ""
+    assert table.horizontalHeaderItem(qt.screen_mod.ACTION_COLUMN).text() == (
+        ""
+    )
     before = [
         table.item(row, qt.screen_mod.NAME_COLUMN).text()
         for row in range(table.rowCount())
     ]
-    order = [table.horizontalHeader().sortIndicatorSection()]
-    # A real press on the action header, through the filter.
-    rect = table.horizontalHeader().sectionViewportPosition(
-        qt.screen_mod.ACTION_COLUMN
-    )
-    press = qt.QtGui.QMouseEvent(
-        qt.QtGui.QMouseEvent.Type.MouseButtonPress,
-        qt.QtCore.QPointF(rect + 2, 2),
-        qt.QtCore.QPointF(rect + 2, 2),
+    # The real gesture: a click delivered to the header's
+    # viewport, the surface the platform serves.
+    QtTest.QTest.mouseClick(
+        header.viewport(),
         qt.QtCore.Qt.MouseButton.LeftButton,
-        qt.QtCore.Qt.MouseButton.LeftButton,
-        qt.QtCore.Qt.KeyboardModifier.NoModifier,
+        pos=qt.QtCore.QPoint(
+            header.sectionViewportPosition(qt.screen_mod.ACTION_COLUMN) + 2,
+            2,
+        ),
     )
-    assert (
-        screen.eventFilter(table.horizontalHeader(), press) is True
-    )  # the press never reaches the view
-    table.horizontalHeader().sectionClicked.emit(
-        qt.screen_mod.ACTION_COLUMN
-    )  # even a click the platform serves anyway
-    assert order == [table.horizontalHeader().sortIndicatorSection()]
+    assert header.sortIndicatorSection() == qt.screen_mod.CREATED_COLUMN
     after = [
         table.item(row, qt.screen_mod.NAME_COLUMN).text()
         for row in range(table.rowCount())
     ]
-    assert after == before
+    assert after == before  # the standing order stands
+    # The positive control: a real click on a sortable header
+    # sorts by it.
+    QtTest.QTest.mouseClick(
+        header.viewport(),
+        qt.QtCore.Qt.MouseButton.LeftButton,
+        pos=qt.QtCore.QPoint(
+            header.sectionViewportPosition(qt.screen_mod.NAME_COLUMN) + 2, 2
+        ),
+    )
+    assert header.sortIndicatorSection() == qt.screen_mod.NAME_COLUMN
+    labels = [
+        table.item(row, qt.screen_mod.NAME_COLUMN).text()
+        for row in range(table.rowCount())
+    ]
+    assert labels == sorted(labels)
     window.close()
 
 

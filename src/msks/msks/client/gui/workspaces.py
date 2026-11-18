@@ -20,7 +20,12 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..data import RestFailure
 from .bridge import Bridge
-from .rows import WorkspaceRow, detail_text, workspace_rows
+from .rows import (
+    WorkspaceRow,
+    detail_text,
+    workspace_costs,
+    workspace_rows,
+)
 
 #: The standing refresh cadence (#939), milliseconds — the TUI's
 #: own listing interval (#470 L2, five seconds): the list reloads
@@ -118,27 +123,6 @@ def action_reply_text(label: str, reply: object) -> str:
     readable status still names its workspace."""
     status = reply.get("status") if isinstance(reply, dict) else None
     return f"{label} {status}" if status else label
-
-
-def cost_of(ws: dict) -> int | None:
-    """One report entry's root-plus-home cost (#849), or None
-    for an entry that predates the per-row fields."""
-    if "root_bytes" not in ws or "home_bytes" not in ws:
-        return None
-    return ws["root_bytes"] + ws["home_bytes"]
-
-
-def workspace_costs(report: dict) -> dict[str, int]:
-    """The capacity report's per-workspace costs (#849): the
-    root-plus-home bytes, keyed by id. An entry that predates
-    the per-row fields reads as nothing, so the standing figures
-    keep until a fuller report lands."""
-    costs: dict[str, int] = {}
-    for ws in report.get("workspaces") or []:
-        cost = cost_of(ws)
-        if cost is not None and "id" in ws:
-            costs[ws["id"]] = cost
-    return costs
 
 
 def state_text(model: WorkspaceRow) -> str:
@@ -266,11 +250,13 @@ class WorkspaceList(QtWidgets.QWidget):
         # lands on no row, and the blank space below the rows is
         # chrome, not a select-nothing gesture.
         self.table.viewport().installEventFilter(self)
-        # The action header sorts nothing (#972): a press on the
-        # row-actions column's header never reaches the view,
-        # so its click moves no ordering — the sortable columns
-        # stand as they are.
-        self.table.horizontalHeader().installEventFilter(self)
+        # The action header sorts nothing (#972): a press on
+        # the row-actions column's header never reaches the
+        # view, so its click moves no ordering — the sortable
+        # columns stand as they are. The filter watches the
+        # header's viewport, the surface real clicks land on
+        # (the header's own object filter never sees them).
+        self.table.horizontalHeader().viewport().installEventFilter(self)
         # The row actions (#972): the actions a row carries in
         # its own cell — the toggle and the shell button, one
         # flight at a time across them. The flight remembers its
@@ -424,6 +410,9 @@ class WorkspaceList(QtWidgets.QWidget):
         toggle = QtWidgets.QToolButton(self.table)
         toggle.setIcon(self.style().standardIcon(TOGGLE_ICONS[model.action]))
         toggle.setToolTip(model.action.capitalize())
+        # A rebuild under a standing flight keeps the gate (#972):
+        # the cells are new, the one-flight rule is not.
+        toggle.setEnabled(not self.action_pending)
         toggle.clicked.connect(
             lambda: self.toggle_workspace((model.id, model.label))
         )
@@ -714,8 +703,9 @@ class WorkspaceList(QtWidgets.QWidget):
             self.opened.emit(name.data(ROW_ID_ROLE))
 
     def held_workspace(self) -> tuple[str, str] | None:
-        """The workspace the actions sit on (#940): the current
-        row's — else the first selected row's — id and label."""
+        """The workspace the detail strip reads (#940, #972):
+        the current row's — else the first selected row's — id
+        and label."""
         rows = sorted({index.row() for index in self.table.selectedIndexes()})
         if not rows:
             return None
@@ -983,7 +973,7 @@ class WorkspaceList(QtWidgets.QWidget):
         """
         header = self.table.horizontalHeader()
         return (
-            watched is header
+            watched is header.viewport()
             and event.type() == QtCore.QEvent.Type.MouseButtonPress
             and header.logicalIndexAt(event.position().toPoint())
             == ACTION_COLUMN
