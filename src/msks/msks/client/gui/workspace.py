@@ -17,6 +17,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..data import RestFailure
 from .bridge import Bridge
+from .create import CreateDialog
 from .detail import DetailSections, detail_sections, frame_names
 from .rows import (
     WINDOW_TITLE,
@@ -733,6 +734,17 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         stand-in when the list holds none."""
         model = self.listing.rows_by_id.get(workspace_id)
         return model.label if model else workspace_id
+
+    @QtCore.Slot()
+    def open_create(self) -> None:
+        """The Workspaces tab's plus button (#962): the create
+        dialog atop the workspaces — the TUI's create popup's
+        counterpart (#309) — a landed create refreshing the
+        listing behind it; a cancel or a refusal decides
+        nothing."""
+        dialog = CreateDialog(self.bridge)
+        dialog.accepted.connect(self.listing.refresh)
+        dialog.exec()
 
     @QtCore.Slot(str)
     def open_detail(self, workspace_id: str) -> None:
