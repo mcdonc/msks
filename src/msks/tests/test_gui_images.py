@@ -332,6 +332,7 @@ def test_a_catalog_answer_moves_the_markers(qt) -> None:
     turns ``[imported]`` — without refetching the channel."""
     tab, window, bridge = make_tab(qt)
     bridge.calls.clear()
+    tab.refresh_catalog()  # the import's landing flight
     landed = page_answer()["catalog"] + [
         {
             "name": "alpine",
@@ -342,7 +343,9 @@ def test_a_catalog_answer_moves_the_markers(qt) -> None:
         }
     ]
     tab.on_succeeded(images_mod.CATALOG_KEY, landed)
-    assert bridge.calls == []  # the channel was not refetched
+    assert bridge.calls == [
+        (images_mod.CATALOG_KEY, "images", ())
+    ]  # the flight this test issued; the channel was not refetched
     assert rows_texts(tab.published_table)[0][-1] == IMPORTED_MARKER
     assert tab.status.text() == "3 in the catalog · 2 published"
     window.close()
@@ -581,6 +584,7 @@ def test_the_selection_carries_across_a_rebuild(qt) -> None:
     )
     # The answer drops Debian: the held image moves to the top
     # slot — the hold follows the row's content, not its slot.
+    tab.refresh_catalog()
     tab.on_succeeded(images_mod.CATALOG_KEY, [catalog_raw()[1]])
     assert tab.catalog_table.rowCount() == 1
     assert tab.catalog_table.currentRow() == 0
@@ -589,6 +593,7 @@ def test_the_selection_carries_across_a_rebuild(qt) -> None:
         == "ubuntu:24.04"
     )
     # A rebuild that drops the held image clears the hold.
+    tab.refresh_catalog()
     tab.on_succeeded(images_mod.CATALOG_KEY, [catalog_raw()[0]])
     assert tab.catalog_table.selectedItems() == []
     window.close()
@@ -1010,6 +1015,7 @@ def test_the_hold_follows_the_build_not_the_ref(qt) -> None:
     # The rebuild flips the import stamps: the held build now
     # leads the block — the hold follows it to the top slot.
     flipped = [dict(twins[1], imported="2026-01-03T03:04:05"), twins[0]]
+    tab.refresh_catalog()
     tab.on_succeeded(images_mod.CATALOG_KEY, flipped)
     assert tab.catalog_table.currentRow() == 0
     assert tab.catalog_table.item(0, 2).text() == held
@@ -1215,3 +1221,64 @@ def test_the_package_presents_its_parts_lazily() -> None:
 
     with pytest.raises(AttributeError):
         package.no_such_part
+
+
+def test_a_stale_catalog_answer_keeps_the_fresher_page(qt) -> None:
+    """The reader sequence's other half (#964, the review's
+    mirror): a catalog flight an action landed, then the
+    operator's own refresh — the page answers first, the older
+    catalog answer lands second and wipes nothing: the fresher
+    page's rows stand."""
+    tab, window, bridge = make_tab(qt)
+    bridge.calls.clear()
+    tab.refresh_catalog()  # the action's flight, out first
+    tab.refresh()  # the operator's, out after
+    assert tab.pending and tab.catalog_pending
+    tab.on_succeeded(images_mod.PAGE_KEY, page_answer())  # fresher
+    tab.on_succeeded(
+        images_mod.CATALOG_KEY, [catalog_raw()[1]]
+    )  # the older read
+    assert rows_texts(tab.catalog_table) == [
+        ["debian:13.6", "default", "a" * 12, "2026-01-02 03:04"],
+        ["ubuntu:24.04", "-", "b" * 12, "2026-01-03 03:04"],
+    ]
+    assert not tab.catalog_pending
+    window.close()
+
+
+def test_the_panes_reflow_when_the_vertical_bar_appears(qt) -> None:
+    """The pane's own resize re-flow (#964, the review's
+    scrollbar): rows enough to scroll shrink the viewport after
+    the fill sized against the wider one, and the columns
+    re-flow — no horizontal scrollbar on either pane, whatever
+    the row count."""
+    many = [
+        {
+            "name": "distro",
+            "version": f"{index}",
+            "hash": f"{index:02x}" * 32,
+            "default": index == 0,
+            "imported": f"2026-01-0{index % 9 + 1}T03:04:05",
+        }
+        for index in range(12)
+    ]
+    channel_rows = [
+        {
+            "ref": f"distro:{index}",
+            "url": f"https://ch.example/{index}.tar",
+            "hash": f"{index:02x}" * 32,
+            "description": f"build {index} of the channel",
+            "size": 104_857_600 + index,
+            "built_at": "2026-01-01T00:00:00Z",
+        }
+        for index in range(12)
+    ]
+    tab, window, _bridge = make_tab(qt)
+    window.resize(1400, 760)
+    qt.app.processEvents()
+    tab.on_succeeded(images_mod.PAGE_KEY, page_answer(many, channel_rows))
+    qt.app.processEvents()
+    for table in (tab.catalog_table, tab.published_table):
+        assert table.verticalScrollBar().isVisible()
+        assert table.horizontalScrollBar().maximum() == 0
+    window.close()

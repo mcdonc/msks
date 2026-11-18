@@ -160,12 +160,16 @@ class ImagesTab(QtWidgets.QWidget):
         self.published_raw: list[dict] = []
         self.catalog_models: list[CatalogRow] = []
         self.published_models: list[PublishedRow] = []
-        # The catalog's epoch (#964): bumped by every catalog
-        # refresh an action lands, read by the page flight at
-        # its issue — a page answer that predates a fresher
-        # catalog read keeps the fresher rows.
-        self.catalog_writes = 0
-        self.page_epoch = 0
+        # The catalog's reader sequence (#964): every flight
+        # that reads the catalog — the gathered page, the
+        # catalog-only refresh — takes the next number at its
+        # issue, and an answer applies its catalog half only
+        # while its own number is still the last one out: a
+        # flight that predates a later reader keeps the fresher
+        # rows, whichever kind of flight answered first.
+        self.read_seq = 0
+        self.page_seq = 0
+        self.catalog_seq = 0
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
         self.catalog_table = ListTable(0, len(CATALOG_COLUMNS), self)
@@ -231,6 +235,10 @@ class ImagesTab(QtWidgets.QWidget):
         )
         table.verticalHeader().setVisible(False)
         bold_header(table)
+        # The pane's own resizes re-flow the columns (#964): a
+        # vertical scrollbar's appearance shrinks the viewport
+        # after a fill sized against the wider one.
+        table.viewport().installEventFilter(self)
         # The header's presses belong to the tab (#964): the
         # sort a click means — a new column ascending, the same
         # column toggled — is the tab's own rule, applied with
@@ -260,19 +268,23 @@ class ImagesTab(QtWidgets.QWidget):
             return
         self.pending = True
         self.standing("fetching the catalog and the published manifest…")
-        self.page_epoch = self.catalog_writes
+        self.read_seq += 1
+        self.page_seq = self.read_seq
         self.bridge.call(PAGE_KEY, "images_page", self.url)
 
     def refresh_catalog(self) -> None:
         """The catalog-only refresh (#964): the read an action's
         landing takes — the channel's rows did not change, and
         the published group's markers move against the new
-        catalog alone. The epoch bumps here, so a page flight
-        already out — its catalog read possibly older than this
-        one's — cannot land its half over the fresher rows."""
+        catalog alone. The reader sequence moves here, so a page
+        flight already out — its catalog read possibly older
+        than this one's — cannot land its half over the fresher
+        rows, and this one's answer stands down before a later
+        page flight's."""
         if self.catalog_pending:
             return
-        self.catalog_writes += 1
+        self.read_seq += 1
+        self.catalog_seq = self.read_seq
         self.catalog_pending = True
         self.bridge.call(CATALOG_KEY, "images")
 
@@ -313,7 +325,7 @@ class ImagesTab(QtWidgets.QWidget):
         self.pending = False
         page = result or {}
         self.published_raw = list(page.get("published") or [])
-        if self.page_epoch == self.catalog_writes:
+        if self.page_seq == self.read_seq:
             self.catalog_raw = list(page.get("catalog") or [])
         self.rebuild()
         self.standing(counts_text(self.catalog_raw, self.published_raw))
@@ -321,22 +333,31 @@ class ImagesTab(QtWidgets.QWidget):
     def catalog_landed(self, result: object) -> None:
         """The catalog answer (#964): the catalog group and the
         published markers rebuild against the new rows, and the
-        standing counts read the new state."""
+        standing counts read the new state — unless a later
+        reader went out after this flight, whose fresher rows
+        this one must not wipe."""
         self.catalog_pending = False
-        self.catalog_raw = list(result or [])
+        if self.catalog_seq == self.read_seq:
+            self.catalog_raw = list(result or [])
+            self.rebuild()
+            self.standing(counts_text(self.catalog_raw, self.published_raw))
+            return
         self.rebuild()
         self.standing(counts_text(self.catalog_raw, self.published_raw))
 
     def rebuild(self) -> None:
         """Both groups from the presenter (#964): the catalog in
-        its reading order, the published rows in the manifest's
-        own, their markers read against the catalog as it stands
-        — the whole page rebuilt from plain data, the selection
-        carried by row content across the swap."""
+        its reading order, the published rows beside it, their
+        markers read against the catalog as it stands — the
+        whole page rebuilt from plain data, the selection
+        carried by row content across the swap, both panes sized
+        once after the groups stand (the panes' standing sorts
+        order the rows over whatever order the fills wrote)."""
         self.fill_catalog(catalog_rows(self.catalog_raw))
         self.fill_published(
             published_rows(self.published_raw, self.catalog_raw)
         )
+        self.size_columns()
 
     def fill_catalog(self, models: list[CatalogRow]) -> None:
         """The catalog group's rows (#964): one per model, the
@@ -367,9 +388,10 @@ class ImagesTab(QtWidgets.QWidget):
         self.size_columns()
 
     def fill_published(self, models: list[PublishedRow]) -> None:
-        """The published group's rows (#964): one per model in
-        the manifest's own order, the selection carried by the
-        row's url — the same settle."""
+        """The published group's rows (#964): one per model, the
+        selection carried by the row's url — the same settle;
+        the pane's standing sort orders the rows, the REF column
+        ascending, over whatever order the fill wrote."""
         held = self.held_first(self.published_table)
         was_empty = self.published_table.rowCount() == 0
         table = self.published_table
@@ -482,11 +504,12 @@ class ImagesTab(QtWidgets.QWidget):
         pane keeps every row's cells to read, each ellipsized,
         where a scrollbar would hide them."""
         count = table.columnCount()
+        floor = table.horizontalHeader().minimumSectionSize()
         share, extra = divmod(-spare, count)
         for column in range(count):
             width = table.columnWidth(column)
             give = share + (1 if column < extra else 0)
-            table.setColumnWidth(column, max(width - give, 1))
+            table.setColumnWidth(column, max(width - give, floor))
 
     def row_model(self, table: ListTable, row: int) -> PublishedRow | None:
         """The model a table row shows (#964): read through the
@@ -523,8 +546,9 @@ class ImagesTab(QtWidgets.QWidget):
     def column_floor(self, table: ListTable, column: int) -> int:
         """A shrinking column's floor (#964): its header's own
         label and the cell margin — a column never reads below
-        the word that names it."""
-        metrics = table.fontMetrics()
+        the word that names it, measured in the header's own
+        bold face."""
+        metrics = table.horizontalHeader().fontMetrics()
         label = table.model().headerData(
             column, QtCore.Qt.Orientation.Horizontal
         )
@@ -871,7 +895,20 @@ class ImagesTab(QtWidgets.QWidget):
             return True
         if self.header_sorted(watched, event):
             return True
+        self.pane_resized(watched, event)
         return super().eventFilter(watched, event)
+
+    def pane_resized(self, watched: QtCore.QObject, event) -> None:
+        """A group pane's own resize (#964): the columns re-flow
+        — a vertical scrollbar appearing shrinks the viewport
+        after a fill sized against the wider one, and a pane
+        never owes the operator a horizontal bar for it."""
+        if event.type() != QtCore.QEvent.Type.Resize:
+            return
+        for table in (self.catalog_table, self.published_table):
+            if watched is table.viewport():
+                self.size_columns()
+                return
 
     def button_key(self, watched: QtCore.QObject, event) -> bool:
         """The refresh button's arrow bridges (#962's rule): Up
@@ -900,18 +937,26 @@ class ImagesTab(QtWidgets.QWidget):
         first-click order never reads against its arrow."""
         for table in (self.catalog_table, self.published_table):
             header = table.horizontalHeader()
-            if watched is header.viewport() and (
-                event.type()
-                in (
-                    QtCore.QEvent.Type.MouseButtonPress,
-                    QtCore.QEvent.Type.MouseButtonRelease,
-                )
-            ):
+            if watched is header.viewport() and self.header_click(event):
                 if event.type() == QtCore.QEvent.Type.MouseButtonRelease:
                     return True  # the press sorted; Qt's own
                     # click path never lands on top of it
                 return self.sort_pressed(table, header, event)
         return False
+
+    def header_click(self, event) -> bool:
+        """Whether this event is a header's own click gesture
+        (#964): a press or its matching release, the left button
+        — the gesture the tab's sort rule answers, every other
+        press reaching Qt's own handling."""
+        return (
+            event.type()
+            in (
+                QtCore.QEvent.Type.MouseButtonPress,
+                QtCore.QEvent.Type.MouseButtonRelease,
+            )
+            and event.button() == QtCore.Qt.MouseButton.LeftButton
+        )
 
     def sort_pressed(self, table: ListTable, header, event) -> bool:
         """The pressed header's own sort (#964): the section the
