@@ -495,6 +495,33 @@ def test_the_window_names_the_workspace_and_back(qt, window_shell):
     assert shell.window().windowTitle() == "msks"
 
 
+def test_a_close_lands_on_the_remaining_shell_not_the_plus(hub, tabs):
+    """A close that takes the tab current stood on lands on the
+    remaining shell before the "+", never on the blank + page
+    (#971); the last shell's close lands on the Info tab."""
+    hub.open_shell("ws-a")
+    hub.open_shell("ws-a")
+    tabs.host("ws-a")
+    tabs.setCurrentIndex(2)  # the newest shell
+    hub.close_shell("ws-a", 2)
+    assert tabs.currentWidget() is hub.find("ws-a", 1).widget
+    hub.close_shell("ws-a", 1)
+    assert tabs.currentIndex() == 0  # the Info tab
+
+
+def test_the_plus_tooltip_follows_every_readd(hub, tabs):
+    """The + tab carries its tooltip on every host, the re-added
+    tab included."""
+    tabs.host("ws-a")
+    index = tabs.indexOf(tabs.plus_page)
+    assert tabs.tabBar().tabToolTip(index) == "Open a shell tab"
+    tabs.host("ws-b")
+    assert (
+        tabs.tabBar().tabToolTip(tabs.indexOf(tabs.plus_page))
+        == "Open a shell tab"
+    )
+
+
 def test_a_shell_tab_never_shrinks_under_three_characters(hub, tabs):
     """A one-digit title keeps a tab the pointer can grab: the
     floor is three digits of the bar's font beside the close

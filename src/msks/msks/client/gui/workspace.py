@@ -256,13 +256,14 @@ class WorkspaceDetail(QtWidgets.QWidget):
         if self.workspace_id:
             self.shell_wanted.emit(self.workspace_id)
 
-    def open(self, workspace_id: str, label: str) -> None:
+    def open(self, workspace_id: str) -> None:
         """The page takes a workspace (#945, #954, #971): the
         state resets — fresh row, doc, frame buffer, rendered
         sections — the shell tabs re-host for this workspace,
-        and the first refresh goes out. The workspace's name
-        stands in the window title until the row's own answer
-        lands (#971: the page carries no header of its own)."""
+        and the first refresh goes out. The page carries no
+        header of its own; the window's title names the
+        workspace, the shell's list label standing in until the
+        row's own answer lands."""
         self.workspace_id = workspace_id
         self.row = None
         self.health_doc = None
@@ -289,11 +290,11 @@ class WorkspaceDetail(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def refresh(self) -> None:
-        """One page refresh through the bridge (#945) — the
-        tick, the manual button, and the page's own open share
-        it. A flight already out is not stacked, the listing's
-        own guard (#470); the sections stand until the answers
-        replace them."""
+        """One page refresh through the bridge (#945, #971) —
+        the tick and the page's own open share it. A flight
+        already out is not stacked, the listing's own guard
+        (#470); the sections stand until the answers replace
+        them."""
         if not self.row_pending:
             self.row_pending = True
             self.bridge.call(ROW_KEY, "workspaces")
@@ -400,6 +401,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # the section models carry no part of, so the sections'
         # skip must not freeze the footer with them.
         self.render_footer(model)
+        # The window's title reads every answer too (#971): the
+        # list's label stands in until the row's own name lands,
+        # and a renamed workspace re-names the window at once.
+        self.window().setWindowTitle(f"{WINDOW_TITLE} — {model.label}")
         if model == self.rendered:
             return
         self.rendered = model
@@ -407,8 +412,8 @@ class WorkspaceDetail(QtWidgets.QWidget):
 
     def render_sections(self, model: DetailSections) -> None:
         """The sections as the model reads (#945): each section
-        its own widgets — the title renders on every answer, in
-        :meth:`rebuild`, outside this skip-guarded path."""
+        its own widgets — the footer renders on every answer,
+        in :meth:`rebuild`, outside this skip-guarded path."""
         self.render_mounts(model)
         self.render_health(model)
         self.render_events(model)
@@ -648,8 +653,8 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         the page carries no header of its own."""
         model = self.listing.rows_by_id.get(workspace_id)
         label = model.label if model else workspace_id
-        self.detail.open(workspace_id, label)
-        self.name_window(label)
+        self.detail.open(workspace_id)
+        self.name_window(label)  # the row's own answer refines it
         self.setCurrentWidget(self.detail)
 
     def name_window(self, label: str) -> None:

@@ -10,13 +10,11 @@ tagged `vX.Y.Z`.
 
 - **GUI detail-page footer and tab-strip layout (#971).** The
   workspace detail page carries the listing's one-line
-  description bar at its bottom, beneath the terminal tabs, and
-  the header line at the top is gone: the window title names
-  the workspace while the page shows. The page's Refresh
-  button is removed; the page refreshes on its own timer. The
-  tab strip's "+" is the last tab itself, directly right of the
-  rightmost shell tab, instead of pinned to the strip's
-  right edge.
+  description bar at its bottom, beneath the terminal tabs. The
+  header line at the top is gone: the window title carries the
+  workspace's name while the page shows. The tab strip's "+" is
+  the last tab itself, directly right of the rightmost shell
+  tab, instead of pinned to the strip's right edge.
 
 - **GUI terminal-tab polish (#969).** A "+" at the right edge
   of the detail page's tab strip opens a new shell tab. It
@@ -78,8 +76,7 @@ tagged `vX.Y.Z`.
   workspace list — a double-click or Enter on it — swaps to that
   workspace's page: the mounts with their derived state and
   next-start note, the daemon's health facts, and the recent
-  events, refreshed on the listing's own cadence plus a manual
-  button. A failed refresh flashes while the page keeps its
+  events, refreshed on the listing's own cadence. A failed refresh flashes while the page keeps its
   content; Back (or Escape) returns to the list, and a
   workspace another surface deleted closes its page behind a
   notice.

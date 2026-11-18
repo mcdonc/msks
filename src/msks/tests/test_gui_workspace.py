@@ -170,7 +170,7 @@ def make_page(qt) -> tuple:
     window = qt.QtWidgets.QMainWindow()
     window.setCentralWidget(page)
     window.show()
-    page.open("ws-a", "alpha")
+    page.open("ws-a")
     bridge.calls.clear()
     return page, window, bridge
 
@@ -441,7 +441,7 @@ def test_opening_resets_the_page(qt) -> None:
     page, window, bridge = make_page(qt)
     land(qt, page, bridge)
     page.push_frame({"event": "workspace.status", "data": {"id": "ws-a"}})
-    page.open("ws-b", "beta")
+    page.open("ws-b")
     assert page.footer.text() == ""
     assert page.events.isHidden()
     assert page.empty_events.isVisibleTo(page)
@@ -518,6 +518,19 @@ def test_the_none_health_silence_keeps_the_outage(qt) -> None:
     assert page.health.text() == (
         "status  ok\nversion  0.9.3\nmachine  arm64\nimage  -"
     )
+
+
+def test_the_rows_own_name_refines_the_window_title(qt) -> None:
+    """The window's title reads every row answer (#971): the
+    list's label stands in at open, and the row's own name — a
+    rename the list has not seen — takes the title the moment
+    the answer lands."""
+    page, window, bridge = make_page(qt)
+    window.setWindowTitle("msks — alpha")  # the list's stand-in
+    row = daemon_row()
+    row["name"] = "renamed"
+    page.on_succeeded(qt.page_mod.ROW_KEY, [row])
+    assert window.windowTitle() == "msks — renamed"
 
 
 def test_the_footer_reads_the_storage_report(qt) -> None:

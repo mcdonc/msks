@@ -66,10 +66,10 @@ class ShellBar(QtWidgets.QTabBar):
     the default hint squeezes a one-digit title into a sliver
     the pointer cannot grab."""
 
-    #: The strip's "+" tab's index (#971): the one tab after
-    #: the Info tab that is not a shell and takes its natural
-    #: width. The strip recomputes it on every structural
-    #: change; -1 before the first host.
+    #: The strip's "+" tab's index (#971): the one tab that is
+    #: not a shell and takes its natural width. The strip
+    #: recomputes it on every structural change; -1 holds only
+    #: between an unhost and the next host.
     plus_index = -1
 
     def tabSizeHint(self, index):  # noqa: N802
@@ -320,6 +320,16 @@ class ShellTabs(QtWidgets.QTabWidget):
         if index >= 0:
             self.removeTab(index)
         self.sync_plus_index()
+        self.leave_plus()
+
+    def leave_plus(self) -> None:
+        """Take current off the blank "+" (#971): a close that
+        removed the tab current stood on lands Qt's default on
+        the +, a body with nothing in it — the remaining shell
+        before it takes the window back, else the Info tab."""
+        if self.currentWidget() is not self.plus_page:
+            return
+        self.setCurrentIndex(max(0, self.currentIndex() - 1))
 
     def drop_button(self, no: int) -> None:
         """One close's button down (#954) — the same leak the
