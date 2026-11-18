@@ -8,6 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **GUI detail-page footer and tab-strip layout (#971).** The
+  workspace detail page carries the listing's one-line
+  description bar at its bottom, beneath the terminal tabs, and
+  the header line at the top is gone: the window title names
+  the workspace while the page shows. The page's Refresh
+  button is removed; the page refreshes on its own timer. The
+  tab strip's "+" is the last tab itself, directly right of the
+  rightmost shell tab, instead of pinned to the strip's
+  right edge.
+
 - **GUI terminal-tab polish (#969).** A "+" at the right edge
   of the detail page's tab strip opens a new shell tab. It
   stands beside the Info tab when no shell is open. Shell tabs

@@ -14,6 +14,13 @@ from dataclasses import dataclass
 from ..ages import created_label, parse_stamp
 from ..volumes import MIB, human_bytes
 
+#: The GUI window's plain title (#939): the screens give it a
+#: workspace to name while a detail page shows (#971), and the
+#: shell takes the plain title back on the list. The shared
+#: leaf carries it so the entry and the screens read one
+#: definition.
+WINDOW_TITLE = "msks"
+
 #: The state word's sort order (#938), mirroring the TUI's
 #: ``STATUS_SORT_ORDER`` (#854): the lifecycle order an operator
 #: scans in, the vocabulary's own sequence. A state outside the

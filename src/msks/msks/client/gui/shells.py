@@ -14,10 +14,10 @@ contract (close before ``deleteLater``).
 The strip (:class:`ShellTabs`) is the page's tab widget: the
 Info tab first, then one tab per session, titled with the
 session's number until an in-place rename stands, and the "+"
-at the strip's right edge opening one more shell (#969).
-Hosting is per workspace — opening another workspace's page
-unhooks this one's widgets (they keep running hidden) and hooks
-the new workspace's.
+as the last tab — directly right of the rightmost shell tab —
+opening one more shell (#969, #971). Hosting is per workspace
+— opening another workspace's page unhooks this one's widgets
+(they keep running hidden) and hooks the new workspace's.
 
 The module imports PySide6 at module scope, the same contract
 as the screen modules (:mod:`msks.client.gui.workspace`):
@@ -66,11 +66,17 @@ class ShellBar(QtWidgets.QTabBar):
     the default hint squeezes a one-digit title into a sliver
     the pointer cannot grab."""
 
+    #: The strip's "+" tab's index (#971): the one tab after
+    #: the Info tab that is not a shell and takes its natural
+    #: width. The strip recomputes it on every structural
+    #: change; -1 before the first host.
+    plus_index = -1
+
     def tabSizeHint(self, index):  # noqa: N802
-        """The platform's own hint, floored for the shell tabs
-        (everything after the Info tab)."""
+        """The platform's own hint, floored for the shell tabs —
+        everything after the Info tab but the "+" itself."""
         size = super().tabSizeHint(index)
-        if index > 0:
+        if index > 0 and index != self.plus_index:
             size.setWidth(max(size.width(), self.min_tab_px()))
         return size
 
@@ -180,15 +186,16 @@ class ShellTabs(QtWidgets.QTabWidget):
         # has to stand before the first tab sizes against it.
         self.setTabBar(ShellBar(self))
         self.addTab(info, INFO_LABEL)
-        # The "+" (#969): always present at the strip's right
-        # edge, beside the Info tab when no shell stands and
-        # right of the rightmost shell tab when they do — the
-        # page's own new-shell action.
-        self.plus = QtWidgets.QToolButton(self)
-        self.plus.setText("+")
-        self.plus.setToolTip("Open a shell tab on this workspace")
-        self.plus.clicked.connect(self.new_shell)
-        self.setCornerWidget(self.plus, QtCore.Qt.Corner.TopRightCorner)
+        # The "+" (#969, #971): a tab of its own, always the
+        # last — directly right of the rightmost shell tab, and
+        # beside the Info tab when no shell stands. A click on
+        # it opens one more shell; visiting it by keyboard or a
+        # tab shift opens nothing.
+        self.plus_page = QtWidgets.QWidget(self)
+        self.addTab(self.plus_page, "+")
+        self.tabBar().setTabToolTip(1, "Open a shell tab")
+        self.tabBar().tabBarClicked.connect(self.bar_clicked)
+        self.sync_plus_index()
         self.tabBar().installEventFilter(self)
         # The shell tabs' own maps, number to widget and number
         # to the tab's close button (#954): a close takes the
@@ -208,32 +215,42 @@ class ShellTabs(QtWidgets.QTabWidget):
         """Show one workspace's shells (#954): the standing tabs
         come off first — their widgets keep running under the
         hub — then one tab per session, titled as its record
-        reads, the newest shell current."""
+        reads, the newest shell current, the "+" last."""
         self.unhost()
         self.hosted = workspace_id
+        self.addTab(self.plus_page, "+")
+        self.tabBar().setTabToolTip(
+            self.indexOf(self.plus_page), "Open a shell tab"
+        )
+        self.sync_plus_index()
         for session in self.hub.shells(workspace_id):
             self.add_session(session)
-        last = self.count() - 1
+        last = self.count() - 2
         if last > 0:
             self.setCurrentIndex(last)
 
     def unhost(self) -> None:
         """Take the shell tabs off (#954): each widget unhooks
         from the strip and keeps running — the hub owns it, and
-        a page's close ends nothing."""
+        a page's close ends nothing. The "+" comes off with
+        them; the strip re-adds it at its next host."""
         self.cancel_rename()
         while self.count() > 1:
             widget = self.widget(1)
             self.removeTab(1)
-            widget.setParent(None)
+            if widget is not self.plus_page:
+                widget.setParent(None)
         self.hosted = ""
+        self.sync_plus_index()
         self.tab_widgets.clear()
         self.drop_buttons()
 
     def add_session(self, session: ShellSession) -> None:
         """One session's tab (#954): titled as its record reads,
-        with its own close button — the Info tab carries none."""
-        index = self.addTab(session.widget, session.label)
+        with its own close button — inserted before the "+" so
+        the strip's last tab stays the strip's own."""
+        index = self.insertTab(self.count() - 1, session.widget, session.label)
+        self.sync_plus_index()
         self.tab_widgets[session.no] = session.widget
         button = QtWidgets.QToolButton(self.tabBar())
         button.setIcon(
@@ -257,6 +274,20 @@ class ShellTabs(QtWidgets.QTabWidget):
         for button in self.tab_buttons.values():
             button.deleteLater()
         self.tab_buttons.clear()
+
+    def sync_plus_index(self) -> None:
+        """The "+" tab's index back into the bar (#971): the bar
+        floors every shell tab and skips the + by this index,
+        which every structural change can move."""
+        self.tabBar().plus_index = self.indexOf(self.plus_page)
+
+    @QtCore.Slot(int)
+    def bar_clicked(self, index: int) -> None:
+        """One click on the bar (#971): the "+" opens a shell;
+        every other tab is a tab, and current moving onto the +
+        without a click (a close shifting tabs) opens nothing."""
+        if self.widget(index) is self.plus_page:
+            self.new_shell.emit()
 
     # --- the hub's signals ---------------------------------------------
 
@@ -288,6 +319,7 @@ class ShellTabs(QtWidgets.QTabWidget):
         index = self.indexOf(widget)
         if index >= 0:
             self.removeTab(index)
+        self.sync_plus_index()
 
     def drop_button(self, no: int) -> None:
         """One close's button down (#954) — the same leak the
@@ -348,7 +380,7 @@ class ShellTabs(QtWidgets.QTabWidget):
         ):
             return False
         index = self.tabBar().tabAt(event.position().toPoint())
-        if index <= 0:
+        if index <= 0 or self.widget(index) is self.plus_page:
             return False
         self.begin_rename(index)
         return True

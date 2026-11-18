@@ -21,6 +21,7 @@ from types import ModuleType
 
 from ..sshsessions import state_dir
 from .data import GuiData
+from .rows import WINDOW_TITLE
 
 # What a base install hears when it asks for the window (#928):
 # one stderr line, the client's error convention, naming the
@@ -47,9 +48,6 @@ NO_DISPLAY = (
     "WAYLAND_DISPLAY, or QT_QPA_PLATFORM=offscreen)"
 )
 
-# The shell window's title, until the screens give it a
-# workspace to name (#924 phases 3 and 4).
-WINDOW_TITLE = "msks"
 
 # The style the window asks Qt for by name (#937). A desktop
 # session can hand the wheel's Qt a style engine plugin built

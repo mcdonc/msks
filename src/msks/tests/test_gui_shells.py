@@ -190,8 +190,9 @@ def test_hosting_shows_one_tab_per_shell(hub, tabs):
         "Info",
         "1",
         "2",
+        "+",
     ]
-    assert tabs.currentIndex() == 2
+    assert tabs.currentIndex() == 2  # the newest shell, not the +
 
 
 def test_unhosting_keeps_the_sessions_running(hub, tabs):
@@ -218,6 +219,7 @@ def test_rehosting_shows_the_titles(hub, tabs):
         "Info",
         "1",
         "build",
+        "+",
     ]
 
 
@@ -236,7 +238,7 @@ def test_an_open_for_another_workspace_adds_nothing(hub, tabs):
     adds no tab to it."""
     tabs.host("ws-a")
     hub.open_shell("ws-b")
-    assert tabs.count() == 1
+    assert [tabs.tabText(i) for i in range(tabs.count())] == ["Info", "+"]
 
 
 def test_a_close_removes_the_tab(hub, tabs):
@@ -248,6 +250,7 @@ def test_a_close_removes_the_tab(hub, tabs):
     assert [tabs.tabText(i) for i in range(tabs.count())] == [
         "Info",
         "2",
+        "+",
     ]
 
 
@@ -260,7 +263,7 @@ def test_the_close_button_ends_its_session(hub, tabs, qt):
     button = tabs.tabBar().tabButton(1, side)
     assert tabs.tabBar().tabButton(0, side) is None
     button.click()
-    assert tabs.count() == 1
+    assert [tabs.tabText(i) for i in range(tabs.count())] == ["Info", "+"]
     assert hub.shells("ws-a") == []
 
 
@@ -347,7 +350,7 @@ def test_an_open_for_an_unknown_number_adds_nothing(hub, tabs):
     the strip reads the hub's record, and no record stands."""
     tabs.host("ws-a")
     hub.shell_opened.emit("ws-a", 99)
-    assert tabs.count() == 1
+    assert [tabs.tabText(i) for i in range(tabs.count())] == ["Info", "+"]
 
 
 def test_a_close_for_an_unknown_number_removes_nothing(hub, tabs):
@@ -355,7 +358,11 @@ def test_a_close_for_an_unknown_number_removes_nothing(hub, tabs):
     hub.open_shell("ws-a")
     tabs.host("ws-a")
     hub.shell_closed.emit("ws-a", 99)
-    assert tabs.count() == 2
+    assert [tabs.tabText(i) for i in range(tabs.count())] == [
+        "Info",
+        "1",
+        "+",
+    ]
 
 
 def test_a_close_for_a_widget_out_of_the_strip_removes_nothing(hub, tabs, qt):
@@ -366,7 +373,11 @@ def test_a_close_for_a_widget_out_of_the_strip_removes_nothing(hub, tabs, qt):
     stranger = qt.QtWidgets.QWidget()
     tabs.tab_widgets[9] = stranger
     hub.shell_closed.emit("ws-a", 9)
-    assert tabs.count() == 2
+    assert [tabs.tabText(i) for i in range(tabs.count())] == [
+        "Info",
+        "1",
+        "+",
+    ]
 
 
 def test_a_commit_for_a_gone_record_changes_nothing(hub, tabs):
@@ -459,6 +470,31 @@ def test_a_rename_for_a_record_behind_the_strip_changes_nothing(hub, tabs):
     assert tabs.tabText(1) == "1"
 
 
+def test_the_plus_tab_takes_its_natural_width(hub, tabs):
+    """The floor is the shell tabs': the "+" keeps its own
+    narrow width, floored like a shell tab it would read as a
+    wide blank beside the tabs it opens."""
+    hub.open_shell("ws-a")
+    tabs.host("ws-a")
+    tabs.resize(800, 400)
+    bar = tabs.tabBar()
+    shell_width = bar.tabRect(1).width()
+    plus_width = bar.tabRect(tabs.indexOf(tabs.plus_page)).width()
+    assert shell_width >= bar.min_tab_px()
+    assert plus_width < bar.min_tab_px()
+
+
+def test_the_window_names_the_workspace_and_back(qt, window_shell):
+    """The workspace's name lives in the window title while the
+    page shows (#971), and the list takes the plain title
+    back."""
+    shell, hub, _window = window_shell
+    shell.open_detail("ws-a")
+    assert shell.window().windowTitle() == "msks — alpha"
+    shell.detail.go_back()
+    assert shell.window().windowTitle() == "msks"
+
+
 def test_a_shell_tab_never_shrinks_under_three_characters(hub, tabs):
     """A one-digit title keeps a tab the pointer can grab: the
     floor is three digits of the bar's font beside the close
@@ -471,25 +507,33 @@ def test_a_shell_tab_never_shrinks_under_three_characters(hub, tabs):
     assert bar.min_tab_px() >= bar.fontMetrics().horizontalAdvance("000")
 
 
-def test_the_plus_sits_right_of_the_tabs_and_opens_a_shell(qt, window_shell):
-    """The "+" stands at the strip's right edge with no shell
-    open and stays there right of the rightmost shell tab; a
-    click opens a new shell tab on the page's workspace."""
+def test_the_plus_sits_directly_right_of_the_last_tab_and_opens(
+    qt, window_shell
+):
+    """The "+" is the last tab itself — directly right of the
+    rightmost shell tab with shells standing, beside the Info
+    tab without; a click on it opens a new shell tab, and a
+    close shifting tabs onto the + opens nothing."""
     shell, hub, _window = window_shell
-    assert tabs_plus(shell.detail) is not None
+    assert tabs_plus(shell.detail) == 1  # beside Info alone
     shell.open_detail("ws-a")
-    tabs_plus(shell.detail).click()
-    assert shell.detail.tabs.count() == 2
+    click_plus(shell.detail)
     titles = [
         shell.detail.tabs.tabText(i) for i in range(shell.detail.tabs.count())
     ]
-    assert titles == ["Info", "1"]
-    # the + stays right of the rightmost shell tab, both read in
-    # the strip's own frame
+    assert titles == ["Info", "1", "+"]
     tabs = shell.detail.tabs
     bar = tabs.tabBar()
-    tab_right = bar.mapTo(tabs, bar.tabRect(1).topRight()).x()
-    assert tabs_plus(shell.detail).x() >= tab_right
+    plus = bar.tabRect(tabs_plus(shell.detail))
+    last_shell = bar.tabRect(tabs_plus(shell.detail) - 1)
+    assert plus.left() >= last_shell.right()  # directly right
+    # a close shifting the current tab onto the + opens nothing
+    hub.close_shell("ws-a", 1)
+    assert [tabs.tabText(i) for i in range(tabs.count())] == ["Info", "+"]
+    assert hub.shells("ws-a") == []
+    # a click on any other tab is just a tab: no shell opens
+    tabs.tabBar().tabBarClicked.emit(0)
+    assert hub.shells("ws-a") == []
 
 
 def test_the_plus_opens_a_second_shell_beside(qt, window_shell):
@@ -497,12 +541,12 @@ def test_the_plus_opens_a_second_shell_beside(qt, window_shell):
     standing one, numbered in open order."""
     shell, hub, _window = window_shell
     shell.open_detail("ws-a")
-    tabs_plus(shell.detail).click()
-    tabs_plus(shell.detail).click()
+    click_plus(shell.detail)
+    click_plus(shell.detail)
     titles = [
         shell.detail.tabs.tabText(i) for i in range(shell.detail.tabs.count())
     ]
-    assert titles == ["Info", "1", "2"]
+    assert titles == ["Info", "1", "2", "+"]
 
 
 def test_the_page_chrome_carries_no_shell_button(qt, window_shell):
@@ -514,12 +558,18 @@ def test_the_page_chrome_carries_no_shell_button(qt, window_shell):
         for button in shell.detail.findChildren(type(shell.detail.back_button))
         if button.text()
     ]
-    assert chrome_buttons == ["Refresh"]
+    assert chrome_buttons == []
 
 
-def tabs_plus(page) -> object:
-    """The tab strip's "+" button."""
-    return page.tabs.plus
+def tabs_plus(page) -> int:
+    """The tab strip's "+" tab index."""
+    return page.tabs.indexOf(page.tabs.plus_page)
+
+
+def click_plus(page) -> None:
+    """A real click on the "+" tab: the bar's own clicked
+    signal, the gesture the strip routes."""
+    page.tabs.tabBar().tabBarClicked.emit(tabs_plus(page))
 
 
 # --- the window shell's actions ---------------------------------------
@@ -533,9 +583,10 @@ def test_the_shell_action_opens_the_detail_on_a_new_tab(qt, window_shell):
     shell.listing.table.selectRow(0)
     shell.listing.shell_button.click()
     assert shell.currentWidget() is shell.detail
-    assert shell.detail.tabs.count() == 2
+    assert shell.detail.tabs.count() == 3
     assert shell.detail.tabs.currentIndex() == 1
     assert shell.detail.tabs.tabText(1) == "1"
+    assert shell.detail.tabs.tabText(2) == "+"
 
 
 def test_a_second_shell_takes_the_tab_beside(qt, window_shell):
@@ -547,7 +598,7 @@ def test_a_second_shell_takes_the_tab_beside(qt, window_shell):
     titles = [
         shell.detail.tabs.tabText(i) for i in range(shell.detail.tabs.count())
     ]
-    assert titles == ["Info", "1", "2"]
+    assert titles == ["Info", "1", "2", "+"]
 
 
 def test_the_back_action_closes_no_shell(qt, window_shell):
@@ -574,7 +625,7 @@ def test_reopening_shows_every_shell_with_its_title(qt, window_shell):
     titles = [
         shell.detail.tabs.tabText(i) for i in range(shell.detail.tabs.count())
     ]
-    assert titles == ["Info", "1", "build"]
+    assert titles == ["Info", "1", "build", "+"]
 
 
 def test_a_shell_for_another_workspace_swaps_the_page(qt, window_shell):
@@ -587,7 +638,7 @@ def test_a_shell_for_another_workspace_swaps_the_page(qt, window_shell):
     titles = [
         shell.detail.tabs.tabText(i) for i in range(shell.detail.tabs.count())
     ]
-    assert titles == ["Info", "1"]
+    assert titles == ["Info", "1", "+"]
     assert len(hub.shells("ws-a")) == 1
 
 

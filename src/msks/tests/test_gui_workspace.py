@@ -198,9 +198,12 @@ def test_opening_a_row_shows_the_page(qt) -> None:
     shell, window, bridge = make_shell(qt)
     shell.listing.opened.emit("ws-a")
     assert shell.currentWidget() is shell.detail
-    assert shell.detail.title.text() == "alpha"
+    # The workspace's name lives in the window title (#971):
+    # the page carries no header of its own.
+    assert window.windowTitle() == "msks — alpha"
     assert ("detail-row", "workspaces", ()) in bridge.calls
     assert ("detail-health", "health", ()) in bridge.calls
+    assert ("detail-storage", "storage", ()) in bridge.calls
     assert shell.detail.timer.interval() == 5000
 
 
@@ -221,12 +224,15 @@ def test_the_page_renders_the_sections(qt) -> None:
     """The sections land as widgets (#945): the mounts table
     reads the entries — the spec, the derived state, the gate's
     reason — the next-start note stands under it, the health
-    facts read one pair a line, and the header line carries the
-    label beside the row's own facts (#969)."""
+    facts read one pair a line, and the footer strip (#971)
+    carries the same one-line read the listing's strip gives,
+    storage as the honest dash until a report lands."""
     page, window, bridge = make_page(qt)
     land(qt, page, bridge)
-    assert page.title.text() == (
-        "alpha  ·  id ws-a  ·  image msks/fedora:41  ·  created 2d ago"
+    assert page.footer.text() == (
+        "alpha  ·  id ws-a  ·  image msks/fedora:41"
+        "  ·  cpu -  ·  mem -  ·  egress -"
+        "  ·  mounts ✗1  ·  next ↻1  ·  storage -"
     )
     assert page.mounts.rowCount() == 2
     cells = [
@@ -436,7 +442,7 @@ def test_opening_resets_the_page(qt) -> None:
     land(qt, page, bridge)
     page.push_frame({"event": "workspace.status", "data": {"id": "ws-a"}})
     page.open("ws-b", "beta")
-    assert page.title.text() == "beta"
+    assert page.footer.text() == ""
     assert page.events.isHidden()
     assert page.empty_events.isVisibleTo(page)
     assert page.frames == []
@@ -514,38 +520,37 @@ def test_the_none_health_silence_keeps_the_outage(qt) -> None:
     )
 
 
-def test_the_header_reads_on_one_line(qt) -> None:
-    """The page's header carries the label and the row's own
-    facts together on one line (#969) — id, image, created
-    beside the name, and no second line: the meta label the
-    two-line shape carried is gone."""
+def test_the_footer_reads_the_storage_report(qt) -> None:
+    """The footer's storage fact reads the capacity report
+    (#971): the same per-workspace cost the listing's strip
+    charges, landing with the report's own answer."""
     page, window, bridge = make_page(qt)
     land(qt, page, bridge)
-    text = page.title.text()
-    assert text.startswith("alpha  ·  id ws-a")
-    assert "image msks/fedora:41" in text
-    assert text.endswith("created 2d ago")
-    assert not hasattr(page, "meta")
-
-
-def test_the_header_line_moves_with_the_clock(qt, monkeypatch) -> None:
-    """The header renders on every answer (#945): the created age
-    is a fact of the row, not the section models — an unchanged
-    section answer still re-reads it against the moved clock."""
-    from datetime import datetime as dt
-
-    page, window, bridge = make_page(qt)
-    land(qt, page, bridge)
-    assert "created 2d ago" in page.title.text()
-    monkeypatch.setattr(
-        ages_mod, "clock_now", lambda: dt.fromisoformat("2026-01-18T12:00:00")
+    assert page.footer.text().endswith("storage -")
+    page.on_succeeded(
+        qt.page_mod.STORAGE_KEY,
+        {
+            "workspaces": [
+                {"id": "ws-a", "root_bytes": 10737418240, "home_bytes": 1}
+            ]
+        },
     )
-    land(qt, page, bridge)  # the same row, the clock 14 days on
-    assert "created 2w ago" in page.title.text()
-    # The sections stood unchanged through the same answer; the
-    # hold that survives them is pinned by the unchanged-answer
-    # test.
-    assert page.mounts.rowCount() == 2
+    assert "storage 10G" in page.footer.text()
+
+
+def test_a_failed_storage_read_flashes_and_keeps_the_dash(qt) -> None:
+    """A refused storage read flashes the status line and the
+    footer keeps its dash (#971): the strip's fact is the
+    report's, not an error's."""
+    page, window, bridge = make_page(qt)
+    land(qt, page, bridge)
+    page.on_failed(
+        qt.page_mod.STORAGE_KEY,
+        clientdata.RestFailure("the daemon refused", reach=False),
+    )
+    assert page.status.text() == "the daemon refused"
+    assert page.footer.text().endswith("storage -")
+    assert not page.storage_pending
 
 
 def test_a_late_removed_answer_needs_the_page_current(qt) -> None:
