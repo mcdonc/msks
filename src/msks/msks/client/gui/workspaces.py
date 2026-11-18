@@ -20,6 +20,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..data import RestFailure
 from .bridge import Bridge
+from .listtable import ListTable
 from .rows import (
     WorkspaceRow,
     detail_text,
@@ -201,7 +202,7 @@ class WorkspaceList(QtWidgets.QWidget):
         self.flash_seq = 0
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
-        self.table = QtWidgets.QTableWidget(0, len(COLUMNS) + 1, self)
+        self.table = ListTable(0, len(COLUMNS) + 1, self)
         self.table.setHorizontalHeaderLabels((*COLUMNS, ""))
         self.table.verticalHeader().setVisible(False)
         # The standing sort (#939): CREATED newest-first, the

@@ -324,6 +324,32 @@ def test_the_gui_window_opens_offscreen(
         opened["geometry"] = [
             (w.x(), w.y(), w.width(), w.height()) for w in windows
         ]
+        # The strip's shape read while the window stands (#962):
+        # the tabs, their labels, the current one, and the
+        # Workspaces tab's create opener.
+        opened["tabs"] = [
+            (
+                type(w.centralWidget()).__name__,
+                [
+                    w.centralWidget().tabText(i)
+                    for i in range(w.centralWidget().count())
+                ],
+                w.centralWidget().currentIndex(),
+            )
+            if isinstance(w.centralWidget(), QtWidgets.QTabWidget)
+            else None
+            for w in windows
+        ]
+        opened["plus"] = [
+            (
+                w.centralWidget()
+                .tabBar()
+                .tabButton(0, QtWidgets.QTabBar.ButtonPosition.RightSide)
+            )
+            if isinstance(w.centralWidget(), QtWidgets.QTabWidget)
+            else None
+            for w in windows
+        ]
         return 0
 
     monkeypatch.setattr(QtWidgets.QApplication, "exec", record_and_exit)
@@ -341,6 +367,19 @@ def test_the_gui_window_opens_offscreen(
     # places the frame, so the size is what is pinned).
     first = opened["geometry"][0]
     assert first[2:] == (app.DEFAULT_WIDTH, app.DEFAULT_HEIGHT)
+    # The top-level strip (#962): the window's central widget is
+    # the tab strip, the Workspaces tab first and current.
+    from msks.client.gui.tabs import WORKSPACES_LABEL
+
+    assert opened["tabs"][0] == (
+        "MainTabs",
+        [WORKSPACES_LABEL],
+        0,
+    )
+    # The create opener rides the tab (#962): a plus button
+    # embedded in the Workspaces tab.
+    plus = opened["plus"][0]
+    assert plus is not None and plus.text() == "+"
 
     # Each run rescales the shared application's font (#939:
     # one scale per open), so a second run in one process would
@@ -444,6 +483,7 @@ def test_open_window_reuses_an_existing_app(
     would."""
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("the gui extra is not installed on this host")
+    from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui.bridge import Bridge
 
@@ -452,10 +492,23 @@ def test_open_window_reuses_an_existing_app(
     styles: list[str] = []
     central: list[object] = []
     built: list[object] = []
+    screens: list[object] = []
+    creates: list[object] = []
 
     class FakeSignal:
         def connect(self, slot: object) -> None:
             stops.append(slot)
+
+    class CreateSignal:
+        """The strip's create opener (#962): the window path
+        connects the shell's slot on it — the recording pins the
+        wiring."""
+
+        def __init__(self) -> None:
+            self.slots: list[object] = []
+
+        def connect(self, slot: object) -> None:
+            creates.append(slot)
 
     class FakeRect:
         """The window geometry's shape for the save pin (#939):
@@ -499,9 +552,26 @@ def test_open_window_reuses_an_existing_app(
             self, bridge: object, terminal_cmd: object = None
         ) -> None:
             built.append(bridge)
+            screens.append(self)
             self.terminal_cmd = terminal_cmd
 
+        def open_create(self) -> None:
+            pass  # the wiring pin reads the bound method, not the call
+
     monkeypatch.setattr(workspace_mod, "WorkspaceShell", FakeScreen)
+
+    class FakeTabs:
+        """The strip the shell lands under (#962): the stub the
+        window path takes for the real tab widget — the shell is
+        its first page, the Workspaces tab, and its create
+        opener lands on the shell."""
+
+        create_requested = CreateSignal()
+
+        def __init__(self, page: object) -> None:
+            self.page = page
+
+    monkeypatch.setattr(tabs_mod, "MainTabs", FakeTabs)
 
     class FakeFont:
         """The app font's shape for the scale pin (#939): a point
@@ -573,11 +643,16 @@ def test_open_window_reuses_an_existing_app(
     # the session theme.
     assert os.environ["QT_STYLE_OVERRIDE"] == "Fusion"
     assert app.WINDOW_TITLE in shown
-    # The window opens on the workspace list (#939): the screen
-    # is the central widget, built over the same bridge the
-    # window started.
+    # The window opens on the top-level tab strip (#962): the
+    # screen is the strip's first page — the Workspaces tab —
+    # built over the same bridge the window started.
     assert len(central) == 1
+    assert isinstance(central[0], FakeTabs)
+    assert central[0].page is screens[0]
     assert built == started
+    # The create opener lands on the shell (#962): the strip's
+    # plus button opens the shell's own create dialog.
+    assert creates == [screens[0].open_create]
     assert shown[-1] == "stopped"  # the return path stopped the bridge
     assert len(started) == 1  # started with the window
     assert len(stops) == 1  # aboutToQuit holds the same stop
@@ -597,6 +672,7 @@ def test_open_window_keeps_a_user_style_choice(
     with the choice preset in the swapped-out environment."""
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("the gui extra is not installed on this host")
+    from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui.bridge import Bridge
 
@@ -605,6 +681,16 @@ def test_open_window_keeps_a_user_style_choice(
 
     class FakeSignal:
         def connect(self, slot: object) -> None:
+            pass
+
+    class FakeTabs:
+        """The strip stub (#962): the shell lands under it, the
+        shape the style test never reads past — the opener's
+        connect is the no-op signal's own."""
+
+        create_requested = FakeSignal()
+
+        def __init__(self, page: object) -> None:
             pass
 
     class FakeWindow:
@@ -641,7 +727,12 @@ def test_open_window_keeps_a_user_style_choice(
         ) -> None:
             pass
 
+        def open_create(self) -> None:
+            pass
+
     monkeypatch.setattr(workspace_mod, "WorkspaceShell", FakeScreen)
+
+    monkeypatch.setattr(tabs_mod, "MainTabs", FakeTabs)
 
     class FakeApp:
         aboutToQuit = FakeSignal()

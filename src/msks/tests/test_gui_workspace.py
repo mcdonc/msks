@@ -440,6 +440,45 @@ def test_back_returns_to_the_list(qt) -> None:
     qt.app.processEvents()
     QtTest.QTest.keyClick(window, qt.QtCore.Qt.Key.Key_Escape)
     assert shell.currentWidget() is shell.listing
+
+
+def test_the_create_opener_opens_the_dialog_over_the_list(
+    qt, monkeypatch
+) -> None:
+    """The Workspaces tab's plus button (#962): the shell opens
+    the create dialog over the bridge it owns, and a landed
+    create — the dialog's accept — refreshes the listing behind
+    it."""
+    shell, window, bridge = make_shell(qt)
+    opened: list[object] = []
+    accepted: list[object] = []
+
+    class FakeDialog:
+        """The dialog's stub: the constructor's bridge, the
+        accepted signal's connect surface, and an exec that
+        returns at once (the stub never enters a loop)."""
+
+        def __init__(self, bridge: object) -> None:
+            opened.append(bridge)
+
+    class FakeAccepted:
+        def connect(self, slot: object) -> None:
+            accepted.append(slot)
+
+    FakeDialog.accepted = FakeAccepted()  # type: ignore[attr-defined]
+
+    def fake_exec(self: FakeDialog) -> int:
+        return 0
+
+    FakeDialog.exec = fake_exec  # type: ignore[method-assign]
+    from msks.client.gui import workspace as workspace_mod
+
+    monkeypatch.setattr(workspace_mod, "CreateDialog", FakeDialog)
+    shell.open_create()
+    assert opened == [bridge]
+    # A landed create refreshes the listing: the connected slot
+    # is the list's own refresh.
+    assert accepted == [shell.listing.refresh]
     shell.listing.opened.emit("ws-a")
     page = shell.detail
     back = next(

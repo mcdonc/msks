@@ -14,7 +14,7 @@ import json
 import signal
 import subprocess
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 
 import httpx
 
@@ -613,3 +613,39 @@ async def fetch_manifest(url: str, transport=None) -> list[dict]:
     if not isinstance(document, list):
         raise SystemExit("the image manifest is not a list of images")
     return document
+
+
+#: The image ordering's floor (#962, shared with the GUI's
+#: create dialog): a row without a usable import stamp sorts
+#: below every dated row of its group.
+FIRST_MOMENT = datetime(1, 1, 1, tzinfo=UTC)
+
+
+def stamp_moment(stamp: object) -> datetime | None:
+    """One import stamp as an aware local moment, or ``None``
+    when the row carries no stamp or a moment the clock cannot
+    parse (#186) — a naive stamp reads as local time, matching
+    the CLI table's own rendering. Distinct from
+    :mod:`msks.client.tui.importer`'s ``imported_moment`` row
+    helper: that one reads a dict and treats a naive stamp as
+    UTC."""
+    # OverflowError rides extreme stamps: a year-1 moment has no
+    # representation in some local zones. TypeError covers a
+    # daemon sending a non-string.
+    with contextlib.suppress(ValueError, TypeError, OverflowError):
+        return datetime.fromisoformat(stamp).astimezone()
+    return None
+
+
+def ordered_image_rows(rows: list[dict]) -> list[dict]:
+    """The image pickers' ordering, the TUI select's and the
+    GUI dialog's own (#962): distro name ascending, then import
+    date descending — the newest build of a distro leads its
+    group, and a row without a usable stamp sorts below every
+    dated row of its group."""
+    newest_first = sorted(
+        rows,
+        key=lambda row: stamp_moment(row.get("imported")) or FIRST_MOMENT,
+        reverse=True,
+    )
+    return sorted(newest_first, key=lambda row: row["name"])

@@ -5,9 +5,9 @@ module at load time (``wscommands.py``), so a module-scope
 PySide6 import would break every command on a base install. The
 window shell is the phase-1 surface (#928) carrying the
 workspace list screen (#939, phase 3 of the plan): a main
-window over the daemon's REST API whose central widget renders
-the presenter's row models and refreshes them through the
-bridge.
+window over the daemon's REST API whose central tab strip
+(#962) hosts the presenter's row models and refreshes them
+through the bridge.
 """
 
 import json
@@ -271,10 +271,12 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     wants one application per process. The window owns the
     bridge (phase 2 of #924): started with the window, stopped
     on close — ``aboutToQuit`` first, then the return path, both
-    through the idempotent stop — and opens on the workspace
-    screens (#939, #945): the shell — the list and the detail
-    page over one bridge — is the central widget the bridge's
-    answers land on.
+    through the idempotent stop — and opens on the top-level
+    tab strip (#962): the workspace screens (#939, #945) — the
+    shell, the list and the detail page over one bridge — live
+    under the Workspaces tab, the first of the strip the images
+    and secrets tabs of phase 4.6 join. The bridge's answers
+    land on the shell wherever the strip shows it.
     """
     # allow-deferred-import — the bridge brings PySide6 with it
     # (module scope there); this module stays Qt-free at parse
@@ -319,6 +321,11 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     app.aboutToQuit.connect(bridge.stop)
     window = QtWidgets.QMainWindow()
     window.setWindowTitle(WINDOW_TITLE)
+    # allow-deferred-import — the strip carries the screens'
+    # own shape (#962): the screens land under the Workspaces
+    # tab, the strip the phase 4.6 pages join.
+    from .tabs import MainTabs
+
     # allow-deferred-import — the screen module brings PySide6
     # with it (module scope there, like the bridge); the window
     # path loads it after the guards — the same reachability
@@ -326,9 +333,13 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # the module.
     from .workspace import WorkspaceShell
 
-    window.setCentralWidget(
-        WorkspaceShell(bridge, terminal_cmd=terminal_command(conf))
-    )
+    shell = WorkspaceShell(bridge, terminal_cmd=terminal_command(conf))
+    tabs = MainTabs(shell)
+    # The Workspaces tab's plus button (#962): the shell owns
+    # the bridge, so the opener's click lands there — the
+    # create dialog is the shell's own surface.
+    tabs.create_requested.connect(shell.open_create)
+    window.setCentralWidget(tabs)
     # The opening geometry (#939): the last-closed rect wins —
     # a saved geometry the screens still show — and the fixed
     # 1280 by 720 is the first-open shape until a close
