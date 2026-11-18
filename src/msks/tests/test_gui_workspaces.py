@@ -1034,15 +1034,22 @@ def test_the_action_column_sorts_nothing(qt) -> None:
         table.item(row, qt.screen_mod.NAME_COLUMN).text()
         for row in range(table.rowCount())
     ]
+
     # The real gesture: a click delivered to the header's
-    # viewport, the surface the platform serves.
+    # viewport, the surface the platform serves — at the
+    # section's center, clear of the resize grips a boundary
+    # hugging press would grab instead.
+    def section_center(column: int) -> qt.QtCore.QPoint:
+        return qt.QtCore.QPoint(
+            header.sectionViewportPosition(column)
+            + header.sectionSize(column) // 2,
+            header.height() // 2,
+        )
+
     QtTest.QTest.mouseClick(
         header.viewport(),
         qt.QtCore.Qt.MouseButton.LeftButton,
-        pos=qt.QtCore.QPoint(
-            header.sectionViewportPosition(qt.screen_mod.ACTION_COLUMN) + 2,
-            2,
-        ),
+        pos=section_center(qt.screen_mod.ACTION_COLUMN),
     )
     assert header.sortIndicatorSection() == qt.screen_mod.CREATED_COLUMN
     after = [
@@ -1055,9 +1062,7 @@ def test_the_action_column_sorts_nothing(qt) -> None:
     QtTest.QTest.mouseClick(
         header.viewport(),
         qt.QtCore.Qt.MouseButton.LeftButton,
-        pos=qt.QtCore.QPoint(
-            header.sectionViewportPosition(qt.screen_mod.NAME_COLUMN) + 2, 2
-        ),
+        pos=section_center(qt.screen_mod.NAME_COLUMN),
     )
     assert header.sortIndicatorSection() == qt.screen_mod.NAME_COLUMN
     labels = [
@@ -1065,6 +1070,36 @@ def test_the_action_column_sorts_nothing(qt) -> None:
         for row in range(table.rowCount())
     ]
     assert labels == sorted(labels)
+    window.close()
+
+
+def test_a_rebuild_under_a_flight_keeps_the_gate(qt) -> None:
+    """A changed listing landing under a standing action flight
+    (#972): the rebuilt cells take the gate with them — every
+    row's toggle stands disabled until the flight lands."""
+    screen, window, bridge = make_screen(qt)
+    screen.table.clearSelection()  # no hold: the rebuild below
+    # fires no selection change, so the cells' own gate stands
+    # alone against the flight
+    screen.row_actions["ws-1"].click()  # the start flight opens
+    assert not screen.row_actions["ws-2"].isEnabled()
+    # A changed listing (a renamed row) rebuilds the cells.
+    renamed = daemon_rows()
+    renamed[0]["name"] = "alpha-renamed"
+    screen.on_succeeded("workspaces-list", renamed)
+    assert (
+        screen.table.item(
+            screen.row_ids()["ws-1"], qt.screen_mod.NAME_COLUMN
+        ).text()
+        == "alpha-renamed"
+    )
+    for toggle in screen.row_actions.values():
+        assert not toggle.isEnabled()  # the gate survived the rebuild
+    screen.on_succeeded(
+        "workspaces-start", {"id": "ws-1", "status": "running"}
+    )
+    for toggle in screen.row_actions.values():
+        assert toggle.isEnabled()  # the flight landed, the gate lifts
     window.close()
 
 
