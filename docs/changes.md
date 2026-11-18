@@ -31,7 +31,6 @@ tagged `vX.Y.Z`.
   daemon's defaults, and a refusal keeping the dialog open
   with the failure on its note line.
 
->>>>>>> a4d5408 (Address the review: the create dialog and the strip's focus bridges (#962))
 - **GUI top-level Shells and Info tabs (#974).** The
   workspace detail page's tab row, on the back arrow's own row,
   now carries a Shells tab and an Info tab, with Shells the
