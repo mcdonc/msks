@@ -298,6 +298,11 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.rendered = None
         self.footer.setText("")
         self.clear_sections()
+        # The row resets with every open (#974): Shells is the
+        # page's default tab, and a prior visit's Info tab must
+        # not hand the next workspace a hidden terminal holding
+        # the keyboard.
+        self.bar.setCurrentIndex(0)
         self.shells.host(workspace_id)
         if not self.hub.shells(workspace_id):
             self.hub.open_shell(workspace_id)

@@ -17,6 +17,14 @@ from types import SimpleNamespace
 
 import pytest
 
+# The hub's pty children spawn through ``fork()`` on Qt's own
+# threads (termsession's pty design, #951); Python 3.14 warns
+# on the multi-threaded fork by design of the spawn, and the
+# warning is the suite's own noise, not a defect to fix here.
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:This process.*multi-threaded.*:DeprecationWarning"
+)
+
 if importlib.util.find_spec("PySide6") is None:
     pytest.skip(
         "the gui extra is not installed on this host",
@@ -285,7 +293,7 @@ def test_an_open_with_shells_standing_adds_none(qt) -> None:
     assert len(page.hub.shells("ws-a")) == 1
 
 
-def test_the_shows_back_button_anchors_when_no_shell_holds(qt) -> None:
+def test_the_show_anchors_on_the_tab_the_row_shows(qt) -> None:
     """The keyboard's anchor (#974): the Back button holds it
     while the Info tab shows, the current shell's terminal
     while the Shells tab shows one."""
@@ -296,6 +304,21 @@ def test_the_shows_back_button_anchors_when_no_shell_holds(qt) -> None:
     page.bar.setCurrentIndex(0)  # Shells, a shell current
     page.anchor_focus()
     assert window.focusWidget() is page.hub.find("ws-a", 1).widget
+
+
+def test_a_reopen_resets_the_row_and_anchors_the_terminal(qt) -> None:
+    """Every open starts on Shells (#974): a prior visit's Info
+    tab must not hand the next workspace a hidden terminal
+    holding the keyboard. The reopen drives the page's own show
+    — the anchor is the show's, not the strip's."""
+    shell, window, bridge = make_shell(qt)
+    shell.listing.opened.emit("ws-a")
+    shell.detail.bar.setCurrentIndex(1)  # Info before leaving
+    shell.detail.go_back()
+    shell.listing.opened.emit("ws-a")  # reopen: a fresh open's show
+    assert shell.detail.bar.currentIndex() == 0  # Shells again
+    assert shell.detail.stack.currentWidget() is shell.detail.shells
+    assert window.focusWidget() is shell.detail.hub.find("ws-a", 1).widget
 
 
 def test_the_activated_row_opens_the_workspace(qt) -> None:
@@ -536,7 +559,8 @@ def test_opening_resets_the_page(qt) -> None:
     show_info(page)
     land(qt, page, bridge)
     page.push_frame({"event": "workspace.status", "data": {"id": "ws-a"}})
-    page.open("ws-b")
+    page.open("ws-b")  # the open resets the row to Shells
+    show_info(page)
     assert page.footer.text() == ""
     assert page.events.isHidden()
     assert page.empty_events.isVisibleTo(page)

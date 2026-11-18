@@ -11,11 +11,15 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from test_gui_workspace import StubBridge, daemon_row
+from test_gui_workspace import SLEEPER, StubBridge, daemon_row
 
-#: The argv the hub's tests spawn: a child that stands until the
-#: close path takes it down, the widget suite's sleeper.
-SLEEPER = "import time; time.sleep(60)"
+# The hub's pty children spawn through ``fork()`` on Qt's own
+# threads (termsession's pty design, #951); Python 3.14 warns
+# on the multi-threaded fork by design of the spawn, and the
+# warning is the suite's own noise, not a defect to fix here.
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:This process.*multi-threaded.*:DeprecationWarning"
+)
 
 
 @pytest.fixture()
