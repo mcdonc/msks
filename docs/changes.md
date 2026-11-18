@@ -8,6 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI images presenter (#963).** The images tab gains
+  its data layer: the daemon's catalog and the published
+  channel's manifest build as plain row models. The catalog
+  group carries each row's reference, default designation, hash
+  prefix, and import date; the published group carries the
+  descriptions, sizes, build dates, and the
+  `[imported]`/`[local]` membership markers, with the rows the
+  daemon's machine cannot boot left off. The tab's widget
+  lands next on the `pyside-gui` branch.
+
 - **GUI row actions on the workspace list (#972).** The
   workspace list's toolbar is gone: the Start, Stop, Shell,
   External, and Refresh buttons leave the page and the rows
