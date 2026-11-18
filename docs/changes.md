@@ -8,6 +8,20 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI images tab (#964).** The desktop GUI's Images tab
+  renders the TUI image page's two groups: the daemon's catalog
+  with the default marker, hash prefixes, and import dates, and
+  the published channel with descriptions, sizes, build dates,
+  and the `[imported]`/`[local]` membership markers. Rows the
+  daemon's machine cannot boot stay off the published group.
+  Activating a published row imports it behind a progress dialog
+  that holds the wait while the daemon downloads, verifies, and
+  floor-checks, and the catalog refreshes when the import lands.
+  A catalog row opens its full record, Remove asks for
+  confirmation, and Set as the default posts the designation;
+  the channel URL follows `image_manifest_url` with the same
+  default the TUI page reads.
+
 - **The GUI images presenter (#963).** The images tab gains
   its data layer: the daemon's catalog and the published
   channel's manifest build as plain row models. The catalog
