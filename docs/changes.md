@@ -8,6 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **GUI top-level Shells and Info tabs (#974).** The
+  workspace detail page's tab row, on the back arrow's own row,
+  now carries a Shells tab and an Info tab, with Shells the
+  default. The shell sessions
+  live as subtabs inside the Shells tab. Opening a detail page
+  with no shell subtab open creates one and focuses it. The
+  Info tab holds the mounts, health, and events sections that
+  previously lived as a subtab beside the shells.
+
 - **GUI detail-page footer and tab-strip layout (#971).** The
   workspace detail page carries the listing's one-line
   description bar at its bottom, beneath the terminal tabs. The
