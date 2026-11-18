@@ -58,6 +58,14 @@ BACK_ICON_PX = 24
 #: named.
 MOUNT_COLUMNS = ("HOST", "GUEST", "MODE", "STATE", "REASON")
 
+#: The Shells tab's label (#974): the page's default tab, the
+#: workspace's terminal sessions as subtabs.
+SHELLS_LABEL = "Shells"
+
+#: The Info tab's label (#974): the detail content — the
+#: mounts, health, and events sections.
+INFO_LABEL = "Info"
+
 
 def find_row(rows: list[dict] | None, workspace_id: str) -> dict | None:
     """This workspace's row out of a listing (#945): the same
@@ -79,18 +87,19 @@ def muted_note(text: str) -> QtWidgets.QLabel:
 
 
 class WorkspaceDetail(QtWidgets.QWidget):
-    """One workspace's page (#945, #954, #971): the tabbed body
-    — the Info tab (the presenter's three sections: the mounts
-    table with its next-start note, the health facts, the
-    events list) with one tab per active shell beside it
-    (#954) — over the footer strip, the same one-line read the
-    listing's own bottom strip gives (#971). The workspace's
-    name lives in the window title while the page shows. A
-    failed refresh flashes the status line while the sections
-    keep their content; a listing that can no longer see the
-    workspace emits ``removed`` — the TUI page's own close
-    (#309's close_removed shape) — and the back action returns
-    to the list, closing no shell (#954)."""
+    """One workspace's page (#945, #954, #971, #974): the tab
+    row — Shells, the default (#974), with the workspace's
+    terminal sessions as subtabs (#954), and Info beside it,
+    the presenter's three sections (the mounts table with its
+    next-start note, the health facts, the events list) — over
+    the footer strip, the same one-line read the listing's own
+    bottom strip gives (#971). The workspace's name lives in
+    the window title while the page shows. A failed refresh
+    flashes the status line while the sections keep their
+    content; a listing that can no longer see the workspace
+    emits ``removed`` — the TUI page's own close (#309's
+    close_removed shape) — and the back action returns to the
+    list, closing no shell (#954)."""
 
     back = QtCore.Signal()
     removed = QtCore.Signal(str)
@@ -99,6 +108,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
     def __init__(self, bridge: Bridge, hub: ShellHub) -> None:
         super().__init__()
         self.bridge = bridge
+        self.hub = hub
         self.workspace_id = ""
         self.row: dict | None = None
         self.health_doc: dict | None = None
@@ -139,12 +149,16 @@ class WorkspaceDetail(QtWidgets.QWidget):
         scroll = QtWidgets.QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setWidget(sections)
-        # The tabbed body (#954): the sections scroll is the
-        # Info tab, and the workspace's shells host beside it —
-        # the strip re-hosts on every open, and the hub keeps
-        # the sessions themselves alive across visits.
-        self.tabs = ShellTabs(hub, scroll)
-        self.tabs.new_shell.connect(self.want_shell)
+        # The tab row (#974): Shells — the default, the
+        # workspace's terminal sessions as subtabs — and Info —
+        # the sections scroll. The strip re-hosts on every
+        # open, and the hub keeps the sessions themselves alive
+        # across visits (#954).
+        self.shells = ShellTabs(hub)
+        self.shells.new_shell.connect(self.want_shell)
+        self.tabs = QtWidgets.QTabWidget(self)
+        self.tabs.addTab(self.shells, SHELLS_LABEL)
+        self.tabs.addTab(scroll, INFO_LABEL)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(self.chrome)  # the top row, the list's own
         layout.addWidget(self.tabs, stretch=1)
@@ -263,7 +277,11 @@ class WorkspaceDetail(QtWidgets.QWidget):
         and the first refresh goes out. The page carries no
         header of its own; the window's title names the
         workspace, the shell's list label standing in until the
-        row's own answer lands."""
+        row's own answer lands.
+
+        The open takes a first shell when none stands (#974):
+        the Shells tab opens with a terminal to type in, and
+        its subtab takes the focus."""
         self.workspace_id = workspace_id
         self.row = None
         self.health_doc = None
@@ -271,7 +289,9 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.rendered = None
         self.footer.setText("")
         self.clear_sections()
-        self.tabs.host(workspace_id)
+        self.shells.host(workspace_id)
+        if not self.hub.shells(workspace_id):
+            self.hub.open_shell(workspace_id)
         self.refresh()
 
     def clear_sections(self) -> None:
@@ -514,6 +534,19 @@ class WorkspaceDetail(QtWidgets.QWidget):
         back to the list."""
         self.back.emit()
 
+    def anchor_focus(self) -> None:
+        """Where a showing page's keyboard lands (#974): the
+        current shell's terminal when the Shells tab shows one,
+        the Back button otherwise — the Escape anchor the
+        page's own shortcut needs. The strip's own focus paths
+        (a new shell, a rename) take their own anchors."""
+        if self.tabs.currentWidget() is self.shells:
+            widget = self.shells.currentWidget()
+            if widget is not None and widget is not self.shells.plus_page:
+                widget.setFocus()
+                return
+        self.back_button.setFocus()
+
     def flash(self, message: str, *, outage: bool = False) -> None:
         """The status line's flash (#945, #904's contract): the
         message shows; a refusal clears itself after the flash
@@ -557,7 +590,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         empty wrapper PySide6 raises at teardown for a C++
         object that outlived its Python one."""
         if getattr(self, "back_button", None) is not None:
-            self.back_button.setFocus()
+            self.anchor_focus()
             self.refresh()
             self.timer.start()
         super().showEvent(event)
@@ -613,15 +646,23 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
 
     @QtCore.Slot(str)
     def open_shell(self, workspace_id: str) -> None:
-        """A shell action named a workspace (#954): the page
-        takes the workspace if it has not already, then one more
-        ssh connection opens — the strip beside the page's Info
-        tab takes the new tab and the focus."""
-        if self.detail.workspace_id != workspace_id or (
-            self.currentWidget() is not self.detail
-        ):
+        """A shell action named a workspace (#954, #974): the
+        page takes the workspace if it has not already, then
+        one more ssh connection opens — the Shells tab's strip
+        takes the new subtab and the focus. The page's own open
+        creates the first shell of a workspace with none
+        standing, so a fresh open's action answers itself."""
+        shows = (
+            self.detail.workspace_id == workspace_id
+            and self.currentWidget() is self.detail
+        )
+        if shows:
+            self.hub.open_shell(workspace_id)
+        elif self.hub.shells(workspace_id):
             self.open_detail(workspace_id)
-        self.hub.open_shell(workspace_id)
+            self.hub.open_shell(workspace_id)
+        else:
+            self.open_detail(workspace_id)
 
     @QtCore.Slot(str)
     def open_external(self, workspace_id: str) -> None:

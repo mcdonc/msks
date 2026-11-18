@@ -1,7 +1,7 @@
-"""The workspace shell tabs (phase 4.5 of #924, #954): the hub
-that owns a workspace's terminal sessions across detail-page
-visits, and the tab strip that hosts them beside the page's
-Info tab.
+"""The workspace shell tabs (phase 4.5 of #924, #954, #974):
+the hub that owns a workspace's terminal sessions across
+detail-page visits, and the tab strip that hosts them inside
+the page's Shells tab.
 
 The hub (:class:`ShellHub`) owns the :class:`TerminalWidget`
 instances — one per active ssh connection — and each session's
@@ -11,12 +11,12 @@ closes (Back to the list) closes nothing — only a tab's own
 close ends its session, through the widget's own teardown
 contract (close before ``deleteLater``).
 
-The strip (:class:`ShellTabs`) is the page's tab widget: the
-Info tab first, then one tab per session, titled with the
-session's number until an in-place rename stands, and the "+"
-as the last tab — directly right of the rightmost shell tab —
-opening one more shell (#969, #971). Hosting is per workspace
-— opening another workspace's page unhooks this one's widgets
+The strip (:class:`ShellTabs`) is the Shells tab's own tab
+widget (#974): one tab per session, titled with the session's
+number until an in-place rename stands, and the "+" as the
+last tab — directly right of the rightmost shell tab — opening
+one more shell (#969, #971). Hosting is per workspace —
+opening another workspace's page unhooks this one's widgets
 (they keep running hidden) and hooks the new workspace's.
 
 The module imports PySide6 at module scope, the same contract
@@ -28,11 +28,6 @@ from PySide6 import QtCore, QtWidgets
 
 from . import terminal
 from .termsession import shell_argv
-
-#: The Info tab's label (#954): the detail page's own content —
-#: mounts, health, events — the first tab, with the shells
-#: beside it.
-INFO_LABEL = "Info"
 
 #: A shell tab's minimum text width, characters (#969): a tab
 #: titled with a one-digit session number stays wide enough to
@@ -74,9 +69,9 @@ class ShellBar(QtWidgets.QTabBar):
 
     def tabSizeHint(self, index):  # noqa: N802
         """The platform's own hint, floored for the shell tabs —
-        everything after the Info tab but the "+" itself."""
+        every tab but the "+" itself."""
         size = super().tabSizeHint(index)
-        if index > 0 and index != self.plus_index:
+        if index != self.plus_index:
             size.setWidth(max(size.width(), self.min_tab_px()))
         return size
 
@@ -169,8 +164,8 @@ class ShellHub(QtCore.QObject):
 
 
 class ShellTabs(QtWidgets.QTabWidget):
-    """The detail page's tab strip (#954): the Info tab first,
-    then one tab per shell of the hosted workspace. Hosting is
+    """The Shells tab's own strip (#954, #974): one tab per
+    shell of the hosted workspace, the "+" last. Hosting is
     exclusive — ``host`` unhooks the standing shell widgets
     (they keep running, owned by the hub) and hooks the new
     workspace's — and the hub's signals keep the strip in step
@@ -178,22 +173,21 @@ class ShellTabs(QtWidgets.QTabWidget):
 
     new_shell = QtCore.Signal()
 
-    def __init__(self, hub: ShellHub, info: QtWidgets.QWidget) -> None:
+    def __init__(self, hub: ShellHub) -> None:
         super().__init__()
         self.hub = hub
         self.hosted = ""
         # The bar first (#969): the strip's own floor-width hint
         # has to stand before the first tab sizes against it.
         self.setTabBar(ShellBar(self))
-        self.addTab(info, INFO_LABEL)
         # The "+" (#969, #971): a tab of its own, always the
         # last — directly right of the rightmost shell tab, and
-        # beside the Info tab when no shell stands. A click on
-        # it opens one more shell; visiting it by keyboard or a
-        # tab shift opens nothing.
+        # the strip's whole content when no shell stands. A
+        # click on it opens one more shell; visiting it by
+        # keyboard or a tab shift opens nothing.
         self.plus_page = QtWidgets.QWidget(self)
         self.addTab(self.plus_page, "+")
-        self.tabBar().setTabToolTip(1, "Open a shell tab")
+        self.tabBar().setTabToolTip(0, "Open a shell tab")
         self.tabBar().tabBarClicked.connect(self.bar_clicked)
         self.sync_plus_index()
         self.tabBar().installEventFilter(self)
@@ -212,10 +206,9 @@ class ShellTabs(QtWidgets.QTabWidget):
     # --- hosting ------------------------------------------------------
 
     def host(self, workspace_id: str) -> None:
-        """Show one workspace's shells (#954): the standing tabs
-        come off first — their widgets keep running under the
-        hub — then one tab per session, titled as its record
-        reads, the newest shell current, the "+" last."""
+        """Show one workspace's shells (#954, #974): the strip
+        starts empty, then one tab per session, titled as its
+        record reads, the newest shell current, the "+" last."""
         self.unhost()
         self.hosted = workspace_id
         self.addTab(self.plus_page, "+")
@@ -226,7 +219,7 @@ class ShellTabs(QtWidgets.QTabWidget):
         for session in self.hub.shells(workspace_id):
             self.add_session(session)
         last = self.count() - 2
-        if last > 0:
+        if last >= 0:
             self.setCurrentIndex(last)
 
     def unhost(self) -> None:
@@ -235,9 +228,9 @@ class ShellTabs(QtWidgets.QTabWidget):
         a page's close ends nothing. The "+" comes off with
         them; the strip re-adds it at its next host."""
         self.cancel_rename()
-        while self.count() > 1:
-            widget = self.widget(1)
-            self.removeTab(1)
+        while self.count() > 0:
+            widget = self.widget(0)
+            self.removeTab(0)
             if widget is not self.plus_page:
                 widget.setParent(None)
         self.hosted = ""
@@ -326,7 +319,9 @@ class ShellTabs(QtWidgets.QTabWidget):
         """Take current off the blank "+" (#971): a close that
         removed the tab current stood on lands Qt's default on
         the +, a body with nothing in it — the remaining shell
-        before it takes the window back, else the Info tab."""
+        before it takes the window back, and the + alone when
+        nothing stands (the page's next open creates a
+        shell)."""
         if self.currentWidget() is not self.plus_page:
             return
         self.setCurrentIndex(max(0, self.currentIndex() - 1))
@@ -343,7 +338,7 @@ class ShellTabs(QtWidgets.QTabWidget):
         """A rename stood (#954): the tab's text takes it."""
         if workspace_id != self.hosted:
             return
-        for index in range(1, self.count()):
+        for index in range(self.count()):
             session = self.session_at(index)
             if session is not None and session.no == no:
                 self.setTabText(index, session.label)
@@ -390,7 +385,7 @@ class ShellTabs(QtWidgets.QTabWidget):
         ):
             return False
         index = self.tabBar().tabAt(event.position().toPoint())
-        if index <= 0 or self.widget(index) is self.plus_page:
+        if index < 0 or self.widget(index) is self.plus_page:
             return False
         self.begin_rename(index)
         return True

@@ -10,6 +10,7 @@ bridge's own tests holding the real worker's contract.
 
 import importlib.util
 import os
+import sys
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -97,6 +98,12 @@ def daemon_row() -> dict:
     }
 
 
+#: The argv the sleeper hubs spawn (#974): a child that stands
+#: until the close path takes it down, the widget suite's
+#: sleeper — the page's own open now takes a first shell.
+SLEEPER = "import time; time.sleep(60)"
+
+
 def other_row() -> dict:
     """A second workspace the listing can carry."""
     return {
@@ -124,13 +131,25 @@ def qt(tmp_path: Path):
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(
         ["msks-test"]
     )
-    yield SimpleNamespace(
+    ns = SimpleNamespace(
         app=app,
         QtCore=QtCore,
         QtGui=QtGui,
         QtWidgets=QtWidgets,
         page_mod=workspace_mod,
+        hubs=[],
+        keep=[],
     )
+    yield ns
+    # The sleeper hubs the helpers build (#974): the page's own
+    # open takes a first shell, so every hub a test built owns
+    # a child by teardown unless the test closed it. The windows
+    # stand until the hubs are down — a dropped top-level
+    # reference deletes the C++ tree, terminal widgets included,
+    # ahead of the close that reaps their children.
+    for hub in ns.hubs:
+        hub.shutdown()
+    del ns.keep[:]
     # The same teardown the list's own fixture owes its worker
     # (#959): close and delete every top-level widget, then
     # flush the deferred deletions — nothing C++-side outlives
@@ -148,12 +167,17 @@ def qt(tmp_path: Path):
 def make_shell(qt, rows=None) -> tuple:
     """The shell over the stub bridge in a real window — the
     list shown, its first listing answered (so the rows and the
-    model map stand), the page still hidden."""
+    model map stand), the page still hidden. The hub runs
+    sleeper children (#974): the page's own open takes a first
+    shell, and the qt fixture shuts the hub down at teardown."""
     bridge = StubBridge()
-    shell = qt.page_mod.WorkspaceShell(bridge)
+    hub = qt.page_mod.ShellHub(lambda ws: [sys.executable, "-c", SLEEPER])
+    qt.hubs.append(hub)
+    shell = qt.page_mod.WorkspaceShell(bridge, None, hub)
     window = qt.QtWidgets.QMainWindow()
     window.setCentralWidget(shell)
     window.show()
+    qt.keep.append(window)
     shell.listing.on_succeeded(
         "workspaces-list", rows if rows is not None else [daemon_row()]
     )
@@ -164,15 +188,24 @@ def make_page(qt) -> tuple:
     """The page alone over the stub bridge, shown in a real
     window and opened on the workspace — the shape every page
     test reads: first refresh issued, the row and the doc one
-    answer away."""
+    answer away, a first shell taken (#974)."""
     bridge = StubBridge()
-    page = qt.page_mod.WorkspaceDetail(bridge, qt.page_mod.ShellHub())
+    hub = qt.page_mod.ShellHub(lambda ws: [sys.executable, "-c", SLEEPER])
+    qt.hubs.append(hub)
+    page = qt.page_mod.WorkspaceDetail(bridge, hub)
     window = qt.QtWidgets.QMainWindow()
     window.setCentralWidget(page)
     window.show()
+    qt.keep.append(window)
     page.open("ws-a")
     bridge.calls.clear()
     return page, window, bridge
+
+
+def show_info(page) -> None:
+    """The Info tab current (#974): the sections render under
+    it, and a non-current tab page's widgets read as hidden."""
+    page.tabs.setCurrentIndex(1)
 
 
 def land(qt, page, bridge, row=None, doc=None) -> None:
@@ -207,6 +240,58 @@ def test_opening_a_row_shows_the_page(qt) -> None:
     assert shell.detail.timer.interval() == 5000
 
 
+def test_the_page_carries_top_level_shells_and_info_tabs(qt) -> None:
+    """The tab row beside the back arrow (#974): Shells first
+    and the default, Info beside it holding the detail content
+    — the mounts table, the health label, the events list."""
+    page, window, bridge = make_page(qt)
+    assert [page.tabs.tabText(i) for i in range(page.tabs.count())] == [
+        "Shells",
+        "Info",
+    ]
+    assert page.tabs.currentIndex() == 0  # Shells, the default
+    assert page.tabs.widget(0) is page.shells
+    info = page.tabs.widget(1)
+    assert info.findChildren(type(page.mounts)) == [page.mounts]
+    assert page.health in info.findChildren(type(page.health))
+    assert info.findChildren(type(page.events)) == [page.events]
+
+
+def test_an_open_with_no_shell_creates_one_and_focuses_it(qt) -> None:
+    """The Shells tab opens with a terminal to type in (#974):
+    the open takes a first shell when none stands, its subtab
+    current and its terminal holding the keyboard."""
+    page, window, bridge = make_page(qt)
+    assert [page.shells.tabText(i) for i in range(page.shells.count())] == [
+        "1",
+        "+",
+    ]
+    session = page.hub.find("ws-a", 1)
+    assert page.shells.currentWidget() is session.widget
+    assert window.focusWidget() is session.widget
+
+
+def test_an_open_with_shells_standing_adds_none(qt) -> None:
+    """A reopen over standing shells adds no shell (#974): the
+    open's first shell is only for a workspace with none."""
+    page, window, bridge = make_page(qt)
+    page.open("ws-a")  # one shell already stands
+    assert len(page.hub.shells("ws-a")) == 1
+
+
+def test_the_shows_back_button_anchors_when_no_shell_holds(qt) -> None:
+    """The keyboard's anchor (#974): the Back button holds it
+    while the Info tab shows, the current shell's terminal
+    while the Shells tab shows one."""
+    page, window, bridge = make_page(qt)
+    page.tabs.setCurrentIndex(1)  # Info
+    page.anchor_focus()
+    assert window.focusWidget() is page.back_button
+    page.tabs.setCurrentIndex(0)  # Shells, a shell current
+    page.anchor_focus()
+    assert window.focusWidget() is page.hub.find("ws-a", 1).widget
+
+
 def test_the_activated_row_opens_the_workspace(qt) -> None:
     """A row's activation opens its workspace (#945): the
     keypress or double-click the platform serves lands on the
@@ -228,6 +313,7 @@ def test_the_page_renders_the_sections(qt) -> None:
     carries the same one-line read the listing's strip gives,
     storage as the honest dash until a report lands."""
     page, window, bridge = make_page(qt)
+    show_info(page)
     land(qt, page, bridge)
     assert page.footer.text() == (
         "alpha  ·  id ws-a  ·  image msks/fedora:41"
@@ -272,6 +358,7 @@ def test_a_workspace_that_mounts_nothing_reads_the_stand_in(
     for the muted note — the presenter's empty section, the
     widget's honest stand-in."""
     page, window, bridge = make_page(qt)
+    show_info(page)
     row = other_row()
     page.workspace_id = "ws-b"
     land(qt, page, bridge, row=row)
@@ -286,6 +373,7 @@ def test_pushed_frames_fill_the_events_section(qt) -> None:
     read, newest last, another workspace's stay out, and the
     buffer keeps its bound."""
     page, window, bridge = make_page(qt)
+    show_info(page)
     land(qt, page, bridge)
     page.push_frame(
         {
@@ -439,6 +527,7 @@ def test_opening_resets_the_page(qt) -> None:
     all start fresh — the first workspace's tail cannot leak
     onto the second's page."""
     page, window, bridge = make_page(qt)
+    show_info(page)
     land(qt, page, bridge)
     page.push_frame({"event": "workspace.status", "data": {"id": "ws-a"}})
     page.open("ws-b")
@@ -457,6 +546,7 @@ def test_the_answers_land_in_either_order(qt) -> None:
     row still renders — the best-effort silence after it keeps
     the standing section."""
     page, window, bridge = make_page(qt)
+    show_info(page)
     page.on_succeeded(
         qt.page_mod.HEALTH_KEY,
         {"status": "ok", "version": "0.9.2", "machine": "x86_64"},
@@ -501,6 +591,7 @@ def test_the_none_health_silence_keeps_the_outage(qt) -> None:
     keeps; only a real doc resolves the one and replaces the
     other."""
     page, window, bridge = make_page(qt)
+    show_info(page)
     land(qt, page, bridge)
     page.on_failed(
         qt.page_mod.ROW_KEY,
