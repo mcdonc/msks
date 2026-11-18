@@ -47,7 +47,7 @@ class MainTabs(QtWidgets.QTabWidget):
         self.tabBar().setFocusPolicy(QtCore.Qt.FocusPolicy.TabFocus)
         self.tabBar().installEventFilter(self)
 
-    def eventFilter(self, obj, event) -> bool:  # noqa: N804
+    def eventFilter(self, obj, event) -> bool:
         """Down leaves the bar (#962): the page below takes the
         focus, at its first focusable child — the same stop Tab
         reaches — so the bar answers no key the page below should
@@ -82,10 +82,27 @@ class MainTabs(QtWidgets.QTabWidget):
         later tab's content) is not the page's own, and the
         chain's wrap back to the page answers None."""
         seen = page.nextInFocusChain()
-        while seen is not None and page.isAncestorOf(seen):
-            if seen is not page and (
-                seen.focusPolicy() & QtCore.Qt.FocusPolicy.TabFocus
-            ):
+        while self.inside_walk(page, seen):
+            if self.is_tab_stop(page, seen):
                 return seen
             seen = seen.nextInFocusChain()
         return None
+
+    def inside_walk(self, page, seen) -> bool:
+        """Whether the walk continues at this widget: a real
+        widget, inside the page's subtree and not the page
+        itself — the page is the chain's own wrap point, so the
+        cycle back to it ends the walk (a page the chain can
+        walk forever — a window with nothing focusable under
+        it — hangs nothing)."""
+        return (
+            seen is not None and seen is not page and page.isAncestorOf(seen)
+        )
+
+    def is_tab_stop(self, page, seen) -> bool:
+        """Whether the walk's current widget is the page's own
+        tab stop: inside the subtree, not the page itself, and
+        carrying the Tab key's focus bit."""
+        return seen is not page and (
+            seen.focusPolicy() & QtCore.Qt.FocusPolicy.TabFocus
+        )

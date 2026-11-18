@@ -176,6 +176,26 @@ class CreatedItem(QtWidgets.QTableWidgetItem):
         return self.data(CREATED_ROLE) < other.data(CREATED_ROLE)
 
 
+class ListTable(QtWidgets.QTableWidget):
+    """The listing's own table (#962): the row set the
+    presenter's models fill. Up on the top row — or an empty
+    table's Up — hands the keyboard to whatever stands above
+    the list in the focus chain (the window's tab strip): the
+    arrows read top-to-bottom without a Tab, both directions,
+    the spatial-navigation rule."""
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == QtCore.Qt.Key.Key_Up and self.currentRow() <= 0:
+            # The base walk, not the view's own: the view's
+            # override answers Shift-Tab's shape without moving
+            # the focus, and the arrow needs the move. The
+            # chain's own order carries the keyboard to the
+            # strip above the list.
+            QtWidgets.QWidget.focusNextPrevChild(self, False)
+            return
+        super().keyPressEvent(event)
+
+
 class WorkspaceList(QtWidgets.QWidget):
     """The main window's central screen (#939): the table of row
     models, a manual refresh button, and the status line a
@@ -201,7 +221,7 @@ class WorkspaceList(QtWidgets.QWidget):
         self.flash_seq = 0
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
-        self.table = QtWidgets.QTableWidget(0, len(COLUMNS) + 1, self)
+        self.table = ListTable(0, len(COLUMNS) + 1, self)
         self.table.setHorizontalHeaderLabels((*COLUMNS, ""))
         self.table.verticalHeader().setVisible(False)
         # The standing sort (#939): CREATED newest-first, the

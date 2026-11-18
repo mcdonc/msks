@@ -19,6 +19,19 @@ tagged `vX.Y.Z`.
   same actions plus Delete, which removes the workspace behind
   a confirmation. The external-terminal action moved to the
   workspace detail page.
+
+- **GUI tabbed main window (#962).** The desktop GUI's main
+  window now opens on a top-level tab strip: the Workspaces
+  tab holds the workspace list and detail screens, and the
+  Images and Secrets tabs of the plan land beside it. Arrow
+  keys cross the tabs, and Up from the list's top row returns
+  to the tab strip. A plus button on the Workspaces tab opens
+  the create-workspace dialog, the TUI create form's
+  counterpart: the same fields, blank fields left to the
+  daemon's defaults, and a refusal keeping the dialog open
+  with the failure on its note line.
+
+>>>>>>> a4d5408 (Address the review: the create dialog and the strip's focus bridges (#962))
 - **GUI top-level Shells and Info tabs (#974).** The
   workspace detail page's tab row, on the back arrow's own row,
   now carries a Shells tab and an Info tab, with Shells the

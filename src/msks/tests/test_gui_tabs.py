@@ -58,6 +58,21 @@ def qt(tmp_path):
     app.processEvents()
 
 
+class Signal:
+    """A Qt signal's connect/emit surface for the stub bridge:
+    an emit calls the connected slots at once."""
+
+    def __init__(self) -> None:
+        self.slots: list = []
+
+    def connect(self, slot) -> None:
+        self.slots.append(slot)
+
+    def emit(self, *args) -> None:
+        for slot in self.slots:
+            slot(*args)
+
+
 def press(qt, widget, key) -> None:
     """One key pressed on the widget, through Qt's own event
     path: the strip's filter reads it there, the same delivery
@@ -139,6 +154,55 @@ def test_down_leaves_the_bar_for_the_page(qt) -> None:
     bar.setFocus()
     press(qt, bar, qt.QtCore.Qt.Key.Key_Down)
     assert window.focusWidget() is box
+
+
+def test_up_from_the_top_row_returns_to_the_bar(qt) -> None:
+    """The rule's other direction (#962): Up on the list's top
+    row hands the keyboard back to the tab strip — the arrows
+    read top-to-bottom without a Tab, both ways."""
+    from msks.client.gui.workspaces import LIST_KEY, WorkspaceList
+    from PySide6.QtTest import QTest
+
+    class ListBridge:
+        """The list's bridge stub: the signals it connects and
+        the verb it calls."""
+
+        def __init__(self) -> None:
+            self.succeeded = Signal()
+            self.failed = Signal()
+
+        def call(self, key, method, *args):
+            return None
+
+    listing = WorkspaceList(ListBridge())
+    listing.on_succeeded(LIST_KEY, [daemon_row()])
+    tabs = MainTabs(listing)
+    window = window_over(qt, tabs)
+    listing.table.setFocus()
+    listing.table.setCurrentCell(0, 0)
+    QTest.keyClick(listing.table, qt.QtCore.Qt.Key.Key_Up)
+    # The focus leaves the table upward (#962): the strip above
+    # the list takes it — the chain's own reading order, the
+    # table the first stop under the page it fills.
+    focused = window.focusWidget()
+    assert focused is not listing.table
+    assert focused is tabs.tabBar() or focused.parent() is tabs.tabBar()
+    # The view's own keys still move the selection: the bridge
+    # takes only the top row's Up.
+    listing.table.setFocus()
+    QTest.keyClick(listing.table, qt.QtCore.Qt.Key.Key_Right)
+    assert window.focusWidget() is listing.table
+
+
+def daemon_row() -> dict:
+    """One listing row the list reads, the workspace suite's
+    own shape."""
+    return {
+        "id": "ws-a",
+        "name": "alpha",
+        "status": "running",
+        "created_at": "2026-01-02T12:00:00",
+    }
 
 
 def test_down_falls_back_to_the_page_itself(qt) -> None:

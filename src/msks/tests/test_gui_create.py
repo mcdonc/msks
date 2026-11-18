@@ -7,6 +7,7 @@ platform on every host.
 
 import importlib.util
 import os
+from concurrent.futures import Future
 from types import SimpleNamespace
 
 import pytest
@@ -40,6 +41,9 @@ class FakeSignal:
     def connect(self, slot) -> None:
         self.slots.append(slot)
 
+    def disconnect(self, slot) -> None:
+        self.slots.remove(slot)
+
     def emit(self, *args) -> None:
         for slot in self.slots:
             slot(*args)
@@ -51,11 +55,14 @@ class StubBridge:
 
     def __init__(self) -> None:
         self.calls: list[tuple] = []
+        self.flights: list[Future] = []
         self.succeeded = FakeSignal()
         self.failed = FakeSignal()
 
-    def call(self, key: str, method: str, *args: object) -> None:
+    def call(self, key: str, method: str, *args: object) -> Future:
         self.calls.append((key, method, args))
+        self.flights.append(Future())
+        return self.flights[-1]
 
 
 @pytest.fixture()
@@ -134,18 +141,69 @@ def test_blank_fields_stay_the_daemons_defaults() -> None:
     assert create_body({}) == (None, "a workspace name is required")
 
 
+def test_only_ascii_digits_are_whole_numbers() -> None:
+    """The whole-number rule (#962, the TUI's own hazard):
+    unicode digits a paste can carry refuse locally — ``int``
+    would crash on some of them and the daemon would take the
+    rest as numbers the TUI's own form refuses."""
+    for pasted in ("\u00b2", "\u0663", "+3", "-3", "3.0"):
+        body, error = create_body({"name": "a", "cpus": pasted})
+        assert body is None, pasted
+        assert error == "cpus: a whole number, or leave it blank"
+
+
 def test_the_image_options_mark_the_default() -> None:
-    """The picker's options (#962): the reference as the value,
-    the designated default's asterisk on its label alone."""
+    """The picker's options (#962, the TUI select's own
+    arithmetic): distro ascending, newest import first within
+    it, the designated default's asterisk on its label alone,
+    and a reference two builds share riding the hash in every
+    value but the daemon's own pick."""
     rows = [
-        {"name": "msks", "version": "41", "default": True},
-        {"name": "msks", "version": "40"},
+        {
+            "name": "msks",
+            "version": "41",
+            "hash": "h-old",
+            "imported": "2026-01-01T00:00:00",
+        },
+        {
+            "name": "msks",
+            "version": "41",
+            "hash": "h-new",
+            "imported": "2026-02-01T00:00:00",
+            "default": True,
+        },
+        {
+            "name": "alt",
+            "version": "9",
+            "hash": "h-alt",
+            "imported": "2026-03-01T00:00:00",
+        },
     ]
     assert image_options(rows) == [
-        ("msks:41", "msks:41 *"),
-        ("msks:40", "msks:40"),
+        ("alt:9", "alt:9"),
+        # newest first within the group; the daemon's own
+        # name:version resolution picks the oldest import
+        # (h-old), so the newer build rides the hash
+        ("msks@h-new", "msks:41 *"),
+        ("msks:41", "msks:41"),
     ]
     assert image_options(None) == []
+
+
+def test_a_name_the_charset_refuses_leaves_the_placeholder_empty(
+    monkeypatch,
+) -> None:
+    """The placeholder's own refusal (#962): a login name the
+    charset refuses — the CLI create's own SystemExit — leaves
+    the field's hint empty instead of taking the window down;
+    the create read itself surfaces the refusal as a failure."""
+    from msks.client.gui import create as create_mod
+
+    def refused() -> str:
+        raise SystemExit("msks: your username")
+
+    monkeypatch.setattr(create_mod, "invoking_user", refused)
+    assert create_mod.user_placeholder() == ""
 
 
 def test_the_size_placeholders_read_the_defaults() -> None:
@@ -159,29 +217,44 @@ def test_the_size_placeholders_read_the_defaults() -> None:
 def test_the_dialog_loads_its_hints_on_show(qt) -> None:
     """The hint reads (#962): the first show asks for the image
     catalog and the create defaults; the catalog fills the
-    picker, the defaults the size placeholders."""
+    picker behind its default stand-in, the defaults the size
+    placeholders. An untouched picker stays on the stand-in —
+    the create body carries no image, and the daemon answers
+    its designated default."""
     dialog, bridge = make_dialog(qt)
     assert bridge.calls == [
         (IMAGES_KEY, "images", ()),
         (DEFAULTS_KEY, "create_defaults", ()),
     ]
+    picker = dialog.fields["image"]
+    assert picker.itemText(0) == "the daemon's default"
+    assert picker.currentData() is None
     bridge.succeeded.emit(
         IMAGES_KEY,
-        [{"name": "msks", "version": "41", "default": True}],
+        [
+            {"name": "msks", "version": "41", "hash": "h1", "default": True},
+        ],
     )
-    combo = dialog.fields["image"]
-    assert combo.count() == 1
-    assert combo.itemText(0) == "msks:41 *"
+    assert picker.count() == 2
+    assert picker.itemText(1) == "msks:41 *"
+    assert picker.currentIndex() == 0
     bridge.succeeded.emit(DEFAULTS_KEY, {"root_mib": 4096})
     assert dialog.fields["root_mib"].placeholderText() == "MiB — 4096"
     # A second show loads the hints once only: the reads the
     # first show issued stand.
+    reads = list(bridge.calls)
     dialog.hide()
     dialog.show()
-    assert bridge.calls == [
-        (IMAGES_KEY, "images", ()),
-        (DEFAULTS_KEY, "create_defaults", ()),
-    ]
+    assert bridge.calls == reads
+    # An untouched picker submits no image: the daemon answers
+    # its designated default.
+    fill(dialog, {"name": "alpha"})
+    dialog.submit()
+    assert dialog.bridge.calls[-1] == (
+        CREATE_KEY,
+        "create",
+        ({"name": "alpha"},),
+    )
 
 
 def test_a_submit_posts_the_body_and_a_landed_create_closes(
@@ -230,7 +303,26 @@ def test_another_keys_answer_is_not_the_dialogs_to_take(qt) -> None:
     assert dialog.create_button.isEnabled()
 
 
-def test_a_refused_create_keeps_the_dialog_standing(qt) -> None:
+def test_a_dialog_closed_mid_flight_cancels_its_own_call(qt) -> None:
+    """The closed dialog hears nothing (#962): a cancel while
+    the create is in flight cancels the call through its
+    handle, and the late answer — had it raced the cancel —
+    reaches no dialog: the bridge's hands are off, and the
+    next dialog opened takes only its own answers."""
+    dialog, bridge = make_dialog(qt)
+    fill(dialog, {"name": "alpha"})
+    dialog.submit()
+    flight = dialog.flight
+    assert flight is not None
+    dialog.reject()
+    assert flight.cancelled()
+    # A late answer on the shared key reaches the closed
+    # dialog's unhooked slots: nothing.
+    second, _bridge2 = make_dialog(qt)
+    landed: list[object] = []
+    second.accepted.connect(lambda: landed.append(True))
+    bridge.succeeded.emit(CREATE_KEY, {"id": "ws-a"})
+    assert landed == []  # the closed dialog's answer is no one's
     """A refused create (#962): the failure lands on the note
     line, the create button returns, and the dialog stands —
     the operator keeps the fields they filled."""

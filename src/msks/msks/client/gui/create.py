@@ -9,16 +9,20 @@ behind it refreshes.
 
 This module imports PySide6 at module scope — the same contract
 as the screens' modules: nothing imports it at CLI parse time,
-and the shell's create path imports it lazily.
+and the shell imports it beside the screens.
 """
+
+import contextlib
 
 from PySide6 import QtCore, QtWidgets
 
 from ..create import invoking_user
 from ..data import RestFailure
+from ..images import ordered_image_rows
 
-#: The create call's key (#962): the dialog answers only its own
-#: key, whatever else shares the bridge.
+#: The create call's key (#962): every open dialog shares it —
+#: an answer lands on the dialog whose flight is open, the
+#: closed ones having unhooked and cancelled theirs.
 CREATE_KEY = "workspace-create"
 
 #: The hint reads' keys (#962): the image catalog for the image
@@ -48,6 +52,19 @@ STATIC_PLACEHOLDERS = {
     "mem_mib": "MiB — 8192",
 }
 
+#: The image picker's stand-in entry (#962): an untouched picker
+#: stays on it, and its value is nothing — the create body
+#: carries no image, and the daemon answers its designated
+#: default, the TUI's own blank-select behavior.
+DEFAULT_IMAGE_LABEL = "the daemon's default"
+
+
+def whole_number(value: str) -> bool:
+    """Whether a form value is a whole number (#309's own rule):
+    ASCII digits only — ``int()`` refuses some unicode digits
+    ``isdigit()`` accepts, and a paste can carry them."""
+    return value.isascii() and value.isdigit()
+
 
 def land_value(field: str, value: str, body: dict) -> str | None:
     """One filled value into the body (#962, #309's own rule):
@@ -56,7 +73,7 @@ def land_value(field: str, value: str, body: dict) -> str | None:
     nothing."""
     if not value:
         return None
-    if field in INT_FIELDS and not value.isdigit():
+    if field in INT_FIELDS and not whole_number(value):
         return f"{field}: a whole number, or leave it blank"
     body[field] = int(value) if field in INT_FIELDS else value
     return None
@@ -78,16 +95,39 @@ def create_body(values: dict) -> tuple[dict | None, str]:
     return body, ""
 
 
+def image_plain_refs(rows: list[dict]) -> dict[str, str]:
+    """Each reference's plain-value holder: the first delivered
+    row of the reference. The catalog lists a reference's rows
+    oldest import first, and the daemon's name:version
+    resolution scans that same order — so the plain reference
+    and the daemon agree on which build it names."""
+    plain: dict[str, str] = {}
+    for row in rows:
+        plain.setdefault(f"{row['name']}:{row['version']}", row["hash"])
+    return plain
+
+
+def row_option(row: dict, plain: dict[str, str]) -> tuple[str, str]:
+    """One catalog row as the picker's value and label: the
+    reference, riding the hash when another row of the same
+    reference holds the daemon's own plain resolution, the
+    designated default carrying the asterisk on its label."""
+    ref = f"{row['name']}:{row['version']}"
+    value = (
+        ref if plain[ref] == row["hash"] else (f"{row['name']}@{row['hash']}")
+    )
+    label = f"{ref} *" if row.get("default") else ref
+    return value, label
+
+
 def image_options(rows: object) -> list[tuple[str, str]]:
-    """The image picker's options (#962): one per catalog row —
-    the ``name:version`` reference as the value, the reference
-    with the designated default's asterisk as the label."""
-    options: list[tuple[str, str]] = []
-    for row in rows or []:
-        ref = f"{row.get('name')}:{row.get('version')}"
-        label = f"{ref} *" if row.get("default") else ref
-        options.append((ref, label))
-    return options
+    """The image picker's options (#962, the TUI select's own
+    arithmetic): one per catalog row, distro ascending and
+    newest import first, a shared reference riding the hash in
+    every value but the daemon's own pick."""
+    listed = list(rows or [])
+    plain = image_plain_refs(listed)
+    return [row_option(row, plain) for row in ordered_image_rows(listed)]
 
 
 def size_placeholders(defaults: object) -> dict[str, str]:
@@ -101,30 +141,47 @@ def size_placeholders(defaults: object) -> dict[str, str]:
     }
 
 
+def user_placeholder() -> str:
+    """The user field's placeholder (#962): the operator's own
+    account name, the CLI create's own default. A name the
+    login charset refuses — a capitalized or accented one, a
+    host getpass cannot answer — leaves the placeholder empty:
+    the create read itself surfaces that refusal as a failure
+    the note line shows (#309's SystemExit never reaches the
+    event loop here)."""
+    with contextlib.suppress(SystemExit):
+        return invoking_user()
+    return ""
+
+
 class CreateDialog(QtWidgets.QDialog):
     """The create form as a dialog (#962): the TUI create
     popup's counterpart over the workspaces, its exchange and
     its refusals carried the screens' way — calls through the
     bridge, answers over its signals, failures on the note
-    line."""
+    line. A dialog closed mid-flight cancels its own call and
+    hears nothing after."""
 
     def __init__(self, bridge) -> None:
         super().__init__()
         self.bridge = bridge
         self.hints_loaded = False
+        self.flight = None
         self.setWindowTitle("Create a workspace")
         self.note = QtWidgets.QLabel("create a workspace")
         form = QtWidgets.QFormLayout()
         self.fields: dict[str, QtWidgets.QWidget] = {}
         for field, label in FORM_FIELDS:
             if field == "image":
-                self.fields[field] = QtWidgets.QComboBox()
+                picker = QtWidgets.QComboBox()
+                picker.addItem(DEFAULT_IMAGE_LABEL, None)
+                self.fields[field] = picker
             else:
                 edit = QtWidgets.QLineEdit()
                 if field in STATIC_PLACEHOLDERS:
                     edit.setPlaceholderText(STATIC_PLACEHOLDERS[field])
                 elif field == "user":
-                    edit.setPlaceholderText(invoking_user())
+                    edit.setPlaceholderText(user_placeholder())
                 self.fields[field] = edit
             form.addRow(label, self.fields[field])
         self.create_button = QtWidgets.QPushButton("create")
@@ -142,7 +199,7 @@ class CreateDialog(QtWidgets.QDialog):
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
 
-    def showEvent(self, event) -> None:  # noqa: N804
+    def showEvent(self, event) -> None:
         """The hints load on the first show (#962): the image
         catalog and the daemon's defaults, through the bridge —
         a refused hint leaves the form standing on its static
@@ -152,6 +209,17 @@ class CreateDialog(QtWidgets.QDialog):
             self.hints_loaded = True
             self.bridge.call(IMAGES_KEY, "images")
             self.bridge.call(DEFAULTS_KEY, "create_defaults")
+
+    def done(self, result: int) -> None:
+        """The dialog's close, every path's (#962): the bridge
+        hands go — a dialog closed mid-flight cancels its own
+        call, so its late answer reaches no one and the next
+        dialog's own answers land on it alone."""
+        if self.flight is not None and not self.flight.done():
+            self.flight.cancel()
+        self.bridge.succeeded.disconnect(self.on_succeeded)
+        self.bridge.failed.disconnect(self.on_failed)
+        super().done(result)
 
     @QtCore.Slot(str, object)
     def on_succeeded(self, key: str, result: object) -> None:
@@ -165,10 +233,12 @@ class CreateDialog(QtWidgets.QDialog):
 
     def hint_landed(self, key: str, result: object) -> None:
         """One answered hint (#962): the catalog fills the image
-        picker, the defaults the size placeholders."""
+        picker after its default stand-in, the defaults the size
+        placeholders."""
         if key == IMAGES_KEY:
+            picker = self.fields["image"]
             for value, label in image_options(result):
-                self.fields["image"].addItem(label, value)
+                picker.addItem(label, value)
         else:
             for field, hint in size_placeholders(result).items():
                 self.fields[field].setPlaceholderText(hint)
@@ -207,4 +277,4 @@ class CreateDialog(QtWidgets.QDialog):
             return
         self.create_button.setEnabled(False)
         self.note.setText(f"creating {body['name']} …")
-        self.bridge.call(CREATE_KEY, "create", body)
+        self.flight = self.bridge.call(CREATE_KEY, "create", body)
