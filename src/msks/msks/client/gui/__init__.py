@@ -19,7 +19,9 @@ and the terminal widget package (:mod:`.terminal`, phase 4.5
 with grid-anchored selection, the clipboard paths, OSC 8 and
 plain-text hyperlinks, and find; its own init imports no Qt,
 so it parses safe here while its widgets wait for #954's tab
-wiring to reach them).
+wiring to reach them), and the images tab's presenter
+(:mod:`.imagerows`, #963 — the catalog and published groups
+as plain row models, PySide6-free).
 The screen widgets
 (:mod:`.workspaces`, #939 — the list; :mod:`.workspace`, #945
 — the detail page and the shell that swaps the two) and the
@@ -39,6 +41,7 @@ from . import (  # noqa: F401 — reachability pins for the gate;
     detail,
     feed,
     ghostty,
+    imagerows,
     rows,
     terminal,
     termsession,
