@@ -126,7 +126,6 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.row: dict | None = None
         self.health_doc: dict | None = None
         self.frames: list[dict] = []
-        self.rendered: DetailSections | None = None
         self.rendered_key: tuple | None = None
         self.row_pending = False
         self.health_pending = False
@@ -328,7 +327,6 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.row = None
         self.health_doc = None
         self.frames = []
-        self.rendered = None
         self.rendered_key = None
         self.footer.setText("")
         self.clear_sections()
@@ -497,7 +495,6 @@ class WorkspaceDetail(QtWidgets.QWidget):
         key = (model.mounts, model.pending_note, model.health)
         if key == self.rendered_key:
             return
-        self.rendered = model
         self.rendered_key = key
         self.render_sections(model)
 
@@ -572,8 +569,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
         feed): the buffer keeps only the frames that name this
         workspace — the feed is a daemon-wide subscriber, and
         busy siblings would otherwise evict this page's history
-        out of the cap — and the section re-renders the moment
-        one lands."""
+        out of the cap — and the Events tab appends the moment
+        one lands. The Info sections render nothing a frame can
+        move (#989): the render-skip guard holds them whole
+        across a noisy feed."""
         data = frame.get("data") or {}
         if not frame_names(data, self.workspace_id):
             return
