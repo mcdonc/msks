@@ -10,8 +10,8 @@ tagged `vX.Y.Z`.
 
 - **The GUI workspace edit action (#986).** The workspace list's
   context menu grows an Edit action opening an editor in the
-  create dialog's shape, seeded with the workspace's values;
-  the changed sizes and topology send through the resize route
+  create dialog's shape, seeded with the workspace's values.
+  The changed sizes and topology send through the resize route
   `msks resize` drives, and the list refreshes when the daemon
   answers. A row whose edits wait for the next start leads its
   status with the `↻N` marker, the tooltip and the detail
