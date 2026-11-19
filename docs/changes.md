@@ -12,10 +12,10 @@ tagged `vX.Y.Z`.
   grows a Proxies tab beside Mounts and Info. The tab lists the
   workspace's forwards and remotes with their live status, and
   Add and Edit parse the spec with the CLI's own parsers before
-  anything sends; Removal asks first. Every proxy transition the
-  daemon publishes for the open workspace refreshes the tab through
-  the events feed, so
-  a bind that fails while the tab stands paints itself.
+  anything sends; Removal asks first. Every proxy transition the daemon
+  publishes for the open workspace refreshes the tab through the
+  events feed, so a bind that fails while the tab stands paints
+  itself.
 
 - **The GUI workspace mounts tab (#987).** The workspace page
   grows a Mounts tab beside Shells and Info. The tab lists the

@@ -6,9 +6,9 @@ letter, the spec, the label, the live status word with its
 cause); Add and Edit parse the spec through the CLI's own
 parsers before anything sends, Removal asks for confirmation,
 and the rows move through the REST surface the ``msks proxy``
-commands ride. Every proxy transition the daemon publishes
-refreshes the tab through the events feed, so a bind that fails
-while the tab stands paints itself.
+commands ride. Every proxy transition the daemon publishes for
+the open workspace refreshes the tab through the events feed,
+so a bind that fails while the tab stands paints itself.
 
 This module imports PySide6 at module scope — the screens' own
 contract: nothing imports it at CLI parse time, and the
