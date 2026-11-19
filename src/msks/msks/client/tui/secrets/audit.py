@@ -113,8 +113,14 @@ class SecretAuditScreen(HelpKeys, Screen):
 
     def started(self) -> None:
         """The compose has settled: focus the rows, pull the
-        replay."""
-        self.query_one("#audit-rows", ListView).focus()
+        replay. The focus takes the list only while one stands —
+        a refresh callback landing inside a rebuild's swap
+        window holds none (the fresh list mounts within it), and
+        the window's own healer is the replay the worker pulls
+        regardless."""
+        rows = self.rows_widget()
+        if rows is not None:
+            rows.focus()
         self.run_worker(self.load_audit, exclusive=True)
 
     def on_unmount(self) -> None:

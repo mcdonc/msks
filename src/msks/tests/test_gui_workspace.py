@@ -277,16 +277,17 @@ def test_the_page_carries_top_level_shells_and_info_tabs(qt) -> None:
         "Shells",
         "Mounts",
         "Proxies",
+        "Events",
         "Info",
     ]
     assert page.bar.currentIndex() == 0  # Shells, the default
     assert page.stack.currentIndex() == 0
     assert page.stack.widget(0) is page.shells
-    info = page.stack.widget(3)
+    assert page.stack.widget(3) is page.events_tab  # the bar's own order
+    info = page.stack.widget(4)
     assert info.findChildren(type(page.mounts)) == [page.mounts]
     assert page.health in info.findChildren(type(page.health))
-    assert info.findChildren(type(page.events)) == [page.events]
-    page.bar.setCurrentIndex(3)  # the bar drives the stack
+    page.bar.setCurrentIndex(bar_index(page, "Info"))
     assert page.stack.currentWidget() is info
 
 
@@ -319,6 +320,7 @@ def test_the_proxies_tab_rides_the_page(qt) -> None:
     action."""
     page, window, bridge = make_page(qt)
     assert bar_index(page, "Proxies") == 2
+    assert bar_index(page, "Events") == 3
     land(qt, page, bridge)
     # The open's own refresh already poked a listing; answer it
     # so the next tick's poke runs.
@@ -362,7 +364,7 @@ def test_the_show_anchors_on_the_tab_the_row_shows(qt) -> None:
     while the Info tab shows, the current shell's terminal
     while the Shells tab shows one."""
     page, window, bridge = make_page(qt)
-    page.bar.setCurrentIndex(3)  # Info
+    page.bar.setCurrentIndex(bar_index(page, "Info"))
     page.anchor_focus()
     assert window.focusWidget() is page.back_button
     page.bar.setCurrentIndex(0)  # Shells, a shell current
@@ -377,7 +379,7 @@ def test_a_reopen_resets_the_row_and_anchors_the_terminal(qt) -> None:
     — the anchor is the show's, not the strip's."""
     shell, window, bridge = make_shell(qt)
     shell.listing.opened.emit("ws-a")
-    shell.detail.bar.setCurrentIndex(3)  # Info before leaving
+    shell.detail.bar.setCurrentIndex(bar_index(shell.detail, "Info"))
     shell.detail.go_back()
     shell.listing.opened.emit("ws-a")  # reopen: a fresh open's show
     assert shell.detail.bar.currentIndex() == 0  # Shells again
@@ -439,10 +441,15 @@ def test_the_page_renders_the_sections(qt) -> None:
         "status  ok\nversion  0.9.2\nmachine  x86_64\nimage  -"
     )
     assert page.empty_health.isHidden()
-    # No frame has landed: the events section reads its muted
-    # stand-in.
-    assert page.empty_events.isVisibleTo(page)
-    assert page.events.isHidden()
+    # No frame has landed: the Events tab reads its muted
+    # stand-in, and the Info scroll carries no Events pane (#989).
+    assert not page.events_tab.empty.isHidden()
+    assert page.events_tab.rows.isHidden()
+    assert not [
+        box
+        for box in page.findChildren(qt.QtWidgets.QGroupBox)
+        if box.title() == "Events"
+    ]
 
 
 def test_a_workspace_that_mounts_nothing_reads_the_stand_in(
@@ -461,11 +468,13 @@ def test_a_workspace_that_mounts_nothing_reads_the_stand_in(
     assert page.pending_label.isHidden()
 
 
-def test_pushed_frames_fill_the_events_section(qt) -> None:
-    """A pushed frame lands in the buffer and re-renders the
-    section (#945's seam, #946's feed): this workspace's frames
-    read, newest last, another workspace's stay out, and the
-    buffer keeps its bound."""
+def test_pushed_frames_fill_the_events_tab(qt) -> None:
+    """A pushed frame lands in the buffer and the Events tab
+    (#945's seam, #946's feed, #989): this workspace's frames
+    read, newest last, another workspace's stay out, the buffer
+    keeps its bound, and a frame that moves nothing the Info
+    sections show re-renders nothing — the mounts hold survives
+    a noisy feed whole."""
     page, window, bridge = make_page(qt)
     show_info(page)
     land(qt, page, bridge)
@@ -475,21 +484,40 @@ def test_pushed_frames_fill_the_events_section(qt) -> None:
             "data": {"id": "ws-b", "status": "running"},
         }
     )
-    assert page.empty_events.isVisibleTo(page)
+    assert page.events_tab.rows.count() == 0  # a foreign frame
     page.push_frame({"event": "workspace.status", "data": {"id": "ws-a"}})
-    assert page.events.isVisibleTo(page)
-    assert [page.events.item(row).text() for row in range(1)] == ["status ?"]
+    assert not page.events_tab.rows.isHidden()
+    (stamp, _kind, summary) = (
+        page.events_tab.rows.item(0).text().split("  ", 2)
+    )
+    assert stamp  # the receipt stamp reads
+    assert summary == "status ?"
     page.push_frame(
         {
             "event": "workspace.status",
             "data": {"id": "ws-a", "status": "stopped"},
         }
     )
-    texts = [page.events.item(row).text() for row in range(2)]
-    assert texts[-1] == "status stopped"
+    summaries = [
+        page.events_tab.rows.item(row).text().split("  ", 2)[2]
+        for row in range(2)
+    ]
+    assert summaries[-1] == "status stopped"
+    # The frame that moved nothing the sections show renders
+    # nothing: the mounts hold survives it whole (#989).
+    page.mounts.selectRow(min(1, page.mounts.rowCount() - 1))
+    held = page.mounts.selectedItems()[0].text()
+    key = page.rendered_key
+    page.push_frame({"event": "workspace.status", "data": {"id": "ws-a"}})
+    assert page.rendered_key == key  # nothing re-rendered
+    assert page.mounts.selectedItems()[0].text() == held
     for n in range(qt.page_mod.FRAMES_BUFFER + 5):
         page.push_frame({"event": "noise", "data": {"id": "ws-a"}})
     assert len(page.frames) == qt.page_mod.FRAMES_BUFFER
+    # The tab's window caps at the presenter's own limit (#989).
+    from msks.client.gui.detail import EVENTS_LIMIT
+
+    assert page.events_tab.rows.count() == EVENTS_LIMIT
 
 
 def test_back_returns_to_the_list(qt) -> None:
@@ -666,10 +694,10 @@ def test_opening_resets_the_page(qt) -> None:
     page.open("ws-b")  # the open resets the row to Shells
     show_info(page)
     assert page.footer.text() == ""
-    assert page.events.isHidden()
-    assert page.empty_events.isVisibleTo(page)
+    assert page.events_tab.rows.count() == 0
+    assert not page.events_tab.empty.isHidden()
     assert page.frames == []
-    assert page.rendered is None
+    assert page.rendered_key is None
     assert ("detail-row", "workspaces", ()) in bridge.calls
 
 
@@ -685,7 +713,7 @@ def test_the_answers_land_in_either_order(qt) -> None:
         qt.page_mod.HEALTH_KEY,
         {"status": "ok", "version": "0.9.2", "machine": "x86_64"},
     )
-    assert page.rendered is None
+    assert page.rendered_key is None
     assert page.empty_health.isVisibleTo(page)
     page.on_succeeded(qt.page_mod.ROW_KEY, [daemon_row()])
     assert page.health.isVisibleTo(page)

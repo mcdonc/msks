@@ -21,6 +21,8 @@ from ..data import RestFailure
 from .bridge import Bridge
 from .create import CreateDialog
 from .detail import DetailSections, detail_sections, frame_names
+from .events import EventsTab
+from .forms import muted_note
 from .listcells import read_only_item
 from .mounts import MountsTab
 from .proxies import ProxiesTab
@@ -80,6 +82,10 @@ MOUNTS_LABEL = "Mounts"
 #: remote proxies with their live status.
 PROXIES_LABEL = "Proxies"
 
+#: The Events tab's label (#989): the recent-frames window the
+#: Info pane carried before the pane moved.
+EVENTS_LABEL = "Events"
+
 
 def find_row(rows: list[dict] | None, workspace_id: str) -> dict | None:
     """This workspace's row out of a listing (#945): the same
@@ -89,15 +95,6 @@ def find_row(rows: list[dict] | None, workspace_id: str) -> dict | None:
         (row for row in rows or [] if row.get("id") == workspace_id),
         None,
     )
-
-
-def muted_note(text: str) -> QtWidgets.QLabel:
-    """A muted section note (#945): the empty section's honest
-    stand-in, colored the palette's own shadow."""
-    label = QtWidgets.QLabel(text)
-    shadow = label.palette().color(QtGui.QPalette.ColorRole.Shadow)
-    label.setStyleSheet(f"color: {shadow.name()};")
-    return label
 
 
 class WorkspaceDetail(QtWidgets.QWidget):
@@ -129,7 +126,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.row: dict | None = None
         self.health_doc: dict | None = None
         self.frames: list[dict] = []
-        self.rendered: DetailSections | None = None
+        self.rendered_key: tuple | None = None
         self.row_pending = False
         self.health_pending = False
         self.storage_pending = False
@@ -178,15 +175,18 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.mounts_tab = MountsTab(bridge)
         self.mounts_tab.row_updated.connect(self.mounts_landed)
         self.proxies_tab = ProxiesTab(bridge)
+        self.events_tab = EventsTab()
         self.bar = QtWidgets.QTabBar(self)
         self.bar.addTab(SHELLS_LABEL)
         self.bar.addTab(MOUNTS_LABEL)
         self.bar.addTab(PROXIES_LABEL)
+        self.bar.addTab(EVENTS_LABEL)
         self.bar.addTab(INFO_LABEL)
         self.stack = QtWidgets.QStackedWidget(self)
         self.stack.addWidget(self.shells)
         self.stack.addWidget(self.mounts_tab)
         self.stack.addWidget(self.proxies_tab)
+        self.stack.addWidget(self.events_tab)
         self.stack.addWidget(scroll)
         self.bar.currentChanged.connect(self.stack.setCurrentIndex)
         self.chrome.insertWidget(1, self.bar)
@@ -201,14 +201,13 @@ class WorkspaceDetail(QtWidgets.QWidget):
         escape.activated.connect(self.go_back)
 
     def build_sections(self) -> QtWidgets.QWidget:
-        """The three sections' column (#945): grouped boxes on
-        one scrolling page — the mounts over the health over
-        the events."""
+        """The sections' column (#945, #989): grouped boxes on
+        one scrolling page — the mounts over the health, the
+        events window living in its own tab now."""
         column = QtWidgets.QWidget(self)
         layout = QtWidgets.QVBoxLayout(column)
         layout.addWidget(self.build_mounts())
         layout.addWidget(self.build_health())
-        layout.addWidget(self.build_events())
         return column
 
     def build_mounts(self) -> QtWidgets.QGroupBox:
@@ -253,19 +252,6 @@ class WorkspaceDetail(QtWidgets.QWidget):
         inner = QtWidgets.QVBoxLayout(box)
         inner.addWidget(self.health)
         inner.addWidget(self.empty_health)
-        return box
-
-    def build_events(self) -> QtWidgets.QGroupBox:
-        """The events section's chrome (#945): the recent
-        frames' lines, newest last, in a scrolling list — the
-        pushed frames (#946) fill it, with a muted stand-in
-        until one lands."""
-        self.events = QtWidgets.QListWidget(self)
-        self.empty_events = muted_note("none yet")
-        box = QtWidgets.QGroupBox("Events", self)
-        inner = QtWidgets.QVBoxLayout(box)
-        inner.addWidget(self.events)
-        inner.addWidget(self.empty_events)
         return box
 
     def build_chrome(self) -> None:
@@ -341,7 +327,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.row = None
         self.health_doc = None
         self.frames = []
-        self.rendered = None
+        self.rendered_key = None
         self.footer.setText("")
         self.clear_sections()
         # The row resets with every open (#974): Shells is the
@@ -358,6 +344,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # takes the switch the same way (#988).
         self.mounts_tab.host(workspace_id, {})
         self.proxies_tab.host(workspace_id)
+        self.events_tab.clear()
         self.refresh()
 
     def clear_sections(self) -> None:
@@ -366,13 +353,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.mounts.setRowCount(0)
         self.pending_label.setVisible(False)
         self.health.setText("")
-        self.events.clear()
         self.empty_mounts.setVisible(True)
         self.mounts.setVisible(False)
         self.empty_health.setVisible(True)
         self.health.setVisible(False)
-        self.empty_events.setVisible(True)
-        self.events.setVisible(False)
 
     @QtCore.Slot()
     def refresh(self) -> None:
@@ -503,9 +487,15 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # the page's own read is the tab's standing truth between
         # changes.
         self.mounts_tab.host(self.workspace_id, self.row)
-        if model == self.rendered:
+        # The render-skip guard reads the sections the Info tab
+        # renders (#989): the events window lives in its own tab
+        # now, so a frame that moves nothing the sections show
+        # costs no re-render — the mounts hold survives a noisy
+        # feed whole.
+        key = (model.mounts, model.pending_note, model.health)
+        if key == self.rendered_key:
             return
-        self.rendered = model
+        self.rendered_key = key
         self.render_sections(model)
 
     def render_sections(self, model: DetailSections) -> None:
@@ -514,7 +504,6 @@ class WorkspaceDetail(QtWidgets.QWidget):
         in :meth:`rebuild`, outside this skip-guarded path."""
         self.render_mounts(model)
         self.render_health(model)
-        self.render_events(model)
 
     def render_footer(self, model: DetailSections) -> None:
         """The footer strip (#971): the same one-line read the
@@ -574,25 +563,16 @@ class WorkspaceDetail(QtWidgets.QWidget):
             self.health.setVisible(False)
             self.empty_health.setVisible(True)
 
-    def render_events(self, model: DetailSections) -> None:
-        """The events section (#945): the recent frames' lines,
-        newest last, the tail scrolled into view."""
-        self.events.clear()
-        for entry in model.events:
-            self.events.addItem(entry.line)
-        if model.events:
-            self.events.scrollToBottom()
-        self.events.setVisible(bool(model.events))
-        self.empty_events.setVisible(not model.events)
-
     @QtCore.Slot(object)
     def push_frame(self, frame: dict) -> None:
         """One pushed frame into the buffer (#945's seam, #946's
         feed): the buffer keeps only the frames that name this
         workspace — the feed is a daemon-wide subscriber, and
         busy siblings would otherwise evict this page's history
-        out of the cap — and the section re-renders the moment
-        one lands."""
+        out of the cap — and the Events tab appends the moment
+        one lands. The Info sections render nothing a frame can
+        move (#989): the render-skip guard holds them whole
+        across a noisy feed."""
         data = frame.get("data") or {}
         if not frame_names(data, self.workspace_id):
             return
@@ -601,8 +581,11 @@ class WorkspaceDetail(QtWidgets.QWidget):
             del self.frames[: len(self.frames) - FRAMES_BUFFER]
         # A proxy transition repaints the Proxies tab (#988) —
         # the feed's frame is the tab's own refresh trigger, the
-        # same path the page's tick drives.
+        # same path the page's tick drives — and every frame
+        # appends to the Events tab (#989), the pane the Info
+        # sections carried before the tab took the window.
         self.proxies_tab.frame(frame)
+        self.events_tab.push(frame)
         self.rebuild()
 
     @QtCore.Slot(object)
