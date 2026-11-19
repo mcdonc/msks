@@ -48,3 +48,17 @@ class GuiData(RestData):
             return {"catalog": catalog, "published": published}
 
         return await self.carried(build)
+
+    async def secrets_page(self) -> dict:
+        """The secrets tab's one gathered read (#966): the
+        placeholder listing with its lock states beside the
+        recorded audit rows — the two halves the tab's one
+        refresh fills, one flight, both daemon reads."""
+
+        async def build() -> dict:
+            return {
+                "secrets": await self.secrets(),
+                "audit": await self.secret_audit(),
+            }
+
+        return await self.carried(build)
