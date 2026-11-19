@@ -316,3 +316,112 @@ def test_the_tls_context_is_shared_and_local_needs_none(
     monkeypatch.setenv("MSKSC_URL", "")
     monkeypatch.setenv("MSKSC_SOCKET", "/run/msks/msksd.sock")
     assert env_mod.shared_ssl() is None
+
+
+async def test_the_images_page_gathers_and_filters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The images tab's gathered read (#964): the daemon's
+    catalog, the machine word off /health, then the channel's
+    manifest — already narrowed to the rows the daemon's own
+    machine boots, the presenter's arch guard run on the worker
+    — as one answer the tab refreshes whole. In that order, so a
+    refused catalog read sends no manifest request at all."""
+    gui_env(monkeypatch)
+    catalog = [
+        {
+            "name": "debian",
+            "version": "13.6",
+            "hash": "a" * 64,
+            "default": True,
+            "imported": "2026-01-02T03:04:05",
+        }
+    ]
+    channel = "https://ch.example/manifest.json"
+    seen: list[tuple[str, str, dict | None]] = []
+    data = data_mod.GuiData(
+        transport=scripted(
+            [
+                (
+                    "GET",
+                    "/api/v1/images",
+                    httpx.Response(200, json=catalog),
+                ),
+                (
+                    "GET",
+                    "/api/v1/health",
+                    httpx.Response(200, json={"machine": "x86_64"}),
+                ),
+                (
+                    "GET",
+                    "/manifest.json",
+                    httpx.Response(
+                        200,
+                        json=[
+                            {
+                                "ref": "amd64:1",
+                                "url": "https://ch.example/a.tar",
+                                "arch": "x86_64",
+                            },
+                            {
+                                "ref": "arm64:1",
+                                "url": "https://ch.example/b.tar",
+                                "arch": "aarch64",
+                            },
+                            {
+                                "ref": "any:1",
+                                "url": "https://ch.example/c.tar",
+                            },
+                        ],
+                    ),
+                ),
+            ],
+            seen,
+        )
+    )
+    page = await data.images_page(channel)
+    assert page == {
+        "catalog": catalog,
+        "published": [
+            {
+                "ref": "amd64:1",
+                "url": "https://ch.example/a.tar",
+                "arch": "x86_64",
+            },
+            {"ref": "any:1", "url": "https://ch.example/c.tar"},
+        ],
+    }
+    assert seen == [
+        ("GET", "/api/v1/images", None),
+        ("GET", "/api/v1/health", None),
+        ("GET", "/manifest.json", None),
+    ]
+
+
+async def test_the_images_page_carries_a_failed_manifest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A channel that will not answer (#964, #904's contract):
+    the manifest's fetch failure arrives carried like every
+    other call's — the daemon-down shape with ``reach`` set, the
+    fetch's own one-line refusal as the message."""
+    gui_env(monkeypatch)
+    seen: list[tuple[str, str, dict | None]] = []
+    data = data_mod.GuiData(
+        transport=scripted(
+            [
+                ("GET", "/api/v1/images", httpx.Response(200, json=[])),
+                ("GET", "/api/v1/health", httpx.Response(200, json={})),
+                (
+                    "GET",
+                    "/manifest.json",
+                    httpx.Response(404, json={"detail": "gone"}),
+                ),
+            ],
+            seen,
+        )
+    )
+    with pytest.raises(clientdata.RestFailure) as failed:
+        await data.images_page("https://ch.example/manifest.json")
+    assert "cannot fetch the image manifest" in str(failed.value)
+    assert failed.value.reach

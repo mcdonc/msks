@@ -368,18 +368,20 @@ def test_the_gui_window_opens_offscreen(
     first = opened["geometry"][0]
     assert first[2:] == (app.DEFAULT_WIDTH, app.DEFAULT_HEIGHT)
     # The top-level strip (#962): the window's central widget is
-    # the tab strip, the Workspaces tab first and current.
-    from msks.client.gui.tabs import WORKSPACES_LABEL
+    # the tab strip, the Workspaces tab first and current, the
+    # Images tab beside it (#964).
+    from msks.client.gui.tabs import IMAGES_LABEL, WORKSPACES_LABEL
 
     assert opened["tabs"][0] == (
         "MainTabs",
-        [WORKSPACES_LABEL],
+        [WORKSPACES_LABEL, IMAGES_LABEL],
         0,
     )
     # The create opener rides the tab (#962): a plus button
     # embedded in the Workspaces tab.
     plus = opened["plus"][0]
-    assert plus is not None and plus.text() == "+"
+    assert plus is not None
+    assert not plus.icon().isNull()  # the drawn green badge (#964)
 
     # Each run rescales the shared application's font (#939:
     # one scale per open), so a second run in one process would
@@ -486,6 +488,7 @@ def test_open_window_reuses_an_existing_app(
     from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui.bridge import Bridge
+    from msks.client.gui.images import tab as images_tab_mod
 
     shown: list[str] = []
     stops: list[object] = []
@@ -494,6 +497,7 @@ def test_open_window_reuses_an_existing_app(
     built: list[object] = []
     screens: list[object] = []
     creates: list[object] = []
+    images: list[tuple[object, str]] = []
 
     class FakeSignal:
         def connect(self, slot: object) -> None:
@@ -560,16 +564,31 @@ def test_open_window_reuses_an_existing_app(
 
     monkeypatch.setattr(workspace_mod, "WorkspaceShell", FakeScreen)
 
+    class FakeImagesTab:
+        """The Images tab's stub (#964): the window path builds
+        it over the same bridge the shell reads, under the
+        strip's second tab — the recording pins both."""
+
+        def __init__(self, bridge: object, url: str) -> None:
+            images.append((bridge, url))
+
+    monkeypatch.setattr(images_tab_mod, "ImagesTab", FakeImagesTab)
+
     class FakeTabs:
         """The strip the shell lands under (#962): the stub the
         window path takes for the real tab widget — the shell is
-        its first page, the Workspaces tab, and its create
-        opener lands on the shell."""
+        its first page, the Workspaces tab, the Images tab's
+        page lands beside it (#964), and its create opener
+        lands on the shell."""
 
         create_requested = CreateSignal()
 
         def __init__(self, page: object) -> None:
             self.page = page
+            self.pages: list[tuple[object, str]] = []
+
+        def addTab(self, page: object, label: str) -> None:
+            self.pages.append((page, label))
 
     monkeypatch.setattr(tabs_mod, "MainTabs", FakeTabs)
 
@@ -650,6 +669,14 @@ def test_open_window_reuses_an_existing_app(
     assert isinstance(central[0], FakeTabs)
     assert central[0].page is screens[0]
     assert built == started
+    # The Images tab lands beside the shell (#964): built over
+    # the same bridge, under the strip's second tab, on the
+    # channel URL the config resolves — the default, with no
+    # config in the run.
+    from msks.client.gui.images import channel_url
+
+    assert images == [(started[0], channel_url(None))]
+    assert [label for _page, label in central[0].pages] == ["Images"]
     # The create opener lands on the shell (#962): the strip's
     # plus button opens the shell's own create dialog.
     assert creates == [screens[0].open_create]
@@ -675,6 +702,7 @@ def test_open_window_keeps_a_user_style_choice(
     from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui.bridge import Bridge
+    from msks.client.gui.images import tab as images_tab_mod
 
     styles: list[str] = []
     central: list[object] = []
@@ -685,12 +713,22 @@ def test_open_window_keeps_a_user_style_choice(
 
     class FakeTabs:
         """The strip stub (#962): the shell lands under it, the
-        shape the style test never reads past — the opener's
-        connect is the no-op signal's own."""
+        Images tab's page beside it (#964) — the shape the
+        style test never reads past, the opener's connect the
+        no-op signal's own."""
 
         create_requested = FakeSignal()
 
         def __init__(self, page: object) -> None:
+            pass
+
+        def addTab(self, page: object, label: str) -> None:
+            pass
+
+    class FakeImagesTab:
+        """The Images tab stub (#964): built, never read."""
+
+        def __init__(self, bridge: object, url: str) -> None:
             pass
 
     class FakeWindow:
@@ -731,6 +769,7 @@ def test_open_window_keeps_a_user_style_choice(
             pass
 
     monkeypatch.setattr(workspace_mod, "WorkspaceShell", FakeScreen)
+    monkeypatch.setattr(images_tab_mod, "ImagesTab", FakeImagesTab)
 
     monkeypatch.setattr(tabs_mod, "MainTabs", FakeTabs)
 

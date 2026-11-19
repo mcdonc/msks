@@ -8,6 +8,37 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI images tab (#964).** The desktop GUI's Images tab
+  renders the TUI image page's two groups: the daemon's catalog
+  with the default marker, hash prefixes, and import dates, and
+  the published channel with descriptions, sizes, build dates,
+  and the `[imported]`/`[local]` membership markers. Rows the
+  daemon's machine cannot boot stay off the published group.
+  Activating a published row imports it behind a progress dialog
+  that holds the wait while the daemon downloads, verifies, and
+  floor-checks, and the catalog refreshes when the import lands.
+  A catalog row opens its full record, Remove asks for
+  confirmation, and Set as the default posts the designation;
+  a right-click on a published row offers the import behind
+  the same progress dialog; the channel URL follows
+  `image_manifest_url` with the same default the TUI page
+  reads. The two groups' standing tally —
+  `N in the catalog · M published` — reads on a selectable
+  line beneath the published pane, the workspace list's own
+  bottom strip's style. Both panes' bold column headers
+  read as one table's chrome and their columns sort — the
+  sorted-by column carries its arrow, the dates and sizes
+  ordering by their moments and whole MiB rather than their
+  labels' spelling. The catalog pane's columns share the
+  window's whole width, and the published pane spreads its
+  spare room across the size, hash, build date, and marker —
+  the description keeping its whole value with no empty tail —
+  while a tight pane takes its character budget from the
+  description first (a middle ellipsis down to a handful of
+  characters), then the hash, then the ref and build date, with
+  the size and marker reading whole in every pane a real window
+  shows; no horizontal scrollbar ever hides a row's cells.
+
 - **The GUI images presenter (#963).** The images tab gains
   its data layer: the daemon's catalog and the published
   channel's manifest build as plain row models. The catalog
@@ -17,6 +48,14 @@ tagged `vX.Y.Z`.
   `[imported]`/`[local]` membership markers, with the rows the
   daemon's machine cannot boot left off. The tab's widget
   lands next on the `pyside-gui` branch.
+
+- **The GUI workspaces pane fills its width (#964).** The
+  workspace list's columns now consume the pane's whole width
+  at any width over the default — the screen's own resize
+  event read the viewport one layout pass behind, so every
+  widen left its last delta as blank space beside the rows, a
+  maximized window most of all. The pane's own resize re-flows
+  the columns.
 
 - **GUI row actions on the workspace list (#972).** The
   workspace list's toolbar is gone: the Start, Stop, Shell,
@@ -35,11 +74,12 @@ tagged `vX.Y.Z`.
   tab holds the workspace list and detail screens, and the
   Images and Secrets tabs of the plan land beside it. Arrow
   keys cross the tabs, and Up from the list's top row returns
-  to the tab strip. A plus button on the Workspaces tab opens
-  the create-workspace dialog, the TUI create form's
-  counterpart: the same fields, blank fields left to the
-  daemon's defaults, and a refusal keeping the dialog open
-  with the failure on its note line.
+  to the tab strip. A green gradient badge on the Workspaces
+  tab — a drawn disc, bright at the crown and deep at the
+  foot, a white plus on it, the pointing hand over it — opens
+  the create-workspace dialog, the TUI create form's counterpart: the same fields,
+  blank fields left to the daemon's defaults, and a refusal
+  keeping the dialog open with the failure on its note line.
 
 - **GUI top-level Shells and Info tabs (#974).** The
   workspace detail page's tab row, on the back arrow's own row,

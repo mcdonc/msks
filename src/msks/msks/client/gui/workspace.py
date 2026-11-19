@@ -19,6 +19,7 @@ from ..data import RestFailure
 from .bridge import Bridge
 from .create import CreateDialog
 from .detail import DetailSections, detail_sections, frame_names
+from .listcells import read_only_item
 from .rows import (
     WINDOW_TITLE,
     detail_text,
@@ -27,12 +28,7 @@ from .rows import (
 )
 from .shells import ShellHub, ShellTabs
 from .termsession import shell_argv
-from .workspaces import (
-    FLASH_MS,
-    REFRESH_MS,
-    WorkspaceList,
-    read_only_item,
-)
+from .workspaces import FLASH_MS, REFRESH_MS, WorkspaceList
 
 #: The row read's key (#945): the page answers only its own
 #: key, whatever else shares the bridge.
