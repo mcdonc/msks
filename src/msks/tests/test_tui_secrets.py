@@ -7,6 +7,7 @@ pure helpers (coverage, TTL, the audit seed) get direct tests in
 test_consent_tui_helpers.py.
 """
 
+import asyncio
 import base64
 import json
 from datetime import UTC, datetime, timedelta
@@ -1135,6 +1136,55 @@ async def test_the_audit_view_filters_by_kind_and_workspace() -> None:
         view.kind = "mint"
         view.rebuilds.request()
         await wait_for(lambda: "No events match" in audit_empty(app))
+
+
+async def test_started_rides_out_a_rebuilds_swap_window(
+    monkeypatch,
+) -> None:
+    """The compose-settled start (#987's macOS flake, the family
+    the leave-press retry fixed): a refresh callback landing
+    inside a rebuild's swap window — the old list removed, the
+    fresh one not yet mounted — starts the replay without dying
+    on the absent rows; the window is transient and the fresh
+    list mounts within it."""
+    data = FakeData([])
+    data.audit_rows = [audit_row(1, "mint", workspaces=["ws-a"])]
+    factory = FakeFactory([FakeWS([])])
+
+    def link_factory() -> AuditLink:
+        return AuditLink(
+            ws_factory=factory, reconnect_delays=(0.01, 0.01, 0.01)
+        )
+
+    app, _follow = make_app(data)
+    async with app.run_test() as pilot:
+        screen = await open_audit(pilot, app, link_factory)
+        await wait_for(lambda: screen.rows_widget() is not None)
+        held = screen.rows_widget()
+        body = screen.query_one("#audit-body")
+        gate = asyncio.Event()
+        real_mount = body.mount
+
+        async def held_mount(*args, **kwargs):
+            # The swap's own window: the old list is gone and the
+            # fresh one not yet mounted while the gate holds.
+            await gate.wait()
+            return await real_mount(*args, **kwargs)
+
+        monkeypatch.setattr(body, "mount", held_mount)
+        # A moved log requests the rebuild; its swap parks inside
+        # the window the gate holds open.
+        screen.link_or_stub().controller.seed_audit(
+            [audit_row(2, "revoke", workspaces=["ws-a"])]
+        )
+        screen.rebuilds.request()
+        await pilot.pause()
+        await wait_for(lambda: screen.rows_widget() is None)
+        screen.started()  # rides the window out: no raise
+        gate.set()
+        await wait_for(lambda: screen.rows_widget() is not None)
+        fresh = screen.rows_widget()
+        assert fresh is not held
 
 
 async def test_an_empty_audit_log_states_it() -> None:
