@@ -469,6 +469,7 @@ def test_the_placeholder_helpers_match_the_tui_page() -> None:
     assert gui_secrets.MINT_TTLS == tui_cells.MINT_TTLS
     assert gui_secrets.AUDIT_KINDS == tui_audit.AUDIT_KINDS
     assert gui_secrets.FILTER_ALL == tui_audit.FILTER_ALL
+    assert tui_cells.SECRET_COLUMNS[5][0] == "STATE"
     for row in (placeholder(locked=True), placeholder(locked=False)):
         assert (
             gui_secrets.state_text(row) == tui_cells.secret_row_cells(row)[5]

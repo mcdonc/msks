@@ -144,11 +144,10 @@ def coverage_text(row: dict) -> str:
 
 
 def ttl_text(row: dict, now: datetime | None = None) -> str:
-    """The TTL cell (#965, over #390): the remaining lifetime as
-    the countdown's compact label — the tab's timer repaints it
-    from the cached row, no daemon call per tick. An unbounded
-    row reads ``never``, a past deadline ``expired``, a stamp
-    that does not parse its dash."""
+    """The TTL cell over a daemon row (#965, over #390): the
+    remaining lifetime as the countdown's compact label. An
+    unbounded row reads ``never``, a past deadline ``expired``,
+    a stamp that does not parse its dash."""
     expires = row.get("expires_at")
     if not expires:
         return "never"
@@ -162,7 +161,10 @@ def countdown(expires_ts: float, now: datetime | None = None) -> str:
     """The countdown over the model's deadline epoch (#965): the
     label the tab's timer repaints each tick from the cached
     model, no daemon call and no re-parse — ``expired`` past
-    the deadline, the compact countdown between now and it."""
+    the deadline, the compact countdown between now and it.
+    The clock the caller pins reads as an aware moment (the
+    shared leaf's clock is); a naive one would read as local
+    time."""
     when = now if now is not None else clock_now()
     remaining = expires_ts - when.timestamp()
     if remaining <= 0:
