@@ -737,9 +737,14 @@ class WorkspaceList(QtWidgets.QWidget):
         shape, the sizes and topology editable — and a landed
         resize closes it and refreshes the listing behind it,
         which shows the pending marker the row grows. A row the
-        last answer dropped opens nothing."""
+        last answer dropped names itself on the status line —
+        the editor seeds from the row's whole facts or not at
+        all."""
         row = self.daemon_rows.get(workspace[0])
         if row is None:
+            self.flash(
+                f"{workspace[1]} left the listing — refresh and retry the edit"
+            )
             return
         dialog = EditDialog(self.bridge, row)
         dialog.accepted.connect(self.refresh)

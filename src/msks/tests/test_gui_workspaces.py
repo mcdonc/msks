@@ -1198,12 +1198,16 @@ def test_edit_opens_the_editor_over_the_rows_own_facts(
     screen.edit_workspace(("ws-1", "alpha"))
     assert opened == [("ws-1",)]
     assert accepted == [screen.refresh]
-    # A workspace the last answer dropped opens nothing: the
-    # editor seeds from the row's own facts or not at all.
+    # A workspace the last answer dropped names itself on the
+    # status line: the editor seeds from the row's own facts or
+    # not at all.
     opened.clear()
     screen.daemon_rows.pop("ws-1")
     screen.edit_workspace(("ws-1", "alpha"))
     assert opened == []
+    assert screen.status.text() == (
+        "alpha left the listing — refresh and retry the edit"
+    )
     window.close()
 
 

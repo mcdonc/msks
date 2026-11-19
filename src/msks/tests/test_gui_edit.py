@@ -163,16 +163,21 @@ def test_the_editor_fields_follow_the_rename_route() -> None:
 def test_the_body_moves_only_changed_fields() -> None:
     """The resize body's arithmetic (#986, the TUI edit's own):
     a field left at its seed rides nothing — the resize moves
-    what the operator changed — whole numbers land as integers,
-    and a body with nothing moved refuses locally, the daemon's
-    nothing-to-resize refusal said where the operator can still
-    edit."""
+    what the operator changed, a re-spelled seed the same number
+    rides nothing either, so the daemon sees no no-op — whole
+    numbers land as integers, and a body with nothing moved
+    refuses locally, the daemon's nothing-to-resize refusal said
+    where the operator can still edit."""
     seeds = edit_seeds(daemon_row())
     body, error = resize_body({"cpus": " 4 ", "mem_mib": "8192"}, seeds)
     assert (body, error) == ({"cpus": 4}, "")
     assert resize_body({"home_mib": "8192"}, seeds) == (
         {"home_mib": 8192},
         "",
+    )
+    assert resize_body({"root_mib": "08192"}, seeds) == (
+        None,
+        "nothing to resize — change a size, or cancel",
     )
     assert resize_body({}, seeds) == (
         None,
@@ -211,9 +216,10 @@ def test_the_root_only_grows() -> None:
 def test_the_names_constraints() -> None:
     """The name's constraints (#986, the daemon's create rule
     mirrored): the DNS-label charset and the 64-character bound,
-    checked where the operator can still edit — ready for the
-    day the rename route lands the field. A blank value keeps
-    the workspace's current name, so it carries no error."""
+    checked wherever a value reaches the body builder — ready
+    for the day the rename route lands the field. A blank value
+    keeps the workspace's current name, so it carries no
+    error."""
     assert name_error("alpha") is None
     assert name_error("a-1") is None
     assert name_error("2fast") is None
@@ -223,6 +229,15 @@ def test_the_names_constraints() -> None:
     assert name_error("under_score") is not None
     assert name_error("a" * 65) is not None
     assert name_error("a" * 64) is None
+    # The builder takes the constraints wherever the value came
+    # from: an invalid name refuses the whole body before any
+    # size is read.
+    seeds = edit_seeds(daemon_row())
+    assert resize_body({"name": "Bad!", "cpus": "4"}, seeds) == (
+        None,
+        "name: lowercase letters, digits, and hyphens — an ASCII "
+        "letter or digit first, at most 64 characters",
+    )
 
 
 def test_the_dialog_opens_seeded_and_submits_a_resize(qt) -> None:
@@ -313,3 +328,17 @@ def test_a_dialog_closed_mid_flight_cancels_its_own_call(qt) -> None:
     second.accepted.connect(lambda: landed.append(True))
     bridge.succeeded.emit(EDIT_KEY, {"status": "stopped"})
     assert landed == []  # the closed dialog's answer is no one's
+
+
+def test_a_close_qt_re_enters_unhooks_nothing_twice(qt) -> None:
+    """The close path's once-only hands (#986): Qt can re-enter
+    ``done`` — a close delivered beside the accept that already
+    closed the dialog — and the second pass finds nothing left
+    to unhook instead of failing to recognize its own
+    hookup."""
+    dialog, _bridge = make_dialog(qt)
+    fill(dialog, {"cpus": "4"})
+    dialog.submit()
+    dialog.done(1)  # the accept path's own close
+    dialog.done(0)  # a re-entered close: no raise, no residue
+    assert dialog.hooks is None

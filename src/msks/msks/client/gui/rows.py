@@ -204,11 +204,13 @@ def detail_text(model: WorkspaceRow, used_bytes: int | None) -> str:
 
 def detail_pairs(
     model: WorkspaceRow, used_bytes: int | None
-) -> list[tuple[str, str]]:
-    """The line's posture and cost pairs (#849's facts): cpu,
-    memory, the egress mode — then the mounts and pending
-    markers while either counts, then the storage the capacity
-    report charges."""
+) -> list[tuple[str | None, str]]:
+    """The line's posture and cost pairs (#849's facts, #986's
+    words): cpu, memory, the egress mode — then the mounts
+    marker and the restart note while either shows, then the
+    storage the capacity report charges. A pair's label reads
+    ``None`` when the value is its own sentence — the restart
+    note carries no "label value" shape."""
     pairs = [
         ("cpu", cpu_value(model)),
         ("mem", mem_value(model)),

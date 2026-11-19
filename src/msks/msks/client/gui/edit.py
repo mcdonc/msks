@@ -42,9 +42,6 @@ EDIT_FIELDS = (
     ("home_mib", "home MiB"),
 )
 
-#: Every size field lands as a whole number (#331's own rule).
-INT_FIELDS = frozenset(field for field, _label in EDIT_FIELDS)
-
 #: The name field's key and label (#986): the row the rename
 #: route will edit, first among the fields the day it exists.
 NAME_FIELD = "name"
@@ -52,9 +49,11 @@ NAME_LABEL = "name"
 
 #: Whether the daemon's rename route exists (#986): the
 #: workspace row is immutable after create today, so the field
-#: stays off the form until the route lands daemon-side; the
-#: flip is the route's follow-up, and :func:`name_error` —
-#: checked where the operator can still edit — is ready for it.
+#: stays off the form until the route lands daemon-side. The
+#: flip's follow-up wires the whole name path — the field on
+#: the form, the constraints :func:`name_error` already checks
+#: wherever a value reaches the body builder, and the send
+#: itself; nothing here claims the send before the route does.
 RENAME_SUPPORTED = False
 
 #: The name's charset (#986, the daemon's create rule mirrored,
@@ -116,11 +115,28 @@ def resize_body(values: dict, seeds: dict) -> tuple[dict | None, str]:
     off its seed — the resize moves what the operator changed,
     a blank or untouched field keeps its current value — with
     the whole-number rule and the root's grow-only rule said
-    locally, where the operator can still edit. A body with
-    nothing moved refuses locally: the daemon's
+    locally, where the operator can still edit. A name value
+    that reaches the builder takes its constraints here
+    (#986): the field itself waits on the daemon's route, and
+    an invalid name is refused wherever it comes from. A body
+    with nothing moved refuses locally: the daemon's
     nothing-to-resize refusal, said on the note line. A local
     refusal answers ``(None, note)``; a whole body
     ``((body), "")``."""
+    name = name_error((values.get(NAME_FIELD) or "").strip())
+    if name is not None:
+        return None, name
+    body, error = sized_body(values, seeds)
+    if error is not None:
+        return None, error
+    return body, ""
+
+
+def sized_body(values: dict, seeds: dict) -> tuple[dict | None, str | None]:
+    """The changed sizes into the body (#986): every field the
+    resize route moves, landed through its own rule — the note
+    on the first local refusal, the nothing-moved note when no
+    field moved."""
     body: dict = {}
     for field, _label in EDIT_FIELDS:
         error = land_field(
@@ -130,21 +146,33 @@ def resize_body(values: dict, seeds: dict) -> tuple[dict | None, str]:
             return None, error
     if not body:
         return None, "nothing to resize — change a size, or cancel"
-    return body, ""
+    return body, None
 
 
 def land_field(field: str, value: str, seeds: dict, body: dict) -> str | None:
-    """One field into the body (#986): a blank or untouched
-    field rides nothing — its current value stands — a moved
-    one lands as its whole number. The note on a local
-    refusal, ``None`` when the field landed or rode nothing."""
-    if not value or value == seeds.get(field):
+    """One field into the body (#986): a blank field rides
+    nothing, a whole value lands unless it states the seed's
+    own number — the same size in a different spelling rides
+    nothing either, so the daemon sees no no-op it must catch
+    up. The note on a local refusal, ``None`` when the field
+    landed or rode nothing."""
+    if not value:
         return None
     error = field_error(field, value, seeds)
     if error is not None:
         return error
+    if int(value) == seeded_number(seeds, field):
+        return None
     body[field] = int(value)
     return None
+
+
+def seeded_number(seeds: dict, field: str) -> int | None:
+    """The seed's own number (#986): a row that predates the
+    fact seeds blank and reads as no number, so any whole
+    value the operator gives it lands."""
+    seed = seeds.get(field)
+    return None if not seed else int(seed)
 
 
 def field_error(field: str, value: str, seeds: dict) -> str | None:
@@ -165,8 +193,8 @@ def root_error(asked: str, seeds: dict) -> str | None:
     the daemon ever sees it. A row without a root fact — the
     seed reads blank — has no local floor; the daemon owns that
     one."""
-    seeded = seeds.get("root_mib")
-    if not seeded or int(asked) >= int(seeded):
+    seeded = seeded_number(seeds, "root_mib")
+    if seeded is None or int(asked) >= seeded:
         return None
     return f"the root only grows — it is {seeded} MiB"
 

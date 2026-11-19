@@ -38,10 +38,17 @@ class BridgeClose:
 
     def done(self, result: int) -> None:
         """The dialog's close, every path's: the standing flight
-        cancelled, the bridge's hands go, the platform's own
-        close under it."""
+        cancelled, the bridge's hands go — once, a close Qt
+        re-enters finds nothing left to unhook — and the
+        platform's own close under it. A wrapper whose
+        construction never reached the hookup (#959's
+        half-built shape) closes without touching a bridge it
+        never took."""
         if self.flight is not None and not self.flight.done():
             self.flight.cancel()
-        self.bridge.succeeded.disconnect(self.hooks[0])
-        self.bridge.failed.disconnect(self.hooks[1])
+        hooks = getattr(self, "hooks", None)
+        if hooks is not None:
+            self.hooks = None
+            self.bridge.succeeded.disconnect(hooks[0])
+            self.bridge.failed.disconnect(hooks[1])
         super().done(result)
