@@ -386,7 +386,7 @@ def test_a_bare_link_runs_and_ends_without_its_callbacks() -> None:
         task = drive(link)
         await wait_done(task)
         assert link.controller.pending.keys() == {"req-1"}
-        assert link.reject_reason == ("the daemon refused the registration")
+        assert link.reject_reason == "the daemon refused the registration"
 
     asyncio.run(scenario())
 
