@@ -6,9 +6,9 @@
 # root store the interceptor's upstream verification
 # (ssl_verify_upstream_trusted_ca) and the image download's
 # fallback context both load. The wheel stays so the closure keeps
-# the floor whatever the channel behind the pin carries; built
-# from the PyPI wheel —
-# pure python, no compiled extensions, no dependencies — because
+# the floor whatever the channel behind the pin carries. Built from
+# the PyPI wheel — pure python, no compiled extensions, no
+# dependencies — because
 # certifi is a transitive dependency in the closure (httpx and
 # mitmproxy propagate it), so a callPackage argument alone would
 # collide with the packages that still carry nixpkgs' own: the
