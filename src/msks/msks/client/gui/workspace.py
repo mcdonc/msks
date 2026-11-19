@@ -4,7 +4,9 @@ sections as widgets (mounts with their derived state, the
 health facts, the recent events), refreshed on the listing's
 own cadence through the bridge, the same reads the TUI's
 workspace page makes: the row out of the workspaces listing,
-the doc out of the health read.
+the doc out of the health read. Phase 5.7 (#987) adds the
+Mounts tab beside the shells and the sections: the editable
+mounts surface (:mod:`msks.client.gui.mounts`).
 
 This module imports PySide6 at module scope — the same
 contract as the list screen's module
@@ -20,6 +22,7 @@ from .bridge import Bridge
 from .create import CreateDialog
 from .detail import DetailSections, detail_sections, frame_names
 from .listcells import read_only_item
+from .mounts import MountsTab
 from .rows import (
     WINDOW_TITLE,
     detail_text,
@@ -66,6 +69,11 @@ SHELLS_LABEL = "Shells"
 #: The Info tab's label (#974): the detail content — the
 #: mounts, health, and events sections.
 INFO_LABEL = "Info"
+
+#: The Mounts tab's label (#987): the workspace's editable
+#: mounts surface, between the shells and the read-only
+#: sections.
+MOUNTS_LABEL = "Mounts"
 
 
 def find_row(rows: list[dict] | None, workspace_id: str) -> dict | None:
@@ -152,20 +160,25 @@ class WorkspaceDetail(QtWidgets.QWidget):
         scroll = QtWidgets.QScrollArea(self)
         scroll.setWidgetResizable(True)
         scroll.setWidget(sections)
-        # The tab row beside the back arrow (#974): Shells —
-        # the default, the workspace's terminal sessions as
-        # subtabs — and Info — the sections scroll. The bar sits
-        # on the chrome's own row after the arrow and drives the
-        # stack below it. The strip re-hosts on every open, and
-        # the hub keeps the sessions themselves alive across
-        # visits (#954).
+        # The tab row beside the back arrow (#974, #987): Shells
+        # — the default, the workspace's terminal sessions as
+        # subtabs — Mounts — the editable mounts surface — and
+        # Info — the sections scroll. The bar sits on the
+        # chrome's own row after the arrow and drives the stack
+        # below it. The strip re-hosts on every open, and the
+        # hub keeps the sessions themselves alive across visits
+        # (#954).
         self.shells = ShellTabs(hub)
         self.shells.new_shell.connect(self.want_shell)
+        self.mounts_tab = MountsTab(bridge)
+        self.mounts_tab.row_updated.connect(self.mounts_landed)
         self.bar = QtWidgets.QTabBar(self)
         self.bar.addTab(SHELLS_LABEL)
+        self.bar.addTab(MOUNTS_LABEL)
         self.bar.addTab(INFO_LABEL)
         self.stack = QtWidgets.QStackedWidget(self)
         self.stack.addWidget(self.shells)
+        self.stack.addWidget(self.mounts_tab)
         self.stack.addWidget(scroll)
         self.bar.currentChanged.connect(self.stack.setCurrentIndex)
         self.chrome.insertWidget(1, self.bar)
@@ -331,6 +344,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.shells.host(workspace_id)
         if not self.hub.shells(workspace_id):
             self.hub.open_shell(workspace_id)
+        # The Mounts tab blanks with the page's own reset (#987):
+        # a flight the prior workspace still has out cancels, and
+        # the first row answer fills the tab.
+        self.mounts_tab.host(workspace_id, {})
         self.refresh()
 
     def clear_sections(self) -> None:
@@ -469,6 +486,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # again, and the row's own answer refines it here.
         if not self.isHidden():
             self.window().setWindowTitle(f"{WINDOW_TITLE} — {model.label}")
+        # The Mounts tab takes the row with every render (#987):
+        # the page's own read is the tab's standing truth between
+        # changes.
+        self.mounts_tab.host(self.workspace_id, self.row)
         if model == self.rendered:
             return
         self.rendered = model
@@ -565,6 +586,15 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.frames.append(frame)
         if len(self.frames) > FRAMES_BUFFER:
             del self.frames[: len(self.frames) - FRAMES_BUFFER]
+        self.rebuild()
+
+    @QtCore.Slot(object)
+    def mounts_landed(self, row: dict) -> None:
+        """A landed mounts save (#987): the tab's answer is a
+        fresh daemon row — the page takes it whole and
+        re-renders, the footer and the Info sections reading the
+        same facts the tab painted."""
+        self.row = row
         self.rebuild()
 
     @QtCore.Slot()

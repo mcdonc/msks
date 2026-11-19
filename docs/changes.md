@@ -8,6 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI workspace mounts tab (#987).** The workspace page
+  grows a Mounts tab beside Shells and Info. The tab lists the
+  workspace's mounts with their derived state, and Add, Edit,
+  and Remove compose the next whole list and save it through
+  the route `msks mount` drives — next-start semantics, one
+  flight at a time. A refused save shows the daemon's message
+  and keeps the edited list, and the tab states in words while
+  the configured set differs from the attached one.
+
 - **The GUI workspace edit action (#986).** The workspace list's
   context menu grows an Edit action opening an editor in the
   create dialog's shape, seeded with the workspace's values.
