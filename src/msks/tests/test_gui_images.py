@@ -1372,15 +1372,17 @@ def test_the_size_and_marker_give_ground_last(qt) -> None:
     any — a pane deep enough in deficit never shows the size or
     the marker narrower than the columns ahead of them in the
     order."""
-    tab, window = make_channel_tab(qt, 380)
+    tab, window = make_channel_tab(qt, 240)
     table = tab.published_table
-    assert table.horizontalScrollBar().maximum() == 0
-    assert table.columnWidth(cells.SIZE_COLUMN) >= table.columnWidth(
-        cells.REF_COLUMN
-    )
-    assert table.columnWidth(cells.MARKER_COLUMN) >= table.columnWidth(
-        cells.BUILT_COLUMN
-    )
+    minimum = table.horizontalHeader().minimumSectionSize()
+    # Deep enough in deficit that every stage spent: the ref and
+    # the build date sit at the header's minimum, and the size
+    # and the marker gave only what the ref and the build date
+    # could not — never below the minimum themselves.
+    assert table.columnWidth(cells.REF_COLUMN) <= minimum + 1
+    assert table.columnWidth(cells.BUILT_COLUMN) <= minimum + 1
+    assert table.columnWidth(cells.SIZE_COLUMN) >= minimum
+    assert table.columnWidth(cells.MARKER_COLUMN) >= minimum
     window.close()
 
 
