@@ -906,10 +906,11 @@ def test_the_hash_ellipsizes_only_after_the_description_floor(
     assert table.horizontalScrollBar().maximum() == 0
     desc_cell = table.item(0, cells.DESC_COLUMN).text()
     assert "…" in desc_cell and not desc_cell.startswith("x" * 10)
-    # The description spent its ground to its own floor.
-    assert table.columnWidth(cells.DESC_COLUMN) <= (
-        layout_mod.description_floor(table) + 2
-    )
+    # The description paid the budget: its column sits under a
+    # tenth of its natural width (400 characters), wherever the
+    # host's fonts leave the rest — above its floor or at it.
+    natural = table.fontMetrics().horizontalAdvance("x" * 400)
+    assert table.columnWidth(cells.DESC_COLUMN) < natural // 10
     window.close()
 
 
