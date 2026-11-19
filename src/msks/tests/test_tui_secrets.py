@@ -982,8 +982,12 @@ async def test_the_audit_view_replays_and_streams() -> None:
         # waited on their text, not the row count (the compose
         # stream lags the count; the count alone races the reads).
         await wait_for(lambda: "swap" in audit_text(app, 0))
-        assert "revoke" in audit_text(app, 1)
-        assert "mint" in audit_text(app, 2)
+        # The replay rows mount behind the live one on a slow
+        # runner — the macOS CI host once rendered row 0 while
+        # row 1 still mounted, so each row is waited on its
+        # text, not asserted the moment the first lands.
+        await wait_for(lambda: "revoke" in audit_text(app, 1))
+        await wait_for(lambda: "mint" in audit_text(app, 2))
         assert "*/github_api" in audit_text(app, 1)  # daemon-wide coverage
         # A live sighting lands: the row carries the marker.
         factory.made[0].push(
