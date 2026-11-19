@@ -1,10 +1,11 @@
-"""The GUI secrets tab (#966): the presenter's models rendered
-as the placeholder listing with the sentinel panel beside it
-and the audit group beneath — the TTL countdown repainted from
-the deadline epochs, the mint form, the renew picker, the
-revoke gate, and the confirm-gated reveal, every daemon
+"""The GUI secrets tab (#966, #997): the presenter's models
+rendered as the placeholder listing with the audit group
+beneath, both tables' columns filling the pane's whole width
+— the TTL countdown repainted from the deadline epochs, the
+mint form, the renew picker, the revoke gate, every daemon
 exchange through the stub bridge's signal emits, the bridge's
-own tests holding the real worker's contract. The widget runs
+own tests holding the real worker's contract. The sentinel
+pane is gone (#997). The widget runs
 under the offscreen platform on every host (#939's fixture
 shape)."""
 
@@ -24,6 +25,7 @@ if importlib.util.find_spec("PySide6") is None:
 from msks.client import ages as ages_mod  # noqa: E402
 from msks.client.data import RestFailure  # noqa: E402
 from msks.client.gui import secretrows as secretrows_mod  # noqa: E402
+from msks.client.gui.listtable import fill_columns  # noqa: E402
 from msks.client.gui.secrets import (  # noqa: E402
     cells as cells,
 )
@@ -39,7 +41,6 @@ from msks.client.gui.secrets import (
 #: deterministic on every host's timezone.
 NOW = datetime(2030, 1, 2, 3, 4, 5).astimezone()
 
-SCOPED = "mskssec1_" + "s" * 24
 WIDE = "mskssec2_" + "w" * 24
 
 
@@ -293,6 +294,129 @@ def test_the_empty_states_name_their_absence(qt, monkeypatch) -> None:
     window.close()
 
 
+def table_spare(table) -> int:
+    """A table's viewport width beyond its columns' total
+    (#997's fakes read): what the fill has left to give."""
+    return table.viewport().width() - sum(
+        table.columnWidth(column) for column in range(table.columnCount())
+    )
+
+
+def test_both_tables_fill_the_window_width(qt, monkeypatch) -> None:
+    """The tables fill their panes (#997): after a window resize
+    re-flows the columns, each table's columns take the whole
+    viewport width — no dead margin beside either table — on
+    the window the test sized and on a wider one alike."""
+    tab, window, _bridge = make_tab(qt, monkeypatch)
+    for width in (1200, 2000):
+        window.resize(width, 900)
+        qt.app.processEvents()
+        for table in (tab.table, tab.audit_table):
+            assert 0 <= table_spare(table) <= table.columnCount()
+    window.close()
+
+
+def test_the_tables_never_owe_a_horizontal_bar(qt, monkeypatch) -> None:
+    """A vertical scrollbar appearing after a fill (#997): the
+    viewport's own resize re-flows the columns against the
+    narrower pane — a pane never owes the operator a horizontal
+    bar for it, the images tab's own rule (#964)."""
+    rows = [placeholder(id=i, name=f"key_{i}") for i in range(1, 60)]
+    tab, window, _bridge = make_tab(qt, monkeypatch)
+    window.resize(900, 300)
+    qt.app.processEvents()
+    tab.refresh()
+    tab.on_succeeded(secrets_mod.PAGE_KEY, page_answer(secrets=rows))
+    qt.app.processEvents()
+    for table in (tab.table, tab.audit_table):
+        assert table.horizontalScrollBar().maximum() == 0
+        assert 0 <= table_spare(table) <= table.columnCount()
+    window.close()
+
+
+def test_a_window_resized_behind_a_hidden_tab_reflows_on_show(
+    qt, monkeypatch
+) -> None:
+    """A window resized while the tab stands hidden (#997): the
+    pane's resize reaches the tables at the tab's next show,
+    the columns re-flowing against the window's current width —
+    no dead margin beside the tables on the return."""
+    tab, window, _bridge = make_tab(qt, monkeypatch)
+    tab.setVisible(False)
+    window.resize(1900, 900)
+    qt.app.processEvents()
+    tab.setVisible(True)
+    qt.app.processEvents()
+    for table in (tab.table, tab.audit_table):
+        assert 0 <= table_spare(table) <= table.columnCount()
+    window.close()
+
+
+def test_a_wider_window_widens_the_columns(qt, monkeypatch) -> None:
+    """The reflow follows the window (#997): a wider window
+    widens the columns' total with it, the spare shared out
+    again — each table keeps filling all the horizontal space
+    the window gives."""
+    tab, window, _bridge = make_tab(qt, monkeypatch)
+    window.resize(1100, 900)
+    qt.app.processEvents()
+    narrow = sum(
+        tab.table.columnWidth(column)
+        for column in range(tab.table.columnCount())
+    )
+    window.resize(2100, 900)
+    qt.app.processEvents()
+    wide = sum(
+        tab.table.columnWidth(column)
+        for column in range(tab.table.columnCount())
+    )
+    assert wide > narrow + 400
+    assert 0 <= table_spare(tab.table) <= tab.table.columnCount()
+    window.close()
+
+
+def test_fill_columns_shares_the_spare_exactly(qt) -> None:
+    """The shared fill's arithmetic (#997): a table wider than
+    its contents lands its columns' total exactly on the
+    viewport's width, the odd pixel to the earlier columns."""
+    table = qt.QtWidgets.QTableWidget(1, 3)
+    for column, text in enumerate(("one", "a-longer-cell", "x")):
+        table.setItem(0, column, qt.QtWidgets.QTableWidgetItem(text))
+    table.setHorizontalHeaderLabels(("FIRST", "SECOND", "THIRD"))
+    table.resize(700, 120)
+    qt.app.processEvents()
+    table.resizeColumnsToContents()
+    contents = [
+        table.columnWidth(column) for column in range(table.columnCount())
+    ]
+    fill_columns(table)
+    widths = [table.columnWidth(column) for column in range(3)]
+    assert sum(widths) == table.viewport().width()
+    shares = [width - content for width, content in zip(widths, contents)]
+    assert max(shares) - min(shares) <= 1  # the odd pixel to the earlier
+
+
+def test_fill_columns_keeps_the_contents_on_a_tight_pane(qt) -> None:
+    """A pane tighter than the contents (#997): the columns
+    keep their contents' widths — nothing crushes below what
+    the values ask, and the table scrolls instead."""
+    table = qt.QtWidgets.QTableWidget(1, 3)
+    for column, text in enumerate(
+        ("a-very-long-cell-value", "another-long-one", "third-long-value")
+    ):
+        table.setItem(0, column, qt.QtWidgets.QTableWidgetItem(text))
+    table.resize(200, 120)
+    qt.app.processEvents()
+    table.resizeColumnsToContents()
+    contents = [
+        table.columnWidth(column) for column in range(table.columnCount())
+    ]
+    fill_columns(table)
+    widths = [table.columnWidth(column) for column in range(3)]
+    assert widths == contents
+    assert sum(widths) > table.viewport().width()
+
+
 def test_the_ttl_column_counts_down_without_a_daemon_call(
     qt, monkeypatch
 ) -> None:
@@ -418,72 +542,21 @@ def test_the_listing_columns_sort_by_their_ranks(qt, monkeypatch) -> None:
     window.close()
 
 
-def test_activation_fetches_the_sentinel_masked(qt, monkeypatch) -> None:
-    """An activated row fetches its sentinel on demand (#966,
-    over #440): the on-demand read through the bridge, and the
-    panel fills masked — the prefix names the reach, the body
-    renders bullets, the token never prints."""
+def test_the_page_carries_no_sentinel_pane(qt, monkeypatch) -> None:
+    """The sentinel pane is gone (#997): the page's groups are
+    the placeholder listing and the audit table alone, and an
+    activated row sends nothing — the tab took no sentinel
+    flight."""
     tab, window, bridge = make_tab(qt, monkeypatch)
+    groups = [box.title() for box in tab.findChildren(qt.QtWidgets.QGroupBox)]
+    assert groups == [cells.LIST_GROUP, cells.AUDIT_GROUP]
+    assert not hasattr(secrets_mod, "SENTINEL_KEY")
     bridge.calls.clear()
     tab.table.activated.emit(tab.table.model().index(row_of_id(tab, 1), 0))
-    assert bridge.calls == [(secrets_mod.SENTINEL_KEY, "secret", (1,))]
-    tab.on_succeeded(
-        secrets_mod.SENTINEL_KEY,
-        dict(placeholder(), sentinel=WIDE),
-    )
-    assert tab.panel.label.text() == "*/github_api"
-    assert tab.panel.sentinel.text() == "mskssec2_" + "\u2022" * 24
-    assert tab.panel.reach.text() == "reach: every accepting workspace"
-    assert WIDE not in tab.panel.sentinel.text()
-    window.close()
-
-
-def test_the_sentinel_reveal_asks_first(qt, monkeypatch) -> None:
-    """The reveal's gate (#966): a No keeps the mask, a Yes
-    puts the real token on the panel, and Hide masks it back —
-    the token leaves the display the moment the operator turns
-    it off."""
-    tab, window, _bridge = make_tab(qt, monkeypatch)
-    tab.panel.show_row(dict(placeholder(), sentinel=SCOPED))
-    answers = iter([False, True])
-    monkeypatch.setattr(tab.panel, "confirm_reveal", lambda: next(answers))
-    tab.panel.toggle_reveal()
-    assert tab.panel.sentinel.text() == "mskssec1_" + "\u2022" * 24
-    tab.panel.toggle_reveal()
-    assert tab.panel.sentinel.text() == SCOPED
-    assert tab.panel.show_button.text() == "Hide"
-    tab.panel.toggle_reveal()
-    assert tab.panel.sentinel.text() == "mskssec1_" + "\u2022" * 24
-    assert tab.panel.show_button.text() == "Show"
-    window.close()
-
-
-def test_the_sentinel_copy_lands_the_real_token(qt, monkeypatch) -> None:
-    """The copy (#966): masked or revealed, the clipboard gets
-    the real sentinel, and the note says what happened. With no
-    row on the panel, neither button answers."""
-    tab, window, _bridge = make_tab(qt, monkeypatch)
-    qt.app.clipboard().setText("")
-    assert not tab.panel.copy_button.isEnabled()
-    tab.panel.show_row(dict(placeholder(), sentinel=WIDE))
-    tab.panel.copy()
-    assert qt.app.clipboard().text() == WIDE
-    assert tab.panel.note.text() == "copied to the clipboard"
-    window.close()
-
-
-def test_the_panel_clears_its_lines(qt, monkeypatch) -> None:
-    """Clearing the panel (#966): every line empties — the
-    sentinel leaves the widget tree with the row that carried
-    it — and the note returns to its idle line."""
-    tab, window, _bridge = make_tab(qt, monkeypatch)
-    tab.panel.show_row(dict(placeholder(), sentinel=WIDE))
-    tab.panel.clear()
-    assert tab.panel.label.text() == ""
-    assert tab.panel.sentinel.text() == ""
-    assert tab.panel.reach.text() == ""
-    assert tab.panel.note.text() == cells.PANEL_IDLE
-    assert not tab.panel.show_button.isEnabled()
+    tab.on_succeeded("secrets-sentinel", dict(placeholder(), sentinel=WIDE))
+    tab.on_failed("secrets-sentinel", RestFailure("nope", reach=False))
+    assert bridge.calls == []
+    assert tab.status.text() == ""
     window.close()
 
 
@@ -573,24 +646,20 @@ def test_one_action_flight_at_a_time(qt, monkeypatch) -> None:
     window.close()
 
 
-def test_the_row_menu_carries_the_three_actions(qt, monkeypatch) -> None:
+def test_the_row_menu_carries_the_two_actions(qt, monkeypatch) -> None:
     """A right-click on a placeholder row opens its menu
-    (#966): the sentinel fetch, the renew, and the revoke —
-    each driving its own action; a press on no row opens
-    nothing."""
+    (#966, #997): the renew and the revoke — each driving its
+    own action; a press on no row opens nothing."""
     tab, window, bridge = make_tab(qt, monkeypatch)
     bridge.calls.clear()
     menu = tab.row_menu(row_of_id(tab, 1))
     assert [action.text() for action in menu.actions()] == [
-        "Show the sentinel",
         "Renew…",
         "Revoke…",
     ]
     assert tab.row_menu(99) is None
-    menu.actions()[0].trigger()
-    assert bridge.calls == [(secrets_mod.SENTINEL_KEY, "secret", (1,))]
     monkeypatch.setattr(tab, "pick_ttl", lambda model: "7d")
-    menu.actions()[1].trigger()
+    menu.actions()[0].trigger()
     assert bridge.calls[-1] == (
         secrets_mod.RENEW_KEY,
         "renew_secret",
@@ -685,9 +754,8 @@ def test_the_mint_dialog_posts_and_lands(qt, monkeypatch) -> None:
     """The mint dialog's flight (#966): the submit posts the
     body through the bridge with the Mint button held; a landed
     mint accepts with its reply — the row carrying the sentinel
-    — and the tab refreshes, fills the panel with the fresh
-    sentinel, and flashes the row's label. A cancel decides
-    nothing."""
+    the page no longer displays (#997) — and the tab refreshes
+    and flashes the row's label. A cancel decides nothing."""
     tab, window, bridge = make_tab(qt, monkeypatch)
     dialog = mint_mod.MintDialog(bridge)
     dialog.show()
@@ -732,15 +800,13 @@ def test_the_mint_dialog_posts_and_lands(qt, monkeypatch) -> None:
     )
     tab.open_mint()
     assert bridge.calls == [(secrets_mod.PAGE_KEY, "secrets_page", ())]
-    assert tab.panel.sentinel.text() == "mskssec2_" + "\u2022" * 24
     assert tab.status.text() == "minted */github_api"
     window.close()
 
 
 def test_a_refused_mint_keeps_the_fields(qt) -> None:
     """A refused mint (#966): the failure lands on the note
-    line with the fields kept for a retry — the sentinel panel
-    fills with nothing."""
+    line with the fields kept for a retry."""
     bridge = StubBridge()
     dialog = mint_mod.MintDialog(bridge)
     dialog.name.setText("github_api")
@@ -784,6 +850,18 @@ def test_a_half_built_wrapper_fetches_nothing(qt) -> None:
     tab.showEvent(qt.QtGui.QShowEvent())
     assert bridge.calls == []
     assert not tab.pending
+
+
+def test_a_half_built_wrapper_sizes_nothing_on_resize(qt) -> None:
+    """A wrapper without its tables (#959, #997): a resize event
+    Qt delivers mid-construction sizes nothing — the guard
+    answers for the tables that do not exist yet."""
+    bridge = StubBridge()
+    tab = secrets_mod.SecretsTab(bridge)
+    del tab.audit_table
+    size = qt.QtCore.QSize(800, 600)
+    tab.resizeEvent(qt.QtGui.QResizeEvent(size, size))
+    assert bridge.calls == []
 
 
 def test_the_package_presents_its_parts_lazily() -> None:
@@ -857,45 +935,6 @@ def test_the_bar_buttons_cross_by_arrows(qt, monkeypatch) -> None:
     window.close()
 
 
-def test_the_idle_panel_answers_no_action(qt, monkeypatch) -> None:
-    """The idle panel's guards (#966): with no row on it, the
-    reveal and the copy answer nothing — the clipboard keeps
-    whatever it held, the ask never opens."""
-    tab, window, _bridge = make_tab(qt, monkeypatch)
-    qt.app.clipboard().setText("kept")
-    asked: list[bool] = []
-
-    def no_ask() -> bool:
-        asked.append(True)
-        return True
-
-    monkeypatch.setattr(tab.panel, "confirm_reveal", no_ask)
-    tab.panel.toggle_reveal()
-    tab.panel.copy()
-    assert asked == []
-    assert qt.app.clipboard().text() == "kept"
-    window.close()
-
-
-def test_the_reveal_confirmation_answers_the_operator(qt, monkeypatch) -> None:
-    """The reveal's own gate (#966): the real ask — No keeps the
-    mask, Yes reveals — with No the default answer."""
-    tab, window, _bridge = make_tab(qt, monkeypatch)
-    tab.panel.show_row(dict(placeholder(), sentinel=WIDE))
-    answers = iter(
-        [qt.QtWidgets.QMessageBox.StandardButton.No]
-        + [qt.QtWidgets.QMessageBox.StandardButton.Yes]
-    )
-    monkeypatch.setattr(
-        qt.QtWidgets.QMessageBox,
-        "question",
-        lambda *args, **kwargs: next(answers),
-    )
-    assert tab.panel.confirm_reveal() is False
-    assert tab.panel.confirm_reveal() is True
-    window.close()
-
-
 def test_the_revoke_confirmation_answers_the_operator(qt, monkeypatch) -> None:
     """The revoke's own gate (#966): the real ask over the
     presenter's question — No keeps the row, Yes retires it —
@@ -914,26 +953,6 @@ def test_the_revoke_confirmation_answers_the_operator(qt, monkeypatch) -> None:
     )
     assert tab.confirm_revoke(model) is False
     assert tab.confirm_revoke(model) is True
-    window.close()
-
-
-def test_a_sentinel_fetch_failure_flashes(qt, monkeypatch) -> None:
-    """A refused sentinel fetch (#966): the failure flashes on
-    the status line and the panel keeps whatever it held."""
-    tab, window, _bridge = make_tab(qt, monkeypatch)
-    tab.on_failed(secrets_mod.SENTINEL_KEY, RestFailure("locked", reach=False))
-    assert tab.status.text() == "locked"
-    window.close()
-
-
-def test_an_activation_below_the_rows_fetches_nothing(qt, monkeypatch) -> None:
-    """An activation on a row the table does not hold (#966):
-    the half-filled guard answers nothing — no sentinel
-    flight."""
-    tab, window, bridge = make_tab(qt, monkeypatch)
-    bridge.calls.clear()
-    tab.sentinel_at(tab.table.model().index(99, 0))
-    assert bridge.calls == []
     window.close()
 
 
@@ -1085,16 +1104,6 @@ def test_the_mint_dialog_seeds_once_and_ignores_strangers(qt) -> None:
     assert dialog.note.text() == standing
 
 
-def test_a_non_mapping_sentinel_answer_fills_nothing(qt, monkeypatch) -> None:
-    """A sentinel answer that is not a mapping (#966): the
-    panel keeps whatever it held — the guard answers nothing."""
-    tab, window, _bridge = make_tab(qt, monkeypatch)
-    tab.panel.show_row(dict(placeholder(), sentinel=WIDE))
-    standing = tab.panel.sentinel.text()
-    tab.on_succeeded(secrets_mod.SENTINEL_KEY, None)
-    assert tab.panel.sentinel.text() == standing
-
-
 def test_a_second_renew_while_a_flight_is_out_sends_nothing(
     qt, monkeypatch
 ) -> None:
@@ -1111,8 +1120,8 @@ def test_a_second_renew_while_a_flight_is_out_sends_nothing(
 
 
 def test_a_cancelled_mint_dialog_decides_nothing(qt, monkeypatch) -> None:
-    """A cancelled mint dialog (#966): no refresh, no flash, no
-    panel fill — the cancel decides nothing."""
+    """A cancelled mint dialog (#966): no refresh, no flash —
+    the cancel decides nothing."""
     tab, window, bridge = make_tab(qt, monkeypatch)
     monkeypatch.setattr(
         secrets_mod,
@@ -1131,8 +1140,8 @@ def test_a_dialog_that_accepts_without_a_reply_decides_nothing(
     qt, monkeypatch
 ) -> None:
     """A mint dialog that accepted without a reply (#966): no
-    refresh, no flash, no panel fill — the guard holds the
-    body behind the reply."""
+    refresh, no flash — the guard holds the body behind the
+    reply."""
     tab, window, bridge = make_tab(qt, monkeypatch)
     monkeypatch.setattr(
         secrets_mod,
@@ -1207,27 +1216,6 @@ def test_a_queued_mint_answer_after_the_close_reaches_no_one(qt) -> None:
     assert dialog.value.text() == ""
 
 
-def test_a_revoke_clears_the_panels_row(qt, monkeypatch) -> None:
-    """The revoke and the panel (#966, review round one): a
-    revoke that retires the row whose sentinel stands on the
-    panel clears the panel with it — the token leaves the widget
-    tree with its row — and another row's revoke leaves the
-    panel standing."""
-    tab, window, bridge = make_tab(qt, monkeypatch)
-    tab.panel.show_row(dict(placeholder(id=2), sentinel=SCOPED))
-    monkeypatch.setattr(tab, "confirm_revoke", lambda model: True)
-    model = next(m for m in tab.secret_models if m.id == 1)
-    tab.revoke_row(model)
-    tab.on_succeeded(secrets_mod.REVOKE_KEY, {"revoked": 1})
-    assert tab.panel.row is not None  # another row's revoke: stands
-    model = next(m for m in tab.secret_models if m.id == 2)
-    tab.revoke_row(model)
-    tab.on_succeeded(secrets_mod.REVOKE_KEY, {"revoked": 2})
-    assert tab.panel.row is None
-    assert tab.panel.sentinel.text() == ""
-    window.close()
-
-
 def test_the_listing_keeps_the_daemons_order_until_a_click(
     qt, monkeypatch
 ) -> None:
@@ -1251,22 +1239,16 @@ def test_the_listing_keeps_the_daemons_order_until_a_click(
     window.close()
 
 
-def test_the_listing_edges_cross_to_the_pane(qt, monkeypatch) -> None:
-    """The listing's Left/Right edges (#966, review round two):
-    Right on the last column lands on the pane's Show button —
-    the explicit destination, measured where the focus actually
-    went — Left on the first hands the keyboard back up the
-    page, and the interior columns still walk cells. A pane with
-    no row on it (its buttons disabled) falls to the chain."""
+def test_the_listing_edges_hand_the_page_order(qt, monkeypatch) -> None:
+    """The listing's Left/Right edges (#966, #997): Right on the
+    last column hands the keyboard down to the audit group —
+    the page's reading order, measured where the focus actually
+    went — Left on the first hands it back up the page to the
+    bar, and the interior columns still walk cells."""
     tab, window, _bridge = make_tab(qt, monkeypatch)
     key = qt.QtCore.Qt.Key
     press = qt.QtCore.QEvent.Type.KeyPress
     mods = qt.QtCore.Qt.KeyboardModifier.NoModifier
-
-    # The pane armed: its Show button holds the crossing's
-    # destination (an idle pane falls to the chain — the last
-    # assertion below).
-    tab.panel.show_row(dict(placeholder(), sentinel=WIDE))
 
     def pressed(table, key_event):
         table.setFocus()
@@ -1279,7 +1261,7 @@ def test_the_listing_edges_cross_to_the_pane(qt, monkeypatch) -> None:
     table.setCurrentCell(0, len(cells.LIST_COLUMNS) - 1)
     assert (
         pressed(table, qt.QtGui.QKeyEvent(press, key.Key_Right, mods))
-        is tab.panel.show_button
+        is tab.audit_table
     )
     table.setCurrentCell(0, 0)
     assert (
@@ -1292,33 +1274,6 @@ def test_the_listing_edges_cross_to_the_pane(qt, monkeypatch) -> None:
     table.setFocus()
     table.keyPressEvent(qt.QtGui.QKeyEvent(press, key.Key_Right, mods))
     assert table.currentColumn() == 2
-    # The disabled pane falls to the chain: the crossing's own
-    # target holds nothing to focus.
-    tab.panel.clear()
-    table.setCurrentCell(0, len(cells.LIST_COLUMNS) - 1)
-    assert (
-        pressed(table, qt.QtGui.QKeyEvent(press, key.Key_Right, mods))
-        is not tab.panel.show_button
-    )
-    window.close()
-
-
-def test_the_panel_buttons_cross_by_arrows(qt, monkeypatch) -> None:
-    """The pane's arrow bridges (#966, review round one): the
-    Show and Copy buttons answer Up and Down themselves, and
-    leave every other event to Qt's own handling."""
-    tab, window, _bridge = make_tab(qt, monkeypatch)
-    key = qt.QtCore.Qt.Key
-    press = qt.QtCore.QEvent.Type.KeyPress
-    mods = qt.QtCore.Qt.KeyboardModifier.NoModifier
-    down = qt.QtGui.QKeyEvent(press, key.Key_Down, mods)
-    up = qt.QtGui.QKeyEvent(press, key.Key_Up, mods)
-    other = qt.QtGui.QKeyEvent(press, key.Key_Left, mods)
-    for button in (tab.panel.show_button, tab.panel.copy_button):
-        assert tab.panel.eventFilter(button, down) is True
-        assert tab.panel.eventFilter(button, up) is True
-        assert tab.panel.eventFilter(button, other) is False
-    assert tab.panel.eventFilter(tab.table, down) is False
     window.close()
 
 
@@ -1351,9 +1306,9 @@ def test_the_mint_picker_edges_hand_the_walk_back(qt) -> None:
     assert picker.currentRow() == 1
 
 
-def test_the_confirmations_default_to_no(qt, monkeypatch) -> None:
-    """The gates' defaults (#966, review round one): both asks
-    carry No as the default answer — the token and the row stay
+def test_the_revoke_ask_defaults_to_no(qt, monkeypatch) -> None:
+    """The revoke ask's default (#966, review round one): the
+    question carries No as the default answer — the row stays
     unless the operator says otherwise."""
     tab, window, _bridge = make_tab(qt, monkeypatch)
     defaults: list[object] = []
@@ -1366,11 +1321,9 @@ def test_the_confirmations_default_to_no(qt, monkeypatch) -> None:
         return no
 
     monkeypatch.setattr(qt.QtWidgets.QMessageBox, "question", recorder)
-    tab.panel.show_row(dict(placeholder(), sentinel=WIDE))
-    tab.panel.confirm_reveal()
     model = next(m for m in tab.secret_models if m.id == 1)
     tab.confirm_revoke(model)
-    assert defaults == [no, no]
+    assert defaults == [no]
     window.close()
 
 

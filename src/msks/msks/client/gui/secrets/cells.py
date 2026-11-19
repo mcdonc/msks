@@ -1,10 +1,10 @@
-"""The secrets tab's plain cells (phase 4.6 of #924, #966): the
-panes' glue over the presenter's row models — the column sets
-and their indexes, the sort-rank items a countdown or created
-cell orders by, the standing and flash texts, and the mint
-form's local checks (the TUI form's own vocabulary, mirrored
-and pinned by parity tests). Plain data and plain widgets'
-glue, no tab state in it: the tab module
+"""The secrets tab's plain cells (phase 4.6 of #924, #966,
+#997): the panes' glue over the presenter's row models — the
+column sets and their indexes, the sort-rank items a countdown
+or created cell orders by, the standing and flash texts, and
+the mint form's local checks (the TUI form's own vocabulary,
+mirrored and pinned by parity tests). Plain data and plain
+widgets' glue, no tab state in it: the tab module
 (:mod:`msks.client.gui.secrets.tab`) owns the flights and the
 fills, and this module owns what they render and check.
 
@@ -96,19 +96,6 @@ MINT_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 #: refused on the form.
 DEST_ENTRY = re.compile(
     r"^\.?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$"
-)
-
-#: The sentinel panel's idle line (#966): what the panel says
-#: before any row is activated onto it.
-PANEL_IDLE = "activate a row to show its sentinel"
-
-#: The reveal's confirmation (#966): the sentinel reaches the
-#: screen only while the operator asked for it — the ask itself
-#: names what showing means.
-REVEAL_TITLE = "Reveal the sentinel"
-REVEAL_QUESTION = (
-    "show the sentinel on screen? it stays until the panel "
-    "masks it again — a shoulder could read it"
 )
 
 
@@ -253,9 +240,9 @@ def renewed_text(model: SecretRow, reply: dict) -> str:
 
 
 def minted_text(row: dict) -> str:
-    """The mint's landing flash (#966): the reply row's label in
-    the page's own vocabulary — the sentinel itself stays on the
-    panel."""
+    """The mint's landing flash (#966, #997): the reply row's
+    label in the page's own vocabulary — the page carries no
+    sentinel display, the CLI's own read owns the token."""
     return f"minted {coverage_text(row)}/{row['name']}"
 
 

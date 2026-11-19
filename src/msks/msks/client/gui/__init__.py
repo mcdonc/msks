@@ -23,8 +23,8 @@ wiring to reach them), the images tab's presenter
 (:mod:`.imagerows`, #963 — the catalog and published groups
 as plain row models, PySide6-free), and the secrets tab's
 presenter (:mod:`.secretrows`, #965 — the placeholder rows,
-the sentinel panel, the TTL choices, and the audit rows as
-plain data, PySide6-free), and the workspace mounts tab's
+the TTL choices, and the audit rows as plain data,
+PySide6-free), and the workspace mounts tab's
 presenter (:mod:`.mountrows`, #987 — the editing list's
 arithmetic, the spec parse, and the pending words, plain data,
 PySide6-free), and the proxies tab's presenter

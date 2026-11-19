@@ -1,21 +1,25 @@
-"""The secrets tab (phase 4.6 of #924, #966): the thin widget
-that renders the presenter's row models
+"""The secrets tab (phase 4.6 of #924, #966, #997): the thin
+widget that renders the presenter's row models
 (:mod:`msks.client.gui.secretrows`) as the TUI secrets page's
 counterpart — the placeholder listing (coverage, name,
 destinations, a live TTL countdown, the created label, the lock
-state) with the sentinel panel beside it, and the audit group
-beneath. The tab holds no business logic: its one refresh walks
-the bridge to the gathered read
+state) with the audit group beneath, each table's columns
+sharing all the horizontal space the window gives it
+(:func:`msks.client.gui.listtable.fill_columns`, re-flowed on
+every window and pane resize, a scrollbar's appearance
+included). The tab holds no business logic: its one
+refresh walks the bridge to the gathered read
 (:meth:`msks.client.gui.data.GuiData.secrets_page`), and the
 answers rebuild the groups from the plain models. The TTL
 column counts down from the deadline epoch the presenter lands
 — a per-second repaint over the cached models, no daemon call
-per tick. Activating a row fetches its sentinel and fills the
-panel masked; Mint opens the form (:mod:`.mint`), renew opens
-the TTL picker, and revoke asks first — each action landing
-through the bridge with the listing refreshed behind it.
-Refusals and failures flash the status line, the listing's own
-contract (#904).
+per tick. Mint opens the form (:mod:`.mint`), renew opens the
+TTL picker, and revoke asks first — each action landing
+through the bridge with the listing refreshed behind it. The
+sentinel pane is gone (#997): the page renders the two tables
+alone, the sentinel stays the CLI's and the TUI's own surface,
+and activating a row sends nothing. Refusals and failures
+flash the status line, the listing's own contract (#904).
 
 This module imports PySide6 at module scope — the same contract
 as the screens' modules: the package's init imports none of it
@@ -26,7 +30,7 @@ guards.
 from PySide6 import QtCore, QtWidgets
 
 from ...data import RestFailure
-from ..listtable import ListTable
+from ..listtable import ListTable, fill_columns, resized_viewport
 from ..secretrows import (
     SECRET_TTL_SECONDS,
     SECRET_TTLS,
@@ -41,15 +45,15 @@ from ..secretrows import (
 )
 from . import cells
 from .mint import MintDialog
-from .sentinel import SentinelPanel
 
 
 def table_edge(key: int, current: int, last: int) -> bool | None:
-    """The listing's edge keys (#966): Right on the last column
-    and Left on the first hand the keyboard out of the table —
-    None keeps the walk inside the cells. The destinations are
-    the crossing's own (:func:`hand_focus`), the
-    spatial-navigation rule over sibling columns."""
+    """The listing's edge keys (#966, #997): Right on the last
+    column and Left on the first hand the keyboard out of the
+    table — None keeps the walk inside the cells. The chain's
+    own order carries the keyboard onward (the audit group
+    below, the bar above), the spatial-navigation rule in the
+    page's reading order."""
     if key == QtCore.Qt.Key.Key_Right and current >= last:
         return True
     if key == QtCore.Qt.Key.Key_Left and current <= 0:
@@ -57,30 +61,13 @@ def table_edge(key: int, current: int, last: int) -> bool | None:
     return None
 
 
-def hand_focus(table, hand: bool) -> None:
-    """The edge crossing's destination (#966, review round two):
-    a right-hand crossing takes the pane's Show button — the
-    tab wires the target, an explicit destination the focus
-    chain's construction order cannot be trusted to name — and
-    a disabled target (no row on the pane) falls to the chain
-    like every other hand."""
-    target = table.right_target
-    if hand and target is not None and target.isEnabled():
-        target.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
-        return
-    QtWidgets.QWidget.focusNextPrevChild(table, hand)
-
-
 class RowTable(ListTable):
-    """The listing's own table (#966): the Up bridge the list
-    owns, beside the Left/Right edges' own (:func:`table_edge`
-    and :func:`hand_focus`) — Right crosses to the sentinel
-    pane beside the listing, Left hands the keyboard back up
-    the page, the pane joining the reading order."""
-
-    #: The right-hand crossing's destination (#966): the tab
-    #: wires the pane's Show button once the pane exists.
-    right_target = None
+    """The listing's own table (#966, #997): the Up bridge the
+    list owns, beside the Left/Right edges' own
+    (:func:`table_edge`) — Right on the last column hands the
+    keyboard down to the audit group, Left on the first hands
+    it back up the page, the reading order with the sentinel
+    pane gone."""
 
     def keyPressEvent(self, event) -> None:
         hand = table_edge(
@@ -89,7 +76,7 @@ class RowTable(ListTable):
         if hand is None:
             super().keyPressEvent(event)
             return
-        hand_focus(self, hand)
+        QtWidgets.QWidget.focusNextPrevChild(self, hand)
 
 
 #: The tab's gathered refresh key (#966): the open's first read
@@ -99,10 +86,6 @@ PAGE_KEY = "secrets-page"
 #: The renew and revoke flights' keys (#966).
 RENEW_KEY = "secrets-renew"
 REVOKE_KEY = "secrets-revoke"
-
-#: The sentinel fetch's key (#966): a row's activation reads
-#: the row with its sentinel (#440).
-SENTINEL_KEY = "secrets-sentinel"
 
 #: How long a flashed refusal stays on the status line,
 #: milliseconds — the listing's own span (#939). An outage (a
@@ -117,14 +100,13 @@ TICK_MS = 1000
 
 
 class SecretsTab(QtWidgets.QWidget):
-    """The Secrets tab of the main window's strip (#966): the
-    placeholder listing with the sentinel panel beside it and
-    the audit group beneath, refreshed whole when the tab opens
-    and through the manual action or an action's landing. Every
-    daemon exchange walks the bridge; the answers arrive on the
-    GUI thread through this widget's slots, and a failure
-    flashes the status line while the groups already on screen
-    stand."""
+    """The Secrets tab of the main window's strip (#966, #997):
+    the placeholder listing and the audit group stacked full
+    width, refreshed whole when the tab opens and through the
+    manual action or an action's landing. Every daemon exchange
+    walks the bridge; the answers arrive on the GUI thread
+    through this widget's slots, and a failure flashes the
+    status line while the groups already on screen stand."""
 
     def __init__(self, bridge) -> None:
         super().__init__()
@@ -145,7 +127,6 @@ class SecretsTab(QtWidgets.QWidget):
         self.table = RowTable(0, len(cells.LIST_COLUMNS), self)
         self.table.setHorizontalHeaderLabels(cells.LIST_COLUMNS)
         self.build_table(self.table)
-        self.table.activated.connect(self.sentinel_at)
         self.table.setContextMenuPolicy(
             QtCore.Qt.ContextMenuPolicy.CustomContextMenu
         )
@@ -165,11 +146,6 @@ class SecretsTab(QtWidgets.QWidget):
         # The audit empty state wraps too (#966), for the same
         # reason.
         self.audit_empty.setWordWrap(True)
-        self.panel = SentinelPanel(self)
-        # The listing's right-hand crossing lands on the pane's
-        # Show button — the explicit destination the chain's own
-        # order cannot be trusted to name (#966, review round two).
-        self.table.right_target = self.panel.show_button
         self.status = QtWidgets.QLabel("", self)
         self.refresh_button = QtWidgets.QPushButton("Refresh", self)
         self.refresh_button.clicked.connect(self.refresh)
@@ -187,45 +163,36 @@ class SecretsTab(QtWidgets.QWidget):
         self.layout_widgets()
 
     def layout_widgets(self) -> None:
-        """The tab's panes (#966): the refresh bar on top, the
-        listing and the sentinel panel sharing the middle — the
-        panel a fixed narrow pane beside the listing's growing
-        one — and the audit group with the standing counts
-        beneath."""
+        """The tab's panes (#997): the refresh bar on top, the
+        placeholder listing and the audit group stacked beneath
+        it — each spanning the window's whole width — and the
+        standing counts on the bottom line."""
         bar = QtWidgets.QHBoxLayout()
         bar.addWidget(self.refresh_button)
         bar.addWidget(self.mint_button)
         bar.addWidget(self.status, stretch=1)
-        listing = QtWidgets.QVBoxLayout()
-        listing.addWidget(self.table)
-        listing.addWidget(self.list_empty)
-        sentinel = QtWidgets.QGroupBox("Sentinel", self)
-        sentinel_rows = QtWidgets.QVBoxLayout(sentinel)
-        sentinel_rows.addWidget(self.panel)
-        split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal, self)
-        left = QtWidgets.QWidget(self)
-        left.setLayout(listing)
-        split.addWidget(left)
-        split.addWidget(sentinel)
-        split.setStretchFactor(0, 1)
-        split.setStretchFactor(1, 0)
+        listing = QtWidgets.QGroupBox(cells.LIST_GROUP, self)
+        listing_rows = QtWidgets.QVBoxLayout(listing)
+        listing_rows.addWidget(self.table)
+        listing_rows.addWidget(self.list_empty)
         audit = QtWidgets.QGroupBox(cells.AUDIT_GROUP, self)
         audit_rows = QtWidgets.QVBoxLayout(audit)
         audit_rows.addWidget(self.audit_table)
         audit_rows.addWidget(self.audit_empty)
         columns = QtWidgets.QVBoxLayout(self)
         columns.addLayout(bar)
-        columns.addWidget(split, stretch=1)
+        columns.addWidget(listing, stretch=1)
         columns.addWidget(audit, stretch=1)
         columns.addWidget(self.counts)
 
     def build_table(self, table: ListTable, sortable: bool = True) -> None:
-        """A group table's standing shape (#966): whole-row
-        selection, no cell edits, no vertical grid, columns
-        sized to their contents with the last one stretching —
-        the images tab's own reads. The listing sorts by its
-        header clicks; the audit table keeps the presenter's
-        newest-first order, its own contract."""
+        """A group table's standing shape (#966, #997):
+        whole-row selection, no cell edits, no vertical grid,
+        and columns sized by :func:`fill_columns` — the contents
+        first, the spare shared after, the images tab's own
+        read. The listing sorts by its header clicks; the audit
+        table keeps the presenter's newest-first order, its own
+        contract."""
         table.setSelectionBehavior(
             QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
         )
@@ -242,7 +209,12 @@ class SecretsTab(QtWidgets.QWidget):
         )
         table.verticalHeader().setVisible(False)
         cells.bold_header(table)
-        table.horizontalHeader().setStretchLastSection(True)
+        # The pane's own resizes re-flow the columns (#997): a
+        # vertical scrollbar's appearance shrinks the viewport
+        # after a fill sized against the wider one, and a
+        # window resized while the tab stood hidden reaches the
+        # pane at its next show.
+        table.viewport().installEventFilter(self)
         # No standing sort (#966): the indicator clears before
         # the sorting enables — the listing keeps the daemon's
         # own order until a header click asks for one, the TUI
@@ -281,16 +253,13 @@ class SecretsTab(QtWidgets.QWidget):
     @QtCore.Slot(str, object)
     def on_succeeded(self, key: str, result: object) -> None:
         """One answered call (#966): the gathered read rebuilds
-        both groups, an action's landing flashes its outcome and
-        refreshes, and the sentinel fetch fills the panel.
-        Another key's answer is not this tab's to take."""
+        both groups, and an action's landing flashes its outcome
+        and refreshes. Another key's answer is not this tab's
+        to take."""
         if key == PAGE_KEY:
             self.page_landed(result)
         elif key in (RENEW_KEY, REVOKE_KEY):
             self.action_arrived(key, result)
-        elif key == SENTINEL_KEY:
-            if isinstance(result, dict):
-                self.panel.show_row(result)
 
     def page_landed(self, result: object) -> None:
         """The gathered answer (#966): both groups rebuild from
@@ -316,10 +285,18 @@ class SecretsTab(QtWidgets.QWidget):
         self.fill_list(build_secret_rows(self.secret_raw))
         self.fill_audit(build_audit_rows(self.audit_raw))
 
+    def size_columns(self) -> None:
+        """Both tables' columns at their panes' whole width
+        (#997): the fills land here, and the window's and the
+        panes' own resizes re-flow the spare."""
+        fill_columns(self.table)
+        fill_columns(self.audit_table)
+
     def fill_list(self, models: list) -> None:
         """The listing's rows (#966): one per model, the
         selection carried by the row's id across the rebuild,
-        the empty state named beside an empty table."""
+        the empty state named beside an empty table, the
+        columns filling the pane's whole width (#997)."""
         held = self.held_first(self.table)
         was_empty = self.table.rowCount() == 0
         self.table.setSortingEnabled(False)
@@ -338,13 +315,14 @@ class SecretsTab(QtWidgets.QWidget):
         self.list_empty.setVisible(not models)
         self.table.setSortingEnabled(True)
         self.settle_hold(self.table, held, was_empty)
-        self.table.resizeColumnsToContents()
+        fill_columns(self.table)
 
     def fill_audit(self, models: list) -> None:
         """The audit group's rows (#966): one per model, newest
         first — the presenter's own order, no header sort — the
         selection carried by the audit id where the row carried
-        one."""
+        one, the columns filling the pane's whole width
+        (#997)."""
         held = self.held_first(self.audit_table)
         was_empty = self.audit_table.rowCount() == 0
         self.audit_table.setRowCount(len(models))
@@ -359,7 +337,7 @@ class SecretsTab(QtWidgets.QWidget):
         self.audit_models = models
         self.audit_empty.setVisible(not models)
         self.settle_hold(self.audit_table, held, was_empty)
-        self.audit_table.resizeColumnsToContents()
+        fill_columns(self.audit_table)
 
     def held_first(self, table: ListTable) -> object:
         """The current row's identity (#966): the carry key its
@@ -416,8 +394,6 @@ class SecretsTab(QtWidgets.QWidget):
         elif key in (RENEW_KEY, REVOKE_KEY):
             self.action_landed()
             self.flash(str(failure), outage=failure.reach)
-        elif key == SENTINEL_KEY:
-            self.flash(str(failure), outage=failure.reach)
 
     # -- the countdown -----------------------------------------------------
 
@@ -454,16 +430,6 @@ class SecretsTab(QtWidgets.QWidget):
         return next(
             (row for row in self.secret_raw if row["id"] == model.id), None
         )
-
-    @QtCore.Slot(QtCore.QModelIndex)
-    def sentinel_at(self, index: QtCore.QModelIndex) -> None:
-        """One activated row (#966, over #440): the row's
-        sentinel is fetched on demand — the daemon serves it to
-        a token holder whenever asked — and the panel fills
-        masked."""
-        model = self.row_model(index.row())
-        if model is not None:
-            self.bridge.call(SENTINEL_KEY, "secret", model.id)
 
     def renew_row(self, model) -> None:
         """The renew action (#966): the TTL picker over the
@@ -533,20 +499,13 @@ class SecretsTab(QtWidgets.QWidget):
         the daemon's own reply, the countdown's vocabulary, the
         revoked row's label — and the listing refreshes behind
         it. The gate set the row when the flight left; a landing
-        reads it back. A revoke that retires the row whose
-        sentinel stands on the panel clears the panel with it —
-        the token leaves the widget tree with its row."""
+        reads it back."""
         model = self.action_model
         self.action_landed()
         if key == RENEW_KEY:
             reply = result if isinstance(result, dict) else {}
             self.flash(cells.renewed_text(model, reply))
         else:
-            if (
-                self.panel.row is not None
-                and self.panel.row.get("id") == model.id
-            ):
-                self.panel.clear()
             self.flash(cells.revoked_text(model))
         self.take_flight()
 
@@ -559,43 +518,35 @@ class SecretsTab(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def open_mint(self) -> None:
-        """The Mint action (#966): the form over the bridge — a
-        landed mint refreshes the listing, the fresh sentinel
-        fills the panel, and the flash names the row; a cancel
-        decides nothing."""
+        """The Mint action (#966, #997): the form over the
+        bridge — a landed mint refreshes the listing and the
+        flash names the row, the page carries no sentinel
+        display; a cancel decides nothing."""
         dialog = MintDialog(self.bridge, self)
         if dialog.exec() and dialog.reply:
             self.take_flight()
-            self.panel.show_row(dialog.reply)
             self.flash(cells.minted_text(dialog.reply))
 
     @QtCore.Slot(QtCore.QPoint)
     def menu_requested(self, pos: QtCore.QPoint) -> None:
         """A right-click on a placeholder row opens its menu
-        (#966): the sentinel fetch, the renew, and the revoke
-        behind its confirmation. A press on no row opens
-        nothing."""
+        (#966): the renew and the revoke behind its
+        confirmation. A press on no row opens nothing."""
         menu = self.row_menu(self.table.rowAt(pos.y()))
         if menu is None:
             return
         menu.popup(self.table.viewport().mapToGlobal(pos))
 
     def row_menu(self, row: int) -> QtWidgets.QMenu | None:
-        """The placeholder row's menu (#966) — ``None`` for a
-        row the table does not hold."""
+        """The placeholder row's menu (#966, #997) — ``None``
+        for a row the table does not hold."""
         model = self.row_model(row)
         if model is None:
             return None
         menu = QtWidgets.QMenu(self.table)
-        menu.addAction("Show the sentinel", lambda: self.sentinel_for(model))
         menu.addAction("Renew…", lambda: self.renew_row(model))
         menu.addAction("Revoke…", lambda: self.revoke_row(model))
         return menu
-
-    def sentinel_for(self, model) -> None:
-        """The menu's sentinel fetch (#966): the activation's
-        own exchange, from the row the menu held."""
-        self.bridge.call(SENTINEL_KEY, "secret", model.id)
 
     # -- the status line ----------------------------------------------------
 
@@ -652,14 +603,26 @@ class SecretsTab(QtWidgets.QWidget):
         self.tick_timer.stop()
         super().hideEvent(event)
 
+    def resizeEvent(self, event) -> None:
+        """A resized window re-flows both tables' columns
+        (#997): the spare the new width leaves beyond the
+        columns' contents shares out again, each table filling
+        all the horizontal space the window gives it. A wrapper
+        without its tables (#959) sizes nothing."""
+        if getattr(self, "audit_table", None) is not None:
+            self.size_columns()
+        super().resizeEvent(event)
+
     def eventFilter(
         self, watched: QtCore.QObject, event: QtCore.QEvent
     ) -> bool:
-        """The bar buttons' arrow bridges (#962's rule): Up
-        hands the keyboard to whatever stands above the tab —
-        the strip — and Down enters the groups below, so the
-        arrows cross the page in reading order without a
-        Tab."""
+        """The bar buttons' arrow bridges (#962's rule) beside a
+        pane's own resize (#997): Up hands the keyboard to
+        whatever stands above the tab — the strip — and Down
+        enters the groups below, so the arrows cross the page
+        in reading order without a Tab; a group pane's resize
+        re-flows its columns."""
+        self.pane_resized(watched, event)
         if watched not in (self.refresh_button, self.mint_button) or (
             event.type() != QtCore.QEvent.Type.KeyPress
         ):
@@ -671,3 +634,17 @@ class SecretsTab(QtWidgets.QWidget):
             QtWidgets.QWidget.focusNextPrevChild(self.refresh_button, True)
             return True
         return super().eventFilter(watched, event)
+
+    def pane_resized(self, watched: QtCore.QObject, event) -> None:
+        """A group pane's own resize (#997): a vertical scrollbar
+        appearing shrinks the viewport after a fill sized
+        against the wider one, and a window resized while the
+        tab stood hidden reaches the pane at its next show — a
+        pane never owes the operator a horizontal bar for it,
+        the images tab's own rule (#964) over the shared
+        :func:`resized_viewport`."""
+        if (
+            resized_viewport((self.table, self.audit_table), watched, event)
+            is not None
+        ):
+            self.size_columns()

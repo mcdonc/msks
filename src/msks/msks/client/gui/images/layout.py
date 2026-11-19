@@ -24,7 +24,7 @@ init imports none of it at parse time (#927).
 
 from PySide6 import QtCore
 
-from ..listtable import ListTable
+from ..listtable import ListTable, fill_columns
 from .cells import (
     BUILT_COLUMN,
     CELL_MARGIN,
@@ -63,18 +63,10 @@ def size_catalog_columns(catalog: ListTable) -> None:
     label included — and the spare beyond that split evenly
     across the columns, an odd cell to the earlier ones, the
     listing's own arithmetic (#347) so the group consumes
-    the pane's whole horizontal space."""
-    catalog.resizeColumnsToContents()
-    spare = table_spare(catalog)
-    if spare <= 0:
-        return
-    count = catalog.columnCount()
-    share, extra = divmod(spare, count)
-    for column in range(count):
-        catalog.setColumnWidth(
-            column,
-            catalog.columnWidth(column) + share + (1 if column < extra else 0),
-        )
+    the pane's whole horizontal space — the shared leaf's
+    :func:`fill_columns` (#997), the secrets tables' beside
+    it."""
+    fill_columns(catalog)
 
 
 def size_published_columns(table: ListTable, models) -> None:

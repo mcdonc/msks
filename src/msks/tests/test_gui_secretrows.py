@@ -1,8 +1,9 @@
-"""The GUI secrets presenter (#965): placeholder, sentinel, and
+"""The GUI secrets presenter (#965): placeholder and
 audit fakes in, row models out — the coverage label, the TTL
-countdown, the masked sentinel, the TTL choices, and the audit
+countdown, the TTL choices, and the audit
 rows. The presenter holds no Qt import, so these tests drive it
-as plain Python, the same way the coverage gate does."""
+as plain Python, the same way the coverage gate does.
+"""
 
 import ast
 import time
@@ -15,7 +16,6 @@ from msks.client.tui import consent as tui_consent
 from msks.client.tui.consent_ui import events as tui_events
 from msks.client.tui.secrets import audit as tui_audit
 from msks.client.tui.secrets import cells as tui_cells
-from msks.client.tui.secrets import sentinel as tui_sentinel
 from rich.markup import escape
 
 #: The pinned clock (#965's fakes): an aware local moment the
@@ -28,9 +28,6 @@ NOW = datetime(2030, 1, 2, 3, 4, 5).astimezone()
 NAIVE_STAMP = "2030-01-02T03:04:05"
 NAIVE_EPOCH = datetime(2030, 1, 2, 3, 4, 5, tzinfo=UTC).timestamp()
 
-SCOPED = "mskssec1_" + "s" * 24
-WIDE = "mskssec2_" + "w" * 24
-
 
 def placeholder(
     id: int = 1,
@@ -40,11 +37,9 @@ def placeholder(
     expires_at: str | None = None,
     created_at: str | None = None,
     locked: bool = False,
-    sentinel: str | None = None,
 ) -> dict:
     """One placeholder row as the listing serves it (#965's
-    fakes): the fields the presenter reads — no sentinel on a
-    listing row, one on a mint's reply or the on-demand fetch."""
+    fakes): the fields the presenter reads."""
     row = {
         "id": id,
         "workspaces": list(workspaces or []),
@@ -55,8 +50,6 @@ def placeholder(
     }
     if created_at is not None:
         row["created_at"] = created_at
-    if sentinel is not None:
-        row["sentinel"] = sentinel
     return row
 
 
@@ -293,30 +286,6 @@ def test_the_renew_picker_default_reads_the_remaining_lifetime() -> None:
     assert gui_secrets.ttl_default(placeholder(expires_at="junk")) == "30d"
 
 
-def test_the_sentinel_model_masks_the_sentinel() -> None:
-    """The panel's model (#965, over #393): the row's label, the
-    masked display — the prefix stays, the body renders one
-    bullet per character, a sentinel under neither prefix masks
-    whole — and the reach line the prefix decodes."""
-    scoped = gui_secrets.sentinel_model(
-        placeholder(workspaces=["ws1", "ws2"], sentinel=SCOPED)
-    )
-    assert scoped == gui_secrets.SentinelModel(
-        label="ws1,ws2/github_api",
-        masked="mskssec1_" + "\u2022" * 24,
-        reach="the chosen workspaces: ws1,ws2",
-    )
-    wide = gui_secrets.sentinel_model(placeholder(sentinel=WIDE))
-    assert wide.label == "*/github_api"
-    assert wide.masked == "mskssec2_" + "\u2022" * 24
-    assert wide.reach == "every accepting workspace"
-    foreign = gui_secrets.sentinel_model(placeholder(sentinel="tok" * 9))
-    assert foreign.masked == "\u2022" * 27
-    assert foreign.reach == "every accepting workspace"
-    empty = gui_secrets.sentinel_model(placeholder(sentinel=""))
-    assert empty.masked == ""
-
-
 def test_the_audit_rows_build_newest_first() -> None:
     """The audit view's rows (#965): one per recorded row the
     shape accepts, newest first — the stamps order them, so a
@@ -435,10 +404,9 @@ def test_the_placeholder_helpers_match_the_tui_page() -> None:
     """The mirrored placeholder helpers keep behavior parity with
     the TUI's cells (#965): over the same placeholder fakes, both
     clients read the same coverage labels, TTL countdowns,
-    destinations cells, renew defaults, sentinel masks and
-    reaches, and choice vocabulary — a formatting change on one
-    side must fail here rather than drift the two pages
-    apart."""
+    destinations cells, renew defaults, and choice vocabulary —
+    a formatting change on one side must fail here rather than
+    drift the two pages apart."""
     rows = [
         placeholder(),
         placeholder(
@@ -448,22 +416,12 @@ def test_the_placeholder_helpers_match_the_tui_page() -> None:
         ),
         placeholder(expires_at=(NOW - timedelta(minutes=90)).isoformat()),
         placeholder(expires_at="junk", locked=True),
-        placeholder(workspaces=["ws1"], sentinel=SCOPED),
-        placeholder(sentinel=WIDE),
-        placeholder(sentinel="tok" * 9),
-        placeholder(sentinel=""),
     ]
     for row in rows:
         assert gui_secrets.coverage_text(row) == tui_cells.coverage_text(row)
         assert gui_secrets.dests_cell(row) == tui_cells.dests_cell(row)
         assert gui_secrets.ttl_text(row, NOW) == tui_cells.ttl_text(row, NOW)
         assert gui_secrets.ttl_default(row) == tui_cells.ttl_default(row)
-        assert escape(gui_secrets.sentinel_reach(row)) == (
-            tui_cells.sentinel_reach(row)
-        )
-        assert gui_secrets.masked_sentinel(row.get("sentinel") or "") == (
-            tui_sentinel.masked_sentinel(row.get("sentinel") or "")
-        )
     assert gui_secrets.SECRET_TTLS == tui_cells.SECRET_TTLS
     assert gui_secrets.SECRET_TTL_SECONDS == tui_cells.SECRET_TTL_SECONDS
     assert gui_secrets.MINT_TTLS == tui_cells.MINT_TTLS
