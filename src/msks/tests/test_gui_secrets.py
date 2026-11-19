@@ -383,6 +383,11 @@ def test_fill_columns_shares_the_spare_exactly(qt) -> None:
     for column, text in enumerate(("one", "a-longer-cell", "x")):
         table.setItem(0, column, qt.QtWidgets.QTableWidgetItem(text))
     table.setHorizontalHeaderLabels(("FIRST", "SECOND", "THIRD"))
+    # The pane's geometry must be real before the fill reads it
+    # (#997): a widget the platform never showed carries a
+    # placeholder viewport size that varies by host.
+    table.show()
+    qt.app.processEvents()
     table.resize(700, 120)
     qt.app.processEvents()
     table.resizeColumnsToContents()
@@ -402,10 +407,19 @@ def test_fill_columns_keeps_the_contents_on_a_tight_pane(qt) -> None:
     the values ask, and the table scrolls instead."""
     table = qt.QtWidgets.QTableWidget(1, 3)
     for column, text in enumerate(
-        ("a-very-long-cell-value", "another-long-one", "third-long-value")
+        (
+            "a-very-long-cell-value-here",
+            "another-long-one-here",
+            "third-long-value-here",
+        )
     ):
         table.setItem(0, column, qt.QtWidgets.QTableWidgetItem(text))
-    table.resize(200, 120)
+    # The pane's geometry must be real before the fill reads it
+    # (#997): a widget the platform never showed carries a
+    # placeholder viewport size that varies by host.
+    table.show()
+    qt.app.processEvents()
+    table.resize(160, 100)
     qt.app.processEvents()
     table.resizeColumnsToContents()
     contents = [
