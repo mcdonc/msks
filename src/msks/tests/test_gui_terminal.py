@@ -990,6 +990,29 @@ def test_a_bigger_font_keeps_the_grid_and_grows_the_window(screen, qt):
         host.close()
 
 
+def test_a_maximized_window_answers_no_fit(screen, qt):
+    """A maximized frame keeps its pixels (#976): no resize
+    lands while the window is maximized — the face still
+    steps, and the grid re-derives at the restore."""
+    host = qt.QtWidgets.QMainWindow()
+    host.show()
+    from msks.client.gui.terminal import TerminalWidget
+
+    widget = TerminalWidget([sys.executable, "-c", SLEEPER], parent=host)
+    host.setCentralWidget(widget)
+    try:
+        drain_until(widget, b"ready")
+        host.showMaximized()
+        qt.app.processEvents()
+        maximized = host.size()
+        widget.apply_font_size(widget.font.pointSize() + 2)
+        assert widget.metrics.cell_height > 0  # the face stepped
+        assert host.size() == maximized  # the frame answered nothing
+    finally:
+        shutdown(widget)
+        host.close()
+
+
 def test_the_size_report_answers_the_widgets_grid(screen, qt):
     """The library's window-size query (CSI 14 t) reads the
     widget's own geometry."""

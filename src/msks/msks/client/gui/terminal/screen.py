@@ -330,22 +330,54 @@ class TerminalWidget(QWidget):
 
     def fit_window(self) -> None:
         """Grow or shrink the enclosing window around the
-        widget's grid (#976): the window takes exactly the
-        delta between the grid's new pixel size and the
-        widget's current pixels, the partial-cell slack
-        included, so the grid the resize event re-derives is
-        the grid that stood. A terminal the window does not
-        show — hidden behind another tab, not yet laid out —
-        sizes nothing; its own show re-derives its grid. A
-        maximized frame keeps its size while it stays
-        maximized (Qt holds the resize for the restore)."""
+        widget's grid (#976): two passes, the second taking
+        the remainder the first left — the whole-client zoom
+        writes the chrome's application font in the same step,
+        and the font-metric chrome (the tab bars around the
+        terminal) takes its share of the window between them.
+        The grid the final resize re-derives is the grid that
+        stood, the partial-cell slack included."""
         window = self.window()
-        if window is self or not self.isVisible():
+        if not self.can_fit_window(window):
             return
+        for _ in range(2):
+            if not self.fit_once(window):
+                return
+
+    def can_fit_window(self, window) -> bool:
+        """Whether fit_window may move this window (#976): a
+        terminal that is its own window sizes nothing, a
+        terminal the window does not show — hidden behind
+        another tab, not yet laid out — sizes nothing, and a
+        maximized frame keeps its pixels: no resize lands
+        while it stays maximized, and the grid re-derives at
+        the restore."""
+        return (
+            window is not self
+            and self.isVisible()
+            and not window.isMaximized()
+        )
+
+    def fit_once(self, window) -> bool:
+        """One pass of the window's resize toward the grid
+        (#976): the delta between the grid's pixel size and
+        the widget's current pixels, one resize, and the
+        layout settled for whoever measures next. Answers
+        whether another pass can reach anything: no, when the
+        pixels already answer the grid, and no, when the
+        window carries no layout that moves the widget — a
+        second pass would add the same delta to the window
+        again and reach nothing."""
         width = self.metrics.cell_width * self.cols - self.width()
         height = self.metrics.cell_height * self.rows - self.height()
-        if width or height:
-            window.resize(window.width() + width, window.height() + height)
+        if not (width or height):
+            return False
+        held = (self.width(), self.height())
+        window.resize(window.width() + width, window.height() + height)
+        layout = window.layout()
+        if layout is not None:
+            layout.activate()
+        return (self.width(), self.height()) != held
 
     def resize_grid(self, cols: int, rows: int) -> None:
         """Tell the emulator and the child the new grid, in the

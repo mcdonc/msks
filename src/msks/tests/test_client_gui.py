@@ -392,7 +392,11 @@ def test_the_gui_window_opens_offscreen(
         for shortcut in widget.findChildren(QtGui.QShortcut)
         if shortcut.context() == QtCore.Qt.ShortcutContext.ApplicationShortcut
     )
-    assert zoom_keys == [("Ctrl++", "Ctrl+="), ("Ctrl+-",), ("Ctrl+0",)]
+    assert zoom_keys == [
+        ("Ctrl++", "Ctrl+=", "Ctrl+Shift++"),
+        ("Ctrl+-",),
+        ("Ctrl+0",),
+    ]
     # The create opener rides the tab (#962): a plus button
     # embedded in the Workspaces tab.
     plus = opened["plus"][0]

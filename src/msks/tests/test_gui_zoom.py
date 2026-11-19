@@ -185,6 +185,10 @@ def test_each_set_holds_its_own_clamp(qt, zoomed):
     for _ in range(fonts.MAX_PT - fonts.DEFAULT_PT):
         zoom.grow()  # the terminal to its ceiling
     assert zoom.term_pt == fonts.MAX_PT
+    # The offscreen default chrome (9pt scaled to 13.5) still
+    # has room at the terminal's ceiling — a host whose
+    # platform default already sits near the UI ceiling would
+    # clamp here instead.
     assert qt.app.font().pointSizeF() < qt.zoom.UI_MAX_PT
     for _ in range(64):
         zoom.grow()  # the chrome joins the ceiling; both hold
@@ -229,8 +233,10 @@ def test_a_shell_opened_after_a_zoom_joins_it(qt, zoomed):
 
 def test_the_keys_sit_on_the_window_application_wide(qt, zoomed):
     """The zoom's shortcuts (#976): three of them on the window,
-    application scope — the focus never gates them — with both
-    plus spellings on the grow one."""
+    application scope — the focus never gates them — with
+    every plus spelling on the grow one (the numpad plus, the
+    bare equal, and the shifted equal a main-row plus asks
+    on a keyboard with no numpad)."""
     Qt = qt.QtCore.Qt
     zooms = [
         shortcut
@@ -241,7 +247,39 @@ def test_the_keys_sit_on_the_window_application_wide(qt, zoomed):
         tuple(sorted(key.toString() for key in shortcut.keys()))
         for shortcut in zooms
     )
-    assert keys == [("Ctrl++", "Ctrl+="), ("Ctrl+-",), ("Ctrl+0",)]
+    assert keys == [
+        ("Ctrl++", "Ctrl+=", "Ctrl+Shift++"),
+        ("Ctrl+-",),
+        ("Ctrl+0",),
+    ]
+
+
+def test_the_grid_holds_through_the_windows_real_chrome(qt, zoomed):
+    """A step with the window's real chrome around the
+    terminal (#976): the application-font write moves the
+    chrome's own metrics in the same step, and the window's
+    settle pass takes the remainder — the terminal's grid
+    holds exactly, and a zoom round trip ends where it
+    began."""
+    session = zoomed.hub.open_shell("ws")
+    widget = session.widget
+    shells = qt.QtWidgets.QTabWidget()
+    shells.addTab(widget, "1")
+    page = qt.QtWidgets.QTabWidget()
+    page.addTab(shells, "Shells")
+    page.addTab(qt.QtWidgets.QWidget(), "Info")
+    outer = qt.QtWidgets.QTabWidget()
+    outer.addTab(page, "Workspaces")
+    zoomed.window.setCentralWidget(outer)
+    zoomed.window.show()
+    qt.app.processEvents()
+    held = (widget.cols, widget.rows)
+    zoomed.zoom.grow()
+    qt.app.processEvents()
+    assert (widget.cols, widget.rows) == held
+    zoomed.zoom.shrink()
+    qt.app.processEvents()
+    assert (widget.cols, widget.rows) == held
 
 
 def test_the_headers_follow_the_application_font(qt, zoomed):

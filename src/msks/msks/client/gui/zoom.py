@@ -48,15 +48,18 @@ class Zoom(QtCore.QObject):
     def install(self, window) -> None:
         """Stand the zoom keys on the window (#976): one
         shortcut per action, application scope — the focus
-        never gates them. The numpad keys answer through the
-        ``Ctrl+Plus`` and ``Ctrl+Minus`` names (the keypad
-        modifier takes no part in matching)."""
+        never gates them. Three spellings grow: the numpad's
+        plus (``Ctrl++`` matches the keypad key), the bare
+        equal (``Ctrl+=``, the same key without the shift a
+        plus asks), and the shifted equal (``Ctrl+Shift++`` —
+        a sequence match wants the shift named, and a
+        keyboard with no numpad has no other plus)."""
         for keys, slot in (
-            (("Ctrl++", "Ctrl+="), self.grow),
+            (("Ctrl++", "Ctrl+=", "Ctrl+Shift++"), self.grow),
             (("Ctrl+-",), self.shrink),
             (("Ctrl+0",), self.reset),
         ):
-            shortcut = QtGui.QShortcut(QtGui.QKeySequence(keys[0]), window)
+            shortcut = QtGui.QShortcut(window)
             shortcut.setKeys([QtGui.QKeySequence(k) for k in keys])
             shortcut.setContext(QtCore.Qt.ShortcutContext.ApplicationShortcut)
             shortcut.activated.connect(slot)
@@ -120,11 +123,13 @@ class Zoom(QtCore.QObject):
 
     @QtCore.Slot(str, int)
     def shell_joined(self, workspace_id: str, no: int) -> None:
-        """A shell opened after a zoom joins at the zoomed face
-        (#976): the hub's fresh terminal carries the default,
-        and a default-sized one beside the zoomed chrome would
-        read against it. The window stays put — the new shell's
-        own layout sizes it."""
+        """A shell opened after a zoom joins it (#976): the
+        hub's fresh terminal carries the default, and a
+        default-sized one beside the zoomed chrome would read
+        against it. The walk takes any live terminal the face
+        has not reached — the fresh shell, wherever the hub's
+        own signal order seats its tab — and the window stays
+        put: the new shell's own layout sizes it."""
         if self.term_pt == fonts.DEFAULT_PT:
             return
         for widget in self.hub.terminals():
