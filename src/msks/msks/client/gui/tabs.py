@@ -3,7 +3,9 @@ top-level pages the window opens on. "Workspaces" is first — the
 list and the detail pages over the bridge (#939, #945) — and the
 Images and Secrets tabs of the plan (#963–#966) land beside it
 through :meth:`MainTabs.addTab` — Images since #964, the
-published channel and the catalog under the second tab. The bar
+published channel and the catalog under the second tab, and
+Secrets since #966, the placeholder listing, the sentinel
+panel, and the audit group under the third. The bar
 crosses by arrow keys (the spatial-navigation rule carried to the
 GUI): Left and Right move between the tabs, Down leaves the bar
 for the page below, and the bar never holds the keyboard without
@@ -18,6 +20,11 @@ WORKSPACES_LABEL = "Workspaces"
 #: The second tab's label (#964): the images page — the catalog
 #: and the published channel, the TUI image page's counterpart.
 IMAGES_LABEL = "Images"
+
+#: The third tab's label (#966): the secrets page — the
+#: placeholder listing, the sentinel panel, and the audit
+#: group, the TUI secrets page's counterpart.
+SECRETS_LABEL = "Secrets"
 
 #: The opener badge's palette (#964, the operator's ask): the
 #: greens a create action reads as — a bright leaf for the

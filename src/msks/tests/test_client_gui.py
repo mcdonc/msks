@@ -369,12 +369,16 @@ def test_the_gui_window_opens_offscreen(
     assert first[2:] == (app.DEFAULT_WIDTH, app.DEFAULT_HEIGHT)
     # The top-level strip (#962): the window's central widget is
     # the tab strip, the Workspaces tab first and current, the
-    # Images tab beside it (#964).
-    from msks.client.gui.tabs import IMAGES_LABEL, WORKSPACES_LABEL
+    # Images tab beside it (#964), the Secrets tab third (#966).
+    from msks.client.gui.tabs import (
+        IMAGES_LABEL,
+        SECRETS_LABEL,
+        WORKSPACES_LABEL,
+    )
 
     assert opened["tabs"][0] == (
         "MainTabs",
-        [WORKSPACES_LABEL, IMAGES_LABEL],
+        [WORKSPACES_LABEL, IMAGES_LABEL, SECRETS_LABEL],
         0,
     )
     # The create opener rides the tab (#962): a plus button
@@ -489,6 +493,7 @@ def test_open_window_reuses_an_existing_app(
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui.bridge import Bridge
     from msks.client.gui.images import tab as images_tab_mod
+    from msks.client.gui.secrets import tab as secrets_tab_mod
 
     shown: list[str] = []
     stops: list[object] = []
@@ -573,6 +578,18 @@ def test_open_window_reuses_an_existing_app(
             images.append((bridge, url))
 
     monkeypatch.setattr(images_tab_mod, "ImagesTab", FakeImagesTab)
+
+    secrets_built: list[object] = []
+
+    class FakeSecretsTab:
+        """The Secrets tab's stub (#966): the window path builds
+        it over the same bridge, under the strip's third tab —
+        the recording pins it."""
+
+        def __init__(self, bridge: object) -> None:
+            secrets_built.append(bridge)
+
+    monkeypatch.setattr(secrets_tab_mod, "SecretsTab", FakeSecretsTab)
 
     class FakeTabs:
         """The strip the shell lands under (#962): the stub the
@@ -676,7 +693,11 @@ def test_open_window_reuses_an_existing_app(
     from msks.client.gui.images import channel_url
 
     assert images == [(started[0], channel_url(None))]
-    assert [label for _page, label in central[0].pages] == ["Images"]
+    assert secrets_built == [started[0]]  # the same bridge (#966)
+    assert [label for _page, label in central[0].pages] == [
+        "Images",
+        "Secrets",
+    ]
     # The create opener lands on the shell (#962): the strip's
     # plus button opens the shell's own create dialog.
     assert creates == [screens[0].open_create]
@@ -703,6 +724,7 @@ def test_open_window_keeps_a_user_style_choice(
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui.bridge import Bridge
     from msks.client.gui.images import tab as images_tab_mod
+    from msks.client.gui.secrets import tab as secrets_tab_mod
 
     styles: list[str] = []
     central: list[object] = []
@@ -770,6 +792,18 @@ def test_open_window_keeps_a_user_style_choice(
 
     monkeypatch.setattr(workspace_mod, "WorkspaceShell", FakeScreen)
     monkeypatch.setattr(images_tab_mod, "ImagesTab", FakeImagesTab)
+
+    secrets_built: list[object] = []
+
+    class FakeSecretsTab:
+        """The Secrets tab's stub (#966): the window path builds
+        it over the same bridge, under the strip's third tab —
+        the recording pins it."""
+
+        def __init__(self, bridge: object) -> None:
+            secrets_built.append(bridge)
+
+    monkeypatch.setattr(secrets_tab_mod, "SecretsTab", FakeSecretsTab)
 
     monkeypatch.setattr(tabs_mod, "MainTabs", FakeTabs)
 

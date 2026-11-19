@@ -333,10 +333,16 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # names-from-definers rule).
     from .images.tab import ImagesTab
 
+    # allow-deferred-import — the Secrets tab itself (#966)
+    # carries the screens' contract: PySide6 at module scope,
+    # loaded only on the window path — the images package's
+    # own presentation.
+    from .secrets.tab import SecretsTab
+
     # allow-deferred-import — the strip carries the screens'
     # own shape (#962): the screens land under the Workspaces
     # tab, the strip the phase 4.6 pages join.
-    from .tabs import IMAGES_LABEL, MainTabs
+    from .tabs import IMAGES_LABEL, SECRETS_LABEL, MainTabs
 
     # allow-deferred-import — the screen module brings PySide6
     # with it (module scope there, like the bridge); the window
@@ -348,6 +354,7 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     shell = WorkspaceShell(bridge, terminal_cmd=terminal_command(conf))
     tabs = MainTabs(shell)
     tabs.addTab(ImagesTab(bridge, channel_url(conf)), IMAGES_LABEL)
+    tabs.addTab(SecretsTab(bridge), SECRETS_LABEL)
     # The Workspaces tab's plus button (#962): the shell owns
     # the bridge, so the opener's click lands there — the
     # create dialog is the shell's own surface.

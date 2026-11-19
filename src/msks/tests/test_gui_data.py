@@ -425,3 +425,54 @@ async def test_the_images_page_carries_a_failed_manifest(
         await data.images_page("https://ch.example/manifest.json")
     assert "cannot fetch the image manifest" in str(failed.value)
     assert failed.value.reach
+
+
+async def test_the_secrets_page_gathers_both_halves(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The secrets tab's gathered read (#966): the placeholder
+    listing with its lock states, then the recorded audit rows —
+    one answer the tab refreshes whole, both daemon reads in
+    that order."""
+    gui_env(monkeypatch)
+    secrets = [
+        {
+            "id": 1,
+            "workspaces": [],
+            "name": "github_api",
+            "dests": ["api.github.com"],
+            "created_at": "2026-01-02T03:04:05",
+            "expires_at": None,
+            "locked": True,
+        }
+    ]
+    audit = [
+        {
+            "id": 3,
+            "kind": "mint",
+            "workspaces": [],
+            "name": "github_api",
+            "dests": ["api.github.com"],
+            "created_at": "2026-01-02T03:04:05",
+        }
+    ]
+    seen: list[tuple[str, str, dict | None]] = []
+    data = data_mod.GuiData(
+        transport=scripted(
+            [
+                ("GET", "/api/v1/secrets", httpx.Response(200, json=secrets)),
+                (
+                    "GET",
+                    "/api/v1/secrets/audit",
+                    httpx.Response(200, json=audit),
+                ),
+            ],
+            seen,
+        )
+    )
+    page = await data.secrets_page()
+    assert page == {"secrets": secrets, "audit": audit}
+    assert [request[:2] for request in seen] == [
+        ("GET", "/api/v1/secrets"),
+        ("GET", "/api/v1/secrets/audit"),
+    ]

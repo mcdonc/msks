@@ -8,6 +8,21 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI secrets tab (#966).** The desktop GUI's Secrets
+  tab renders the TUI secrets page: the placeholder listing
+  with coverage, destinations, a live TTL countdown, the
+  created label, and the lock state, with the sentinel panel
+  beside it. Activating a row fetches its sentinel and fills
+  the panel masked; the reveal sits behind a confirmation and
+  the copy writes the real value to the clipboard. Mint opens
+  the form (name, destinations, coverage, TTL, and the value
+  typed or pasted directly), renew opens the TTL picker, and
+  revoke asks first — each action landing through the bridge
+  with the listing refreshed behind it. The TTL column counts
+  down from the deadline epoch the presenter lands, with no
+  daemon call per tick, and the audit group beneath replays
+  the recorded rows newest first.
+
 - **The GUI secrets presenter (#965).** The secrets tab
   gains its data layer: the daemon's placeholder rows build
   as plain row models carrying the id, coverage, destinations,
