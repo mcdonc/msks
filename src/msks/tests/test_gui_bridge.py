@@ -161,15 +161,24 @@ def test_results_and_failures_cross_to_the_gui_thread(
         ("refused_environment",),
     ]
     assert receiver.okay == [("list", [{"id": "ws-1", "status": "running"}])]
-    halted = receiver.bad[0][1]
+    # The three failures read by key, not by arrival index: a
+    # coroutine the worker finishes before the GUI thread arms
+    # its done callback delivers at once on the caller's thread
+    # (a direct emit) while its earlier siblings' answers still
+    # sit queued from the worker — arrival order is scheduling's
+    # own, and the screens dispatch by key the same way. CI hit
+    # the window once: the env refusal landed before the queued
+    # 409.
+    by_key = dict(receiver.bad)
+    halted = by_key["halt"]
     assert isinstance(halted, clientdata.RestFailure)
     assert "409" in str(halted)
     assert not halted.reach
-    bugged = receiver.bad[1][1]
+    bugged = by_key["oops"]
     assert isinstance(bugged, clientdata.RestFailure)
     assert "data-layer bug" in str(bugged)
     assert not bugged.reach
-    refused = receiver.bad[2][1]
+    refused = by_key["env"]
     assert isinstance(refused, clientdata.RestFailure)
     assert "invoking user" in str(refused)
     assert refused.reach  # the environment refused, not the daemon

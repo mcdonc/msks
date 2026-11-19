@@ -14,9 +14,11 @@ call per tick — the created label (the shared
 own epoch for the column sort, and the lock state word. The
 helpers the TUI's page owns (the secrets cells and the audit
 halves of :mod:`msks.client.tui.consent`) are mirrored here —
-the GUI imports nothing from the TUI, and the suite pins the
-pair's parity — so the module holds no PySide6 import and the
-coverage gate lands on it whole.
+this module imports nothing from the TUI (the decider link's
+own controller share, #999, is the exception the gui package
+carries), and the suite pins the pair's parity — so the module
+holds no PySide6 import and the coverage gate lands on it
+whole.
 """
 
 import time
