@@ -79,6 +79,10 @@ class MainTabs(QtWidgets.QTabWidget):
         plus.setIcon(create_badge())
         plus.setAutoRaise(True)
         plus.setToolTip("Create a workspace")
+        # The pointing hand over the badge (#964, the operator's
+        # ask): the opener reads as a clickable action the
+        # moment the pointer reaches it.
+        plus.setCursor(QtCore.Qt.CursorShape.PointingHandCursor)
         plus.clicked.connect(self.create_requested)
         self.tabBar().setTabButton(
             0, QtWidgets.QTabBar.ButtonPosition.RightSide, plus

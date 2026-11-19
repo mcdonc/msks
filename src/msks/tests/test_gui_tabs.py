@@ -122,6 +122,10 @@ def test_the_workspaces_tab_carries_the_create_opener(qt) -> None:
     assert not plus.icon().isNull()
     size = plus.icon().availableSizes()[0]
     assert (size.width(), size.height()) == (32, 32)
+    # The pointing hand over the badge (#964).
+    assert plus.cursor().shape() == qt.QtCore.Qt.CursorShape(
+        qt.QtCore.Qt.CursorShape.PointingHandCursor
+    )
     asked: list[bool] = []
     tabs.create_requested.connect(lambda: asked.append(True))
     plus.click()

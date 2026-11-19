@@ -76,8 +76,8 @@ tagged `vX.Y.Z`.
   keys cross the tabs, and Up from the list's top row returns
   to the tab strip. A green gradient badge on the Workspaces
   tab — a drawn disc, bright at the crown and deep at the
-  foot, a white plus on it — opens the create-workspace
-  dialog, the TUI create form's counterpart: the same fields,
+  foot, a white plus on it, the pointing hand over it — opens
+  the create-workspace dialog, the TUI create form's counterpart: the same fields,
   blank fields left to the daemon's defaults, and a refusal
   keeping the dialog open with the failure on its note line.
 
