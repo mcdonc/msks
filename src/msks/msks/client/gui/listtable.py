@@ -5,7 +5,13 @@ and the column sizing every group table takes against its
 pane's width (#997).
 """
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
+
+#: The bold-seat mark a bolded header carries (#976): the
+#: zoom's after-write walk finds the headers by it — an
+#: explicit font (the only way Qt holds a bold header) does
+#: not follow the application font on its own.
+BOLD_SEAT = "msks-bold-header"
 
 
 class ListTable(QtWidgets.QTableWidget):
@@ -26,6 +32,41 @@ class ListTable(QtWidgets.QTableWidget):
             QtWidgets.QWidget.focusNextPrevChild(self, False)
             return
         super().keyPressEvent(event)
+
+
+def bold_header(table: QtWidgets.QTableWidget) -> None:
+    """One group table's header text (#964, #976): the bold
+    weight on the panes' headers — one definition, so every
+    pane's column labels read as one table's chrome whatever
+    the platform style would draw on its own. The header
+    carries the bold-seat mark: the whole-client zoom's
+    after-write walk (:func:`rebold_headers`) finds it there
+    and moves the header with the rest of the chrome."""
+    header = table.horizontalHeader()
+    header.setProperty(BOLD_SEAT, True)
+    header_font(header)
+
+
+def header_font(header: QtWidgets.QHeaderView) -> None:
+    """The header's bold face off the application font (#976):
+    the size and the family stay the application's own."""
+    font = QtGui.QGuiApplication.font()
+    font.setBold(True)
+    header.setFont(font)
+
+
+def rebold_headers() -> None:
+    """The zoom's after-write walk (#976): every bolded header
+    still alive takes the fresh application font's bold face
+    again. An explicit font is the only way Qt holds a bold
+    header, and an explicit font freezes a widget against the
+    application font's changes — the headers are the window's
+    only explicitly-set fonts, so this walk is the whole gap
+    between the zoom's write and the chrome following it."""
+    app = QtWidgets.QApplication.instance()
+    for widget in app.allWidgets():
+        if widget.property(BOLD_SEAT):
+            header_font(widget)
 
 
 def resized_viewport(

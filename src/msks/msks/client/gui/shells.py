@@ -123,6 +123,16 @@ class ShellHub(QtCore.QObject):
         """This workspace's sessions in open order (#954)."""
         return list(self.sessions.get(workspace_id, ()))
 
+    def terminals(self) -> list:
+        """Every live terminal across the workspaces (#976): the
+        whole-client zoom steps them together — the hosted one
+        and the ones running on behind their tabs."""
+        return [
+            session.widget
+            for sessions in self.sessions.values()
+            for session in sessions
+        ]
+
     def find(self, workspace_id: str, no: int) -> ShellSession | None:
         """One session by its number, when it still runs."""
         for session in self.sessions.get(workspace_id, ()):

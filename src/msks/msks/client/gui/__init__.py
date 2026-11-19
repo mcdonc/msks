@@ -38,13 +38,17 @@ PySide6-free), and the proxies tab's presenter
 the CLI's own parsers, and the seeds, plain data, PySide6-free).
 The screen widgets
 (:mod:`.workspaces`, #939 — the list; :mod:`.workspace`, #945
-— the detail page and the shell that swaps the two) and the
-asyncio worker (:mod:`.bridge`) are pinned by nothing here — both import the
+— the detail page and the shell that swaps the two), the
+whole-client font zoom (:mod:`.zoom`, #976 — the application
+shortcuts that step the chrome's font and every live terminal
+together), and the asyncio worker (:mod:`.bridge`) are pinned
+by nothing here — all import the
 Qt binding at module scope, and this package's own init runs
 at CLI parse time on every command (``wscommands`` imports
-``.app`` through it), so pinning either would break a base
-install's every command (#927). ``.app`` imports both lazily
-on the window path, which is the reachability the gate counts.
+``.app`` through it), so pinning any of them would break a
+base install's every command (#927). ``.app`` imports each
+lazily on the window path, which is the reachability the gate
+counts.
 """
 
 from . import (  # noqa: F401 — reachability pins for the gate;

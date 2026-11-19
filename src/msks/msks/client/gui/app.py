@@ -276,7 +276,10 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     shell, the list and the detail page over one bridge — live
     under the Workspaces tab, the first of the strip the images
     and secrets tabs of phase 4.6 join. The bridge's answers
-    land on the shell wherever the strip shows it.
+    land on the shell wherever the strip shows it, and the
+    window carries the whole-client font zoom (#976):
+    Ctrl+Plus/Minus and Ctrl+0 step the chrome's font and the
+    shell hub's terminals together, wherever the focus stands.
     """
     # allow-deferred-import — the bridge brings PySide6 with it
     # (module scope there); this module stays Qt-free at parse
@@ -360,6 +363,16 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # create dialog is the shell's own surface.
     tabs.create_requested.connect(shell.open_create)
     window.setCentralWidget(tabs)
+    # allow-deferred-import — the whole-client zoom (#976)
+    # carries the screen modules' own contract: PySide6 at
+    # module scope there, loaded only on the window path.
+    from .zoom import Zoom
+
+    # The whole-client font zoom (#976): Ctrl+Plus/Minus and
+    # Ctrl+0 as application shortcuts, stepping the chrome's
+    # application font and every live terminal the shell's hub
+    # owns — the keys answer wherever the focus stands.
+    Zoom(shell.hub, window)
     # The opening geometry (#939): the last-closed rect wins —
     # a saved geometry the screens still show — and the fixed
     # 1280 by 720 is the first-open shape until a close

@@ -19,6 +19,13 @@ tagged `vX.Y.Z`.
   registration (an unknown workspace) flashes its reason on the
   page's status line; the consent panel that answers the holds
   from the GUI lands with the rest of phase 5.5.
+- **The GUI whole-client zoom (#976).** Ctrl+Plus, Ctrl+Equal,
+  and Ctrl+Minus step the UI fonts and the terminal fonts
+  together, and Ctrl+0 sets both back to their defaults. The
+  keys answer wherever the focus stands, and the window
+  resizes around the visible terminal so its columns and rows
+  hold at the new size. The terminal keeps its 7–28 pt window;
+  the UI fonts clamp to 8–28 pt.
 
 - **The GUI workspace events tab (#989).** The workspace page
   grows an Events tab beside Proxies and Info, and the

@@ -252,17 +252,6 @@ def revoked_text(model: SecretRow) -> str:
     return f"revoked {model.coverage}/{model.name}"
 
 
-def bold_header(table: QtWidgets.QTableWidget) -> None:
-    """One group table's header text (#966): the bold weight on
-    both panes' headers — one definition, so the two groups'
-    column labels read as one table's chrome whatever the
-    platform style would draw."""
-    header = table.horizontalHeader()
-    font = table.font()
-    font.setBold(True)
-    header.setFont(font)
-
-
 def read_only_item(
     item: QtWidgets.QTableWidgetItem,
 ) -> QtWidgets.QTableWidgetItem:

@@ -381,6 +381,18 @@ def test_the_gui_window_opens_offscreen(
         [WORKSPACES_LABEL, IMAGES_LABEL, SECRETS_LABEL],
         0,
     )
+    # The whole-client zoom's keys (#976): three application
+    # shortcuts on the window — both plus spellings on the grow
+    # one — so the focus never gates them.
+    from PySide6 import QtCore, QtGui
+
+    zoom_keys = sorted(
+        tuple(sorted(key.toString() for key in shortcut.keys()))
+        for widget in opened["windows"]
+        for shortcut in widget.findChildren(QtGui.QShortcut)
+        if shortcut.context() == QtCore.Qt.ShortcutContext.ApplicationShortcut
+    )
+    assert zoom_keys == [("Ctrl++", "Ctrl+="), ("Ctrl+-",), ("Ctrl+0",)]
     # The create opener rides the tab (#962): a plus button
     # embedded in the Workspaces tab.
     plus = opened["plus"][0]
@@ -491,6 +503,7 @@ def test_open_window_reuses_an_existing_app(
         pytest.skip("the gui extra is not installed on this host")
     from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import workspace as workspace_mod
+    from msks.client.gui import zoom as zoom_mod
     from msks.client.gui.bridge import Bridge
     from msks.client.gui.images import tab as images_tab_mod
     from msks.client.gui.secrets import tab as secrets_tab_mod
@@ -503,10 +516,27 @@ def test_open_window_reuses_an_existing_app(
     screens: list[object] = []
     creates: list[object] = []
     images: list[tuple[object, str]] = []
+    zooms: list[tuple[object, object]] = []
+    windows: list[object] = []
 
     class FakeSignal:
         def connect(self, slot: object) -> None:
             stops.append(slot)
+
+    class FakeShellHub:
+        """The shell hub's stub (#976): the window path hands
+        the zoom the shell's own hub — the recording pins the
+        handoff."""
+
+    class FakeZoom:
+        """The whole-client zoom's stub (#976): the window path
+        builds it over the shell's hub and the window — the
+        recording pins both."""
+
+        def __init__(self, hub: object, window: object) -> None:
+            zooms.append((hub, window))
+
+    monkeypatch.setattr(zoom_mod, "Zoom", FakeZoom)
 
     class CreateSignal:
         """The strip's create opener (#962): the window path
@@ -536,6 +566,9 @@ def test_open_window_reuses_an_existing_app(
             return 480
 
     class FakeWindow:
+        def __init__(self) -> None:
+            windows.append(self)
+
         def setWindowTitle(self, title: str) -> None:
             shown.append(title)
 
@@ -563,6 +596,7 @@ def test_open_window_reuses_an_existing_app(
             built.append(bridge)
             screens.append(self)
             self.terminal_cmd = terminal_cmd
+            self.hub = FakeShellHub()  # the zoom's handoff (#976)
 
         def open_create(self) -> None:
             pass  # the wiring pin reads the bound method, not the call
@@ -701,6 +735,10 @@ def test_open_window_reuses_an_existing_app(
     # The create opener lands on the shell (#962): the strip's
     # plus button opens the shell's own create dialog.
     assert creates == [screens[0].open_create]
+    # The zoom takes the shell's own hub and the window (#976):
+    # the terminals it steps are the shell's, the keys sit on
+    # the window.
+    assert zooms == [(screens[0].hub, windows[0])]
     assert shown[-1] == "stopped"  # the return path stopped the bridge
     assert len(started) == 1  # started with the window
     assert len(stops) == 1  # aboutToQuit holds the same stop
@@ -722,6 +760,7 @@ def test_open_window_keeps_a_user_style_choice(
         pytest.skip("the gui extra is not installed on this host")
     from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import workspace as workspace_mod
+    from msks.client.gui import zoom as zoom_mod
     from msks.client.gui.bridge import Bridge
     from msks.client.gui.images import tab as images_tab_mod
     from msks.client.gui.secrets import tab as secrets_tab_mod
@@ -785,10 +824,19 @@ def test_open_window_keeps_a_user_style_choice(
         def __init__(
             self, bridge: object, terminal_cmd: object = None
         ) -> None:
-            pass
+            self.hub = object()  # the zoom's handoff (#976)
 
         def open_create(self) -> None:
             pass
+
+    class FakeZoom:
+        """The zoom's stub: built, never read — the style test
+        reads the environment and the app font only."""
+
+        def __init__(self, hub: object, window: object) -> None:
+            pass
+
+    monkeypatch.setattr(zoom_mod, "Zoom", FakeZoom)
 
     monkeypatch.setattr(workspace_mod, "WorkspaceShell", FakeScreen)
     monkeypatch.setattr(images_tab_mod, "ImagesTab", FakeImagesTab)

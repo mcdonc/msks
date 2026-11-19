@@ -931,48 +931,63 @@ def test_a_resize_event_recomputes_the_grid(screen, qt):
     assert (screen.cols, screen.rows) == (40, 10)
 
 
-def test_font_stepping_zooms_and_clamps(screen, qt):
+def test_the_widget_holds_no_font_keys(screen, qt):
+    """The font keys left the widget (#976): the zoom lives at
+    the application level now — a widget-level Ctrl+= or
+    Ctrl+0 steps nothing."""
     Qt = qt.QtCore.Qt
     start = screen.font.pointSize()
     grow = key_event(
         qt, Qt.Key.Key_Equal, "=", Qt.KeyboardModifier.ControlModifier
     )
     screen.keyPressEvent(grow)
-    assert screen.font.pointSize() == start + 1
-    shrink = key_event(
-        qt, Qt.Key.Key_Minus, "-", Qt.KeyboardModifier.ControlModifier
-    )
-    screen.keyPressEvent(shrink)
     assert screen.font.pointSize() == start
-    screen.apply_font_size(qt.fonts.MAX_PT)
-    screen.keyPressEvent(grow)
-    assert screen.font.pointSize() == qt.fonts.MAX_PT
     reset = key_event(
         qt, Qt.Key.Key_0, "0", Qt.KeyboardModifier.ControlModifier
     )
     screen.keyPressEvent(reset)
-    assert screen.font.pointSize() == qt.fonts.DEFAULT_PT
-    screen.keyPressEvent(reset)  # already default: skipped
-    assert screen.font.pointSize() == qt.fonts.DEFAULT_PT
+    assert screen.font.pointSize() == start
 
 
 def test_a_bigger_font_keeps_the_grid_and_grows_the_window(screen, qt):
-    """Zooming the face keeps the cell count and hands the
-    enclosing window the new pixel size."""
+    """Zooming the face keeps the cell count and grows the
+    enclosing window by the same delta the grid took (#976):
+    the window answers the new cell metrics, not the bare
+    grid — the chrome the window carries around the terminal
+    keeps its share of the pixels."""
     host = qt.QtWidgets.QWidget()
+    host.show()
     from msks.client.gui.terminal import TerminalWidget
 
     widget = TerminalWidget([sys.executable, "-c", SLEEPER], parent=host)
     try:
         drain_until(widget, b"ready")
+        widget.resize(widget.sizeHint())  # laid out at its grid
+        widget.show()  # a raw child of a shown parent stays
+        # hidden until it is shown itself — the window resizes
+        # only around a terminal it shows
         cols, rows = widget.cols, widget.rows
-        before = widget.metrics.cell_height
+        before = host.size()
+        old_grid = widget.sizeHint()
+        old_cell = widget.metrics.cell_height
         widget.apply_font_size(widget.font.pointSize() + 2)
-        assert widget.metrics.cell_height > before
+        new_grid = widget.sizeHint()
+        assert widget.metrics.cell_height > old_cell
         assert (widget.cols, widget.rows) == (cols, rows)
-        assert host.size() == widget.sizeHint()
+        # The window took the grid's own growth (#976): the new
+        # cell metrics less the old ones, per axis — the chrome
+        # around the terminal keeps its share of the pixels.
+        assert (
+            host.width()
+            == before.width() + new_grid.width() - old_grid.width()
+        )
+        assert (
+            host.height()
+            == before.height() + new_grid.height() - old_grid.height()
+        )
     finally:
         shutdown(widget)
+        host.close()
 
 
 def test_the_size_report_answers_the_widgets_grid(screen, qt):

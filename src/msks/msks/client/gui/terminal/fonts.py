@@ -48,6 +48,13 @@ REPCHAR = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgjijklmnopqrstuvwxyz0123456789./+@"
 MIN_PT, MAX_PT = 7, 28
 DEFAULT_PT = 15
 
+
+def stepped(points: int, direction: int) -> int:
+    """One zoom step's size (#976): the asked direction clamped
+    to the stepping window."""
+    return min(max(points + direction, MIN_PT), MAX_PT)
+
+
 # The row-height cap: JetBrains Mono's natural line box is
 # about 1.3 em; terminals ship exactly this trim as their
 # line-height setting.
