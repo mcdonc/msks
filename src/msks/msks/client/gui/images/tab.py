@@ -199,9 +199,12 @@ class ImagesTab(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Policy.Ignored,
             QtWidgets.QSizePolicy.Policy.Preferred,
         )
+        # The refresh action leads the bar (#964, the operator's
+        # ask): the button on the left, the flash line taking
+        # the rest.
         top = QtWidgets.QHBoxLayout()
-        top.addWidget(self.status, stretch=1)
         top.addWidget(self.refresh_button)
+        top.addWidget(self.status, stretch=1)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(top)
         layout.addWidget(self.group(CATALOG_GROUP, self.catalog_table))

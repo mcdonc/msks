@@ -1416,3 +1416,14 @@ def test_a_spare_pane_spreads_the_room(qt) -> None:
     ]
     assert all(extra > 0 for extra in grew)
     window.close()
+
+
+def test_the_refresh_button_leads_the_bar(qt) -> None:
+    """The refresh action's place (#964, the operator's ask):
+    the button on the bar's left, the flash line taking the
+    rest beside it."""
+    tab, window, _bridge = make_tab(qt)
+    bar = tab.layout().itemAt(0)  # the tab's top bar
+    assert bar.itemAt(0).widget() is tab.refresh_button
+    assert bar.itemAt(1).widget() is tab.status
+    window.close()
