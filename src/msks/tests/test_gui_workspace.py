@@ -210,10 +210,27 @@ def make_page(qt) -> tuple:
     return page, window, bridge
 
 
+def bar_index(page, label: str) -> int:
+    """The tab's index on the page's bar, by its label (#987):
+    the bar's own order is the page's business, not the
+    tests'."""
+    for index in range(page.bar.count()):
+        if page.bar.tabText(index) == label:
+            return index
+    raise AssertionError(f"no {label} tab on the bar")
+
+
 def show_info(page) -> None:
-    """The Info tab current (#974): the sections render under
-    it, and a non-current page of the body reads as hidden."""
-    page.bar.setCurrentIndex(1)
+    """The Info tab current (#974, #987): the sections render
+    under it, and a non-current page of the body reads as
+    hidden."""
+    page.bar.setCurrentIndex(bar_index(page, "Info"))
+
+
+def show_mounts(page) -> None:
+    """The Mounts tab current (#987): the editable surface
+    under it."""
+    page.bar.setCurrentIndex(bar_index(page, "Mounts"))
 
 
 def land(qt, page, bridge, row=None, doc=None) -> None:
@@ -258,17 +275,40 @@ def test_the_page_carries_top_level_shells_and_info_tabs(qt) -> None:
     assert page.chrome.itemAt(1).widget() is page.bar
     assert [page.bar.tabText(i) for i in range(page.bar.count())] == [
         "Shells",
+        "Mounts",
         "Info",
     ]
     assert page.bar.currentIndex() == 0  # Shells, the default
     assert page.stack.currentIndex() == 0
     assert page.stack.widget(0) is page.shells
-    info = page.stack.widget(1)
+    info = page.stack.widget(2)
     assert info.findChildren(type(page.mounts)) == [page.mounts]
     assert page.health in info.findChildren(type(page.health))
     assert info.findChildren(type(page.events)) == [page.events]
-    page.bar.setCurrentIndex(1)  # the bar drives the stack
+    page.bar.setCurrentIndex(2)  # the bar drives the stack
     assert page.stack.currentWidget() is info
+
+
+def test_a_mounts_save_lands_on_the_page(qt) -> None:
+    """The Mounts tab's landed save (#987): the tab's answer is
+    a fresh daemon row — the page takes it whole, the footer
+    and the Info sections reading the same facts the tab
+    painted, and the tab's own hosting of it changing
+    nothing."""
+    page, window, bridge = make_page(qt)
+    land(qt, page, bridge)
+    show_mounts(page)
+    entry = {"host": "/srv/new", "guest": "/mnt/new", "mode": "ro"}
+    fresh = {
+        **daemon_row(),
+        "mounts": [*daemon_row()["mounts"], entry],
+        "mounts_pending": True,
+    }
+    page.mounts_tab.row_updated.emit(fresh)
+    assert page.row is fresh
+    assert page.mounts_tab.table.rowCount() == 3
+    assert "1 change applies at the next start" in page.footer.text()
+    window.close()
 
 
 def test_an_open_with_no_shell_creates_one_and_focuses_it(qt) -> None:
@@ -298,7 +338,7 @@ def test_the_show_anchors_on_the_tab_the_row_shows(qt) -> None:
     while the Info tab shows, the current shell's terminal
     while the Shells tab shows one."""
     page, window, bridge = make_page(qt)
-    page.bar.setCurrentIndex(1)  # Info
+    page.bar.setCurrentIndex(2)  # Info
     page.anchor_focus()
     assert window.focusWidget() is page.back_button
     page.bar.setCurrentIndex(0)  # Shells, a shell current
@@ -313,7 +353,7 @@ def test_a_reopen_resets_the_row_and_anchors_the_terminal(qt) -> None:
     — the anchor is the show's, not the strip's."""
     shell, window, bridge = make_shell(qt)
     shell.listing.opened.emit("ws-a")
-    shell.detail.bar.setCurrentIndex(1)  # Info before leaving
+    shell.detail.bar.setCurrentIndex(2)  # Info before leaving
     shell.detail.go_back()
     shell.listing.opened.emit("ws-a")  # reopen: a fresh open's show
     assert shell.detail.bar.currentIndex() == 0  # Shells again

@@ -576,12 +576,18 @@ def test_the_plus_opens_a_second_shell_beside(qt, window_shell):
 
 def test_the_page_chrome_carries_no_shell_button(qt, window_shell):
     """The "+" owns the page's new-shell action: the chrome
-    carries no Shell button."""
+    carries no Shell button — the tabs under it carry their own
+    (the Mounts tab's Add/Edit/Remove, #987), out of the
+    chrome's row."""
     shell, hub, _window = window_shell
+    chrome = shell.detail.chrome
     chrome_buttons = [
-        button.text()
-        for button in shell.detail.findChildren(type(shell.detail.back_button))
-        if button.text()
+        chrome.itemAt(i).widget().text()
+        for i in range(chrome.count())
+        if isinstance(
+            chrome.itemAt(i).widget(), type(shell.detail.back_button)
+        )
+        and chrome.itemAt(i).widget().text()
     ]
     assert chrome_buttons == []
 
