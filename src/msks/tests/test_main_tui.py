@@ -3986,8 +3986,11 @@ async def test_the_listing_renders_inside_a_frame(monkeypatch) -> None:
         assert listing.styles.border_top == ("round", primary)
         assert {edge for edge, _color in listing.styles.border} == {"round"}
         # The rows sit inside the frame: the content starts past
-        # the border's column.
-        assert app.query_one("#columns").content_region.x >= 2
+        # the border's column — waited, not assumed, because the
+        # border's inset applies on a layout pass a slow host can
+        # run after the rows land (CI saw x=1 with the frame
+        # still pending).
+        await wait_for(lambda: app.query_one("#columns").content_region.x >= 2)
         # The status bar above stays a borderless line.
         assert app.query_one("#status").styles.border_top != (
             "round",
