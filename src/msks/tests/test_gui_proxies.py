@@ -382,9 +382,9 @@ def test_an_add_posts_the_body_and_refreshes(qt, monkeypatch) -> None:
     tab.add()
     method_call = bridge.calls[0]
     assert method_call[1:] == ("create_proxy", ("ws-a", body))
-    assert tab.list_pending or not tab.list_pending  # listing may ride
     bridge.succeeded.emit(method_call[0], {"id": 11, "status": "listening"})
     assert tab.note.text() == "saved"
+    assert tab.add_button.isEnabled()
     assert [call[1] for call in bridge.calls[1:]] == ["workspace_proxies"]
 
 
@@ -416,6 +416,7 @@ def test_a_refused_spec_names_itself(qt, monkeypatch) -> None:
         "refused: workspace ws-a has no NIC: its tap is not up"
     )
     assert tab.table.rowCount() == 2
+    assert tab.add_button.isEnabled()  # the refusal re-enables
 
 
 def test_remove_asks_and_removes(qt, monkeypatch) -> None:
@@ -437,8 +438,12 @@ def test_remove_asks_and_removes(qt, monkeypatch) -> None:
     assert bridge.calls == []  # the refusal sent nothing
     assert asked[0][0] == "Remove proxy"
     assert "-L 8080:localhost:80" in asked[0][1]
+    assert asked[0][2] is qt.QtWidgets.QMessageBox.StandardButton.No
     tab.remove()
     assert bridge.calls[0][1:] == ("remove_proxy", ("ws-a", 7))
+    key = bridge.calls[0][0]
+    bridge.succeeded.emit(key, {"id": 7})
+    assert tab.note.text() == "removed"
 
 
 def test_a_pushed_transition_refreshes_the_open_tab(qt) -> None:

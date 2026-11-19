@@ -117,6 +117,7 @@ class ProxiesTab(QtWidgets.QWidget):
         self.seq = 0
         self.list_key = ""
         self.change_key = ""
+        self.landing_note = "saved"
         self.table = read_only_table(PROXY_COLUMNS)
         self.table.itemSelectionChanged.connect(self.sync_buttons)
         self.add_button = QtWidgets.QPushButton("Add")
@@ -224,13 +225,15 @@ class ProxiesTab(QtWidgets.QWidget):
         self.edit_button.setEnabled(held and idle)
         self.remove_button.setEnabled(held and idle)
 
-    def change(self, method: str, *args: object) -> None:
+    def change(self, method: str, *args: object, note: str = "saved") -> None:
         """One mutation through the bridge (#988): add, edit, or
         remove, each under its own key — one at a time, the
-        answer refreshing the listing behind it."""
+        answer refreshing the listing behind it and naming its
+        landing with the note the action gave."""
         if self.change_pending or not self.workspace_id:
             return
         self.change_pending = True
+        self.landing_note = note
         self.seq += 1
         self.change_key = f"{CHANGE_STEM}-{self.seq}"
         self.sync_buttons()
@@ -272,7 +275,7 @@ class ProxiesTab(QtWidgets.QWidget):
         if not self.confirm_remove(row):
             return
         self.note.setText("removing …")
-        self.change("remove_proxy", row["id"])
+        self.change("remove_proxy", row["id"], note="removed")
 
     def confirm_remove(self, row: dict) -> bool:
         """Remove's confirmation (#988): the question names the
@@ -296,17 +299,29 @@ class ProxiesTab(QtWidgets.QWidget):
         the rows; a mutation's answer notes its landing and
         refreshes the listing. Another key's answer is not this
         tab's to take."""
-        if key == self.list_key:
-            self.list_pending = False
-            self.list_flight = None
-            self.rows = list(result or [])
-            self.repaint_rows()
+        if key == self.list_key and self.list_key:
+            self.listing_landed(result)
             return
         if key != self.change_key or not self.change_key:
             return
+        self.change_landed()
+
+    def listing_landed(self, result: object) -> None:
+        """The listing's answer (#988): the rows repaint from
+        it, whole."""
+        self.list_pending = False
+        self.list_flight = None
+        self.rows = list(result or [])
+        self.repaint_rows()
+
+    def change_landed(self) -> None:
+        """The mutation's answer (#988): the buttons return, the
+        note names the landing, and the listing refreshes behind
+        it."""
         self.change_pending = False
         self.change_flight = None
-        self.note.setText("saved")
+        self.sync_buttons()
+        self.note.setText(self.landing_note)
         self.poke()
 
     @QtCore.Slot(str, object)
@@ -322,4 +337,5 @@ class ProxiesTab(QtWidgets.QWidget):
             return
         self.change_pending = False
         self.change_flight = None
+        self.sync_buttons()
         self.note.setText(f"refused: {failure}")
