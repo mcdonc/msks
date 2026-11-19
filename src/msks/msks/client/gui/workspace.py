@@ -127,6 +127,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.health_doc: dict | None = None
         self.frames: list[dict] = []
         self.rendered: DetailSections | None = None
+        self.rendered_key: tuple | None = None
         self.row_pending = False
         self.health_pending = False
         self.storage_pending = False
@@ -328,6 +329,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.health_doc = None
         self.frames = []
         self.rendered = None
+        self.rendered_key = None
         self.footer.setText("")
         self.clear_sections()
         # The row resets with every open (#974): Shells is the
@@ -487,9 +489,16 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # the page's own read is the tab's standing truth between
         # changes.
         self.mounts_tab.host(self.workspace_id, self.row)
-        if model == self.rendered:
+        # The render-skip guard reads the sections the Info tab
+        # renders (#989): the events window lives in its own tab
+        # now, so a frame that moves nothing the sections show
+        # costs no re-render — the mounts hold survives a noisy
+        # feed whole.
+        key = (model.mounts, model.pending_note, model.health)
+        if key == self.rendered_key:
             return
         self.rendered = model
+        self.rendered_key = key
         self.render_sections(model)
 
     def render_sections(self, model: DetailSections) -> None:

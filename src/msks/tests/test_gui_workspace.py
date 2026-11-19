@@ -283,10 +283,11 @@ def test_the_page_carries_top_level_shells_and_info_tabs(qt) -> None:
     assert page.bar.currentIndex() == 0  # Shells, the default
     assert page.stack.currentIndex() == 0
     assert page.stack.widget(0) is page.shells
+    assert page.stack.widget(3) is page.events_tab  # the bar's own order
     info = page.stack.widget(4)
     assert info.findChildren(type(page.mounts)) == [page.mounts]
     assert page.health in info.findChildren(type(page.health))
-    page.bar.setCurrentIndex(4)  # the bar drives the stack
+    page.bar.setCurrentIndex(bar_index(page, "Info"))
     assert page.stack.currentWidget() is info
 
 
@@ -362,7 +363,7 @@ def test_the_show_anchors_on_the_tab_the_row_shows(qt) -> None:
     while the Info tab shows, the current shell's terminal
     while the Shells tab shows one."""
     page, window, bridge = make_page(qt)
-    page.bar.setCurrentIndex(4)  # Info
+    page.bar.setCurrentIndex(bar_index(page, "Info"))
     page.anchor_focus()
     assert window.focusWidget() is page.back_button
     page.bar.setCurrentIndex(0)  # Shells, a shell current
@@ -377,7 +378,7 @@ def test_a_reopen_resets_the_row_and_anchors_the_terminal(qt) -> None:
     — the anchor is the show's, not the strip's."""
     shell, window, bridge = make_shell(qt)
     shell.listing.opened.emit("ws-a")
-    shell.detail.bar.setCurrentIndex(4)  # Info before leaving
+    shell.detail.bar.setCurrentIndex(bar_index(shell.detail, "Info"))
     shell.detail.go_back()
     shell.listing.opened.emit("ws-a")  # reopen: a fresh open's show
     assert shell.detail.bar.currentIndex() == 0  # Shells again
@@ -480,7 +481,7 @@ def test_pushed_frames_fill_the_events_section(qt) -> None:
             "data": {"id": "ws-b", "status": "running"},
         }
     )
-    assert not page.events_tab.empty.isHidden()  # a foreign frame
+    assert page.events_tab.rows.count() == 0  # a foreign frame
     page.push_frame({"event": "workspace.status", "data": {"id": "ws-a"}})
     assert not page.events_tab.rows.isHidden()
     (stamp, _kind, summary) = (

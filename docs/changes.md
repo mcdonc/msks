@@ -9,11 +9,11 @@ tagged `vX.Y.Z`.
 ### Added
 
 - **The GUI workspace events tab (#989).** The workspace page
-  grows an Events tab beside Proxies and Info. The recent-events
-  pane the Info tab carried moved there whole: each row keeps
-  the receipt stamp, the kind, and the summary, and a pushed
-  frame appends without a manual action. The Info tab carries
-  its mounts and health sections alone.
+  grows an Events tab beside Proxies and Info, and the
+  recent-events pane the Info tab carried moved into it. Each
+  row keeps the receipt stamp, the kind, and the summary, and a
+  pushed frame appends without a manual action. The Info tab
+  carries its mounts and health sections alone.
 
 - **The GUI workspace proxies tab (#988).** The workspace page
   grows a Proxies tab beside Mounts and Info. The tab lists the
