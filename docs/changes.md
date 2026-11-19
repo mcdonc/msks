@@ -209,6 +209,15 @@ tagged `vX.Y.Z`.
   kept under the client state root (see `docs/cli.md` →
   Client environment).
 
+### Changed
+
+- **The nixpkgs pin behind devenv and the release flake now
+  tracks `nixpkgs-unstable` (#990).** The dev shell's fontconfig
+  matches the host's generation again, and the warning wall at
+  `msks gui` startup is gone. Guest images and flake outputs
+  build against unstable, so operators building images from
+  source see closure diffs from the channel move.
+
 ### Fixed
 
 - **The GUI window names its own widget style (#937).** A
