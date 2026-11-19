@@ -27,7 +27,9 @@ the sentinel panel, the TTL choices, and the audit rows as
 plain data, PySide6-free), and the workspace mounts tab's
 presenter (:mod:`.mountrows`, #987 — the editing list's
 arithmetic, the spec parse, and the pending words, plain data,
-PySide6-free).
+PySide6-free), and the proxies tab's presenter
+(:mod:`.proxyrows`, #988 — the spec grammar, the parse through
+the CLI's own parsers, and the seeds, plain data, PySide6-free).
 The screen widgets
 (:mod:`.workspaces`, #939 — the list; :mod:`.workspace`, #945
 — the detail page and the shell that swaps the two) and the
@@ -49,6 +51,7 @@ from . import (  # noqa: F401 — reachability pins for the gate;
     ghostty,
     imagerows,
     mountrows,
+    proxyrows,
     rows,
     secretrows,
     terminal,

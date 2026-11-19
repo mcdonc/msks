@@ -19,6 +19,7 @@ workspace page (itself lazily imported) owns the import.
 from PySide6 import QtCore, QtWidgets
 
 from .detail import mount_entries
+from .forms import read_only_table, save_cancel_row
 from .mountrows import (
     MODE_CHOICES,
     added_mount,
@@ -75,14 +76,8 @@ class MountDialog(QtWidgets.QDialog):
         mode = seeded["mode"] if seeded["mode"] in MODE_CHOICES else "rw"
         self.mode.setCurrentIndex(MODE_CHOICES.index(mode))
         form.addRow("mode", self.mode)
-        self.save_button = QtWidgets.QPushButton("save")
-        self.save_button.setDefault(True)
-        self.save_button.clicked.connect(self.submit)
-        cancel = QtWidgets.QPushButton("cancel")
+        self.save_button, cancel, buttons = save_cancel_row(self.submit)
         cancel.clicked.connect(self.reject)
-        buttons = QtWidgets.QHBoxLayout()
-        buttons.addWidget(self.save_button)
-        buttons.addWidget(cancel)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.note)
         layout.addLayout(form)
@@ -128,20 +123,7 @@ class MountsTab(QtWidgets.QWidget):
         self.landed = False
         self.flight_seq = 0
         self.flight_key = ""
-        self.table = QtWidgets.QTableWidget(0, len(MOUNT_COLUMNS), self)
-        self.table.setHorizontalHeaderLabels(MOUNT_COLUMNS)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(
-            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
-        )
-        self.table.setSelectionMode(
-            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
-        )
-        self.table.setEditTriggers(
-            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
-        )
-        self.table.setShowGrid(False)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table = read_only_table(MOUNT_COLUMNS)
         self.table.itemSelectionChanged.connect(self.sync_buttons)
         self.add_button = QtWidgets.QPushButton("Add")
         self.add_button.clicked.connect(self.add)

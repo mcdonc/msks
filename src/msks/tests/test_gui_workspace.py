@@ -276,16 +276,17 @@ def test_the_page_carries_top_level_shells_and_info_tabs(qt) -> None:
     assert [page.bar.tabText(i) for i in range(page.bar.count())] == [
         "Shells",
         "Mounts",
+        "Proxies",
         "Info",
     ]
     assert page.bar.currentIndex() == 0  # Shells, the default
     assert page.stack.currentIndex() == 0
     assert page.stack.widget(0) is page.shells
-    info = page.stack.widget(2)
+    info = page.stack.widget(3)
     assert info.findChildren(type(page.mounts)) == [page.mounts]
     assert page.health in info.findChildren(type(page.health))
     assert info.findChildren(type(page.events)) == [page.events]
-    page.bar.setCurrentIndex(2)  # the bar drives the stack
+    page.bar.setCurrentIndex(3)  # the bar drives the stack
     assert page.stack.currentWidget() is info
 
 
@@ -308,6 +309,29 @@ def test_a_mounts_save_lands_on_the_page(qt) -> None:
     assert page.row is fresh
     assert page.mounts_tab.table.rowCount() == 3
     assert "1 change applies at the next start" in page.footer.text()
+    window.close()
+
+
+def test_the_proxies_tab_rides_the_page(qt) -> None:
+    """The Proxies tab's page integration (#988): the bar carries
+    it beside Mounts and Info, the page's tick pokes its listing,
+    and a pushed proxy frame refreshes it without a manual
+    action."""
+    page, window, bridge = make_page(qt)
+    assert bar_index(page, "Proxies") == 2
+    land(qt, page, bridge)
+    # The open's own refresh already poked a listing; answer it
+    # so the next tick's poke runs.
+    bridge.succeeded.emit(page.proxies_tab.list_key, [])
+    bridge.calls.clear()
+    page.refresh()  # the page's own tick drives the tab's listing
+    assert [c for c in bridge.calls if c[1] == "workspace_proxies"]
+    bridge.succeeded.emit(page.proxies_tab.list_key, [])  # the tick's listing
+    bridge.calls.clear()
+    page.push_frame(
+        {"event": "proxy.listening", "data": {"id": page.workspace_id}}
+    )
+    assert [c[1] for c in bridge.calls if c[1] == "workspace_proxies"]
     window.close()
 
 
@@ -338,7 +362,7 @@ def test_the_show_anchors_on_the_tab_the_row_shows(qt) -> None:
     while the Info tab shows, the current shell's terminal
     while the Shells tab shows one."""
     page, window, bridge = make_page(qt)
-    page.bar.setCurrentIndex(2)  # Info
+    page.bar.setCurrentIndex(3)  # Info
     page.anchor_focus()
     assert window.focusWidget() is page.back_button
     page.bar.setCurrentIndex(0)  # Shells, a shell current
@@ -353,7 +377,7 @@ def test_a_reopen_resets_the_row_and_anchors_the_terminal(qt) -> None:
     — the anchor is the show's, not the strip's."""
     shell, window, bridge = make_shell(qt)
     shell.listing.opened.emit("ws-a")
-    shell.detail.bar.setCurrentIndex(2)  # Info before leaving
+    shell.detail.bar.setCurrentIndex(3)  # Info before leaving
     shell.detail.go_back()
     shell.listing.opened.emit("ws-a")  # reopen: a fresh open's show
     assert shell.detail.bar.currentIndex() == 0  # Shells again
