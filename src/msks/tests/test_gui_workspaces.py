@@ -140,6 +140,7 @@ def qt(tmp_path: Path):
     fonts.write_text("<fontconfig/>\n")
     os.environ["FONTCONFIG_FILE"] = str(fonts)
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    from msks.client.gui import listcells as listcells_mod
     from msks.client.gui import workspaces as workspaces_mod
     from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -152,6 +153,7 @@ def qt(tmp_path: Path):
         QtGui=QtGui,
         QtWidgets=QtWidgets,
         screen_mod=workspaces_mod,
+        cells_mod=listcells_mod,
     )
     # The teardown every GUI test owes its worker (#959): close
     # and delete every top-level widget the test left, then
@@ -210,7 +212,7 @@ def test_the_window_opens_on_the_standing_sort(qt) -> None:
     screen, window, _bridge = make_screen(qt)
     header = screen.table.horizontalHeader()
     assert header.isSortIndicatorShown()
-    assert header.sortIndicatorSection() == qt.screen_mod.CREATED_COLUMN
+    assert header.sortIndicatorSection() == qt.cells_mod.CREATED_COLUMN
     assert (
         header.sortIndicatorOrder() == qt.QtCore.Qt.SortOrder.DescendingOrder
     )
@@ -248,7 +250,7 @@ def test_the_list_renders_the_row_models(qt) -> None:
     assert screen.table.item(0, 4).text() == "today"
     assert screen.table.item(1, 4).text() == "2d ago"
     assert screen.table.item(2, 4).text() == "-"
-    rank = qt.screen_mod.RANK_ROLE
+    rank = qt.cells_mod.RANK_ROLE
     assert (
         screen.table.item(0, 1).data(rank) == 2  # running's lifecycle rank
     )
@@ -526,7 +528,7 @@ def test_the_columns_fit_their_longest_values(qt) -> None:
     included — so no cell elides, whatever the pane's width."""
     screen, window, _bridge = make_screen(qt)
     fm = screen.table.fontMetrics()
-    for column, label in enumerate(qt.screen_mod.COLUMNS):
+    for column, label in enumerate(qt.cells_mod.COLUMNS):
         texts = [
             screen.table.item(row, column).text()
             for row in range(screen.table.rowCount())
@@ -583,14 +585,14 @@ def test_the_columns_fill_the_pane(qt) -> None:
     qt.app.processEvents()
     total = sum(
         screen.table.columnWidth(column)
-        for column in range(len(qt.screen_mod.COLUMNS) + 1)
+        for column in range(len(qt.cells_mod.COLUMNS) + 1)
     )
     assert total == screen.table.viewport().width()
     window.resize(1500, 700)
     qt.app.processEvents()
     total = sum(
         screen.table.columnWidth(column)
-        for column in range(len(qt.screen_mod.COLUMNS) + 1)
+        for column in range(len(qt.cells_mod.COLUMNS) + 1)
     )
     assert total == screen.table.viewport().width()
     window.close()
@@ -603,7 +605,7 @@ def select_cell(qt, screen, row: int, column: int) -> None:
     model = screen.table.model()
     selection = qt.QtCore.QItemSelection(
         model.index(row, 0),
-        model.index(row, len(qt.screen_mod.COLUMNS) - 1),
+        model.index(row, len(qt.cells_mod.COLUMNS) - 1),
     )
     screen.table.selectionModel().select(
         selection,
@@ -628,7 +630,7 @@ def test_an_unchanged_listing_rebuilds_nothing(qt) -> None:
     screen.on_succeeded("workspaces-list", daemon_rows())
     assert screen.table.item(0, 0) is name  # nothing was rebuilt
     assert (
-        len(screen.table.selectedIndexes()) == len(qt.screen_mod.COLUMNS) + 1
+        len(screen.table.selectedIndexes()) == len(qt.cells_mod.COLUMNS) + 1
     )  # the whole row, the action column with it, still holds
     assert screen.table.currentIndex().column() == 1
     window.close()
@@ -647,9 +649,7 @@ def test_the_selection_follows_the_workspace(qt) -> None:
     rows = daemon_rows()
     screen.on_succeeded("workspaces-list", [rows[1], rows[0], rows[2]])
     assert screen.table.item(1, 0).text() == "alpha"
-    assert (
-        len(screen.table.selectedIndexes()) == len(qt.screen_mod.COLUMNS) + 1
-    )
+    assert len(screen.table.selectedIndexes()) == len(qt.cells_mod.COLUMNS) + 1
     # A changed stamp moves the row under the hold: alpha's
     # creation moves to now, and the hold follows it to the top.
     moved = [dict(row) for row in daemon_rows()]
@@ -679,10 +679,10 @@ def test_the_unchanged_and_hold_reads_defensively(qt) -> None:
     assert not screen.rows_unchanged(
         gui_rows.workspace_rows(changed)
     )  # a cell moved
-    screen.table.setItem(0, qt.screen_mod.IMAGE_COLUMN, None)
+    screen.table.setItem(0, qt.cells_mod.IMAGE_COLUMN, None)
     assert not screen.rows_unchanged(models)  # a missing cell
     select_cell(qt, screen, 1, 1)
-    screen.table.setItem(1, qt.screen_mod.NAME_COLUMN, None)
+    screen.table.setItem(1, qt.cells_mod.NAME_COLUMN, None)
     held, now = screen.held_rows()
     assert held == set() and now is None
     window.close()
@@ -768,7 +768,7 @@ def test_a_press_on_the_blank_space_keeps_the_hold(qt) -> None:
         pos=blank,
     )
     assert (
-        len(screen.table.selectedIndexes()) == len(qt.screen_mod.COLUMNS) + 1
+        len(screen.table.selectedIndexes()) == len(qt.cells_mod.COLUMNS) + 1
     )  # alpha's row still holds
     window.close()
 
@@ -799,7 +799,7 @@ def test_the_toolbar_is_gone_and_the_rows_hold_the_actions(qt) -> None:
     assert screen.findChildren(qt.QtWidgets.QPushButton) == []
     for workspace in ("ws-1", "ws-2", "ws-3"):
         cell = screen.table.cellWidget(
-            screen.row_ids()[workspace], qt.screen_mod.ACTION_COLUMN
+            screen.row_ids()[workspace], qt.cells_mod.ACTION_COLUMN
         )
         buttons = cell.findChildren(qt.QtWidgets.QToolButton)
         assert len(buttons) == 2  # the toggle and the shell
@@ -1003,7 +1003,7 @@ def test_the_action_slots_stand_guard(qt) -> None:
     screen.on_succeeded("workspaces-start", {})  # land the flight
     select_cell(qt, screen, screen.row_ids()["ws-1"], 0)  # hold it
     screen.table.setItem(
-        screen.row_ids()["ws-1"], qt.screen_mod.NAME_COLUMN, None
+        screen.row_ids()["ws-1"], qt.cells_mod.NAME_COLUMN, None
     )
     assert screen.held_workspace() is None
     # A row the rebuild has not filled measures nothing; an
@@ -1026,12 +1026,12 @@ def test_the_action_column_sorts_nothing(qt) -> None:
     screen, window, _bridge = make_screen(qt)
     table = screen.table
     header = table.horizontalHeader()
-    assert table.columnCount() == len(qt.screen_mod.COLUMNS) + 1
-    assert table.horizontalHeaderItem(qt.screen_mod.ACTION_COLUMN).text() == (
+    assert table.columnCount() == len(qt.cells_mod.COLUMNS) + 1
+    assert table.horizontalHeaderItem(qt.cells_mod.ACTION_COLUMN).text() == (
         ""
     )
     before = [
-        table.item(row, qt.screen_mod.NAME_COLUMN).text()
+        table.item(row, qt.cells_mod.NAME_COLUMN).text()
         for row in range(table.rowCount())
     ]
 
@@ -1049,11 +1049,11 @@ def test_the_action_column_sorts_nothing(qt) -> None:
     QtTest.QTest.mouseClick(
         header.viewport(),
         qt.QtCore.Qt.MouseButton.LeftButton,
-        pos=section_center(qt.screen_mod.ACTION_COLUMN),
+        pos=section_center(qt.cells_mod.ACTION_COLUMN),
     )
-    assert header.sortIndicatorSection() == qt.screen_mod.CREATED_COLUMN
+    assert header.sortIndicatorSection() == qt.cells_mod.CREATED_COLUMN
     after = [
-        table.item(row, qt.screen_mod.NAME_COLUMN).text()
+        table.item(row, qt.cells_mod.NAME_COLUMN).text()
         for row in range(table.rowCount())
     ]
     assert after == before  # the standing order stands
@@ -1062,11 +1062,11 @@ def test_the_action_column_sorts_nothing(qt) -> None:
     QtTest.QTest.mouseClick(
         header.viewport(),
         qt.QtCore.Qt.MouseButton.LeftButton,
-        pos=section_center(qt.screen_mod.NAME_COLUMN),
+        pos=section_center(qt.cells_mod.NAME_COLUMN),
     )
-    assert header.sortIndicatorSection() == qt.screen_mod.NAME_COLUMN
+    assert header.sortIndicatorSection() == qt.cells_mod.NAME_COLUMN
     labels = [
-        table.item(row, qt.screen_mod.NAME_COLUMN).text()
+        table.item(row, qt.cells_mod.NAME_COLUMN).text()
         for row in range(table.rowCount())
     ]
     assert labels == sorted(labels)
@@ -1089,7 +1089,7 @@ def test_a_rebuild_under_a_flight_keeps_the_gate(qt) -> None:
     screen.on_succeeded("workspaces-list", renamed)
     assert (
         screen.table.item(
-            screen.row_ids()["ws-1"], qt.screen_mod.NAME_COLUMN
+            screen.row_ids()["ws-1"], qt.cells_mod.NAME_COLUMN
         ).text()
         == "alpha-renamed"
     )
@@ -1111,7 +1111,7 @@ def test_the_row_shell_button_opens_the_workspace(qt) -> None:
     seen: list[str] = []
     screen.shell_requested.connect(seen.append)
     row = screen.row_ids()["ws-2"]
-    cell = screen.table.cellWidget(row, qt.screen_mod.ACTION_COLUMN)
+    cell = screen.table.cellWidget(row, qt.cells_mod.ACTION_COLUMN)
     buttons = cell.findChildren(qt.QtWidgets.QToolButton)
     shell = next(b for b in buttons if b.toolTip() == "Open a shell")
     shell.click()
@@ -1358,7 +1358,7 @@ def test_every_cell_renders_but_never_edits(qt) -> None:
     phase 4's detail page will ride still lands."""
     screen, window, _bridge = make_screen(qt)
     for row in range(screen.table.rowCount()):
-        for column in range(len(qt.screen_mod.COLUMNS)):
+        for column in range(len(qt.cells_mod.COLUMNS)):
             flags = screen.table.item(row, column).flags()
             editable = qt.QtCore.Qt.ItemFlag.ItemIsEditable
             selectable = qt.QtCore.Qt.ItemFlag.ItemIsSelectable
@@ -1412,4 +1412,25 @@ def test_the_status_column_sorts_by_lifecycle_rank(qt) -> None:
     screen.table.sortItems(3, qt.QtCore.Qt.SortOrder.AscendingOrder)
     labels = [screen.table.item(row, 0).text() for row in range(2)]
     assert labels == ["beta", "alpha"]
+    window.close()
+
+
+def test_a_widened_pane_reflows_the_columns(qt) -> None:
+    """The widened screen's columns (#964, the operator's ask):
+    the screen's own resize event reads the viewport one layout
+    pass behind, so every widen left its last delta blank — a
+    maximized window most of all. The pane's own resize re-flows
+    the columns: the table consumes the pane's whole width at
+    any width over the default, no horizontal scrollbar."""
+    screen, window, _bridge = make_screen(qt)
+    for width in (2000, 1700, 1450):
+        window.resize(width, 700)
+        qt.app.processEvents()
+        table = screen.table
+        total = sum(
+            table.columnWidth(column)
+            for column in range(len(qt.cells_mod.COLUMNS))
+        ) + table.columnWidth(qt.cells_mod.ACTION_COLUMN)
+        assert total >= table.viewport().width() - 8  # the pane filled
+        assert table.horizontalScrollBar().maximum() == 0
     window.close()

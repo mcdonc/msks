@@ -252,7 +252,7 @@ def test_the_page_answer_renders_both_groups(qt) -> None:
             IMPORTED_MARKER,
         ],
     ]
-    assert tab.status.text() == "2 in the catalog · 2 published"
+    assert tab.counts.text() == "2 in the catalog · 2 published"
     window.close()
 
 
@@ -265,7 +265,7 @@ def test_a_later_answer_replaces_the_groups(qt) -> None:
     tab.on_succeeded(images_mod.PAGE_KEY, page_answer([], []))
     assert tab.catalog_table.rowCount() == 0
     assert tab.published_table.rowCount() == 0
-    assert tab.status.text() == (
+    assert tab.counts.text() == (
         "the catalog and the channel both carry nothing — "
         "import from a channel URL once one is published"
     )
@@ -356,7 +356,7 @@ def test_a_catalog_answer_moves_the_markers(qt) -> None:
         (images_mod.CATALOG_KEY, "images", ())
     ]  # the flight this test issued; the channel was not refetched
     assert rows_texts(tab.published_table)[0][-1] == IMPORTED_MARKER
-    assert tab.status.text() == "3 in the catalog · 2 published"
+    assert tab.counts.text() == "3 in the catalog · 2 published"
     window.close()
 
 
@@ -621,7 +621,7 @@ def test_the_flash_clears_after_its_span(qt) -> None:
     third = tab.flash_seq
     tab.standing("2 in the catalog · 2 published")
     tab.clear_stale(third)  # retired by the standing line
-    assert tab.status.text() == "2 in the catalog · 2 published"
+    assert tab.counts.text() == "2 in the catalog · 2 published"
     window.close()
 
 
@@ -993,7 +993,7 @@ def test_a_stale_page_answer_keeps_the_fresher_catalog(qt) -> None:
     ]
     # The channel's half took: the published rows still show.
     assert tab.published_table.rowCount() == 2
-    assert tab.status.text() == "1 in the catalog · 2 published"
+    assert tab.counts.text() == "1 in the catalog · 2 published"
     window.close()
 
 

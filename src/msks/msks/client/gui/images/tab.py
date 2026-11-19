@@ -185,6 +185,20 @@ class ImagesTab(QtWidgets.QWidget):
         self.import_timer = QtCore.QTimer(self)
         self.import_timer.setInterval(IMPORT_TICK_MS)
         self.import_timer.timeout.connect(self.import_tick)
+        # The counts line (#964, the operator's ask): the two
+        # groups' standing tally beneath the published pane, the
+        # workspace list's own bottom strip's style — one
+        # `·`-separated line the operator can select and copy
+        # whole. A long line clips in place: the strip's width
+        # follows the window's, never the text's.
+        self.counts = QtWidgets.QLabel("", self)
+        self.counts.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.counts.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
         top = QtWidgets.QHBoxLayout()
         top.addWidget(self.status, stretch=1)
         top.addWidget(self.refresh_button)
@@ -192,6 +206,7 @@ class ImagesTab(QtWidgets.QWidget):
         layout.addLayout(top)
         layout.addWidget(self.group(CATALOG_GROUP, self.catalog_table))
         layout.addWidget(self.group(PUBLISHED_GROUP, self.published_table))
+        layout.addWidget(self.counts)
         self.setLayout(layout)
 
     def group(self, title: str, table: ListTable) -> QtWidgets.QGroupBox:
@@ -256,7 +271,8 @@ class ImagesTab(QtWidgets.QWidget):
         if self.pending:
             return
         self.pending = True
-        self.standing("fetching the catalog and the published manifest…")
+        self.flash_seq += 1  # retire any pending flash timeout
+        self.status.setText("fetching the catalog and the published manifest…")
         self.read_seq += 1
         self.page_seq = self.read_seq
         self.bridge.call(PAGE_KEY, "images_page", self.url)
@@ -662,14 +678,16 @@ class ImagesTab(QtWidgets.QWidget):
             self.status.clear()
 
     def standing(self, text: str) -> None:
-        """The standing status (#964): a refresh's counts, the
-        fetch line while a refresh is out — no timeout, and the
-        serial bump retires any flash timeout still pending,
-        resolves any outage the flash named, and stands until
-        something else says its piece."""
+        """The standing tally (#964): a refresh's counts land on
+        the bottom line beneath the published pane, and the
+        status line's flash resolves — the serial bump retires
+        any timeout still pending and any outage the flash
+        named — standing clear until something else says its
+        piece."""
         self.flash_seq += 1
         self.flash_outage = False
-        self.status.setText(text)
+        self.counts.setText(text)
+        self.status.clear()
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         """The tab's first refresh at open (#964): the groups
