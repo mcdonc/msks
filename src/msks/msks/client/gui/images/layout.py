@@ -2,14 +2,17 @@
 #964): the layout the two group tables take against their
 panes' widths — the catalog pane's columns sharing the spare so
 the group fills its pane's whole width, and the published
-pane's character budget: the description pays first, its middle
-ellipsis shrinking to a handful of characters, then the hash,
-then the ref and the build date, the size and the marker giving
-ground only after those are spent — so the size and the marker
-read whole in every pane a real window shows, and no horizontal
-scrollbar hides a row's cells whatever the pane's width. The
-budget pays each column's own padding before its text, so a
-cell that fits its column reads whole.
+pane's widths: a spare pane keeps every whole value and spreads
+the room across the size, the hash, the build date, and the
+marker; a tight pane takes its character budget from the
+description first (its middle ellipsis shrinking to a handful
+of characters), then the hash, then the ref and the build date,
+the size and the marker giving ground only after those are
+spent — so the size and the marker read whole in every pane a
+real window shows, and no horizontal scrollbar hides a row's
+cells whatever the pane's width. A column at or above its
+natural width keeps whole text: the natural measurement already
+carries the padding the cell renders within.
 
 Plain widget arithmetic, no tab state: the tab module
 (:mod:`msks.client.gui.images.tab`) hands over the tables and
@@ -75,15 +78,16 @@ def size_catalog_columns(catalog: ListTable) -> None:
 
 
 def size_published_columns(table: ListTable, models) -> None:
-    """The published group's columns (#964): the spare goes
-    to the description (the TUI page's own absorber), and a
-    pane without room takes its character budget from the
-    description first — down to a handful of characters —
-    then the hash, then the ref and the build date, the size
-    and the marker giving ground only after those are spent:
-    the size and the marker read whole in every pane a real
-    window shows, and no horizontal scrollbar hides a row's
-    cells whatever the pane's width."""
+    """The published group's columns (#964): a spare pane keeps
+    every whole value and spreads the room across the size, the
+    hash, the build date, and the marker; a pane without room
+    takes its character budget from the description first —
+    down to a handful of characters — then the hash, then the
+    ref and the build date, the size and the marker giving
+    ground only after those are spent: the size and the marker
+    read whole in every pane a real window shows, and no
+    horizontal scrollbar hides a row's cells whatever the
+    pane's width."""
     restore_whole_texts(table, models)
     table.resizeColumnsToContents()
     widths = [
@@ -91,7 +95,11 @@ def size_published_columns(table: ListTable, models) -> None:
     ]
     spare = table_spare(table)
     if spare > 0:
-        table.setColumnWidth(DESC_COLUMN, widths[DESC_COLUMN] + spare)
+        share_the_spare(
+            table,
+            (SIZE_COLUMN, HASH_COLUMN, BUILT_COLUMN, MARKER_COLUMN),
+            spare,
+        )
     else:
         spare = shrink_to(
             table, widths, DESC_COLUMN, description_floor(table), spare
@@ -106,6 +114,22 @@ def size_published_columns(table: ListTable, models) -> None:
         spare = stage_deficit(table, (REF_COLUMN, BUILT_COLUMN), spare)
         stage_deficit(table, (SIZE_COLUMN, MARKER_COLUMN), spare)
     fit_elided(table, models, widths)
+
+
+def share_the_spare(
+    table: ListTable, columns: tuple[int, ...], spare: int
+) -> None:
+    """The spare pane's sharing (#964): the description keeps
+    its whole value and the spare spreads evenly across the
+    size, the hash, the build date, and the marker — the pane
+    fills its width with its facts instead of parking the room
+    in the description's empty tail."""
+    share, extra = divmod(spare, len(columns))
+    for index, column in enumerate(columns):
+        table.setColumnWidth(
+            column,
+            table.columnWidth(column) + share + (1 if index < extra else 0),
+        )
 
 
 def description_floor(table: ListTable) -> int:
@@ -208,17 +232,18 @@ def column_floor(table: ListTable, column: int) -> int:
 
 
 def fit_elided(table: ListTable, models, naturals: list[int]) -> None:
-    """The published cells' display (#964): every cell
-    ellipsized in the middle within the width its column ended
-    with — the budget pays the column's own padding first, so a
-    cell that fits its column reads whole. The whole values
-    stay on the models, so a wider pane restores them."""
+    """The published cells' display (#964): a column at or
+    above its natural width reads its whole values — the
+    natural measurement already carries the padding the cell
+    renders within, and a budget shaved below it would ellipsize
+    every cell that fits. A column below its natural width
+    ellipsizes in the middle within the width it ended with,
+    the budget paying only the padding the natural carried.
+    The whole values stay on the models, so a wider pane
+    restores them."""
     metrics = table.fontMetrics()
     for column in range(table.columnCount()):
-        overhead = column_overhead(
-            table, metrics, column, naturals[column], models
-        )
-        budget = table.columnWidth(column) - overhead
+        budget = elide_budget(table, metrics, column, naturals[column], models)
         for row in range(table.rowCount()):
             model = row_model(table, models, row)
             if model is None:
@@ -234,6 +259,19 @@ def fit_elided(table: ListTable, models, naturals: list[int]) -> None:
                     budget,
                 )
             )
+
+
+def elide_budget(
+    table: ListTable, metrics, column: int, natural: int, models
+) -> int:
+    """The column's elide budget (#964): the column's whole
+    width when the whole value fits by construction — the
+    natural measurement already carries the padding the cell
+    renders within — and the padding-paid width below it."""
+    width = table.columnWidth(column)
+    if width >= natural:
+        return width
+    return width - column_overhead(table, metrics, column, natural, models)
 
 
 def column_overhead(

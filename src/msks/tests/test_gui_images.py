@@ -1381,3 +1381,38 @@ def test_the_size_and_marker_give_ground_last(qt) -> None:
         cells.BUILT_COLUMN
     )
     window.close()
+
+
+def test_a_spare_pane_spreads_the_room(qt) -> None:
+    """The spare pane's sharing (#964, the operator's ask): the
+    description keeps its whole value — no empty tail parking
+    the pane's room — and the spare spreads across the size,
+    the hash, the build date, and the marker, the group filling
+    the pane's whole width."""
+    tab, window = make_channel_tab(qt, 2400)
+    qt.app.processEvents()
+    table = tab.published_table
+    assert widths_total(table) >= table.viewport().width() - 4
+    assert table.horizontalScrollBar().maximum() == 0
+    # The description stands at its natural width, not wider,
+    # and the room went to the four fact columns instead —
+    # measured against a fresh re-measure of the naturals.
+    sized = [table.columnWidth(c) for c in range(table.columnCount())]
+    table.setSortingEnabled(False)
+    layout_mod.restore_whole_texts(table, tab.published_models)
+    table.resizeColumnsToContents()
+    naturals = [table.columnWidth(c) for c in range(table.columnCount())]
+    table.setSortingEnabled(True)
+    assert sized[cells.DESC_COLUMN] == naturals[cells.DESC_COLUMN]
+    # The room went to the four fact columns instead.
+    grew = [
+        sized[c] - naturals[c]
+        for c in (
+            cells.SIZE_COLUMN,
+            cells.HASH_COLUMN,
+            cells.BUILT_COLUMN,
+            cells.MARKER_COLUMN,
+        )
+    ]
+    assert all(extra > 0 for extra in grew)
+    window.close()
