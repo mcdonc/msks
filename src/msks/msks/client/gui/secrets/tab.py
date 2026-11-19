@@ -46,10 +46,10 @@ from .sentinel import SentinelPanel
 
 def table_edge(key: int, current: int, last: int) -> bool | None:
     """The listing's edge keys (#966): Right on the last column
-    hands the keyboard onward to the pane beside the listing,
-    Left on the first hands it back — None keeps the walk inside
-    the table's cells, the spatial-navigation rule over sibling
-    columns."""
+    and Left on the first hand the keyboard out of the table —
+    None keeps the walk inside the cells. The destinations are
+    the crossing's own (:func:`hand_focus`), the
+    spatial-navigation rule over sibling columns."""
     if key == QtCore.Qt.Key.Key_Right and current >= last:
         return True
     if key == QtCore.Qt.Key.Key_Left and current <= 0:
@@ -57,11 +57,30 @@ def table_edge(key: int, current: int, last: int) -> bool | None:
     return None
 
 
+def hand_focus(table, hand: bool) -> None:
+    """The edge crossing's destination (#966, review round two):
+    a right-hand crossing takes the pane's Show button — the
+    tab wires the target, an explicit destination the focus
+    chain's construction order cannot be trusted to name — and
+    a disabled target (no row on the pane) falls to the chain
+    like every other hand."""
+    target = table.right_target
+    if hand and target is not None and target.isEnabled():
+        target.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+        return
+    QtWidgets.QWidget.focusNextPrevChild(table, hand)
+
+
 class RowTable(ListTable):
     """The listing's own table (#966): the Up bridge the list
-    owns, beside the Left/Right edges' own (:func:`table_edge`)
-    — the keyboard crosses the splitter, the sentinel pane
-    beside the listing joining the reading order."""
+    owns, beside the Left/Right edges' own (:func:`table_edge`
+    and :func:`hand_focus`) — Right crosses to the sentinel
+    pane beside the listing, Left hands the keyboard back up
+    the page, the pane joining the reading order."""
+
+    #: The right-hand crossing's destination (#966): the tab
+    #: wires the pane's Show button once the pane exists.
+    right_target = None
 
     def keyPressEvent(self, event) -> None:
         hand = table_edge(
@@ -70,7 +89,7 @@ class RowTable(ListTable):
         if hand is None:
             super().keyPressEvent(event)
             return
-        QtWidgets.QWidget.focusNextPrevChild(self, hand)
+        hand_focus(self, hand)
 
 
 #: The tab's gathered refresh key (#966): the open's first read
@@ -136,6 +155,9 @@ class SecretsTab(QtWidgets.QWidget):
         # line must not price the tab's minimum past the
         # window's own default width.
         self.list_empty.setWordWrap(True)
+        # The plain list table, not the crossing one (#966): the
+        # audit group spans the page with no sibling column to
+        # cross, its Up bridge alone the edges it needs.
         self.audit_table = ListTable(0, len(cells.AUDIT_COLUMNS), self)
         self.audit_table.setHorizontalHeaderLabels(cells.AUDIT_COLUMNS)
         self.build_table(self.audit_table, sortable=False)
@@ -144,6 +166,10 @@ class SecretsTab(QtWidgets.QWidget):
         # reason.
         self.audit_empty.setWordWrap(True)
         self.panel = SentinelPanel(self)
+        # The listing's right-hand crossing lands on the pane's
+        # Show button — the explicit destination the chain's own
+        # order cannot be trusted to name (#966, review round two).
+        self.table.right_target = self.panel.show_button
         self.status = QtWidgets.QLabel("", self)
         self.refresh_button = QtWidgets.QPushButton("Refresh", self)
         self.refresh_button.clicked.connect(self.refresh)
@@ -381,6 +407,11 @@ class SecretsTab(QtWidgets.QWidget):
         key's failure is not this tab's to show."""
         if key == PAGE_KEY:
             self.pending = False
+            # The carried ask dies with the flight it waited on
+            # (#966, review round two): the outage flash already
+            # names the retry, and a later landing must not fire
+            # a refresh nobody asked for.
+            self.refresh_due = False
             self.flash(str(failure), outage=failure.reach)
         elif key in (RENEW_KEY, REVOKE_KEY):
             self.action_landed()

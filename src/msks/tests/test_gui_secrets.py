@@ -1252,30 +1252,54 @@ def test_the_listing_keeps_the_daemons_order_until_a_click(
 
 
 def test_the_listing_edges_cross_to_the_pane(qt, monkeypatch) -> None:
-    """The listing's Left/Right edges (#966, review round one):
-    Right on the last column and Left on the first hand the
-    keyboard across the splitter — the sentinel pane joins the
-    reading order, and the interior columns still walk cells."""
+    """The listing's Left/Right edges (#966, review round two):
+    Right on the last column lands on the pane's Show button —
+    the explicit destination, measured where the focus actually
+    went — Left on the first hands the keyboard back up the
+    page, and the interior columns still walk cells. A pane with
+    no row on it (its buttons disabled) falls to the chain."""
     tab, window, _bridge = make_tab(qt, monkeypatch)
     key = qt.QtCore.Qt.Key
     press = qt.QtCore.QEvent.Type.KeyPress
     mods = qt.QtCore.Qt.KeyboardModifier.NoModifier
+
+    # The pane armed: its Show button holds the crossing's
+    # destination (an idle pane falls to the chain — the last
+    # assertion below).
+    tab.panel.show_row(dict(placeholder(), sentinel=WIDE))
+
+    def pressed(table, key_event):
+        table.setFocus()
+        qt.app.processEvents()
+        table.keyPressEvent(key_event)
+        qt.app.processEvents()
+        return qt.app.focusWidget()
+
     table = tab.table
     table.setCurrentCell(0, len(cells.LIST_COLUMNS) - 1)
     assert (
-        table.keyPressEvent(qt.QtGui.QKeyEvent(press, key.Key_Right, mods))
-        is None
+        pressed(table, qt.QtGui.QKeyEvent(press, key.Key_Right, mods))
+        is tab.panel.show_button
     )
     table.setCurrentCell(0, 0)
     assert (
-        table.keyPressEvent(qt.QtGui.QKeyEvent(press, key.Key_Left, mods))
-        is None
+        pressed(table, qt.QtGui.QKeyEvent(press, key.Key_Left, mods))
+        is tab.mint_button
     )
-    table.setCurrentCell(0, 1)
     # An interior column's Right still walks the cells — the
     # base table's own move, handed back to Qt.
+    table.setCurrentCell(0, 1)
+    table.setFocus()
     table.keyPressEvent(qt.QtGui.QKeyEvent(press, key.Key_Right, mods))
     assert table.currentColumn() == 2
+    # The disabled pane falls to the chain: the crossing's own
+    # target holds nothing to focus.
+    tab.panel.clear()
+    table.setCurrentCell(0, len(cells.LIST_COLUMNS) - 1)
+    assert (
+        pressed(table, qt.QtGui.QKeyEvent(press, key.Key_Right, mods))
+        is not tab.panel.show_button
+    )
     window.close()
 
 
@@ -1360,4 +1384,22 @@ def test_a_hidden_tab_stops_its_tick(qt, monkeypatch) -> None:
     assert not tab.tick_timer.isActive()
     tab.showEvent(qt.QtGui.QShowEvent())
     assert tab.tick_timer.isActive()
+    window.close()
+
+
+def test_a_failed_page_flight_releases_the_carried_ask(
+    qt, monkeypatch
+) -> None:
+    """The carried ask dies with its flight (#966, review round
+    two): a page flight that fails clears the carry — a later
+    manual retry lands once, with no refresh nobody asked for
+    firing after it."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    tab.refresh_due = True
+    tab.on_failed(secrets_mod.PAGE_KEY, RestFailure("outage", reach=True))
+    assert not tab.refresh_due
+    bridge.calls.clear()
+    tab.refresh()
+    tab.on_succeeded(secrets_mod.PAGE_KEY, page_answer())
+    assert bridge.calls == [(secrets_mod.PAGE_KEY, "secrets_page", ())]
     window.close()
