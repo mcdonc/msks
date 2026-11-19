@@ -271,15 +271,32 @@ def test_the_grid_holds_through_the_windows_real_chrome(qt, zoomed):
     outer = qt.QtWidgets.QTabWidget()
     outer.addTab(page, "Workspaces")
     zoomed.window.setCentralWidget(outer)
+    # The client's real opening size (#939): a sliver of a
+    # window cannot lose a row to test with — the pin must
+    # hold at the size the window really opens at.
+    zoomed.window.resize(1280, 720)
     zoomed.window.show()
     qt.app.processEvents()
+    assert widget.rows > 1  # a real grid to hold, not a sliver
     held = (widget.cols, widget.rows)
+    before = zoomed.window.size()
     zoomed.zoom.grow()
     qt.app.processEvents()
     assert (widget.cols, widget.rows) == held
     zoomed.zoom.shrink()
     qt.app.processEvents()
     assert (widget.cols, widget.rows) == held
+    # Three steps and a reset (#976, the round the review
+    # probed): the zoom's own round trip ends where it began —
+    # same grid, window no smaller than the start.
+    for _ in range(3):
+        zoomed.zoom.grow()
+        qt.app.processEvents()
+        assert (widget.cols, widget.rows) == held
+    zoomed.zoom.reset()
+    qt.app.processEvents()
+    assert (widget.cols, widget.rows) == held
+    assert zoomed.window.height() >= before.height()
 
 
 def test_the_headers_follow_the_application_font(qt, zoomed):

@@ -136,6 +136,12 @@ class TerminalWidget(QWidget):
         self._wheel_accum = 0
         self._closed = False
         self._exit_reported = False
+        # The window fit's flag (#976): a pass's window resize
+        # delivers a resize event synchronously, and the grid
+        # re-derivation it would run mid-fit would shrink the
+        # very target the next pass fits to — the fit holds the
+        # entry grid and lands it once at the end.
+        self._fitting = False
         # Selection, links, and find: the press state for the
         # multi-click window, the drag state for autoscroll,
         # the painter's URL scan, the hand cursor, and the
@@ -335,14 +341,40 @@ class TerminalWidget(QWidget):
         writes the chrome's application font in the same step,
         and the font-metric chrome (the tab bars around the
         terminal) takes its share of the window between them.
-        The grid the final resize re-derives is the grid that
-        stood, the partial-cell slack included."""
+        The fit holds the grid it entered with — the passes'
+        window resizes deliver resize events that would
+        re-derive the grid from pixels mid-fit and shrink the
+        target — and :meth:`land_grid` lands the settled
+        pixels' grid once at the end, so the child sees its
+        entry columns and rows at the new cell size when the
+        fit converges."""
         window = self.window()
         if not self.can_fit_window(window):
             return
-        for _ in range(2):
-            if not self.fit_once(window):
-                return
+        entered = (self.width(), self.height())
+        self._fitting = True
+        try:
+            for _ in range(2):
+                if not self.fit_once(window):
+                    return
+        finally:
+            self._fitting = False
+            self.land_grid(entered)
+
+    def land_grid(self, entered: tuple[int, int]) -> None:
+        """Land the grid the fit left (#976): the passes' own
+        resize events were held off, and the settled pixels
+        name the grid now — the entry grid when the fit
+        converged, whatever the pixels hold when it could not.
+        A widget whose pixels never moved (a window that
+        carries no layout over it) keeps the grid it entered
+        with whole."""
+        if (self.width(), self.height()) == entered:
+            return
+        cols = max(1, self.width() // self.metrics.cell_width)
+        rows = max(1, self.height() // self.metrics.cell_height)
+        if (cols, rows) != (self.cols, self.rows):
+            self.resize_grid(cols, rows)
 
     def can_fit_window(self, window) -> bool:
         """Whether fit_window may move this window (#976): a
@@ -396,10 +428,11 @@ class TerminalWidget(QWidget):
         self.refresh()
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
-        cols = max(1, self.width() // self.metrics.cell_width)
-        rows = max(1, self.height() // self.metrics.cell_height)
-        if (cols, rows) != (self.cols, self.rows):
-            self.resize_grid(cols, rows)
+        if not self._fitting:  # the window fit holds the grid it entered with
+            cols = max(1, self.width() // self.metrics.cell_width)
+            rows = max(1, self.height() // self.metrics.cell_height)
+            if (cols, rows) != (self.cols, self.rows):
+                self.resize_grid(cols, rows)
         find.layout(self)
         super().resizeEvent(event)
 

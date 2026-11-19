@@ -1005,9 +1005,43 @@ def test_a_maximized_window_answers_no_fit(screen, qt):
         host.showMaximized()
         qt.app.processEvents()
         maximized = host.size()
+        stepped = widget.metrics.cell_height
         widget.apply_font_size(widget.font.pointSize() + 2)
-        assert widget.metrics.cell_height > 0  # the face stepped
+        assert widget.metrics.cell_height > stepped  # the face stepped
         assert host.size() == maximized  # the frame answered nothing
+    finally:
+        shutdown(widget)
+        host.close()
+
+
+def test_a_fit_that_cannot_reach_lands_the_pixels_grid(screen, qt):
+    """A fit the window's layout cannot complete (#976): a
+    capped terminal takes its window's growth only to the
+    cap, the settle cannot bring the entry grid back, and the
+    landing hands the emulator and the child the grid the
+    pixels hold — the screen paints, the child reads, one
+    grid."""
+    host = qt.QtWidgets.QMainWindow()
+    host.show()
+    from msks.client.gui.terminal import TerminalWidget
+
+    widget = TerminalWidget([sys.executable, "-c", SLEEPER], parent=host)
+    host.setCentralWidget(widget)
+    qt.app.processEvents()  # the central takes the window's pixels first
+    try:
+        drain_until(widget, b"ready")
+        widget.setMaximumHeight(widget.height() // 2)  # the cap the
+        # layout cannot lift: the fit's growth stops at it
+        qt.app.processEvents()
+        held = (widget.cols, widget.rows)
+        widget.apply_font_size(widget.font.pointSize() + 2)
+        qt.app.processEvents()
+        landed = (
+            max(1, widget.width() // widget.metrics.cell_width),
+            max(1, widget.height() // widget.metrics.cell_height),
+        )
+        assert landed[1] < held[1]  # the cap held the fit short
+        assert (widget.cols, widget.rows) == landed  # one grid everywhere
     finally:
         shutdown(widget)
         host.close()
