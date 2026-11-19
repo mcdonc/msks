@@ -322,12 +322,17 @@ def test_the_manual_refresh_skips_a_flight_already_out(
     qt, monkeypatch
 ) -> None:
     """The refresh guard (#966, the listing's own): a refresh
-    already in flight is skipped; the landing opens the gate."""
+    already in flight is skipped — and the gate carries the
+    ask: the landing takes the flight the gate refused, so a
+    refresh is never dropped either."""
     tab, window, bridge = make_tab(qt, monkeypatch)
     bridge.calls.clear()
     tab.refresh()
     tab.refresh()
     assert bridge.calls == [(secrets_mod.PAGE_KEY, "secrets_page", ())]
+    tab.on_succeeded(secrets_mod.PAGE_KEY, page_answer())
+    # The carried ask flew on the landing.
+    assert bridge.calls[-1] == (secrets_mod.PAGE_KEY, "secrets_page", ())
     tab.on_succeeded(secrets_mod.PAGE_KEY, page_answer())
     bridge.calls.clear()
     tab.refresh()
@@ -497,7 +502,10 @@ def test_renew_picks_the_ttl_and_posts_it(qt, monkeypatch) -> None:
     assert bridge.calls == [
         (secrets_mod.RENEW_KEY, "renew_secret", (2, 21600))
     ]
-    tab.on_succeeded(secrets_mod.RENEW_KEY, {"id": 2})
+    tab.on_succeeded(
+        secrets_mod.RENEW_KEY,
+        {"id": 2, "expires_at": (NOW + timedelta(hours=6)).isoformat()},
+    )
     assert tab.status.text() == ("renewed ws1,ws2/deploy_key · expires 6h")
     assert bridge.calls[-1] == (secrets_mod.PAGE_KEY, "secrets_page", ())
     window.close()
@@ -719,7 +727,9 @@ def test_the_mint_dialog_posts_and_lands(qt, monkeypatch) -> None:
     assert dialog.reply == reply
     bridge.calls.clear()
     landed = SimpleNamespace(reply=reply, exec=lambda: 1)
-    monkeypatch.setattr(secrets_mod, "MintDialog", lambda bridge: landed)
+    monkeypatch.setattr(
+        secrets_mod, "MintDialog", lambda bridge, parent=None: landed
+    )
     tab.open_mint()
     assert bridge.calls == [(secrets_mod.PAGE_KEY, "secrets_page", ())]
     assert tab.panel.sentinel.text() == "mskssec2_" + "\u2022" * 24
@@ -1022,8 +1032,7 @@ def test_the_mint_dialog_refuses_local_junk(qt) -> None:
     dialog = mint_mod.MintDialog(bridge)
     dialog.submit()
     assert dialog.note.text() == "a name is required"
-    assert bridge.calls == [(mint_mod.WORKSPACES_KEY, "workspaces", ())][1:]
-    assert bridge.calls == []
+    assert bridge.calls == []  # construction alone asks nothing
     dialog.name.setText("github_api")
     dialog.dests.setText("api.github.com")
     dialog.submit()
@@ -1108,7 +1117,9 @@ def test_a_cancelled_mint_dialog_decides_nothing(qt, monkeypatch) -> None:
     monkeypatch.setattr(
         secrets_mod,
         "MintDialog",
-        lambda bridge: SimpleNamespace(reply=None, exec=lambda: 0),
+        lambda bridge, parent=None: SimpleNamespace(
+            reply=None, exec=lambda: 0
+        ),
     )
     bridge.calls.clear()
     tab.open_mint()
@@ -1126,7 +1137,9 @@ def test_a_dialog_that_accepts_without_a_reply_decides_nothing(
     monkeypatch.setattr(
         secrets_mod,
         "MintDialog",
-        lambda bridge: SimpleNamespace(reply=None, exec=lambda: 1),
+        lambda bridge, parent=None: SimpleNamespace(
+            reply=None, exec=lambda: 1
+        ),
     )
     bridge.calls.clear()
     tab.open_mint()
@@ -1144,3 +1157,207 @@ def test_a_press_on_a_row_pops_the_menu(qt, monkeypatch) -> None:
     )
     tab.menu_requested(qt.QtCore.QPoint(30, 40))
     assert len(popped) == 1
+
+
+def test_an_actions_refresh_is_never_dropped(qt, monkeypatch) -> None:
+    """The gate carries an action's refresh (#966, review round
+    one): a page flight already out when the action lands does
+    not swallow the re-read — the stale answer (a read issued
+    before the action) lands once, then the carried flight
+    replaces it with the fresh rows."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    model = next(m for m in tab.secret_models if m.id == 1)
+    monkeypatch.setattr(tab, "confirm_revoke", lambda model: True)
+    tab.refresh()  # the stale read goes out
+    bridge.calls.clear()
+    tab.revoke_row(model)
+    assert bridge.calls == [(secrets_mod.REVOKE_KEY, "revoke_secret", (1,))]
+    tab.on_succeeded(secrets_mod.REVOKE_KEY, {"revoked": 1})
+    assert tab.refresh_due  # the gate carried the ask
+    # The stale page answer lands — the revoked row still shows.
+    tab.on_succeeded(
+        secrets_mod.PAGE_KEY, page_answer(secrets=[placeholder()])
+    )
+    assert {m.id for m in tab.secret_models} == {1}
+    assert not tab.refresh_due  # the carried flight flew
+    assert bridge.calls[-1] == (secrets_mod.PAGE_KEY, "secrets_page", ())
+    # Its landing shows the fresh rows.
+    tab.on_succeeded(secrets_mod.PAGE_KEY, page_answer(secrets=[]))
+    assert tab.secret_models == []
+    window.close()
+
+
+def test_a_queued_mint_answer_after_the_close_reaches_no_one(qt) -> None:
+    """The close race (#966, review round one): an answer already
+    queued when the dialog closes is ignored — the closed dialog
+    accepts nothing, keeps no reply, and the value field stays
+    cleared."""
+    bridge = StubBridge()
+    dialog = mint_mod.MintDialog(bridge)
+    dialog.name.setText("github_api")
+    dialog.dests.setText("api.github.com")
+    dialog.value.setText("x")
+    dialog.submit()
+    dialog.done(0)
+    dialog.on_succeeded(
+        mint_mod.MINT_KEY, dict(placeholder(id=9), sentinel=WIDE)
+    )
+    dialog.on_failed(mint_mod.MINT_KEY, RestFailure("late", reach=False))
+    assert dialog.reply is None
+    assert dialog.value.text() == ""
+
+
+def test_a_revoke_clears_the_panels_row(qt, monkeypatch) -> None:
+    """The revoke and the panel (#966, review round one): a
+    revoke that retires the row whose sentinel stands on the
+    panel clears the panel with it — the token leaves the widget
+    tree with its row — and another row's revoke leaves the
+    panel standing."""
+    tab, window, bridge = make_tab(qt, monkeypatch)
+    tab.panel.show_row(dict(placeholder(id=2), sentinel=SCOPED))
+    monkeypatch.setattr(tab, "confirm_revoke", lambda model: True)
+    model = next(m for m in tab.secret_models if m.id == 1)
+    tab.revoke_row(model)
+    tab.on_succeeded(secrets_mod.REVOKE_KEY, {"revoked": 1})
+    assert tab.panel.row is not None  # another row's revoke: stands
+    model = next(m for m in tab.secret_models if m.id == 2)
+    tab.revoke_row(model)
+    tab.on_succeeded(secrets_mod.REVOKE_KEY, {"revoked": 2})
+    assert tab.panel.row is None
+    assert tab.panel.sentinel.text() == ""
+    window.close()
+
+
+def test_the_listing_keeps_the_daemons_order_until_a_click(
+    qt, monkeypatch
+) -> None:
+    """No standing sort (#966, review round one): the listing
+    renders the daemon's own order — the insertion order the
+    presenter carries — and a header click orders it on
+    request."""
+    tab, window, _bridge = make_tab(qt, monkeypatch)
+    assert [
+        tab.table.item(row, 0).data(cells.ROW_KEY_ROLE)
+        for row in range(tab.table.rowCount())
+    ] == [1, 2]
+    tab.table.sortByColumn(
+        cells.EXPIRES_COLUMN,
+        qt.QtCore.Qt.SortOrder.DescendingOrder,
+    )
+    assert [
+        tab.table.item(row, 0).data(cells.ROW_KEY_ROLE)
+        for row in range(tab.table.rowCount())
+    ] == [1, 2]  # unbounded last on the descending countdown
+    window.close()
+
+
+def test_the_listing_edges_cross_to_the_pane(qt, monkeypatch) -> None:
+    """The listing's Left/Right edges (#966, review round one):
+    Right on the last column and Left on the first hand the
+    keyboard across the splitter — the sentinel pane joins the
+    reading order, and the interior columns still walk cells."""
+    tab, window, _bridge = make_tab(qt, monkeypatch)
+    key = qt.QtCore.Qt.Key
+    press = qt.QtCore.QEvent.Type.KeyPress
+    mods = qt.QtCore.Qt.KeyboardModifier.NoModifier
+    table = tab.table
+    table.setCurrentCell(0, len(cells.LIST_COLUMNS) - 1)
+    assert (
+        table.keyPressEvent(qt.QtGui.QKeyEvent(press, key.Key_Right, mods))
+        is None
+    )
+    table.setCurrentCell(0, 0)
+    assert (
+        table.keyPressEvent(qt.QtGui.QKeyEvent(press, key.Key_Left, mods))
+        is None
+    )
+    table.setCurrentCell(0, 1)
+    # An interior column's Right still walks the cells — the
+    # base table's own move, handed back to Qt.
+    table.keyPressEvent(qt.QtGui.QKeyEvent(press, key.Key_Right, mods))
+    assert table.currentColumn() == 2
+    window.close()
+
+
+def test_the_panel_buttons_cross_by_arrows(qt, monkeypatch) -> None:
+    """The pane's arrow bridges (#966, review round one): the
+    Show and Copy buttons answer Up and Down themselves, and
+    leave every other event to Qt's own handling."""
+    tab, window, _bridge = make_tab(qt, monkeypatch)
+    key = qt.QtCore.Qt.Key
+    press = qt.QtCore.QEvent.Type.KeyPress
+    mods = qt.QtCore.Qt.KeyboardModifier.NoModifier
+    down = qt.QtGui.QKeyEvent(press, key.Key_Down, mods)
+    up = qt.QtGui.QKeyEvent(press, key.Key_Up, mods)
+    other = qt.QtGui.QKeyEvent(press, key.Key_Left, mods)
+    for button in (tab.panel.show_button, tab.panel.copy_button):
+        assert tab.panel.eventFilter(button, down) is True
+        assert tab.panel.eventFilter(button, up) is True
+        assert tab.panel.eventFilter(button, other) is False
+    assert tab.panel.eventFilter(tab.table, down) is False
+    window.close()
+
+
+def test_the_mint_picker_edges_hand_the_walk_back(qt) -> None:
+    """The mint picker's edge bridges (#966, review round one):
+    Up from the first option and Down from the last leave the
+    list for the form — the interior options still walk."""
+    bridge = StubBridge()
+    dialog = mint_mod.MintDialog(bridge)
+    dialog.on_succeeded(
+        mint_mod.WORKSPACES_KEY,
+        [{"id": "ws1", "name": "web"}, {"id": "ws2"}],
+    )
+    picker = dialog.workspaces
+    key = qt.QtCore.Qt.Key
+    press = qt.QtCore.QEvent.Type.KeyPress
+    mods = qt.QtCore.Qt.KeyboardModifier.NoModifier
+    picker.setCurrentRow(0)
+    assert (
+        picker.keyPressEvent(qt.QtGui.QKeyEvent(press, key.Key_Up, mods))
+        is None
+    )
+    picker.setCurrentRow(1)
+    assert (
+        picker.keyPressEvent(qt.QtGui.QKeyEvent(press, key.Key_Down, mods))
+        is None
+    )
+    picker.setCurrentRow(0)
+    picker.keyPressEvent(qt.QtGui.QKeyEvent(press, key.Key_Down, mods))
+    assert picker.currentRow() == 1
+
+
+def test_the_confirmations_default_to_no(qt, monkeypatch) -> None:
+    """The gates' defaults (#966, review round one): both asks
+    carry No as the default answer — the token and the row stay
+    unless the operator says otherwise."""
+    tab, window, _bridge = make_tab(qt, monkeypatch)
+    defaults: list[object] = []
+    no = qt.QtWidgets.QMessageBox.StandardButton.No
+
+    def recorder(*args, **kwargs):
+        defaults.append(
+            kwargs.get("defaultButton", args[-1] if args else None)
+        )
+        return no
+
+    monkeypatch.setattr(qt.QtWidgets.QMessageBox, "question", recorder)
+    tab.panel.show_row(dict(placeholder(), sentinel=WIDE))
+    tab.panel.confirm_reveal()
+    model = next(m for m in tab.secret_models if m.id == 1)
+    tab.confirm_revoke(model)
+    assert defaults == [no, no]
+    window.close()
+
+
+def test_a_hidden_tab_stops_its_tick(qt, monkeypatch) -> None:
+    """The tick's lifetime (#966, review round one): a hidden tab
+    repaints nothing — the timer stops with the hide and starts
+    again with the show."""
+    tab, window, _bridge = make_tab(qt, monkeypatch)
+    assert tab.tick_timer.isActive()
+    tab.hideEvent(qt.QtGui.QHideEvent())
+    assert not tab.tick_timer.isActive()
+    tab.showEvent(qt.QtGui.QShowEvent())
+    assert tab.tick_timer.isActive()
+    window.close()

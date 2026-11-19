@@ -43,6 +43,36 @@ from . import cells
 from .mint import MintDialog
 from .sentinel import SentinelPanel
 
+
+def table_edge(key: int, current: int, last: int) -> bool | None:
+    """The listing's edge keys (#966): Right on the last column
+    hands the keyboard onward to the pane beside the listing,
+    Left on the first hands it back — None keeps the walk inside
+    the table's cells, the spatial-navigation rule over sibling
+    columns."""
+    if key == QtCore.Qt.Key.Key_Right and current >= last:
+        return True
+    if key == QtCore.Qt.Key.Key_Left and current <= 0:
+        return False
+    return None
+
+
+class RowTable(ListTable):
+    """The listing's own table (#966): the Up bridge the list
+    owns, beside the Left/Right edges' own (:func:`table_edge`)
+    — the keyboard crosses the splitter, the sentinel pane
+    beside the listing joining the reading order."""
+
+    def keyPressEvent(self, event) -> None:
+        hand = table_edge(
+            event.key(), self.currentColumn(), self.columnCount() - 1
+        )
+        if hand is None:
+            super().keyPressEvent(event)
+            return
+        QtWidgets.QWidget.focusNextPrevChild(self, hand)
+
+
 #: The tab's gathered refresh key (#966): the open's first read
 #: and every later one — one flight, both groups.
 PAGE_KEY = "secrets-page"
@@ -81,6 +111,7 @@ class SecretsTab(QtWidgets.QWidget):
         super().__init__()
         self.bridge = bridge
         self.pending = False
+        self.refresh_due = False
         self.action_pending = False
         self.action_model = None
         self.action_choice: str | None = None
@@ -92,7 +123,7 @@ class SecretsTab(QtWidgets.QWidget):
         self.audit_models: list = []
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
-        self.table = ListTable(0, len(cells.LIST_COLUMNS), self)
+        self.table = RowTable(0, len(cells.LIST_COLUMNS), self)
         self.table.setHorizontalHeaderLabels(cells.LIST_COLUMNS)
         self.build_table(self.table)
         self.table.activated.connect(self.sentinel_at)
@@ -186,14 +217,14 @@ class SecretsTab(QtWidgets.QWidget):
         table.verticalHeader().setVisible(False)
         cells.bold_header(table)
         table.horizontalHeader().setStretchLastSection(True)
+        # No standing sort (#966): the indicator clears before
+        # the sorting enables — the listing keeps the daemon's
+        # own order until a header click asks for one, the TUI
+        # page's rule, and the audit table's beside it.
+        table.horizontalHeader().setSortIndicator(
+            -1, QtCore.Qt.SortOrder.AscendingOrder
+        )
         table.setSortingEnabled(sortable)
-        if sortable:
-            # The explicit indicator (#966): Qt's own default is
-            # descending, and the listing's standing order reads
-            # ascending — the images tab's own pin.
-            table.horizontalHeader().setSortIndicator(
-                0, QtCore.Qt.SortOrder.AscendingOrder
-            )
 
     @QtCore.Slot()
     def refresh(self) -> None:
@@ -209,8 +240,13 @@ class SecretsTab(QtWidgets.QWidget):
         """The gathered flight itself (#966), the status line
         untouched — the refresh an action's landing takes keeps
         the flash that named the outcome standing while it
-        flies."""
+        flies. A flight already out carries the need instead:
+        its landing takes the flight the gate refused, so an
+        action's refresh is never dropped — the stale answer a
+        read issued before the action lands once, then the
+        fresh read replaces it."""
         if self.pending:
+            self.refresh_due = True
             return
         self.pending = True
         self.flash_seq += 1  # retire any pending flash timeout
@@ -225,21 +261,26 @@ class SecretsTab(QtWidgets.QWidget):
         if key == PAGE_KEY:
             self.page_landed(result)
         elif key in (RENEW_KEY, REVOKE_KEY):
-            self.action_arrived(key)
+            self.action_arrived(key, result)
         elif key == SENTINEL_KEY:
             if isinstance(result, dict):
                 self.panel.show_row(result)
 
     def page_landed(self, result: object) -> None:
         """The gathered answer (#966): both groups rebuild from
-        the presenter's models, the standing counts beside
-        them."""
+        the presenter's models, the standing counts beside them
+        — and a refresh the gate carried while this flight was
+        out flies now, the heal an action's landing asked
+        for."""
         self.pending = False
         page = result if isinstance(result, dict) else {}
         self.secret_raw = list(page.get("secrets") or [])
         self.audit_raw = list(page.get("audit") or [])
         self.rebuild()
         self.standing()
+        if self.refresh_due:
+            self.refresh_due = False
+            self.take_flight()
 
     def rebuild(self) -> None:
         """Both groups from the presenter (#966): the listing in
@@ -455,17 +496,26 @@ class SecretsTab(QtWidgets.QWidget):
         )
         return answer == QtWidgets.QMessageBox.StandardButton.Yes
 
-    def action_arrived(self, key: str) -> None:
+    def action_arrived(self, key: str, result: object) -> None:
         """An action's landing (#966): the flight's remembered
-        row flashes its outcome — the renewed lifetime in the
-        countdown's own vocabulary, the revoked row's label —
-        and the listing refreshes behind it. The gate set the
-        row when the flight left; a landing reads it back."""
-        model, choice = self.action_model, self.action_choice
+        row flashes its outcome — the renewed lifetime read off
+        the daemon's own reply, the countdown's vocabulary, the
+        revoked row's label — and the listing refreshes behind
+        it. The gate set the row when the flight left; a landing
+        reads it back. A revoke that retires the row whose
+        sentinel stands on the panel clears the panel with it —
+        the token leaves the widget tree with its row."""
+        model = self.action_model
         self.action_landed()
         if key == RENEW_KEY:
-            self.flash(cells.renewed_text(model, SECRET_TTL_SECONDS[choice]))
+            reply = result if isinstance(result, dict) else {}
+            self.flash(cells.renewed_text(model, reply))
         else:
+            if (
+                self.panel.row is not None
+                and self.panel.row.get("id") == model.id
+            ):
+                self.panel.clear()
             self.flash(cells.revoked_text(model))
         self.take_flight()
 
@@ -482,7 +532,7 @@ class SecretsTab(QtWidgets.QWidget):
         landed mint refreshes the listing, the fresh sentinel
         fills the panel, and the flash names the row; a cancel
         decides nothing."""
-        dialog = MintDialog(self.bridge)
+        dialog = MintDialog(self.bridge, self)
         if dialog.exec() and dialog.reply:
             self.take_flight()
             self.panel.show_row(dialog.reply)
@@ -563,6 +613,13 @@ class SecretsTab(QtWidgets.QWidget):
             self.refresh()
             self.tick_timer.start()
         super().showEvent(event)
+
+    def hideEvent(self, event) -> None:
+        """A hidden tab stops its tick (#966): a background
+        page repaints nothing — the countdown resumes with the
+        tab, whole, from the epochs the models carry."""
+        self.tick_timer.stop()
+        super().hideEvent(event)
 
     def eventFilter(
         self, watched: QtCore.QObject, event: QtCore.QEvent

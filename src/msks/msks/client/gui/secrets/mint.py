@@ -32,10 +32,33 @@ WORKSPACES_KEY = "secrets-mint-workspaces"
 
 #: The form's standing note (#966): its title line, back on a
 # refused seed or a landed refusal once the note clears.
-MINT_NOTE = (
-    "mint a placeholder — the sentinel shows on the panel; "
-    "Enter on a row reopens it"
-)
+MINT_NOTE = "mint a placeholder — the sentinel shows on the panel"
+
+
+def picker_edge(key: int, current: int, last: int) -> bool | None:
+    """The picker's edge keys (#966): Up from the first option
+    hands the keyboard back to the form above, Down from the
+    last to the field below — None keeps the walk inside the
+    options, the spatial-navigation rule the TUI picker's own
+    edge bridges carry."""
+    if key == QtCore.Qt.Key.Key_Up and current <= 0:
+        return False
+    if key == QtCore.Qt.Key.Key_Down and current >= last:
+        return True
+    return None
+
+
+class WorkspacePicker(QtWidgets.QListWidget):
+    """The mint form's workspace picker (#966): a multi-select
+    whose edges (:func:`picker_edge`) hand the keyboard back to
+    the form — the picker joins the walk, no focus trap."""
+
+    def keyPressEvent(self, event) -> None:
+        hand = picker_edge(event.key(), self.currentRow(), self.count() - 1)
+        if hand is None:
+            super().keyPressEvent(event)
+            return
+        QtWidgets.QWidget.focusNextPrevChild(self, hand)
 
 
 class MintDialog(QtWidgets.QDialog):
@@ -45,12 +68,13 @@ class MintDialog(QtWidgets.QDialog):
     line, a dialog closed mid-flight cancelling its own
     call."""
 
-    def __init__(self, bridge) -> None:
-        super().__init__()
+    def __init__(self, bridge, parent=None) -> None:
+        super().__init__(parent)
         self.bridge = bridge
         self.reply: dict | None = None
         self.flight = None
         self.seeded = False
+        self.closed = False
         self.setWindowTitle("Mint a placeholder")
         self.note = QtWidgets.QLabel(MINT_NOTE, self)
         self.note.setWordWrap(True)
@@ -66,7 +90,7 @@ class MintDialog(QtWidgets.QDialog):
             self.coverage.addItem(label, value)
         self.coverage.currentIndexChanged.connect(self.sync_coverage)
         form.addRow("coverage", self.coverage)
-        self.workspaces = QtWidgets.QListWidget()
+        self.workspaces = WorkspacePicker()
         self.workspaces.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.MultiSelection
         )
@@ -111,6 +135,7 @@ class MintDialog(QtWidgets.QDialog):
         call — and the value field clears first, so the typed
         secret leaves the widget tree with the form."""
         self.value.clear()
+        self.closed = True  # a queued answer after this reaches no one
         if self.flight is not None and not self.flight.done():
             self.flight.cancel()
         self.bridge.succeeded.disconnect(self.on_succeeded)
@@ -149,6 +174,8 @@ class MintDialog(QtWidgets.QDialog):
         """One answered call (#966): the seed fills the picker,
         a landed mint accepts with its reply. Another key's
         answer is not this dialog's to take."""
+        if self.closed:
+            return  # the dialog went; the answer reaches no one
         if key == WORKSPACES_KEY:
             self.seed_landed(result)
         elif key == MINT_KEY:
@@ -170,6 +197,8 @@ class MintDialog(QtWidgets.QDialog):
         """One refused call (#966): a mint refusal keeps the
         fields with the failure on the note line; a refused seed
         notes it and the form stands."""
+        if self.closed:
+            return  # the dialog went; the refusal reaches no one
         if key == MINT_KEY:
             self.mint_button.setEnabled(True)
             self.note.setText(str(failure))

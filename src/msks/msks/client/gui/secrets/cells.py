@@ -21,8 +21,8 @@ from ..secretrows import (
     MINT_TTLS,
     SecretRow,
     coverage_text,
-    fmt_duration,
     ttl_seconds,
+    ttl_text,
 )
 
 #: The model's place on every row's first cell (#966): the
@@ -243,14 +243,13 @@ def revoke_question(model: SecretRow) -> str:
     )
 
 
-def renewed_text(model: SecretRow, seconds: int) -> str:
+def renewed_text(model: SecretRow, reply: dict) -> str:
     """The renew's landing flash (#966): the extended row's
-    label with its new lifetime — the page speaks the
-    countdown's vocabulary, not the CLI's absolute stamp."""
-    return (
-        f"renewed {model.coverage}/{model.name} · expires "
-        f"{fmt_duration(seconds)}"
-    )
+    label with its new remaining lifetime, read off the
+    daemon's own reply — the page speaks the countdown's
+    vocabulary, not the CLI's absolute stamp, and the label is
+    the lifetime the daemon actually wrote."""
+    return f"renewed {model.coverage}/{model.name} · expires {ttl_text(reply)}"
 
 
 def minted_text(row: dict) -> str:

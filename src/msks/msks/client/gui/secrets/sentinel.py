@@ -50,6 +50,12 @@ class SentinelPanel(QtWidgets.QWidget):
         self.show_button.clicked.connect(self.toggle_reveal)
         self.copy_button = QtWidgets.QPushButton("Copy", self)
         self.copy_button.clicked.connect(self.copy)
+        # The buttons' arrow bridges (#962's rule): Up leaves the
+        # pane for whatever stands above it, Down enters the
+        # groups below — the pane joins the reading order, not a
+        # Tab-only corner.
+        for button in (self.show_button, self.copy_button):
+            button.installEventFilter(self)
         buttons = QtWidgets.QHBoxLayout()
         buttons.addWidget(self.show_button)
         buttons.addWidget(self.copy_button)
@@ -136,6 +142,22 @@ class SentinelPanel(QtWidgets.QWidget):
             QtWidgets.QMessageBox.StandardButton.No,
         )
         return answer == QtWidgets.QMessageBox.StandardButton.Yes
+
+    def eventFilter(self, watched, event) -> bool:
+        """The pane's arrow bridges (#966): the buttons answer Up
+        and Down themselves, handing the keyboard onward from
+        where the operator stands."""
+        if watched not in (self.show_button, self.copy_button) or (
+            event.type() != QtCore.QEvent.Type.KeyPress
+        ):
+            return super().eventFilter(watched, event)
+        if event.key() == QtCore.Qt.Key.Key_Up:
+            QtWidgets.QWidget.focusNextPrevChild(self.show_button, False)
+            return True
+        if event.key() == QtCore.Qt.Key.Key_Down:
+            QtWidgets.QWidget.focusNextPrevChild(self.show_button, True)
+            return True
+        return super().eventFilter(watched, event)
 
     def copy(self) -> None:
         """The copy (#966): the real sentinel to the clipboard —
