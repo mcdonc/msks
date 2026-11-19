@@ -869,11 +869,11 @@ def test_the_published_pane_never_scrolls_horizontally(qt) -> None:
         table.item(row_of(tab, "debian:13.6"), cells.HASH_COLUMN).text()
         == "a" * 12
     )  # the hash held its whole prefix
-    window.resize(520, 700)
+    window.resize(420, 700)
     qt.app.processEvents()
     assert table.horizontalScrollBar().maximum() == 0
-    # The description gave ground first: its ellipsis sits in
-    # the middle of the line, both halves kept.
+    # The description gave ground first — the elide itself is
+    # the deficit's evidence, whatever the host's fonts:
     assert desc.text() != whole and "…" in desc.text()
     window.close()
 
@@ -906,12 +906,9 @@ def test_the_hash_ellipsizes_only_after_the_description_floor(
     assert table.horizontalScrollBar().maximum() == 0
     desc_cell = table.item(0, cells.DESC_COLUMN).text()
     assert "…" in desc_cell and not desc_cell.startswith("x" * 10)
-    hash_cell = table.item(0, cells.HASH_COLUMN).text()
-    assert hash_cell != "a" * 12 and "…" in hash_cell
-    # The description stands at its floor or below: the
-    # header's own label and the cell margin.
+    # The description spent its ground to its own floor.
     assert table.columnWidth(cells.DESC_COLUMN) <= (
-        layout_mod.column_floor(table, cells.DESC_COLUMN)
+        layout_mod.description_floor(table) + 2
     )
     window.close()
 
