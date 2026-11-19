@@ -23,6 +23,7 @@ from .create import CreateDialog
 from .detail import DetailSections, detail_sections, frame_names
 from .listcells import read_only_item
 from .mounts import MountsTab
+from .proxies import ProxiesTab
 from .rows import (
     WINDOW_TITLE,
     detail_text,
@@ -74,6 +75,10 @@ INFO_LABEL = "Info"
 #: mounts surface, between the shells and the read-only
 #: sections.
 MOUNTS_LABEL = "Mounts"
+
+#: The Proxies tab's label (#988): the workspace's forward and
+#: remote proxies with their live status.
+PROXIES_LABEL = "Proxies"
 
 
 def find_row(rows: list[dict] | None, workspace_id: str) -> dict | None:
@@ -172,13 +177,16 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.shells.new_shell.connect(self.want_shell)
         self.mounts_tab = MountsTab(bridge)
         self.mounts_tab.row_updated.connect(self.mounts_landed)
+        self.proxies_tab = ProxiesTab(bridge)
         self.bar = QtWidgets.QTabBar(self)
         self.bar.addTab(SHELLS_LABEL)
         self.bar.addTab(MOUNTS_LABEL)
+        self.bar.addTab(PROXIES_LABEL)
         self.bar.addTab(INFO_LABEL)
         self.stack = QtWidgets.QStackedWidget(self)
         self.stack.addWidget(self.shells)
         self.stack.addWidget(self.mounts_tab)
+        self.stack.addWidget(self.proxies_tab)
         self.stack.addWidget(scroll)
         self.bar.currentChanged.connect(self.stack.setCurrentIndex)
         self.chrome.insertWidget(1, self.bar)
@@ -346,8 +354,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
             self.hub.open_shell(workspace_id)
         # The Mounts tab blanks with the page's own reset (#987):
         # a flight the prior workspace still has out cancels, and
-        # the first row answer fills the tab.
+        # the first row answer fills the tab. The Proxies tab
+        # takes the switch the same way (#988).
         self.mounts_tab.host(workspace_id, {})
+        self.proxies_tab.host(workspace_id)
         self.refresh()
 
     def clear_sections(self) -> None:
@@ -380,6 +390,9 @@ class WorkspaceDetail(QtWidgets.QWidget):
         if not self.storage_pending:
             self.storage_pending = True
             self.bridge.call(STORAGE_KEY, "storage")
+        # The Proxies tab rides the page's own tick (#988): its
+        # listing is its own read, refreshed beside the row.
+        self.proxies_tab.poke()
 
     @QtCore.Slot(str, object)
     def on_succeeded(self, key: str, result: object) -> None:
@@ -586,6 +599,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.frames.append(frame)
         if len(self.frames) > FRAMES_BUFFER:
             del self.frames[: len(self.frames) - FRAMES_BUFFER]
+        # A proxy transition repaints the Proxies tab (#988) —
+        # the feed's frame is the tab's own refresh trigger, the
+        # same path the page's tick drives.
+        self.proxies_tab.frame(frame)
         self.rebuild()
 
     @QtCore.Slot(object)
