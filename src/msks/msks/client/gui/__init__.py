@@ -8,6 +8,12 @@ PySide6-free), and the workspace detail view's presenter
 (:mod:`.detail`, phase 4 — plain section models,
 PySide6-free), the live events feed (:mod:`.feed`, phase 4 of
 #924 — plain asyncio over the shared dial seams, no Qt in it),
+the workspace page's decider registration (:mod:`.decider`,
+phase 5.5 of #924 — #999: the page's own second events
+connection, plain asyncio over the feed's same seams with the
+TUI's pure consent controller behind it, no Qt in it; the
+bridge imports it at module scope, so it loads on the window
+path the bridge itself does),
 and the libghostty-vt ctypes binding (:mod:`.ghostty`,
 phase 4.5 — #950: pure ctypes over the C ABI, no Qt in it),
 the PTY session behind a terminal tab (:mod:`.termsession`,

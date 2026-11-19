@@ -34,11 +34,34 @@ from PySide6 import QtCore
 
 from ..data import RestFailure
 from .data import GuiData
+from .decider import DeciderLink
 
 #: How long stop() waits for the worker to land its loop's
 #: shutdown, in seconds: a stuck network call inside the loop
 #: must not hang the window's close on it.
 JOIN_TIMEOUT_S = 5.0
+
+
+def stop_on_last(
+    tasks: set[asyncio.Task], loop: asyncio.AbstractEventLoop
+) -> None:
+    """The loop's stop wired to the last task's completion
+    (#946, #999): each ended task's exception, if it died of
+    one, retrieved the moment it lands, and the loop stopped
+    only when the last one has. A task's unwind suspends inside
+    its socket's close, so a stop on a timer can outrun it and
+    leave the task destroyed-but-pending; the completion
+    callback cannot."""
+
+    def finished(task: asyncio.Task) -> None:
+        if not task.cancelled():
+            task.exception()  # retrieved, whatever it was
+        tasks.discard(task)
+        if not tasks:
+            loop.stop()
+
+    for task in tasks:
+        task.add_done_callback(finished)
 
 
 class Bridge(QtCore.QObject):
@@ -52,7 +75,14 @@ class Bridge(QtCore.QObject):
     ``landed(frame)`` delivers each pushed frame to the GUI
     thread, ``feed_dropped(reason)`` and ``feed_reconnected()``
     carry the subscription's outage and recovery — the screens
-    flash the one and refresh on the other.
+    flash the one and refresh on the other. The workspace
+    page's decider registration (#999) rides the same loop as
+    its own task: ``start_decider(workspace)`` claims a
+    workspace's holds for the page's lifetime —
+    ``stop_decider()`` retires it, the socket's close the
+    daemon's own retire — and the link's landings cross as
+    ``decider_landed(outcome, payload)`` with the daemon's
+    refusal of the registration as ``decider_rejected(reason)``.
     """
 
     succeeded = QtCore.Signal(str, object)
@@ -60,6 +90,8 @@ class Bridge(QtCore.QObject):
     landed = QtCore.Signal(object)
     feed_dropped = QtCore.Signal(str)
     feed_reconnected = QtCore.Signal()
+    decider_landed = QtCore.Signal(str, object)
+    decider_rejected = QtCore.Signal(str)
 
     def __init__(
         self,
@@ -67,12 +99,24 @@ class Bridge(QtCore.QObject):
         *,
         thread_name: str = "msks-gui",
         feed_factory=None,
+        decider_factory=DeciderLink,
     ) -> None:
         super().__init__()
         self._data = data
         self._thread_name = thread_name
         self._feed_factory = feed_factory
+        self._decider_factory = decider_factory
         self._feed_task: asyncio.Task | None = None
+        self._decider_task: asyncio.Task | None = None
+        #: The standing registration's workspace (#999) — the
+        #: idempotence key a re-ask for the page's own workspace
+        #: reads.
+        self._decider_workspace = ""
+        #: The cancelled-but-unwound decider tasks (#999): a
+        #: retire cancels and moves on, and the loop's shutdown
+        #: still owes each one its completion — the unwind
+        #: suspends inside the socket's close.
+        self._retiring: set[asyncio.Task] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
 
@@ -141,25 +185,97 @@ class Bridge(QtCore.QObject):
         feed.on_reconnect = self.feed_reconnected.emit
         self._feed_task = loop.create_task(feed.run())
 
-    def stop_feed(self, loop: asyncio.AbstractEventLoop) -> None:
-        """The loop's shutdown (#946): the feed task cancelled,
-        and the stop told by the task's own completion — the
-        task's unwind suspends inside its socket's close, so a
-        stop on a timer can outrun the unwind and leave the task
-        destroyed-but-pending; the completion callback cannot.
-        No feed task means a plain stop."""
-        if self._feed_task is None:
+    def stop_tasks(self, loop: asyncio.AbstractEventLoop) -> None:
+        """The loop's shutdown (#946, #999): the standing tasks
+        — the feed, the page's decider link, and any decider
+        link still unwinding from a cancel — cancelled, and the
+        stop wired to the last completion. No task standing
+        means a plain stop."""
+        tasks = self.standing_tasks()
+        if not tasks:
             loop.stop()
             return
-        task = self._feed_task
+        for task in tasks:
+            task.cancel()
+        stop_on_last(tasks, loop)
+
+    def standing_tasks(self) -> set[asyncio.Task]:
+        """The tasks the loop's shutdown owes a completion to
+        (#946, #999): the feed, the standing decider link, and
+        the retired ones still unwinding their socket's close —
+        done tasks excluded, their completions already
+        landed."""
+        return {
+            task
+            for task in (self._feed_task, self._decider_task, *self._retiring)
+            if task is not None and not task.done()
+        }
+
+    def start_decider(self, workspace_id: str) -> None:
+        """The workspace page's registration (#999): claim
+        ``workspace_id``'s holds on the loop. Idempotent per
+        workspace — the page's open and its show both ask, and
+        the second ask for the standing workspace changes
+        nothing — while a different workspace (the page
+        re-hosted) retires the old registration first. A
+        stopped bridge ignores the ask: the window is closing,
+        and the page's hide tells the retire anyway."""
+        if self._loop is None:
+            return
+        loop = self._loop
+        loop.call_soon_threadsafe(self.launch_decider, loop, workspace_id)
+
+    def launch_decider(
+        self, loop: asyncio.AbstractEventLoop, workspace_id: str
+    ) -> None:
+        """The registration's own start, on the loop thread: the
+        link built, its callbacks the bridge's signals, and its
+        task reaped when it ends — an exception never left
+        un-retrieved on a task the bridge made."""
+        standing = self._decider_task
+        if (
+            standing is not None
+            and not standing.done()
+            and workspace_id == self._decider_workspace
+        ):
+            return
+        self.retire_decider()
+        link = self._decider_factory(workspace_id)
+        link.on_frame = self.decider_landed.emit
+        link.on_rejected = self.decider_rejected.emit
+        self._decider_workspace = workspace_id
+        task = loop.create_task(link.run())
+        task.add_done_callback(self.reap_decider)
+        self._decider_task = task
+
+    def stop_decider(self) -> None:
+        """The page's retire (#999): cancel the standing
+        registration — the socket's close is the daemon's own
+        deregistration — from any thread, through the loop's
+        threadsafe door."""
+        if self._loop is None:
+            return
+        self._loop.call_soon_threadsafe(self.retire_decider)
+
+    def retire_decider(self) -> None:
+        """The retire on the loop thread: the slot cleared, the
+        task cancelled and held in the retiring set until its
+        unwind lands — the loop's shutdown waits for it there."""
+        task = self._decider_task
+        self._decider_task = None
+        self._decider_workspace = ""
+        if task is None or task.done():
+            return
         task.cancel()
+        self._retiring.add(task)
 
-        def finished(_task: asyncio.Task) -> None:
-            if not _task.cancelled():
-                _task.exception()  # retrieved, whatever it was
-            loop.stop()
-
-        task.add_done_callback(finished)
+    def reap_decider(self, task: asyncio.Task) -> None:
+        """One decider task's end: its exception, if it died of
+        one, retrieved the moment it lands — and its retiring
+        bookkeeping cleared with it."""
+        self._retiring.discard(task)
+        if not task.cancelled():
+            task.exception()
 
     def call(self, key: str, method: str, *args: object):
         """Run one :class:`GuiData` coroutine by name — the
@@ -222,5 +338,5 @@ class Bridge(QtCore.QObject):
             return
         self._loop = None
         self._thread = None
-        loop.call_soon_threadsafe(self.stop_feed, loop)
+        loop.call_soon_threadsafe(self.stop_tasks, loop)
         thread.join(JOIN_TIMEOUT_S)

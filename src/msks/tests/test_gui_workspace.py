@@ -76,9 +76,21 @@ class StubBridge:
         self.landed = FakeSignal()
         self.feed_dropped = FakeSignal()
         self.feed_reconnected = FakeSignal()
+        self.decider_landed = FakeSignal()
+        self.decider_rejected = FakeSignal()
+        #: The decider registration's bracket (#999): the page's
+        #: asks and retires, recorded for the lifetime asserts.
+        self.decider_starts: list[str] = []
+        self.decider_stops = 0
 
     def call(self, key: str, method: str, *args: object) -> None:
         self.calls.append((key, method, args))
+
+    def start_decider(self, workspace_id: str) -> None:
+        self.decider_starts.append(workspace_id)
+
+    def stop_decider(self) -> None:
+        self.decider_stops += 1
 
 
 def daemon_row() -> dict:
@@ -533,6 +545,74 @@ def test_back_returns_to_the_list(qt) -> None:
     qt.app.processEvents()
     QtTest.QTest.keyClick(window, qt.QtCore.Qt.Key.Key_Escape)
     assert shell.currentWidget() is shell.listing
+
+
+def test_the_page_registers_as_the_workspace_decider(qt) -> None:
+    """The registration's lifetime tracks the page (#999): the
+    open claims the workspace's holds, a re-hosted page claims
+    the new workspace, and every path that hides the page —
+    Back, the removed workspace's close — retires the claim:
+    the daemon holds flows only while a page watches, and the
+    socket's close is the retire."""
+    shell, window, bridge = make_shell(qt)
+    # The page's open claims its workspace — twice while the
+    # open raises a hidden page, once for the open itself and
+    # once for the show it causes; the bridge's own test pins
+    # the second ask's idempotence. The window's show before
+    # any open claims nothing (no workspace stands).
+    assert bridge.decider_starts == []
+    shell.listing.opened.emit("ws-a")
+    assert bridge.decider_starts == ["ws-a", "ws-a"]
+    assert bridge.decider_stops == 0
+    # Back hides the page: the claim retires with it.
+    shell.detail.go_back()
+    assert bridge.decider_stops == 1
+    # A re-open claims again, the open and the show it raises.
+    shell.listing.opened.emit("ws-a")
+    assert bridge.decider_starts == ["ws-a", "ws-a", "ws-a", "ws-a"]
+    # A second workspace re-hosts the page already showing: the
+    # open alone asks, the claim following the workspace the
+    # page shows.
+    shell.listing.opened.emit("ws-b")
+    assert bridge.decider_starts[-1] == "ws-b"
+    assert len(bridge.decider_starts) == 5
+    # The removed workspace's close hides the page its own way:
+    # the retire tells the same — a listing that cannot see the
+    # page's workspace answers with another workspace's row.
+    shell.detail.on_succeeded("detail-row", [daemon_row()])
+    assert bridge.decider_stops == 2
+
+
+def test_a_reshown_page_claims_again(qt) -> None:
+    """The show after a hide without an open (#999): the page
+    hid under whatever hid it — a Back whose return never
+    re-opened, a tab switch away and back — and the workspace's
+    holds need their decider back the moment the page shows
+    again, the claim the hide retired."""
+    page, window, bridge = make_page(qt)
+    assert bridge.decider_starts == ["ws-a"]
+    page.hide()
+    assert bridge.decider_stops == 1
+    page.show()
+    assert bridge.decider_starts == ["ws-a", "ws-a"]
+
+
+def test_a_refused_registration_flashes_the_current_screen(qt) -> None:
+    """The daemon's refusal of the registration (#999): the
+    reason flashes on the screen the operator sees — the page
+    while it owns the window, the list after the page went
+    back — one flash the whole tell, the link having ended
+    itself."""
+    shell, window, bridge = make_shell(qt)
+    shell.decider_refused("unknown workspace")
+    assert shell.listing.status.text() == (
+        "the decider registration was refused — unknown workspace"
+    )
+    shell.listing.opened.emit("ws-a")
+    shell.decider_refused("the workspace left")
+    assert shell.detail.status.text() == (
+        "the decider registration was refused — the workspace left"
+    )
 
 
 def test_the_create_opener_opens_the_dialog_over_the_list(

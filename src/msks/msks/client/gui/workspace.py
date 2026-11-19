@@ -105,7 +105,12 @@ class WorkspaceDetail(QtWidgets.QWidget):
     the presenter's three sections (the mounts table with its
     next-start note, the health facts, the events list) — over
     the footer strip, the same one-line read the listing's own
-    bottom strip gives (#971). The workspace's name lives in
+    bottom strip gives (#971). The page registers as the
+    workspace's egress decider while it shows (#999): the
+    bridge's link claims the workspace's holds at the open,
+    the registration retiring at every hide (a page nobody
+    sees holds flows nobody answers) and re-claiming at the
+    next show. The workspace's name lives in
     the window title while the page shows. A failed refresh
     flashes the status line while the sections keep their
     content; a listing that can no longer see the workspace
@@ -338,6 +343,13 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.shells.host(workspace_id)
         if not self.hub.shells(workspace_id):
             self.hub.open_shell(workspace_id)
+        # The page's decider registration opens with the page
+        # (#999): the bridge's link claims this workspace's
+        # holds — the pending snapshot and the rules posture
+        # land on the link's controller, the panel the phase's
+        # later work docks renders them — and the hide below
+        # retires the claim at the page's own hide.
+        self.bridge.start_decider(workspace_id)
         # The Mounts tab blanks with the page's own reset (#987):
         # a flight the prior workspace still has out cancels, and
         # the first row answer fills the tab. The Proxies tab
@@ -657,20 +669,37 @@ class WorkspaceDetail(QtWidgets.QWidget):
         does none of the three (#959): Qt can deliver events to
         a page whose construction never finished, and to the
         empty wrapper PySide6 raises at teardown for a C++
-        object that outlived its Python one."""
+        object that outlived its Python one. The decider
+        registration returns with the show (#999): the hide
+        retired it, and the workspace's holds wait for a
+        decider only while one watches — the page showing again
+        is the watch resuming, whatever hid it (Back's return,
+        a tab switch back to Workspaces)."""
         if getattr(self, "back_button", None) is not None:
             self.anchor_focus()
             self.refresh()
             self.timer.start()
+            if self.workspace_id:
+                self.bridge.start_decider(self.workspace_id)
         super().showEvent(event)
 
     def hideEvent(self, event: QtGui.QHideEvent) -> None:
-        """The tick stops with the page (#945): a hidden page's
-        tick must not touch widgets. A wrapper without its
-        ``timer`` (#959) has no tick to stop."""
+        """The tick stops with the page (#945), and the decider
+        registration retires with it (#999): the daemon holds
+        flows only while a decider watches, and a page nobody
+        sees must not hold them — the bridge's cancel closes
+        the link's socket, the daemon's own retire. A wrapper
+        without its ``timer`` (#959) has no tick to stop; its
+        bridge stands from the constructor's first line, so the
+        retire needs no guard of its own."""
         timer = getattr(self, "timer", None)
         if timer is not None:
             timer.stop()
+        # The stack's own addWidget hides a page that never
+        # opened — no claim stands to retire — so the retire
+        # asks only while a workspace does.
+        if self.workspace_id:
+            self.bridge.stop_decider()
         super().hideEvent(event)
 
 
@@ -703,6 +732,7 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         bridge.landed.connect(self.frame_landed)
         bridge.feed_dropped.connect(self.feed_dropped)
         bridge.feed_reconnected.connect(self.feed_back)
+        bridge.decider_rejected.connect(self.decider_refused)
         # The quit path closes every shell (#954): the window's
         # children never see a close event of their own, and a
         # session left open would outlive the loop that reads
@@ -832,6 +862,17 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         own."""
         screen = self.currentWidget()
         screen.flash("the events feed reconnected")
+
+    @QtCore.Slot(str)
+    def decider_refused(self, reason: str) -> None:
+        """The daemon refused the page's decider registration
+        (#999): the reason flashes on the screen the operator
+        sees — a workspace the daemon cannot resolve stays that
+        way, so the link ended itself and one flash is the
+        whole tell. The consent panel takes the surface over
+        when the phase's later work docks it."""
+        screen = self.currentWidget()
+        screen.flash(f"the decider registration was refused — {reason}")
 
     @QtCore.Slot(str)
     def listing_removed(self, workspace_id: str) -> None:

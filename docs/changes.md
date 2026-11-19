@@ -8,6 +8,18 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI's decider registration (#999).** Opening a
+  workspace page in `msks gui` registers the page as that
+  workspace's egress decider: an `interactive` workspace's
+  held flows wait for the page while it shows, the pending
+  holds and the egress posture arriving on the page's own
+  events connection. Closing the page, going back, or closing
+  the window retires the registration, and a dropped connection
+  re-registers with a fresh snapshot on reconnect. A refused
+  registration (an unknown workspace) flashes its reason on the
+  page's status line; the consent panel that answers the holds
+  from the GUI lands with the rest of phase 5.5.
+
 - **The GUI workspace events tab (#989).** The workspace page
   grows an Events tab beside Proxies and Info, and the
   recent-events pane the Info tab carried moved into it. Each

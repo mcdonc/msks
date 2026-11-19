@@ -319,3 +319,201 @@ def test_the_feed_rides_the_loop_and_its_frames_cross(
     assert not bridge.running
     assert feed.cancelled
     bridge.stop()  # idempotent with the feed in place
+
+
+class StubLink:
+    """The decider link's shape for the bridge's tests: one
+    frame outcome and the registration's refusal told at once,
+    then a serve the stop must cancel."""
+
+    def __init__(self, workspace_id: str) -> None:
+        self.workspace_id = workspace_id
+        self.on_frame = None
+        self.on_rejected = None
+        self.cancelled = False
+
+    async def run(self) -> None:
+        if self.on_frame is not None:
+            self.on_frame("added", f"hold-for-{self.workspace_id}")
+        if self.on_rejected is not None:
+            self.on_rejected("unknown workspace")
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+
+def test_the_decider_registration_rides_the_loop_with_the_page(
+    qapp_setup,
+) -> None:
+    """The page's decider registration (#999): the link's task
+    rides the bridge's loop, its callbacks cross to the GUI
+    thread as the bridge's signals, the ask is idempotent per
+    workspace (the page's open and show both ask), a different
+    workspace retires the standing registration first, and the
+    stop paths — the page's own retire, the window's close —
+    cancel the task with the loop. An ask after the stop lands
+    nowhere: the window is closing, and no page outlives it."""
+    qt = qapp_setup
+
+    class DeciderReceiver(qt.Receiver):
+        """The shell-shaped receiver: the link's two signals, the
+        deliveries appended for the asserts."""
+
+        def __init__(self, bridge) -> None:
+            super().__init__(bridge)
+            self.landed: list[tuple[str, object]] = []
+            self.refusals: list[str] = []
+            bridge.decider_landed.connect(self.on_landed)
+            bridge.decider_rejected.connect(self.on_refused)
+
+        def on_landed(self, outcome: str, payload: object) -> None:
+            self.landed.append((outcome, payload))
+
+        def on_refused(self, reason: str) -> None:
+            self.refusals.append(reason)
+
+    links: list[StubLink] = []
+    bridge = qt.Bridge(
+        StubData(),
+        decider_factory=lambda workspace_id: (
+            links.append(StubLink(workspace_id)) or links[-1]
+        ),
+    )
+    bridge.start()
+    receiver = DeciderReceiver(bridge)
+    bridge.start_decider("ws-1")
+    pump_until = time.monotonic() + 10.0
+    while time.monotonic() < pump_until:
+        qt.app.processEvents()
+        if receiver.landed and receiver.refusals:
+            break
+        time.sleep(TICK)
+    assert receiver.landed == [("added", "hold-for-ws-1")]
+    assert receiver.refusals == ["unknown workspace"]
+    # The re-ask for the standing workspace is a no-op: the
+    # page's open and its show both ask, and one link serves.
+    bridge.start_decider("ws-1")
+    time.sleep(0.1)
+    qt.app.processEvents()
+    assert len(links) == 1
+    assert not links[0].cancelled
+    # A different workspace — the page re-hosted — retires the
+    # old registration and claims the new.
+    bridge.start_decider("ws-2")
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and not links[0].cancelled:
+        qt.app.processEvents()
+        time.sleep(TICK)
+    assert links[0].cancelled
+    assert links[1].workspace_id == "ws-2"
+    # The page's retire cancels the standing link — the socket's
+    # close the daemon's own deregistration — and a retire with
+    # nothing standing is a plain no-op.
+    bridge.stop_decider()
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and not links[1].cancelled:
+        qt.app.processEvents()
+        time.sleep(TICK)
+    bridge.stop_decider()
+    assert links[1].cancelled
+    # The window's close takes the loop down with whatever tasks
+    # stand — none here but the retiring unwind — and an ask
+    # after it lands nowhere.
+    bridge.stop()
+    assert not bridge.running
+    bridge.start_decider("ws-3")
+    time.sleep(0.05)
+    assert len(links) == 2
+    # The retire on a stopped bridge is the same quiet no-op.
+    bridge.stop_decider()
+
+
+def test_a_decider_task_that_dies_on_its_own_stops_clean(
+    qapp_setup,
+) -> None:
+    """A decider task that crashed on its own (#999): the reap
+    retrieves the task's exception the moment it lands — never
+    left un-retrieved on a task the bridge made — and the stop
+    still takes the loop down clean."""
+
+    class DyingLink:
+        """A link whose run ends at once: the died-on-its-own
+        shape."""
+
+        def __init__(self, workspace_id: str) -> None:
+            self.workspace_id = workspace_id
+            self.on_frame = None
+            self.on_rejected = None
+
+        async def run(self) -> None:
+            raise RuntimeError("the link died on its own")
+
+    qt = qapp_setup
+    bridge = qt.Bridge(StubData(), decider_factory=DyingLink)
+    bridge.start()
+    bridge.start_decider("ws-1")
+    deadline = time.monotonic() + 10.0
+    task = None
+    while time.monotonic() < deadline:
+        qt.app.processEvents()
+        task = bridge._decider_task
+        if task is not None and task.done():
+            break
+        time.sleep(TICK)
+    assert task is not None and task.done()
+    bridge.stop()
+    assert not bridge.running
+
+
+def test_the_stop_retrieves_a_task_that_dies_mid_unwind(
+    qapp_setup,
+) -> None:
+    """The loop's shutdown with tasks still standing (#999): a
+    decider link whose unwind itself fails — the cancel caught
+    and a bug raised in its place — lands as an ended task at
+    stop time, and the shutdown's completion callback retrieves
+    the exception and still stops the loop only after the last
+    task lands."""
+
+    class ParkingFeed:
+        """The feed's shape: parked, the stop's cancel its own
+        end."""
+
+        def __init__(self) -> None:
+            self.on_frame = None
+            self.on_drop = None
+            self.on_reconnect = None
+
+        async def run(self) -> None:
+            await asyncio.sleep(3600)
+
+    class UnwindingLink:
+        """A link that answers its cancel with a bug: the
+        died-mid-unwind shape."""
+
+        def __init__(self, workspace_id: str) -> None:
+            self.workspace_id = workspace_id
+            self.on_frame = None
+            self.on_rejected = None
+
+        async def run(self) -> None:
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                raise RuntimeError("the unwind broke") from None
+
+    qt = qapp_setup
+    feed = ParkingFeed()
+    bridge = qt.Bridge(
+        StubData(),
+        feed_factory=lambda: feed,
+        decider_factory=UnwindingLink,
+    )
+    bridge.start()
+    bridge.start_decider("ws-1")
+    time.sleep(0.2)  # both tasks parked on their serves
+    qt.app.processEvents()
+    bridge.stop()
+    assert not bridge.running
