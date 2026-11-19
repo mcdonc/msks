@@ -347,7 +347,8 @@ def test_the_page_renders_the_sections(qt) -> None:
     assert page.footer.text() == (
         "alpha  ·  id ws-a  ·  image msks/fedora:41"
         "  ·  cpu -  ·  mem -  ·  egress -"
-        "  ·  mounts ✗1  ·  next ↻1  ·  storage -"
+        "  ·  mounts ✗1  ·  1 change applies at the next start"
+        "  ·  storage -"
     )
     assert page.mounts.rowCount() == 2
     cells = [

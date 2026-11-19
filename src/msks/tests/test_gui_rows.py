@@ -226,6 +226,25 @@ def test_the_pending_count_counts_waiting_halves() -> None:
     assert both.pending_count == 2
 
 
+def test_the_pending_marker_and_its_restart_note() -> None:
+    """The pending marker names its restart (#986): the ↻N the
+    status cell leads its state word with, and the sentence the
+    cell's tooltip and the strips read — the TUI's own naming
+    of the flags, one clause per count. A row that waits on
+    nothing carries neither."""
+    none = gui_rows.workspace_row(daemon_row())
+    assert gui_rows.pending_marker(none) is None
+    assert gui_rows.restart_note(none) is None
+    one = gui_rows.workspace_row(daemon_row(sizes_pending=True))
+    assert gui_rows.pending_marker(one) == "↻1"
+    assert gui_rows.restart_note(one) == "1 change applies at the next start"
+    both = gui_rows.workspace_row(
+        daemon_row(mounts_pending=True, sizes_pending=True)
+    )
+    assert gui_rows.pending_marker(both) == "↻2"
+    assert gui_rows.restart_note(both) == "2 changes apply at the next start"
+
+
 def test_the_detail_line_reads_the_model() -> None:
     """The detail strip's single line (#849's facts, the GUI's
     read): identity, posture, and costs ``·``-separated, the
@@ -240,8 +259,8 @@ def test_the_detail_line_reads_the_model() -> None:
     )
     assert gui_rows.detail_text(model, 10737418241) == (
         f"alpha  ·  id {WS}  ·  image debian:13.6  ·  cpu 2  ·  "
-        "mem 8G  ·  egress allow  ·  mounts ✗1  ·  next ↻1  ·  "
-        "storage 10G"
+        "mem 8G  ·  egress allow  ·  mounts ✗1  ·  "
+        "1 change applies at the next start  ·  storage 10G"
     )
     bare = gui_rows.workspace_row(
         daemon_row(cpus=None, mem_mib=None, egress_mode=None)
