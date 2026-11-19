@@ -1,12 +1,14 @@
 """The workspace list screen (phase 3 of #924, #939): the thin
 widget that renders the presenter's row models in the main
 window — the TUI listing's five fields (NAME, STATUS with the
-unresolved-mounts marker, ID, IMAGE, CREATED). The screen holds
-no business logic: daemon rows arrive as row models
+unresolved-mounts and pending-changes markers, ID, IMAGE,
+CREATED) and the row-actions column beside them. The screen
+holds no business logic: daemon rows arrive as row models
 (:mod:`msks.client.gui.rows`), the bridge
 (:mod:`msks.client.gui.bridge`) carries every call, and a
 refresh failure flashes the status line while the rows already
-on screen stand.
+on screen stand. The row's menu (#972) opens the editor
+(:mod:`msks.client.gui.edit`, #986) beside its other actions.
 
 This module imports PySide6 at module scope. That is safe
 because nothing imports it at CLI parse time: the package init
@@ -20,6 +22,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..data import RestFailure
 from .bridge import Bridge
+from .edit import EditDialog
 from .listcells import (
     ACTION_COLUMN,
     CELL_MARGIN,
@@ -190,6 +193,7 @@ class WorkspaceList(QtWidgets.QWidget):
         # the fill keeps; storage reads the cached capacity
         # report, fetched beside the rows.
         self.rows_by_id: dict[str, WorkspaceRow] = {}
+        self.daemon_rows: dict[str, dict] = {}
         self.storage_used: dict[str, int] = {}
         self.storage_pending = False
         self.detail = QtWidgets.QLabel("", self)
@@ -569,6 +573,11 @@ class WorkspaceList(QtWidgets.QWidget):
         inside it cannot wipe the outcome the operator just
         read."""
         self.pending = False
+        # The daemon's own rows stand beside the models (#986):
+        # the editor seeds from the row's whole facts — the
+        # sizes the model carries no cell for — so the last
+        # answer's rows stay keyed by id beside their models.
+        self.daemon_rows = {row.get("id"): row for row in result or []}
         self.set_rows(workspace_rows(result))
         if self.flash_outage:
             self.clear_flash()
@@ -722,6 +731,20 @@ class WorkspaceList(QtWidgets.QWidget):
         self.sync_actions()
         self.bridge.call(DELETE_KEY, "remove", workspace[0])
 
+    def edit_workspace(self, workspace: tuple[str, str]) -> None:
+        """The Edit action (#986): the editor opens over the list
+        seeded from the row's own facts — the create dialog's
+        shape, the sizes and topology editable — and a landed
+        resize closes it and refreshes the listing behind it,
+        which shows the pending marker the row grows. A row the
+        last answer dropped opens nothing."""
+        row = self.daemon_rows.get(workspace[0])
+        if row is None:
+            return
+        dialog = EditDialog(self.bridge, row)
+        dialog.accepted.connect(self.refresh)
+        dialog.exec()
+
     def confirm_stop(self, label: str) -> bool:
         """Stop's confirmation (#940): the question names the
         workspace, and No is the default — a stop is the
@@ -765,8 +788,11 @@ class WorkspaceList(QtWidgets.QWidget):
             menu.popup(self.table.viewport().mapToGlobal(pos))
 
     def row_menu(self, row: int) -> QtWidgets.QMenu | None:
-        """The row's menu (#972) — ``None`` for a row the table
-        does not hold."""
+        """The row's menu (#972, #986) — ``None`` for a row the
+        table does not hold. Edit joins the row's own verb, the
+        shell, and Delete: the editor opens for the workspace's
+        sizes and topology, the rename field waiting on the
+        daemon's route."""
         name = self.table.item(row, NAME_COLUMN)
         if name is None:
             return None
@@ -774,6 +800,7 @@ class WorkspaceList(QtWidgets.QWidget):
         model = self.rows_by_id.get(workspace[0])
         verb = model.action if model is not None else "start"
         menu = QtWidgets.QMenu(self.table)
+        menu.addAction("Edit", lambda: self.edit_workspace(workspace))
         menu.addAction(
             verb.capitalize(),
             lambda: self.toggle_workspace(workspace),

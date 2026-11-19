@@ -19,6 +19,7 @@ from PySide6 import QtCore, QtWidgets
 from ..create import invoking_user
 from ..data import RestFailure
 from ..images import ordered_image_rows
+from .dialogs import BridgeClose, whole_number
 
 #: The create call's key (#962): every open dialog shares it —
 #: an answer lands on the dialog whose flight is open, the
@@ -57,13 +58,6 @@ STATIC_PLACEHOLDERS = {
 #: carries no image, and the daemon answers its designated
 #: default, the TUI's own blank-select behavior.
 DEFAULT_IMAGE_LABEL = "the daemon's default"
-
-
-def whole_number(value: str) -> bool:
-    """Whether a form value is a whole number (#309's own rule):
-    ASCII digits only — ``int()`` refuses some unicode digits
-    ``isdigit()`` accepts, and a paste can carry them."""
-    return value.isascii() and value.isdigit()
 
 
 def land_value(field: str, value: str, body: dict) -> str | None:
@@ -154,7 +148,7 @@ def user_placeholder() -> str:
     return ""
 
 
-class CreateDialog(QtWidgets.QDialog):
+class CreateDialog(BridgeClose, QtWidgets.QDialog):
     """The create form as a dialog (#962): the TUI create
     popup's counterpart over the workspaces, its exchange and
     its refusals carried the screens' way — calls through the
@@ -196,8 +190,7 @@ class CreateDialog(QtWidgets.QDialog):
         layout.addWidget(self.note)
         layout.addLayout(form)
         layout.addLayout(buttons)
-        bridge.succeeded.connect(self.on_succeeded)
-        bridge.failed.connect(self.on_failed)
+        self.hook_bridge(bridge)
 
     def showEvent(self, event) -> None:
         """The hints load on the first show (#962): the image
@@ -209,17 +202,6 @@ class CreateDialog(QtWidgets.QDialog):
             self.hints_loaded = True
             self.bridge.call(IMAGES_KEY, "images")
             self.bridge.call(DEFAULTS_KEY, "create_defaults")
-
-    def done(self, result: int) -> None:
-        """The dialog's close, every path's (#962): the bridge
-        hands go — a dialog closed mid-flight cancels its own
-        call, so its late answer reaches no one and the next
-        dialog's own answers land on it alone."""
-        if self.flight is not None and not self.flight.done():
-            self.flight.cancel()
-        self.bridge.succeeded.disconnect(self.on_succeeded)
-        self.bridge.failed.disconnect(self.on_failed)
-        super().done(result)
 
     @QtCore.Slot(str, object)
     def on_succeeded(self, key: str, result: object) -> None:

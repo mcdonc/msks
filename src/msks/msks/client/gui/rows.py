@@ -90,6 +90,29 @@ def state_rank(state: str) -> int:
     return STATE_SORT_RANK.get(state, len(STATE_SORT_ORDER))
 
 
+def pending_marker(model: WorkspaceRow) -> str | None:
+    """The pending-changes marker (#986, the TUI's own ↻N over
+    the same flags): one per waiting half — a mounts edit the
+    last start has not taken, a sizes or topology edit no boot
+    has taken — else ``None``. The status cell leads its state
+    word with it, the TUI listing's own shape."""
+    return f"↻{model.pending_count}" if model.pending_count else None
+
+
+def restart_note(model: WorkspaceRow) -> str | None:
+    """The restart the pending marker names, in words (#986,
+    the TUI's pending-flags own naming): how many changes wait
+    for the next start — the count the marker carries, said as
+    a sentence the status cell's tooltip and the strips read.
+    A row with nothing waiting answers ``None``."""
+    count = model.pending_count
+    if not count:
+        return None
+    noun = "change" if count == 1 else "changes"
+    verb = "applies" if count == 1 else "apply"
+    return f"{count} {noun} {verb} at the next start"
+
+
 def issue_marker(row: dict) -> str | None:
     """The unresolved-mounts marker (#620, part #624, #938):
     ``✗N``, N counting the workspace's unresolved mounts, for a
@@ -213,16 +236,18 @@ def mem_value(model: WorkspaceRow) -> str:
     return human_bytes(model.mem_mib * MIB)
 
 
-def marker_pairs(model: WorkspaceRow) -> list[tuple[str, str]]:
-    """The strip's marker pairs (#849's shape): the mounts count
-    while any mount skips, the pending count while a change
-    waits for the next start — the same ✗N/↻N cues the status
-    cell carries, read beside the costs."""
+def marker_pairs(model: WorkspaceRow) -> list[tuple[str | None, str]]:
+    """The strip's marker pairs (#849's shape, #986's words):
+    the mounts count while any mount skips, then the restart
+    note while a change waits for the next start — the pending
+    count said as a sentence, the words the ✗N and ↻N cues the
+    status cell carries stand for here."""
     pairs = []
     if model.issue_marker is not None:
         pairs.append(("mounts", model.issue_marker))
-    if model.pending_count:
-        pairs.append(("next", f"↻{model.pending_count}"))
+    note = restart_note(model)
+    if note is not None:
+        pairs.append((None, note))
     return pairs
 
 

@@ -12,7 +12,7 @@ own contract: nothing imports it at CLI parse time (#927).
 
 from PySide6 import QtCore, QtWidgets
 
-from .rows import WorkspaceRow
+from .rows import WorkspaceRow, pending_marker, restart_note
 
 RANK_ROLE = QtCore.Qt.ItemDataRole.UserRole
 
@@ -80,23 +80,34 @@ def action_reply_text(label: str, reply: object) -> str:
 
 
 def state_text(model: WorkspaceRow) -> str:
-    """The status cell's text (#939): the unresolved-mounts
-    marker ahead of the state word — the TUI status cell's shape
-    (``✗1 stopped``) — the word alone on a healthy row."""
-    if model.issue_marker is None:
+    """The status cell's text (#939, #986): the unresolved-mounts
+    marker ahead of the pending-changes marker ahead of the state
+    word — the TUI status cell's shape (``✗1 ↻2 running``) — the
+    word alone on a row that waits on nothing."""
+    markers = " ".join(
+        marker
+        for marker in (model.issue_marker, pending_marker(model))
+        if marker is not None
+    )
+    if not markers:
         return model.state
-    return f"{model.issue_marker} {model.state}"
+    return f"{markers} {model.state}"
 
 
 class StateItem(QtWidgets.QTableWidgetItem):
-    """The status cell as a sort item (#939): the marker beside
+    """The status cell as a sort item (#939): the markers beside
     the word, the lifecycle rank carried as the item's sort data
     — a column click orders the rows by the vocabulary's own
-    sequence, a state outside it last."""
+    sequence, a state outside it last. The cell's tooltip names
+    the restart the pending marker stands for (#986): the ↻N a
+    narrow cell renders, said as the sentence the strips read."""
 
     def __init__(self, model: WorkspaceRow) -> None:
         super().__init__(state_text(model))
         self.setData(RANK_ROLE, model.state_rank)
+        note = restart_note(model)
+        if note is not None:
+            self.setToolTip(note)
 
     def __lt__(self, other: QtWidgets.QTableWidgetItem) -> bool:
         return self.data(RANK_ROLE) < other.data(RANK_ROLE)

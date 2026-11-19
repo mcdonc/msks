@@ -90,6 +90,8 @@ def daemon_rows() -> list[dict]:
             "mount_issues": [],
             "cpus": 2,
             "mem_mib": 8192,
+            "root_mib": 8192,
+            "home_mib": 16384,
             "egress_mode": "allow",
             "mounts_pending": False,
             "sizes_pending": False,
@@ -104,6 +106,8 @@ def daemon_rows() -> list[dict]:
             "mount_issues": [{"kind": "skipped"}],
             "cpus": 4,
             "mem_mib": 16384,
+            "root_mib": 4096,
+            "home_mib": 8192,
             "egress_mode": "allow",
             "mounts_pending": True,
             "sizes_pending": False,
@@ -118,6 +122,8 @@ def daemon_rows() -> list[dict]:
             "mount_issues": [],
             "cpus": None,
             "mem_mib": None,
+            "root_mib": None,
+            "home_mib": None,
             "egress_mode": None,
             "mounts_pending": False,
             "sizes_pending": False,
@@ -237,7 +243,7 @@ def test_the_list_renders_the_row_models(qt) -> None:
     # newest-first, the TUI's own default.
     labels = [screen.table.item(row, 0).text() for row in range(3)]
     assert labels == ["beta", "alpha", "ws-3"]
-    assert screen.table.item(0, 1).text() == "✗1 running"
+    assert screen.table.item(0, 1).text() == "✗1 ↻1 running"
     assert screen.table.item(1, 1).text() == "stopped"
     # The ID column's cell (#849's vocabulary): the immutable id.
     assert screen.table.item(2, 2).text() == "ws-3"
@@ -547,7 +553,7 @@ def test_a_narrow_pane_ellipsizes_the_image_alone(qt) -> None:
     while every other column keeps its whole values; a pane
     with the room reads the image whole again."""
     screen, window, _bridge = make_screen(qt)
-    window.resize(600, 700)  # the hash row alone overflows this
+    window.resize(680, 700)  # the hash row alone overflows this
     qt.app.processEvents()
     image = screen.table.item(0, 3).text()  # the 64-char hash row
     assert image != "b" * 64
@@ -1120,16 +1126,18 @@ def test_the_row_shell_button_opens_the_workspace(qt) -> None:
 
 
 def test_the_context_menu_carries_the_rows_actions(qt, monkeypatch) -> None:
-    """A right-click on a row opens its menu (#972): start or
-    stop per the row's own action, a shell, and Delete — the
-    same paths the row's buttons take. A right-click on no row
-    opens nothing."""
+    """A right-click on a row opens its menu (#972, #986):
+    Edit — the editor over the row's own facts — start or stop
+    per the row's own action, a shell, and Delete — the same
+    paths the row's buttons take. A right-click on no row opens
+    nothing."""
     screen, window, bridge = make_screen(qt)
     monkeypatch.setattr(
         qt.QtWidgets.QMessageBox,
         "question",
         lambda *args: qt.QtWidgets.QMessageBox.StandardButton.No,
     )
+    edits = fake_editor(monkeypatch, qt)[0]
     # The show is non-modal: the request itself pops the menu,
     # and a press below every row opens nothing.
     assert screen.row_menu(-1) is None
@@ -1141,15 +1149,86 @@ def test_the_context_menu_carries_the_rows_actions(qt, monkeypatch) -> None:
     screen.menu_requested(pos)
     menu = screen.findChildren(qt.QtWidgets.QMenu)[-1]
     labels = [action.text() for action in menu.actions()]
-    assert labels == ["Start", "Open a shell", "Delete"]
+    assert labels == ["Edit", "Start", "Open a shell", "Delete"]
     bridge.calls.clear()
     seen: list[str] = []
     screen.shell_requested.connect(seen.append)
     for action in menu.actions():
         action.trigger()
+    assert edits == [("ws-1",)]  # the editor opened this row
     assert bridge.calls == [("workspaces-start", "start", ("ws-1",))]
     assert seen == ["ws-1"]  # the shell entry ran its path
     # Delete's entry runs behind its confirmation (below).
+    window.close()
+
+
+def fake_editor(monkeypatch, qt) -> tuple[list, list]:
+    """The editor's stub (#986): the constructor's row recorded,
+    the accepted signal's connect surface with it, and an exec
+    that returns at once — the stub never enters a loop. A
+    landed edit refreshes the listing through the connected
+    slot, exactly the create dialog's shape."""
+    opened: list[tuple] = []
+    accepted: list[object] = []
+
+    class FakeDialog:
+        def __init__(self, bridge: object, row: dict) -> None:
+            opened.append((row["id"],))
+
+    class FakeAccepted:
+        def connect(self, slot: object) -> None:
+            accepted.append(slot)
+
+    FakeDialog.accepted = FakeAccepted()  # type: ignore[attr-defined]
+    FakeDialog.exec = lambda self: 0  # type: ignore[method-assign]
+    monkeypatch.setattr(qt.screen_mod, "EditDialog", FakeDialog)
+    return opened, accepted
+
+
+def test_edit_opens_the_editor_over_the_rows_own_facts(
+    qt, monkeypatch
+) -> None:
+    """The Edit action (#986): the editor opens over the bridge
+    it shares with the list, seeded from the daemon row the last
+    listing stood beside the models — the whole facts the sizes
+    read — and a landed resize refreshes the listing behind it.
+    A workspace the last answer dropped opens nothing."""
+    screen, window, bridge = make_screen(qt)
+    opened, accepted = fake_editor(monkeypatch, qt)
+    screen.edit_workspace(("ws-1", "alpha"))
+    assert opened == [("ws-1",)]
+    assert accepted == [screen.refresh]
+    # A workspace the last answer dropped opens nothing: the
+    # editor seeds from the row's own facts or not at all.
+    opened.clear()
+    screen.daemon_rows.pop("ws-1")
+    screen.edit_workspace(("ws-1", "alpha"))
+    assert opened == []
+    window.close()
+
+
+def test_a_row_with_deferred_edits_marks_the_restart(qt) -> None:
+    """The deferred-edit row (#986): a sizes edit no boot has
+    taken leads the status word with the ↻N marker, the cell's
+    tooltip names the restart in the words the strip reads, and
+    the strip states it in words — the marker stands until a
+    start takes the change and the listing agrees again."""
+    screen, window, bridge = make_screen(qt)
+    rows = daemon_rows()
+    rows[0]["sizes_pending"] = True
+    screen.on_succeeded("workspaces-list", rows)
+    row = screen.row_ids()["ws-1"]
+    status = screen.table.item(row, 1)
+    assert status.text() == "↻1 stopped"
+    assert status.toolTip() == "1 change applies at the next start"
+    assert "1 change applies at the next start" in screen.detail.text()
+    # A start that takes the change clears the marker: the
+    # listing and the config agree again.
+    rows[0]["sizes_pending"] = False
+    screen.on_succeeded("workspaces-list", rows)
+    status = screen.table.item(screen.row_ids()["ws-1"], 1)
+    assert status.text() == "stopped"
+    assert status.toolTip() == ""
     window.close()
 
 
@@ -1165,9 +1244,12 @@ def test_the_context_menus_stop_confirms(qt, monkeypatch) -> None:
 
     monkeypatch.setattr(qt.QtWidgets.QMessageBox, "question", refuse)
     menu = screen.row_menu(screen.row_ids()["ws-2"])
-    assert [action.text() for action in menu.actions()][0] == "Stop"
+    assert [action.text() for action in menu.actions()][:2] == [
+        "Edit",
+        "Stop",
+    ]
     bridge.calls.clear()
-    menu.actions()[0].trigger()
+    menu.actions()[1].trigger()
     assert bridge.calls == []  # the refusal sent nothing
     assert asked[0][0] == "Stop workspace"
     window.close()
@@ -1224,7 +1306,7 @@ def test_the_detail_strip_follows_the_hold(qt) -> None:
     assert line.startswith("beta  ·  id ws-2  ·  image ")
     for fact in ("cpu 4", "mem 16G", "egress allow"):
         assert fact in line
-    assert "mounts ✗1" in line and "next ↻1" in line
+    assert "mounts ✗1" in line and "1 change applies at the next start" in line
     assert "storage -" in line
     # The listing's answer fetched the capacity report beside
     # the rows; its answer fills the figure.
@@ -1299,15 +1381,15 @@ def test_the_storage_cache_keeps_standing_figures(qt) -> None:
 def test_a_posture_change_alone_refreshes_the_strip(qt) -> None:
     """The unchanged-listing skip spares the table, not the
     strip (#940): an answer whose five displayed cells read the
-    same but whose posture facts changed — a pending change
-    landed — still refreshes the model map and the strip. The
-    strip cannot lie about facts the columns never show."""
+    same but whose posture facts changed — a cpu edit landed —
+    still refreshes the model map and the strip. The strip
+    cannot lie about facts the columns never show."""
     screen, window, _bridge = make_screen(qt)
-    assert "next ↻1" in screen.detail.text()  # beta's wait
+    assert "cpu 4" in screen.detail.text()  # beta's standing fact
     settled = [dict(row) for row in daemon_rows()]
-    settled[1]["mounts_pending"] = False  # the wait landed
+    settled[1]["cpus"] = 8  # the edit landed
     screen.on_succeeded("workspaces-list", settled)
-    assert "next" not in screen.detail.text()
+    assert "cpu 8" in screen.detail.text()
     assert screen.table.rowCount() == 3  # the table stood whole
     window.close()
 

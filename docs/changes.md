@@ -8,6 +8,19 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI workspace edit action (#986).** The desktop GUI's
+  workspace list grows an Edit action on the row's context
+  menu: the editor opens in the create dialog's shape with the
+  workspace's current values filled in, and the changed sizes
+  and topology send through the resize route `msks resize`
+  drives. The root's grow-only rule is checked on the form,
+  where the edit can still change, and the list refreshes when
+  the daemon answers. A row whose edits wait for the next start
+  leads its status with the `↻N` marker, its tooltip and the
+  detail strips stating in words how many changes the next
+  start applies. The name field follows the daemon: it stays
+  off the form until the rename route lands.
+
 - **The GUI secrets tab (#966).** The desktop GUI's Secrets
   tab renders the TUI secrets page: the placeholder listing
   with coverage, destinations, a live TTL countdown, the
