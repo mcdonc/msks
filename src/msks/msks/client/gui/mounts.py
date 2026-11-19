@@ -32,8 +32,14 @@ from .mountrows import (
     saved_note,
 )
 
-#: The save call's key (#987): the tab's one flight — a change
-#: already out gates the next, exactly the listing's own rule.
+#: The save call's key stem (#987): each flight carries its
+#: own key off it — ``workspace-mounts-N``, one counter per tab
+#: — so the tab takes only its own current flight's answers. A
+#: refusal the prior workspace's finished flight delivers past a
+#: switch carries the old key and reaches nothing: the failure
+#: signal names no row, and the key is the one identity it does
+#: carry. A change already out gates the next, exactly the
+#: listing's own rule.
 MOUNTS_KEY = "workspace-mounts"
 
 #: The tab's row of columns (#987): the Info tab's own mounts
@@ -120,6 +126,8 @@ class MountsTab(QtWidgets.QWidget):
         self.flight = None
         self.pending = False
         self.landed = False
+        self.flight_seq = 0
+        self.flight_key = ""
         self.table = QtWidgets.QTableWidget(0, len(MOUNT_COLUMNS), self)
         self.table.setHorizontalHeaderLabels(MOUNT_COLUMNS)
         self.table.verticalHeader().setVisible(False)
@@ -177,6 +185,12 @@ class MountsTab(QtWidgets.QWidget):
             self.pending = False
             self.before = None
             self.workspace_id = workspace_id
+            # The open takes no answers from before it (#987): a
+            # flight the prior workspace still had out — its
+            # cancel a no-op on a future already finished — can
+            # deliver its answer past this reset, and a key no
+            # standing flight holds reaches nothing.
+            self.flight_key = ""
             # A fresh workspace's note starts blank (#987): the
             # prior one's refusal must not name itself on a page
             # that never asked.
@@ -297,9 +311,11 @@ class MountsTab(QtWidgets.QWidget):
         self.before = self.working
         self.working = mounts
         self.pending = True
+        self.flight_seq += 1
+        self.flight_key = f"{MOUNTS_KEY}-{self.flight_seq}"
         self.repaint(self.pending_row or {})
         self.flight = self.bridge.call(
-            MOUNTS_KEY, "set_mounts", self.workspace_id, mounts
+            self.flight_key, "set_mounts", self.workspace_id, mounts
         )
 
     @QtCore.Slot(str, object)
@@ -309,18 +325,15 @@ class MountsTab(QtWidgets.QWidget):
         names what the save waits for, and the page behind takes
         the row. Another key's answer is not this tab's to
         take."""
-        if key != MOUNTS_KEY:
+        if key != self.flight_key:
+            # Another surface's answer, or a flight this tab no
+            # longer holds — a switch cancelled it, or its
+            # delivery raced one — is not this tab's to take.
             return
+        fresh = result if isinstance(result, dict) else {}
         self.pending = False
         self.before = None
         self.flight = None
-        fresh = result if isinstance(result, dict) else {}
-        if fresh.get("id") != self.workspace_id:
-            # The prior workspace's late answer, or a reply that
-            # names no workspace at all — its flight was
-            # cancelled at the open, and a race that delivered it
-            # anyway is not this workspace's to take.
-            return
         self.take_row(fresh)
         self.note.setText(saved_note(fresh))
         self.row_updated.emit(fresh)
@@ -332,7 +345,10 @@ class MountsTab(QtWidgets.QWidget):
         message whole — and the working list rolls back to the
         snapshot the change took: the daemon is the authority,
         and a refused edit must not ride a later save."""
-        if key != MOUNTS_KEY:
+        if key != self.flight_key:
+            # Another surface's refusal, or a flight this tab no
+            # longer holds — the failure signal carries no row,
+            # and the key is the one identity it does.
             return
         self.pending = False
         self.flight = None

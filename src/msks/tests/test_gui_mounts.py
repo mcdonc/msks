@@ -250,7 +250,7 @@ def test_an_add_posts_the_whole_list_and_the_answer_lands(qt) -> None:
     tab.change(added_mount(tab.working, entry))
     assert bridge.calls == [
         (
-            "workspace-mounts",
+            tab.flight_key,
             "set_mounts",
             ("ws-a", [*daemon_row()["mounts"], entry]),
         )
@@ -260,7 +260,7 @@ def test_an_add_posts_the_whole_list_and_the_answer_lands(qt) -> None:
         **daemon_row(),
         "mounts": [*daemon_row()["mounts"], entry],
     }
-    bridge.succeeded.emit("workspace-mounts", fresh)
+    bridge.succeeded.emit(tab.flight_key, fresh)
     assert seen == [fresh]
     assert tab.table.rowCount() == 3
     assert tab.note.text() == SAVED_PENDING
@@ -279,18 +279,18 @@ def test_an_edit_and_a_remove_run_through_the_bridge(qt, monkeypatch) -> None:
     tab.edit()
     assert bridge.calls == [
         (
-            "workspace-mounts",
+            tab.flight_key,
             "set_mounts",
             ("ws-a", [entry, daemon_row()["mounts"][1]]),
         )
     ]
-    bridge.succeeded.emit("workspace-mounts", daemon_row())
+    bridge.succeeded.emit(tab.flight_key, daemon_row())
     bridge.calls.clear()
     tab.table.selectRow(1)
     tab.remove()
     assert bridge.calls == [
         (
-            "workspace-mounts",
+            tab.flight_key,
             "set_mounts",
             ("ws-a", [daemon_row()["mounts"][0]]),
         )
@@ -308,7 +308,7 @@ def test_a_named_refusal_keeps_the_edited_list(qt) -> None:
     tab.change(gone)
     assert tab.table.rowCount() == 1  # the composition shows
     bridge.failed.emit(
-        "workspace-mounts",
+        tab.flight_key,
         "host path /srv/gone is outside the allowed roots",
     )
     assert "outside the allowed roots" in tab.note.text()
@@ -385,7 +385,7 @@ def test_the_adds_own_path_posts_the_entry(qt, monkeypatch) -> None:
     tab.add()
     assert bridge.calls == [
         (
-            "workspace-mounts",
+            tab.flight_key,
             "set_mounts",
             ("ws-a", [*daemon_row()["mounts"], entry]),
         )
@@ -442,16 +442,50 @@ def test_a_refresh_inside_the_dialog_re_resolves_the_edit(
             tab.host("ws-a", {**daemon_row(), "mounts": settled[::-1]})
             return 1
 
+    tab.host("ws-a", daemon_row())  # the whole list again
+    tab.table.selectRow(0)  # /srv/ok, slot 0
     monkeypatch.setattr(qt.mounts, "MountDialog", ReorderingDialog)
-    tab.table.selectRow(0)
-    tab.edit()
+    tab.edit()  # the tick moved /srv/ok to slot 1: the edit finds it
     assert bridge.calls == [
         (
-            "workspace-mounts",
+            tab.flight_key,
             "set_mounts",
-            ("ws-a", [entry, settled[0]]),
+            ("ws-a", [settled[1], entry]),
         )
     ]
+
+
+def test_a_late_refusal_from_the_prior_workspace_decides_nothing(
+    qt,
+) -> None:
+    """The switch's generation (#987): a refusal the prior
+    workspace's finished flight delivers past the reset — the
+    cancel a no-op on it — neither names itself on the fresh
+    page nor rolls a live flight's list back under it."""
+    tab, bridge = make_tab(qt)
+    tab.change(added_mount(tab.working, {"host": "/x", "guest": "/y"}))
+    ws_a_key = tab.flight_key  # ws-a's flight, its cancel a no-op once done
+    tab.host("ws-b", {**daemon_row(), "id": "ws-b"})
+    assert tab.add_button.isEnabled()
+    entry = {"host": "/srv/new", "guest": "/mnt/new"}
+    tab.change(added_mount(tab.working, entry))  # ws-b's own flight
+    # ws-a's refusal delivers late: the note holds, the flight
+    # holds, the composed list holds.
+    bridge.failed.emit(ws_a_key, "host path /x refused")
+    assert tab.note.text() == ""
+    assert not tab.add_button.isEnabled()
+    assert tab.table.rowCount() == 3
+    # ws-b's own answer lands whole.
+    bridge.succeeded.emit(
+        tab.flight_key,
+        {
+            **daemon_row(),
+            "id": "ws-b",
+            "mounts": [*daemon_row()["mounts"], entry],
+        },
+    )
+    assert tab.note.text() == "saved — applies at the next start"
+    assert tab.table.rowCount() == 3
 
 
 def test_a_failure_without_a_snapshot_keeps_the_list(qt) -> None:
@@ -459,7 +493,7 @@ def test_a_failure_without_a_snapshot_keeps_the_list(qt) -> None:
     and the standing list stands — there is no snapshot to roll
     back to, and none is needed."""
     tab, bridge = make_tab(qt)
-    bridge.failed.emit("workspace-mounts", "the daemon is gone")
+    bridge.failed.emit(tab.flight_key, "the daemon is gone")
     assert tab.note.text() == "refused: the daemon is gone"
     assert tab.table.rowCount() == 2
 
@@ -471,16 +505,17 @@ def test_a_new_workspace_cancels_the_old_flight(qt) -> None:
     refusal leaves the note, and the Add stays gated until the
     new workspace's own row lands."""
     tab, bridge = make_tab(qt)
-    bridge.failed.emit("workspace-mounts", "host path refused")
+    bridge.failed.emit(tab.flight_key, "host path refused")
     assert "host path refused" in tab.note.text()
     tab.change(added_mount(tab.working, {"host": "/x", "guest": "/y"}))
     assert not tab.add_button.isEnabled()
+    stale_key = tab.flight_key  # ws-a's flight, cancelled at the switch
     tab.host("ws-b", {})
     assert not tab.add_button.isEnabled()  # nothing landed for ws-b
     assert tab.note.text() == ""  # the prior refusal left with it
     assert tab.table.rowCount() == 0
     # The old workspace's late answer changes nothing here.
-    bridge.succeeded.emit("workspace-mounts", daemon_row())
+    bridge.succeeded.emit(stale_key, daemon_row())
     assert tab.table.rowCount() == 0
     assert tab.workspace_id == "ws-b"
     tab.host("ws-b", {**daemon_row(), "id": "ws-b"})
@@ -508,7 +543,7 @@ def test_a_tick_under_a_flight_keeps_the_posted_list(qt) -> None:
     tab.host("ws-a", daemon_row())  # the tick's older row
     assert tab.table.rowCount() == 3  # the posted list stands
     bridge.succeeded.emit(
-        "workspace-mounts", {**daemon_row(), "mounts_pending": False}
+        tab.flight_key, {**daemon_row(), "mounts_pending": False}
     )
     assert tab.table.rowCount() == 2
     assert tab.note.text() == SAVED
