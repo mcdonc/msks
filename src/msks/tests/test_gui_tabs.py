@@ -116,7 +116,12 @@ def test_the_workspaces_tab_carries_the_create_opener(qt) -> None:
         0, qt.QtWidgets.QTabBar.ButtonPosition.RightSide
     )
     assert plus is not None
-    assert plus.text() == "+"
+    assert plus.text() == ""
+    # The badge (#964): a drawn, multicolor green icon — not
+    # the bare text glyph the opener first wore.
+    assert not plus.icon().isNull()
+    size = plus.icon().availableSizes()[0]
+    assert (size.width(), size.height()) == (32, 32)
     asked: list[bool] = []
     tabs.create_requested.connect(lambda: asked.append(True))
     plus.click()

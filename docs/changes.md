@@ -74,11 +74,12 @@ tagged `vX.Y.Z`.
   tab holds the workspace list and detail screens, and the
   Images and Secrets tabs of the plan land beside it. Arrow
   keys cross the tabs, and Up from the list's top row returns
-  to the tab strip. A plus button on the Workspaces tab opens
-  the create-workspace dialog, the TUI create form's
-  counterpart: the same fields, blank fields left to the
-  daemon's defaults, and a refusal keeping the dialog open
-  with the failure on its note line.
+  to the tab strip. A green gradient badge on the Workspaces
+  tab — a drawn disc, bright at the crown and deep at the
+  foot, a white plus on it — opens the create-workspace
+  dialog, the TUI create form's counterpart: the same fields,
+  blank fields left to the daemon's defaults, and a refusal
+  keeping the dialog open with the failure on its note line.
 
 - **GUI top-level Shells and Info tabs (#974).** The
   workspace detail page's tab row, on the back arrow's own row,

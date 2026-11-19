@@ -380,7 +380,8 @@ def test_the_gui_window_opens_offscreen(
     # The create opener rides the tab (#962): a plus button
     # embedded in the Workspaces tab.
     plus = opened["plus"][0]
-    assert plus is not None and plus.text() == "+"
+    assert plus is not None
+    assert not plus.icon().isNull()  # the drawn green badge (#964)
 
     # Each run rescales the shared application's font (#939:
     # one scale per open), so a second run in one process would

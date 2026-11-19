@@ -10,7 +10,7 @@ for the page below, and the bar never holds the keyboard without
 a way out (no focus trap).
 """
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 #: The first tab's label (#962): the workspace screens' page.
 WORKSPACES_LABEL = "Workspaces"
@@ -18,6 +18,45 @@ WORKSPACES_LABEL = "Workspaces"
 #: The second tab's label (#964): the images page — the catalog
 #: and the published channel, the TUI image page's counterpart.
 IMAGES_LABEL = "Images"
+
+#: The opener badge's palette (#964, the operator's ask): the
+#: greens a create action reads as — a bright leaf for the
+#: badge's crown, a deeper one for its foot, a dark rim, and
+#: the white glyph.
+BADGE_GREEN = QtGui.QColor("#43a047")
+BADGE_GREEN_DARK = QtGui.QColor("#2e7d32")
+BADGE_RIM = QtGui.QColor("#1b5e20")
+GLYPH_WHITE = QtGui.QColor("#ffffff")
+
+#: The badge's pixel size (#964): the pixmap the icon draws,
+#: before the button scales it to the style's own icon size.
+BADGE_PX = 32
+
+
+def create_badge() -> QtGui.QIcon:
+    """The Workspaces tab's opener badge (#962, restyled #964):
+    a green gradient disc — bright at the crown, deep at the
+    foot, a dark rim around it — with the white plus of a
+    create action on it. Drawn, not loaded: no asset ships in
+    the wheel, and the badge renders the same on every host."""
+    pixmap = QtGui.QPixmap(BADGE_PX, BADGE_PX)
+    pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+    painter = QtGui.QPainter(pixmap)
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    gradient = QtGui.QLinearGradient(0, 0, 0, BADGE_PX)
+    gradient.setColorAt(0.0, BADGE_GREEN)
+    gradient.setColorAt(1.0, BADGE_GREEN_DARK)
+    painter.setPen(QtGui.QPen(BADGE_RIM, 2))
+    painter.setBrush(QtGui.QBrush(gradient))
+    painter.drawEllipse(2, 2, BADGE_PX - 4, BADGE_PX - 4)
+    painter.setPen(QtGui.QPen(GLYPH_WHITE, 4))
+    painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+    middle = BADGE_PX // 2
+    arm = 6
+    painter.drawLine(middle - arm, middle, middle + arm, middle)
+    painter.drawLine(middle, middle - arm, middle, middle + arm)
+    painter.end()
+    return QtGui.QIcon(pixmap)
 
 
 class MainTabs(QtWidgets.QTabWidget):
@@ -37,7 +76,7 @@ class MainTabs(QtWidgets.QTabWidget):
         # click asks for a create dialog, the shell that owns
         # the bridge answers it.
         plus = QtWidgets.QToolButton()
-        plus.setText("+")
+        plus.setIcon(create_badge())
         plus.setAutoRaise(True)
         plus.setToolTip("Create a workspace")
         plus.clicked.connect(self.create_requested)
