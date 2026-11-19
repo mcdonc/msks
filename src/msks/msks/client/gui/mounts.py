@@ -24,9 +24,11 @@ from .mountrows import (
     added_mount,
     dialog_seeds,
     mount_entry,
+    mount_pair,
     pending_words,
     removed_mount,
     replaced_mount,
+    resolved_index,
     saved_note,
 )
 
@@ -64,7 +66,8 @@ class MountDialog(QtWidgets.QDialog):
         form.addRow("guest path", self.guest)
         self.mode = QtWidgets.QComboBox()
         self.mode.addItems(list(MODE_CHOICES))
-        self.mode.setCurrentIndex(MODE_CHOICES.index(seeded["mode"]))
+        mode = seeded["mode"] if seeded["mode"] in MODE_CHOICES else "rw"
+        self.mode.setCurrentIndex(MODE_CHOICES.index(mode))
         form.addRow("mode", self.mode)
         self.save_button = QtWidgets.QPushButton("save")
         self.save_button.setDefault(True)
@@ -116,6 +119,7 @@ class MountsTab(QtWidgets.QWidget):
         self.before: list[dict] | None = None
         self.flight = None
         self.pending = False
+        self.landed = False
         self.table = QtWidgets.QTableWidget(0, len(MOUNT_COLUMNS), self)
         self.table.setHorizontalHeaderLabels(MOUNT_COLUMNS)
         self.table.verticalHeader().setVisible(False)
@@ -173,6 +177,10 @@ class MountsTab(QtWidgets.QWidget):
             self.pending = False
             self.before = None
             self.workspace_id = workspace_id
+            # A fresh workspace's note starts blank (#987): the
+            # prior one's refusal must not name itself on a page
+            # that never asked.
+            self.note.setText("")
         self.pending_row = row
         if not self.pending:
             self.take_row(row)
@@ -181,7 +189,10 @@ class MountsTab(QtWidgets.QWidget):
         """The daemon's facts into the tab's standing state
         (#987): the working list is the row's own — the daemon
         is the authority between changes — with the issues and
-        the pending flag beside it."""
+        the pending flag beside it. A row with nothing in it is
+        the open's blank, not a landing: the Add stays gated
+        until a real row arrives."""
+        self.landed = bool(row)
         self.working = list(row.get("mounts") or [])
         self.issues = list(row.get("mount_issues") or [])
         self.repaint(row)
@@ -210,6 +221,7 @@ class MountsTab(QtWidgets.QWidget):
                     item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable
                 )
                 self.table.setItem(index, column, item)
+        self.table.resizeColumnsToContents()
         words = pending_words(row)
         self.pending_label.setVisible(words is not None)
         if words is not None:
@@ -223,10 +235,12 @@ class MountsTab(QtWidgets.QWidget):
 
     @QtCore.Slot()
     def sync_buttons(self) -> None:
-        """The buttons' state (#987): Add gated on the one
-        flight, Edit and Remove on a selected row besides."""
+        """The buttons' state (#987): Add gated on a landed row
+        beside the one flight — a blank tab cannot compose a
+        whole-list replacement for facts it never read — and
+        Edit and Remove on a selected row besides."""
         held = self.selected() >= 0
-        self.add_button.setEnabled(not self.pending)
+        self.add_button.setEnabled(self.landed and not self.pending)
         self.edit_button.setEnabled(held and not self.pending)
         self.remove_button.setEnabled(held and not self.pending)
 
@@ -242,14 +256,22 @@ class MountsTab(QtWidgets.QWidget):
     @QtCore.Slot()
     def edit(self) -> None:
         """The Edit action (#987): the form seeded with the
-        selected row's mount, an accepted entry taking its
-        slot."""
+        selected row's mount, an accepted entry taking its slot
+        — the slot re-resolved by the mount's (host, guest) pair
+        after the form's wait, the TUI editor's own rule: a
+        refresh that landed inside the dialog re-created every
+        dict, and a mount that left the list decides nothing."""
         index = self.selected()
         if index < 0:
             return
-        dialog = MountDialog(self.working[index])
+        mount = self.working[index]
+        pair = mount_pair(mount)
+        dialog = MountDialog(mount)
         if dialog.exec() and dialog.entry is not None:
-            self.change(replaced_mount(self.working, index, dialog.entry))
+            fresh = resolved_index(self.working, pair)
+            if fresh < 0:
+                return
+            self.change(replaced_mount(self.working, fresh, dialog.entry))
 
     @QtCore.Slot()
     def remove(self) -> None:
@@ -293,8 +315,9 @@ class MountsTab(QtWidgets.QWidget):
         self.before = None
         self.flight = None
         fresh = result if isinstance(result, dict) else {}
-        if fresh.get("id") not in (None, self.workspace_id):
-            # The prior workspace's late answer — its flight was
+        if fresh.get("id") != self.workspace_id:
+            # The prior workspace's late answer, or a reply that
+            # names no workspace at all — its flight was
             # cancelled at the open, and a race that delivered it
             # anyway is not this workspace's to take.
             return

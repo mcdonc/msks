@@ -348,6 +348,13 @@ def test_the_dialog_builds_seeded_and_submits(qt) -> None:
     assert refused.note.text() == (
         "the host path is the form's one required field"
     )
+    foreign = qt.mounts.MountDialog(
+        {"host": "/s", "guest": "/g", "mode": "rx"}
+    )
+    qt.keep.append(foreign)
+    assert (
+        foreign.mode.currentText() == "rw"
+    )  # an unknown mode reads as the default
 
 
 def test_a_cancelled_form_sends_nothing(qt, monkeypatch) -> None:
@@ -397,6 +404,56 @@ def test_another_keys_answer_is_not_the_tabs_to_take(qt) -> None:
     assert tab.table.rowCount() == 2
 
 
+def test_a_refresh_inside_the_dialog_re_resolves_the_edit(
+    qt, monkeypatch
+) -> None:
+    """The edit's wait (#987, the TUI editor's own rule): the
+    page's tick can land inside the modal form and re-create
+    every dict — the edit re-resolves its mount by the (host,
+    guest) pair on the working list it finds after the form,
+    and a mount that left the list decides nothing."""
+    tab, bridge = make_tab(qt)
+    settled = [dict(mount) for mount in daemon_row()["mounts"]]
+    entry = {"host": "/srv/changed", "guest": "/mnt/ok"}
+
+    class RefreshingDialog:
+        """The form whose wait lands a tick: the daemon's list
+        shrank while the operator edited row 0."""
+
+        def __init__(self, seed: dict | None = None) -> None:
+            self.entry = entry
+
+        def exec(self) -> int:
+            tab.host("ws-a", {**daemon_row(), "mounts": settled[1:]})
+            return 1
+
+    monkeypatch.setattr(qt.mounts, "MountDialog", RefreshingDialog)
+    tab.table.selectRow(0)
+    tab.edit()
+    assert bridge.calls == []  # the edited mount left: nothing composes
+    assert tab.table.rowCount() == 1
+
+    class ReorderingDialog(RefreshingDialog):
+        """The form whose wait lands a tick that reorders: the
+        edited pair sits at another slot, and the edit finds
+        it."""
+
+        def exec(self) -> int:
+            tab.host("ws-a", {**daemon_row(), "mounts": settled[::-1]})
+            return 1
+
+    monkeypatch.setattr(qt.mounts, "MountDialog", ReorderingDialog)
+    tab.table.selectRow(0)
+    tab.edit()
+    assert bridge.calls == [
+        (
+            "workspace-mounts",
+            "set_mounts",
+            ("ws-a", [entry, settled[0]]),
+        )
+    ]
+
+
 def test_a_failure_without_a_snapshot_keeps_the_list(qt) -> None:
     """A refusal nothing composed (#987): the note carries it
     and the standing list stands — there is no snapshot to roll
@@ -410,18 +467,24 @@ def test_a_failure_without_a_snapshot_keeps_the_list(qt) -> None:
 def test_a_new_workspace_cancels_the_old_flight(qt) -> None:
     """The open's reset (#987): a workspace switch mid-flight
     cancels the old workspace's save — its answer is not the new
-    workspace's to take — and the tab blanks until the new row
-    lands."""
+    workspace's to take — the tab blanks, the prior one's
+    refusal leaves the note, and the Add stays gated until the
+    new workspace's own row lands."""
     tab, bridge = make_tab(qt)
+    bridge.failed.emit("workspace-mounts", "host path refused")
+    assert "host path refused" in tab.note.text()
     tab.change(added_mount(tab.working, {"host": "/x", "guest": "/y"}))
     assert not tab.add_button.isEnabled()
     tab.host("ws-b", {})
-    assert tab.add_button.isEnabled()
+    assert not tab.add_button.isEnabled()  # nothing landed for ws-b
+    assert tab.note.text() == ""  # the prior refusal left with it
     assert tab.table.rowCount() == 0
     # The old workspace's late answer changes nothing here.
     bridge.succeeded.emit("workspace-mounts", daemon_row())
     assert tab.table.rowCount() == 0
     assert tab.workspace_id == "ws-b"
+    tab.host("ws-b", {**daemon_row(), "id": "ws-b"})
+    assert tab.add_button.isEnabled()
 
 
 def test_a_flight_gates_the_changes(qt) -> None:

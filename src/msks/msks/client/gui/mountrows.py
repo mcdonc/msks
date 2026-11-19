@@ -64,6 +64,25 @@ def dialog_seeds(entry: dict | None) -> dict:
     }
 
 
+def mount_pair(mount: dict) -> tuple[str, str]:
+    """The mount's wire identity (#987, the TUI's own rule): the
+    host path beside the guest path — the pair the derived
+    issues match on, the one identity a reply that re-created
+    every dict keeps."""
+    return (mount.get("host"), mount.get("guest"))
+
+
+def resolved_index(mounts: list, pair: tuple[str, str]) -> int:
+    """The pair's slot on the working list (#987): re-resolved
+    after a form's wait — a reply that landed mid-dialog
+    re-created every dict, and a pair that left the list
+    decides nothing (``-1``)."""
+    for slot, candidate in enumerate(mounts):
+        if mount_pair(candidate) == pair:
+            return slot
+    return -1
+
+
 def added_mount(mounts: list, entry: dict) -> list:
     """The list with one entry joined at its end (#987): the add
     composes the next whole list the save posts."""
