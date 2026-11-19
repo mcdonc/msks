@@ -8,6 +8,7 @@ life.
 
 import asyncio
 import importlib.util
+import logging
 
 import pytest
 import websockets
@@ -274,11 +275,16 @@ def test_a_refused_token_retries_slowly_and_tells_no_recovery(
     asyncio.run(scenario())
 
 
-def test_a_bare_feed_runs_without_its_callbacks() -> None:
+def test_a_bare_feed_runs_without_its_callbacks(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """The feed unwired (#946): the bridge sets the callbacks,
     but a bare feed still runs — frames land, drops and
     recoveries tell to nobody — and a socket whose close itself
-    breaks swallows: one broken close never takes the loop."""
+    breaks stays best-effort without taking the loop: one
+    broken close never kills the connection's cleanup, and the
+    failure is named in the log, never swallowed (AGENTS.md's
+    exception rule — #1002's review)."""
 
     async def scenario() -> None:
         class Unclosable(FakeWS):
@@ -306,7 +312,13 @@ def test_a_bare_feed_runs_without_its_callbacks() -> None:
         assert not task.done()
         task.cancel()
 
+    caplog.set_level(logging.DEBUG, logger="msks.client.gui.feed")
     asyncio.run(scenario())
+    assert any(
+        "the events socket's close failed" in record.message
+        and record.levelno == logging.DEBUG
+        for record in caplog.records
+    )
 
 
 def test_the_ladder_resets_on_a_served_connection() -> None:

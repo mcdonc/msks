@@ -44,7 +44,7 @@ CLOSE_TIMEOUT_S = 3.0
 
 
 async def close_quietly(ws) -> None:
-    """The socket closed, bounded and swallowing: a peer that
+    """The socket closed, bounded and best-effort: a peer that
     already went raises, and one that cannot answer is cut at
     the bound — the reconnect moves on, and the shutdown's
     unwind cannot outlast the bridge's join. The decider link
@@ -53,8 +53,15 @@ async def close_quietly(ws) -> None:
     connections."""
     try:
         await asyncio.wait_for(ws.close(), timeout=CLOSE_TIMEOUT_S)
-    except Exception:
-        pass
+    except Exception as exc:
+        # The close stays best-effort — a socket the wire
+        # already broke is the reconnect path's own case — but
+        # the failure is named in the log, not swallowed
+        # (AGENTS.md's exception rule: no silent except-and-
+        # pass). Debug level: the broken peer is routine on
+        # every reconnect after a drop, and the record is
+        # there when asked for.
+        logger.debug("the events socket's close failed: %s", exc)
 
 
 def backoff(delays: tuple[float, ...], attempt: int) -> float:
