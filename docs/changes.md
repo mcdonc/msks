@@ -8,6 +8,15 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI secrets presenter (#965).** The secrets tab
+  gains its data layer: the daemon's placeholder rows build
+  as plain row models carrying the id, coverage, destinations,
+  TTL countdown, created label, and lock state; the sentinel
+  panel's model masks the sentinel a row exposes beside the
+  reach its prefix names; the mint form's TTL choices and the
+  audit view's rows build as plain data. The tab's widget
+  lands next on the `pyside-gui` branch.
+
 - **The GUI images tab (#964).** The desktop GUI's Images tab
   renders the TUI image page's two groups: the daemon's catalog
   with the default marker, hash prefixes, and import dates, and
