@@ -1,15 +1,15 @@
-"""The mint form (phase 4.6 of #924, #966): the dialog the
-listing's Mint action opens — the TUI mint screen's counterpart
+"""The mint form (phase 4.6 of #924, #966, #997): the dialog
+the listing's Mint action opens — the TUI mint screen's counterpart
 (#393, #423). One labeled field per row (name, the
 comma-separated destinations, the coverage pick, the workspace
 picker a scoped pick shows, the TTL choice, and the value — a
 masked input the operator types or pastes into, the form taking
 the secret's bytes directly). The local checks land on the
 form's note line, a refusal keeps the fields; a landed mint
-accepts with its reply — the row carrying the sentinel — and
-the value field clears with the dialog, so the typed secret
-leaves the widget tree (the panel's own closing rule). The
-workspace picker seeds from the tree's own list through the
+accepts with its reply — the row carrying the sentinel the
+page no longer displays (#997) — and the value field clears
+with the dialog, so the typed secret leaves the widget tree.
+The workspace picker seeds from the tree's own list through the
 bridge; a refused seed notes itself and the daemon-wide mint
 needs no list.
 
@@ -30,9 +30,11 @@ MINT_KEY = "secrets-mint"
 #: The workspace-list seed's key (#966).
 WORKSPACES_KEY = "secrets-mint-workspaces"
 
-#: The form's standing note (#966): its title line, back on a
-# refused seed or a landed refusal once the note clears.
-MINT_NOTE = "mint a placeholder — the sentinel shows on the panel"
+#: The form's standing note (#966, #997): its title line,
+#: back on a refused seed or a landed refusal once the note
+#: clears — the page carries no sentinel display, so the note
+#: names the action alone.
+MINT_NOTE = "mint a placeholder"
 
 
 def picker_edge(key: int, current: int, last: int) -> bool | None:

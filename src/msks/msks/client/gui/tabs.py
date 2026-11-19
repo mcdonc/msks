@@ -4,8 +4,8 @@ list and the detail pages over the bridge (#939, #945) — and the
 Images and Secrets tabs of the plan (#963–#966) land beside it
 through :meth:`MainTabs.addTab` — Images since #964, the
 published channel and the catalog under the second tab, and
-Secrets since #966, the placeholder listing, the sentinel
-panel, and the audit group under the third. The bar
+Secrets since #966, the placeholder listing and the audit
+group full width under the third (#997). The bar
 crosses by arrow keys (the spatial-navigation rule carried to the
 GUI): Left and Right move between the tabs, Down leaves the bar
 for the page below, and the bar never holds the keyboard without
@@ -22,8 +22,8 @@ WORKSPACES_LABEL = "Workspaces"
 IMAGES_LABEL = "Images"
 
 #: The third tab's label (#966): the secrets page — the
-#: placeholder listing, the sentinel panel, and the audit
-#: group, the TUI secrets page's counterpart.
+#: placeholder listing and the audit group, full width
+#: (#997), the TUI secrets page's counterpart.
 SECRETS_LABEL = "Secrets"
 
 #: The opener badge's palette (#964, the operator's ask): the

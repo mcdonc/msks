@@ -37,7 +37,7 @@ from ..imagerows import (
     catalog_rows,
     published_rows,
 )
-from ..listtable import ListTable
+from ..listtable import ListTable, resized_viewport
 from . import layout
 from .cells import (
     CATALOG_COLUMNS,
@@ -760,13 +760,16 @@ class ImagesTab(QtWidgets.QWidget):
         """A group pane's own resize (#964): the columns re-flow
         — a vertical scrollbar appearing shrinks the viewport
         after a fill sized against the wider one, and a pane
-        never owes the operator a horizontal bar for it."""
-        if event.type() != QtCore.QEvent.Type.Resize:
-            return
-        for table in (self.catalog_table, self.published_table):
-            if watched is table.viewport():
-                self.size_columns()
-                return
+        never owes the operator a horizontal bar for it — the
+        shared leaf's :func:`resized_viewport` (#997), the
+        secrets tab's beside it."""
+        if (
+            resized_viewport(
+                (self.catalog_table, self.published_table), watched, event
+            )
+            is not None
+        ):
+            self.size_columns()
 
     def button_key(self, watched: QtCore.QObject, event) -> bool:
         """The refresh button's arrow bridges (#962's rule): Up

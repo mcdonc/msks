@@ -262,6 +262,14 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **The GUI secrets page fills the window and drops the
+  sentinel pane (#997).** The placeholder listing and the audit
+  table each span the window's whole width, their columns
+  sharing the spare space and re-flowing on every window
+  resize. The Sentinel pane beside the listing is gone: a row
+  activation or a mint no longer fetches a sentinel, and the
+  sentinel stays the CLI's and the TUI's own surface.
+
 - **The nixpkgs pin behind devenv and the release flake now
   tracks `nixpkgs-unstable` (#990).** The dev shell's fontconfig
   matches the host's generation again, and the warning wall at

@@ -1,25 +1,22 @@
-"""The secrets tab's presenter (#965, phase 4.6 of #924): the
-placeholder listing, the sentinel panel, the mint form's TTL
-choices, and the audit view's rows as plain data — daemon rows
-and recorded audit rows in, dataclasses out, nothing Qt-bound
-in between. A placeholder row carries the id the renew and
-revoke actions key on, the mint-time name, the coverage label
-(the workspaces the row serves, ``*`` the daemon-wide row —
-the workspace the listing shows of it), the destinations cell,
-the TTL countdown (the arithmetic the TUI's EXPIRES cell
-repaints per tick, mirrored here) beside the deadline epoch
-the tab's timer repaints it from — no daemon call per tick —
-the created label (the shared :mod:`msks.client.ages` leaf
-both listings read) beside its own epoch for the column sort,
-and the lock state word. The sentinel panel's model masks the fresh or
-standing sentinel a row exposes — the prefix names the reach
-and holds no bearer power, the body renders one bullet per
-character — beside the reach line the prefix decodes. The
-helpers the TUI's page owns (the secrets cells, the panel's
-mask, and the audit halves of :mod:`msks.client.tui.consent`)
-are mirrored here — the GUI imports nothing from the TUI, and
-the suite pins the pair's parity — so the module holds no
-PySide6 import and the coverage gate lands on it whole.
+"""The secrets tab's presenter (#965, phase 4.6 of #924, the
+sentinel model gone #997): the placeholder listing, the mint
+form's TTL choices, and the audit view's rows as plain data —
+daemon rows and recorded audit rows in, dataclasses out,
+nothing Qt-bound in between. A placeholder row carries the id
+the renew and revoke actions key on, the mint-time name, the
+coverage label (the workspaces the row serves, ``*`` the
+daemon-wide row — the workspace the listing shows of it), the
+destinations cell, the TTL countdown (the arithmetic the TUI's
+EXPIRES cell repaints per tick, mirrored here) beside the
+deadline epoch the tab's timer repaints it from — no daemon
+call per tick — the created label (the shared
+:mod:`msks.client.ages` leaf both listings read) beside its
+own epoch for the column sort, and the lock state word. The
+helpers the TUI's page owns (the secrets cells and the audit
+halves of :mod:`msks.client.tui.consent`) are mirrored here —
+the GUI imports nothing from the TUI, and the suite pins the
+pair's parity — so the module holds no PySide6 import and the
+coverage gate lands on it whole.
 """
 
 import time
@@ -48,16 +45,6 @@ SECRET_TTL_SECONDS = {
 #: the daemon's default when a mint carries no ttl — then the
 #: renew picker's own span (#390).
 MINT_TTLS = ("unbounded", *SECRET_TTLS)
-
-#: The scoped sentinel's prefix (#393): the client's own copy of
-#: the daemon's spelling (the client-isolation rule keeps the
-#: daemon's secretstore out of this process) — the panel's mask
-#: and reach line decode it.
-SCOPED_SENTINEL = "mskssec1_"
-
-#: The daemon-wide sentinel's prefix (#393): every accepting
-#: workspace's tap swaps it.
-WIDE_SENTINEL = "mskssec2_"
 
 #: The audit kind filter's choices (#390): every kind a row can
 #: carry, in the issue's own order. The recorded listing serves
@@ -94,21 +81,6 @@ class SecretRow:
     created: str
     created_ts: float
     state: str
-
-
-@dataclass(frozen=True)
-class SentinelModel:
-    """The sentinel panel's model (#965, over #393 and #440): the
-    row's label, the sentinel masked for display (the prefix
-    names the reach, the body renders one bullet per character),
-    and the reach line the prefix decodes. The real sentinel
-    stays off the model — the reveal and the copy read the row
-    the panel was opened on, and the model puts no bearer power
-    on screen."""
-
-    label: str
-    masked: str
-    reach: str
 
 
 @dataclass(frozen=True)
@@ -260,47 +232,6 @@ def secret_rows(
     columns order rows when the operator asks (the epochs this
     module lands beside the labels are the sort keys)."""
     return [secret_row(row, now) for row in rows]
-
-
-def masked_sentinel(sentinel: str) -> str:
-    """The sentinel's masked display (#393): the prefix stays —
-    it names the reach, holds no bearer power — and the body
-    renders one bullet per character, so the panel opens without
-    putting the token on screen. A sentinel under neither prefix
-    masks whole."""
-    if not sentinel:
-        return ""
-    if sentinel.startswith(SCOPED_SENTINEL):
-        prefix = SCOPED_SENTINEL
-    elif sentinel.startswith(WIDE_SENTINEL):
-        prefix = WIDE_SENTINEL
-    else:
-        return "\u2022" * len(sentinel)
-    return prefix + "\u2022" * (len(sentinel) - len(prefix))
-
-
-def sentinel_reach(row: dict) -> str:
-    """The sentinel's reach line (#393), decoded from its prefix:
-    ``mskssec2_`` swaps on every accepting workspace's tap,
-    ``mskssec1_`` on the row's own coverage set — the prefix
-    names the reach from the string alone (the daemon's own
-    rule, duplicated here per the client-isolation rule)."""
-    sentinel = row.get("sentinel") or ""
-    if sentinel.startswith(SCOPED_SENTINEL):
-        return f"the chosen workspaces: {coverage_text(row)}"
-    return "every accepting workspace"
-
-
-def sentinel_model(row: dict) -> SentinelModel:
-    """The panel's model over one row (#965): the label the
-    panel heads with, the masked display it opens on, and the
-    reach line beneath — the row a mint's reply carried, or the
-    on-demand fetch's (#440)."""
-    return SentinelModel(
-        label=f"{coverage_text(row)}/{row['name']}",
-        masked=masked_sentinel(row.get("sentinel") or ""),
-        reach=sentinel_reach(row),
-    )
 
 
 def string_tuple(value: object) -> tuple[str, ...]:
