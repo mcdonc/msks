@@ -175,6 +175,12 @@ class ImagesTab(QtWidgets.QWidget):
         self.published_table.setHorizontalHeaderLabels(PUBLISHED_COLUMNS)
         self.build_table(self.published_table)
         self.published_table.activated.connect(self.import_at)
+        self.published_table.setContextMenuPolicy(
+            QtCore.Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        self.published_table.customContextMenuRequested.connect(
+            self.published_menu_requested
+        )
         self.status = QtWidgets.QLabel("", self)
         self.refresh_button = QtWidgets.QPushButton("Refresh", self)
         self.refresh_button.clicked.connect(self.refresh)
@@ -643,6 +649,28 @@ class ImagesTab(QtWidgets.QWidget):
         menu = self.catalog_menu(self.catalog_table.rowAt(pos.y()))
         if menu is not None:
             menu.popup(self.catalog_table.viewport().mapToGlobal(pos))
+
+    @QtCore.Slot(QtCore.QPoint)
+    def published_menu_requested(self, pos: QtCore.QPoint) -> None:
+        """A right-click on a published row opens its menu
+        (#964): the import, for a row the catalog does not hold
+        as this build. A press on no row opens nothing."""
+        menu = self.published_menu(self.published_table.rowAt(pos.y()))
+        if menu is not None:
+            menu.popup(self.published_table.viewport().mapToGlobal(pos))
+
+    def published_menu(self, row: int) -> QtWidgets.QMenu | None:
+        """The published row's menu (#964) — ``None`` for a row
+        the table does not hold, and for the exact build
+        already in the catalog, whose activation flashes the
+        skip the import path names."""
+        item = self.published_table.item(row, 0)
+        if item is None:
+            return None
+        model = self.published_models[item.data(ROW_INDEX_ROLE)]
+        menu = QtWidgets.QMenu(self.published_table)
+        menu.addAction("Import…", lambda: self.start_import(model))
+        return menu
 
     def catalog_menu(self, row: int) -> QtWidgets.QMenu | None:
         """The catalog row's menu (#964) — ``None`` for a row

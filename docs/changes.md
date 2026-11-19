@@ -19,8 +19,10 @@ tagged `vX.Y.Z`.
   floor-checks, and the catalog refreshes when the import lands.
   A catalog row opens its full record, Remove asks for
   confirmation, and Set as the default posts the designation;
-  the channel URL follows `image_manifest_url` with the same
-  default the TUI page reads. The two groups' standing tally —
+  a right-click on a published row offers the import behind
+  the same progress dialog; the channel URL follows
+  `image_manifest_url` with the same default the TUI page
+  reads. The two groups' standing tally —
   `N in the catalog · M published` — reads on a selectable
   line beneath the published pane, the workspace list's own
   bottom strip's style. Both panes' bold column headers

@@ -780,6 +780,7 @@ def test_a_press_below_the_rows_opens_no_menu(qt) -> None:
     tab, window, bridge = make_tab(qt)
     bridge.calls.clear()
     tab.menu_requested(qt.QtCore.QPoint(2, 10_000))
+    tab.published_menu_requested(qt.QtCore.QPoint(2, 10_000))
     assert bridge.calls == []
 
 
@@ -1426,4 +1427,59 @@ def test_the_refresh_button_leads_the_bar(qt) -> None:
     bar = tab.layout().itemAt(0)  # the tab's top bar
     assert bar.itemAt(0).widget() is tab.refresh_button
     assert bar.itemAt(1).widget() is tab.status
+    window.close()
+
+
+def test_a_right_click_on_a_published_row_offers_the_import(
+    qt,
+) -> None:
+    """A right-click on a published row (#964, the operator's
+    ask): the import action on it, driving the same gated
+    flight an activation starts. A press on no row opens
+    nothing."""
+    tab, window, bridge = make_tab(qt)
+    bridge.calls.clear()
+    menu = tab.published_menu(row_of(tab, "alpine:3.21"))
+    assert [action.text() for action in menu.actions()] == ["Import…"]
+    menu.actions()[0].trigger()
+    assert bridge.calls == [
+        (
+            images_mod.IMPORT_KEY,
+            "import_image",
+            ("https://ch.example/alpine.tar.zst",),
+        )
+    ]
+    assert tab.published_menu(99) is None
+    window.close()
+
+
+def test_the_imported_builds_menu_offers_the_skip(qt) -> None:
+    """The already-imported build's right-click (#964): the
+    menu still offers the import, and taking it flashes the
+    skip the activation path names — the exact build is in the
+    catalog."""
+    tab, window, bridge = make_tab(qt)
+    bridge.calls.clear()
+    menu = tab.published_menu(row_of(tab, "debian:13.6"))
+    menu.actions()[0].trigger()
+    assert bridge.calls == []
+    assert tab.status.text() == "debian:13.6 is already in the catalog"
+    window.close()
+
+
+def test_a_right_click_opens_the_published_menu(qt) -> None:
+    """A right-click on a published row opens its menu (#964):
+    the import action on it, over the row pressed."""
+    tab, window, _bridge = make_tab(qt)
+    row = row_of(tab, "alpine:3.21")
+    tab.published_menu_requested(qt.QtCore.QPoint(10, row * 40 + 5))
+    menus = [
+        widget
+        for widget in qt.app.topLevelWidgets()
+        if isinstance(widget, qt.QtWidgets.QMenu)
+    ]
+    assert len(menus) == 1
+    assert menus[0].isVisible()
+    assert [action.text() for action in menus[0].actions()] == ["Import…"]
+    menus[0].close()
     window.close()
