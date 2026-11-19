@@ -43,6 +43,27 @@ REFUSED_RETRY_S = 60.0
 CLOSE_TIMEOUT_S = 3.0
 
 
+async def close_quietly(ws) -> None:
+    """The socket closed, bounded and best-effort: a peer that
+    already went raises, and one that cannot answer is cut at
+    the bound — the reconnect moves on, and the shutdown's
+    unwind cannot outlast the bridge's join. The decider link
+    (#999) closes its own sockets through the same door: one
+    close contract for both of the client's events
+    connections."""
+    try:
+        await asyncio.wait_for(ws.close(), timeout=CLOSE_TIMEOUT_S)
+    except Exception as exc:
+        # The close stays best-effort — a socket the wire
+        # already broke is the reconnect path's own case — but
+        # the failure is named in the log, not swallowed
+        # (AGENTS.md's exception rule: no silent except-and-
+        # pass). Debug level: the broken peer is routine on
+        # every reconnect after a drop, and the record is
+        # there when asked for.
+        logger.debug("the events socket's close failed: %s", exc)
+
+
 def backoff(delays: tuple[float, ...], attempt: int) -> float:
     """The reconnect delay for an attempt: the ladder's first
     delay at the reset (attempt 0) and below it, capped at the
@@ -143,7 +164,7 @@ class EventsFeed:
             self.note_drop(f"the socket broke: {exc}")
             return True, False
         finally:
-            await self.close_quietly(ws)
+            await close_quietly(ws)
         self.note_drop("the daemon closed the events socket")
         return True, False
 
@@ -187,13 +208,3 @@ class EventsFeed:
         self.dropped = True
         if self.on_drop is not None:
             self.on_drop(reason)
-
-    async def close_quietly(self, ws) -> None:
-        """The socket closed, bounded and swallowing: a peer
-        that already went raises, and one that cannot answer is
-        cut at the bound — the reconnect moves on, and the
-        shutdown's unwind cannot outlast the bridge's join."""
-        try:
-            await asyncio.wait_for(ws.close(), timeout=CLOSE_TIMEOUT_S)
-        except Exception:
-            pass
