@@ -13,6 +13,7 @@ from msks.client import ages as ages_mod
 from msks.client.gui import secretrows as gui_secrets
 from msks.client.tui import consent as tui_consent
 from msks.client.tui.consent_ui import events as tui_events
+from msks.client.tui.secrets import audit as tui_audit
 from msks.client.tui.secrets import cells as tui_cells
 from msks.client.tui.secrets import sentinel as tui_sentinel
 from rich.markup import escape
@@ -110,7 +111,9 @@ def test_the_placeholder_rows_build_models() -> None:
             coverage="ws1,ws2",
             dests="api.github.com",
             ttl="2h",
+            expires_ts=(NOW + timedelta(hours=2)).timestamp(),
             created="3d ago",
+            created_ts=(NOW - timedelta(days=3)).timestamp(),
             state="open",
         ),
         gui_secrets.SecretRow(
@@ -119,7 +122,9 @@ def test_the_placeholder_rows_build_models() -> None:
             coverage="*",
             dests="-",
             ttl="never",
+            expires_ts=None,
             created="today",
+            created_ts=NOW.timestamp(),
             state="open",
         ),
         gui_secrets.SecretRow(
@@ -128,7 +133,9 @@ def test_the_placeholder_rows_build_models() -> None:
             coverage="ws1",
             dests="api.github.com",
             ttl="expired",
+            expires_ts=(NOW - timedelta(seconds=1)).timestamp(),
             created="yesterday",
+            created_ts=(NOW - timedelta(days=1)).timestamp(),
             state="locked",
         ),
     ]
@@ -140,7 +147,10 @@ def test_the_placeholder_rows_build_models() -> None:
 def test_one_placeholder_model_carries_what_the_widget_renders() -> None:
     """One model's cells (#965): the name's dash floor for a row
     that carries none, the created label's dash beside it, and
-    the unparsable expiry's dash — the TUI row's own floors."""
+    the unparsable expiry's dash — the TUI row's own floors. A
+    stamp that does not parse leaves no deadline epoch (the
+    frozen dash stands, the tick recomputes nothing), and a
+    missing creation floors at zero, below every dated row."""
     model = gui_secrets.secret_row(
         placeholder(name="", expires_at="junk", created_at=None), NOW
     )
@@ -150,7 +160,9 @@ def test_one_placeholder_model_carries_what_the_widget_renders() -> None:
         coverage="*",
         dests="api.github.com",
         ttl="-",
+        expires_ts=None,
         created="-",
+        created_ts=0.0,
         state="open",
     )
 
@@ -181,6 +193,25 @@ def test_the_ttl_cell_counts_the_remaining_lifetime() -> None:
     assert gui_secrets.ttl_text(far) == gui_secrets.ttl_text(
         far, ages_mod.clock_now()
     )
+
+
+def test_the_countdown_reads_the_deadline_epoch() -> None:
+    """The tick's own read (#965): the label over the model's
+    deadline epoch — the same label the row-dict path renders
+    over the same deadline — with the unpinned call reading the
+    wall clock the shared leaf owns."""
+    deadline = (NOW + timedelta(hours=2)).timestamp()
+    assert gui_secrets.countdown(deadline, NOW) == "2h"
+    assert gui_secrets.countdown(NOW.timestamp(), NOW) == "expired"
+    far = (ages_mod.clock_now() + timedelta(days=2)).timestamp()
+    assert gui_secrets.countdown(far) == gui_secrets.countdown(
+        far, ages_mod.clock_now()
+    )
+    for offset in (timedelta(hours=2), timedelta(seconds=45)):
+        row = placeholder(expires_at=(NOW + offset).isoformat())
+        assert gui_secrets.countdown(
+            gui_secrets.secret_row(row, NOW).expires_ts, NOW
+        ) == gui_secrets.ttl_text(row, NOW)
 
 
 def test_the_duration_ladder_reads_compactly() -> None:
@@ -436,6 +467,12 @@ def test_the_placeholder_helpers_match_the_tui_page() -> None:
     assert gui_secrets.SECRET_TTLS == tui_cells.SECRET_TTLS
     assert gui_secrets.SECRET_TTL_SECONDS == tui_cells.SECRET_TTL_SECONDS
     assert gui_secrets.MINT_TTLS == tui_cells.MINT_TTLS
+    assert gui_secrets.AUDIT_KINDS == tui_audit.AUDIT_KINDS
+    assert gui_secrets.FILTER_ALL == tui_audit.FILTER_ALL
+    for row in (placeholder(locked=True), placeholder(locked=False)):
+        assert (
+            gui_secrets.state_text(row) == tui_cells.secret_row_cells(row)[5]
+        )
     for secs in (0.0, 45.9, 300, 3599, 7200, 86399, 259200):
         assert gui_secrets.fmt_duration(secs) == tui_consent.fmt_duration(secs)
 

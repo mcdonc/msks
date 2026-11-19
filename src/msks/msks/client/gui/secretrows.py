@@ -7,10 +7,11 @@ revoke actions key on, the mint-time name, the coverage label
 (the workspaces the row serves, ``*`` the daemon-wide row —
 the workspace the listing shows of it), the destinations cell,
 the TTL countdown (the arithmetic the TUI's EXPIRES cell
-repaints per tick, mirrored here so the tab's timer reads it
-without a daemon call), the created label (the shared
-:mod:`msks.client.ages` leaf both listings read), and the lock
-state word. The sentinel panel's model masks the fresh or
+repaints per tick, mirrored here) beside the deadline epoch
+the tab's timer repaints it from — no daemon call per tick —
+the created label (the shared :mod:`msks.client.ages` leaf
+both listings read) beside its own epoch for the column sort,
+and the lock state word. The sentinel panel's model masks the fresh or
 standing sentinel a row exposes — the prefix names the reach
 and holds no bearer power, the body renders one bullet per
 character — beside the reach line the prefix decodes. The
@@ -59,8 +60,10 @@ SCOPED_SENTINEL = "mskssec1_"
 WIDE_SENTINEL = "mskssec2_"
 
 #: The audit kind filter's choices (#390): every kind a row can
-#: carry, in the issue's own order — the vocabulary the view's
-#: picker reads beside its no-filter word.
+#: carry, in the issue's own order. The recorded listing serves
+#: the lifecycle kinds alone (mint, revoke, expiry, unlock) —
+#: swaps and sightings arrive on the live stream, and the
+#: filter takes both deliveries' kinds.
 AUDIT_KINDS = ("swap", "sighting", "mint", "revoke", "expiry", "unlock")
 
 #: The audit filter's no-filter sentinel (#510).
@@ -73,15 +76,23 @@ class SecretRow:
     the id the renew and revoke actions key on, the mint-time
     name, the coverage label (the workspaces the row serves),
     the destinations cell, the TTL countdown, the created label,
-    and the lock state word — the whole row the widget needs to
-    render, as plain data with nothing Qt-bound in it."""
+    and the lock state word — beside the deadline and creation
+    epochs the tab's timer and column sorts read. ``expires_ts``
+    is None when the row carries no countdown (an unbounded
+    row, or a stamp that does not parse — the frozen ``ttl``
+    cell holds the distinction, ``never`` against the dash),
+    and such a row's cell never recomputes; ``created_ts``
+    floors at zero, where a row without a usable stamp sorts
+    below every dated one. Plain data, nothing Qt-bound."""
 
     id: int
     name: str
     coverage: str
     dests: str
     ttl: str
+    expires_ts: float | None
     created: str
+    created_ts: float
     state: str
 
 
@@ -144,8 +155,16 @@ def ttl_text(row: dict, now: datetime | None = None) -> str:
     stamp = parse_stamp(expires)
     if stamp is None:
         return "-"
+    return countdown(stamp.timestamp(), now)
+
+
+def countdown(expires_ts: float, now: datetime | None = None) -> str:
+    """The countdown over the model's deadline epoch (#965): the
+    label the tab's timer repaints each tick from the cached
+    model, no daemon call and no re-parse — ``expired`` past
+    the deadline, the compact countdown between now and it."""
     when = now if now is not None else clock_now()
-    remaining = (stamp - when).total_seconds()
+    remaining = expires_ts - when.timestamp()
     if remaining <= 0:
         return "expired"
     return fmt_duration(remaining)
@@ -203,27 +222,41 @@ def ttl_seconds(choice: str) -> int | None:
     return None if choice == MINT_TTLS[0] else SECRET_TTL_SECONDS[choice]
 
 
+def stamp_epoch(row: dict, field: str) -> float | None:
+    """One row's stamp field as epoch (#965) — None when the row
+    carries no stamp or the stamp does not parse, the shared
+    leaf's own floors."""
+    stamp = parse_stamp(row.get(field) or "")
+    return stamp.timestamp() if stamp is not None else None
+
+
 def secret_row(row: dict, now: datetime | None = None) -> SecretRow:
     """One daemon placeholder row as its listing model (#965):
     the cells the row renders, with the id the actions key on —
     the countdown and the created label read the clock the
     caller pins (the shared leaf's own arithmetic, the tab's
-    timer supplying none)."""
+    timer supplying none), and the epochs land beside them for
+    the tick and the sorts."""
     return SecretRow(
         id=row["id"],
         name=row.get("name") or "-",
         coverage=coverage_text(row),
         dests=dests_cell(row),
         ttl=ttl_text(row, now),
+        expires_ts=stamp_epoch(row, "expires_at"),
         created=created_label(row.get("created_at"), now),
+        created_ts=stamp_epoch(row, "created_at") or 0.0,
         state=state_text(row),
     )
 
 
-def secret_rows(rows: list[dict], now: datetime | None = None) -> list:
+def secret_rows(
+    rows: list[dict], now: datetime | None = None
+) -> list[SecretRow]:
     """The listing's row models (#965) in the daemon's own order
     — the listing's rule, not the catalog's sort; the widget's
-    columns order rows when the operator asks."""
+    columns order rows when the operator asks (the epochs this
+    module lands beside the labels are the sort keys)."""
     return [secret_row(row, now) for row in rows]
 
 
