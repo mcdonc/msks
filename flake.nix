@@ -1,7 +1,7 @@
 {
   description = "msks: workspaces as microvms — the msksd package and its NixOS module";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/21a67dc470149f337cecafbe965d8d252a390518";
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/e21fec321d73511849707a7585e4ea155ee4bf40";
 
   outputs =
     {

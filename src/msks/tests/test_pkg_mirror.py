@@ -85,13 +85,14 @@ def test_no_extra_nix_dependencies_beyond_pyproject() -> None:
 
 
 def test_both_locks_pin_the_same_nixpkgs_revision() -> None:
-    """flake.nix's and README's claim that each flake attribute
-    builds the same store path as its `devenv build outputs.<name>`
-    twin holds while both locks pin the same nixpkgs revision
-    (#537). devenv.yaml tracks the moving nixos-26.05 branch and
-    the flake pins a rev, so a devenv bump that leaves flake.lock
-    behind fails here — re-pin the flake to match, or soften the
-    same-path claim where it is stated (README, flake.nix)."""
+    """docs/development.md's and flake.nix's claim that each flake
+    attribute builds the same store path as its `devenv build
+    outputs.<name>` twin holds while both locks pin the same nixpkgs
+    revision (#537). devenv.yaml tracks the moving nixpkgs-unstable
+    branch and the flake pins a rev, so a devenv bump that leaves
+    flake.lock behind fails here — re-pin the flake to match, or
+    soften the same-path claim where it is stated
+    (docs/development.md, flake.nix)."""
 
     def locked_rev(path: Path) -> str:
         nodes = json.loads(path.read_text())["nodes"]

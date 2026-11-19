@@ -294,8 +294,15 @@ def test_the_feed_rides_the_loop_and_its_frames_cross(
 
     feed = StubFeed()
     bridge = qt.Bridge(StubData(), feed_factory=lambda: feed)
-    bridge.start()
+    # The connections go up before the loop does: start_feed wires
+    # the stub's callbacks to the signals the moment the loop
+    # turns, and the stub fires its three deliveries at once —
+    # a receiver that connects after start() can lose the race
+    # to the worker's first emission (the stub fires exactly
+    # once, so the deadline pump cannot recover the frames; CI
+    # hit it as a bare `frames == []`).
     receiver = FeedReceiver(bridge)
+    bridge.start()
     deadline = time.monotonic() + 10.0
     while time.monotonic() < deadline:
         qt.app.processEvents()

@@ -454,12 +454,12 @@ invocation is appended after it, the way most terminals take a command after
 `-e` / `--`:
 
 ```yaml
-terminal_open_cmd: konsole --hold -e   # string form (shell-split)
-terminal_open_cmd:                     # Linux (list form, no shell quoting)
+terminal_open_cmd: konsole --hold -e # string form (shell-split)
+terminal_open_cmd: # Linux (list form, no shell quoting)
   - ghostty
   - +wait
   - -e
-terminal_open_cmd:                     # macOS (open launches Ghostty.app)
+terminal_open_cmd: # macOS (open launches Ghostty.app)
   - open
   - -na
   - Ghostty.app
@@ -542,8 +542,8 @@ opened by `terminal_open_cmd`. For example:
 ```yaml
 terminal_open_cmd: konsole -e msks-term-popup
 terminal_open_cmd: xterm -e msks-term-popup
-terminal_open_cmd: ghostty +wait -e msks-term-popup       # Linux
-terminal_open_cmd: open -na Ghostty.app --args -e msks-term-popup  # macOS
+terminal_open_cmd: ghostty +wait -e msks-term-popup # Linux
+terminal_open_cmd: open -na Ghostty.app --args -e msks-term-popup # macOS
 ```
 
 The launch also starts the consent-decider

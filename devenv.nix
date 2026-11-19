@@ -20,7 +20,7 @@ let
     version = jscpdBinaryVersion;
     src = pkgs.fetchurl {
       url =
-        if pkgs.stdenv.isDarwin then
+        if pkgs.stdenv.hostPlatform.isDarwin then
           "https://registry.npmjs.org/jscpd-darwin-"
           + (if pkgs.stdenv.hostPlatform.darwinArch == "arm64" then "arm64" else "x64")
           + "/-/jscpd-darwin-"
@@ -33,7 +33,7 @@ let
         else
           throw "jscpd: no prebuilt binary for ${pkgs.stdenv.hostPlatform.system}";
       hash =
-        if pkgs.stdenv.isDarwin then
+        if pkgs.stdenv.hostPlatform.isDarwin then
           (
             if pkgs.stdenv.hostPlatform.darwinArch == "arm64" then
               "sha256-vntXwMkns8HqtHwVzxthzun0tpRAe755YKB5k4c3Wqg="
@@ -139,16 +139,16 @@ let
     freetype # fontconfig's rasterizer backend
     expat # fontconfig's parser, its own store path
     libxcb # the X protocol transport, the core connection only
-    xorg.xcbutilcursor # libxcb-cursor.so.0 — Qt 6.5+ requires it for xcb
-    xorg.xcbutilwm # libxcb-icccm.so.4, the xcb plugin's window manager talk
-    xorg.xcbutil # libxcb-util.so.1, the atoms/geometry helpers
-    xorg.xcbutilimage # libxcb-image.so.0, the xcb plugin's pixmaps
-    xorg.xcbutilkeysyms # libxcb-keysyms.so.1, key mapping over xcb
-    xorg.xcbutilrenderutil # libxcb-render-util.so.0, xcb rendering helpers
-    xorg.libX11 # the X family QtGui and the xcb plugin link
-    xorg.libXext
-    xorg.libXfixes
-    xorg.libXrandr
+    libxcb-cursor # libxcb-cursor.so.0 — Qt 6.5+ requires it for xcb
+    libxcb-wm # libxcb-icccm.so.4, the xcb plugin's window manager talk
+    libxcb-util # libxcb-util.so.1, the atoms/geometry helpers
+    libxcb-image # libxcb-image.so.0, the xcb plugin's pixmaps
+    libxcb-keysyms # libxcb-keysyms.so.1, key mapping over xcb
+    libxcb-render-util # libxcb-render-util.so.0, xcb rendering helpers
+    libx11 # the X family QtGui and the xcb plugin link
+    libxext
+    libxfixes
+    libxrandr
   ];
 
   linuxOnly = with pkgs; [
@@ -218,7 +218,7 @@ in
       })
       (python314Packages.radon) # complexity introspection (radon cc)
     ]
-    ++ lib.optionals pkgs.stdenv.isLinux linuxOnly;
+    ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux linuxOnly;
 
   env.UV_PYTHON = config.languages.python.package;
   # Runtime .so loads (LD_LIBRARY_PATH) resolve against the nix
@@ -233,7 +233,7 @@ in
   # and loads the xcb platform plugin unaided. A macOS shell
   # needs none of them (its wheels bundle their Qt dylibs and
   # link the system frameworks), so the export stays Linux-only.
-  env.LD_LIBRARY_PATH = lib.optionalString pkgs.stdenv.isLinux (
+  env.LD_LIBRARY_PATH = lib.optionalString pkgs.stdenv.hostPlatform.isLinux (
     lib.concatStringsSep ":" (
       [
         "${pkgs.libnetfilter_queue}/lib"
@@ -332,7 +332,7 @@ in
   # instead of supervising the refusal into a restart loop. The
   # msks-dev script below stays registered everywhere — its own
   # uname gate names the development chapter on a Mac.
-  processes = lib.mkIf pkgs.stdenv.isLinux {
+  processes = lib.mkIf pkgs.stdenv.hostPlatform.isLinux {
     # The dev-mode daemon as a managed foreground process (#231):
     # `devenv processes up` (no -d) runs it attached; the manager
     # supervises restarts and owns the graceful stop (grace below).

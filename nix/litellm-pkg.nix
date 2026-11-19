@@ -1,11 +1,13 @@
 # The LLM router library for the msksd closure (#607).
 #
-# nixpkgs (the pinned rev) carries 1.86.0, below the >=1.106.2
-# floor pyproject declares: msks's own runtime deps check refuses
-# the wheel against it. Built here from the PyPI wheel uv.lock
-# pins, against nixpkgs' own aiohttp/openai/pydantic/… so the
-# daemon closure stays on the platform's package set wherever the
-# floors allow it.
+# nixpkgs (the pinned rev) now carries 1.108.0, above the
+# >=1.106.2 floor pyproject declares. The wheel stays at uv.lock's
+# 1.106.2 so the closure ships the exact version the lock vetted;
+# retiring the hand pin for the channel's copy is a deliberate
+# release decision, not a pin-side effect. Built here from the
+# PyPI wheel uv.lock pins, against nixpkgs' own
+# aiohttp/openai/pydantic/… so the daemon closure stays on the
+# platform's package set wherever the floors allow it.
 #
 # The wheel carries one compiled extension (litellm/rust_bridge/
 # _native.abi3.so, the rust bridge nixpkgs' own expression builds

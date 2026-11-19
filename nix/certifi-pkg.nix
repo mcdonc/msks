@@ -1,12 +1,14 @@
 # The platform CA bundle for the msksd closure (#424, #606).
 #
-# nixpkgs (nixos-26.05) carries 2026.01.04, below the >=2026.10.23
+# nixpkgs now carries 2026.10.23, matching the >=2026.10.23
 # floor pyproject declares: that release drops the distrusted
 # emSign root certificates (GHSA-6q48-6c7w-9gw2) from the Mozilla
 # root store the interceptor's upstream verification
 # (ssl_verify_upstream_trusted_ca) and the image download's
-# fallback context both load. Built here from the PyPI wheel —
-# pure python, no compiled extensions, no dependencies — because
+# fallback context both load. The wheel stays so the closure keeps
+# the floor whatever the channel behind the pin carries. Built from
+# the PyPI wheel — pure python, no compiled extensions, no
+# dependencies — because
 # certifi is a transitive dependency in the closure (httpx and
 # mitmproxy propagate it), so a callPackage argument alone would
 # collide with the packages that still carry nixpkgs' own: the
