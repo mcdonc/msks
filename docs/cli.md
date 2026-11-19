@@ -264,8 +264,8 @@ options to its own, and a remembered separator would turn
 msks's transport into the remote command:
 
 ```yaml
-ssh_options: -A -o ServerAliveInterval=30   # string form (shell-split)
-ssh_options:                                # list form (tokens stay whole)
+ssh_options: -A -o ServerAliveInterval=30 # string form (shell-split)
+ssh_options: # list form (tokens stay whole)
   - -A
   - -o
   - ServerAliveInterval=30
