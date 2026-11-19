@@ -6,7 +6,17 @@ the screens' own contract: nothing imports it at CLI parse
 time.
 """
 
-from PySide6 import QtWidgets
+from PySide6 import QtGui, QtWidgets
+
+
+def muted_note(text: str) -> QtWidgets.QLabel:
+    """A muted section note: the empty state's honest stand-in,
+    colored the palette's own shadow (#945's own shape, shared
+    by the page's sections and the tabs' stand-ins)."""
+    label = QtWidgets.QLabel(text)
+    shadow = label.palette().color(QtGui.QPalette.ColorRole.Shadow)
+    label.setStyleSheet(f"color: {shadow.name()};")
+    return label
 
 
 def read_only_table(columns: tuple) -> QtWidgets.QTableWidget:
