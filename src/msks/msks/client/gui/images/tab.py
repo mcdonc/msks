@@ -38,14 +38,14 @@ from ..imagerows import (
     published_rows,
 )
 from ..listtable import ListTable
+from . import layout
 from .cells import (
     CATALOG_COLUMNS,
     CATALOG_GROUP,
-    CELL_MARGIN,
-    DESC_COLUMN,
-    HASH_COLUMN,
     PUBLISHED_COLUMNS,
     PUBLISHED_GROUP,
+    ROW_INDEX_ROLE,
+    ROW_KEY_ROLE,
     bold_header,
     built_rank,
     counts_text,
@@ -84,17 +84,6 @@ FLASH_MS = 4000
 #: The import dialog's elapsed tick (#964), milliseconds — the
 #: TUI importing modal's own cadence: the wait shows it moving.
 IMPORT_TICK_MS = 1000
-
-#: The model's place on every row's first cell (#964): the
-#: selection and the actions read the row's model through it,
-#: whatever a rebuild did to the row slots.
-ROW_INDEX_ROLE = QtCore.Qt.ItemDataRole.UserRole
-
-#: The row's own identity on its first cell (#964): the hash
-#: for a catalog row, the url for a published one — the carry
-#: keys on the row the operator held, not its slot and not its
-#: ref (a rebuilt archive shares the ref under another hash).
-ROW_KEY_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
 
 
 def action_reply_text(key: str, label: str) -> str:
@@ -418,193 +407,13 @@ class ImagesTab(QtWidgets.QWidget):
         self.size_columns()
 
     def size_columns(self) -> None:
-        """Both groups' columns against the panes' widths
-        (#964): the catalog group's columns share the spare —
-        every column at least its content, the group filling the
-        pane's whole width — and the published group's identity
-        columns keep their whole values while the description
-        and the hash share what remains, a narrow pane
-        ellipsizing the description first and the hash only
-        after its floor: no horizontal scrollbar, every row's
-        cells whole to read whatever the pane's width. The
-        published pass pauses the sorting for its text
-        rewrites — a cell the eliding rewrites would re-sort
-        mid-swap and scramble the rows — and resumes after, the
-        indicator re-applied."""
-        self.size_catalog_columns()
-        table = self.published_table
-        table.setSortingEnabled(False)
-        self.size_published_columns()
-        table.setSortingEnabled(True)
-
-    def size_catalog_columns(self) -> None:
-        """The catalog group's columns (#964): every column at
-        least as wide as its longest value — the header's own
-        label included — and the spare beyond that split evenly
-        across the columns, an odd cell to the earlier ones, the
-        listing's own arithmetic (#347) so the group consumes
-        the pane's whole horizontal space."""
-        table = self.catalog_table
-        table.resizeColumnsToContents()
-        spare = self.table_spare(table)
-        if spare <= 0:
-            return
-        count = table.columnCount()
-        share, extra = divmod(spare, count)
-        for column in range(count):
-            table.setColumnWidth(
-                column,
-                table.columnWidth(column)
-                + share
-                + (1 if column < extra else 0),
-            )
-
-    def size_published_columns(self) -> None:
-        """The published group's columns (#964): the identity
-        columns — ref, size, build date, marker — keep their
-        whole values, and the description and the hash share
-        what remains: the spare goes to the description (the
-        TUI page's own absorber), and a pane without room takes
-        ground from the description first, the hash after it —
-        and, below their floors, from every column alike, so the
-        pane reads whole rows at any width: no horizontal
-        scrollbar, the narrow cells ellipsized in the middle
-        within what the arithmetic left them."""
-        table = self.published_table
-        self.restore_whole_texts()
-        table.resizeColumnsToContents()
-        widths = [
-            table.columnWidth(column) for column in range(table.columnCount())
-        ]
-        spare = self.table_spare(table)
-        if spare > 0:
-            table.setColumnWidth(DESC_COLUMN, widths[DESC_COLUMN] + spare)
-        else:
-            spare = self.shrink_to_floor(table, widths, DESC_COLUMN, spare)
-            spare = self.shrink_to_floor(table, widths, HASH_COLUMN, spare)
-            if spare < 0:
-                self.share_deficit(table, spare)
-        self.fit_elided(widths)
-
-    def shrink_to_floor(
-        self, table: ListTable, widths: list[int], column: int, spare: int
-    ) -> int:
-        """One elidable column's ground (#964): down to its
-        floor — its header's own label and the cell margin —
-        and no further, whatever remains of the deficit."""
-        give = min(widths[column] - self.column_floor(table, column), -spare)
-        table.setColumnWidth(column, widths[column] - give)
-        return spare + give
-
-    def share_deficit(self, table: ListTable, spare: int) -> None:
-        """The impossible pane's arithmetic (#964): with the
-        description and the hash at their floors the identity
-        columns' whole values still run past the viewport, so
-        every column gives an equal slice of the deficit — the
-        pane keeps every row's cells to read, each ellipsized,
-        where a scrollbar would hide them."""
-        count = table.columnCount()
-        floor = table.horizontalHeader().minimumSectionSize()
-        share, extra = divmod(-spare, count)
-        for column in range(count):
-            width = table.columnWidth(column)
-            give = share + (1 if column < extra else 0)
-            table.setColumnWidth(column, max(width - give, floor))
-
-    def row_model(self, table: ListTable, row: int) -> PublishedRow | None:
-        """The model a table row shows (#964): read through the
-        row's index role — a sort moves rows and models apart,
-        and the text passes follow the row, never the list's
-        order."""
-        item = table.item(row, 0)
-        if item is None:
-            return None
-        return self.published_models[item.data(ROW_INDEX_ROLE)]
-
-    def restore_whole_texts(self) -> None:
-        """The elidable cells' whole values back (#964): the
-        sizing pass measures them afresh — an elided display
-        from a narrower pane must not shrink the natural width a
-        wider one measures."""
-        table = self.published_table
-        for row in range(table.rowCount()):
-            model = self.row_model(table, row)
-            if model is None:
-                continue
-            for column, value in enumerate(published_cells(model)):
-                item = table.item(row, column)
-                if item is not None:
-                    item.setText(value)
-
-    def table_spare(self, table: ListTable) -> int:
-        """The pane's width beyond the columns' current total
-        (#964): what the sizing has to give or take."""
-        return table.viewport().width() - sum(
-            table.columnWidth(column) for column in range(table.columnCount())
-        )
-
-    def column_floor(self, table: ListTable, column: int) -> int:
-        """A shrinking column's floor (#964): its header's own
-        label and the cell margin — a column never reads below
-        the word that names it, measured in the header's own
-        bold face."""
-        metrics = table.horizontalHeader().fontMetrics()
-        label = table.model().headerData(
-            column, QtCore.Qt.Orientation.Horizontal
-        )
-        return metrics.horizontalAdvance(str(label)) + CELL_MARGIN
-
-    def fit_elided(self, naturals: list[int]) -> None:
-        """The published cells' display (#964): every cell
-        ellipsized in the middle within the width its column
-        ended with — the budget pays the column's own padding
-        first, so a cell that fits its column reads whole. The
-        whole values stay on the models, so a wider pane
-        restores them."""
-        table = self.published_table
-        metrics = table.fontMetrics()
-        for column in range(table.columnCount()):
-            overhead = self.column_overhead(
-                table, metrics, column, naturals[column]
-            )
-            budget = table.columnWidth(column) - overhead
-            for row in range(table.rowCount()):
-                model = self.row_model(table, row)
-                if model is None:
-                    continue
-                item = table.item(row, column)
-                if item is None:
-                    continue
-                value = published_cells(model)[column]
-                item.setText(
-                    metrics.elidedText(
-                        value,
-                        QtCore.Qt.TextElideMode.ElideMiddle,
-                        budget,
-                    )
-                )
-
-    def column_overhead(
-        self, table: ListTable, metrics, column: int, natural: int
-    ) -> int:
-        """The column's own padding (#964): the natural width
-        resizeColumnsToContents gave it beyond its longest whole
-        value or its header — the part of the width no text may
-        spend, so an elide budget of the column's whole width
-        still shows a value that fits."""
-        longest = max(
-            (
-                metrics.horizontalAdvance(published_cells(model)[column])
-                for model in self.published_models
-            ),
-            default=0,
-        )
-        label = table.model().headerData(
-            column, QtCore.Qt.Orientation.Horizontal
-        )
-        return max(
-            natural - max(longest, metrics.horizontalAdvance(str(label))),
-            0,
+        """Both panes' columns against their widths (#964): the
+        layout module's own arithmetic — the catalog pane
+        sharing the spare, the published pane taking its
+        character budget in the giving order, the sorting
+        paused around the text rewrites."""
+        layout.size_columns(
+            self.catalog_table, self.published_table, self.published_models
         )
 
     def held_first(self, table: ListTable) -> object:

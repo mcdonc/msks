@@ -25,8 +25,11 @@ tagged `vX.Y.Z`.
   sorted-by column carries its arrow, the dates and sizes
   ordering by their moments and whole MiB rather than their
   labels' spelling. The catalog pane's columns share the
-  window's whole width, and the published pane ellipsizes the
-  description first and the hash second, so no horizontal
+  window's whole width, and the published pane takes its
+  character budget from the description first — a middle
+  ellipsis down to a handful of characters — then the hash,
+  then the ref and build date, with the size and marker reading
+  whole in every pane a real window shows; no horizontal
   scrollbar ever hides a row's cells.
 
 - **The GUI images presenter (#963).** The images tab gains

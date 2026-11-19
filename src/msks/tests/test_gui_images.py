@@ -23,6 +23,7 @@ from msks.client.config import DEFAULT_IMAGE_MANIFEST_URL  # noqa: E402
 from msks.client.data import RestFailure  # noqa: E402
 from msks.client.gui.imagerows import IMPORTED_MARKER  # noqa: E402
 from msks.client.gui.images import cells as cells  # noqa: E402
+from msks.client.gui.images import layout as layout_mod  # noqa: E402
 from msks.client.gui.images import tab as images_mod  # noqa: E402
 
 CHANNEL = "https://ch.example/manifest.json"
@@ -161,7 +162,11 @@ def make_tab(qt) -> tuple:
     tab = images_mod.ImagesTab(bridge, CHANNEL)
     window = qt.QtWidgets.QMainWindow()
     window.setCentralWidget(tab)
-    window.resize(1600, 760)
+    # Wide enough that every whole value fits under any CI
+    # host's font metrics — the mac runner's faces run wider
+    # than the Linux ones, and the elide arithmetic is the
+    # narrow-pane tests' own subject, not this fixture's.
+    window.resize(3200, 1200)
     window.show()
     tab.on_succeeded(images_mod.PAGE_KEY, page_answer())
     return tab, window, bridge
@@ -179,12 +184,16 @@ def rows_texts(table) -> list[list[str]]:
     ]
 
 
-def row_of(table, ref: str) -> int:
+def row_of(tab, ref: str) -> int:
     """The row a published ref shows on (#964's fakes read):
-    the standing REF sort places the rows, and the tests follow
-    the ref wherever its sort lands it."""
+    resolved through the row's own url key — the pane's display
+    text ellipsizes under a narrow one, the key never does, and
+    the tests follow the ref wherever its sort lands it."""
+    url = next(model.url for model in tab.published_models if model.ref == ref)
+    table = tab.published_table
     for row in range(table.rowCount()):
-        if table.item(row, 0).text() == ref:
+        item = table.item(row, 0)
+        if item is not None and (item.data(images_mod.ROW_KEY_ROLE) == url):
             return row
     raise AssertionError(f"{ref!r} shows on no row")
 
@@ -398,9 +407,7 @@ def test_activation_on_a_published_row_imports_behind_the_dialog(
     tab, window, bridge = make_tab(qt)
     bridge.calls.clear()
     tab.published_table.activated.emit(
-        tab.published_table.model().index(
-            row_of(tab.published_table, "alpine:3.21"), 0
-        )
+        tab.published_table.model().index(row_of(tab, "alpine:3.21"), 0)
     )
     assert bridge.calls == [
         (
@@ -430,9 +437,7 @@ def test_the_exact_build_imports_nothing(qt) -> None:
     tab, window, bridge = make_tab(qt)
     bridge.calls.clear()
     tab.published_table.activated.emit(
-        tab.published_table.model().index(
-            row_of(tab.published_table, "debian:13.6"), 0
-        )
+        tab.published_table.model().index(row_of(tab, "debian:13.6"), 0)
     )
     assert bridge.calls == []
     assert tab.progress is None
@@ -845,22 +850,22 @@ def test_the_published_pane_never_scrolls_horizontally(qt) -> None:
     cells read within the pane whatever its width."""
     tab, window, _bridge = make_tab(qt)
     table = tab.published_table
-    row = row_of(table, "debian:13.6")
+    row = row_of(tab, "debian:13.6")
     desc = table.item(row, cells.DESC_COLUMN)
     whole = next(
         model.description
         for model in tab.published_models
         if model.ref == "debian:13.6"
     )
-    window.resize(2000, 700)
+    window.resize(3200, 1200)
     qt.app.processEvents()
     assert desc.text() == whole  # a wide pane: the whole line
-    window.resize(900, 700)
+    window.resize(1200, 700)
     qt.app.processEvents()
     assert table.horizontalScrollBar().maximum() == 0
     assert widths_total(table) <= table.viewport().width()
     assert (
-        table.item(row_of(table, "debian:13.6"), cells.HASH_COLUMN).text()
+        table.item(row_of(tab, "debian:13.6"), cells.HASH_COLUMN).text()
         == "a" * 12
     )  # the hash held its whole prefix
     window.resize(520, 700)
@@ -905,7 +910,7 @@ def test_the_hash_ellipsizes_only_after_the_description_floor(
     # The description stands at its floor or below: the
     # header's own label and the cell margin.
     assert table.columnWidth(cells.DESC_COLUMN) <= (
-        tab.column_floor(table, cells.DESC_COLUMN)
+        layout_mod.column_floor(table, cells.DESC_COLUMN)
     )
     window.close()
 
@@ -1006,7 +1011,7 @@ def test_the_hold_follows_the_build_not_the_ref(qt) -> None:
     tab = images_mod.ImagesTab(bridge, CHANNEL)
     window = qt.QtWidgets.QMainWindow()
     window.setCentralWidget(tab)
-    window.resize(1600, 760)
+    window.resize(3200, 1200)
     window.show()
     tab.on_succeeded(images_mod.PAGE_KEY, page_answer(twins))
     tab.catalog_table.selectRow(1)  # the older build of the ref
@@ -1119,7 +1124,7 @@ def test_a_dash_import_date_sorts_as_the_oldest(qt) -> None:
     tab = images_mod.ImagesTab(bridge, CHANNEL)
     window = qt.QtWidgets.QMainWindow()
     window.setCentralWidget(tab)
-    window.resize(1600, 760)
+    window.resize(3200, 1200)
     window.show()
     tab.on_succeeded(
         images_mod.PAGE_KEY, page_answer([stamped, catalog_raw()[1]], [])
@@ -1281,4 +1286,98 @@ def test_the_panes_reflow_when_the_vertical_bar_appears(qt) -> None:
     for table in (tab.catalog_table, tab.published_table):
         assert table.verticalScrollBar().isVisible()
         assert table.horizontalScrollBar().maximum() == 0
+    window.close()
+
+
+def channel_rows() -> list[dict]:
+    """The channel as the operator's own screenshot reads it
+    (#964's fakes): a long description, a long ref, sizes and
+    markers beside them."""
+    return [
+        {
+            "ref": "nixos:26.05pre-git-lasqn0h9",
+            "url": "https://ch.example/nixos.tar",
+            "hash": "f" * 64,
+            "description": (
+                "NixOS 26.05 cloud image with the full module set "
+                "and the consent stack baked in"
+            ),
+            "size": 63_500_000,
+            "built_at": "2026-11-14T00:00:00Z",
+        },
+        {
+            "ref": "debian:13.6",
+            "url": "https://ch.example/debian.tar",
+            "hash": "a" * 64,
+            "description": "Debian 13.6 cloud image, kernel, consent stack",
+            "size": 33_500_000,
+            "built_at": "2026-11-14T00:00:00Z",
+        },
+    ]
+
+
+def make_channel_tab(qt, width: int) -> tuple:
+    """The tab over the screenshot-shaped channel, at the width
+    the pane reads (#964's fakes)."""
+    bridge = StubBridge()
+    tab = images_mod.ImagesTab(bridge, CHANNEL)
+    window = qt.QtWidgets.QMainWindow()
+    window.setCentralWidget(tab)
+    window.resize(width, 700)
+    window.show()
+    tab.on_succeeded(
+        images_mod.PAGE_KEY, page_answer(catalog_raw(), channel_rows())
+    )
+    qt.app.processEvents()
+    return tab, window
+
+
+def test_the_budget_comes_from_the_description(qt) -> None:
+    """The tight pane's character budget (#964, the operator's
+    screenshot): with a description long enough to pay, the
+    size and the marker read whole — every identity cell whole —
+    and the description's middle ellipsis carries what the pane
+    could not fit."""
+    tab, window = make_channel_tab(qt, 560)
+    table = tab.published_table
+    assert table.horizontalScrollBar().maximum() == 0
+    mib = 1024 * 1024
+    assert [
+        table.item(row, cells.SIZE_COLUMN).text()
+        for row in range(table.rowCount())
+    ] == [
+        # the standing REF sort: debian leads nixos
+        f"{33_500_000 / mib:.0f} MiB",
+        f"{63_500_000 / mib:.0f} MiB",
+    ]
+    markers = [
+        table.item(row, cells.MARKER_COLUMN).text()
+        for row in range(table.rowCount())
+    ]
+    assert markers == [IMPORTED_MARKER, ""]
+    nixos = next(
+        model
+        for model in tab.published_models
+        if model.ref.startswith("nixos")
+    )
+    desc = table.item(row_of(tab, nixos.ref), cells.DESC_COLUMN)
+    assert desc.text() != nixos.description and "…" in desc.text()
+    window.close()
+
+
+def test_the_size_and_marker_give_ground_last(qt) -> None:
+    """The giving order's tail (#964): the ref and the build
+    date spend their ground before the size and the marker give
+    any — a pane deep enough in deficit never shows the size or
+    the marker narrower than the columns ahead of them in the
+    order."""
+    tab, window = make_channel_tab(qt, 380)
+    table = tab.published_table
+    assert table.horizontalScrollBar().maximum() == 0
+    assert table.columnWidth(cells.SIZE_COLUMN) >= table.columnWidth(
+        cells.REF_COLUMN
+    )
+    assert table.columnWidth(cells.MARKER_COLUMN) >= table.columnWidth(
+        cells.BUILT_COLUMN
+    )
     window.close()

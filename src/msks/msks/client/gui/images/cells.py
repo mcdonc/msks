@@ -20,6 +20,17 @@ from ...config import DEFAULT_IMAGE_MANIFEST_URL
 from ..imagerows import CatalogRow, PublishedRow
 from ..listtable import ListTable
 
+#: The model's place on every row's first cell (#964): the
+#: selection and the actions read the row's model through it,
+#: whatever a rebuild or a sort did to the row slots.
+ROW_INDEX_ROLE = QtCore.Qt.ItemDataRole.UserRole
+
+#: The row's own identity on its first cell (#964): the hash
+#: for a catalog row, the url for a published one — the carry
+#: keys on the row the operator held, not its slot and not its
+#: ref (a rebuilt archive shares the ref under another hash).
+ROW_KEY_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
+
 #: A cell's sort rank (#964): the moment or whole-MiB count a
 #: rank cell orders by — a label's spelling and its order
 #: disagree (the dates across months, the sizes across digits).
@@ -48,8 +59,10 @@ PUBLISHED_COLUMNS = (
 
 #: The published table's rank columns (#964): the size by its
 #: whole MiB, the build date by its moment.
+REF_COLUMN = 0
 SIZE_COLUMN = 2
 BUILT_COLUMN = 4
+MARKER_COLUMN = 5
 
 #: The first group's label (#565, the GUI's read).
 CATALOG_GROUP = "In the catalog"
