@@ -999,8 +999,12 @@ async def test_the_audit_view_replays_and_streams() -> None:
         assert "sighting" in marked.classes
         # No registration was sent: the view claims no decider.
         assert factory.made[0].sent == []
-        await pilot.press("r")
-        await wait_for(lambda: not on_audit(app))
+        # The leave-press retries: a press issued inside a
+        # rebuild's swap window no-ops (by design), and the
+        # sighting row's mount just rebuilt the list — CI's macOS
+        # runner lost a bare press here and the screen never
+        # closed (the wait then burned its whole budget).
+        await press_until(pilot, "r", lambda: not on_audit(app))
 
 
 async def test_the_audit_seed_dedups_against_the_live_tail() -> None:
