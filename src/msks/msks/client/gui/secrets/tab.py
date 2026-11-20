@@ -30,7 +30,12 @@ guards.
 from PySide6 import QtCore, QtWidgets
 
 from ...data import RestFailure
-from ..listtable import ListTable, fill_columns, resized_viewport
+from ..listtable import (
+    ListTable,
+    bold_header,
+    fill_columns,
+    resized_viewport,
+)
 from ..secretrows import (
     SECRET_TTL_SECONDS,
     SECRET_TTLS,
@@ -208,7 +213,7 @@ class SecretsTab(QtWidgets.QWidget):
             "128, 90); }"
         )
         table.verticalHeader().setVisible(False)
-        cells.bold_header(table)
+        bold_header(table)
         # The pane's own resizes re-flow the columns (#997): a
         # vertical scrollbar's appearance shrinks the viewport
         # after a fill sized against the wider one, and a

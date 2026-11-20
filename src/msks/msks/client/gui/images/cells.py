@@ -18,7 +18,6 @@ from PySide6 import QtCore, QtWidgets
 
 from ...config import DEFAULT_IMAGE_MANIFEST_URL
 from ..imagerows import CatalogRow, PublishedRow
-from ..listtable import ListTable
 
 #: The model's place on every row's first cell (#964): the
 #: selection and the actions read the row's model through it,
@@ -104,16 +103,6 @@ def published_cells(model: PublishedRow) -> tuple[str, ...]:
         model.built,
         model.marker,
     )
-
-
-def bold_header(table: ListTable) -> None:
-    """One group table's header text (#964): the same bold
-    weight on both panes' headers — one definition, so the two
-    groups' column labels read as one table's chrome whatever
-    the platform style would draw on its own."""
-    font = table.font()
-    font.setBold(True)
-    table.horizontalHeader().setFont(font)
 
 
 def imported_rank(cell: str) -> float:

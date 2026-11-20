@@ -136,6 +136,12 @@ class TerminalWidget(QWidget):
         self._wheel_accum = 0
         self._closed = False
         self._exit_reported = False
+        # The window fit's flag (#976): a pass's window resize
+        # delivers a resize event synchronously, and the grid
+        # re-derivation it would run mid-fit would shrink the
+        # very target the next pass fits to — the fit holds the
+        # entry grid and lands it once at the end.
+        self._fitting = False
         # Selection, links, and find: the press state for the
         # multi-click window, the drag state for autoscroll,
         # the painter's URL scan, the hand cursor, and the
@@ -303,11 +309,13 @@ class TerminalWidget(QWidget):
         )
         self.refresh()
 
-    def apply_font_size(self, points: int) -> None:
-        """Measure the face at a size, push the new pixel
-        metrics into the pty, and keep the grid at the same
-        cell count (the emulator's resize already ran in
-        apply_metrics)."""
+    def set_face(self, points: int) -> None:
+        """Run the face at a size (#976): measure it, push the
+        new pixel metrics into the emulator and the pty, and
+        keep the grid at the same cell count — the layout the
+        zoom gives a terminal whose window must not move (a
+        shell that just opened, one hidden behind another
+        tab)."""
         self.font.setPointSize(points)
         self.apply_metrics()
         self.session.resize(
@@ -316,15 +324,92 @@ class TerminalWidget(QWidget):
             self.metrics.cell_width,
             self.metrics.cell_height,
         )
-        window = self.window()
-        if window is not None and window is not self:
-            window.resize(self.sizeHint())
 
-    def zoom_font(self, direction: int) -> None:
-        """Ctrl+Plus/Minus: step the font size, clamped."""
-        points = self.font.pointSize() + direction
-        if fonts.MIN_PT <= points <= fonts.MAX_PT:
-            self.apply_font_size(points)
+    def apply_font_size(self, points: int) -> None:
+        """Run the face at a size and resize the window around
+        the new cell metrics (#976): the grid keeps its cell
+        count and the window takes the same growth, so a
+        visible terminal reads the same columns and rows at
+        the new size."""
+        self.set_face(points)
+        self.fit_window()
+
+    def fit_window(self) -> None:
+        """Grow or shrink the enclosing window around the
+        widget's grid (#976): two passes, the second taking
+        the remainder the first left — the whole-client zoom
+        writes the chrome's application font in the same step,
+        and the font-metric chrome (the tab bars around the
+        terminal) takes its share of the window between them.
+        The fit holds the grid it entered with — the passes'
+        window resizes deliver resize events that would
+        re-derive the grid from pixels mid-fit and shrink the
+        target — and :meth:`land_grid` lands the settled
+        pixels' grid once at the end, so the child sees its
+        entry columns and rows at the new cell size when the
+        fit converges."""
+        window = self.window()
+        if not self.can_fit_window(window):
+            return
+        entered = (self.width(), self.height())
+        self._fitting = True
+        try:
+            for _ in range(2):
+                if not self.fit_once(window):
+                    return
+        finally:
+            self._fitting = False
+            self.land_grid(entered)
+
+    def land_grid(self, entered: tuple[int, int]) -> None:
+        """Land the grid the fit left (#976): the passes' own
+        resize events were held off, and the settled pixels
+        name the grid now — the entry grid when the fit
+        converged, whatever the pixels hold when it could not.
+        A widget whose pixels never moved (a window that
+        carries no layout over it) keeps the grid it entered
+        with whole."""
+        if (self.width(), self.height()) == entered:
+            return
+        cols = max(1, self.width() // self.metrics.cell_width)
+        rows = max(1, self.height() // self.metrics.cell_height)
+        if (cols, rows) != (self.cols, self.rows):
+            self.resize_grid(cols, rows)
+
+    def can_fit_window(self, window) -> bool:
+        """Whether fit_window may move this window (#976): a
+        terminal that is its own window sizes nothing, a
+        terminal the window does not show — hidden behind
+        another tab, not yet laid out — sizes nothing, and a
+        maximized frame keeps its pixels: no resize lands
+        while it stays maximized, and the grid re-derives at
+        the restore."""
+        return (
+            window is not self
+            and self.isVisible()
+            and not window.isMaximized()
+        )
+
+    def fit_once(self, window) -> bool:
+        """One pass of the window's resize toward the grid
+        (#976): the delta between the grid's pixel size and
+        the widget's current pixels, one resize, and the
+        layout settled for whoever measures next. Answers
+        whether another pass can reach anything: no, when the
+        pixels already answer the grid, and no, when the
+        window carries no layout that moves the widget — a
+        second pass would add the same delta to the window
+        again and reach nothing."""
+        width = self.metrics.cell_width * self.cols - self.width()
+        height = self.metrics.cell_height * self.rows - self.height()
+        if not (width or height):
+            return False
+        held = (self.width(), self.height())
+        window.resize(window.width() + width, window.height() + height)
+        layout = window.layout()
+        if layout is not None:
+            layout.activate()
+        return (self.width(), self.height()) != held
 
     def resize_grid(self, cols: int, rows: int) -> None:
         """Tell the emulator and the child the new grid, in the
@@ -343,10 +428,11 @@ class TerminalWidget(QWidget):
         self.refresh()
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
-        cols = max(1, self.width() // self.metrics.cell_width)
-        rows = max(1, self.height() // self.metrics.cell_height)
-        if (cols, rows) != (self.cols, self.rows):
-            self.resize_grid(cols, rows)
+        if not self._fitting:  # the window fit holds the grid it entered with
+            cols = max(1, self.width() // self.metrics.cell_width)
+            rows = max(1, self.height() // self.metrics.cell_height)
+            if (cols, rows) != (self.cols, self.rows):
+                self.resize_grid(cols, rows)
         find.layout(self)
         super().resizeEvent(event)
 
@@ -366,41 +452,17 @@ class TerminalWidget(QWidget):
         input.encode_key(self, event, action)
 
     def handle_shortcut(self, event: QKeyEvent) -> bool:
-        """The widget's own keys before the encoder: font
-        stepping, buffer paging, the clipboard, and the find
-        bar. ``True`` when the shortcut consumed the event."""
+        """The widget's own keys before the encoder: buffer
+        paging, the clipboard, and the find bar. ``True`` when
+        the shortcut consumed the event. The font keys live at
+        the application level now (#976, :mod:`..zoom`): they
+        answer wherever the focus stands, not the terminal
+        alone."""
         return (
-            self.font_shortcut(event)
-            or self.page_shortcut(event)
+            self.page_shortcut(event)
             or self.clipboard_shortcut(event)
             or self.find_shortcut(event)
         )
-
-    def font_shortcut(self, event: QKeyEvent) -> bool:
-        """The font keys under Ctrl: stepping and reset."""
-        if not event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            return False
-        return self.font_step(event) or self.font_reset(event)
-
-    def font_step(self, event: QKeyEvent) -> bool:
-        """Ctrl+Plus/Equal grows the face, Ctrl+Minus shrinks
-        it (numpad keys arrive as the same names with a keypad
-        modifier)."""
-        if event.key() in (Qt.Key.Key_Equal, Qt.Key.Key_Plus):
-            self.zoom_font(1)
-            return True
-        if event.key() == Qt.Key.Key_Minus:
-            self.zoom_font(-1)
-            return True
-        return False
-
-    def font_reset(self, event: QKeyEvent) -> bool:
-        """Ctrl+0 resets the face to its default size."""
-        if event.key() != Qt.Key.Key_0:
-            return False
-        if self.font.pointSize() != fonts.DEFAULT_PT:
-            self.apply_font_size(fonts.DEFAULT_PT)
-        return True
 
     def page_shortcut(self, event: QKeyEvent) -> bool:
         """Shift+PgUp/PgDn page the buffer locally instead of

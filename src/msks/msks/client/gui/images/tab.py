@@ -37,7 +37,7 @@ from ..imagerows import (
     catalog_rows,
     published_rows,
 )
-from ..listtable import ListTable, resized_viewport
+from ..listtable import ListTable, bold_header, resized_viewport
 from . import layout
 from .cells import (
     CATALOG_COLUMNS,
@@ -46,7 +46,6 @@ from .cells import (
     PUBLISHED_GROUP,
     ROW_INDEX_ROLE,
     ROW_KEY_ROLE,
-    bold_header,
     built_rank,
     counts_text,
     default_cell,
