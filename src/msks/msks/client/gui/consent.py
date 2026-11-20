@@ -68,8 +68,11 @@ class SharedController(ConsentController):
     panel renders rows on the GUI thread, so every apply, every
     reset, and the ordered snapshot the rows read run under one
     lock — a render never iterates a map the worker is landing
-    the next frame into. The TUI's own controller stays
-    lock-free: its loop applies and renders on one thread."""
+    the next frame into. On a GIL build the tear needs a
+    free-threaded interleave to reach, but the snapshot
+    contract is enforced rather than incidental to CPython's
+    internals. The TUI's own controller stays lock-free: its
+    loop applies and renders on one thread."""
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -190,3 +193,11 @@ class ConsentPresenter:
             decision,
             duration,
         )
+
+    def retire(self, key: str) -> None:
+        """One answered flight's key leaves the outstanding set
+        (#1000): the panel's half of the match, told with the key
+        each decide answer carried — a key no flight holds is a
+        quiet no-op, and a stale epoch's answer retires
+        nothing."""
+        self.decide_keys.discard(key)
