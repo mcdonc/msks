@@ -30,6 +30,7 @@ if importlib.util.find_spec("PySide6") is None:
     )
 
 from msks.client import data as clientdata  # noqa: E402
+from msks.client.tui.consent import ConsentController  # noqa: E402
 
 #: The poll cadence for queued signal delivery, seconds: the
 #: worker emits within a network call's time; the test pumps
@@ -335,8 +336,9 @@ class StubLink:
     frame outcome and the registration's refusal told at once,
     then a serve the stop must cancel."""
 
-    def __init__(self, workspace_id: str) -> None:
+    def __init__(self, workspace_id: str, controller=None) -> None:
         self.workspace_id = workspace_id
+        self.controller = controller
         self.on_frame = None
         self.on_rejected = None
         self.cancelled = False
@@ -386,7 +388,7 @@ def test_the_decider_registration_rides_the_loop_with_the_page(
     links: list[StubLink] = []
     bridge = qt.Bridge(
         StubData(),
-        decider_factory=lambda workspace_id: (
+        decider_factory=lambda workspace_id, controller=None: (
             links.append(StubLink(workspace_id)) or links[-1]
         ),
     )
@@ -451,8 +453,9 @@ def test_a_decider_task_that_dies_on_its_own_stops_clean(
         """A link whose run ends at once: the died-on-its-own
         shape."""
 
-        def __init__(self, workspace_id: str) -> None:
+        def __init__(self, workspace_id: str, controller=None) -> None:
             self.workspace_id = workspace_id
+            self.controller = controller
             self.on_frame = None
             self.on_rejected = None
 
@@ -502,8 +505,9 @@ def test_the_stop_retrieves_a_task_that_dies_mid_unwind(
         """A link that answers its cancel with a bug: the
         died-mid-unwind shape."""
 
-        def __init__(self, workspace_id: str) -> None:
+        def __init__(self, workspace_id: str, controller=None) -> None:
             self.workspace_id = workspace_id
+            self.controller = controller
             self.on_frame = None
             self.on_rejected = None
 
@@ -524,5 +528,75 @@ def test_the_stop_retrieves_a_task_that_dies_mid_unwind(
     bridge.start_decider("ws-1")
     time.sleep(0.2)  # both tasks parked on their serves
     qt.app.processEvents()
+    bridge.stop()
+    assert not bridge.running
+
+
+def test_the_registration_lands_on_the_controller_the_ask_carried(
+    qapp_setup,
+) -> None:
+    """The decider state seam (#1000): the controller the page's
+    consent presenter owns crosses to the link the factory
+    builds — the frames land on the state the presenter's rows
+    build from — the same-controller re-ask stays the no-op the
+    page's open-and-show pair asks, and a fresh controller (a
+    new open's presenter) retires the standing registration
+    first."""
+
+    class ParkingLink:
+        """The link's shape: parked, the retire's cancel its own
+        end, the controller it was built around recorded."""
+
+        def __init__(self, workspace_id: str, controller=None) -> None:
+            self.workspace_id = workspace_id
+            self.controller = controller
+            self.on_frame = None
+            self.on_rejected = None
+            self.cancelled = False
+
+        async def run(self) -> None:
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                self.cancelled = True
+                raise
+
+    qt = qapp_setup
+    links: list[ParkingLink] = []
+    bridge = qt.Bridge(
+        StubData(),
+        decider_factory=lambda workspace_id, controller=None: (
+            links.append(ParkingLink(workspace_id, controller)) or links[-1]
+        ),
+    )
+    bridge.start()
+    first = ConsentController(workspace_id="ws-1")
+    bridge.start_decider("ws-1", first)
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and not links:
+        qt.app.processEvents()
+        time.sleep(TICK)
+    assert links
+    assert links[0].controller is first
+    # The re-ask under the same controller — the page's show
+    # after its open — keeps the one link standing.
+    bridge.start_decider("ws-1", first)
+    time.sleep(0.1)
+    qt.app.processEvents()
+    assert len(links) == 1
+    assert not links[0].cancelled
+    # A fresh presenter's controller (a new open of the same
+    # workspace) retires the standing registration first: the
+    # holds land on the state the new presenter reads.
+    second = ConsentController(workspace_id="ws-1")
+    bridge.start_decider("ws-1", second)
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and (
+        not links[0].cancelled or len(links) < 2
+    ):
+        qt.app.processEvents()
+        time.sleep(TICK)
+    assert links[0].cancelled
+    assert links[1].controller is second
     bridge.stop()
     assert not bridge.running

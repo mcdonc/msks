@@ -79,15 +79,19 @@ class StubBridge:
         self.decider_landed = FakeSignal()
         self.decider_rejected = FakeSignal()
         #: The decider registration's bracket (#999): the page's
-        #: asks and retires, recorded for the lifetime asserts.
+        #: asks and retires, recorded for the lifetime asserts,
+        #: with the controller each ask carried beside it — the
+        #: presenter's state seam (#1000).
         self.decider_starts: list[str] = []
+        self.decider_controllers: list[object] = []
         self.decider_stops = 0
 
     def call(self, key: str, method: str, *args: object) -> None:
         self.calls.append((key, method, args))
 
-    def start_decider(self, workspace_id: str) -> None:
+    def start_decider(self, workspace_id: str, controller=None) -> None:
         self.decider_starts.append(workspace_id)
+        self.decider_controllers.append(controller)
 
     def stop_decider(self) -> None:
         self.decider_stops += 1
@@ -595,6 +599,34 @@ def test_a_reshown_page_claims_again(qt) -> None:
     assert bridge.decider_stops == 1
     page.show()
     assert bridge.decider_starts == ["ws-a", "ws-a"]
+
+
+def test_each_open_hands_a_fresh_presenter_to_the_registration(qt) -> None:
+    """The decider state seam (#1000): every open builds a
+    fresh consent presenter — the holds of a prior visit must
+    not linger in the next one's rows — and each ask carries
+    that presenter's controller, so the link's frames land on
+    the state the panel's rows build from."""
+    page, window, bridge = make_page(qt)
+    first = page.consent
+    assert first is not None
+    assert first.workspace_id == "ws-a"
+    assert bridge.decider_controllers[0] is first.controller
+    assert first.rows() == []
+    # A re-open of the same workspace builds a fresh presenter:
+    # its controller is its own, and the ask carries it.
+    page.open("ws-a")
+    second = page.consent
+    assert second is not None
+    assert second is not first
+    assert second.controller is not first.controller
+    assert bridge.decider_controllers[-1] is second.controller
+    # A different workspace re-hosts the presenter the same
+    # fresh way.
+    page.open("ws-b")
+    assert page.consent.workspace_id == "ws-b"
+    assert bridge.decider_starts[-1] == "ws-b"
+    assert bridge.decider_controllers[-1] is page.consent.controller
 
 
 def test_a_refused_registration_flashes_the_current_screen(qt) -> None:

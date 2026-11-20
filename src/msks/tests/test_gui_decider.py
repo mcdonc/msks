@@ -33,6 +33,7 @@ from msks.client.tui.consent import (  # noqa: E402
     REJECTED,
     RESOLVED,
     RULES,
+    ConsentController,
 )
 
 
@@ -407,3 +408,40 @@ def test_the_registration_frame_and_the_default_dial() -> None:
     # The refusal outcome the link ends on is the controller's
     # own vocabulary, the same constant both clients read.
     assert REJECTED == "rejected"
+
+
+def test_a_controller_handed_in_is_the_one_the_link_drives() -> None:
+    """The state seam (#1000): the consent presenter owns a
+    controller and the page hands it to the registration, so
+    the link drives the controller it was given — the frames
+    landing on the state the presenter's rows build from, one
+    source of truth — while a link built without one keeps its
+    own, the registration's whole state its own."""
+
+    async def scenario() -> None:
+        given = ConsentController(workspace_id="ws-a")
+        socket = FakeWS([rules_raw(), request_raw("req-1")])
+        # After the scripted socket the dial fails forever: a
+        # serving tail would re-register and reset the
+        # controller again, and the state under assert would
+        # not be the exchange's own.
+        sockets = [socket]
+
+        def dial():
+            return sockets.pop(0) if sockets else BrokenDial()
+
+        link = decider_mod.DeciderLink("ws-a", given, ws_factory=dial)
+        assert link.controller is given
+        task = drive(link)
+        await settle()
+        task.cancel()
+        assert given.pending.keys() == {"req-1"}
+        assert given.rules is not None
+        assert given.rules.mode == "interactive"
+        # Without one handed in, the link builds its own: the
+        # registration's own state, not a caller's.
+        own = decider_mod.DeciderLink("ws-a")
+        assert own.controller is not given
+        assert own.controller.workspace_id == "ws-a"
+
+    asyncio.run(scenario())

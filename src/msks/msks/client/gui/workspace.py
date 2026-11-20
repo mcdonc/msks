@@ -19,6 +19,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from ..data import RestFailure
 from .bridge import Bridge
+from .consent import ConsentPresenter
 from .create import CreateDialog
 from .detail import DetailSections, detail_sections, frame_names
 from .events import EventsTab
@@ -110,7 +111,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
     bridge's link claims the workspace's holds at the open,
     the registration retiring at every hide (a page nobody
     sees holds flows nobody answers) and re-claiming at the
-    next show. The workspace's name lives in
+    next show. The consent presenter (#1000) stands behind the
+    registration: the link's frames land on the presenter's
+    controller, the seam the consent panel the phase's next
+    work docks renders. The workspace's name lives in
     the window title while the page shows. A failed refresh
     flashes the status line while the sections keep their
     content; a listing that can no longer see the workspace
@@ -128,6 +132,11 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.bridge = bridge
         self.hub = hub
         self.workspace_id = ""
+        # The consent presenter (#1000): built at every open,
+        # the decider's state and verdict seam — the panel the
+        # phase's next work docks renders its rows. Set before
+        # the chrome: a mid-build event meets it standing.
+        self.consent: ConsentPresenter | None = None
         self.row: dict | None = None
         self.health_doc: dict | None = None
         self.frames: list[dict] = []
@@ -345,11 +354,13 @@ class WorkspaceDetail(QtWidgets.QWidget):
             self.hub.open_shell(workspace_id)
         # The page's decider registration opens with the page
         # (#999): the bridge's link claims this workspace's
-        # holds — the pending snapshot and the rules posture
-        # land on the link's controller, the panel the phase's
-        # later work docks renders them — and the hide below
-        # retires the claim at the page's own hide.
-        self.bridge.start_decider(workspace_id)
+        # holds on the consent presenter's controller (#1000)
+        # — the pending snapshot and the rules posture land on
+        # the state the presenter's rows build from, the panel
+        # the phase's later work docks renders them — and the
+        # hide below retires the claim at the page's own hide.
+        self.consent = ConsentPresenter(workspace_id, self.bridge)
+        self.bridge.start_decider(workspace_id, self.consent.controller)
         # The Mounts tab blanks with the page's own reset (#987):
         # a flight the prior workspace still has out cancels, and
         # the first row answer fills the tab. The Proxies tab
@@ -679,8 +690,10 @@ class WorkspaceDetail(QtWidgets.QWidget):
             self.anchor_focus()
             self.refresh()
             self.timer.start()
-            if self.workspace_id:
-                self.bridge.start_decider(self.workspace_id)
+            if self.workspace_id and self.consent is not None:
+                self.bridge.start_decider(
+                    self.workspace_id, self.consent.controller
+                )
         super().showEvent(event)
 
     def hideEvent(self, event: QtGui.QHideEvent) -> None:

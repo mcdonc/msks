@@ -26,7 +26,11 @@ The protocol state is the TUI's own pure controller
 only, no Textual): the frame parsing, the pending-hold map, and
 the per-workspace ``owns()`` check that keeps a foreign
 workspace's frames from planting ghost holds (#280 review) all
-stay one implementation behind both clients. The module holds
+stay one implementation behind both clients. The controller is
+also the presenter's seam (#1000): the page hands the consent
+presenter's own controller to the link, so the frames land on
+the state the panel's rows build from — one source of truth
+— while the link builds its own when none comes. The module holds
 no Qt beside it: :class:`DeciderLink` is plain asyncio over the
 shared dial seams, its callbacks the bridge wires to signals —
 so the suite drives a link against a fake socket with no
@@ -69,13 +73,19 @@ class DeciderLink:
     def __init__(
         self,
         workspace_id: str,
+        controller: ConsentController | None = None,
         *,
         hold_timeout: float = 120.0,
         ws_factory=None,
         reconnect_delays: tuple[float, ...] = RECONNECT_DELAYS,
     ) -> None:
         self.workspace_id = workspace_id
-        self.controller = ConsentController(
+        # The state seam (#1000): a controller handed in is the
+        # one the frames land on — the consent presenter owns
+        # the rows that read it — and the link builds its own
+        # when none comes, the registration's whole state its
+        # own.
+        self.controller = controller or ConsentController(
             hold_timeout=hold_timeout, workspace_id=workspace_id
         )
         #: The daemon's refusal of the registration, as the

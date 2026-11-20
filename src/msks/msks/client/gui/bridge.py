@@ -83,6 +83,14 @@ class Bridge(QtCore.QObject):
     daemon's own retire — and the link's landings cross as
     ``decider_landed(outcome, payload)`` with the daemon's
     refusal of the registration as ``decider_rejected(reason)``.
+    The registration's state lands on the controller the ask
+    carries (#1000): the page's consent presenter owns one, and
+    the rows the panel renders read the same map the frames
+    land on. The controller rides opaquely — the bridge never
+    reads it, and its typed seam is the presenter's and the
+    link's (``msks.client.tui.consent`` sits at the import
+    fan-in ceiling, so the bridge does not become another
+    importer for an annotation).
     """
 
     succeeded = QtCore.Signal(str, object)
@@ -112,6 +120,11 @@ class Bridge(QtCore.QObject):
         #: idempotence key a re-ask for the page's own workspace
         #: reads.
         self._decider_workspace = ""
+        #: The standing registration's controller (#1000) —
+        #: the other half of the idempotence key: a re-ask for
+        #: the same workspace under a fresh presenter (a new
+        #: page open) retires the old registration first.
+        self._decider_controller = None
         #: The cancelled-but-unwound decider tasks (#999): a
         #: retire cancels and moves on, and the loop's shutdown
         #: still owes each one its completion — the unwind
@@ -211,42 +224,66 @@ class Bridge(QtCore.QObject):
             if task is not None and not task.done()
         }
 
-    def start_decider(self, workspace_id: str) -> None:
+    def start_decider(
+        self, workspace_id: str, controller: object | None = None
+    ) -> None:
         """The workspace page's registration (#999): claim
-        ``workspace_id``'s holds on the loop. Idempotent per
-        workspace — the page's open and its show both ask, and
-        the second ask for the standing workspace changes
-        nothing — while a different workspace (the page
-        re-hosted) retires the old registration first. A
-        stopped bridge ignores the ask: the window is closing,
-        and the page's hide tells the retire anyway."""
+        ``workspace_id``'s holds on the loop, the frames landing
+        on ``controller`` when the ask carries one — the page's
+        consent presenter's (#1000). Idempotent per workspace —
+        the page's open and its show both ask, and the second
+        ask for the standing workspace changes nothing — while
+        a different workspace (the page re-hosted) retires the
+        old registration first. A stopped bridge ignores the
+        ask: the window is closing, and the page's hide tells
+        the retire anyway."""
         if self._loop is None:
             return
         loop = self._loop
-        loop.call_soon_threadsafe(self.launch_decider, loop, workspace_id)
+        loop.call_soon_threadsafe(
+            self.launch_decider, loop, workspace_id, controller
+        )
 
     def launch_decider(
-        self, loop: asyncio.AbstractEventLoop, workspace_id: str
+        self,
+        loop: asyncio.AbstractEventLoop,
+        workspace_id: str,
+        controller: object | None = None,
     ) -> None:
         """The registration's own start, on the loop thread: the
-        link built, its callbacks the bridge's signals, and its
-        task reaped when it ends — an exception never left
-        un-retrieved on a task the bridge made."""
-        standing = self._decider_task
-        if (
-            standing is not None
-            and not standing.done()
-            and workspace_id == self._decider_workspace
-        ):
+        link built around the controller the ask carried, its
+        callbacks the bridge's signals, and its task reaped when
+        it ends — an exception never left un-retrieved on a task
+        the bridge made."""
+        if self.standing_answers(workspace_id, controller):
             return
         self.retire_decider()
-        link = self._decider_factory(workspace_id)
+        link = self._decider_factory(workspace_id, controller)
         link.on_frame = self.decider_landed.emit
         link.on_rejected = self.decider_rejected.emit
         self._decider_workspace = workspace_id
+        self._decider_controller = controller
         task = loop.create_task(link.run())
         task.add_done_callback(self.reap_decider)
         self._decider_task = task
+
+    def standing_answers(
+        self, workspace_id: str, controller: object | None
+    ) -> bool:
+        """Whether the standing registration answers the ask
+        (#999, #1000): the same workspace under no controller
+        change — a controller-less re-ask keeps the standing
+        state, and the same controller's re-ask (the page's
+        show after its open) keeps the link — while a fresh
+        controller (a new open's presenter) retires the old
+        registration first."""
+        task = self._decider_task
+        return (
+            task is not None
+            and not task.done()
+            and workspace_id == self._decider_workspace
+            and (controller is None or controller is self._decider_controller)
+        )
 
     def stop_decider(self) -> None:
         """The page's retire (#999): cancel the standing
@@ -264,6 +301,7 @@ class Bridge(QtCore.QObject):
         task = self._decider_task
         self._decider_task = None
         self._decider_workspace = ""
+        self._decider_controller = None
         if task is None or task.done():
             return
         task.cancel()
