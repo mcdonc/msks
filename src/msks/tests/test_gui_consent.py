@@ -1,14 +1,16 @@
 """The consent presenter (#1000, phase 5.5 of #924): the
 decider's state and verdict seam — frames landing through the
-TUI's pure controller, the row models the panel renders, and
-the decide flight the panel sends. These tests run against
-frame fakes and a stubbed bridge, the same shape the TUI's
-consent suite runs under: no Qt, no daemon, no loop — the
-controller's own clock pinned so the countdowns read exact.
+TUI's pure controller (the shared shape, its lock read under a
+real second thread), the row models the panel renders, and the
+decide flight the panel sends. These tests run against frame
+fakes and a stubbed bridge, the same shape the TUI's consent
+suite runs under: no Qt, no daemon, no loop — the controller's
+own clock pinned so the countdowns read exact.
 """
 
 import importlib.util
 import json
+import threading
 
 import pytest
 
@@ -19,7 +21,12 @@ if importlib.util.find_spec("PySide6") is None:
     )
 
 from msks.client.gui import consent as consent_mod  # noqa: E402
-from msks.client.tui.consent import ADDED, IGNORED, RESOLVED, RULES  # noqa: E402
+from msks.client.tui.consent import (  # noqa: E402
+    ADDED,
+    IGNORED,
+    RESOLVED,
+    RULES,
+)
 
 #: The pinned clock's now: every countdown reads against it.
 NOW = 1000.0
@@ -105,25 +112,30 @@ def test_frames_add_and_drop_holds() -> None:
     controller's own ``owns()`` check, and junk lands ignored
     with the state untouched."""
     held = presenter()
-    assert held.frame(rules_raw()) == (RULES, held.controller.rules)
-    outcome, payload = held.frame(request_raw("req-1"))
+    outcome, payload = held.controller.apply_frame(rules_raw())
+    assert outcome == RULES
+    assert payload is held.controller.rules
+    outcome, payload = held.controller.apply_frame(request_raw("req-1"))
     assert outcome == ADDED
     assert payload.dest_host == "api.github.com"
     assert [row.id for row in held.rows()] == ["req-1"]
     # A foreign workspace's hold plants nothing.
-    assert held.frame(request_raw("req-9", ws="ws-b"))[0] == IGNORED
+    assert held.controller.apply_frame(request_raw("req-9", ws="ws-b"))[0] == (
+        IGNORED
+    )
     assert [row.id for row in held.rows()] == ["req-1"]
     # The posture snapshot replaces whole.
-    assert held.frame(rules_raw(mode="static"))[0] == RULES
+    assert held.controller.apply_frame(rules_raw(mode="static"))[0] == RULES
     assert held.controller.rules.mode == "static"
     # The resolved frame drops the hold; another workspace's
-    # resolution drops nothing.
-    assert held.frame(resolved_raw("req-8", ws="ws-b"))[0] == RESOLVED
+    # resolution of an unknown id drops nothing.
+    outcome, _ = held.controller.apply_frame(resolved_raw("req-8", ws="ws-b"))
+    assert outcome == RESOLVED
     assert [row.id for row in held.rows()] == ["req-1"]
-    assert held.frame(resolved_raw("req-1"))[0] == RESOLVED
+    assert held.controller.apply_frame(resolved_raw("req-1"))[0] == RESOLVED
     assert held.rows() == []
     # Junk is ignored, never fatal.
-    assert held.frame("not json at all")[0] == IGNORED
+    assert held.controller.apply_frame("not json at all")[0] == IGNORED
 
 
 def test_rows_carry_the_destination_and_the_countdown() -> None:
@@ -133,9 +145,9 @@ def test_rows_carry_the_destination_and_the_countdown() -> None:
     settings-driven deadline), oldest first through the
     controller's ``ordered()``."""
     held = presenter()
-    held.frame(request_raw("req-2", at=901.0, expires=1010.0))
-    held.frame(request_raw("req-1", at=900.0, expires=1120.0))
-    held.frame(
+    held.controller.apply_frame(request_raw("req-2", at=901.0, expires=1010.0))
+    held.controller.apply_frame(request_raw("req-1", at=900.0, expires=1120.0))
+    held.controller.apply_frame(
         request_raw("req-3", host="pypi.org", port=0, at=902.0, expires=1075.0)
     )
     rows = held.rows()
@@ -156,12 +168,12 @@ def test_the_hold_timeout_is_the_countdowns_fallback() -> None:
     daemon's settings-driven deadline otherwise wins — and a
     deadline the clock passed clamps at zero."""
     held = presenter()
-    held.frame(request_raw("req-1", at=900.0, expires=None))
+    held.controller.apply_frame(request_raw("req-1", at=900.0, expires=None))
     assert held.rows()[0].remaining == 20.0  # 900 + 120 - 1000
     # The frame's own deadline wins over the fallback: a hold
     # requested late with an earlier deadline reads its own.
-    held.frame(request_raw("req-2", at=990.0, expires=1005.0))
-    held.frame(request_raw("req-3", at=900.0, expires=999.0))
+    held.controller.apply_frame(request_raw("req-2", at=990.0, expires=1005.0))
+    held.controller.apply_frame(request_raw("req-3", at=900.0, expires=999.0))
     by_id = {row.id: row for row in held.rows()}
     assert by_id["req-2"].remaining == 5.0
     assert by_id["req-3"].remaining == 0.0
@@ -172,9 +184,12 @@ def test_the_decide_call_sends_verdict_and_duration_together() -> None:
     """The verdict seam (#1000): one bridge flight per verdict,
     the decision and the duration chosen in the same action —
     ``tilrestart`` the default, the controller's own table —
-    each flight under its own key."""
+    each flight's key joining the outstanding set the panel
+    matches against, the keys of a queue's rapid verdicts each
+    their own and never reused across the presenters the page
+    builds."""
     held = presenter()
-    held.frame(request_raw("req-1"))
+    held.controller.apply_frame(request_raw("req-1"))
     held.decide("req-1", "allow")
     assert held.bridge.calls == [
         (
@@ -183,14 +198,21 @@ def test_the_decide_call_sends_verdict_and_duration_together() -> None:
             ("ws-a", "req-1", "allow", "tilrestart"),
         )
     ]
-    assert held.decide_key == "consent-decide-1"
     held.decide("req-1", "deny", "5m")
     assert held.bridge.calls[1] == (
         "consent-decide-2",
         "decide",
         ("ws-a", "req-1", "deny", "5m"),
     )
-    assert held.decide_key == "consent-decide-2"
+    # Both flights stand outstanding together — a queue's
+    # verdicts each keep their own key for the panel's match.
+    assert held.decide_keys == {"consent-decide-1", "consent-decide-2"}
+    # A fresh presenter (the page's next open) never reuses a
+    # gone one's keys: the module-wide sequence runs on.
+    fresh = presenter()
+    fresh.decide("req-2", "deny", "once")
+    assert fresh.bridge.calls[0][0] == "consent-decide-3"
+    assert fresh.decide_keys == {"consent-decide-3"}
 
 
 def test_a_row_clears_on_the_resolved_frame_not_the_click() -> None:
@@ -199,8 +221,62 @@ def test_a_row_clears_on_the_resolved_frame_not_the_click() -> None:
     resolved frame drops it, the daemon the authority, a
     refused verdict flashing in the panel while the row stays."""
     held = presenter()
-    held.frame(request_raw("req-1"))
+    held.controller.apply_frame(request_raw("req-1"))
     held.decide("req-1", "allow", "5m")
     assert [row.id for row in held.rows()] == ["req-1"]
-    held.frame(resolved_raw("req-1"))
+    held.controller.apply_frame(resolved_raw("req-1"))
     assert held.rows() == []
+
+
+def test_rows_snapshot_whole_while_frames_land() -> None:
+    """The shared controller's lock (#1000): the link lands
+    frames on the worker loop while the panel renders rows on
+    the GUI thread — the render's snapshot stays whole (no
+    iteration torn by a landing frame), and every hold that
+    landed reads in the rows when the dust settles."""
+    held = presenter()
+    raws = [request_raw(f"req-{i}", at=900.0 + i) for i in range(200)]
+    torn: list[Exception] = []
+
+    def land() -> None:
+        for raw in raws:
+            held.controller.apply_frame(raw)
+
+    def render(until: threading.Event) -> None:
+        while not until.is_set():
+            try:
+                held.rows()
+            except Exception as exc:  # the tear the lock forbids
+                torn.append(exc)
+                return
+
+    worker = threading.Thread(target=land)
+    done = threading.Event()
+    reader = threading.Thread(target=render, args=(done,))
+    reader.start()
+    worker.start()
+    worker.join()
+    done.set()
+    reader.join()
+    assert torn == []
+    assert len(held.rows()) == 200
+
+
+def test_the_reset_drops_stale_holds_for_the_replay() -> None:
+    """The re-registration's reset (#999's rule on the shared
+    shape): the link resets the controller at every
+    registration and the daemon's snapshot replays what still
+    stands — a hold that resolved during the outage leaves with
+    the reset, not lingered as a ghost row, and the replay
+    re-lands what still stands."""
+    held = presenter()
+    held.controller.apply_frame(rules_raw())
+    held.controller.apply_frame(request_raw("req-1"))
+    held.controller.apply_frame(request_raw("req-2"))
+    held.controller.reset()
+    assert held.rows() == []
+    assert held.controller.rules is None
+    # The replay re-lands what still stands.
+    held.controller.apply_frame(rules_raw())
+    held.controller.apply_frame(request_raw("req-1"))
+    assert [row.id for row in held.rows()] == ["req-1"]

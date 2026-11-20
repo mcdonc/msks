@@ -331,6 +331,26 @@ def test_the_feed_rides_the_loop_and_its_frames_cross(
     bridge.stop()  # idempotent with the feed in place
 
 
+class ParkingLink:
+    """The link's shape for the registration's lifetime tests:
+    parked, the retire's cancel its own end, the controller it
+    was built around recorded."""
+
+    def __init__(self, workspace_id: str, controller=None) -> None:
+        self.workspace_id = workspace_id
+        self.controller = controller
+        self.on_frame = None
+        self.on_rejected = None
+        self.cancelled = False
+
+    async def run(self) -> None:
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+
 class StubLink:
     """The decider link's shape for the bridge's tests: one
     frame outcome and the registration's refusal told at once,
@@ -543,24 +563,6 @@ def test_the_registration_lands_on_the_controller_the_ask_carried(
     new open's presenter) retires the standing registration
     first."""
 
-    class ParkingLink:
-        """The link's shape: parked, the retire's cancel its own
-        end, the controller it was built around recorded."""
-
-        def __init__(self, workspace_id: str, controller=None) -> None:
-            self.workspace_id = workspace_id
-            self.controller = controller
-            self.on_frame = None
-            self.on_rejected = None
-            self.cancelled = False
-
-        async def run(self) -> None:
-            try:
-                await asyncio.sleep(3600)
-            except asyncio.CancelledError:
-                self.cancelled = True
-                raise
-
     qt = qapp_setup
     links: list[ParkingLink] = []
     bridge = qt.Bridge(
@@ -598,5 +600,66 @@ def test_the_registration_lands_on_the_controller_the_ask_carried(
         time.sleep(TICK)
     assert links[0].cancelled
     assert links[1].controller is second
+    bridge.stop()
+    assert not bridge.running
+
+
+def test_the_controller_arms_of_the_idempotence_rule(qapp_setup) -> None:
+    """The idempotence key's cross arms (#1000): a controller-less
+    re-ask over a standing controller-registration keeps the
+    standing link — the ask without a controller says keep, not
+    rebuild — and a controller-bearing ask over a standing
+    controller-less registration retires it and relaunches
+    around the controller the ask carried, the presenter's state
+    the frames must land on."""
+
+    def spun(count: int, cancelled: int | None = None) -> bool:
+        return len(links) >= count and (
+            cancelled is None or links[cancelled].cancelled
+        )
+
+    qt = qapp_setup
+    links: list[ParkingLink] = []
+    bridge = qt.Bridge(
+        StubData(),
+        decider_factory=lambda workspace_id, controller=None: (
+            links.append(ParkingLink(workspace_id, controller)) or links[-1]
+        ),
+    )
+    bridge.start()
+    held = ConsentController(workspace_id="ws-1")
+    bridge.start_decider("ws-1", held)
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and not spun(1):
+        qt.app.processEvents()
+        time.sleep(TICK)
+    assert spun(1)
+    assert links[0].controller is held
+    # The controller-less re-ask keeps the controller-bearing
+    # registration standing.
+    bridge.start_decider("ws-1")
+    time.sleep(0.1)
+    qt.app.processEvents()
+    assert len(links) == 1
+    assert not links[0].cancelled
+    # The retire, then a controller-less ask: the next ask under
+    # a controller retires the plain registration and relaunches
+    # around it.
+    bridge.stop_decider()
+    bridge.start_decider("ws-1")
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and not spun(2):
+        qt.app.processEvents()
+        time.sleep(TICK)
+    assert spun(2)
+    assert links[1].controller is None
+    fresh = ConsentController(workspace_id="ws-1")
+    bridge.start_decider("ws-1", fresh)
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and not spun(3, cancelled=1):
+        qt.app.processEvents()
+        time.sleep(TICK)
+    assert spun(3, cancelled=1)
+    assert links[2].controller is fresh
     bridge.stop()
     assert not bridge.running
