@@ -474,8 +474,11 @@ class ProxiesScreen(HelpKeys, Screen):
         # cancel — and never the widget's own ``loading`` reactive,
         # which would replace the page with Textual's loading
         # indicator on every cycle (the workspaces list's own
-        # name, carried here).
+        # name, carried here). A skipped poke arms the landing
+        # flight (#1019): the standing interval that once served
+        # the skip is gone.
         self.rows_loading = False
+        self.rows_pending = False
 
     # -- the page's frame ---------------------------------------------
 
@@ -558,11 +561,21 @@ class ProxiesScreen(HelpKeys, Screen):
     def refresh_rows(self) -> None:
         """Reload the listing; one flight at a time, a skip and
         not a cancel — the workspaces list's own rule (a cancel
-        landing inside the swap strands the page)."""
+        landing inside the swap strands the page), and a skipped
+        poke arms the landing flight (#1019) so a frame landing
+        mid-flight still gets its read."""
         if self.rows_loading:
+            self.rows_pending = True
             return
         self.rows_loading = True
         self.run_worker(self.load_rows)
+
+    def serve_pending(self) -> None:
+        """The poke a flight skipped (#1019): served the moment no
+        flight stands."""
+        if self.rows_pending and not self.rows_loading:
+            self.rows_pending = False
+            self.refresh_rows()
 
     async def load_rows(self) -> None:
         try:
@@ -573,6 +586,7 @@ class ProxiesScreen(HelpKeys, Screen):
             await self.rebuild_rows(rows)
         finally:
             self.rows_loading = False
+        self.serve_pending()
 
     async def rebuild_rows(self, rows: list[dict]) -> None:
         """Swap in a freshly-built list (its mount awaited),

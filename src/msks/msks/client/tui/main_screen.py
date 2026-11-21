@@ -256,8 +256,10 @@ class MainScreen(HelpKeys, Screen):
         self.columns = LIST_COLUMNS
         self.shown_once = False
         # The listing refresh's in-flight mark (#776): a skip, not
-        # a cancel — see refresh_rows.
+        # a cancel — see refresh_rows. The poke a skip arms
+        # (#1019): the landing flight serves it.
         self.rows_loading = False
+        self.rows_pending = False
         # The detail strip's storage cache (#849): the last
         # capacity report's per-workspace root-plus-home cost,
         # refreshed with the listing — a selection move
@@ -326,6 +328,7 @@ class MainScreen(HelpKeys, Screen):
             await self.rebuild_rows(self.rows)
         finally:
             self.rows_loading = False
+        self.serve_pending()
 
     def on_mount(self) -> None:
         self.link = self.make_link()
@@ -431,13 +434,23 @@ class MainScreen(HelpKeys, Screen):
         removed, the fresh one never mounted — while the rows
         recorded say the swap finished, so every later refresh
         skips against a listing that never painted. The in-flight
-        mark skips instead; the next frame's poke (or a keypress's
-        ``r``) serves the rows.
+        mark skips instead; a skipped poke arms the landing flight
+        (#1019 — the standing interval that once served the skip
+        is gone), so a frame that lands mid-flight still gets its
+        read.
         """
         if self.rows_loading:
+            self.rows_pending = True
             return
         self.rows_loading = True
         self.run_worker(self.load_rows)
+
+    def serve_pending(self) -> None:
+        """The poke a flight skipped (#1019): served the moment no
+        flight stands — one more read, no frame lost to a skip."""
+        if self.rows_pending and not self.rows_loading:
+            self.rows_pending = False
+            self.refresh_rows()
 
     async def load_rows(self) -> None:
         failure: str | None = None
@@ -455,6 +468,7 @@ class MainScreen(HelpKeys, Screen):
         finally:
             self.rows_loading = False
         self.land_reach(failure, reach)
+        self.serve_pending()
 
     def land_reach(self, failure: str | None, reach: bool) -> None:
         """Land one refresh's reach outcome (#904): a daemon that
