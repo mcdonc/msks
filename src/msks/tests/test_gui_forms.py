@@ -65,7 +65,8 @@ def test_the_about_box_opens_centered_on_the_window(qt) -> None:
     asking window, centered on it, the information icon the
     ask carries. The macOS build of Qt clears a message box's
     title (the question box's own note), so the caller's own
-    suite pins the title and the text it passes."""
+    suite pins the arguments it passes through the builder
+    seam, and this suite pins the box's shape."""
     window = make_window(qt)
     box = about_box(window, "About msks", "msks 0.9.2")
     qt.keep.append(box)

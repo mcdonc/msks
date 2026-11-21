@@ -128,6 +128,33 @@ def test_quit_answers_through_the_windows_close_path(
     assert not window.isVisible()  # the window's own close ran
 
 
+def test_about_names_the_ask_through_the_builder_seam(
+    qt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The About ask's own arguments (#1007): the window the
+    box lands on, the title the client's name carries, and the
+    name-and-version text — pinned through the builder seam,
+    because a macOS build of Qt clears a message box's title
+    (#1014's own note) and the readback answers empty there."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    window = make_window(qt)
+    menubar_mod.install_bar(window)
+    asked: list[tuple] = []
+
+    class StubBox:
+        def exec(self) -> int:
+            return 0
+
+    def fake_about_box(parent, title: str, text: str) -> StubBox:
+        asked.append((parent, title, text))
+        return StubBox()
+
+    monkeypatch.setattr(menubar_mod, "about_box", fake_about_box)
+    about = role_action(bar_menu(qt, window), f"About {WINDOW_TITLE}")
+    about.trigger()
+    assert asked == [(window, f"About {WINDOW_TITLE}", menubar_mod.ABOUT_TEXT)]
+
+
 def test_about_opens_the_house_shaped_box(
     qt, monkeypatch: pytest.MonkeyPatch
 ) -> None:
