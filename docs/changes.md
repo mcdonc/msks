@@ -9,11 +9,12 @@ tagged `vX.Y.Z`.
 ### Added
 
 - **The GUI window icon (`msks gui-shortcut`) (#1021).** The GUI
-  window carries a custom msks icon: the window sets its desktop
-  identity and icon directly, and the new `msks gui-shortcut`
-  command installs the desktop entry and the icon renders under
-  the XDG data home so a Wayland taskbar resolves them. Re-run
-  the command after an upgrade; it overwrites in place.
+  window carries a custom msks icon: it sets its desktop identity
+  and icon directly. The new `msks gui-shortcut` command installs
+  the desktop entry and the icon renders under the XDG data home,
+  where a Wayland taskbar resolves them. The install is
+  idempotent, so re-running it after an upgrade refreshes the
+  renders.
 
 - **The GUI connection picker (#1009).** The workspace list's
   status row carries a connection button naming the daemon the

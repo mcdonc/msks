@@ -39,6 +39,18 @@ ICON_FILE = f"{DESKTOP_ID}.svg"
 #: is the fallback theme every desktop reads.
 HICOLOR = "hicolor"
 
+#: The characters the desktop entry spec reserves in an
+#: ``Exec`` value (#1021): a resolved path that carries one
+#: would need the spec's own quoting, and the entry keeps the
+#: plain command instead of a line the desktop could misparse.
+RESERVED = set(" \t\n\"'`$><|&*?#()\\;")
+
+#: What the installer says when ``XDG_DATA_HOME`` carries a
+#: relative path (#1021): the spec wants an absolute one, and
+#: a relative value would plant the tree under whatever the
+#: working directory happened to be.
+NOT_ABSOLUTE = "msks: XDG_DATA_HOME must be an absolute path"
+
 
 def icon_dir() -> Path:
     """The wheel's icon assets (#1021): the directory this
@@ -48,18 +60,38 @@ def icon_dir() -> Path:
     return Path(__file__).resolve().parent / "icons"
 
 
+def usable_exe(exe: str) -> bool:
+    """Whether the entry can carry the resolved command
+    verbatim (#1021): the desktop entry spec wants the
+    executable a full path or a bare name, and a path with a
+    reserved character would need the spec's own quoting.
+    Both answers keep the plain ``msks`` the template ships."""
+    return Path(exe).is_absolute() and not RESERVED & set(exe)
+
+
 def desktop_file_text(exe: str | None) -> str:
     """The desktop entry the installer writes (#1021): the
     shipped template, with its ``Exec`` line naming the
-    absolute ``msks`` the session runs when one resolved on
-    ``PATH``. The desktop runs the entry outside the shell
-    that installed it, where a venv's bin directory may not
-    sit on ``PATH``; a lookup that found nothing leaves the
-    plain command the template ships."""
+    ``msks`` the session resolved on ``PATH``. The desktop
+    runs the entry outside the shell that installed it, where
+    a venv's bin directory may not sit on ``PATH``. A lookup
+    that found nothing — or a path the entry cannot carry
+    verbatim — leaves the plain command the template ships,
+    and the rewrite lands on whatever ``Exec`` line the
+    template carries, not on one line's exact spelling."""
     text = (icon_dir() / DESKTOP_FILE).read_text()
-    if exe is None:
+    if exe is None or not usable_exe(exe):
         return text
-    return text.replace(f"Exec={DESKTOP_ID} gui", f"Exec={exe} gui")
+    kept = []
+    for line in text.splitlines():
+        if not line.startswith("Exec="):
+            kept.append(line)
+            continue
+        # The template's own arguments stand: the rewrite
+        # swaps the executable alone, whatever command the
+        # template's line carries.
+        kept.append(" ".join([f"Exec={exe}", *line.split()[1:]]))
+    return "\n".join(kept) + "\n"
 
 
 def install_shortcut(data_home: Path, exe: str | None) -> Path:
@@ -69,8 +101,8 @@ def install_shortcut(data_home: Path, exe: str | None) -> Path:
     ``icons/hicolor``, the master SVG under that theme's
     scalable slot, and the entry under ``applications``. A
     second run overwrites in place — the install is
-    idempotent, so an upgrade that ships new renders refreshes
-    them with the same command."""
+    idempotent, so an upgrade refreshes the renders it ships
+    with the same command."""
     source = icon_dir() / HICOLOR
     for png in sorted(source.glob("*x*/apps/*.png")):
         target = data_home / "icons" / png.relative_to(icon_dir())
@@ -90,18 +122,21 @@ def run() -> int:
     the shortcut under the XDG data home — the variable's own
     value when set, else ``~/.local/share`` — and print the
     entry's path, the client's one-line convention. A desktop
-    outside Linux hears it has no part in this, and a write
-    the filesystem refuses names itself and fails the same
-    way."""
+    outside Linux hears it has no part in this, a relative
+    data home hears the absolute-path rule, and a write the
+    filesystem refuses names itself and fails the same way."""
     if not sys.platform.startswith("linux"):
         print(NOT_LINUX, file=sys.stderr)
         return 1
-    data_home = Path(
-        os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share"
-    )
     try:
+        data_home = Path(
+            os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share"
+        )
+        if not data_home.is_absolute():
+            print(NOT_ABSOLUTE, file=sys.stderr)
+            return 1
         entry = install_shortcut(data_home, shutil.which(DESKTOP_ID))
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
         print(
             f"msks: cannot install the desktop shortcut: {exc}",
             file=sys.stderr,
