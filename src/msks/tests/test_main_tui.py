@@ -5720,6 +5720,10 @@ async def test_a_sort_click_dropped_mid_flight_is_served(
         screen = app.screen
         while not screen.rows_loading:
             await pilot.pause()
+        # The gated flight is inside its fetch before the click
+        # arrives — a slow host schedules the worker after the
+        # mark flips (the #776 test's own rule).
+        await wait_for(lambda: fetches == 1)
         # The click lands inside the gated flight: the sort state
         # stands, the header carries it, and the armed poke serves
         # the order once the flight lands.
