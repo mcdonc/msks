@@ -1258,7 +1258,9 @@ def test_device_attributes_answer_vt220():
 def test_color_scheme_answers_no_scheme():
     from msks.client.gui.terminal import callbacks
 
-    assert callbacks.color_scheme(None, None, 0) is False
+    # The out slot arrives as the C ABI's pointer; None is the
+    # NULL the no-answer arm never writes through.
+    assert callbacks.color_scheme(None, None, None) is False
 
 
 def test_the_child_exit_reaches_the_widget(qt):

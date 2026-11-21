@@ -49,7 +49,10 @@ The screen widgets
 — the detail page and the shell that swaps the two), the
 whole-client font zoom (:mod:`.zoom`, #976 — the application
 shortcuts that step the chrome's font and every live terminal
-together), and the asyncio worker (:mod:`.bridge`) are pinned
+together), the desktop-scheme pairing (:mod:`.scheme`, #1006
+— the chrome palette and the terminal color sets swapped
+together when the desktop's color scheme switches), and the
+asyncio worker (:mod:`.bridge`) are pinned
 by nothing here — all import the
 Qt binding at module scope, and this package's own init runs
 at CLI parse time on every command (``wscommands`` imports

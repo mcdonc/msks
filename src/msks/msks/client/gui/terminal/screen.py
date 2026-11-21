@@ -132,6 +132,11 @@ class TerminalWidget(QWidget):
         self.reaper.timeout.connect(self.reap_child)
         # The visual bell: BEL flashes a border for a moment.
         self.bell_flash = False
+        # The desktop scheme the window path applied (#1006):
+        # None until one lands, then the library's own
+        # light/dark constant — the answer the color-scheme
+        # query reports to the child.
+        self.color_scheme = None
         self.bell_timer = QTimer(self)
         self.bell_timer.setSingleShot(True)
         self.bell_timer.timeout.connect(self.bell_off)

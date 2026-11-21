@@ -8,7 +8,10 @@ render state, and the PTY session), the cell painter
 the find underlays), the input encoders (:mod:`.input` — keys,
 mouse, wheel, and focus through the library's encoders), the
 font rules (:mod:`.fonts` — Konsole-style cell metrics from
-one measured face), the library's effects callbacks
+one measured face), the color rules (:mod:`.colors`, #1006 —
+the light and dark color sets a desktop's scheme picks
+between, set on a terminal as its default colors, no Qt in
+it), the library's effects callbacks
 (:mod:`.callbacks` — including the OSC 52 clipboard write),
 the selection and clipboard (:mod:`.select`, #953 — the
 gesture protocol, word and line selects, PRIMARY publish,

@@ -520,6 +520,7 @@ def test_open_window_reuses_an_existing_app(
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("the gui extra is not installed on this host")
     from msks.client.gui import connection as connection_mod
+    from msks.client.gui import scheme as scheme_mod
     from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui import zoom as zoom_mod
@@ -538,6 +539,7 @@ def test_open_window_reuses_an_existing_app(
     screens: list[object] = []
     images: list[tuple[object, str]] = []
     zooms: list[tuple[object, object]] = []
+    schemes: list[tuple[object, object]] = []
     windows: list[object] = []
 
     class FakeSignal:
@@ -570,6 +572,22 @@ def test_open_window_reuses_an_existing_app(
             retargets.append(hub)
 
     monkeypatch.setattr(zoom_mod, "Zoom", FakeZoom)
+
+    scheme_retargets: list[object] = []
+
+    class FakeScheme:
+        """The desktop-scheme pairing's stub (#1006, #1009): the
+        window path builds it over the shell's hub and the app
+        — the recording pins both — and a reconnect retargets
+        it at the fresh hub."""
+
+        def __init__(self, hub: object, app: object) -> None:
+            schemes.append((hub, app))
+
+        def retarget(self, hub: object) -> None:
+            scheme_retargets.append(hub)
+
+    monkeypatch.setattr(scheme_mod, "Scheme", FakeScheme)
 
     class FakeRect:
         """The window geometry's shape for the save pin (#939):
@@ -794,6 +812,7 @@ def test_open_window_reuses_an_existing_app(
         assert len(stops) == 2  # its aboutToQuit hook beside it
         assert shutdowns == [screens[0].hub]
         assert retargets == [screens[1].hub]
+        assert scheme_retargets == [screens[1].hub]
         assert central[1].page is screens[1]  # the fresh tree landed
         assert len(listings[1].hosted) == 1  # its picker hosted
         # A refused pick (#1009) — the file changed under the
@@ -852,6 +871,11 @@ def test_open_window_reuses_an_existing_app(
     # the terminals it steps are the shell's, the keys sit on
     # the window.
     assert zooms == [(screens[0].hub, windows[0])]
+    # The desktop-scheme pairing takes the same hub and the
+    # app itself (#1006): the palette it paints is the
+    # application's, and its retarget follows the zoom's
+    # (#1009).
+    assert schemes == [(screens[0].hub, existing)]
     assert shown[-1] == "driven"  # the drive ran last, inside the bracket
     assert "stopped" in shown  # the return path stopped the first bridge
     # The saved geometry written on close (#939): the fake's
@@ -871,6 +895,7 @@ def test_open_window_keeps_a_user_style_choice(
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("the gui extra is not installed on this host")
     from msks.client.gui import connection as connection_mod
+    from msks.client.gui import scheme as scheme_mod
     from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui import zoom as zoom_mod
@@ -956,6 +981,16 @@ def test_open_window_keeps_a_user_style_choice(
             pass
 
     monkeypatch.setattr(zoom_mod, "Zoom", FakeZoom)
+
+    class FakeScheme:
+        """The pairing's stub (#1006): built, never read — the
+        style test reads the environment and the app font
+        only."""
+
+        def __init__(self, hub: object, app: object) -> None:
+            pass
+
+    monkeypatch.setattr(scheme_mod, "Scheme", FakeScheme)
 
     monkeypatch.setattr(workspace_mod, "WorkspaceShell", FakeScreen)
     monkeypatch.setattr(images_tab_mod, "ImagesTab", FakeImagesTab)

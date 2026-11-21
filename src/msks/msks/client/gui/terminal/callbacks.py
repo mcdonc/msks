@@ -100,10 +100,18 @@ def title_changed(_terminal, userdata) -> None:
 
 
 @gt.COLOR_SCHEME_FN
-def color_scheme(_terminal, _userdata, _out) -> bool:
-    """The light/dark scheme query: this widget owns no scheme
-    to report — the palette lives in the library."""
-    return False
+def color_scheme(_terminal, userdata, out) -> bool:
+    """The desktop's light/dark answer (CSI ? 996 n): the
+    screen carries the scheme the window path applied to its
+    grid (#1006), and the query hears it. A screen no scheme
+    reached answers nothing — the library ignores the query,
+    the same fallback a desktop that names no scheme keeps."""
+    screen = screen_for(userdata)
+    scheme = getattr(screen, "color_scheme", None)
+    if scheme is None:
+        return False
+    out[0] = scheme
+    return True
 
 
 @gt.BELL_FN

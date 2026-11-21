@@ -19,6 +19,14 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI window follows the desktop's color scheme
+  (#1006).** A light desktop paints the window light and a
+  dark one dark, and a desktop switch mid-session repaints
+  live with no restart. The terminal grids switch with the
+  chrome, and a program's own terminal colors keep winning
+  over the theme. A desktop that names no scheme keeps the
+  palette the platform theme handed the window.
+
 - **The GUI window icon (`msks gui-shortcut`) (#1021).** The GUI
   window carries a custom msks icon: it sets its desktop identity
   and icon directly. The new `msks gui-shortcut` command installs
