@@ -2,11 +2,11 @@
 read-only table and the save/cancel row the mounts and proxies
 surfaces build the same way — one definition, the screens' own
 rule against drift — beside the centered popups every screen
-opens (#1014): the yes/no question and the item picker, built
-over their asking window so the placement holds across window
-managers. This module imports PySide6 at module scope,
-the screens' own contract: nothing imports it at CLI parse
-time.
+opens (#1014): the yes/no question, the item picker, and the
+about box, built over their asking window so the placement
+holds across window managers. This module imports PySide6 at
+module scope, the screens' own contract: nothing imports it at
+CLI parse time.
 """
 
 from PySide6 import QtGui, QtWidgets
@@ -82,6 +82,20 @@ def save_cancel_row(
     row.addWidget(save)
     row.addWidget(cancel)
     return save, cancel, row
+
+
+def about_box(parent, title: str, text: str) -> QtWidgets.QMessageBox:
+    """The about box in the house dialog shape (#1007, #1014):
+    built over the asking window and centered on it before the
+    modal loop, the placement every popup the client opens
+    carries. The box stands unshown; the caller owns the ask.
+    """
+    box = QtWidgets.QMessageBox(parent)
+    box.setWindowTitle(title)
+    box.setText(text)
+    box.setIcon(QtWidgets.QMessageBox.Icon.Information)
+    center_on_parent(box)
+    return box
 
 
 def confirm_box(parent, title: str, text: str) -> QtWidgets.QMessageBox:

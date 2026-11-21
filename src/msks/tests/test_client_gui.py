@@ -539,6 +539,7 @@ def test_open_window_reuses_an_existing_app(
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("PySide6 is not installed on this host")
     from msks.client.gui import connection as connection_mod
+    from msks.client.gui import menubar as menubar_mod
     from msks.client.gui import scheme as scheme_mod
     from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import workspace as workspace_mod
@@ -560,6 +561,15 @@ def test_open_window_reuses_an_existing_app(
     zooms: list[tuple[object, object]] = []
     schemes: list[tuple[object, object]] = []
     windows: list[object] = []
+    bars: list[object] = []
+
+    # The stub window carries no menu bar (#1007): the window
+    # path asks the bar module to install, and the stub records
+    # the ask — the bar's own construction runs in its own
+    # suite over a real window, not over the FakeWindow here.
+    monkeypatch.setattr(
+        menubar_mod, "install_bar", lambda window: bars.append(window)
+    )
 
     class FakeSignal:
         def connect(self, slot: object) -> None:
@@ -890,6 +900,10 @@ def test_open_window_reuses_an_existing_app(
     # the terminals it steps are the shell's, the keys sit on
     # the window.
     assert zooms == [(screens[0].hub, windows[0])]
+    # The macOS menu bar's install was asked over the window
+    # (#1007), once per open — the reconnect lands a fresh
+    # content tree on the same window, not a fresh window.
+    assert bars == [windows[0]]
     # The desktop-scheme pairing takes the same hub and the
     # app itself (#1006): the palette it paints is the
     # application's, and its retarget follows the zoom's
@@ -914,6 +928,7 @@ def test_open_window_keeps_a_user_style_choice(
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("PySide6 is not installed on this host")
     from msks.client.gui import connection as connection_mod
+    from msks.client.gui import menubar as menubar_mod
     from msks.client.gui import scheme as scheme_mod
     from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import workspace as workspace_mod
@@ -921,6 +936,11 @@ def test_open_window_keeps_a_user_style_choice(
     from msks.client.gui.bridge import Bridge
     from msks.client.gui.images import tab as images_tab_mod
     from msks.client.gui.secrets import tab as secrets_tab_mod
+
+    # The stub window carries no menu bar (#1007): the bar's
+    # install is stubbed the same way as the reuse test's, the
+    # construction itself pinned in the bar's own suite.
+    monkeypatch.setattr(menubar_mod, "install_bar", lambda window: None)
 
     styles: list[str] = []
     central: list[object] = []
