@@ -82,11 +82,12 @@ if ! git -C "$CHECKOUT" rev-parse --verify HEAD >/dev/null 2>&1; then
   git clone --branch "$REPO_REF" "$REPO_URL" "$CHECKOUT"
 fi
 
-# The gui extra's Qt runtime (#928): the synced PySide6 wheels
-# link the FHS sonames the base image does not carry, and the
-# suite's offscreen window test runs (not skips) once the extra
-# is in the venv — without these the in-guest pytest the script
-# itself prints below reddens on the import. libxcb-shape.so.0 is
+# The Qt runtime the GUI's wheels need (#928): the synced
+# PySide6 wheels link the FHS sonames the base image does not
+# carry, and the suite's offscreen window test runs (not skips)
+# once the binding is in the venv — without these the in-guest
+# pytest the script itself prints below reddens on the import.
+# libxcb-shape.so.0 is
 # the marker: the leaf nothing else pulls, so its presence means
 # this set ran (libGL alone can be there without the xcb
 # leaves). The xcb leaves are named even where mesa's chains
@@ -94,7 +95,7 @@ fi
 # not what another package happens to drag in.
 if ! ldconfig -p 2>/dev/null | grep -q 'libxcb-shape\.so\.0'; then
   state qt-libs
-  log "installing the Qt runtime libraries (the gui extra's wheels link them)"
+  log "installing the Qt runtime libraries (the PySide6 wheels link them)"
   apt-get update -qq
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     libgl1 libegl1 libfontconfig1 libxkbcommon0 libxkbcommon-x11-0 \
@@ -106,9 +107,9 @@ if ! ldconfig -p 2>/dev/null | grep -q 'libxcb-shape\.so\.0'; then
 fi
 
 state uv-sync
-log "uv sync (the dev venv, Python included; the gui extra so the offscreen GUI suite runs)"
+log "uv sync (the dev venv, Python included; the GUI dependencies are base dependencies, so the offscreen GUI suite runs)"
 cd "$CHECKOUT"
-uv sync --extra gui
+uv sync
 
 state "done"
 log "bootstrap complete: $CHECKOUT — run the suite with:"

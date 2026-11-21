@@ -280,12 +280,12 @@ in
     # on a current venv it is a ~0.1s no-op, cheaper than getting the gate
     # right. `after` pins ordering: the venv must exist before sync, or
     # devenv:python:virtualenv would `rm -rf` the freshly-synced deps. The
-    # --extra gui (#927) joins the sync so the dev shell and CI can import
-    # PySide6 for the GUI suite's offscreen tests (#924).
+    # GUI dependencies are base dependencies since #1023, so the plain
+    # sync imports PySide6 for the GUI suite's offscreen tests (#924).
     "msks:uv-sync" = {
       exec = ''
         cd "$DEVENV_ROOT"
-        uv sync -p "$UV_PYTHON" --group dev --extra gui
+        uv sync -p "$UV_PYTHON" --group dev
       '';
       after = [ "devenv:python:virtualenv" ];
       before = [ "devenv:enterShell" ];

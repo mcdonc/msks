@@ -326,6 +326,15 @@ tagged `vX.Y.Z`.
 
 ### Changed
 
+- **The GUI dependencies are base dependencies (#1023).** A
+  plain `pip install msks` now installs the desktop GUI too:
+  `msks gui` opens without the `gui` extra, which is gone.
+  Every install gains about 250 MB (PySide6-Essentials and
+  pyghostty). A stripped install — PySide6 removed or broken —
+  hears a reinstall hint on `msks gui`. The nix package stays
+  on the daemon's closure: on a nix host, the GUI is a pip
+  surface (`pip install msks`).
+
 - **The GUI's active-tab mark (#1012).** The main
   Workspaces/Images/Secrets strip and the workspace detail
   strip paint the selected tab with an accent-tinted

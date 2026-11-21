@@ -92,7 +92,19 @@ buildPythonPackage {
   # prefix — the plain "uvicorn" drops the whole bracketed
   # requirement line (a bracketed entry would be a sed bracket
   # expression and match nothing).
-  pythonRemoveDeps = [ "uvicorn" ];
+  #
+  # The GUI dependencies (#1023) — PySide6-Essentials and the
+  # exactly-pinned pyghostty dev snapshot — are stripped the
+  # same way: the nix package is the daemon's closure
+  # (mainProgram msksd), and the pinned nixpkgs carries neither
+  # name (pyghostty only ships as the wheel the base install
+  # pins). The GUI stays a pip surface on a nix host: install
+  # the wheel (`pip install msks`) for `msks gui`.
+  pythonRemoveDeps = [
+    "uvicorn"
+    "PySide6-Essentials"
+    "pyghostty"
+  ];
 
   meta = {
     description = "Microvm workspace daemon (klangkd analogue on cloud-hypervisor)";

@@ -57,6 +57,31 @@ dependencies = [
   # carries the flags (the flag-pair options and the optional
   # lists the declarations use date to the 0.12 line).
   "typer>=0.12",
+  # The desktop GUI client's Qt binding (#924), in the base
+  # install since #1023: the GUI is a first-class client, so a
+  # plain `pip install msks` runs `msks gui` too — the daemon,
+  # the CLI, and the TUI never import it (the `msks gui` seam
+  # imports it lazily, #928), at the measured cost of about
+  # 85 MB of wheel download and about 250 MB installed.
+  # Essentials (not the PySide6 umbrella) carries
+  # QtCore/QtGui/QtWidgets — the umbrella adds
+  # addons/webengine/pdf, 3x the download, that the GUI never
+  # imports; the import name stays `PySide6`. Wheels are
+  # cp310-abi3, so the 3.14 venv resolves without a source
+  # build. The <6.13 minor ceiling holds the soname and plugin
+  # layout the devenv gui-libs set was verified against
+  # (devenv.nix) — a Qt minor can add or move both, so lift the
+  # ceiling only alongside a re-run of that verification. The
+  # nix package strips it (nix/msks-pkg.nix: the GUI is a
+  # pip surface there, never part of the daemon's closure).
+  "PySide6-Essentials>=6.8,<6.13",
+  # The official libghostty-vt build the pyghostty wheel
+  # bundles (#950): the library alone, its Python API unused —
+  # the GUI binding loads it through ctypes. A 0.1.0-dev
+  # snapshot; when a 1.x wheel ships, re-pin here and move the
+  # binding to the stable ABI. In the base install since #1023
+  # with the Qt binding above; the nix package strips it too.
+  "pyghostty==0.1.4",
 ]
 
 [dependency-groups]
@@ -68,30 +93,6 @@ dev = [
   "pytest-timeout",
   "pytest-testmon",
   "pytest-xdist",
-]
-
-[project.optional-dependencies]
-# The desktop GUI client's Qt binding (#924): the gui extra keeps
-# the base install — the daemon, the CLI, the TUI — Qt-free, and
-# the `msks gui` seam imports it lazily (#928). Essentials (not
-# the PySide6 umbrella) carries QtCore/QtGui/QtWidgets — the
-# umbrella adds addons/webengine/pdf, 3x the download, that the
-# GUI never imports; the import name stays `PySide6`. Wheels are
-# cp310-abi3, so the 3.14 venv resolves without a source build.
-# The <6.13 minor ceiling holds the soname and plugin layout the
-# devenv gui-libs set was verified against (devenv.nix) — a Qt
-# minor can add or move both, so lift the ceiling only alongside
-# a re-run of that verification. The nix package stays on the
-# base deps (the GUI is a client-side extra, never part of the
-# daemon's closure).
-gui = [
-    "PySide6-Essentials>=6.8,<6.13",
-    # The official libghostty-vt build the pyghostty wheel
-    # bundles (#950): the library alone, its Python API unused —
-    # the GUI binding loads it through ctypes. A 0.1.0-dev
-    # snapshot; when a 1.x wheel ships, re-pin here and move the
-    # binding to the stable ABI.
-    "pyghostty==0.1.4",
 ]
 
 [build-system]

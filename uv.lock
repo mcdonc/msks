@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.14"
 
 [[package]]
@@ -1367,6 +1367,8 @@ dependencies = [
     { name = "litellm" },
     { name = "mitmproxy" },
     { name = "pydantic" },
+    { name = "pyghostty" },
+    { name = "pyside6-essentials" },
     { name = "pyyaml" },
     { name = "rich" },
     { name = "sqlalchemy", extra = ["asyncio"] },
@@ -1374,12 +1376,6 @@ dependencies = [
     { name = "typer" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
-]
-
-[package.optional-dependencies]
-gui = [
-    { name = "pyghostty" },
-    { name = "pyside6-essentials" },
 ]
 
 [package.dev-dependencies]
@@ -1404,8 +1400,8 @@ requires-dist = [
     { name = "litellm", specifier = ">=1.106.2,<2" },
     { name = "mitmproxy", specifier = ">=12.2,<13" },
     { name = "pydantic", specifier = ">=2.5" },
-    { name = "pyghostty", marker = "extra == 'gui'", specifier = "==0.1.4" },
-    { name = "pyside6-essentials", marker = "extra == 'gui'", specifier = ">=6.8,<6.13" },
+    { name = "pyghostty", specifier = "==0.1.4" },
+    { name = "pyside6-essentials", specifier = ">=6.8,<6.13" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", specifier = ">=13" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
@@ -1414,7 +1410,6 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
     { name = "websockets", specifier = ">=14" },
 ]
-provides-extras = ["gui"]
 
 [package.metadata.requires-dev]
 dev = [

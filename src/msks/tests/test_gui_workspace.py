@@ -27,7 +27,7 @@ pytestmark = pytest.mark.filterwarnings(
 
 if importlib.util.find_spec("PySide6") is None:
     pytest.skip(
-        "the gui extra is not installed on this host",
+        "PySide6 is not installed on this host",
         allow_module_level=True,
     )
 

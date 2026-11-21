@@ -2,7 +2,7 @@
 spike's binding (#935) into the client package. The struct
 mirrors pin against the C ABI — a bad mirror fails loudly
 before the library traps on it — and, where the library is
-installed (the pyghostty wheel the gui extra pins), the binding
+installed (the pyghostty wheel the base install pins), the binding
 drives the render state, the key and mouse encoders, and the
 selection gesture: the APIs the terminal widget needs.
 """
