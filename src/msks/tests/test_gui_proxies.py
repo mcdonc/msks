@@ -304,6 +304,29 @@ def test_the_guards_send_nothing(qt, monkeypatch) -> None:
     bridge.failed.emit(key, "refused once")
 
 
+def test_the_table_shares_the_panes_whole_width(qt) -> None:
+    """The tab's width rule (#1025): the direction and the
+    status hug their text, the spec and the label share the
+    pane's whole remainder — the sections' total is the
+    viewport itself, with no blank tail and no single column
+    pooling the space."""
+    tab, _bridge = make_tab(qt)
+    # a real pane's width, not the offscreen window's own sizeHint
+    tab.window().resize(900, 500)
+    qt.app.processEvents()
+    header = tab.table.horizontalHeader()
+    modes = [header.sectionResizeMode(c) for c in range(4)]
+    assert modes == [
+        qt.QtWidgets.QHeaderView.ResizeMode.ResizeToContents,
+        qt.QtWidgets.QHeaderView.ResizeMode.Stretch,
+        qt.QtWidgets.QHeaderView.ResizeMode.Stretch,
+        qt.QtWidgets.QHeaderView.ResizeMode.ResizeToContents,
+    ]
+    total = sum(header.sectionSize(c) for c in range(4))
+    assert total == tab.table.viewport().width()
+    assert header.sectionSize(1) > header.sectionSize(0)
+
+
 def test_a_refused_listing_stands_silent(qt) -> None:
     """A refused listing (#988): the rows stand, the pending
     flag clears, and the note keeps its standing text — the

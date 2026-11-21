@@ -237,6 +237,30 @@ def test_the_tab_lists_the_rows_mounts(qt) -> None:
     assert not tab.pending_label.isVisibleTo(tab)
 
 
+def test_the_table_shares_the_panes_whole_width(qt) -> None:
+    """The tab's width rule (#1025): the mode and the state
+    hug their text, the host, the guest, and the reason share
+    the pane's whole remainder — the sections' total is the
+    viewport itself, with no blank tail and no single column
+    pooling the space."""
+    tab, _bridge = make_tab(qt)
+    # a real pane's width, not the offscreen window's own sizeHint
+    tab.window().resize(900, 500)
+    qt.app.processEvents()
+    header = tab.table.horizontalHeader()
+    modes = [header.sectionResizeMode(c) for c in range(5)]
+    assert modes == [
+        qt.QtWidgets.QHeaderView.ResizeMode.Stretch,
+        qt.QtWidgets.QHeaderView.ResizeMode.Stretch,
+        qt.QtWidgets.QHeaderView.ResizeMode.ResizeToContents,
+        qt.QtWidgets.QHeaderView.ResizeMode.ResizeToContents,
+        qt.QtWidgets.QHeaderView.ResizeMode.Stretch,
+    ]
+    total = sum(header.sectionSize(c) for c in range(5))
+    assert total == tab.table.viewport().width()
+    assert header.sectionSize(0) > header.sectionSize(2)
+
+
 def test_an_add_posts_the_whole_list_and_the_answer_lands(qt) -> None:
     """The Add action (#987): an accepted entry joins the
     working list and the next whole list posts through the

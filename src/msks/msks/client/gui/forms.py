@@ -19,11 +19,31 @@ def muted_note(text: str) -> QtWidgets.QLabel:
     return label
 
 
-def read_only_table(columns: tuple) -> QtWidgets.QTableWidget:
+def fit_columns(
+    table: QtWidgets.QTableWidget, content_columns: tuple = ()
+) -> None:
+    """The table's width rule (#1025): the columns share the
+    pane's whole horizontal width, the named content columns
+    hugging their text instead — widening the window widens
+    the sharing columns, never the pane's blank tail."""
+    header = table.horizontalHeader()
+    for column in range(table.columnCount()):
+        mode = (
+            QtWidgets.QHeaderView.ResizeMode.ResizeToContents
+            if column in content_columns
+            else QtWidgets.QHeaderView.ResizeMode.Stretch
+        )
+        header.setSectionResizeMode(column, mode)
+
+
+def read_only_table(
+    columns: tuple, content_columns: tuple = ()
+) -> QtWidgets.QTableWidget:
     """A table that renders but never edits (#987, #988): one
-    row per record, single-row selection, the last column
-    stretching to the pane's width. The caller owns the rows and
-    the selection's wiring."""
+    row per record, single-row selection, the columns sharing
+    the pane's whole width (#1025) with the content columns
+    hugging their text. The caller owns the rows and the
+    selection's wiring."""
     table = QtWidgets.QTableWidget(0, len(columns))
     table.setHorizontalHeaderLabels(columns)
     table.verticalHeader().setVisible(False)
@@ -37,7 +57,7 @@ def read_only_table(columns: tuple) -> QtWidgets.QTableWidget:
         QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
     )
     table.setShowGrid(False)
-    table.horizontalHeader().setStretchLastSection(True)
+    fit_columns(table, content_columns)
     return table
 
 

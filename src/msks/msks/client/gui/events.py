@@ -14,7 +14,7 @@ workspace page (itself lazily imported) owns the import.
 
 import time
 
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from .detail import EVENTS_LIMIT, event_line
 from .forms import muted_note
@@ -42,12 +42,23 @@ def row_text(frame: dict, epoch: float) -> str:
 
 class EventsTab(QtWidgets.QWidget):
     """The page's recent-events window (#989): the buffered
-    frames as rows, newest last, the tail held in view. The
-    page's open clears it; every pushed frame appends."""
+    frames as rows, newest last, the tail held in view — each
+    row using the pane's whole width, a long summary wrapping
+    (#1025). The page's open clears it; every pushed frame
+    appends."""
 
     def __init__(self) -> None:
         super().__init__()
         self.rows = QtWidgets.QListWidget(self)
+        # The rows use the pane's whole width (#1025): a long
+        # summary wraps to the next line instead of growing a
+        # horizontal scroll. Wrappable text never shows the
+        # scroll; a single token longer than the pane — a digest,
+        # a URL — brings it back, so its tail stays reachable.
+        self.rows.setWordWrap(True)
+        self.rows.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self.empty = muted_note("no events yet")
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.rows)

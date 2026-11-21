@@ -316,6 +316,12 @@ tagged `vX.Y.Z`.
   background, so the page the operator stands on reads at a
   glance. The tint follows the session palette, and the
   keyboard keeps a dotted rim on the focused tab.
+- **The workspace detail panes use the window's full width
+  (#1025).** The Mounts, Proxies, and Events tables share the
+  whole horizontal width of their tab: the mode, state,
+  direction, and status columns hug their text, and the wide
+  columns share the remainder. Event summaries wrap within the
+  pane instead of growing a horizontal scroll.
 - **The GUI's popups read with capitalized words (#1018).**
   The create, edit, and mint dialogs' field labels, note
   lines, and buttons now start each label with a capital
