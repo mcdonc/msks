@@ -46,7 +46,7 @@ other command.
 A shell inside a devenv tree needs no exports. The connection
 picker reads the dev daemon's state dir and offers that
 connection as a preset. The default state dir is
-`.devenv/state/msksd`; `MSKSD_STATE_DIR` moves it.
+`.devenv/state/msksd`, and `MSKSD_STATE_DIR` moves it.
 
 ![The connection picker's menu: two aliases and the dev daemon, the standing one checked](screens/gui-connection.png)
 

@@ -16,8 +16,10 @@ PySide6):
 
 The fixed clock pins every relative label (``2d ago``, the
 TTL countdown) to one moment, so re-running the script
-reproduces the same pixels except for the terminal child's
-own output.
+reproduces the same pixels except where the live clock or the
+terminal child paints: the events tab stamps its rows from
+the local clock at capture time, and the terminal shows the
+child's own output.
 """
 
 import os
@@ -228,13 +230,20 @@ def main() -> int:
     os.environ["FONTCONFIG_FILE"] = fonts.name
     os.environ.setdefault("QT_STYLE_OVERRIDE", "Fusion")
     try:
-        capture(fonts.name)
+        capture()
     finally:
-        # The teardown runs on every path, a failure mid-capture
-        # included: the hub's terminal children die and the temp
-        # fontconfig file leaves with them.
+        # A capture that failed before its own shutdown leaves
+        # the hub's terminal children alive: the finally shuts
+        # every hub that still holds sessions. A hub whose
+        # widgets are already gone fails its own shutdown; the
+        # failure prints one line and the next step still runs,
+        # the temp fontconfig file's unlink included.
         for hub in HUBS:
-            hub.shutdown()
+            if hub.sessions:
+                try:
+                    hub.shutdown()
+                except RuntimeError as exc:
+                    print(f"msks-screens: {exc}", file=sys.stderr)
         os.unlink(fonts.name)
     return 0
 
@@ -244,7 +253,7 @@ def main() -> int:
 HUBS: list = []
 
 
-def capture(fonts_path: str) -> None:
+def capture() -> None:
 
     from msks.client import ages as ages_mod
     from msks.client.gui import consent as consent_mod
@@ -416,6 +425,12 @@ def capture(fonts_path: str) -> None:
     settle(app, rounds=4)
     shot(detail_window, "gui-events.png")
 
+    # The hub shuts down here, while its widgets still live
+    # (#1008): the capture's tail destroys the top-level widget
+    # tree and flushes Qt's deferred deletions, and a shutdown
+    # after that reaches deleted C++ objects.
+    for hub in HUBS:
+        hub.shutdown()
     detail_window.close()
 
     # --- the images tab --------------------------------------------
