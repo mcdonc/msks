@@ -155,7 +155,7 @@ def test_the_editor_fields_follow_the_rename_route() -> None:
     form edits exactly what the daemon accepts."""
     assert editor_fields() == EDIT_FIELDS
     assert editor_fields(rename_supported=True) == (
-        ("name", "name"),
+        ("name", "Name"),
         *EDIT_FIELDS,
     )
 
@@ -246,7 +246,7 @@ def test_the_dialog_opens_seeded_and_submits_a_resize(qt) -> None:
     through the resize route with the apply button held, and the
     daemon's answer closes the dialog."""
     dialog, bridge = make_dialog(qt)
-    assert dialog.note.text() == "edit alpha"
+    assert dialog.note.text() == "Edit alpha"
     assert dialog.fields["cpus"].text() == "2"
     assert dialog.fields["root_mib"].text() == "8192"
     assert "name" not in dialog.fields  # the route is not there yet

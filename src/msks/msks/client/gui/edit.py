@@ -36,16 +36,16 @@ EDIT_KEY = "workspace-edit"
 #: form's own set minus its create-time half): the key the
 #: body carries and the label the row shows, in walk order.
 EDIT_FIELDS = (
-    ("cpus", "vcpus"),
-    ("mem_mib", "memory MiB"),
-    ("root_mib", "root MiB"),
-    ("home_mib", "home MiB"),
+    ("cpus", "VCPUs"),
+    ("mem_mib", "Memory MiB"),
+    ("root_mib", "Root MiB"),
+    ("home_mib", "Home MiB"),
 )
 
 #: The name field's key and label (#986): the row the rename
 #: route will edit, first among the fields the day it exists.
 NAME_FIELD = "name"
-NAME_LABEL = "name"
+NAME_LABEL = "Name"
 
 #: Whether the daemon's rename route exists (#986): the
 #: workspace row is immutable after create today, so the field
@@ -215,7 +215,7 @@ class EditDialog(BridgeClose, QtWidgets.QDialog):
         self.flight = None
         label = row.get("name") or row["id"]
         self.setWindowTitle("Edit workspace")
-        self.note = QtWidgets.QLabel(f"edit {label}")
+        self.note = QtWidgets.QLabel(f"Edit {label}")
         form = QtWidgets.QFormLayout()
         self.fields: dict[str, QtWidgets.QWidget] = {}
         for field, field_label in editor_fields():
@@ -223,10 +223,10 @@ class EditDialog(BridgeClose, QtWidgets.QDialog):
             edit.setText(self.seeds[field])
             self.fields[field] = edit
             form.addRow(field_label, edit)
-        self.apply_button = QtWidgets.QPushButton("apply")
+        self.apply_button = QtWidgets.QPushButton("Apply")
         self.apply_button.setDefault(True)
         self.apply_button.clicked.connect(self.submit)
-        cancel = QtWidgets.QPushButton("cancel")
+        cancel = QtWidgets.QPushButton("Cancel")
         cancel.clicked.connect(self.reject)
         buttons = QtWidgets.QHBoxLayout()
         buttons.addWidget(self.apply_button)
