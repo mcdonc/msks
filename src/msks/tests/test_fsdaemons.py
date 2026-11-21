@@ -379,9 +379,11 @@ async def test_start_skips_a_gate_refused_host_path(  # noqa: F811
         f"/api/v1/workspaces/{wid}/start", headers=auth()
     )
     assert started.status_code == 200
-    assert published[0][0] == "mount.skipped"
-    assert "outside the allowed host-share roots" in published[0][1]["detail"]
-    assert published[0][1]["host"] == str(link)
+    # The start's own status frames (#1019) publish first; the
+    # skip is the mount family's frame.
+    skips = [frame for frame in published if frame[0] == "mount.skipped"]
+    assert "outside the allowed host-share roots" in skips[0][1]["detail"]
+    assert skips[0][1]["host"] == str(link)
     # #762: the mount-skip family's publish journals, one line
     # per frame.
     lines = [
@@ -857,8 +859,11 @@ async def test_missing_share_path_skips_at_start(client, tmp_path):  # noqa: F81
         f"/api/v1/workspaces/{wid}/start", headers=auth()
     )
     assert started.status_code == 200
-    assert published[0][0] == "mount.skipped"
-    assert "does not exist or is not a directory" in published[0][1]["detail"]
+    # The start's own status frames (#1019) publish first; the
+    # skip is the mount family's frame.
+    skips = [frame for frame in published if frame[0] == "mount.skipped"]
+    assert skips[0][1]["detail"]
+    assert "does not exist or is not a directory" in skips[0][1]["detail"]
 
 
 async def test_spawn_guards_name_every_refusal(tmp_path: Path) -> None:

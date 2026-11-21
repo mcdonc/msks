@@ -312,7 +312,10 @@ async def test_start_publishes_skips_and_proceeds(
     assert started.status_code == 200
     assert started.json()["status"] == "running"
     assert ("launch", wid) in stub.calls
-    assert published == [
+    # The start's own status frames (#1019) publish first; the
+    # skip is the mount family's frame between them.
+    skips = [frame for frame in published if frame[0] == "mount.skipped"]
+    assert skips == [
         (
             "mount.skipped",
             {
