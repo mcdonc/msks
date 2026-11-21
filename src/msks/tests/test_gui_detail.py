@@ -160,9 +160,10 @@ def test_the_lines_read_the_stream_families() -> None:
     # in a generic family's payload renders nothing — its
     # family's own line owns it — while the payload's scalars
     # still read.
-    assert detail_mod.event_line(
-        {"event": "bare.tap", "data": {"id": WS}}
-    ) == ("bare.tap")
+    assert (
+        detail_mod.event_line({"event": "bare.tap", "data": {"id": WS}})
+        == "bare.tap"
+    )
     assert (
         detail_mod.event_line(
             {

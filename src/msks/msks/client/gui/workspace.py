@@ -2,17 +2,17 @@
 page the workspace list opens on one row — the tab strip's
 surfaces (the shells, the editable mounts, the proxies, the
 events window) refreshed on the listing's own cadence through
-the bridge, the same reads the TUI's workspace page makes: the
-row out of the workspaces listing, the doc out of the capacity
-report. The Info pane the page once carried beside the shells
-is gone (#1017): its mounts table read the same facts the
-Mounts tab edits (#987), its events window lives in the Events
-tab (#989), and its health facts — the daemon's own, not the
-workspace's — went with it by named decision: the machine fact
-already reads through the images tab's own gathered health
-fetch, and the page's own reads tell the daemon's reachability
-(a refused read flashes, an outage stands for an answer), so
-the page asks the daemon for no health doc at all.
+the bridge: the row out of the workspaces listing, the
+footer's storage fact out of the capacity report. The Info
+pane the page once carried beside the shells is gone (#1017):
+its mounts table read the same facts the Mounts tab edits
+(#987), its events window lives in the Events tab (#989), and
+its health facts — the daemon's own, not the workspace's —
+went with it by named decision: the machine fact already
+reads through the images tab's own gathered health fetch, and
+the page's own reads tell the daemon's reachability (a
+refused read flashes, an outage stands for an answer), so the
+page asks the daemon for no health doc at all.
 
 This module imports PySide6 at module scope — the same
 contract as the list screen's module
@@ -50,12 +50,6 @@ ROW_KEY = "detail-row"
 #: The capacity report's key (#971): the footer strip's storage
 #: fact, the list's own strip's read.
 STORAGE_KEY = "detail-storage"
-
-#: How many frames the page buffers (#945): the pushed frames
-#: (#946's feed) land here — the presenter keeps the last
-#: twenty for the window, and the buffer holds a wider history
-#: between renders without growing without bound.
-FRAMES_BUFFER = 100
 
 #: The back arrow's size, pixels (#945): the theme's own
 #: left-pointing arrow drawn large against the row's text —
@@ -130,7 +124,6 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # the chrome: a mid-build event meets it standing.
         self.consent: ConsentPresenter | None = None
         self.row: dict | None = None
-        self.frames: list[dict] = []
         self.row_pending = False
         self.storage_pending = False
         self.storage_costs: dict[str, int] = {}
@@ -261,7 +254,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
 
     def open(self, workspace_id: str) -> None:
         """The page takes a workspace (#945, #954, #971): the
-        state resets — fresh row, frame buffer, footer — the
+        state resets — fresh row and footer — the
         shell tabs re-host for this workspace, and the first
         refresh goes out. The page carries no header of its
         own; the window's title names the workspace, the
@@ -273,7 +266,6 @@ class WorkspaceDetail(QtWidgets.QWidget):
         its subtab takes the focus."""
         self.workspace_id = workspace_id
         self.row = None
-        self.frames = []
         self.footer.setText("")
         # The row resets with every open (#974): Shells is the
         # page's default tab, and a prior visit's tab must not
@@ -419,18 +411,14 @@ class WorkspaceDetail(QtWidgets.QWidget):
 
     @QtCore.Slot(object)
     def push_frame(self, frame: dict) -> None:
-        """One pushed frame into the buffer (#945's seam, #946's
-        feed): the buffer keeps only the frames that name this
-        workspace — the feed is a daemon-wide subscriber, and
-        busy siblings would otherwise evict this page's history
-        out of the cap — and the Events tab appends the moment
-        one lands."""
+        """One pushed frame to the tabs that read it (#945's
+        seam, #946's feed): a frame reaches the page's tabs
+        only when it names this workspace — the feed is a
+        daemon-wide subscriber, and a busy sibling's frames
+        would otherwise land on this page's tabs."""
         data = frame.get("data") or {}
         if not frame_names(data, self.workspace_id):
             return
-        self.frames.append(frame)
-        if len(self.frames) > FRAMES_BUFFER:
-            del self.frames[: len(self.frames) - FRAMES_BUFFER]
         # A proxy transition repaints the Proxies tab (#988) —
         # the feed's frame is the tab's own refresh trigger, the
         # same path the page's tick drives — and every frame
@@ -680,12 +668,12 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
 
     @QtCore.Slot(object)
     def frame_landed(self, frame: dict) -> None:
-        """One pushed frame (#946): the page buffers it whatever
-        screen owns the window — its events tab is the frame's
-        own record — and the screen the operator sees refreshes
-        at once, through the same path its timer drives; the
-        hidden screen refreshes at its next show. The tick
-        stays the backstop the feed makes immediate."""
+        """One pushed frame (#946): the page's tabs take it
+        whatever screen owns the window — its events tab is the
+        frame's own record — and the screen the operator sees
+        refreshes at once, through the same path its timer
+        drives; the hidden screen refreshes at its next show.
+        The tick stays the backstop the feed makes immediate."""
         self.detail.push_frame(frame)
         self.currentWidget().refresh()
 

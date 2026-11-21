@@ -553,12 +553,12 @@ def test_a_workspace_that_mounts_nothing_reads_no_rows(qt) -> None:
 
 
 def test_pushed_frames_fill_the_events_tab(qt) -> None:
-    """A pushed frame lands in the buffer and the Events tab
-    (#945's seam, #946's feed, #989): this workspace's frames
-    read, newest last, another workspace's stay out, and the
-    buffer keeps its bound — while a frame that changes nothing
-    the row holds costs the Mounts tab's table its selection
-    not at all, the hold surviving a noisy feed whole."""
+    """A pushed frame lands on the page's tabs (#945's seam,
+    #946's feed, #989): this workspace's frames read, newest
+    last, another workspace's stay out, and the window caps at
+    its own limit — while a frame that changes nothing the row
+    holds costs the Mounts tab's table its selection not at
+    all, the hold surviving a noisy feed whole."""
     page, window, bridge = make_page(qt)
     land(qt, page, bridge)
     page.push_frame(
@@ -594,12 +594,12 @@ def test_pushed_frames_fill_the_events_tab(qt) -> None:
     held = table.selectedItems()[0].text()
     page.push_frame({"event": "workspace.status", "data": {"id": "ws-a"}})
     assert table.selectedItems()[0].text() == held
-    for n in range(qt.page_mod.FRAMES_BUFFER + 5):
-        page.push_frame({"event": "noise", "data": {"id": "ws-a"}})
-    assert len(page.frames) == qt.page_mod.FRAMES_BUFFER
-    # The tab's window caps at the presenter's own limit (#989).
+    # The tab's window caps at its own limit (#989): a long
+    # noisy feed keeps the tail, the oldest rows falling off.
     from msks.client.gui.detail import EVENTS_LIMIT
 
+    for _ in range(EVENTS_LIMIT + 5):
+        page.push_frame({"event": "noise", "data": {"id": "ws-a"}})
     assert page.events_tab.rows.count() == EVENTS_LIMIT
 
 
@@ -864,9 +864,8 @@ def test_the_removed_workspace_closes_its_page(qt) -> None:
 
 def test_opening_resets_the_page(qt) -> None:
     """A second workspace's open resets the page (#945): the
-    row, the frame buffer, and the footer all start fresh — the
-    first workspace's tail cannot leak onto the second's
-    page."""
+    row and the tabs all start fresh — the first workspace's
+    tail cannot leak onto the second's page."""
     page, window, bridge = make_page(qt)
     land(qt, page, bridge)
     page.push_frame({"event": "workspace.status", "data": {"id": "ws-a"}})
@@ -874,7 +873,6 @@ def test_opening_resets_the_page(qt) -> None:
     assert page.footer.text() == ""
     assert page.events_tab.rows.count() == 0
     assert not page.events_tab.empty.isHidden()
-    assert page.frames == []
     assert ("detail-row", "workspaces", ()) in bridge.calls
 
 
@@ -909,12 +907,13 @@ def test_the_open_signal_guards_a_rowless_index(qt) -> None:
     assert opened == []
 
 
-def test_the_none_health_silence_keeps_the_outage(qt) -> None:
+def test_a_storage_answer_resolves_the_standing_outage(qt) -> None:
     """The outage tick's real shape (#945, #717, #904): the row
     read fails — the daemon answered nothing — and the outage
-    flash stands; the storage read's own answer resolves it,
-    the row's own landing beside it. The health read's
-    best-effort silence is gone with the read itself (#1017)."""
+    flash stands until one of the page's own answers resolves
+    it. The health read's best-effort silence is gone with the
+    read itself (#1017): the storage read's answer resolves
+    the outage, the row's own landing beside it."""
     page, window, bridge = make_page(qt)
     land(qt, page, bridge)
     page.on_failed(
@@ -1028,23 +1027,23 @@ def test_a_pushed_frame_refreshes_the_current_screen(qt) -> None:
     assert ("workspaces-list", "workspaces", ()) in bridge.calls
     assert ("detail-row", "workspaces", ()) not in bridge.calls
     # No workspace is open on the page: the frame names none it
-    # holds, so nothing buffers.
-    assert shell.detail.frames == []
+    # holds, so nothing lands on its tabs.
+    assert shell.detail.events_tab.rows.count() == 0
     shell.listing.opened.emit("ws-a")
     land(qt, shell.detail, bridge)  # the open's own flights answered
     bridge.calls.clear()
     shell.frame_landed({"event": "workspace.status", "data": {"id": "ws-a"}})
     assert ("detail-row", "workspaces", ()) in bridge.calls
-    # The open page buffers its own workspace's frame: its
-    # events tab is the frame's own record.
-    assert len(shell.detail.frames) == 1
-    # A busy sibling cannot evict it (#946): the buffer keeps
+    # The page takes its own workspace's frame: its events tab
+    # is the frame's own record.
+    assert shell.detail.events_tab.rows.count() == 1
+    # A busy sibling cannot crowd it (#946): the page takes
     # only this workspace's frames.
     for _ in range(150):
         shell.frame_landed(
             {"event": "workspace.status", "data": {"id": "ws-b"}}
         )
-    assert len(shell.detail.frames) == 1
+    assert shell.detail.events_tab.rows.count() == 1
 
 
 def test_the_feed_outage_flashes_the_current_screen(qt) -> None:
