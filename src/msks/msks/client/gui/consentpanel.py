@@ -175,11 +175,14 @@ class ConsentPanel(QtWidgets.QWidget):
             cell.show()
 
     def focused_position(self):
-        """Find the focused request and its position in the visible order."""
+        """Find the focused request and its position in the visible
+        order. A row's open menu needs no lookup of its own: the
+        button keeps the focus while its menu stands (a QMenu is
+        its own window, never a child of the row), so the focus
+        check below already names the row the menu belongs to."""
         focus = QtWidgets.QApplication.focusWidget()
-        popup = QtWidgets.QApplication.activePopupWidget()
         for rid, cell in self.cells.items():
-            if cell.isAncestorOf(focus) or cell.isAncestorOf(popup):
+            if cell.isAncestorOf(focus):
                 return rid, self.rows_layout.indexOf(cell)
         return None, 0
 
@@ -203,12 +206,12 @@ class ConsentPanel(QtWidgets.QWidget):
             sum(heights[:3]) + max(0, min(3, len(heights)) - 1) * spacing
         )
 
-    def eventFilter(self, watched, event):  # noqa: N802
+    def eventFilter(self, watched, event):
         if event.type() == QtCore.QEvent.Type.LayoutRequest:
             self.resize_rows()
         return super().eventFilter(watched, event)
 
-    def resizeEvent(self, event):  # noqa: N802
+    def resizeEvent(self, event):
         super().resizeEvent(event)
         self.resize_rows()
 

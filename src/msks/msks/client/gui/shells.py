@@ -501,13 +501,13 @@ class ShellsTab(QtWidgets.QWidget):
         else:
             self.shells.tabBar().setFocus()
 
-    def showEvent(self, event):  # noqa: N802
+    def showEvent(self, event):
         if getattr(self, "consent_panel", None) is not None:
             self.consent_panel.refresh()
             self.timer.start()
         super().showEvent(event)
 
-    def hideEvent(self, event):  # noqa: N802
+    def hideEvent(self, event):
         timer = getattr(self, "timer", None)
         if timer is not None:
             timer.stop()
