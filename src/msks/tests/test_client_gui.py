@@ -1,7 +1,7 @@
 """GUI tests (#924): the ``msks gui`` command surface (#928), the
 window shell, and the GUI dependencies' contract with the base
-install (#1023, the extra they rode before #927's decision
-was reversed)."""
+install (#1023, which reversed #927's extra: the deps the extra
+gated are base dependencies now)."""
 
 import ctypes
 import importlib.util
