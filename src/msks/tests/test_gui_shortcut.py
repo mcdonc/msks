@@ -111,10 +111,17 @@ def test_the_entry_rewrites_whatever_exec_line_the_template_carries(
 
 def test_the_entry_refuses_a_path_it_cannot_carry_verbatim() -> None:
     """A resolved path the spec cannot carry verbatim (#1021)
-    — a space inside it, or a relative spelling — keeps the
-    plain command: a misparsed ``Exec`` line would run the
-    wrong binary from the desktop's menus, silently."""
-    for unusable in ("/home/u/My Apps/venv/bin/msks", "bin/msks"):
+    keeps the plain command: a space, a tilde, an equal sign,
+    a field-code percent, or a relative spelling — each would
+    arrive misparsed or mutated from the desktop's menus,
+    silently running the wrong binary."""
+    for unusable in (
+        "/home/u/My Apps/venv/bin/msks",
+        "bin/msks",
+        "/home/ci/50%dir/msks",
+        "/home/u~x/msks",
+        "/opt/we=ird/msks",
+    ):
         text = shortcut.desktop_file_text(unusable)
         assert f"Exec={shortcut.DESKTOP_ID} gui" in text
         assert unusable not in text

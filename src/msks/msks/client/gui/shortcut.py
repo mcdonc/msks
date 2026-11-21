@@ -43,7 +43,7 @@ HICOLOR = "hicolor"
 #: ``Exec`` value (#1021): a resolved path that carries one
 #: would need the spec's own quoting, and the entry keeps the
 #: plain command instead of a line the desktop could misparse.
-RESERVED = set(" \t\n\"'`$><|&*?#()\\;")
+RESERVED = set(" \t\n\"'`$><|&*?#()\\;~%=")
 
 #: What the installer says when ``XDG_DATA_HOME`` carries a
 #: relative path (#1021): the spec wants an absolute one, and
