@@ -388,6 +388,14 @@ gui`. The nix package keeps the daemon's closure lean, so on
 
 ### Fixed
 
+- **Quitting the GUI with a focused terminal no longer crashes
+  the client (#1034).** Closing a terminal freed the emulator's
+  handles, and the focus-out Qt delivered on the hide that
+  followed read them — a use-after-free that took the process
+  down on every quit whose close path touched a focused shell,
+  the menu bar's Cmd+Q included. A closed screen now answers no
+  focus report.
+
 - **The GUI's popups open centered on the main window
   (#1014).** Every popup the GUI opens — the create and edit
   forms, the mounts and proxies add and edit forms, the image

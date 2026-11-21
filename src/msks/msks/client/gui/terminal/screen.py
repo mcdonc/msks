@@ -711,9 +711,17 @@ class TerminalWidget(QWidget):
         self.refresh()
 
     def focusInEvent(self, event: QFocusEvent) -> None:  # noqa: N802
-        input.send_focus(self, True)
+        # The guard is the teardown contract (#1034): closing
+        # frees the emulator handles, and the hide the close
+        # performs delivers Qt's focus events after them — an
+        # unguarded report reads a terminal the library already
+        # freed, and the read is the crash that took the suite
+        # down on every quit that closed a focused terminal.
+        if not self._closed:
+            input.send_focus(self, True)
         super().focusInEvent(event)
 
     def focusOutEvent(self, event: QFocusEvent) -> None:  # noqa: N802
-        input.send_focus(self, False)
+        if not self._closed:
+            input.send_focus(self, False)
         super().focusOutEvent(event)
