@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+The msks icon (#1021): a stack of two workspace plates with a
+shell prompt on the front one. The palette is the app's own:
+the accent blue and the surface tone from the GUI's screens,
+the running green from the status column. The back plate
+(#0178d4) peeks up-right — the stack of workspaces a client
+sits over; the front plate (#242f38) carries the prompt every
+workspace opens: a white chevron and the terminal's block
+cursor in green.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="msks">
+  <title>msks</title>
+  <rect x="112" y="32" width="368" height="368" rx="84" fill="#0178d4"/>
+  <rect x="32" y="112" width="368" height="368" rx="84" fill="#242f38"/>
+  <polyline points="125,204 229,296 125,388" fill="none" stroke="#ffffff" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="265" y="248" width="60" height="96" rx="18" fill="#4ebf71"/>
+</svg>

@@ -22,6 +22,7 @@ from types import ModuleType
 from ..sshsessions import state_dir
 from .data import GuiData
 from .rows import WINDOW_TITLE
+from .shortcut import DESKTOP_ID, ICON_FILE, icon_dir
 
 # What a base install hears when it asks for the window (#928):
 # one stderr line, the client's error convention, naming the
@@ -83,6 +84,24 @@ FONT_SCALE_ENV = "MSKSC_GUI_FONT_SCALE"
 #: and the fixed default applies only until the first close
 #: remembers a geometry.
 GEOMETRY_FILE = "gui-window.json"
+
+
+def apply_identity(app) -> None:
+    """Name the window for the desktop (#1021): the desktop
+    file name a compositor matches — the app id a Wayland
+    taskbar resolves the icon by, the class an X11 one — plus
+    the icon itself, which the surfaces that read the window
+    rather than the entry show (macOS's dock reads this one
+    alone). The entry and its icon land on the desktop through
+    :func:`msks.client.gui.shortcut.run`."""
+    # allow-deferred-import — the icon type comes from the
+    # binding the window path already loaded (run's guards
+    # answered absence); this module stays Qt-free at parse
+    # time so the CLI's every command parses without it.
+    from PySide6 import QtGui
+
+    app.setDesktopFileName(DESKTOP_ID)
+    app.setWindowIcon(QtGui.QIcon(str(icon_dir() / ICON_FILE)))
 
 
 def geometry_path() -> Path:
@@ -319,6 +338,7 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
         font.pointSizeF() * scale_from_env(FONT_SCALE_ENV, FONT_SCALE)
     )
     app.setFont(font)
+    apply_identity(app)
     window = QtWidgets.QMainWindow()
     window.setWindowTitle(WINDOW_TITLE)
     # allow-deferred-import — the picker's presenter (#1009):
