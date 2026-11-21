@@ -70,7 +70,11 @@ def test_the_question_box_carries_yes_no_with_no_the_default(qt) -> None:
     yes = qt.QtWidgets.QMessageBox.StandardButton.Yes
     no = qt.QtWidgets.QMessageBox.StandardButton.No
     assert box.parent() is window
-    assert box.windowTitle() == "Stop workspace"
+    # The title is not asserted: the macOS build of Qt clears a
+    # message box's title — Aqua shows the text alone, the
+    # static question call met the same rule — so the readback
+    # answers empty there. The screens' own tests pin the
+    # titles each call passes.
     assert box.text() == "Stop beta?"
     assert box.standardButtons() == (yes | no)
     assert box.standardButton(box.defaultButton()) is no
