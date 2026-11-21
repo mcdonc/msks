@@ -33,7 +33,7 @@ from .rows import (
     workspace_costs,
     workspace_row,
 )
-from .shells import ShellHub, ShellTabs
+from .shells import ShellHub, ShellsTab
 from .termsession import shell_argv
 from .workspaces import FLASH_MS, REFRESH_MS, WorkspaceList
 
@@ -184,7 +184,8 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # below it. The strip re-hosts on every open, and the
         # hub keeps the sessions themselves alive across visits
         # (#954).
-        self.shells = ShellTabs(hub)
+        self.shells_tab = ShellsTab(hub, bridge)
+        self.shells = self.shells_tab.shells
         self.shells.new_shell.connect(self.want_shell)
         self.mounts_tab = MountsTab(bridge)
         self.mounts_tab.row_updated.connect(self.mounts_landed)
@@ -197,7 +198,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.bar.addTab(EVENTS_LABEL)
         self.bar.addTab(INFO_LABEL)
         self.stack = QtWidgets.QStackedWidget(self)
-        self.stack.addWidget(self.shells)
+        self.stack.addWidget(self.shells_tab)
         self.stack.addWidget(self.mounts_tab)
         self.stack.addWidget(self.proxies_tab)
         self.stack.addWidget(self.events_tab)
@@ -349,17 +350,12 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # not hand the next workspace a hidden terminal holding
         # the keyboard.
         self.bar.setCurrentIndex(0)
-        self.shells.host(workspace_id)
+        # Host before registration: even an immediate frame must reach the
+        # panel's current presenter. Terminals remain owned by the hub.
+        self.consent = ConsentPresenter(workspace_id, self.bridge)
+        self.shells_tab.host(workspace_id, self.consent)
         if not self.hub.shells(workspace_id):
             self.hub.open_shell(workspace_id)
-        # The page's decider registration opens with the page
-        # (#999): the bridge's link claims this workspace's
-        # holds on the consent presenter's controller (#1000)
-        # — the pending snapshot and the rules posture land on
-        # the state the presenter's rows build from, the panel
-        # the phase's later work docks renders them — and the
-        # hide below retires the claim at the page's own hide.
-        self.consent = ConsentPresenter(workspace_id, self.bridge)
         self.bridge.start_decider(workspace_id, self.consent.controller)
         # The Mounts tab blanks with the page's own reset (#987):
         # a flight the prior workspace still has out cancels, and
@@ -632,7 +628,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         the Back button otherwise — the Escape anchor the
         page's own shortcut needs. The strip's own focus paths
         (a new shell, a rename) take their own anchors."""
-        if self.stack.currentWidget() is self.shells:
+        if self.stack.currentWidget() is self.shells_tab:
             widget = self.shells.currentWidget()
             if widget is not None and widget is not self.shells.plus_page:
                 widget.setFocus()

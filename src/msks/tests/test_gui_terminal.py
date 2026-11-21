@@ -1047,6 +1047,35 @@ def test_a_fit_that_cannot_reach_lands_the_pixels_grid(screen, qt):
         host.close()
 
 
+def test_fit_settles_only_font_and_layout_inside_grid_guard(
+    screen, qt, monkeypatch
+):
+    from msks.client.gui.terminal import screen as screen_mod
+
+    events = []
+    passes = []
+    monkeypatch.setattr(screen, "can_fit_window", lambda window: True)
+    monkeypatch.setattr(
+        screen_mod.QCoreApplication,
+        "sendPostedEvents",
+        lambda receiver, kind: events.append((kind, screen._fitting)),
+    )
+    monkeypatch.setattr(
+        screen,
+        "fit_once",
+        lambda window: passes.append(screen._fitting) or True,
+    )
+    held = (screen.cols, screen.rows)
+    screen.fit_window()
+    assert events == [
+        (screen_mod.QEvent.Type.ApplicationFontChange, True),
+        (screen_mod.QEvent.Type.LayoutRequest, True),
+    ]
+    assert passes == [True, True]
+    assert not screen._fitting
+    assert (screen.cols, screen.rows) == held
+
+
 def test_the_size_report_answers_the_widgets_grid(screen, qt):
     """The library's window-size query (CSI 14 t) reads the
     widget's own geometry."""

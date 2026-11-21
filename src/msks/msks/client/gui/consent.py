@@ -43,7 +43,12 @@ import time
 from dataclasses import dataclass
 
 from ..tui.consent import (
-    DURATION_DEFAULT,
+    DURATION_DEFAULT as DURATION_DEFAULT,
+)
+from ..tui.consent import (
+    DURATIONS as DURATIONS,
+)
+from ..tui.consent import (
     ConsentController,
     ConsentRequest,
     fmt_duration,

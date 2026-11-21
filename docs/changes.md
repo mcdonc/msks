@@ -8,6 +8,11 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **Shells consent panel (#1001).** Pending connections appear above the
+  terminal tabs with a countdown and inline Allow and Deny actions.
+  Each action offers a duration menu, and the panel collapses when the
+  queue is empty.
+
 - **The GUI consent presenter (#1000).** The workspace page's
   decider registration now feeds a consent presenter: the
   held flows build as row models carrying the destination
