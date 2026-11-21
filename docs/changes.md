@@ -212,9 +212,8 @@ tagged `vX.Y.Z`.
 - **GUI terminal-tab polish (#969).** A "+" at the right edge
   of the detail page's tab strip opens a new shell tab. Shell
   tabs keep a minimum width of about three characters beside
-  their close button. The detail page's header carries the
-  name, id, image, and created on one line. The page's top
-  chrome loses its Shell button: the "+" owns that action.
+  their close button. The page's top chrome loses its Shell
+  button: the "+" owns that action.
 
 - **GUI workspace shells in terminal tabs (#954).** The GUI's
   workspace detail page is now tabbed: every open shell on the

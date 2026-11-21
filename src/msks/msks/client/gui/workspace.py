@@ -254,7 +254,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
 
     def open(self, workspace_id: str) -> None:
         """The page takes a workspace (#945, #954, #971): the
-        state resets — fresh row and footer — the
+        state resets — fresh row, footer, and tabs — the
         shell tabs re-host for this workspace, and the first
         refresh goes out. The page carries no header of its
         own; the window's title names the workspace, the

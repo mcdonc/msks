@@ -1016,7 +1016,7 @@ def test_a_late_removed_answer_needs_the_page_current(qt) -> None:
 
 
 def test_a_pushed_frame_refreshes_the_current_screen(qt) -> None:
-    """One pushed frame (#946): the page buffers it whatever
+    """One pushed frame (#946): the page takes it whatever
     screen owns the window, and the screen the operator sees
     refreshes at once through the same path its timer drives —
     the feed is the immediacy, the tick the backstop."""

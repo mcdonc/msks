@@ -4,7 +4,7 @@ lines out — plain data the tabs render. The Info pane that
 composed whole sections is gone (#1017), and the parts the
 surviving tabs read stand: the mounts tab reads the entries
 with their derived state, the events tab reads the frame lines,
-and the page's buffer filter reads the frame naming. The module
+and the page's frame gate reads the naming. The module
 imports nothing from PySide6, so the suite drives it as plain
 Python and the coverage gate lands on it whole; its vocabulary
 comes from :mod:`msks.spec` through the client allowlist (the
