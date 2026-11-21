@@ -11,8 +11,9 @@ venv's copy under ``pyghostty/_lib``, the ``GHOSTTY_VT_LIB``
 override when it is set, the system loader's
 ``libghostty-vt.so`` — ``.dylib`` under macOS's loader —
 otherwise. The wheel snapshot is a pre-1.0
-``0.1.0-dev`` build; when a 1.x wheel ships, the extra re-pins
-and this binding moves to the stable ABI.
+``0.1.0-dev`` build; when a 1.x wheel ships, the base
+dependency re-pins and this binding moves to the stable
+ABI.
 
 The spike's ctypes findings (#935's README) are folded in:
 every struct field is mirrored exactly, padding members

@@ -173,9 +173,8 @@ def tui(
 @one_line_interrupts
 def gui() -> int:
     """The desktop GUI client (#924): the PySide6 front end over
-    the daemon's REST API. Ships with the gui extra
-    (pip install 'msks[gui]'); the workspace screens arrive
-    with the plan's later phases."""
+    the daemon's REST API. Ships in the base install (#1023);
+    the workspace screens arrive with the plan's later phases."""
     return run_gui(conf=cliapp.invoked_conf)
 
 

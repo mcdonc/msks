@@ -268,9 +268,9 @@ tagged `vX.Y.Z`.
   the render state, the key and mouse encoders, and the
   selection gesture the phase 4.5 terminal widget will drive,
   with every C struct mirrored exactly (padding members
-  included) and pinned by size against the ABI. The gui extra
-  now installs `pyghostty`, whose wheel bundles the official
-  `libghostty-vt` build the binding loads.
+  included) and pinned by size against the ABI. The base
+  install carries `pyghostty` (#1023), whose wheel bundles the
+  official `libghostty-vt` build the binding loads.
 - **The GUI live events feed (#946).** The window subscribes to
   the daemon's events socket over the bridge's loop: a pushed
   lifecycle frame refreshes the screen the operator sees at
@@ -308,10 +308,9 @@ tagged `vX.Y.Z`.
 - **`msks gui` (#928).** The desktop GUI client opens its
   phase-1 window shell on Linux and macOS: a PySide6 front end
   over the daemon's REST API, with the workspace screens to
-  follow. Install it with the new `gui` extra
-  (`pip install 'msks[gui]'`). A base install stays Qt-free and
-  hears the extra's install hint; a session without a display
-  hears a one-line notice instead of a crash.
+  follow. The GUI dependencies are base dependencies (#1023);
+  a session without a display hears a one-line notice instead
+  of a crash.
 - **The GUI workspace list (#939).** The GUI window opens on
   the workspace list: the TUI listing's five columns (name,
   status with the unresolved-mounts marker, id, image,
@@ -325,6 +324,14 @@ tagged `vX.Y.Z`.
   Client environment).
 
 ### Changed
+
+- **The GUI dependencies are base dependencies (#1023).** A
+  plain `pip install msks` now installs the desktop GUI, and
+  the `gui` extra is gone. Every install gains about 250 MB
+  (PySide6-Essentials and pyghostty). A stripped install
+  (PySide6 removed or broken) hears a reinstall hint on `msks
+gui`. The nix package keeps the daemon's closure lean, so on
+  a nix host the GUI is a pip surface (`pip install msks`).
 
 - **The GUI's active-tab mark (#1012).** The main
   Workspaces/Images/Secrets strip and the workspace detail

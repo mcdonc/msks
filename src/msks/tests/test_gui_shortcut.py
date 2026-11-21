@@ -244,7 +244,7 @@ def test_the_window_names_the_entry_and_carries_the_icon() -> None:
     loaded from the master the wheel ships beside the
     module."""
     if importlib.util.find_spec("PySide6") is None:
-        pytest.skip("the gui extra is not installed on this host")
+        pytest.skip("PySide6 is not installed on this host")
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from PySide6 import QtWidgets
 

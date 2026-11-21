@@ -1,6 +1,7 @@
 """GUI tests (#924): the ``msks gui`` command surface (#928), the
-window shell, and the gui extra's contract with the base install
-(#927)."""
+window shell, and the GUI dependencies' contract with the base
+install (#1023, which reversed #927's extra: the deps the extra
+gated are base dependencies now)."""
 
 import ctypes
 import importlib.util
@@ -28,13 +29,15 @@ def dep_name(spec: str) -> str:
     return re.split(r"[><=~!;\[]", spec)[0].strip().lower()
 
 
-def test_the_gui_command_hints_without_the_extra(
+def test_the_gui_command_hints_without_the_binding(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """``msks gui`` on a base install (#928): the absence guard
-    answers with the extra's install hint — one stderr line, the
-    client's error convention. The find_spec stand-in replaces
-    the absent binding in a process that has it."""
+    """``msks gui`` on a stripped or partial install (#928): the
+    absence guard answers with the reinstall hint — one stderr
+    line, the client's error convention. The binding is a base
+    dependency (#1023), so its absence means the install itself
+    is broken. The find_spec stand-in replaces the absent
+    binding in a process that has it."""
     client_env(monkeypatch)
     monkeypatch.setattr(app, "find_spec", lambda name: None)
     assert cli.main(["gui"]) == 1
@@ -44,14 +47,14 @@ def test_the_gui_command_hints_without_the_extra(
 def test_a_base_install_parses_every_command(
     tmp_path: Path,
 ) -> None:
-    """The base-install contract whole (#927), pinned for real:
-    with the binding unimportable — the state of a ``pip
-    install msks`` without the extra — the CLI module itself
-    imports and parses. The package init once pinned the
-    bridge, whose module scope loads Qt, and every command died
-    at parse time; a process with the binding installed cannot
-    see that bug, so the child blocks the binding the way a
-    base install lives."""
+    """The base-install contract whole (#1023), pinned for real:
+    with the binding unimportable — the state of an install
+    whose Qt binding was removed or failed to install — the
+    CLI module itself imports and parses. The package init
+    once pinned the bridge, whose module scope loads Qt, and
+    every command died at parse time; a process with the
+    binding installed cannot see that bug, so the child blocks
+    the binding the way a stripped install lives."""
     probe = tmp_path / "probe.py"
     probe.write_text(
         "import sys\n"
@@ -73,8 +76,8 @@ def test_the_gui_command_names_a_headless_session(
     pre-flight answers with one line instead of Qt's abort — the
     qFatal the QApplication constructor would raise is past
     anything Python can catch (exit 134 and a multi-line dump).
-    The find_spec stand-in keeps the test base-install safe (a host
-    without the extra hears HINT here, not a failure)."""
+    The find_spec stand-in keeps the test parse-safe (a host
+    without the binding hears HINT here, not a failure)."""
     client_env(monkeypatch)
     monkeypatch.setattr(app, "find_spec", lambda name: object())
     # The launchd stand-in pins the darwin arm: the gate must
@@ -149,9 +152,9 @@ def test_the_launchd_probe_reads_headless_absence(
 def test_the_gui_command_names_a_broken_install(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The binding is installed but will not load: the install
-    hint would send an operator who already has the extra in
-    circles, so this arm names the reinstall. The None stub
+    """The binding is installed but will not load: the absence
+    hint would send an operator who already has the dependency
+    in circles, so this arm names the reinstall. The None stub
     makes ``from PySide6 import ...`` raise ImportError in a
     process where the binding loads clean."""
     client_env(monkeypatch)
@@ -241,39 +244,55 @@ def test_the_parser_help_lists_gui(
 ) -> None:
     """The help names the command, and parsing stays Qt-free:
     the help render never imports the binding."""
+    # A GitHub runner's GITHUB_ACTIONS (or FORCE_COLOR) hands
+    # rich a forced terminal, and the command names render
+    # ANSI-wrapped — a raw ``" gui "`` then matches nothing
+    # (the gui extra's docstring once supplied the match by
+    # carrying the words "the gui extra" in the help text
+    # itself, #927). The assertion reads the de-colored output,
+    # so the command row is what matches wherever the test
+    # runs.
     with pytest.raises(SystemExit) as raised:
         cli.main(["--help"])
     assert raised.value.code == 0
-    assert " gui " in capsys.readouterr().out
+    assert " gui " in re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().out)
 
 
-def test_the_gui_extra_stays_off_the_base_install() -> None:
-    """The ``gui`` extra is the only door PySide6 and the
-    terminal library walk through (#927, #950): the base
-    dependencies stay Qt-free (the umbrella and the Essentials
-    split both checked), and the extra names the binding with
-    its floor and ceiling beside the pyghostty wheel that
-    bundles libghostty-vt."""
-    base = {dep_name(d) for d in PYPROJECT["project"]["dependencies"]}
-    assert "pyside6" not in base
-    assert "pyside6-essentials" not in base
-    assert "pyghostty" not in base
-    assert PYPROJECT["project"]["optional-dependencies"]["gui"] == [
-        "PySide6-Essentials>=6.8,<6.13",
-        "pyghostty==0.1.4",
-    ]
+def test_the_gui_dependencies_are_base_dependencies() -> None:
+    """PySide6 and the terminal library walk through the base
+    dependencies (#1023, reversing #927's extra): the plain
+    ``pip install msks`` runs the GUI too, and no optional
+    extra gates them (the umbrella and the Essentials split
+    both checked) beside the pyghostty wheel that bundles
+    libghostty-vt."""
+    deps = list(PYPROJECT["project"]["dependencies"])
+    base = {dep_name(d) for d in deps}
+    assert "pyside6" not in base, "the PySide6 umbrella entered the base deps"
+    assert "pyside6-essentials" in base, (
+        "PySide6-Essentials left the base deps"
+    )
+    assert "pyghostty" in base, "pyghostty left the base deps"
+    assert "PySide6-Essentials>=6.8,<6.13" in deps, (
+        "the PySide6-Essentials floor or ceiling moved"
+    )
+    assert "pyghostty==0.1.4" in deps, "the pyghostty pin moved"
+    assert "optional-dependencies" not in PYPROJECT["project"], (
+        "an optional extra returned — the GUI deps are base "
+        "dependencies (#1023); a new extra for other purposes "
+        "needs this assert revisited"
+    )
 
 
 def test_the_gui_window_opens_offscreen(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """With the extra installed (#928), the command's entry opens
+    """With the binding installed (#928), the command's entry opens
     the main-window shell: a real offscreen ``QApplication``, a
     shown window, and the event loop entered (the exec stand-in
     returns at once). ``exec`` is patched on the class because
     the real loop never returns under a test."""
     if importlib.util.find_spec("PySide6") is None:
-        pytest.skip("the gui extra is not installed on this host")
+        pytest.skip("PySide6 is not installed on this host")
     # os.environ, not monkeypatch: Qt's shutdown-time fontconfig
     # re-scan runs after fixture teardown has restored the env —
     # monkeypatch.undo would hand it the host /etc/fonts and the
@@ -518,7 +537,7 @@ def test_open_window_reuses_an_existing_app(
     aboutToQuit records the stop hook like the real signal
     would."""
     if importlib.util.find_spec("PySide6") is None:
-        pytest.skip("the gui extra is not installed on this host")
+        pytest.skip("PySide6 is not installed on this host")
     from msks.client.gui import connection as connection_mod
     from msks.client.gui import scheme as scheme_mod
     from msks.client.gui import tabs as tabs_mod
@@ -893,7 +912,7 @@ def test_open_window_keeps_a_user_style_choice(
     the pin replaces. The same stub shape as the reuse test,
     with the choice preset in the swapped-out environment."""
     if importlib.util.find_spec("PySide6") is None:
-        pytest.skip("the gui extra is not installed on this host")
+        pytest.skip("PySide6 is not installed on this host")
     from msks.client.gui import connection as connection_mod
     from msks.client.gui import scheme as scheme_mod
     from msks.client.gui import tabs as tabs_mod
