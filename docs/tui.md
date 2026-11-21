@@ -39,7 +39,8 @@ The list follows the daemon over the events websocket. A
 workspace changed from another surface (the CLI, another
 operator) appears without a keypress: the daemon publishes every
 listing-affecting move — a create, a removal, a status change, a
-resize, a mounts edit — and the list re-reads on the frame. A
+resize, a mounts edit, an image catalog move — and the list
+re-reads on the frame. A
 daemon at rest sends the list nothing; there is no polling
 timer.
 

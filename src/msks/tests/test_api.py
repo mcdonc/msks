@@ -4280,6 +4280,56 @@ async def test_the_listing_names_each_images_catalog_reference(client) -> None:
     assert image_ref(catalog, "0" * 64) is None
 
 
+async def test_catalog_moves_publish_their_frames(client) -> None:
+    """#1019: the catalog moves that change the listing's IMAGE
+    column — an import (a digest becomes a named reference), a
+    rename, and a removal (a reference falls back to the bare
+    digest) — announce themselves, so attached clients re-read
+    on the frame instead of a poll."""
+    from test_imagestore import build_containerdisk
+
+    http, app, _stub = client
+    state_dir = app.state.settings.vmm.state_dir
+    state_dir.mkdir(parents=True, exist_ok=True)
+    archive = state_dir / "cat-move.tar"
+    build_containerdisk(archive, name="fedora-42", version="2026.10")
+    queue = app.state.hub.subscribe()
+    try:
+        imported = await http.post(
+            "/api/v1/images", json={"source": str(archive)}, headers=auth()
+        )
+        assert imported.status_code == 201, imported.text
+        digest = imported.json()["hash"]
+        renamed = await http.patch(
+            f"/api/v1/images/{digest}",
+            json={"name": "fedora-43"},
+            headers=auth(),
+        )
+        assert renamed.status_code == 200, renamed.text
+        # An image a workspace references refuses the remove; a
+        # second, unreferenced archive serves the removal frame.
+        build_containerdisk(archive, name="debian-13", version="2026.09")
+        spare = await http.post(
+            "/api/v1/images", json={"source": str(archive)}, headers=auth()
+        )
+        assert spare.status_code == 201, spare.text
+        removed = await http.delete(
+            f"/api/v1/images/{spare.json()['hash']}", headers=auth()
+        )
+        assert removed.status_code == 200, removed.text
+    finally:
+        frames = []
+        while not queue.empty():
+            frames.append(json.loads(await queue.get()))
+    changed = [frame for frame in frames if frame["event"] == "image.changed"]
+    assert [frame["data"]["ref"] for frame in changed] == [
+        "fedora-42:2026.10",
+        "fedora-43:2026.10",
+        "debian-13:2026.09",
+        spare.json()["hash"],
+    ]
+
+
 # --- pending and unlock (#514) --------------------------------------------
 
 

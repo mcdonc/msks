@@ -57,11 +57,14 @@ def row_frame(msg: dict, workspace_id: str) -> bool:
     the routes and the watcher publish (created, removed,
     status, mounts, resized) — or a volume move the row's facts
     follow (``home.imported``, ``home.exported``), naming the
-    workspace under the family's own conventions (``id``, or
-    the scalar ``workspace_id``). Frames for other workspaces
-    and frames the page's own surface already answered (the
-    egress family, whose rules frame the controller lands
-    directly) decide nothing."""
+    workspace under the naming conventions the stream's families
+    use — ``id``, and the scalar ``workspace_id`` the consent
+    family uses (no lifecycle frame carries it today; the
+    matcher keeps it so a future frame that does admits
+    unchanged). Frames for other workspaces and frames the
+    page's own surface already answered (the egress family,
+    whose rules frame the controller lands directly) decide
+    nothing."""
     data = msg.get("data") or {}
     named = (data.get("id"), data.get("workspace_id"))
     return (
@@ -173,7 +176,11 @@ class DeciderLink:
         """Connect, register, pump; reconnect until cancelled — the
         consent app's ladder: backoff on drops, one slow fixed
         retry on an auth refusal, the ladder resets after any
-        connection that reached its serve loop."""
+        connection that reached its serve loop. The two permanent
+        exits are terminal by design: an unusable token never
+        becomes dialable by retrying, and a refused registration
+        is the daemon's own no — the host keeps its standing state
+        and re-reads on its own keypresses until then."""
         attempt = 0
         while True:
             connected, refused, rejected = await self.pump_one()
@@ -274,7 +281,12 @@ class DeciderLink:
         """Hand the serving moment to the hook, when one is set
         (#1019) — a host that paints daemon state re-reads it:
         the frames published while no connection stood never
-        landed."""
+        landed. The hook fires on the first connection too, not
+        only reconnects: the host's own opening read and this
+        re-read bracket the startup race — a frame published
+        between the REST answer and the server-side subscribe
+        misses the socket but shows in the re-read, whose REST
+        answer postdates the subscribe."""
         if self.on_connect is not None:
             self.on_connect()
 

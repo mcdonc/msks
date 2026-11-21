@@ -125,10 +125,11 @@ class WorkspaceScreen(HelpKeys, PageWatches, Screen):
         # where the operator reads it.
         self.flash_line = FlashLine()
         # The workspace's proxy rows (#809): the compact line's
-        # data, fetched at page start and on each proxy transition
-        # the link lands (#1019 dropped the standing backstop: the
-        # events own the live path, and a link that cannot connect
-        # still fetches on every connect, resume, and action).
+        # data, fetched at page start, on each proxy transition
+        # the link lands, and on every reconnect (#1019 dropped
+        # the standing backstop: the events own the live path,
+        # and a reconnect serves the transitions a dropped
+        # connection missed).
         self.proxy_rows: list[dict] | None = None
         # The edit waiting on the stop-and-resize answer (#380):
         # the body a running workspace's Apply parked while the
@@ -399,7 +400,7 @@ class WorkspaceScreen(HelpKeys, PageWatches, Screen):
         # The host's open-shell count lands on the row the way the
         # listing lands it (#858): client-side, per-host state the
         # header's shells segment reads — the local tick keeps it
-        # keeps it within a heartbeat of each open and close.
+        # within a heartbeat of each open and close.
         fresh["shells"] = count_sessions().get(self.row["id"], 0)
         self.row = fresh
         self.paint_header()
