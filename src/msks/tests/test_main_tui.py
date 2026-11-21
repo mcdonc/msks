@@ -4434,10 +4434,14 @@ async def test_a_dropped_socket_pokes_one_refresh(monkeypatch) -> None:
 def test_the_default_listing_link_wires_the_poke() -> None:
     """The unpatched link factory wires the listing's refresh as
     both the frame poke and the reconnect poke (#1019) — the
-    tests' quiet seam replaces this one connection. A screen
-    with its link made unmounts it closed."""
+    suite's quiet seam (conftest) replaces this one connection,
+    so the real factory is read beside the patch. A screen
+    without its link watches quietly, and a screen with it
+    unmounts it closed."""
     screen = main_screen_mod.MainScreen()
-    link = screen.make_link()
+    screen.on_unmount()  # no link stands: the quiet no-op
+    screen.local_tick()  # the watch without its link decides nothing
+    link = screen.make_real_link()
     assert isinstance(link, main_screen_mod.ListingLink)
     assert link.on_event == screen.refresh_rows
     assert link.on_connect == screen.refresh_rows
