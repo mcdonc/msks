@@ -327,3 +327,36 @@ def test_the_headers_follow_the_application_font(qt, zoomed):
         header = table.horizontalHeader()
         assert header.font().pointSizeF() == before + 1
         assert header.font().bold()
+
+
+def test_a_retarget_carries_the_steps_to_a_new_hub(qt, zoomed):
+    """The zoom across a reconnect (#1009): the hub the old
+    shell owned closes with its connection, the zoom points at
+    the fresh tree's hub, and the steps the operator set carry
+    — a shell the new hub opens joins the standing zoom instead
+    of resetting it. A re-ask for the same hub changes
+    nothing."""
+    from msks.client.gui.shells import ShellHub
+
+    zoomed.zoom.grow()
+    stepped = zoomed.zoom.term_pt
+    fresh = ShellHub(
+        argv_factory=lambda workspace_id: [
+            sys.executable,
+            "-c",
+            SLEEPER,
+        ]
+    )
+    try:
+        zoomed.zoom.retarget(fresh)
+        assert zoomed.zoom.hub is fresh
+        assert zoomed.zoom.term_pt == stepped
+        session = fresh.open_shell("ws-new")
+        qt.app.processEvents()
+        assert session.widget.font.pointSizeF() == stepped
+        # The old hub no longer feeds the zoom, and a re-ask for
+        # the standing hub changes nothing.
+        zoomed.zoom.retarget(fresh)
+        assert zoomed.zoom.hub is fresh
+    finally:
+        fresh.shutdown()

@@ -45,6 +45,19 @@ class Zoom(QtCore.QObject):
         self.hub.shell_opened.connect(self.shell_joined)
         self.install(window)
 
+    def retarget(self, hub) -> None:
+        """Point the zoom at a reconnected window's terminals
+        (#1009): the hub the old shell owned closed with its
+        connection, and the new hub's shells join the standing
+        zoom — the steps the operator set survive the daemon
+        switch instead of resetting to the defaults. A re-ask
+        for the same hub changes nothing."""
+        if hub is self.hub:
+            return
+        self.hub.shell_opened.disconnect(self.shell_joined)
+        self.hub = hub
+        hub.shell_opened.connect(self.shell_joined)
+
     def install(self, window) -> None:
         """Stand the zoom keys on the window (#976): one
         shortcut per action, application scope — the focus

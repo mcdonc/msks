@@ -8,6 +8,16 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The GUI connection picker (#1009).** The `msks gui` window
+  carries a connection strip naming the daemon it talks to,
+  with a menu of the client's presets: the config file's
+  daemon aliases, the environment the shell exported, and the
+  dev daemon's state-dir preset. Picking one reconnects the
+  window over the picked values through the same config
+  resolution `msks --daemon` uses; the open terminals close
+  with the connection they belonged to, and the font zoom
+  carries over.
+
 - **Shells consent panel (#1001).** Pending connections appear above the
   terminal tabs with a countdown and inline Allow and Deny actions.
   Each action offers a duration menu, and the panel collapses when the

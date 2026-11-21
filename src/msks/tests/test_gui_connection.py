@@ -1,0 +1,274 @@
+"""The connection picker's presenter (#1009, phase 5 of
+#924): the presets the window picks its daemon from, and the
+environment application a pick makes. No Qt in it — the
+presets build over the client's own config layer with a
+temporary file, a fake state dir, and a patched environment,
+and every pick's writes read straight off the environment the
+readers share.
+"""
+
+import os
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from msks.client.gui import connection as connection_mod
+
+
+@pytest.fixture(autouse=True)
+def plain_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A clean connection environment: the shaping variables
+    absent unless a test sets them, and the dev state dir
+    pointing nowhere — the working tree's own dev daemon must
+    not leak a preset into a test's menu."""
+    for name in connection_mod.SHAPING_VARS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(tmp_path / "no-dev-state"))
+
+
+def config_file(tmp_path: Path, text: str) -> str:
+    """One config file with the text given."""
+    path = tmp_path / "msks.yaml"
+    path.write_text(text)
+    return str(path)
+
+
+ALIASES = """
+daemons:
+  farm:
+    url: https://10.0.0.9:9660
+    token_file: {token}
+  laptop:
+    socket: /run/msks/local.sock
+active_daemon: farm
+"""
+
+
+def dev_state(tmp_path: Path, *, port: str = "9661") -> Path:
+    """The dev daemon's state dir: the port, the token, and the
+    CA the daemon writes on first serve."""
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "port").write_text(port)
+    (state / "bootstrap-token").write_text("devtok\n")
+    (state / "msks-ca.pem").write_text("CA\n")
+    return state
+
+
+def test_the_presets_list_the_file_the_dev_daemon_and_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The menu's rows (#1009): the file's aliases in the file's
+    own order with the invocation's alias marked, the dev daemon
+    when its state dir names a dial, and the environment when
+    the shell exported an address."""
+    token = tmp_path / "farm.tok"
+    token.write_text("farmtok")
+    config = config_file(tmp_path, ALIASES.format(token=token))
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(dev_state(tmp_path)))
+    monkeypatch.setenv("MSKSC_URL", "https://127.0.0.1:9661")
+    conf = SimpleNamespace(daemon=None, url="", socket="")
+    rows = connection_mod.Connections(conf, config=config).presets()
+    assert [(row.name, row.kind, row.active) for row in rows] == [
+        ("farm", connection_mod.ALIAS, False),
+        ("laptop", connection_mod.ALIAS, False),
+        ("dev daemon", connection_mod.DEV, True),
+        ("environment", connection_mod.ENVIRONMENT, False),
+    ]
+    assert rows[0].address == "https://10.0.0.9:9660"
+    assert rows[1].address == "/run/msks/local.sock"
+    assert rows[2].address == "https://127.0.0.1:9661"
+    # An alias the invocation itself picked marks that alias,
+    # and the dev and environment rows stand down.
+    conf = SimpleNamespace(daemon="laptop", url="", socket="")
+    rows = connection_mod.Connections(conf, config=config).presets()
+    assert [row.active for row in rows] == [False, True, False, False]
+
+
+def test_the_environment_row_marks_itself_the_standing_dial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An exported address with no dev state and no alias pick
+    (#1009): the environment row is the standing connection, the
+    one an ambient export dialed."""
+    monkeypatch.setenv("MSKSC_URL", "https://msks.example:9660")
+    conf = SimpleNamespace(daemon=None, url="", socket="")
+    rows = connection_mod.Connections(conf, config="none").presets()
+    assert [(row.name, row.active) for row in rows] == [("environment", True)]
+    # Nothing exported and nothing named: no environment row at
+    # all — the local socket default dials and no preset claims
+    # it.
+    monkeypatch.delenv("MSKSC_URL")
+    rows = connection_mod.Connections(None, config="none").presets()
+    assert rows == []
+
+
+def test_an_unusable_config_lists_no_aliases(tmp_path: Path) -> None:
+    """A broken file at menu-build time (#1009): the aliases
+    list nothing — the window already runs on what bootstrap
+    resolved — and the other presets stand."""
+    config = config_file(tmp_path, "daemons: [not a mapping]\n")
+    rows = connection_mod.Connections(None, config=config).presets()
+    assert [row.kind for row in rows] == []
+
+
+def test_an_alias_pick_applies_the_config_layers_own_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The alias pick (#1009): the config layer's own resolve
+    and apply materialize the entry's values — the flagged
+    entry outranking the ambient environment, the address
+    written exclusively (the socket variable emptied), exactly
+    what ``msks --daemon farm`` would dial."""
+    token = tmp_path / "farm.tok"
+    token.write_text("farmtok")
+    config = config_file(tmp_path, ALIASES.format(token=token))
+    monkeypatch.setenv("MSKSC_URL", "https://ambient:1")
+    monkeypatch.setenv("MSKSC_SOCKET", "/run/ambient.sock")
+    held = connection_mod.Connections(None, config=config)
+    assert held.pick(held.presets()[0]) is True
+    assert os.environ["MSKSC_URL"] == "https://10.0.0.9:9660"
+    assert os.environ["MSKSC_SOCKET"] == ""
+    assert os.environ["MSKSC_TOKEN"] == "farmtok"
+
+
+def test_an_alias_the_file_can_no_longer_resolve_picks_nothing(
+    tmp_path: Path,
+) -> None:
+    """The refused pick (#1009): the file changed under the menu
+    — its token file left — and the config layer's own refusal
+    answers False with the environment untouched, nothing to
+    re-dial."""
+    token = tmp_path / "farm.tok"
+    token.write_text("farmtok")
+    config = config_file(tmp_path, ALIASES.format(token=token))
+    held = connection_mod.Connections(None, config=config)
+    preset = held.presets()[0]
+    token.unlink()
+    assert held.pick(preset) is False
+    assert "MSKSC_URL" not in os.environ
+
+
+def test_a_dev_pick_writes_the_state_dirs_dial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dev pick (#1009): the url, token, and CA from the
+    state dir as it stands at the pick — the values re-read, a
+    rotated port honored — with the socket variable emptied
+    beside them. A state dir that cannot name a dial answers
+    False and leaves the environment untouched."""
+    state = dev_state(tmp_path)
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(state))
+    held = connection_mod.Connections(None, config="none")
+    preset = held.presets()[0]
+    assert held.pick(preset) is True
+    assert os.environ["MSKSC_URL"] == "https://127.0.0.1:9661"
+    assert os.environ["MSKSC_SOCKET"] == ""
+    assert os.environ["MSKSC_TOKEN"] == "devtok"
+    assert os.environ["MSKSC_CAFILE"] == str(state / "msks-ca.pem")
+    # The pick re-reads the state: a rotated port dials the new
+    # one.
+    (state / "port").write_text("9662")
+    assert held.pick(preset) is True
+    assert os.environ["MSKSC_URL"] == "https://127.0.0.1:9662"
+    # A state dir that lost its files picks nothing.
+    (state / "port").unlink()
+    assert held.pick(preset) is False
+    assert os.environ["MSKSC_URL"] == "https://127.0.0.1:9662"
+
+
+def test_an_environment_pick_restores_the_open_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The environment pick (#1009): the dial returns to the
+    exports the window opened on — a value the shell supplied
+    comes back, a variable a later pick added leaves the
+    environment whole."""
+    monkeypatch.setenv("MSKSC_URL", "https://shell.example:9660")
+    monkeypatch.setenv("MSKSC_TOKEN", "shelltok")
+    held = connection_mod.Connections(None, config="none")
+    monkeypatch.setenv("MSKSC_URL", "https://elsewhere:9")
+    monkeypatch.setenv("MSKSC_CAFILE", "/tmp/some-ca.pem")
+    assert held.pick(held.presets()[0]) is True
+    assert os.environ["MSKSC_URL"] == "https://shell.example:9660"
+    assert os.environ["MSKSC_TOKEN"] == "shelltok"
+    assert "MSKSC_CAFILE" not in os.environ
+    assert "MSKSC_SOCKET" not in os.environ
+
+
+def test_the_dev_values_read_the_state_dirs_files(
+    tmp_path: Path,
+) -> None:
+    """The state dir's own reads (#1009): a missing dir, an
+    empty port, or a missing token answers None — nothing
+    honest to dial — and the CA joins only when its file
+    stands."""
+    gone = connection_mod.dev_values(tmp_path / "nope")
+    assert gone is None
+    state = tmp_path / "state"
+    state.mkdir()
+    (state / "port").write_text("\n")
+    (state / "bootstrap-token").write_text("tok")
+    assert connection_mod.dev_values(state) is None
+    (state / "port").write_text("9")
+    values = connection_mod.dev_values(state)
+    assert values == ("https://127.0.0.1:9", "tok", "")
+    (state / "msks-ca.pem").write_text("CA")
+    assert connection_mod.dev_values(state) == (
+        "https://127.0.0.1:9",
+        "tok",
+        str(state / "msks-ca.pem"),
+    )
+
+
+def test_the_dev_state_dir_honors_the_variable_and_the_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The state dir's resolution (#1009): ``MSKSD_STATE_DIR``
+    names it outright, and without it the working directory's
+    ``.devenv/state/msksd`` stands — the devenv tree's own
+    default."""
+    monkeypatch.setenv("MSKSD_STATE_DIR", "/opt/state")
+    assert connection_mod.dev_state_dir() == Path("/opt/state")
+    monkeypatch.delenv("MSKSD_STATE_DIR")
+    assert connection_mod.dev_state_dir() == connection_mod.DEV_STATE_DEFAULT
+
+
+def test_a_conf_that_named_an_address_stands_on_it(
+    tmp_path: Path,
+) -> None:
+    """The invocation's own resolution wins the standing
+    address (#1009): a conf that carried a url (or a socket)
+    names the standing dial before any export reads, and a
+    non-dict daemon entry in a hand-built document lists
+    nothing for itself."""
+    from msks.client.gui import connection as conn
+
+    conf = SimpleNamespace(
+        daemon="farm", url="https://10.0.0.9:9660", socket=""
+    )
+    startup = {"MSKSC_URL": "https://ambient:1", "MSKSC_SOCKET": ""}
+    assert conn.standing_address(conf, startup) == "https://10.0.0.9:9660"
+    conf = SimpleNamespace(daemon=None, url="", socket="/run/local.sock")
+    assert conn.standing_address(conf, startup) == "/run/local.sock"
+    assert conn.alias_entries(
+        {"daemons": {"ok": {"url": "https://u"}, "bogus": 3}}
+    ) == [("ok", "https://u")]
+
+
+def test_a_dev_pick_without_a_ca_dials_unpinned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A state dir with no CA file yet (#1009): the dial applies
+    with url and token alone, the CA variable left for whatever
+    stood — the daemon writes the CA on first serve, and a
+    window opened before that still picks the connection."""
+    state = tmp_path / "bare"
+    state.mkdir()
+    (state / "port").write_text("9663")
+    (state / "bootstrap-token").write_text("tok\n")
+    monkeypatch.setenv("MSKSD_STATE_DIR", str(state))
+    held = connection_mod.Connections(None, config="none")
+    assert held.pick(held.presets()[0]) is True
+    assert os.environ["MSKSC_URL"] == "https://127.0.0.1:9663"
+    assert "MSKSC_CAFILE" not in os.environ
