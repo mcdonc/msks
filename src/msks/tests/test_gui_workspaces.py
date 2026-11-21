@@ -849,13 +849,9 @@ def test_edit_and_remove_act_on_the_selected_row(qt, monkeypatch) -> None:
     row — the editor opens over its own facts, Remove asks
     first and a refusal sends nothing — and both stand disabled
     until a row holds. The flight's gate holds them besides."""
-    monkeypatch.setattr(
-        qt.QtWidgets.QMessageBox,
-        "question",
-        lambda *args: qt.QtWidgets.QMessageBox.StandardButton.No,
-    )
+    monkeypatch.setattr(qt.screen_mod, "confirm", lambda *args: False)
     screen, window, bridge = make_screen(qt)
-    opened, _accepted = fake_editor(monkeypatch, qt)
+    opened, _accepted, _parents = fake_editor(monkeypatch, qt)
     # No hold: the row the open's first answer held clears, and
     # the buttons stand disabled until a row holds again.
     screen.table.clearSelection()
@@ -886,11 +882,7 @@ def test_the_action_row_follows_the_flight(qt, monkeypatch) -> None:
     """The row's gate (#1011): a start/stop/delete flight out
     holds Edit and Remove beside the row toggles, and the
     landing frees them again."""
-    monkeypatch.setattr(
-        qt.QtWidgets.QMessageBox,
-        "question",
-        lambda *args: qt.QtWidgets.QMessageBox.StandardButton.Yes,
-    )
+    monkeypatch.setattr(qt.screen_mod, "confirm", lambda *args: True)
     screen, window, bridge = make_screen(qt)
     row = screen.row_ids()["ws-2"]
     screen.table.selectRow(row)
@@ -1223,11 +1215,7 @@ def test_the_context_menu_carries_the_rows_actions(qt, monkeypatch) -> None:
     paths the row's buttons take. A right-click on no row opens
     nothing."""
     screen, window, bridge = make_screen(qt)
-    monkeypatch.setattr(
-        qt.QtWidgets.QMessageBox,
-        "question",
-        lambda *args: qt.QtWidgets.QMessageBox.StandardButton.No,
-    )
+    monkeypatch.setattr(qt.screen_mod, "confirm", lambda *args: False)
     edits = fake_editor(monkeypatch, qt)[0]
     # The show is non-modal: the request itself pops the menu,
     # and a press below every row opens nothing.
