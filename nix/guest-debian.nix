@@ -91,7 +91,7 @@ let
       nodeHash = "sha256-EISqNhlrukw6Xmmh7jiKbk/3KdrQlEX7zUNLKP48JK8=";
       # The staged apt-list pins (#783): the trixie main Packages
       # index, per arch.
-      aptPackagesHashes.trixie = "sha256-d3jT4/MDt924zg/nyNV0c6B2xr8ujyQfdUIdI5Y1JJg=";
+      aptPackagesHashes.trixie = "sha256-vj19lqBA7aBQXBgIzMxn8YO7wF3/CELFD4jmw5ZVdBI=";
     };
     aarch64 = {
       debianArch = "arm64";
@@ -105,7 +105,7 @@ let
       kernelFormat = "Image";
       nodeTar = "arm64";
       nodeHash = "sha256-XO0tSNHXGYc5t/hoBN4Bca77aCO2hLEjQdMyGvw8sLI=";
-      aptPackagesHashes.trixie = "sha256-vhazey90DwZuqT011W8E+U1jaT5aPrQhsFK/hvrnW80=";
+      aptPackagesHashes.trixie = "sha256-W5oBDmcw5AGekPy4HJKtWfBhlViQ1pG30RFjfT+NPas=";
     };
   };
   facts =
@@ -267,7 +267,7 @@ let
   # security fixes runs its own `apt-get update` — and needs
   # egress to install anything anyway, which is exactly when that
   # update becomes possible.
-  aptInReleaseHashes.trixie = "sha256-BYT7oy4T4KuChfsWwnreoewDpzZpwYcCghCU/WyoZnU=";
+  aptInReleaseHashes.trixie = "sha256-v6ytTKYYmc4g1KDUOfKTOfZlQVYbZ1BjZO+4jife6HA=";
 
   aptSuites = [
     {
