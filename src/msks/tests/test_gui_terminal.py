@@ -892,6 +892,12 @@ def test_a_focused_screen_closes_without_a_focus_read(screen, qt):
     # focus-in its guard shares the reason with.
     screen.focusOutEvent(qt.QtGui.QFocusEvent(qt.QtCore.QEvent.Type.FocusOut))
     screen.focusInEvent(qt.QtGui.QFocusEvent(qt.QtCore.QEvent.Type.FocusIn))
+    # The resize arm (#1034, review round one): the same
+    # contract holds the layout's late resize — a closed widget
+    # a layout still owns sizes no grid on the freed terminal.
+    screen.resizeEvent(
+        qt.QtGui.QResizeEvent(qt.QtCore.QSize(10, 10), qt.QtCore.QSize(20, 20))
+    )
     # The session was hung up on inside the close: nothing the
     # guard skipped could have been written anyway.
     time.sleep(0.1)

@@ -441,12 +441,17 @@ class TerminalWidget(QWidget):
         self.refresh()
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
-        if not self._fitting:  # the window fit holds the grid it entered with
-            cols = max(1, self.width() // self.metrics.cell_width)
-            rows = max(1, self.height() // self.metrics.cell_height)
-            if (cols, rows) != (self.cols, self.rows):
-                self.resize_grid(cols, rows)
-        find.layout(self)
+        # The guard is the teardown contract (#1034): a layout
+        # that still owns a closed, hidden widget re-activates
+        # and resizes it — the resize would size a grid on a
+        # terminal the library already freed.
+        if not self._closed:
+            if not self._fitting:  # the window fit holds its grid
+                cols = max(1, self.width() // self.metrics.cell_width)
+                rows = max(1, self.height() // self.metrics.cell_height)
+                if (cols, rows) != (self.cols, self.rows):
+                    self.resize_grid(cols, rows)
+            find.layout(self)
         super().resizeEvent(event)
 
     # --- painting -----------------------------------------------------
