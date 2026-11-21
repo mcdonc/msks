@@ -1,7 +1,7 @@
 """The workspace Mounts tab (phase 5.7 of #924, #987): the
 page's editable mounts surface — the TUI's mounts editor
-(:mod:`msks.client.tui.mounts`) as a tab beside Shells and
-Info. The table reads the presenter's entries (host, guest,
+(:mod:`msks.client.tui.mounts`) as a tab beside Shells. The
+table reads the presenter's entries (host, guest,
 mode, the derived state, the reason a gate named); Add, Edit,
 and Remove compose the next whole list and post it through the
 route ``msks mount`` drives, next-start semantics like the
@@ -43,9 +43,10 @@ from .mountrows import (
 #: listing's own rule.
 MOUNTS_KEY = "workspace-mounts"
 
-#: The tab's row of columns (#987): the Info tab's own mounts
-#: table's set — the spec the operator wrote beside the state
-#: the daemon derived.
+#: The tab's row of columns (#987): the spec the operator
+#: wrote beside the state the daemon derived — the same five
+#: columns the page's own read-only table carried before the
+#: table left with the Info pane (#1017).
 MOUNT_COLUMNS = ("HOST", "GUEST", "MODE", "STATE", "REASON")
 
 

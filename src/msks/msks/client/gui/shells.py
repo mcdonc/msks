@@ -369,7 +369,7 @@ class ShellTabs(QtWidgets.QTabWidget):
     def eventFilter(self, obj, event) -> bool:
         """The strip's two filtered gestures (#954): a
         double-click on a shell tab opens the title editor in
-        place — the Info tab renames nothing — and the open
+        place — only a shell tab renames — and the open
         editor's Escape closes it as a cancel."""
         if obj is self.editor:
             if self.editor_escape(obj, event):

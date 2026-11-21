@@ -6,6 +6,17 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Removed
+
+- **The GUI workspace page's Info tab (#1017).** The page's
+  tab strip carries Shells, Mounts, Proxies, and Events. The
+  health facts the tab showed are gone with it: they are the
+  daemon's own facts rather than the workspace's, the machine
+  fact already reads through the images tab, and a refused
+  read's flash on the status line already tells the daemon's
+  reachability. The page no longer asks the daemon for a
+  health doc on its refresh tick.
+
 ### Added
 
 - **The GUI connection picker (#1009).** The workspace list's

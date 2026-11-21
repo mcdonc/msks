@@ -236,11 +236,11 @@ def bar_index(page, label: str) -> int:
     raise AssertionError(f"no {label} tab on the bar")
 
 
-def show_info(page) -> None:
-    """The Info tab current (#974, #987): the sections render
-    under it, and a non-current page of the body reads as
-    hidden."""
-    page.bar.setCurrentIndex(bar_index(page, "Info"))
+def show_tab(page, label: str) -> None:
+    """One of the non-default tabs current (#974, #987): the
+    tab's surface shows, and a non-current page of the body
+    reads as hidden."""
+    page.bar.setCurrentIndex(bar_index(page, label))
 
 
 def show_mounts(page) -> None:
@@ -249,17 +249,17 @@ def show_mounts(page) -> None:
     page.bar.setCurrentIndex(bar_index(page, "Mounts"))
 
 
-def land(qt, page, bridge, row=None, doc=None) -> None:
-    """The page's two answers landed: the row (this workspace's,
-    unless a listing is handed in) and the health doc."""
+def land(qt, page, bridge, row=None) -> None:
+    """The page's answers landed: the row (this workspace's,
+    unless a listing is handed in) and the capacity report."""
     bridge.calls.clear()
     page.on_succeeded(
         qt.page_mod.ROW_KEY,
         [daemon_row() if row is None else row],
     )
     page.on_succeeded(
-        qt.page_mod.HEALTH_KEY,
-        {"status": "ok", "version": "0.9.2", "machine": "x86_64"},
+        qt.page_mod.STORAGE_KEY,
+        {"workspaces": []},
     )
     bridge.calls.clear()
 
@@ -276,16 +276,20 @@ def test_opening_a_row_shows_the_page(qt) -> None:
     # the page carries no header of its own.
     assert window.windowTitle() == "msks — alpha"
     assert ("detail-row", "workspaces", ()) in bridge.calls
-    assert ("detail-health", "health", ()) in bridge.calls
     assert ("detail-storage", "storage", ()) in bridge.calls
+    # The health read is gone with the Info pane (#1017): the
+    # daemon's facts are not the workspace's, and the page asks
+    # for no doc it renders nowhere.
+    assert not [call for call in bridge.calls if call[1] == "health"]
     assert shell.detail.timer.interval() == 5000
 
 
-def test_the_page_carries_top_level_shells_and_info_tabs(qt) -> None:
-    """The tab row on the back arrow's own row (#974): the
-    arrow, then Shells — the default — then Info, the status
-    line filling the rest; the body below holds the shell strip
-    and the detail content, the bar driving the stack."""
+def test_the_page_carries_the_tab_strip(qt) -> None:
+    """The tab row on the back arrow's own row (#974, #1017):
+    the arrow, then Shells — the default — Mounts, Proxies, and
+    Events, the status line filling the rest; the bar drives
+    the stack, and the Info pane is gone with its duplicated
+    sections."""
     page, window, bridge = make_page(qt)
     assert page.chrome.itemAt(0).widget() is page.back_button
     assert page.chrome.itemAt(1).widget() is page.bar
@@ -294,7 +298,6 @@ def test_the_page_carries_top_level_shells_and_info_tabs(qt) -> None:
         "Mounts",
         "Proxies",
         "Events",
-        "Info",
     ]
     assert page.bar.currentIndex() == 0  # Shells, the default
     # The active tab's mark (#1012): the strip wears the shared
@@ -304,11 +307,9 @@ def test_the_page_carries_top_level_shells_and_info_tabs(qt) -> None:
     assert page.stack.widget(0) is page.shells_tab
     assert page.shells_tab.shells is page.shells
     assert page.stack.widget(3) is page.events_tab  # the bar's own order
-    info = page.stack.widget(4)
-    assert info.findChildren(type(page.mounts)) == [page.mounts]
-    assert page.health in info.findChildren(type(page.health))
-    page.bar.setCurrentIndex(bar_index(page, "Info"))
-    assert page.stack.currentWidget() is info
+    assert page.stack.count() == 4
+    show_tab(page, "Events")
+    assert page.stack.currentWidget() is page.events_tab
 
 
 def test_open_hosts_consent_before_registration(qt) -> None:
@@ -403,7 +404,7 @@ def test_reset_collapses_panel_and_resolution_returns_terminal_focus(
 def test_other_workspace_tabs_keep_decider_registration(qt) -> None:
     page, window, bridge = make_page(qt)
     stops = bridge.decider_stops
-    show_info(page)
+    show_tab(page, "Events")
     assert not page.shells_tab.timer.isActive()
     assert bridge.decider_stops == stops
     page.bar.setCurrentIndex(0)
@@ -413,9 +414,8 @@ def test_other_workspace_tabs_keep_decider_registration(qt) -> None:
 def test_a_mounts_save_lands_on_the_page(qt) -> None:
     """The Mounts tab's landed save (#987): the tab's answer is
     a fresh daemon row — the page takes it whole, the footer
-    and the Info sections reading the same facts the tab
-    painted, and the tab's own hosting of it changing
-    nothing."""
+    reading the same facts the tab painted, and the tab's own
+    hosting of it changing nothing."""
     page, window, bridge = make_page(qt)
     land(qt, page, bridge)
     show_mounts(page)
@@ -434,9 +434,8 @@ def test_a_mounts_save_lands_on_the_page(qt) -> None:
 
 def test_the_proxies_tab_rides_the_page(qt) -> None:
     """The Proxies tab's page integration (#988): the bar carries
-    it beside Mounts and Info, the page's tick pokes its listing,
-    and a pushed proxy frame refreshes it without a manual
-    action."""
+    it beside Mounts, the page's tick pokes its listing, and a
+    pushed proxy frame refreshes it without a manual action."""
     page, window, bridge = make_page(qt)
     assert bar_index(page, "Proxies") == 2
     assert bar_index(page, "Events") == 3
@@ -480,10 +479,10 @@ def test_an_open_with_shells_standing_adds_none(qt) -> None:
 
 def test_the_show_anchors_on_the_tab_the_row_shows(qt) -> None:
     """The keyboard's anchor (#974): the Back button holds it
-    while the Info tab shows, the current shell's terminal
+    while a non-shell tab shows, the current shell's terminal
     while the Shells tab shows one."""
     page, window, bridge = make_page(qt)
-    page.bar.setCurrentIndex(bar_index(page, "Info"))
+    show_tab(page, "Events")
     page.anchor_focus()
     assert window.focusWidget() is page.back_button
     page.bar.setCurrentIndex(0)  # Shells, a shell current
@@ -492,13 +491,13 @@ def test_the_show_anchors_on_the_tab_the_row_shows(qt) -> None:
 
 
 def test_a_reopen_resets_the_row_and_anchors_the_terminal(qt) -> None:
-    """Every open starts on Shells (#974): a prior visit's Info
-    tab must not hand the next workspace a hidden terminal
-    holding the keyboard. The reopen drives the page's own show
-    — the anchor is the show's, not the strip's."""
+    """Every open starts on Shells (#974): a prior visit's tab
+    must not hand the next workspace a hidden terminal holding
+    the keyboard. The reopen drives the page's own show — the
+    anchor is the show's, not the strip's."""
     shell, window, bridge = make_shell(qt)
     shell.listing.opened.emit("ws-a")
-    shell.detail.bar.setCurrentIndex(bar_index(shell.detail, "Info"))
+    show_tab(shell.detail, "Events")
     shell.detail.go_back()
     shell.listing.opened.emit("ws-a")  # reopen: a fresh open's show
     assert shell.detail.bar.currentIndex() == 0  # Shells again
@@ -519,15 +518,16 @@ def test_the_activated_row_opens_the_workspace(qt) -> None:
     assert opened == ["ws-a"]
 
 
-def test_the_page_renders_the_sections(qt) -> None:
-    """The sections land as widgets (#945): the mounts table
-    reads the entries — the spec, the derived state, the gate's
-    reason — the next-start note stands under it, the health
-    facts read one pair a line, and the footer strip (#971)
-    carries the same one-line read the listing's strip gives,
-    storage as the honest dash until a report lands."""
+def test_the_page_renders_the_footer(qt) -> None:
+    """The row lands on the footer strip (#945, #971): the
+    same one-line read the listing's strip gives — identity,
+    posture, costs — storage as the honest dash until a report
+    lands. The sections the page once rendered under an Info
+    pane are gone with it (#1017): the mounts read through the
+    Mounts tab, the events through the Events tab, and the
+    daemon's health facts nowhere, by the decision that took
+    the pane."""
     page, window, bridge = make_page(qt)
-    show_info(page)
     land(qt, page, bridge)
     assert page.footer.text() == (
         "alpha  ·  id ws-a  ·  image msks/fedora:41"
@@ -535,67 +535,31 @@ def test_the_page_renders_the_sections(qt) -> None:
         "  ·  mounts ✗1  ·  1 change applies at the next start"
         "  ·  storage -"
     )
-    assert page.mounts.rowCount() == 2
-    cells = [
-        page.mounts.item(row, column).text()
-        for row in range(2)
-        for column in range(5)
-    ]
-    assert cells == [
-        "/srv/ok",
-        "/mnt/ok",
-        "rw",
-        "healthy",
-        "-",
-        "/srv/gone",
-        "/mnt/gone",
-        "rw",
-        "skipped",
-        "stopped: the host path left",
-    ]
-    assert page.pending_label.isVisibleTo(page)
-    assert page.pending_label.text() == "applies at next start"
-    assert page.health.isVisibleTo(page)
-    assert page.health.text() == (
-        "status  ok\nversion  0.9.2\nmachine  x86_64\nimage  -"
-    )
-    assert page.empty_health.isHidden()
-    # No frame has landed: the Events tab reads its muted
-    # stand-in, and the Info scroll carries no Events pane (#989).
-    assert not page.events_tab.empty.isHidden()
-    assert page.events_tab.rows.isHidden()
-    assert not [
-        box
-        for box in page.findChildren(qt.QtWidgets.QGroupBox)
-        if box.title() == "Events"
-    ]
+    # The mounts table the page renders is the Mounts tab's
+    # own (#987): the read-only copy is gone with the pane.
+    assert page.mounts_tab.table.rowCount() == 2
+    assert not page.findChildren(qt.QtWidgets.QGroupBox)
 
 
-def test_a_workspace_that_mounts_nothing_reads_the_stand_in(
-    qt,
-) -> None:
-    """An empty mounts section (#945): the table stands aside
-    for the muted note — the presenter's empty section, the
-    widget's honest stand-in."""
+def test_a_workspace_that_mounts_nothing_reads_no_rows(qt) -> None:
+    """An empty mounts listing (#945): the row lands with no
+    entries and the Mounts tab's table stands empty — the page
+    renders no read-only copy of its own (#1017)."""
     page, window, bridge = make_page(qt)
-    show_info(page)
     row = other_row()
     page.workspace_id = "ws-b"
     land(qt, page, bridge, row=row)
-    assert page.mounts.isHidden()
-    assert page.empty_mounts.isVisibleTo(page)
-    assert page.pending_label.isHidden()
+    assert page.mounts_tab.table.rowCount() == 0
 
 
 def test_pushed_frames_fill_the_events_tab(qt) -> None:
     """A pushed frame lands in the buffer and the Events tab
     (#945's seam, #946's feed, #989): this workspace's frames
-    read, newest last, another workspace's stay out, the buffer
-    keeps its bound, and a frame that moves nothing the Info
-    sections show re-renders nothing — the mounts hold survives
-    a noisy feed whole."""
+    read, newest last, another workspace's stay out, and the
+    buffer keeps its bound — while a frame that changes nothing
+    the row holds costs the Mounts tab's table its selection
+    not at all, the hold surviving a noisy feed whole."""
     page, window, bridge = make_page(qt)
-    show_info(page)
     land(qt, page, bridge)
     page.push_frame(
         {
@@ -622,14 +586,14 @@ def test_pushed_frames_fill_the_events_tab(qt) -> None:
         for row in range(2)
     ]
     assert summaries[-1] == "status stopped"
-    # The frame that moved nothing the sections show renders
-    # nothing: the mounts hold survives it whole (#989).
-    page.mounts.selectRow(min(1, page.mounts.rowCount() - 1))
-    held = page.mounts.selectedItems()[0].text()
-    key = page.rendered_key
+    # A frame that changes nothing the row holds keeps the
+    # Mounts tab's selection whole (#989's rule, on the table
+    # that stands now): the repaint lands on an equal row.
+    table = page.mounts_tab.table
+    table.selectRow(min(1, table.rowCount() - 1))
+    held = table.selectedItems()[0].text()
     page.push_frame({"event": "workspace.status", "data": {"id": "ws-a"}})
-    assert page.rendered_key == key  # nothing re-rendered
-    assert page.mounts.selectedItems()[0].text() == held
+    assert table.selectedItems()[0].text() == held
     for n in range(qt.page_mod.FRAMES_BUFFER + 5):
         page.push_frame({"event": "noise", "data": {"id": "ws-a"}})
     assert len(page.frames) == qt.page_mod.FRAMES_BUFFER
@@ -799,15 +763,14 @@ def test_the_create_opener_opens_the_dialog_over_the_list(
     assert shell.currentWidget() is shell.listing
 
 
-def test_a_failed_refresh_flashes_and_keeps_the_sections(
-    qt,
-) -> None:
+def test_a_failed_refresh_flashes_and_keeps_the_tabs(qt) -> None:
     """A refused refresh (#945, AGENTS.md's exception rule): the
     failure flashes on the status line — an outage stands until
-    an answer resolves it — while every section keeps the
-    content it holds."""
+    an answer resolves it — while the footer and the Mounts
+    tab keep the content they hold."""
     page, window, bridge = make_page(qt)
     land(qt, page, bridge)
+    footer = page.footer.text()
     # A refusal first arms its own timeout; the outage after it
     # arms nothing — the armed timeout's stale serial clears
     # nothing, and the outage stands for an answer.
@@ -820,8 +783,8 @@ def test_a_failed_refresh_flashes_and_keeps_the_sections(
         clientdata.RestFailure("the daemon is gone", reach=True),
     )
     assert page.status.text() == "the daemon is gone"
-    assert page.mounts.rowCount() == 2
-    assert page.health.text().startswith("status")
+    assert page.footer.text() == footer
+    assert page.mounts_tab.table.rowCount() == 2
     page.clear_stale(page.flash_seq - 1)  # the armed timeout's slot
     assert page.status.text() == "the daemon is gone"
     land(qt, page, bridge)
@@ -874,16 +837,17 @@ def test_events_on_a_wrapper_past_construction_touch_nothing(
     page.hideEvent(qt.QtGui.QHideEvent())
 
 
-def test_an_unchanged_answer_renders_nothing(qt) -> None:
-    """An answer that changes nothing rebuilds nothing (#945,
-    the listing's #470 L2 rule): a hold on the mounts table
-    survives a refresh whose model reads exactly as the last."""
+def test_an_unchanged_answer_keeps_the_mounts_held_row(qt) -> None:
+    """An answer that changes nothing costs the Mounts tab's
+    selection nothing (#945, the listing's #470 L2 rule): a
+    hold on the table survives a refresh whose row reads
+    exactly as the last."""
     page, window, bridge = make_page(qt)
     land(qt, page, bridge)
-    page.mounts.selectRow(1)
+    page.mounts_tab.table.selectRow(1)
     land(qt, page, bridge)
-    assert page.mounts.selectionModel().selectedRows() == [
-        page.mounts.model().index(1, 0)
+    assert page.mounts_tab.table.selectionModel().selectedRows() == [
+        page.mounts_tab.table.model().index(1, 0)
     ]
 
 
@@ -900,54 +864,38 @@ def test_the_removed_workspace_closes_its_page(qt) -> None:
 
 def test_opening_resets_the_page(qt) -> None:
     """A second workspace's open resets the page (#945): the
-    row, the doc, the frame buffer, and the rendered sections
-    all start fresh — the first workspace's tail cannot leak
-    onto the second's page."""
+    row, the frame buffer, and the footer all start fresh — the
+    first workspace's tail cannot leak onto the second's
+    page."""
     page, window, bridge = make_page(qt)
-    show_info(page)
     land(qt, page, bridge)
     page.push_frame({"event": "workspace.status", "data": {"id": "ws-a"}})
     page.open("ws-b")  # the open resets the row to Shells
-    show_info(page)
     assert page.footer.text() == ""
     assert page.events_tab.rows.count() == 0
     assert not page.events_tab.empty.isHidden()
     assert page.frames == []
-    assert page.rendered_key is None
     assert ("detail-row", "workspaces", ()) in bridge.calls
 
 
 def test_the_answers_land_in_either_order(qt) -> None:
-    """The two flights land independently (#945): a health doc
-    before the row renders nothing (there is nothing to render
-    against yet), and a refused health read flashes while the
-    row still renders — the best-effort silence after it keeps
-    the standing section."""
+    """The two flights land independently (#945): a capacity
+    report before the row renders nothing (there is nothing to
+    render against yet), and the row's own landing renders the
+    footer with the report already standing — the storage fact
+    reads on the first render, no dash between."""
     page, window, bridge = make_page(qt)
-    show_info(page)
     page.on_succeeded(
-        qt.page_mod.HEALTH_KEY,
-        {"status": "ok", "version": "0.9.2", "machine": "x86_64"},
+        qt.page_mod.STORAGE_KEY,
+        {
+            "workspaces": [
+                {"id": "ws-a", "root_bytes": 10737418240, "home_bytes": 1}
+            ]
+        },
     )
-    assert page.rendered_key is None
-    assert page.empty_health.isVisibleTo(page)
+    assert page.footer.text() == ""
     page.on_succeeded(qt.page_mod.ROW_KEY, [daemon_row()])
-    assert page.health.isVisibleTo(page)
-    page.on_failed(
-        qt.page_mod.HEALTH_KEY,
-        clientdata.RestFailure("the health read refused", reach=False),
-    )
-    assert page.status.text() == "the health read refused"
-    assert page.health.isVisibleTo(page)  # the section keeps it
-    # A refusal runs its own span (#940's mask): a landing answer
-    # inside it does not wipe what the operator just read — the
-    # doc lands, the flash holds its text until its timeout.
-    # The silence that follows keeps the standing doc (#717):
-    # the flash holds its span, the section holds its facts.
-    page.on_succeeded(qt.page_mod.HEALTH_KEY, None)
-    assert page.status.text() == "the health read refused"
-    assert page.health.isVisibleTo(page)
-    assert page.health.text().startswith("status  ok")
+    assert "storage 10G" in page.footer.text()
 
 
 def test_the_open_signal_guards_a_rowless_index(qt) -> None:
@@ -963,30 +911,19 @@ def test_the_open_signal_guards_a_rowless_index(qt) -> None:
 
 def test_the_none_health_silence_keeps_the_outage(qt) -> None:
     """The outage tick's real shape (#945, #717, #904): the row
-    read fails — the daemon answered nothing — while the health
-    read, best-effort by its own contract, answers the silence
-    with ``None``. The outage flash stands and the standing doc
-    keeps; only a real doc resolves the one and replaces the
-    other."""
+    read fails — the daemon answered nothing — and the outage
+    flash stands; the storage read's own answer resolves it,
+    the row's own landing beside it. The health read's
+    best-effort silence is gone with the read itself (#1017)."""
     page, window, bridge = make_page(qt)
-    show_info(page)
     land(qt, page, bridge)
     page.on_failed(
         qt.page_mod.ROW_KEY,
         clientdata.RestFailure("the daemon is gone", reach=True),
     )
-    page.on_succeeded(qt.page_mod.HEALTH_KEY, None)
     assert page.status.text() == "the daemon is gone"
-    assert page.health.isVisibleTo(page)
-    assert page.health.text().startswith("status  ok")
-    page.on_succeeded(
-        qt.page_mod.HEALTH_KEY,
-        {"status": "ok", "version": "0.9.3", "machine": "arm64"},
-    )
+    page.on_succeeded(qt.page_mod.STORAGE_KEY, {"workspaces": []})
     assert page.status.text() == ""
-    assert page.health.text() == (
-        "status  ok\nversion  0.9.3\nmachine  arm64\nimage  -"
-    )
 
 
 def test_the_rows_own_name_refines_the_window_title(qt) -> None:
@@ -1089,7 +1026,7 @@ def test_a_pushed_frame_refreshes_the_current_screen(qt) -> None:
     shell.frame_landed({"event": "workspace.status", "data": {"id": "ws-a"}})
     # The list owns the window: its refresh flew.
     assert ("workspaces-list", "workspaces", ()) in bridge.calls
-    assert ("detail-health", "health", ()) not in bridge.calls
+    assert ("detail-row", "workspaces", ()) not in bridge.calls
     # No workspace is open on the page: the frame names none it
     # holds, so nothing buffers.
     assert shell.detail.frames == []
@@ -1098,9 +1035,8 @@ def test_a_pushed_frame_refreshes_the_current_screen(qt) -> None:
     bridge.calls.clear()
     shell.frame_landed({"event": "workspace.status", "data": {"id": "ws-a"}})
     assert ("detail-row", "workspaces", ()) in bridge.calls
-    assert ("detail-health", "health", ()) in bridge.calls
     # The open page buffers its own workspace's frame: its
-    # events section is the frame's own record.
+    # events tab is the frame's own record.
     assert len(shell.detail.frames) == 1
     # A busy sibling cannot evict it (#946): the buffer keeps
     # only this workspace's frames.
@@ -1144,7 +1080,7 @@ def test_a_refresh_in_flight_is_not_stacked(qt) -> None:
     tick under a slow call adds nothing — the landing answer
     retires the guard and the next refresh flies."""
     page, window, bridge = make_page(qt)
-    assert page.row_pending and page.health_pending
+    assert page.row_pending and page.storage_pending
     page.refresh()
     assert bridge.calls == []
     page.on_succeeded(qt.page_mod.ROW_KEY, [daemon_row()])
