@@ -1,7 +1,7 @@
 """The workspace Proxies tab (phase 5.8 of #924, #988): the
 page's proxy surface — the TUI's proxies page
-(:mod:`msks.client.tui.proxies`) as a tab beside Mounts and
-Info. The table reads the presenter's cells (the direction
+(:mod:`msks.client.tui.proxies`) as a tab beside Mounts. The
+table reads the presenter's cells (the direction
 letter, the spec, the label, the live status word with its
 cause); Add and Edit parse the spec through the CLI's own
 parsers before anything sends, Removal asks for confirmation,

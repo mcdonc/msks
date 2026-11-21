@@ -6,6 +6,17 @@ tagged `vX.Y.Z`.
 
 ## \[Unreleased]
 
+### Removed
+
+- **The GUI workspace page's Info tab (#1017).** The page's
+  tab strip carries Shells, Mounts, Proxies, and Events. The
+  health facts the tab showed are gone with it. They are the
+  daemon's own facts rather than the workspace's: the machine
+  fact already reads through the images tab, and a refused
+  read's flash on the status line already tells the daemon's
+  reachability. The page no longer asks the daemon for a
+  health doc on its refresh tick.
+
 ### Added
 
 - **The GUI connection picker (#1009).** The workspace list's
@@ -53,14 +64,12 @@ tagged `vX.Y.Z`.
   the UI fonts clamp to 8–28 pt.
 
 - **The GUI workspace events tab (#989).** The workspace page
-  grows an Events tab beside Proxies and Info, and the
-  recent-events pane the Info tab carried moved into it. Each
-  row shows a receipt stamp, the kind, and the summary, and a
-  pushed frame appends without a manual action. The Info tab
-  carries its mounts and health sections alone.
+  grows an Events tab beside Proxies. Each row shows a receipt
+  stamp, the kind, and the summary, and a pushed frame appends
+  without a manual action.
 
 - **The GUI workspace proxies tab (#988).** The workspace page
-  grows a Proxies tab beside Mounts and Info. The tab lists the
+  grows a Proxies tab beside Mounts. The tab lists the
   workspace's forwards and remotes with their live status, and
   Add and Edit parse the spec with the CLI's own parsers before
   anything sends; Removal asks first. Every proxy transition the daemon
@@ -69,7 +78,7 @@ tagged `vX.Y.Z`.
   itself.
 
 - **The GUI workspace mounts tab (#987).** The workspace page
-  grows a Mounts tab beside Shells and Info. The tab lists the
+  grows a Mounts tab beside Shells. The tab lists the
   workspace's mounts with their derived state, and Add, Edit,
   and Remove compose the next whole list and save it through
   the route `msks mount` drives — next-start semantics, one
@@ -185,14 +194,12 @@ tagged `vX.Y.Z`.
   blank fields left to the daemon's defaults, and a refusal
   keeping the dialog open with the failure on its note line.
 
-- **GUI top-level Shells and Info tabs (#974).** The
+- **GUI top-level Shells tab (#974).** The
   workspace detail page's tab row, on the back arrow's own row,
-  now carries a Shells tab and an Info tab, with Shells the
-  default. The shell sessions
-  live as subtabs inside the Shells tab. Opening a detail page
-  with no shell subtab open creates one and focuses it. The
-  Info tab holds the mounts, health, and events sections that
-  previously lived as a subtab beside the shells.
+  now carries a Shells tab, with Shells the default. The shell
+  sessions live as subtabs inside the Shells tab. Opening a
+  detail page with no shell subtab open creates one and focuses
+  it.
 
 - **GUI detail-page footer and tab-strip layout (#971).** The
   workspace detail page carries the listing's one-line
@@ -203,21 +210,18 @@ tagged `vX.Y.Z`.
   tab, instead of pinned to the strip's right edge.
 
 - **GUI terminal-tab polish (#969).** A "+" at the right edge
-  of the detail page's tab strip opens a new shell tab. It
-  stands beside the Info tab when no shell is open. Shell tabs
-  keep a minimum width of about three characters beside their
-  close button. The detail page's header carries the name, id,
-  image, and created on one line. The page's top chrome loses
-  its Shell button: the "+" owns that action.
+  of the detail page's tab strip opens a new shell tab. Shell
+  tabs keep a minimum width of about three characters beside
+  their close button. The page's top chrome loses its Shell
+  button: the "+" owns that action.
 
 - **GUI workspace shells in terminal tabs (#954).** The GUI's
-  workspace detail page is now tabbed: an Info tab holds the
-  mounts, health, and events sections, and every open shell on
-  the workspace gets its own terminal tab beside it, titled with
-  its session number (double-click renames). Shells keep running
-  when you leave the page; closing a tab ends its session. A
-  Shell action on the workspace list opens the page on a new
-  shell tab, and an External action opens the same shell in the
+  workspace detail page is now tabbed: every open shell on the
+  workspace gets its own terminal tab, titled with its session
+  number (double-click renames). Shells keep running when you
+  leave the page; closing a tab ends its session. A Shell
+  action on the workspace list opens the page on a new shell
+  tab, and an External action opens the same shell in the
   terminal named by `terminal_open_cmd`, as the TUI does.
 
 - **The GUI terminal's user surfaces (#953).** The terminal

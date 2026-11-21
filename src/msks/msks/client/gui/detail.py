@@ -1,11 +1,14 @@
-"""The workspace detail view's presenter (phase 4 of #924, #944):
-daemon rows, health docs, and event frames in; section models out
-— plain data the detail widget (the next issue) renders. The
-module imports nothing from PySide6, so the suite drives it as
-plain Python and the coverage gate lands on it whole; its
-vocabulary comes from :mod:`msks.spec` through the client
-allowlist (the mount modes), the same door the TUI's own detail
-modules use.
+"""The workspace detail view's presenter (phase 4 of #924,
+#944): daemon rows and event frames in; mount entries and event
+lines out — plain data the tabs render. The Info pane that
+composed whole sections is gone (#1017), and the parts the
+surviving tabs read stand: the mounts tab reads the entries
+with their derived state, the events tab reads the frame lines,
+and the page's frame gate reads the naming. The module
+imports nothing from PySide6, so the suite drives it as plain
+Python and the coverage gate lands on it whole; its vocabulary
+comes from :mod:`msks.spec` through the client allowlist (the
+mount modes), the same door the TUI's own detail modules use.
 """
 
 from dataclasses import dataclass
@@ -13,17 +16,12 @@ from dataclasses import dataclass
 from ...spec.mounts import MODE_RW
 
 #: A mount the gates passed, and one they refused (#620): the
-#: state words the mounts section carries.
+#: state words the mounts tab carries.
 HEALTHY = "healthy"
 SKIPPED = "skipped"
 
-#: The mounts section's next-start note (#756): the daemon's
-#: ``mounts_pending`` flag stands while the configured set
-#: differs from the set the last start attached.
-PENDING_NOTE = "applies at next start"
-
-#: How many recent frames the events section keeps (#944): the
-#: detail view reads the tail, newest last.
+#: How many recent frames the events window keeps (#944, #989):
+#: the tab's own tail bound, newest last.
 EVENTS_LIMIT = 20
 
 
@@ -39,32 +37,6 @@ class MountEntry:
     mode: str
     state: str
     reason: str | None
-
-
-@dataclass(frozen=True)
-class EventEntry:
-    """One recent lifecycle frame (#8) as the section reads it:
-    the event's stream name and its compact line, newest
-    last."""
-
-    kind: str
-    line: str
-
-
-@dataclass(frozen=True)
-class DetailSections:
-    """The detail view's sections (#944): the workspace's id
-    and label, the mounts section with its next-start note
-    while a change waits, the health facts, and the recent
-    events — plain data for the widget to compose beside the
-    row's own facts, nothing Qt-bound in it."""
-
-    id: str
-    label: str
-    mounts: tuple[MountEntry, ...]
-    pending_note: str | None
-    health: tuple[tuple[str, str], ...]
-    events: tuple[EventEntry, ...]
 
 
 def issue_for(mount: dict, issues: list[dict]) -> dict | None:
@@ -88,10 +60,10 @@ def skip_reason(issue: dict) -> str:
 
 
 def mount_entries(row: dict) -> tuple[MountEntry, ...]:
-    """The mounts section (#620, part #624): one entry per
+    """The mounts tab's entries (#620, part #624): one entry per
     configured mount, its derived state beside its spec —
     healthy alone, skipped with the reason the gate named. A
-    workspace that mounts nothing reads as an empty section."""
+    workspace that mounts nothing reads as an empty table."""
     issues = row.get("mount_issues") or []
     return tuple(
         mount_entry(mount, issue_for(mount, issues))
@@ -108,9 +80,9 @@ def mount_state(issue: dict | None) -> tuple[str, str | None]:
 
 
 def mount_entry(mount: dict, issue: dict | None) -> MountEntry:
-    """One mount as its section entry (#620): the spec the
-    operator wrote — the mode defaulting to the vocabulary's
-    own MODE_RW — beside the state the daemon derived."""
+    """One mount as its entry (#620): the spec the operator
+    wrote — the mode defaulting to the vocabulary's own MODE_RW
+    — beside the state the daemon derived."""
     state, reason = mount_state(issue)
     return MountEntry(
         host=mount.get("host") or "-",
@@ -118,28 +90,6 @@ def mount_entry(mount: dict, issue: dict | None) -> MountEntry:
         mode=mount.get("mode") or MODE_RW,
         state=state,
         reason=reason,
-    )
-
-
-def pending_note(row: dict) -> str | None:
-    """The mounts section's next-start note (#756): standing
-    while the configured set differs from the set the last start
-    attached, gone when the two agree again."""
-    return PENDING_NOTE if row.get("mounts_pending") else None
-
-
-def health_pairs(doc: dict | None) -> tuple[tuple[str, str], ...]:
-    """The health section (#944): the daemon's health doc as
-    label/value facts — its status, version, machine, and image,
-    each reading the honest dash when the doc carries nothing.
-    The doc's fastapi field is plumbing, not an operator fact,
-    and stays off the section. No doc yet reads as an empty
-    section."""
-    if not doc:
-        return ()
-    keys = ("status", "version", "machine", "image")
-    return tuple(
-        (key, "-" if doc.get(key) is None else str(doc[key])) for key in keys
     )
 
 
@@ -221,22 +171,6 @@ def egress_event_line(kind: str, data: dict) -> str:
     return f"egress {host}:{port_text} {kind.partition('.')[2]}"
 
 
-def event_entries(
-    frames: list[dict], workspace_id: str, limit: int = EVENTS_LIMIT
-) -> tuple[EventEntry, ...]:
-    """The events section (#8, #944): the workspace's recent
-    frames, newest last, the tail the detail view reads. The
-    stream's naming conventions all reach here — ``id`` on the
-    lifecycle frames, the consent and secret frames' scalar and
-    list forms — and the section keeps a frame under any."""
-    mine = [
-        EventEntry(kind=frame.get("event") or "?", line=event_line(frame))
-        for frame in frames
-        if frame_names(frame.get("data") or {}, workspace_id)
-    ]
-    return tuple(mine[-limit:])
-
-
 def frame_names(data: dict, workspace_id: str) -> bool:
     """Whether one frame's data names the workspace (#944):
     under any of the stream's naming conventions — ``id`` on the
@@ -249,20 +183,3 @@ def frame_names(data: dict, workspace_id: str) -> bool:
     if data.get("workspace_id") == workspace_id:
         return True
     return workspace_id in (data.get("workspaces") or [])
-
-
-def detail_sections(
-    row: dict, health: dict | None, frames: list[dict]
-) -> DetailSections:
-    """The detail view's sections (#944) for one workspace:
-    its daemon row's mounts and label, the daemon's health doc,
-    and the recent event frames — plain data the widget composes
-    beside the row's own facts."""
-    return DetailSections(
-        id=row["id"],
-        label=row.get("name") or row["id"],
-        mounts=mount_entries(row),
-        pending_note=pending_note(row),
-        health=health_pairs(health),
-        events=event_entries(frames, row["id"]),
-    )

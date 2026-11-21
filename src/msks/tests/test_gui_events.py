@@ -1,6 +1,6 @@
 """The workspace Events tab (#989): the receipt stamp, the row
 text over the presenter's summary, and the window's cap and
-clear — the pane the Info sections carried, moved whole. The
+clear — the pane the page once carried, moved whole. The
 widgets run under the offscreen platform on every host.
 """
 

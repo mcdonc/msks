@@ -1,12 +1,18 @@
 """The workspace detail screen (phase 4 of #924, #945): the
-page the workspace list opens on one row — the presenter's
-sections as widgets (mounts with their derived state, the
-health facts, the recent events), refreshed on the listing's
-own cadence through the bridge, the same reads the TUI's
-workspace page makes: the row out of the workspaces listing,
-the doc out of the health read. Phase 5.7 (#987) adds the
-Mounts tab beside the shells and the sections: the editable
-mounts surface (:mod:`msks.client.gui.mounts`).
+page the workspace list opens on one row — the tab strip's
+surfaces (the shells, the editable mounts, the proxies, the
+events window) refreshed on the listing's own cadence through
+the bridge: the row out of the workspaces listing, the
+footer's storage fact out of the capacity report. The Info
+pane the page once carried beside the shells is gone (#1017):
+its mounts table read the same facts the Mounts tab edits
+(#987), its events window lives in the Events tab (#989), and
+its health facts — the daemon's own, not the workspace's —
+went with it by named decision: the machine fact already
+reads through the images tab's own gathered health fetch, and
+the page's own reads tell the daemon's reachability (a
+refused read flashes, an outage stands for an answer), so the
+page asks the daemon for no health doc at all.
 
 This module imports PySide6 at module scope — the same
 contract as the list screen's module
@@ -21,14 +27,13 @@ from ..data import RestFailure
 from .bridge import Bridge
 from .consent import ConsentPresenter
 from .create import CreateDialog
-from .detail import DetailSections, detail_sections, frame_names
+from .detail import frame_names
 from .events import EventsTab
-from .forms import muted_note
-from .listcells import read_only_item
 from .mounts import MountsTab
 from .proxies import ProxiesTab
 from .rows import (
     WINDOW_TITLE,
+    WorkspaceRow,
     detail_text,
     workspace_costs,
     workspace_row,
@@ -42,18 +47,9 @@ from .workspaces import FLASH_MS, REFRESH_MS, WorkspaceList
 #: key, whatever else shares the bridge.
 ROW_KEY = "detail-row"
 
-#: The health read's key (#945).
-HEALTH_KEY = "detail-health"
-
 #: The capacity report's key (#971): the footer strip's storage
 #: fact, the list's own strip's read.
 STORAGE_KEY = "detail-storage"
-
-#: How many frames the page buffers (#945): the pushed frames
-#: (#946's feed) land here — the presenter keeps the last
-#: twenty for the section, and the buffer holds a wider history
-#: between renders without growing without bound.
-FRAMES_BUFFER = 100
 
 #: The back arrow's size, pixels (#945): the theme's own
 #: left-pointing arrow drawn large against the row's text —
@@ -62,30 +58,20 @@ FRAMES_BUFFER = 100
 #: a control.
 BACK_ICON_PX = 24
 
-#: The mounts table's columns (#945), in display order — the
-#: entry's own fields, the state beside the reason the gate
-#: named.
-MOUNT_COLUMNS = ("HOST", "GUEST", "MODE", "STATE", "REASON")
-
 #: The Shells tab's label (#974): the page's default tab, the
 #: workspace's terminal sessions as subtabs.
 SHELLS_LABEL = "Shells"
 
-#: The Info tab's label (#974): the detail content — the
-#: mounts, health, and events sections.
-INFO_LABEL = "Info"
-
 #: The Mounts tab's label (#987): the workspace's editable
-#: mounts surface, between the shells and the read-only
-#: sections.
+#: mounts surface.
 MOUNTS_LABEL = "Mounts"
 
 #: The Proxies tab's label (#988): the workspace's forward and
 #: remote proxies with their live status.
 PROXIES_LABEL = "Proxies"
 
-#: The Events tab's label (#989): the recent-frames window the
-#: Info pane carried before the pane moved.
+#: The Events tab's label (#989): the page's recent-frames
+#: window.
 EVENTS_LABEL = "Events"
 
 
@@ -103,10 +89,9 @@ class WorkspaceDetail(QtWidgets.QWidget):
     """One workspace's page (#945, #954, #971, #974): the tab
     row beside the back arrow — Shells, the default (#974),
     with the workspace's terminal sessions as subtabs (#954),
-    and Info beside it,
-    the presenter's three sections (the mounts table with its
-    next-start note, the health facts, the events list) — over
-    the footer strip, the same one-line read the listing's own
+    Mounts (#987), Proxies (#988), and Events (#989), the Info
+    pane gone with its duplicated sections (#1017) — over the
+    footer strip, the same one-line read the listing's own
     bottom strip gives (#971). The page registers as the
     workspace's egress decider while it shows (#999): the
     bridge's link claims the workspace's holds at the open,
@@ -117,9 +102,9 @@ class WorkspaceDetail(QtWidgets.QWidget):
     controller, the seam the consent panel the phase's next
     work docks renders. The workspace's name lives in
     the window title while the page shows. A failed refresh
-    flashes the status line while the sections keep their
-    content; a listing that can no longer see the workspace
-    emits ``removed`` — the TUI page's own close (#309's
+    flashes the status line while the tabs keep their content;
+    a listing that can no longer see the workspace emits
+    ``removed`` — the TUI page's own close (#309's
     close_removed shape) — and the back action returns to the
     list, closing no shell (#954)."""
 
@@ -139,11 +124,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # the chrome: a mid-build event meets it standing.
         self.consent: ConsentPresenter | None = None
         self.row: dict | None = None
-        self.health_doc: dict | None = None
-        self.frames: list[dict] = []
-        self.rendered_key: tuple | None = None
         self.row_pending = False
-        self.health_pending = False
         self.storage_pending = False
         self.storage_costs: dict[str, int] = {}
         self.flash_seq = 0
@@ -155,7 +136,7 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.timer.timeout.connect(self.refresh)
         bridge.succeeded.connect(self.on_succeeded)
         bridge.failed.connect(self.on_failed)
-        # The chrome before the sections (#945): a show or hide
+        # The chrome before the rest (#945): a show or hide
         # event Qt delivers during the build — a stack raising a
         # half-built child among them — meets whole chrome (the
         # timer above, the Back button's focus anchor here), not
@@ -173,18 +154,13 @@ class WorkspaceDetail(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Policy.Ignored,
             QtWidgets.QSizePolicy.Policy.Preferred,
         )
-        sections = self.build_sections()
-        scroll = QtWidgets.QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(sections)
         # The tab row beside the back arrow (#974, #987): Shells
         # — the default, the workspace's terminal sessions as
-        # subtabs — Mounts — the editable mounts surface — and
-        # Info — the sections scroll. The bar sits on the
-        # chrome's own row after the arrow and drives the stack
-        # below it. The strip re-hosts on every open, and the
-        # hub keeps the sessions themselves alive across visits
-        # (#954).
+        # subtabs — Mounts — the editable mounts surface —
+        # Proxies, and Events. The bar sits on the chrome's own
+        # row after the arrow and drives the stack below it. The
+        # strip re-hosts on every open, and the hub keeps the
+        # sessions themselves alive across visits (#954).
         self.shells_tab = ShellsTab(hub, bridge)
         self.shells = self.shells_tab.shells
         self.shells.new_shell.connect(self.want_shell)
@@ -202,13 +178,11 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.bar.addTab(MOUNTS_LABEL)
         self.bar.addTab(PROXIES_LABEL)
         self.bar.addTab(EVENTS_LABEL)
-        self.bar.addTab(INFO_LABEL)
         self.stack = QtWidgets.QStackedWidget(self)
         self.stack.addWidget(self.shells_tab)
         self.stack.addWidget(self.mounts_tab)
         self.stack.addWidget(self.proxies_tab)
         self.stack.addWidget(self.events_tab)
-        self.stack.addWidget(scroll)
         self.bar.currentChanged.connect(self.stack.setCurrentIndex)
         self.chrome.insertWidget(1, self.bar)
         layout = QtWidgets.QVBoxLayout(self)
@@ -221,69 +195,15 @@ class WorkspaceDetail(QtWidgets.QWidget):
         )
         escape.activated.connect(self.go_back)
 
-    def build_sections(self) -> QtWidgets.QWidget:
-        """The sections' column (#945, #989): grouped boxes on
-        one scrolling page — the mounts over the health, the
-        events window living in its own tab now."""
-        column = QtWidgets.QWidget(self)
-        layout = QtWidgets.QVBoxLayout(column)
-        layout.addWidget(self.build_mounts())
-        layout.addWidget(self.build_health())
-        return column
-
-    def build_mounts(self) -> QtWidgets.QGroupBox:
-        """The mounts section's chrome (#945): the table of
-        entries — host, guest, mode, the derived state, the
-        reason a gate named — with the next-start note under it
-        and a muted stand-in for a workspace that mounts
-        nothing."""
-        self.mounts = QtWidgets.QTableWidget(0, len(MOUNT_COLUMNS), self)
-        self.mounts.setHorizontalHeaderLabels(MOUNT_COLUMNS)
-        self.mounts.verticalHeader().setVisible(False)
-        self.mounts.setSelectionBehavior(
-            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
-        )
-        self.mounts.setShowGrid(False)
-        rule = self.mounts.palette().color(QtGui.QPalette.ColorRole.Mid).name()
-        self.mounts.setStyleSheet(
-            f"QTableView::item {{ border-bottom: 1px solid {rule}; }}"
-        )
-        self.mounts.horizontalHeader().setStretchLastSection(True)
-        self.pending_label = QtWidgets.QLabel("", self)
-        self.pending_label.setVisible(False)
-        self.empty_mounts = muted_note("none")
-        box = QtWidgets.QGroupBox("Mounts", self)
-        inner = QtWidgets.QVBoxLayout(box)
-        inner.addWidget(self.mounts)
-        inner.addWidget(self.pending_label)
-        inner.addWidget(self.empty_mounts)
-        return box
-
-    def build_health(self) -> QtWidgets.QGroupBox:
-        """The health section's chrome (#945): the daemon's
-        facts, one pair a line, selectable as text — the doc the
-        health read carries, with a muted stand-in until one
-        lands."""
-        self.health = QtWidgets.QLabel("", self)
-        self.health.setTextInteractionFlags(
-            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        self.empty_health = muted_note("none yet")
-        box = QtWidgets.QGroupBox("Health", self)
-        inner = QtWidgets.QVBoxLayout(box)
-        inner.addWidget(self.health)
-        inner.addWidget(self.empty_health)
-        return box
-
     def build_chrome(self) -> None:
         """The page's controls at the window's top (#945, #971,
         #974): back to the list — the theme's own left-pointing
         arrow, drawn large, its tooltip and accessible name
-        carrying the word — then the Shells and Info tabs, and
-        the status line a failed refresh flashes filling the
-        row's rest. The page refreshes on its own timer (#971:
-        no manual button); its new-shell action is the tab
-        strip's "+" (#969)."""
+        carrying the word — then the tab strip, and the status
+        line a failed refresh flashes filling the row's rest.
+        The page refreshes on its own timer (#971: no manual
+        button); its new-shell action is the tab strip's "+"
+        (#969)."""
         back_button = QtWidgets.QPushButton(self)
         back_button.setIcon(
             self.style().standardIcon(
@@ -334,27 +254,23 @@ class WorkspaceDetail(QtWidgets.QWidget):
 
     def open(self, workspace_id: str) -> None:
         """The page takes a workspace (#945, #954, #971): the
-        state resets — fresh row, doc, frame buffer, rendered
-        sections — the shell tabs re-host for this workspace,
-        and the first refresh goes out. The page carries no
-        header of its own; the window's title names the
-        workspace, the shell's list label standing in until the
-        row's own answer lands.
+        state resets — fresh row, footer, and tabs — the
+        shell tabs re-host for this workspace, and the first
+        refresh goes out. The page carries no header of its
+        own; the window's title names the workspace, the
+        shell's list label standing in until the row's own
+        answer lands.
 
         The open takes a first shell when none stands (#974):
         the Shells tab opens with a terminal to type in, and
         its subtab takes the focus."""
         self.workspace_id = workspace_id
         self.row = None
-        self.health_doc = None
-        self.frames = []
-        self.rendered_key = None
         self.footer.setText("")
-        self.clear_sections()
         # The row resets with every open (#974): Shells is the
-        # page's default tab, and a prior visit's Info tab must
-        # not hand the next workspace a hidden terminal holding
-        # the keyboard.
+        # page's default tab, and a prior visit's tab must not
+        # hand the next workspace a hidden terminal holding the
+        # keyboard.
         self.bar.setCurrentIndex(0)
         # Host before registration: even an immediate frame must reach the
         # panel's current presenter. Terminals remain owned by the hub.
@@ -372,30 +288,16 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.events_tab.clear()
         self.refresh()
 
-    def clear_sections(self) -> None:
-        """A workspace's opening blank (#945): the sections blank
-        until the first answers land."""
-        self.mounts.setRowCount(0)
-        self.pending_label.setVisible(False)
-        self.health.setText("")
-        self.empty_mounts.setVisible(True)
-        self.mounts.setVisible(False)
-        self.empty_health.setVisible(True)
-        self.health.setVisible(False)
-
     @QtCore.Slot()
     def refresh(self) -> None:
         """One page refresh through the bridge (#945, #971) —
         the tick and the page's own open share it. A flight
         already out is not stacked, the listing's own guard
-        (#470); the sections stand until the answers replace
+        (#470); the tabs stand until the answers replace
         them."""
         if not self.row_pending:
             self.row_pending = True
             self.bridge.call(ROW_KEY, "workspaces")
-        if not self.health_pending:
-            self.health_pending = True
-            self.bridge.call(HEALTH_KEY, "health")
         if not self.storage_pending:
             self.storage_pending = True
             self.bridge.call(STORAGE_KEY, "storage")
@@ -407,13 +309,11 @@ class WorkspaceDetail(QtWidgets.QWidget):
     def on_succeeded(self, key: str, result: object) -> None:
         """One answered call (#945): the row read finds this
         workspace's row — a listing that cannot see it emits
-        ``removed`` — and the health read keeps the doc, either
-        answer re-rendering the sections. Another key's answer
-        is not this page's to take."""
+        ``removed`` — and the capacity report keeps the footer's
+        storage fact. Another key's answer is not this page's
+        to take."""
         if key == ROW_KEY:
             self.row_landed(result)
-        elif key == HEALTH_KEY:
-            self.health_landed(result)
         elif key == STORAGE_KEY:
             self.storage_landed(result)
 
@@ -436,34 +336,17 @@ class WorkspaceDetail(QtWidgets.QWidget):
         self.row = fresh
         self.rebuild()
 
-    def health_landed(self, doc: object) -> None:
-        """The health read's answer (#945): a doc lands as the
-        section's standing content and resolves an outage.
-        ``None`` is the read's best-effort silence (#717 —
-        :func:`fetch_health` answers every failure with it), so
-        under an outage the same tick that fails the row read
-        answers the health read with it: both the standing doc
-        and any outage flash keep."""
-        self.health_pending = False
-        if doc is None:
-            return
-        self.resolve_outage()
-        self.health_doc = doc
-        self.rebuild()
-
     @QtCore.Slot(str, object)
     def on_failed(self, key: str, failure: RestFailure) -> None:
         """One refused call (#945): the failure flashes — an
         outage (the daemon answered nothing) stands until an
-        answer resolves it — and the sections keep the content
-        they have. Another key's failure is not this page's to
+        answer resolves it — and the tabs keep the content they
+        have. Another key's failure is not this page's to
         show."""
-        if key not in (ROW_KEY, HEALTH_KEY, STORAGE_KEY):
+        if key not in (ROW_KEY, STORAGE_KEY):
             return
         if key == ROW_KEY:
             self.row_pending = False
-        elif key == HEALTH_KEY:
-            self.health_pending = False
         else:
             self.storage_pending = False
         self.flash(str(failure), outage=failure.reach)
@@ -472,32 +355,33 @@ class WorkspaceDetail(QtWidgets.QWidget):
         """The capacity report into the footer's cache (#971):
         the per-workspace cost, the list's own strip's read. A
         report that lands changes the footer's storage fact at
-        the next render."""
+        the next render and resolves a standing outage — an
+        answer from the daemon proves the reachability the
+        flash held, the contract the health read carried before
+        the read went with the Info pane (#1017)."""
         self.storage_pending = False
+        self.resolve_outage()
         self.storage_costs = workspace_costs(report or {})
         self.rebuild()
 
     def resolve_outage(self) -> None:
         """A standing outage's resolve (#945, #904's contract):
         an answer landed, and the flash it held clears — the
-        sections keep the content they have."""
+        tabs keep the content they have."""
         if self.flash_outage:
             self.clear_flash()
 
     def rebuild(self) -> None:
-        """The sections from the page's standing facts (#945):
-        the presenter's models over the row, the doc, and the
-        frame buffer. An answer that changes nothing renders
-        nothing — the listing's own rule (#470 L2), so a hold on
-        the mounts table survives a refresh that moved
-        nothing."""
+        """The page from its standing facts (#945, #1017): the
+        footer strip, the window's title, and the Mounts tab's
+        hosting over the row — every answer renders them, none
+        behind a skip guard, the sections the guard once held
+        being gone with the Info pane. A row that has not
+        landed renders nothing: there is nothing to render
+        against yet."""
         if self.row is None:
             return
-        model = detail_sections(self.row, self.health_doc, self.frames)
-        # The footer reads every answer (#945, #971): the row's
-        # own facts — the created age above all — move on a clock
-        # the section models carry no part of, so the sections'
-        # skip must not freeze the footer with them.
+        model = workspace_row(self.row)
         self.render_footer(model)
         # The window's title reads every answer too (#971), but
         # only while the page owns the window: the shell feeds
@@ -512,103 +396,33 @@ class WorkspaceDetail(QtWidgets.QWidget):
         # the page's own read is the tab's standing truth between
         # changes.
         self.mounts_tab.host(self.workspace_id, self.row)
-        # The render-skip guard reads the sections the Info tab
-        # renders (#989): the events window lives in its own tab
-        # now, so a frame that moves nothing the sections show
-        # costs no re-render — the mounts hold survives a noisy
-        # feed whole.
-        key = (model.mounts, model.pending_note, model.health)
-        if key == self.rendered_key:
-            return
-        self.rendered_key = key
-        self.render_sections(model)
 
-    def render_sections(self, model: DetailSections) -> None:
-        """The sections as the model reads (#945): each section
-        its own widgets — the footer renders on every answer,
-        in :meth:`rebuild`, outside this skip-guarded path."""
-        self.render_mounts(model)
-        self.render_health(model)
-
-    def render_footer(self, model: DetailSections) -> None:
+    def render_footer(self, model: WorkspaceRow) -> None:
         """The footer strip (#971): the same one-line read the
         listing's own bottom strip gives — the identity, the
         posture and costs, the storage the capacity report
         charges, an honest dash until one lands."""
         self.footer.setText(
             detail_text(
-                workspace_row(self.row),
+                model,
                 self.storage_costs.get(self.workspace_id),
             )
         )
 
-    def render_mounts(self, model: DetailSections) -> None:
-        """The mounts section (#945): one row per entry — the
-        spec the operator wrote, the state the daemon derived,
-        the reason a gate named or the honest dash — with the
-        next-start note while a change waits."""
-        self.pending_label.setVisible(model.pending_note is not None)
-        if model.pending_note is not None:
-            self.pending_label.setText(model.pending_note)
-        self.mounts.setRowCount(len(model.mounts))
-        for row, entry in enumerate(model.mounts):
-            self.fill_mount_row(row, entry)
-        self.mounts.resizeColumnsToContents()
-        self.mounts.setVisible(bool(model.mounts))
-        self.empty_mounts.setVisible(not model.mounts)
-
-    def fill_mount_row(self, row: int, entry) -> None:
-        """One mount's five cells (#945): read-only, the entry's
-        own fields in the columns' order."""
-        values = (
-            entry.host,
-            entry.guest,
-            entry.mode,
-            entry.state,
-            entry.reason or "-",
-        )
-        for column, value in enumerate(values):
-            self.mounts.setItem(
-                row,
-                column,
-                read_only_item(QtWidgets.QTableWidgetItem(value)),
-            )
-
-    def render_health(self, model: DetailSections) -> None:
-        """The health section (#945): the doc's facts, one pair
-        a line — a doc that has not landed reads as the muted
-        stand-in."""
-        if model.health:
-            self.health.setText(
-                "\n".join(f"{key}  {value}" for key, value in model.health)
-            )
-            self.health.setVisible(True)
-            self.empty_health.setVisible(False)
-        else:
-            self.health.setVisible(False)
-            self.empty_health.setVisible(True)
-
     @QtCore.Slot(object)
     def push_frame(self, frame: dict) -> None:
-        """One pushed frame into the buffer (#945's seam, #946's
-        feed): the buffer keeps only the frames that name this
-        workspace — the feed is a daemon-wide subscriber, and
-        busy siblings would otherwise evict this page's history
-        out of the cap — and the Events tab appends the moment
-        one lands. The Info sections render nothing a frame can
-        move (#989): the render-skip guard holds them whole
-        across a noisy feed."""
+        """One pushed frame to the tabs that read it (#945's
+        seam, #946's feed): a frame reaches the page's tabs
+        only when it names this workspace — the feed is a
+        daemon-wide subscriber, and a busy sibling's frames
+        would otherwise land on this page's tabs."""
         data = frame.get("data") or {}
         if not frame_names(data, self.workspace_id):
             return
-        self.frames.append(frame)
-        if len(self.frames) > FRAMES_BUFFER:
-            del self.frames[: len(self.frames) - FRAMES_BUFFER]
         # A proxy transition repaints the Proxies tab (#988) —
         # the feed's frame is the tab's own refresh trigger, the
         # same path the page's tick drives — and every frame
-        # appends to the Events tab (#989), the pane the Info
-        # sections carried before the tab took the window.
+        # appends to the Events tab (#989).
         self.proxies_tab.frame(frame)
         self.events_tab.push(frame)
         self.rebuild()
@@ -617,8 +431,8 @@ class WorkspaceDetail(QtWidgets.QWidget):
     def mounts_landed(self, row: dict) -> None:
         """A landed mounts save (#987): the tab's answer is a
         fresh daemon row — the page takes it whole and
-        re-renders, the footer and the Info sections reading the
-        same facts the tab painted."""
+        re-renders, the footer reading the same facts the tab
+        painted."""
         self.row = row
         self.rebuild()
 
@@ -854,8 +668,8 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
 
     @QtCore.Slot(object)
     def frame_landed(self, frame: dict) -> None:
-        """One pushed frame (#946): the page buffers it whatever
-        screen owns the window — its events section is the
+        """One pushed frame (#946): the page's tabs take it
+        whatever screen owns the window — its events tab is the
         frame's own record — and the screen the operator sees
         refreshes at once, through the same path its timer
         drives; the hidden screen refreshes at its next show.

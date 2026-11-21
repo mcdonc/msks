@@ -1,12 +1,11 @@
 """The workspace Events tab (phase 5.9 of #924, #989): the
-page's recent-frames window with the room the Info pane never
+page's recent-frames window with the room a shared pane never
 had — each row keeps the receipt stamp, the kind, and the
 summary the presenter builds
 (:func:`msks.client.gui.detail.event_line`), newest last, in a
 scroll that holds the window's tail. The tab holds no
 flights and reads no daemon state: the page's pushed-frame
-path (#946) appends to it directly, the same path that
-refreshed the Info sections before the pane moved.
+path (#946) appends to it directly.
 
 This module imports PySide6 at module scope — the screens' own
 contract: nothing imports it at CLI parse time, and the
