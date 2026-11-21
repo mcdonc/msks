@@ -5685,17 +5685,41 @@ async def test_the_pages_reconnect_poke_rereads_the_row(
         await open_page(pilot, app)
         await wait_for(lambda: action_children(app) == 8)
         page = app.screen
-        fetches = data.fetches
-        page.link_reconnected()
-        await wait_for(lambda: data.fetches > fetches)
-        # The proxies line's re-read ran beside the row's: its
-        # worker group is its own, so both flights land.
         proxies_line = page.query_one("#proxy-line", Static)
 
         def painted() -> str:
             return "".join(seg.text for seg in proxies_line.render_line(0))
 
         await wait_for(lambda: "2201" in painted())
+        # Another surface drops the proxy after the page's own
+        # start fetch: only the reconnect poke's fetch can
+        # repaint the line — its flight is the half of the fix
+        # under test, the row's fetch beside it.
+        data.proxy_rows = []
+        fetches = data.fetches
+        page.link_reconnected()
+        await wait_for(lambda: data.fetches > fetches)
+        await wait_for(lambda: "2201" not in painted())
+
+
+async def test_a_catalog_move_rereads_the_pages_row(
+    monkeypatch,
+) -> None:
+    """#1019: an ``image.changed`` frame names no workspace and
+    moves every row's image cell — the page re-reads its row on
+    it, so a rename made from another terminal repaints the meta
+    line."""
+    factory = scripted_link(monkeypatch, [])
+    data = FakeData([row()])
+    app, _ = make_app(data)
+    async with app.run_test() as pilot:
+        await open_page(pilot, app)
+        await wait_for(lambda: action_children(app) == 8)
+        fetches = data.fetches
+        factory.made[0].push(
+            '{"event": "image.changed", "data": {"ref": "debian-13:2026.09"}}'
+        )
+        await wait_for(lambda: data.fetches > fetches)
 
 
 async def test_a_sort_click_dropped_mid_flight_is_served(
@@ -5707,36 +5731,48 @@ async def test_a_sort_click_dropped_mid_flight_is_served(
     import asyncio as _asyncio
 
     gate = _asyncio.Event()
+    hold = [0]
     fetches = 0
 
     class GatedData(FakeData):
         async def workspaces(self) -> list[dict]:
             nonlocal fetches
             fetches += 1
-            if fetches == 1:
+            if fetches == hold[0]:
                 await gate.wait()
             return self.rows
 
-    data = GatedData([row(), row(id="ws-b", name="beta")])
+    # NAME asc differs from the CREATED opening order: the armed
+    # read's repaint is the observable.
+    data = GatedData(
+        [
+            stamp(row(name="zeta"), "2026-02-01T00:00:00"),
+            stamp(row(id="ws-b", name="beta"), "2026-01-01T00:00:00"),
+        ]
+    )
     app, _ = make_app(data)
     async with app.run_test() as pilot:
-        await wait_for(lambda: on_main(app))
+        await wait_for(lambda: list_children(app) == 2)
+        # The CREATED order paints the newest row first; the
+        # startup pokes settle before the gated flight opens.
+        await startup_quiet(pilot, app)
+        await wait_for(lambda: "zeta" in row_text(app, 0))
         screen = app.screen
-        while not screen.rows_loading:
-            await pilot.pause()
-        # The gated flight is inside its fetch before the click
-        # arrives — a slow host schedules the worker after the
-        # mark flips (the #776 test's own rule).
-        await wait_for(lambda: fetches == 1)
+        # The gated flight opens by hand — no startup straggler
+        # can arm beside the click.
+        hold[0] = fetches + 1
+        screen.refresh_rows()
+        await wait_for(lambda: fetches == hold[0])  # inside the fetch
         # The click lands inside the gated flight: the sort state
         # stands, the header carries it, and the armed poke serves
         # the order once the flight lands.
-        screen.pick_column(0)  # NAME — its natural direction descends
+        screen.pick_column(0)  # NAME — its first pick ascends
         assert screen.sort == ("NAME", False)
         gate.set()
-        await wait_for(lambda: fetches == 2)  # the armed read ran
-        await wait_for(lambda: "alpha" in row_text(app, 0))
-        assert "beta" in row_text(app, 1)
+        armed = fetches + 1
+        await wait_for(lambda: fetches >= armed)  # the armed read ran
+        await wait_for(lambda: "beta" in row_text(app, 0))
+        assert "zeta" in row_text(app, 1)
 
 
 async def test_enter_on_a_dimmed_row_flashes_and_runs_nothing(
