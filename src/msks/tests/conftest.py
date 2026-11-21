@@ -77,6 +77,11 @@ def quiet_listing_link(monkeypatch: pytest.MonkeyPatch) -> None:
     from test_consent_page import FakeFactory
 
     factory = FakeFactory([])
+    # The real factory stays reachable beside the patch: the
+    # wiring test reads it (the patch replaces the class
+    # attribute wholesale, and every mounted screen takes the
+    # patched one).
+    MainScreen.make_real_link = MainScreen.make_link
     monkeypatch.setattr(
         MainScreen,
         "make_link",
