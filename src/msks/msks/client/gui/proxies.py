@@ -42,6 +42,11 @@ CHANGE_STEM = "proxies-change"
 #: the direction in its own column.
 PROXY_COLUMNS = ("DIRECTION", "SPEC", "LABEL", "STATUS")
 
+#: The columns that hug their text (#1025): the direction and
+#: the status stay at their content width; the spec and the
+#: label share the pane's remainder.
+PROXY_CONTENT_COLUMNS = (0, 3)
+
 
 class ProxyDialog(QtWidgets.QDialog):
     """The add/edit form (#988, the TUI's one form): the
@@ -118,7 +123,7 @@ class ProxiesTab(QtWidgets.QWidget):
         self.list_key = ""
         self.change_key = ""
         self.landing_note = "saved"
-        self.table = read_only_table(PROXY_COLUMNS)
+        self.table = read_only_table(PROXY_COLUMNS, PROXY_CONTENT_COLUMNS)
         self.table.itemSelectionChanged.connect(self.sync_buttons)
         self.add_button = QtWidgets.QPushButton("Add")
         self.add_button.setEnabled(False)
@@ -206,7 +211,6 @@ class ProxiesTab(QtWidgets.QWidget):
                     item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable
                 )
                 self.table.setItem(index, column, item)
-        self.table.resizeColumnsToContents()
         self.sync_buttons()
 
     def selected(self) -> int:

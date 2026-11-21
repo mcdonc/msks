@@ -78,6 +78,35 @@ def test_the_row_keeps_stamp_kind_and_summary() -> None:
     assert summary == "status x"
 
 
+def test_the_rows_wrap_within_the_pane(qt) -> None:
+    """The window's width rule (#1025): a long summary wraps to
+    the next line within the pane — its row taller than a
+    one-line row — and wrappable text grows no horizontal
+    scroll."""
+    tab = qt.events.EventsTab()
+    window = qt.QtWidgets.QMainWindow()
+    window.setCentralWidget(tab)
+    # a real pane's width, not the offscreen window's own
+    # sizeHint, narrow enough that the long row must wrap
+    window.resize(400, 300)
+    window.show()
+    qt.keep.append(window)
+    tab.push({"event": "short", "data": {"id": "ws-a"}})
+    note = " ".join(f"word{n}" for n in range(60))
+    tab.push({"event": "long", "data": {"id": "ws-a", "note": note}})
+    short = tab.rows.visualItemRect(tab.rows.item(0)).height()
+    long = tab.rows.visualItemRect(tab.rows.item(1)).height()
+    assert long > short  # the summary wrapped, not elided
+    assert tab.rows.horizontalScrollBar().maximum() == 0
+    # A single token longer than the pane keeps its tail
+    # reachable: the scrollbar the wrap leaves behind returns —
+    # the policy stays AsNeeded, never AlwaysOff.
+    token = "d" * 200
+    tab.push({"event": "digest", "data": {"id": "ws-a", "sha": token}})
+    assert tab.rows.horizontalScrollBar().maximum() > 0
+    window.close()
+
+
 def test_the_window_appends_caps_and_clears(qt) -> None:
     """The tab's window (#989): frames append newest last, the
     window caps at the presenter's own limit — the oldest row

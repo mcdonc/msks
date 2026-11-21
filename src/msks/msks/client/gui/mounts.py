@@ -49,6 +49,11 @@ MOUNTS_KEY = "workspace-mounts"
 #: table left with the Info pane (#1017).
 MOUNT_COLUMNS = ("HOST", "GUEST", "MODE", "STATE", "REASON")
 
+#: The columns that hug their text (#1025): the mode and the
+#: state stay at their content width; the host, the guest, and
+#: the reason share the pane's remainder.
+MOUNT_CONTENT_COLUMNS = (2, 3)
+
 
 class MountDialog(QtWidgets.QDialog):
     """The add/edit form (#987, the TUI's one form, #886): the
@@ -124,7 +129,7 @@ class MountsTab(QtWidgets.QWidget):
         self.landed = False
         self.flight_seq = 0
         self.flight_key = ""
-        self.table = read_only_table(MOUNT_COLUMNS)
+        self.table = read_only_table(MOUNT_COLUMNS, MOUNT_CONTENT_COLUMNS)
         self.table.itemSelectionChanged.connect(self.sync_buttons)
         self.add_button = QtWidgets.QPushButton("Add")
         self.add_button.clicked.connect(self.add)
@@ -218,7 +223,6 @@ class MountsTab(QtWidgets.QWidget):
                     item.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable
                 )
                 self.table.setItem(index, column, item)
-        self.table.resizeColumnsToContents()
         words = pending_words(row)
         self.pending_label.setVisible(words is not None)
         if words is not None:
