@@ -20,6 +20,7 @@ init imports none of it at parse time (#927).
 from PySide6 import QtCore, QtWidgets
 
 from ...data import RestFailure
+from ..dialogs import Centered
 from ..secretrows import MINT_TTLS
 from . import cells
 
@@ -63,12 +64,13 @@ class WorkspacePicker(QtWidgets.QListWidget):
         QtWidgets.QWidget.focusNextPrevChild(self, hand)
 
 
-class MintDialog(QtWidgets.QDialog):
+class MintDialog(Centered, QtWidgets.QDialog):
     """The mint form as a dialog (#966): the create dialog's
     pattern over the mint's own fields — calls through the
     bridge, answers over its signals, refusals on the note
     line, a dialog closed mid-flight cancelling its own
-    call."""
+    call. The opener's widget lands as the parent (#1014):
+    the form opens centered on the main window."""
 
     def __init__(self, bridge, parent=None) -> None:
         super().__init__(parent)

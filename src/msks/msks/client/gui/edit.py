@@ -25,7 +25,7 @@ import re
 
 from PySide6 import QtCore, QtWidgets
 
-from .dialogs import BridgeClose, whole_number
+from .dialogs import BridgeClose, Centered, whole_number
 
 #: The resize call's key (#986): the one flight an open editor
 #: owns — the dialog unhooks on close, so a late answer
@@ -199,16 +199,17 @@ def root_error(asked: str, seeds: dict) -> str | None:
     return f"the root only grows — it is {seeded} MiB"
 
 
-class EditDialog(BridgeClose, QtWidgets.QDialog):
+class EditDialog(BridgeClose, Centered, QtWidgets.QDialog):
     """The edit form as a dialog (#986): the create dialog's
     layout seeded from the workspace's row, its exchange
     carried the screens' way — one call through the bridge, the
     answer over its signals, failures on the note line. A
     dialog closed mid-flight cancels its own call and hears
-    nothing after."""
+    nothing after. The opener's widget lands as the parent
+    (#1014): the dialog opens centered on the main window."""
 
-    def __init__(self, bridge, row: dict) -> None:
-        super().__init__()
+    def __init__(self, bridge, row: dict, parent=None) -> None:
+        super().__init__(parent)
         self.bridge = bridge
         self.row = row
         self.seeds = edit_seeds(row)

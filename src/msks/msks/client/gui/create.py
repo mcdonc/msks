@@ -19,7 +19,7 @@ from PySide6 import QtCore, QtWidgets
 from ..create import invoking_user
 from ..data import RestFailure
 from ..images import ordered_image_rows
-from .dialogs import BridgeClose, whole_number
+from .dialogs import BridgeClose, Centered, whole_number
 
 #: The create call's key (#962): every open dialog shares it —
 #: an answer lands on the dialog whose flight is open, the
@@ -148,16 +148,19 @@ def user_placeholder() -> str:
     return ""
 
 
-class CreateDialog(BridgeClose, QtWidgets.QDialog):
+class CreateDialog(BridgeClose, Centered, QtWidgets.QDialog):
     """The create form as a dialog (#962): the TUI create
     popup's counterpart over the workspaces, its exchange and
     its refusals carried the screens' way — calls through the
     bridge, answers over its signals, failures on the note
     line. A dialog closed mid-flight cancels its own call and
-    hears nothing after."""
+    hears nothing after. The opener's widget lands as the
+    parent (#1014): the dialog opens centered on the main
+    window, not wherever the window manager puts a parentless
+    window."""
 
-    def __init__(self, bridge) -> None:
-        super().__init__()
+    def __init__(self, bridge, parent=None) -> None:
+        super().__init__(parent)
         self.bridge = bridge
         self.hints_loaded = False
         self.flight = None

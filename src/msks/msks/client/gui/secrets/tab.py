@@ -30,6 +30,7 @@ guards.
 from PySide6 import QtCore, QtWidgets
 
 from ...data import RestFailure
+from ..forms import confirm, pick_item
 from ..listtable import (
     ListTable,
     bold_header,
@@ -456,20 +457,19 @@ class SecretsTab(QtWidgets.QWidget):
         )
 
     def pick_ttl(self, model) -> str | None:
-        """The renew picker (#966): the presenter's choices with
-        its own default — the row's raw deadline naming the
-        opening one. A cancelled picker decides nothing."""
+        """The renew picker (#966, #1014): the presenter's
+        choices with its own default — the row's raw deadline
+        naming the opening one — centered on the main window. A
+        cancelled picker decides nothing."""
         raw = self.raw_row(model)
         default = ttl_default(raw) if raw is not None else SECRET_TTLS[-1]
-        choice, ok = QtWidgets.QInputDialog.getItem(
+        return pick_item(
             self,
             "Renew",
             f"renew {model.coverage}/{model.name} for",
-            SECRET_TTLS,
-            SECRET_TTLS.index(default),
-            False,
+            list(SECRET_TTLS),
+            default,
         )
-        return choice if ok else None
 
     def revoke_row(self, model) -> None:
         """The revoke action (#966): the row retires everywhere
@@ -486,19 +486,10 @@ class SecretsTab(QtWidgets.QWidget):
         self.bridge.call(REVOKE_KEY, "revoke_secret", model.id)
 
     def confirm_revoke(self, model) -> bool:
-        """Revoke's confirmation (#966): No is the default — the
-        retirement is the operator's call, not the pointer's."""
-        answer = QtWidgets.QMessageBox.question(
-            self,
-            "Revoke",
-            cells.revoke_question(model),
-            (
-                QtWidgets.QMessageBox.StandardButton.Yes
-                | QtWidgets.QMessageBox.StandardButton.No
-            ),
-            QtWidgets.QMessageBox.StandardButton.No,
-        )
-        return answer == QtWidgets.QMessageBox.StandardButton.Yes
+        """Revoke's confirmation (#966, #1014): No the default
+        and both centered on the main window — the retirement
+        is the operator's call, not the pointer's."""
+        return confirm(self, "Revoke", cells.revoke_question(model))
 
     def action_arrived(self, key: str, result: object) -> None:
         """An action's landing (#966): the flight's remembered

@@ -1,9 +1,11 @@
-"""The GUI dialogs' shared seams (#962, #986): the pieces the
-create and edit dialogs hold in common — the whole-number rule
-their fields check locally, and the close path that cancels a
-standing flight and unhooks the bridge. Plain Python, no Qt in
-it: the mixin rides whatever ``QDialog`` subclass takes it, and
-the rule reads as plain data for the coverage gate.
+"""The GUI dialogs' shared seams (#962, #986, #1014): the
+pieces the create and edit dialogs hold in common — the
+whole-number rule their fields check locally, the close path
+that cancels a standing flight and unhooks the bridge, and
+the placement rule that holds every popup on the main
+window's center. Plain Python, no Qt in it: the mixins ride
+whatever ``QDialog`` subclass takes them, and the rules read
+as plain calls for the coverage gate.
 """
 
 
@@ -12,6 +14,42 @@ def whole_number(value: str) -> bool:
     ASCII digits only — ``int()`` refuses some unicode digits
     ``isdigit()`` accepts, and a paste can carry them."""
     return value.isascii() and value.isdigit()
+
+
+def center_on_parent(dialog) -> None:
+    """One dialog placed on its parent window's center (#1014):
+    the dialog's frame, sized to its own layout first, moves
+    until its center is the parent's window center. A parentless
+    dialog stays where it is — nothing names a window to sit
+    on. Plain widget calls throughout: the seam rides whatever
+    ``QDialog`` subclass takes it, no binding import at parse
+    time."""
+    opener = dialog.parentWidget()
+    if opener is None:
+        return
+    dialog.adjustSize()
+    frame = dialog.frameGeometry()
+    frame.moveCenter(opener.window().geometry().center())
+    dialog.move(frame.topLeft())
+
+
+class Centered:
+    """A dialog that opens on its parent window's center
+    (#1014): a dialog the caller parents to a widget of the
+    main window is transient for it, so most window managers
+    place it over the app — but placement stays the manager's,
+    and a manager may answer with a screen corner. The mixin
+    rides whatever ``QDialog`` subclass takes it: the parent
+    argument lands on the subclass's own ``super().__init__``,
+    and the centering runs once, on the ``exec`` every popup
+    opens through, before the modal loop starts."""
+
+    def exec(self) -> int:
+        """The dialog's open, centered first (#1014): the frame
+        moves onto the opener's window, then the platform's own
+        modal loop under it."""
+        center_on_parent(self)
+        return super().exec()
 
 
 class BridgeClose:

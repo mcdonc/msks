@@ -1,12 +1,17 @@
-"""The GUI tabs' shared chrome (#987, #988): the read-only
-table and the save/cancel row the mounts and proxies surfaces
-build the same way — one definition, the screens' own rule
-against drift. This module imports PySide6 at module scope,
+"""The GUI tabs' shared chrome (#987, #988, #1014): the
+read-only table and the save/cancel row the mounts and proxies
+surfaces build the same way — one definition, the screens' own
+rule against drift — beside the centered popups every screen
+opens (#1014): the yes/no question and the item picker, built
+over their asking window so the placement holds across window
+managers. This module imports PySide6 at module scope,
 the screens' own contract: nothing imports it at CLI parse
 time.
 """
 
 from PySide6 import QtGui, QtWidgets
+
+from .dialogs import center_on_parent
 
 
 def muted_note(text: str) -> QtWidgets.QLabel:
@@ -77,3 +82,52 @@ def save_cancel_row(
     row.addWidget(save)
     row.addWidget(cancel)
     return save, cancel, row
+
+
+def confirm_box(parent, title: str, text: str) -> QtWidgets.QMessageBox:
+    """The yes/no question's own box (#1014): built over the
+    asking widget, its No the default — the operator's call,
+    not the pointer's — and centered on the asking window, the
+    placement the static question call leaves to the window
+    manager and a corner-placing manager answers off the app.
+    The box stands unshown; the caller owns the ask."""
+    box = QtWidgets.QMessageBox(parent)
+    box.setWindowTitle(title)
+    box.setText(text)
+    box.setStandardButtons(
+        QtWidgets.QMessageBox.StandardButton.Yes
+        | QtWidgets.QMessageBox.StandardButton.No
+    )
+    box.setDefaultButton(QtWidgets.QMessageBox.StandardButton.No)
+    center_on_parent(box)
+    return box
+
+
+def confirm(parent, title: str, text: str) -> bool:
+    """The yes/no question asked centered (#1014): the box the
+    seam above builds, shown under the modal loop — Yes answers
+    True, anything else False."""
+    return (
+        confirm_box(parent, title, text).exec()
+        == QtWidgets.QMessageBox.StandardButton.Yes
+    )
+
+
+def pick_item(
+    parent, title: str, label: str, choices: list[str], current: str
+) -> str | None:
+    """The item picker asked centered (#1014): the choices in a
+    closed combo over the asking window, ``current`` the opening
+    one — a cancelled picker answers None, a pick the picked
+    item. The static ``getItem`` call leaves the placement to
+    the window manager; this build centers on the asking
+    window first."""
+    picker = QtWidgets.QInputDialog(parent)
+    picker.setWindowTitle(title)
+    picker.setLabelText(label)
+    picker.setComboBoxItems(list(choices))
+    picker.setTextValue(current)
+    center_on_parent(picker)
+    if picker.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+        return None
+    return picker.textValue()

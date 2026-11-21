@@ -632,7 +632,7 @@ class WorkspaceShell(QtWidgets.QStackedWidget):
         popup's counterpart (#309) — a landed create refreshing
         the listing behind it; a cancel or a refusal decides
         nothing."""
-        dialog = CreateDialog(self.bridge)
+        dialog = CreateDialog(self.bridge, self)
         dialog.accepted.connect(self.listing.refresh)
         dialog.exec()
 

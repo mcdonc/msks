@@ -725,14 +725,16 @@ def test_the_create_opener_opens_the_dialog_over_the_list(
     shell, window, bridge = make_shell(qt)
     opened: list[object] = []
     accepted: list[object] = []
+    parents: list[object] = []
 
     class FakeDialog:
         """The dialog's stub: the constructor's bridge, the
         accepted signal's connect surface, and an exec that
         returns at once (the stub never enters a loop)."""
 
-        def __init__(self, bridge: object) -> None:
+        def __init__(self, bridge: object, parent=None) -> None:
             opened.append(bridge)
+            parents.append(parent)
 
     class FakeAccepted:
         def connect(self, slot: object) -> None:
@@ -749,6 +751,7 @@ def test_the_create_opener_opens_the_dialog_over_the_list(
     monkeypatch.setattr(workspace_mod, "CreateDialog", FakeDialog)
     shell.listing.add_button.click()
     assert opened == [bridge]
+    assert parents == [shell]  # the dialog parents to the shell (#1014)
     # A landed create refreshes the listing: the connected slot
     # is the list's own refresh.
     assert accepted == [shell.listing.refresh]
