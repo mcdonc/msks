@@ -335,8 +335,11 @@ MSKSD_STATE_DIR=/tmp/msksd MSKSD_BOOTSTRAP_TOKEN=dev-secret MSKSD_PORT=8660 msks
   inserted once when absent; it is visible in the process environment to
   the same user (acceptable for a single-user local daemon; unset it after
   minting real tokens). `--no-tls` serves plain HTTP for development.
-- **Events**: `wss://host/api/v1/events` streams workspace status
-  transitions. The websocket handshake authenticates with the same
+- **Events**: `wss://host/api/v1/events` streams the daemon's
+  published frames: workspace lifecycle transitions (`workspace.created`,
+  `workspace.removed`, `workspace.status`, `workspace.mounts`,
+  `workspace.resized`), proxy transitions, secret and consent events. The
+  websocket handshake authenticates with the same
   `Authorization: Bearer` header the REST surface uses, so
   the token never appears in a URL. Uvicorn's access log prints
   request lines (method, path, query) and not headers, so turning

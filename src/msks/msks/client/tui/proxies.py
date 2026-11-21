@@ -8,9 +8,11 @@ alone, and it opens from the workspace page (the action row, or
 ``p``). Every proxy transition the daemon publishes
 (``proxy.created``, ``proxy.listening``, ``proxy.failed``,
 ``proxy.closed``, ``proxy.removed``, ``proxy.updated``)
-pokes a refresh through a plain-subscriber connection beside the
-standing interval, so a bind that fails while the page stands
-paints itself without a keypress.
+pokes a refresh through a plain-subscriber connection (#1019
+took the standing interval away: the events own the live path,
+and every connection that comes to serve pokes one refresh
+too), so a bind that fails while the page stands paints itself
+without a keypress.
 
 Spatial navigation: the arrows walk the rows, ``a`` opens the
 add form, ``e`` or Enter opens the edit form on the focused row,
@@ -93,12 +95,6 @@ def form_note(verb: str) -> str:
 #: The direction select's two choices (#809): ssh's own letters.
 FORWARD_CHOICE = "-L"
 REMOTE_CHOICE = "-R"
-
-#: The page's standing refresh (#809): the interval the frames'
-#: poke rides without a live connection — the workspaces list's
-#: own rule, carried to this page (a link that cannot connect
-#: still serves rows every interval).
-PROXY_REFRESH_S = 5.0
 
 
 def bracketed_host(host: str) -> str:
@@ -313,13 +309,16 @@ class ProxyLink(AuditLink):
     events socket without registration, the audit view's own
     lifecycle — the page holds no decider authority, and the
     socket's relay carries every published frame to every
-    subscriber. Each proxy transition pokes the page's refresh;
-    nothing else lands anywhere (the page's rows come from the
-    REST listing, refetched whole)."""
+    subscriber. Each proxy transition pokes the page's refresh,
+    and every connection that comes to serve pokes one too
+    (#1019: frames published while no connection stood never
+    landed); nothing else lands anywhere (the page's rows come
+    from the REST listing, refetched whole)."""
 
     def __init__(self, on_event, *, ws_factory=None) -> None:
         super().__init__(ws_factory=ws_factory)
         self.on_event = on_event
+        self.on_connect = on_event
 
     def land_frame(self, raw: str) -> bool:
         """One frame's landing: a proxy transition pokes the
@@ -437,7 +436,8 @@ class ProxiesScreen(HelpKeys, Screen):
     pages), and ``D`` removes the focused row behind a
     confirmation (``D``, the workspaces list's own remove
     letter); every proxy transition the daemon publishes pokes a
-    refresh beside the standing interval, so a bind that fails
+    refresh through the page's subscriber connection (#1019
+    dropped the standing interval), so a bind that fails
     while the page stands paints itself without a keypress.
     Arrows walk the rows; ``q`` or Escape returns to the
     workspace page — no trap.
@@ -489,7 +489,6 @@ class ProxiesScreen(HelpKeys, Screen):
     def on_mount(self) -> None:
         self.link = self.make_link()
         self.link.start()
-        self.set_interval(PROXY_REFRESH_S, self.refresh_rows)
         self.call_after_refresh(self.refresh_rows)
 
     def on_unmount(self) -> None:
@@ -580,7 +579,7 @@ class ProxiesScreen(HelpKeys, Screen):
         preserving the focused row by key (the top when it left)
         — the consent queue's rebuild rule, carried to the page.
         An unchanged listing repaints nothing (the workspaces
-        list's own rule): the standing interval's read of the same
+        list's own rule): a re-read of the same
         rows keeps its list, so focus and scroll never blip and
         the page never flickers on the clock."""
         if rows == self.rows and self.rows_widget() is not None:

@@ -192,6 +192,7 @@ and saves the row whole; the daemon swaps the listener to the new spec at once.
 `D` removes the focused row behind a confirmation. `q` or Escape returns to the
 workspace page.
 
-The page re-reads the listing every five seconds and on every proxy
-transition, so a bind that fails while the page stands paints itself without
-a keypress.
+The page re-reads the listing on every proxy transition the daemon
+publishes, so a bind that fails while the page stands paints itself without
+a keypress. There is no polling timer: a daemon at rest sends the page
+nothing.

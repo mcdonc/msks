@@ -273,6 +273,12 @@ def router(app) -> APIRouter:
                         dst.unlink(missing_ok=True)
                     raise
         row["mount_issues"] = issue_payloads(await row_mount_issues(app, row))
+        # The clone is a create (#1019): the listing's clients
+        # learn the row from the same frame the create route
+        # publishes.
+        await app.state.hub.publish(
+            "workspace.created", {"id": row["id"], "name": row.get("name")}
+        )
         return Response(
             status_code=201,
             content=json.dumps(row),
