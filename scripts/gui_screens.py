@@ -12,7 +12,7 @@ no desktop window: the widgets paint offscreen and
 Run from the devenv shell (the project's Python carries
 PySide6):
 
-    devenv --quiet shell -- python scripts/gui-screens.py
+    devenv --quiet shell -- python scripts/gui_screens.py
 
 The fixed clock pins every relative label (``2d ago``, the
 TTL countdown) to one moment, so re-running the script
