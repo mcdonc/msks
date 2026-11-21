@@ -13,7 +13,7 @@ directly: every page uses the API.
 The GUI ships in the base install. `pip install msks` installs
 the Qt binding and the terminal library the window uses together
 with everything else. The GUI adds about 85 MB to the wheel
-download and about 250 MB installed.
+download and about 250 MB installed, measured on Linux.
 
 The window needs a display. A Linux session provides one through
 `DISPLAY` or `WAYLAND_DISPLAY`, and `QT_QPA_PLATFORM=offscreen`
@@ -44,9 +44,9 @@ gui`, or write them into the config file, exactly as for any
 other command.
 
 A shell inside a devenv tree needs no exports. The connection
-picker reads the dev daemon's state dir (`.devenv/state/msksd`
-by default; `MSKSD_STATE_DIR` moves it) and offers that
-connection as a preset.
+picker reads the dev daemon's state dir and offers that
+connection as a preset. The default state dir is
+`.devenv/state/msksd`; `MSKSD_STATE_DIR` moves it.
 
 ![The connection picker's menu: two aliases and the dev daemon, the standing one checked](screens/gui-connection.png)
 
@@ -104,8 +104,9 @@ opens the row's menu: Edit, Start or Stop, Open a shell, and
 Delete. Delete asks for confirmation, and the workspace's data
 goes with it.
 
-The page's bottom row carries **Add**, **Edit**, and **Remove**,
-which act on the selected row.
+The page's bottom row carries **Add**, **Edit**, and **Remove**.
+Add opens the create dialog. Edit and Remove act on the
+selected row.
 
 A failed refresh flashes the status line at the top of the page.
 A refusal clears itself after four seconds. A daemon outage
@@ -138,10 +139,11 @@ create.
 
 **Edit** opens a dialog seeded with the workspace's sizes and
 topology: VCPUs, memory, and the root and home volumes. Apply
-posts to the same endpoint `msks resize` uses. A change that
-waits for the next boot shows the row's `↻N` marker once the
-list refreshes. A refusal keeps the dialog open with the reason
-on its note line.
+posts to the same endpoint `msks resize` uses. The sizes move
+while the workspace stands stopped, and the GUI never stops it
+for you: stop it first. A running workspace's Apply comes back
+as a refusal on the note line. A change that waits for the
+next boot shows the row's `↻N` marker once the list refreshes.
 
 ## The workspace page
 
@@ -256,19 +258,19 @@ catalog** lists the daemon's own rows with the default marker,
 the hash prefix, and the import date. **Published** lists the
 channel's rows with their descriptions, sizes, hash prefixes,
 and build dates. A published row that declares another
-architecture stays off the page; a row that declares none is
+architecture stays off the page. A row that declares none is
 shown. A published row whose exact hash the catalog holds reads
 `[imported]`. One the catalog holds under a different hash reads
 `[local]`.
 
 A right-click on a catalog row opens its menu: Open the detail
 (the same lines `msks image info` prints), Set as the default,
-and Remove (which asks first). A right-click on a published row
-offers Import, which runs behind a progress dialog while the
+and Remove… (which asks first). A right-click on a published row
+offers Import…, which runs behind a progress dialog while the
 daemon downloads, verifies, and floor-checks the archive. The
 catalog refreshes when the import lands.
 
-The status line under the groups counts both sides, and
+The counts line at the page's bottom tallies both sides, and
 **Refresh** re-reads them. The [images chapter](images.md)
 describes the catalog and the channel.
 
@@ -283,9 +285,9 @@ destinations, remaining lifetime, created label, and lock state.
 The lifetime cell is a live countdown, repainted every second.
 An unbounded row reads `never`.
 
-A right-click on a row opens Renew, with the TTL choices (`1h`
+A right-click on a row opens Renew…, with the TTL choices (`1h`
 to `30d`, the one nearest the row's remaining lifetime
-pre-selected), and Revoke, which asks first. A revoked row
+pre-selected), and Revoke…, which asks first. A revoked row
 retires everywhere at once.
 
 **Mint** opens the mint form: name, comma-separated destinations,
@@ -296,8 +298,9 @@ reports the minted row, and the sentinel itself reads back
 through the CLI or the TUI. The [secrets chapter](secrets.md)
 explains placeholders and sentinels.
 
-The **Audit** group beneath lists the daemon's recorded mint,
-renew, and revoke events, newest first.
+The **Audit** group beneath lists the daemon's recorded secret
+events, newest first: mint, revoke, expiry, and unlock rows. A
+renew changes a row's deadline without recording an audit row.
 
 ## The zoom keys
 

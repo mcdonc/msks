@@ -227,6 +227,24 @@ def main() -> int:
     fonts.close()
     os.environ["FONTCONFIG_FILE"] = fonts.name
     os.environ.setdefault("QT_STYLE_OVERRIDE", "Fusion")
+    try:
+        capture(fonts.name)
+    finally:
+        # The teardown runs on every path, a failure mid-capture
+        # included: the hub's terminal children die and the temp
+        # fontconfig file leaves with them.
+        for hub in HUBS:
+            hub.shutdown()
+        os.unlink(fonts.name)
+    return 0
+
+
+#: The capture's hubs (#1008): every hub the run builds, each
+#: shut down on the way out whatever path the capture took.
+HUBS: list = []
+
+
+def capture(fonts_path: str) -> None:
 
     from msks.client import ages as ages_mod
     from msks.client.gui import consent as consent_mod
@@ -306,6 +324,7 @@ def main() -> int:
     hub = workspace_mod.ShellHub(
         lambda ws: [sys.executable, "-c", PROMPT_CHILD]
     )
+    HUBS.append(hub)
     detail_bridge = StubBridge()
     detail = workspace_mod.WorkspaceDetail(detail_bridge, hub)
     detail_window = QtWidgets.QMainWindow()
@@ -397,7 +416,6 @@ def main() -> int:
     settle(app, rounds=4)
     shot(detail_window, "gui-events.png")
 
-    hub.shutdown()
     detail_window.close()
 
     # --- the images tab --------------------------------------------
@@ -514,8 +532,6 @@ def main() -> int:
         None, QtCore.QEvent.Type.DeferredDelete
     )
     app.processEvents()
-    os.unlink(fonts.name)
-    return 0
 
 
 if __name__ == "__main__":
