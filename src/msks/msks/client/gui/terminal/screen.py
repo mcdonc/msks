@@ -441,12 +441,17 @@ class TerminalWidget(QWidget):
         self.refresh()
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
-        if not self._fitting:  # the window fit holds the grid it entered with
-            cols = max(1, self.width() // self.metrics.cell_width)
-            rows = max(1, self.height() // self.metrics.cell_height)
-            if (cols, rows) != (self.cols, self.rows):
-                self.resize_grid(cols, rows)
-        find.layout(self)
+        # The guard is the teardown contract (#1034): a layout
+        # that still owns a closed, hidden widget re-activates
+        # and resizes it — the resize would size a grid on a
+        # terminal the library already freed.
+        if not self._closed:
+            if not self._fitting:  # the window fit holds its grid
+                cols = max(1, self.width() // self.metrics.cell_width)
+                rows = max(1, self.height() // self.metrics.cell_height)
+                if (cols, rows) != (self.cols, self.rows):
+                    self.resize_grid(cols, rows)
+            find.layout(self)
         super().resizeEvent(event)
 
     # --- painting -----------------------------------------------------
@@ -711,9 +716,17 @@ class TerminalWidget(QWidget):
         self.refresh()
 
     def focusInEvent(self, event: QFocusEvent) -> None:  # noqa: N802
-        input.send_focus(self, True)
+        # The guard is the teardown contract (#1034): closing
+        # frees the emulator handles, and the hide the close
+        # performs delivers Qt's focus events after them — an
+        # unguarded report reads a terminal the library already
+        # freed, and the read is the crash that took the suite
+        # down on every quit that closed a focused terminal.
+        if not self._closed:
+            input.send_focus(self, True)
         super().focusInEvent(event)
 
     def focusOutEvent(self, event: QFocusEvent) -> None:  # noqa: N802
-        input.send_focus(self, False)
+        if not self._closed:
+            input.send_focus(self, False)
         super().focusOutEvent(event)

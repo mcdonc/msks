@@ -867,6 +867,43 @@ def test_the_widget_sends_focus_on_qt_events(screen, qt):
     assert b"\x1b[O" in drain_until(screen, b"\x1b[O")
 
 
+def test_a_focused_screen_closes_without_a_focus_read(screen, qt):
+    """The focus guard at teardown (#1034): closing frees the
+    emulator handles, and the hide the close performs delivers
+    the focus-out after them — the closed screen answers no
+    focus report, and the report's terminal read never happens.
+    The unguarded read was the use-after-free that took the
+    process down on every close of a focused terminal; this
+    test's own survival is the pin (a regression segfaults the
+    suite, the crash the issue chased), with the closed flag
+    read beside it so the guard's branch shows in coverage."""
+    vt(screen, b"\x1b[?1004h")  # the mode a report would answer
+    screen.resize(600, 400)
+    screen.show()
+    screen.setFocus()
+    qt.app.processEvents()
+    assert screen.close()  # the real close: frees, then hides
+    qt.app.processEvents()  # the hide's focus-out, delivered
+    assert screen._closed
+    # The driven arm (#1034): the same events the hide
+    # delivers, sent straight to the handler, so the pin holds
+    # even where the platform's focus chain hands the close
+    # nothing — the focus-out the crash ran on, and the
+    # focus-in its guard shares the reason with.
+    screen.focusOutEvent(qt.QtGui.QFocusEvent(qt.QtCore.QEvent.Type.FocusOut))
+    screen.focusInEvent(qt.QtGui.QFocusEvent(qt.QtCore.QEvent.Type.FocusIn))
+    # The resize arm (#1034, review round one): the same
+    # contract holds the layout's late resize — a closed widget
+    # a layout still owns sizes no grid on the freed terminal.
+    screen.resizeEvent(
+        qt.QtGui.QResizeEvent(qt.QtCore.QSize(10, 10), qt.QtCore.QSize(20, 20))
+    )
+    # The session was hung up on inside the close: nothing the
+    # guard skipped could have been written anyway.
+    time.sleep(0.1)
+    assert screen.session.read_available() in (None, b"")
+
+
 # --- modes and paging ----------------------------------------------------
 
 
