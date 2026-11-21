@@ -198,7 +198,9 @@ identity = 2
 # #944: the GUI workspace-detail presenter reads the mount-mode
 # vocabulary (MOUNT_MODES) through the allowlist door — the same
 # module-edge-plus-name +2 the TUI's reads take.
-spec = 13
+# #1007: the macOS menu bar's About box names the client's own
+# version word — the same module-edge-plus-name +2.
+spec = 15
 
 [snapshot.config]
 configio = 3

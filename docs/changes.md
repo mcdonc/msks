@@ -19,6 +19,13 @@ tagged `vX.Y.Z`.
 
 ### Added
 
+- **The macOS menu bar (#1007).** The GUI window on macOS
+  carries the platform's menu bar with the two standard roles:
+  About opens a dialog centered on the window naming the client
+  and its version, and Quit on Cmd+Q closes through the
+  window's own quit path, the one that closes every open shell.
+  Linux and Windows windows keep the shape they have.
+
 - **The GUI window follows the desktop's color scheme
   (#1006).** A light desktop paints the window light and a
   dark one dark, and a desktop switch mid-session repaints

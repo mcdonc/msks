@@ -352,6 +352,15 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     apply_identity(app)
     window = QtWidgets.QMainWindow()
     window.setWindowTitle(WINDOW_TITLE)
+    # allow-deferred-import — the macOS menu bar (#1007) carries
+    # the screens' own contract: PySide6 at module scope there,
+    # loaded only on the window path after the guards.
+    from .menubar import install_bar
+
+    # The macOS menu bar (#1007): the platform's own bar, with
+    # the two standard roles; the gate inside the module leaves
+    # every other platform's window the shape it has.
+    install_bar(window)
     # allow-deferred-import — the picker's presenter (#1009):
     # Qt-free, plain data over the client's own config layer.
     from .connection import Connections

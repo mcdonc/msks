@@ -18,6 +18,7 @@ if importlib.util.find_spec("PySide6") is None:
     )
 
 from msks.client.gui.forms import (  # noqa: E402
+    about_box,
     confirm,
     confirm_box,
     pick_item,
@@ -57,6 +58,21 @@ def make_window(qt) -> qt.QtWidgets.QMainWindow:
     window.show()
     qt.keep.append(window)
     return window
+
+
+def test_the_about_box_opens_centered_on_the_window(qt) -> None:
+    """The about box's own shape (#1007, #1014): built over the
+    asking window, centered on it, the information icon the
+    ask carries. The macOS build of Qt clears a message box's
+    title (the question box's own note), so the caller's own
+    suite pins the title and the text it passes."""
+    window = make_window(qt)
+    box = about_box(window, "About msks", "msks 0.9.2")
+    qt.keep.append(box)
+    assert box.parent() is window
+    assert box.text() == "msks 0.9.2"
+    assert box.icon() == qt.QtWidgets.QMessageBox.Icon.Information
+    assert box.geometry().center() == window.geometry().center()
 
 
 def test_the_question_box_carries_yes_no_with_no_the_default(qt) -> None:
