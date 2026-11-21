@@ -234,15 +234,18 @@ def main() -> int:
     finally:
         # A capture that failed before its own shutdown leaves
         # the hub's terminal children alive: the finally shuts
-        # every hub that still holds sessions. A hub whose
-        # widgets are already gone fails its own shutdown; the
-        # failure prints one line and the next step still runs,
-        # the temp fontconfig file's unlink included.
+        # every hub that still holds sessions (an emptied
+        # registry leaves its workspace keys behind, so the
+        # values are what count). The catch is belt and braces:
+        # the capture's own shutdown runs while its widgets
+        # live, and whatever a defensive shutdown still raises
+        # must not cancel the next hub or the temp fontconfig
+        # file's unlink — the failure prints one line instead.
         for hub in HUBS:
-            if hub.sessions:
+            if any(hub.sessions.values()):
                 try:
                     hub.shutdown()
-                except RuntimeError as exc:
+                except Exception as exc:
                     print(f"msks-screens: {exc}", file=sys.stderr)
         os.unlink(fonts.name)
     return 0
