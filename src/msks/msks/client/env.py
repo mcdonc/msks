@@ -152,6 +152,17 @@ def env_token() -> str | None:
 #: :func:`shared_ssl` (the cache it reads).
 _SHARED_SSL: list = [None]
 
+#: The CA the cached context was built against (#1009): the
+#: cache keys on the ``MSKSC_CAFILE`` path, so a changed value
+#: — a connection pick re-dialing a daemon with another CA
+#: posture — builds the next context fresh, pinned or TOFU
+#: whichever the new dial names, while an unchanged value keeps
+#: the one context (the warning stays once per process). The
+#: key is the path, not the file's contents: a CA re-seeded in
+#: place under the same name outlives a standing window, a
+#: relaunch answering it.
+_SHARED_SSL_KEY: list = [None]
+
 
 def shared_ssl():
     """The one TLS context for a process's lifetime — building it
@@ -162,8 +173,10 @@ def shared_ssl():
     on every exchange."""
     if is_unix(env_url()):
         return None
-    if _SHARED_SSL[0] is None:
+    key = os.environ.get("MSKSC_CAFILE") or ""
+    if _SHARED_SSL[0] is None or _SHARED_SSL_KEY[0] != key:
         _SHARED_SSL[0] = ssl_context()
+        _SHARED_SSL_KEY[0] = key
     return _SHARED_SSL[0]
 
 

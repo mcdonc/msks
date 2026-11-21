@@ -39,7 +39,11 @@ presenter (:mod:`.mountrows`, #987 — the editing list's
 arithmetic, the spec parse, and the pending words, plain data,
 PySide6-free), and the proxies tab's presenter
 (:mod:`.proxyrows`, #988 — the spec grammar, the parse through
-the CLI's own parsers, and the seeds, plain data, PySide6-free).
+the CLI's own parsers, and the seeds, plain data, PySide6-free),
+and the connection picker's presenter (:mod:`.connection`,
+#1009 — the presets the window picks its daemon from and the
+environment application a pick makes, over the client's own
+config layer, plain data, PySide6-free).
 The screen widgets
 (:mod:`.workspaces`, #939 — the list; :mod:`.workspace`, #945
 — the detail page and the shell that swaps the two), the
@@ -59,6 +63,7 @@ from . import (  # noqa: F401 — reachability pins for the gate;
     # the bridge and the screen modules reach through app.py's
     # lazy window-path import; the feed rides the same path.
     app,
+    connection,
     consent,
     data,
     detail,

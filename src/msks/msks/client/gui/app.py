@@ -319,11 +319,12 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
         font.pointSizeF() * scale_from_env(FONT_SCALE_ENV, FONT_SCALE)
     )
     app.setFont(font)
-    bridge = Bridge(GuiData(), feed_factory=EventsFeed)
-    bridge.start()
-    app.aboutToQuit.connect(bridge.stop)
     window = QtWidgets.QMainWindow()
     window.setWindowTitle(WINDOW_TITLE)
+    # allow-deferred-import — the picker's presenter (#1009):
+    # Qt-free, plain data over the client's own config layer.
+    from .connection import Connections
+
     # allow-deferred-import — the Images tab's cells (#964):
     # the channel URL, plain data beside the Qt-bearing tab.
     from .images.cells import channel_url
@@ -354,15 +355,65 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # the module.
     from .workspace import WorkspaceShell
 
-    shell = WorkspaceShell(bridge, terminal_cmd=terminal_command(conf))
-    tabs = MainTabs(shell)
-    tabs.addTab(ImagesTab(bridge, channel_url(conf)), IMAGES_LABEL)
-    tabs.addTab(SecretsTab(bridge), SECRETS_LABEL)
-    # The Workspaces tab's plus button (#962): the shell owns
-    # the bridge, so the opener's click lands there — the
-    # create dialog is the shell's own surface.
-    tabs.create_requested.connect(shell.open_create)
-    window.setCentralWidget(tabs)
+    # The connection picker and its re-dial (#1009, phase 5):
+    # the picker rides the listing's status row below the flash
+    # line (the presenter feeds it), never a pane of its own,
+    # and a pick rebuilds the window's whole content tree over
+    # the picked values — the shell, the tabs, the bridge
+    # behind them. The first build lands the same path a pick
+    # re-runs, so the standing tree and every re-dial share one
+    # construction.
+    connections = Connections(conf)
+    tree: dict = {}
+
+    def land() -> WorkspaceShell:
+        bridge = Bridge(GuiData(), feed_factory=EventsFeed)
+        bridge.start()
+        app.aboutToQuit.connect(bridge.stop)
+        shell = WorkspaceShell(bridge, terminal_cmd=terminal_command(conf))
+        tabs = MainTabs(shell)
+        tabs.addTab(ImagesTab(bridge, channel_url(conf)), IMAGES_LABEL)
+        tabs.addTab(SecretsTab(bridge), SECRETS_LABEL)
+        # The Workspaces tab's plus button (#962): the shell owns
+        # the bridge, so the opener's click lands there — the
+        # create dialog is the shell's own surface.
+        tabs.create_requested.connect(shell.open_create)
+        window.setCentralWidget(tabs)
+        # The picker's menu hosts from the presenter's rows
+        # (#1009): the fresh listing's own button, fed here so
+        # the standing connection names itself on every build.
+        shell.listing.host_presets(connections.presets())
+        shell.listing.connection_picked.connect(reconnect)
+        tree["bridge"] = bridge
+        tree["shell"] = shell
+        return shell
+
+    def reconnect(preset) -> None:
+        """One pick's re-dial (#1009): the preset applies to the
+        environment through the config layer's own resolution,
+        the standing tree closes — its bridge stopped, its
+        shell hub's terminals gone with the connection they
+        belonged to — and a fresh tree lands over the picked
+        values, the zoom carrying its steps to the new hub. A
+        pick the presenter refused (the file changed under the
+        menu) re-dials nothing — the picker re-hosts on the
+        standing truth instead."""
+        if not connections.pick(preset):
+            # The refusal shows where every flash shows (#1009):
+            # the listing's own status line, the menu re-hosted
+            # on the standing truth beside it.
+            tree["shell"].listing.flash(
+                f"the connection pick was refused — {preset.name} "
+                "did not resolve"
+            )
+            tree["shell"].listing.host_presets(connections.presets())
+            return
+        tree["bridge"].stop()
+        tree["shell"].hub.shutdown()
+        shell = land()
+        zoom.retarget(shell.hub)
+
+    shell = land()
     # allow-deferred-import — the whole-client zoom (#976)
     # carries the screen modules' own contract: PySide6 at
     # module scope there, loaded only on the window path.
@@ -371,8 +422,11 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
     # The whole-client font zoom (#976): Ctrl+Plus/Minus and
     # Ctrl+0 as application shortcuts, stepping the chrome's
     # application font and every live terminal the shell's hub
-    # owns — the keys answer wherever the focus stands.
-    Zoom(shell.hub, window)
+    # owns — the keys answer wherever the focus stands. The
+    # zoom stands past the strip's swaps (#1009): its retarget
+    # carries the operator's steps to each re-dialed tree's
+    # hub.
+    zoom = Zoom(shell.hub, window)
     # The opening geometry (#939): the last-closed rect wins —
     # a saved geometry the screens still show — and the fixed
     # 1280 by 720 is the first-open shape until a close
@@ -381,6 +435,6 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
         window.resize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
     window.show()
     code = app.exec()
-    bridge.stop()
+    tree["bridge"].stop()
     save_geometry(window)
     return code

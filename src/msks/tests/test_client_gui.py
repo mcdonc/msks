@@ -350,6 +350,15 @@ def test_the_gui_window_opens_offscreen(
             else None
             for w in windows
         ]
+        # The picker's row read while the window stands (#1009):
+        # the listing's connection button, the label it carries.
+        opened["picker"] = [
+            (
+                type(w.centralWidget().widget(0).listing.connection).__name__,
+                w.centralWidget().widget(0).listing.connection.text(),
+            )
+            for w in windows
+        ]
         return 0
 
     monkeypatch.setattr(QtWidgets.QApplication, "exec", record_and_exit)
@@ -381,6 +390,12 @@ def test_the_gui_window_opens_offscreen(
         [WORKSPACES_LABEL, IMAGES_LABEL, SECRETS_LABEL],
         0,
     )
+    # The picker rides the listing's status row (#1009): a
+    # connection button in the listing's chrome, its label
+    # naming whichever preset the run's environment stands on.
+    kind, label = opened["picker"][0]
+    assert kind == "ConnectionButton"
+    assert label
     # The whole-client zoom's keys (#976): three application
     # shortcuts on the window — both plus spellings on the grow
     # one — so the focus never gates them.
@@ -505,10 +520,12 @@ def test_open_window_reuses_an_existing_app(
     would."""
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("the gui extra is not installed on this host")
+    from msks.client.gui import connection as connection_mod
     from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui import zoom as zoom_mod
     from msks.client.gui.bridge import Bridge
+    from msks.client.gui.connection import ConnectionPreset
     from msks.client.gui.images import tab as images_tab_mod
     from msks.client.gui.secrets import tab as secrets_tab_mod
 
@@ -527,18 +544,30 @@ def test_open_window_reuses_an_existing_app(
         def connect(self, slot: object) -> None:
             stops.append(slot)
 
+    shutdowns: list[object] = []
+
     class FakeShellHub:
-        """The shell hub's stub (#976): the window path hands
-        the zoom the shell's own hub — the recording pins the
-        handoff."""
+        """The shell hub's stub (#976, #1009): the window path
+        hands the zoom the shell's own hub — the recording pins
+        the handoff — and a reconnect's teardown shuts the hub
+        down with the connection it belonged to."""
+
+        def shutdown(self) -> None:
+            shutdowns.append(self)
+
+    retargets: list[object] = []
 
     class FakeZoom:
-        """The whole-client zoom's stub (#976): the window path
-        builds it over the shell's hub and the window — the
-        recording pins both."""
+        """The whole-client zoom's stub (#976, #1009): the window
+        path builds it over the shell's hub and the window — the
+        recording pins both — and a reconnect retargets it at
+        the fresh hub."""
 
         def __init__(self, hub: object, window: object) -> None:
             zooms.append((hub, window))
+
+        def retarget(self, hub: object) -> None:
+            retargets.append(hub)
 
     monkeypatch.setattr(zoom_mod, "Zoom", FakeZoom)
 
@@ -601,6 +630,7 @@ def test_open_window_reuses_an_existing_app(
             screens.append(self)
             self.terminal_cmd = terminal_cmd
             self.hub = FakeShellHub()  # the zoom's handoff (#976)
+            self.listing = FakeListing()  # the picker's row (#1009)
 
         def open_create(self) -> None:
             pass  # the wiring pin reads the bound method, not the call
@@ -646,6 +676,63 @@ def test_open_window_reuses_an_existing_app(
             self.pages.append((page, label))
 
     monkeypatch.setattr(tabs_mod, "MainTabs", FakeTabs)
+
+    class PickedSignal:
+        """The strip's pick signal's stub (#1009): the window
+        path connects its re-dial on it."""
+
+        def __init__(self) -> None:
+            self.slots: list[object] = []
+
+        def connect(self, slot: object) -> None:
+            self.slots.append(slot)
+
+    listings: list[FakeListing] = []
+
+    class FakeListing:
+        """The shell's listing stub (#1009): the picker rides its
+        status row — the presets host on it, the picks cross on
+        its signal, a refused pick flashes its status line —
+        recording all three for the wiring pins."""
+
+        connection_picked = PickedSignal()
+
+        def __init__(self) -> None:
+            self.hosted: list[object] = []
+            self.flashed: list[str] = []
+            listings.append(self)
+
+        def host_presets(self, presets: object) -> None:
+            self.hosted.append(presets)
+
+        def flash(self, message: str) -> None:
+            self.flashed.append(message)
+
+    class FakeConnections:
+        """The picker's presenter stub (#1009): one plain row,
+        the pick recording itself, the answer steerable for the
+        refused arm."""
+
+        def __init__(self, conf: object = None) -> None:
+            self.conf = conf
+            self.picked: list[object] = []
+            self.answer = True
+
+        def presets(self) -> list[ConnectionPreset]:
+            return [ConnectionPreset("environment", "environment", "")]
+
+        def pick(self, preset: object) -> bool:
+            self.picked.append(preset)
+            return self.answer
+
+    connections_holder: list[FakeConnections] = []
+
+    def fake_connections(conf: object = None) -> FakeConnections:
+        held = FakeConnections(conf)
+        connections_holder.append(held)
+        return held
+
+    monkeypatch.setattr(connection_mod, "Connections", fake_connections)
 
     class FakeFont:
         """The app font's shape for the scale pin (#939): a point
@@ -703,6 +790,35 @@ def test_open_window_reuses_an_existing_app(
     Bridge.stop = lambda self: shown.append("stopped")  # type: ignore[method-assign]
     try:
         assert app.open_window(stub) == 3
+        # One pick's re-dial (#1009): the presenter applies the
+        # preset, the standing bridge stops, the shell hub's
+        # terminals close with the connection they belonged to,
+        # and a fresh tree lands — the zoom retargeted at the
+        # fresh hub, the menu re-hosted. Driven here, inside the
+        # patch's own bracket.
+        preset = ConnectionPreset("farm", "alias", "https://10.0.0.9:9660")
+        screens[0].listing.connection_picked.slots[0](preset)
+        assert connections_holder[0].picked == [preset]
+        assert len(started) == 2  # the fresh tree's own bridge
+        assert len(stops) == 2  # its aboutToQuit hook beside it
+        assert shutdowns == [screens[0].hub]
+        assert retargets == [screens[1].hub]
+        assert central[1].page is screens[1]  # the fresh tree landed
+        assert len(listings[1].hosted) == 1  # its picker hosted
+        # A refused pick (#1009) — the file changed under the
+        # menu — re-dials nothing: no third bridge, no teardown,
+        # the menu alone re-hosted on the standing truth.
+        connections_holder[0].answer = False
+        screens[1].listing.connection_picked.slots[0](preset)
+        assert len(started) == 2
+        assert len(central) == 2
+        assert len(listings[1].hosted) == 2
+        # The refusal names itself where every flash does
+        # (#1009): the listing's own status line.
+        assert listings[1].flashed == [
+            "the connection pick was refused — farm did not resolve"
+        ]
+        shown.append("driven")
     finally:
         Bridge.start, Bridge.stop = real_start, real_stop  # type: ignore[method-assign]
     assert shown.count("created") == 1  # the pre-made one only
@@ -720,9 +836,9 @@ def test_open_window_reuses_an_existing_app(
     # The window opens on the top-level tab strip (#962): the
     # screen is the strip's first page — the Workspaces tab —
     # built over the same bridge the window started.
-    assert len(central) == 1
     assert isinstance(central[0], FakeTabs)
     assert central[0].page is screens[0]
+    assert len(listings[0].hosted) == 1  # the picker hosted (#1009)
     assert built == started
     # The Images tab lands beside the shell (#964): built over
     # the same bridge, under the strip's second tab, on the
@@ -730,22 +846,21 @@ def test_open_window_reuses_an_existing_app(
     # config in the run.
     from msks.client.gui.images import channel_url
 
-    assert images == [(started[0], channel_url(None))]
-    assert secrets_built == [started[0]]  # the same bridge (#966)
+    assert images[:1] == [(started[0], channel_url(None))]
+    assert secrets_built[:1] == [started[0]]  # the same bridge (#966)
     assert [label for _page, label in central[0].pages] == [
         "Images",
         "Secrets",
     ]
     # The create opener lands on the shell (#962): the strip's
     # plus button opens the shell's own create dialog.
-    assert creates == [screens[0].open_create]
+    assert creates[:1] == [screens[0].open_create]
     # The zoom takes the shell's own hub and the window (#976):
     # the terminals it steps are the shell's, the keys sit on
     # the window.
     assert zooms == [(screens[0].hub, windows[0])]
-    assert shown[-1] == "stopped"  # the return path stopped the bridge
-    assert len(started) == 1  # started with the window
-    assert len(stops) == 1  # aboutToQuit holds the same stop
+    assert shown[-1] == "driven"  # the drive ran last, inside the bracket
+    assert "stopped" in shown  # the return path stopped the first bridge
     # The saved geometry written on close (#939): the fake's
     # rect, as the next open reads it.
     saved = json.loads((tmp_path / "gui-window.json").read_text())
@@ -762,6 +877,7 @@ def test_open_window_keeps_a_user_style_choice(
     with the choice preset in the swapped-out environment."""
     if importlib.util.find_spec("PySide6") is None:
         pytest.skip("the gui extra is not installed on this host")
+    from msks.client.gui import connection as connection_mod
     from msks.client.gui import tabs as tabs_mod
     from msks.client.gui import workspace as workspace_mod
     from msks.client.gui import zoom as zoom_mod
@@ -824,11 +940,21 @@ def test_open_window_keeps_a_user_style_choice(
         def show(self) -> None:
             pass
 
+    class FakeListing:
+        """The listing stub (#1009): the picker's row, its two
+        members the window path touches."""
+
+        connection_picked = FakeSignal()
+
+        def host_presets(self, presets: object) -> None:
+            pass
+
     class FakeScreen:
         def __init__(
             self, bridge: object, terminal_cmd: object = None
         ) -> None:
             self.hub = object()  # the zoom's handoff (#976)
+            self.listing = FakeListing()  # the picker's row (#1009)
 
         def open_create(self) -> None:
             pass
@@ -858,6 +984,21 @@ def test_open_window_keeps_a_user_style_choice(
     monkeypatch.setattr(secrets_tab_mod, "SecretsTab", FakeSecretsTab)
 
     monkeypatch.setattr(tabs_mod, "MainTabs", FakeTabs)
+
+    class FakeConnections:
+        """The picker's presenter stub (#1009): no rows, the
+        pick answered True and never called."""
+
+        def __init__(self, conf: object = None) -> None:
+            pass
+
+        def presets(self) -> list:
+            return []
+
+        def pick(self, preset: object) -> bool:
+            return True
+
+    monkeypatch.setattr(connection_mod, "Connections", FakeConnections)
 
     class FakeApp:
         aboutToQuit = FakeSignal()
