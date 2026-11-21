@@ -1420,13 +1420,19 @@ def test_a_spare_pane_spreads_the_room(qt) -> None:
 
 
 def test_the_refresh_button_leads_the_bar(qt) -> None:
-    """The refresh action's place (#964, the operator's ask):
-    the button on the bar's left, the flash line taking the
-    rest beside it."""
+    """The refresh action's place (#964, the operator's ask;
+    the bar at the page's bottom since #1011, the Mounts and
+    Proxies pattern): the button on the bar's left, the flash
+    line taking the rest beside it, and the bar below the two
+    groups it reads."""
     tab, window, _bridge = make_tab(qt)
-    bar = tab.layout().itemAt(0)  # the tab's top bar
+    layout = tab.layout()
+    assert layout.itemAt(0).widget().title() == cells.CATALOG_GROUP
+    assert layout.itemAt(1).widget().title() == cells.PUBLISHED_GROUP
+    bar = layout.itemAt(2)  # the page's bottom bar
     assert bar.itemAt(0).widget() is tab.refresh_button
     assert bar.itemAt(1).widget() is tab.status
+    assert layout.itemAt(3).widget() is tab.counts
     window.close()
 
 

@@ -574,6 +574,23 @@ def test_the_page_carries_no_sentinel_pane(qt, monkeypatch) -> None:
     window.close()
 
 
+def test_the_action_buttons_sit_at_the_bottom(qt, monkeypatch) -> None:
+    """The page's action row (#1011): Refresh and Mint sit in a
+    row at the bottom of the page — the detail pages' Mounts
+    and Proxies pattern — below the two groups and above the
+    standing counts, the flash line taking the row's rest."""
+    tab, window, _bridge = make_tab(qt, monkeypatch)
+    layout = tab.layout()
+    assert layout.itemAt(0).widget().title() == cells.LIST_GROUP
+    assert layout.itemAt(1).widget().title() == cells.AUDIT_GROUP
+    bar = layout.itemAt(2)  # the page's bottom row
+    assert bar.itemAt(0).widget() is tab.refresh_button
+    assert bar.itemAt(1).widget() is tab.mint_button
+    assert bar.itemAt(2).widget() is tab.status
+    assert layout.itemAt(3).widget() is tab.counts
+    window.close()
+
+
 def test_renew_picks_the_ttl_and_posts_it(qt, monkeypatch) -> None:
     """The renew action (#966): the picker opens over the
     presenter's span with its own default — the nearest choice

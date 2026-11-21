@@ -26,6 +26,7 @@ if importlib.util.find_spec("PySide6") is None:
 
 from msks.client import ages as ages_mod  # noqa: E402
 from msks.client import data as clientdata  # noqa: E402
+from msks.client.gui import listlayout  # noqa: E402
 from msks.client.gui import rows as gui_rows  # noqa: E402
 
 #: The poll cadence for the offscreen event loop, seconds — the
@@ -797,18 +798,113 @@ def test_the_hold_keeps_its_color_unfocused(qt) -> None:
     window.close()
 
 
-def test_the_toolbar_is_gone_and_the_rows_hold_the_actions(qt) -> None:
-    """The toolbar leaves the page (#972): no push buttons
-    anywhere on the screen — the actions live in each row's own
-    cell, the shell button beside the toggle."""
+def test_the_page_carries_the_action_row_and_the_rows_hold_theirs(
+    qt,
+) -> None:
+    """The page's actions (#972, #1011): the bottom row carries
+    Add, Edit, and Remove — the detail pages' Mounts and
+    Proxies pattern — and each row's own cell keeps the toggle
+    and the shell button beside them; no other push button
+    lives on the page."""
     screen, window, _bridge = make_screen(qt)
-    assert screen.findChildren(qt.QtWidgets.QPushButton) == []
+    buttons = screen.findChildren(qt.QtWidgets.QPushButton)
+    assert [button.text() for button in buttons] == [
+        "Add",
+        "Edit",
+        "Remove",
+    ]
+    # The row (#1011) sits at the page's bottom: the table
+    # above it, the detail strip below it.
+    layout = screen.layout()
+    assert layout.itemAt(1).widget() is screen.table
+    row = layout.itemAt(2)
+    assert row.itemAt(0).widget() is screen.add_button
+    assert row.itemAt(1).widget() is screen.edit_button
+    assert row.itemAt(2).widget() is screen.remove_button
+    assert layout.itemAt(3).widget() is screen.detail
     for workspace in ("ws-1", "ws-2", "ws-3"):
         cell = screen.table.cellWidget(
             screen.row_ids()[workspace], qt.cells_mod.ACTION_COLUMN
         )
-        buttons = cell.findChildren(qt.QtWidgets.QToolButton)
-        assert len(buttons) == 2  # the toggle and the shell
+        cell_buttons = cell.findChildren(qt.QtWidgets.QToolButton)
+        assert len(cell_buttons) == 2  # the toggle and the shell
+    window.close()
+
+
+def test_add_asks_the_shell_for_the_create_dialog(qt) -> None:
+    """The Add action (#1011): the click crosses to the shell
+    that owns the bridge — the same create dialog the tab
+    strip's plus badge once opened — the listing carrying no
+    dialog of its own."""
+    screen, window, _bridge = make_screen(qt)
+    asked: list[bool] = []
+    screen.create_requested.connect(lambda: asked.append(True))
+    screen.add_button.click()
+    assert asked == [True]
+    window.close()
+
+
+def test_edit_and_remove_act_on_the_selected_row(qt, monkeypatch) -> None:
+    """The row's Edit and Remove (#1011): both act on the held
+    row — the editor opens over its own facts, Remove asks
+    first and a refusal sends nothing — and both stand disabled
+    until a row holds. The flight's gate holds them besides."""
+    monkeypatch.setattr(
+        qt.QtWidgets.QMessageBox,
+        "question",
+        lambda *args: qt.QtWidgets.QMessageBox.StandardButton.No,
+    )
+    screen, window, bridge = make_screen(qt)
+    opened, _accepted = fake_editor(monkeypatch, qt)
+    # No hold: the row the open's first answer held clears, and
+    # the buttons stand disabled until a row holds again.
+    screen.table.clearSelection()
+    screen.table.selectionModel().clearCurrentIndex()
+    assert not screen.edit_button.isEnabled()
+    assert not screen.remove_button.isEnabled()
+    # The slots behind the buttons decide nothing with no hold:
+    # a disabled button's click never reaches them, and a direct
+    # call answers the same silence.
+    bridge.calls.clear()
+    screen.edit_held()
+    screen.remove_held()
+    assert opened == []
+    assert bridge.calls == []
+    row = screen.row_ids()["ws-1"]
+    screen.table.selectRow(row)
+    assert screen.edit_button.isEnabled()
+    assert screen.remove_button.isEnabled()
+    bridge.calls.clear()
+    screen.edit_button.click()
+    assert opened == [("ws-1",)]
+    screen.remove_button.click()
+    assert bridge.calls == []  # the refusal sent nothing
+    window.close()
+
+
+def test_the_action_row_follows_the_flight(qt, monkeypatch) -> None:
+    """The row's gate (#1011): a start/stop/delete flight out
+    holds Edit and Remove beside the row toggles, and the
+    landing frees them again."""
+    monkeypatch.setattr(
+        qt.QtWidgets.QMessageBox,
+        "question",
+        lambda *args: qt.QtWidgets.QMessageBox.StandardButton.Yes,
+    )
+    screen, window, bridge = make_screen(qt)
+    row = screen.row_ids()["ws-2"]
+    screen.table.selectRow(row)
+    bridge.calls.clear()
+    screen.remove_button.click()
+    assert bridge.calls == [("workspaces-delete", "remove", ("ws-2",))]
+    assert not screen.edit_button.isEnabled()
+    assert not screen.remove_button.isEnabled()
+    # Add stands: the create dialog's flight is its own, not
+    # the row actions'.
+    assert screen.add_button.isEnabled()
+    screen.on_succeeded("workspaces-delete", {"id": "ws-2", "status": "gone"})
+    assert screen.edit_button.isEnabled()
+    assert screen.remove_button.isEnabled()
     window.close()
 
 
@@ -1015,7 +1111,7 @@ def test_the_action_slots_stand_guard(qt) -> None:
     # A row the rebuild has not filled measures nothing; an
     # empty table sets no width at all.
     screen.table.setRowCount(4)  # rows without cells, mid-rebuild
-    screen.size_action_column()
+    listlayout.size_action_column(screen.table)
     screen.on_succeeded("workspaces-list", [])
     window.resize(901, 600)
     qt.app.processEvents()

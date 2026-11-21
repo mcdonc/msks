@@ -374,10 +374,6 @@ def open_window(QtWidgets: ModuleType, conf=None) -> int:
         tabs = MainTabs(shell)
         tabs.addTab(ImagesTab(bridge, channel_url(conf)), IMAGES_LABEL)
         tabs.addTab(SecretsTab(bridge), SECRETS_LABEL)
-        # The Workspaces tab's plus button (#962): the shell owns
-        # the bridge, so the opener's click lands there — the
-        # create dialog is the shell's own surface.
-        tabs.create_requested.connect(shell.open_create)
         window.setCentralWidget(tabs)
         # The picker's menu hosts from the presenter's rows
         # (#1009): the fresh listing's own button, fed here so

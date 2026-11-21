@@ -8,7 +8,11 @@ holds no business logic: daemon rows arrive as row models
 (:mod:`msks.client.gui.bridge`) carries every call, and a
 refresh failure flashes the status line while the rows already
 on screen stand. The row's menu (#972) opens the editor
-(:mod:`msks.client.gui.edit`, #986) beside its other actions.
+(:mod:`msks.client.gui.edit`, #986) beside its other actions,
+and the page's bottom button row (#1011) — Add, Edit, Remove,
+the detail pages' Mounts and Proxies pattern — carries the
+create ask (the shell owns the dialog) and the selected row's
+edit and delete.
 
 This module imports PySide6 at module scope. That is safe
 because nothing imports it at CLI parse time: the package init
@@ -26,7 +30,6 @@ from .connectionbar import ConnectionButton
 from .edit import EditDialog
 from .listcells import (
     ACTION_COLUMN,
-    CELL_MARGIN,
     COLUMNS,
     CREATED_COLUMN,
     ID_COLUMN,
@@ -43,6 +46,7 @@ from .listcells import (
     read_only_item,
     state_text,
 )
+from .listlayout import size_columns
 from .listtable import ListTable
 from .rows import (
     WorkspaceRow,
@@ -88,8 +92,9 @@ FLASH_MS = 4000
 
 class WorkspaceList(QtWidgets.QWidget):
     """The main window's central screen (#939): the table of row
-    models, a manual refresh button, and the status line a
-    failed refresh flashes. The status row carries the
+    models, the Add / Edit / Remove button row at the page's
+    bottom (#1011, the Mounts and Proxies pattern), and the
+    status line a failed refresh flashes. The status row carries the
     connection picker at its right end (#1009, phase 5): the
     standing daemon's name beside a menu of the client's
     presets, a pick crossing as ``connection_picked`` for the
@@ -108,6 +113,7 @@ class WorkspaceList(QtWidgets.QWidget):
     opened = QtCore.Signal(str)
     shell_requested = QtCore.Signal(str)
     connection_picked = QtCore.Signal(object)
+    create_requested = QtCore.Signal()
 
     def __init__(self, bridge: Bridge) -> None:
         super().__init__()
@@ -213,13 +219,28 @@ class WorkspaceList(QtWidgets.QWidget):
             QtWidgets.QSizePolicy.Policy.Ignored,
             QtWidgets.QSizePolicy.Policy.Preferred,
         )
+        # The page's action row (#1011): Add, Edit, and Remove
+        # at the bottom of the page, the detail pages' Mounts
+        # and Proxies pattern — the create ask crosses to the
+        # shell that owns the dialog, Edit and Remove acting on
+        # the selected row. Built before the first sync: the
+        # sync's slot reads the buttons.
+        self.add_button = QtWidgets.QPushButton("Add")
+        self.add_button.clicked.connect(self.request_create)
+        self.edit_button = QtWidgets.QPushButton("Edit")
+        self.edit_button.clicked.connect(self.edit_held)
+        self.edit_button.setEnabled(False)
+        self.remove_button = QtWidgets.QPushButton("Remove")
+        self.remove_button.clicked.connect(self.remove_held)
+        self.remove_button.setEnabled(False)
         self.sync_actions()
         self.timer = QtCore.QTimer(self)
         self.timer.setInterval(REFRESH_MS)
         self.timer.timeout.connect(self.refresh)
         # The status line alone rides the top (#972): the row
-        # cells carry the actions now, and the rows reclaim the
-        # vertical space the toolbar held.
+        # cells carry the start/stop and shell actions, the
+        # page's own actions the bottom row carries, and the
+        # rows reclaim the vertical space a toolbar held.
         # The connection picker rides the status row's right
         # end (#1009, phase 5): the standing connection's name
         # beside a menu of the client's presets — the config
@@ -233,9 +254,15 @@ class WorkspaceList(QtWidgets.QWidget):
         top = QtWidgets.QHBoxLayout()
         top.addWidget(self.status, stretch=1)
         top.addWidget(self.connection)
+        actions = QtWidgets.QHBoxLayout()
+        actions.addWidget(self.add_button)
+        actions.addWidget(self.edit_button)
+        actions.addWidget(self.remove_button)
+        actions.addStretch(1)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addLayout(top)
-        layout.addWidget(self.table)
+        layout.addWidget(self.table, stretch=1)
+        layout.addLayout(actions)
         layout.addWidget(self.detail)
         self.setLayout(layout)
 
@@ -291,7 +318,7 @@ class WorkspaceList(QtWidgets.QWidget):
         for index, model in enumerate(models):
             self.fill_row(index, model)
         self.table.setSortingEnabled(True)
-        self.size_columns()
+        size_columns(self.table)
         self.settle_hold(was_empty, held)
 
     def settle_hold(
@@ -487,85 +514,6 @@ class WorkspaceList(QtWidgets.QWidget):
         else:
             self.table.selectionModel().clearCurrentIndex()
 
-    def size_columns(self) -> None:
-        """The columns' widths (#939): every column at least as
-        wide as its longest value — the header's own label
-        included — and the spare beyond that split evenly across
-        the columns, an odd cell to the earlier ones, so the
-        table fills the pane's whole width. The TUI listing's
-        own arithmetic (#347), over the widget's columns. A pane
-        narrower than the columns' total gives ground on the
-        image column alone — the one whose values run long — its
-        text ellipsized around the middle; every other column
-        keeps its whole values, and the image reads whole again
-        the moment the pane has the room."""
-        self.fit_images(None)  # whole values first: minimums measure them
-        self.table.resizeColumnsToContents()
-        self.size_action_column()
-        spare = (
-            self.table.viewport().width()
-            - sum(
-                self.table.columnWidth(column)
-                for column in range(len(COLUMNS))
-            )
-            - self.table.columnWidth(ACTION_COLUMN)
-        )
-        if spare <= 0:
-            metrics = self.table.fontMetrics()
-            floor = (
-                metrics.horizontalAdvance(COLUMNS[IMAGE_COLUMN]) + CELL_MARGIN
-            )
-            capped = max(self.table.columnWidth(IMAGE_COLUMN) + spare, floor)
-            self.table.setColumnWidth(IMAGE_COLUMN, capped)
-            self.fit_images(capped - CELL_MARGIN)
-            return
-        share, extra = divmod(spare, len(COLUMNS))
-        for column in range(len(COLUMNS)):
-            self.table.setColumnWidth(
-                column,
-                self.table.columnWidth(column)
-                + share
-                + (1 if column < extra else 0),
-            )
-
-    def size_action_column(self) -> None:
-        """The action column's width (#972): its buttons' own
-        hint — the column neither gives ground on a narrow pane
-        nor takes spare on a wide one, so the row's actions stay
-        whole whatever the pane's width. A row the rebuild has
-        not filled yet measures nothing; an empty table sets no
-        width at all."""
-        cells = (
-            self.table.cellWidget(row, ACTION_COLUMN)
-            for row in range(self.table.rowCount())
-        )
-        width = max(
-            (cell.sizeHint().width() for cell in cells if cell is not None),
-            default=0,
-        )
-        if width:
-            self.table.setColumnWidth(ACTION_COLUMN, width + CELL_MARGIN)
-
-    def fit_images(self, budget: int | None) -> None:
-        """The image cells' display (#939): the whole value when
-        the budget is open, else the value ellipsized around the
-        middle — the version half of a reference kept, the TUI
-        clip's own shape."""
-        metrics = self.table.fontMetrics()
-        for row in range(self.table.rowCount()):
-            item = self.table.item(row, IMAGE_COLUMN)
-            whole = item.data(IMAGE_ROLE)
-            if budget is None:
-                item.setText(whole)
-                continue
-            item.setText(
-                metrics.elidedText(
-                    whole,
-                    QtCore.Qt.TextElideMode.ElideMiddle,
-                    budget,
-                )
-            )
-
     @QtCore.Slot(str, object)
     def on_succeeded(self, key: str, result: object) -> None:
         """One answered call (#939, #940): a listing rebuilds the
@@ -659,10 +607,41 @@ class WorkspaceList(QtWidgets.QWidget):
         """The row toggles' state (#972): one action flight at a
         time — every row's toggle stands disabled while one is
         out. The strip rides the same signal: the hold moved, the
-        detail follows."""
+        detail follows. The page's own row (#1011) rides it too:
+        Edit and Remove take a held row besides the flight's
+        gate."""
         for toggle in self.row_actions.values():
             toggle.setEnabled(not self.action_pending)
+        held = self.held_workspace() is not None
+        self.edit_button.setEnabled(held and not self.action_pending)
+        self.remove_button.setEnabled(held and not self.action_pending)
         self.update_detail()
+
+    @QtCore.Slot()
+    def request_create(self) -> None:
+        """The Add action (#1011): the create dialog's ask crosses
+        to the shell that owns the bridge — the same dialog the
+        tab strip's plus badge once opened (#962), the dialog's
+        own landed create refreshing this listing behind it."""
+        self.create_requested.emit()
+
+    @QtCore.Slot()
+    def edit_held(self) -> None:
+        """The page's Edit action (#1011): the held row opens the
+        editor — the same path the row's context menu takes —
+        with nothing held deciding nothing."""
+        held = self.held_workspace()
+        if held is not None:
+            self.edit_workspace(held)
+
+    @QtCore.Slot()
+    def remove_held(self) -> None:
+        """The page's Remove action (#1011): the held row removes
+        behind the Delete confirmation the context menu keeps,
+        with nothing held deciding nothing."""
+        held = self.held_workspace()
+        if held is not None:
+            self.delete_workspace(held)
 
     def update_detail(self) -> None:
         """The detail strip's content (#849, the GUI's read):
@@ -929,7 +908,7 @@ class WorkspaceList(QtWidgets.QWidget):
         if watched is self.table.viewport() and (
             event.type() == QtCore.QEvent.Type.Resize
         ):
-            self.size_columns()
+            size_columns(self.table)
 
     def blank_press(self, watched: QtCore.QObject, event) -> bool:
         """Whether this event is a press on the grid's blank
@@ -961,5 +940,5 @@ class WorkspaceList(QtWidgets.QWidget):
         and the spare fills the pane's new width. A wrapper
         without its ``table`` (#959) sizes nothing."""
         if getattr(self, "table", None) is not None:
-            self.size_columns()
+            size_columns(self.table)
         super().resizeEvent(event)
